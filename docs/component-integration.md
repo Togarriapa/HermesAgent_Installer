@@ -20,7 +20,7 @@ OpenViking uses the native Hermes catalog plugin and a separately prestarted ser
 
 The `search_reference_catalog` handler provides actual local, read-only query behavior for the selected public-apis, awesome-harness-engineering, and awesome-design catalogs. It accepts only the verified source tree already fetched at the pinned revision, scans bounded UTF-8 documentation/data files, and returns file/line excerpts with source URL and revision. It does not call listed APIs or provision them. Oversized or non-UTF-8 candidate text is skipped and marks the result incomplete; callers must not present an incomplete result as exhaustive.
 
-This implements the searchable-reference behavior only. It does not establish upstream license redistribution permission, live service credentials, or functional runtime readiness for the other component adapters.
+The Hyperframes adapter builds the documented local render invocation for a tiny HTML composition, with PRIVATE sensitivity, network denied, explicit fixture/work capabilities and bounded timeout/memory. It only describes a command for the managed supervisor; successful render output and native ARM64 browser/FFmpeg support still require an actual isolated invocation.\n\nThis implements the searchable-reference behavior only. It does not establish upstream license redistribution permission, live service credentials, or functional runtime readiness for the other component adapters.
 
 ### Skill discovery and host-hook inventory
 

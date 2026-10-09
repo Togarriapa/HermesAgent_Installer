@@ -41,7 +41,7 @@ ISOLATED_RUNTIME_PROFILES: Mapping[str, IsolatedRuntimeProfile] = {
     ),
     "hyperframes": IsolatedRuntimeProfile(
         "hyperframes", ("package.json", "packages/cli/package.json"),
-        ("bun.lock",), "node", ">=22", True, ("FFmpeg",),
+        ("bun.lock",), "node", ">=22", True, ("FFmpeg", "ARM64-compatible Chromium"),
     ),
     "omniroute": IsolatedRuntimeProfile(
         "omniroute", ("package.json",), ("package-lock.json",), "node",
@@ -226,4 +226,28 @@ def build_graphify_code_fixture(
             work, common, (), ("component.graphify.read-private-work",),
             "PRIVATE", "deny", 30, 512,
         ),
+    )
+
+
+def build_hyperframes_render_fixture(
+    runtime_root: str,
+    fixture_root: str,
+    work_root: str,
+) -> ComponentInvocation:
+    """Build the documented, local-only Hyperframes CLI render probe."""
+    runtime = _absolute_path(runtime_root, "runtime root")
+    fixture = _absolute_path(fixture_root, "fixture root")
+    work = _absolute_path(work_root, "work root")
+    return ComponentInvocation(
+        "hyperframes",
+        runtime.rstrip("/") + "/bin/hyperframes",
+        ("render", "-c", fixture.rstrip("/") + "/composition.html", "-o", work.rstrip("/") + "/rendered.mp4"),
+        work,
+        (),
+        (),
+        ("component.hyperframes.read-fixture", "component.hyperframes.write-private-work"),
+        "PRIVATE",
+        "deny",
+        180,
+        2048,
     )
