@@ -8,7 +8,7 @@ import unittest
 from uuid import uuid4
 from pathlib import Path
 
-from hermes_installer.evidence import EvidenceClass, EvidenceState
+from hermes_installer.evidence import EvidenceClass, EvidenceState, load_acceptance_catalog
 from hermes_installer.state import OwnedRoot
 from hermes_installer.verification.acceptance import AuthorizedTarget
 from hermes_installer.verification.operator_evidence import ProbeRequest, build_probe_request, verify_operator_result
