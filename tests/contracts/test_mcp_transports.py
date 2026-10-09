@@ -103,6 +103,8 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_http_streamable_transport_pins_loopback_fixture_and_negotiates(self):
         requests = []
+        credential_checks = []
+        credential_scopes = []
 
         async def serve(reader, writer):
             try:
@@ -117,6 +119,9 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                 length = int(headers["content-length"])
                 payload = json.loads(await reader.readexactly(length))
                 requests.append(payload)
+                credential_checks.append(
+                    headers.get("authorization") == "Bearer fixture-secret-canary"
+                )
                 method = payload["method"]
                 if "id" not in payload:
                     status, body = 202, b""
@@ -131,7 +136,25 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                 elif method == "tools/list":
                     status, body = 200, json.dumps({
                         "jsonrpc": "2.0", "id": payload["id"],
-                        "result": {"tools": []},
+                        "result": {"tools": [{
+                            "name": "get_state",
+                            "description": "Read one selected entity",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {"entity_id": {"type": "string"}},
+                                "required": ["entity_id"],
+                                "additionalProperties": False,
+                            },
+                            "annotations": {"readOnlyHint": True, "destructiveHint": False},
+                        }]},
+                    }).encode()
+                    content_type = "application/json"
+                elif method == "tools/call":
+                    status, body = 200, json.dumps({
+                        "jsonrpc": "2.0", "id": payload["id"],
+                        "result": {"content": [{
+                            "type": "text", "text": "sensor.office is 21 C",
+                        }], "isError": False},
                     }).encode()
                     content_type = "application/json"
                 else:
@@ -153,9 +176,6 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
 
         server = await asyncio.start_server(serve, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
-        transport = StreamableHTTPTransport(
-            f"http://127.0.0.1:{port}/mcp", service_id="fixture", timeout=2,
-        )
         from pathlib import Path
         import os
         import tempfile
@@ -204,6 +224,23 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
             transport_binding_id="fixture-binding", reviewed_revision="a" * 64,
             selection_arguments={"get_state": ("entity_id",)},
         )
+        from hermes_installer.authority.enrollment import RootMCPCredentialHandle
+
+        class FixtureVault:
+            def resolve_reference(self, reference, *, peer_uid, required_scope, principal_id):
+                if (reference != "fixture-token" or peer_uid != uid
+                        or principal_id != binding.principal_id):
+                    raise PermissionError("fixture credential binding mismatch")
+                credential_scopes.append(required_scope)
+                return "fixture-secret-canary"
+
+        credential_handle = RootMCPCredentialHandle(
+            "fixture", "fixture-token", FixtureVault(),
+        )
+        transport = StreamableHTTPTransport(
+            f"http://127.0.0.1:{port}/mcp", service_id="fixture",
+            credential_handle=credential_handle, timeout=2,
+        )
         transport_factory = lambda _service, _context: FixtureNetwork(transport)
         handlers = build_mcp_handlers({"fixture": service_record},
                                       transport_factory=transport_factory)
@@ -239,6 +276,9 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
             client = MCPClient(
                 transport, {"get_state"}, service_id="fixture",
                 selection="sensor.office", authority_client=authority, timeout=2,
+                result_scrubber=lambda _value: {
+                    "content": [{"type": "text", "text": "Selected entity state read"}],
+                },
             )
             try:
                 async with server:
@@ -246,6 +286,15 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                     await client.discover()
                     self.assertEqual([item["method"] for item in requests],
                                      ["initialize", "notifications/initialized", "tools/list"])
+                    self.assertEqual(await client.call_read(
+                        "get_state", {"entity_id": "sensor.office"},
+                    ), {"content": [{"type": "text", "text": "Selected entity state read"}]})
+                    self.assertEqual(requests[-1]["params"]["arguments"]["entity_id"],
+                                     "sensor.office")
+                    self.assertTrue(all(credential_checks))
+                    self.assertEqual(set(credential_scopes), {
+                        "mcp:fixture:connect", "mcp:fixture:read",
+                    })
                     await client.close()
             finally:
                 stop_event.set()
