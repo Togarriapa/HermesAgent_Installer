@@ -322,7 +322,13 @@ class ResourceCredentialBinding:
     usage: str
 
     def __post_init__(self) -> None:
-        _ident(self.source_placeholder, "credential source placeholder")
+        # Preserve the exact selected manifest token. Environment-style
+        # placeholders are data labels only: they never become environment
+        # variable names or an implicit vault lookup.
+        if (not isinstance(self.source_placeholder, str)
+                or not (re.fullmatch(r"\$\{[A-Z][A-Z0-9_]{0,127}\}", self.source_placeholder)
+                        or _ID.fullmatch(self.source_placeholder))):
+            raise ResourceJobDenied("credential source placeholder is invalid")
         _ident(self.credential_reference_id, "credential reference")
         if self.usage not in {"webhook-hmac-verify", "channel-account", "backend-account"}:
             raise ResourceJobDenied("credential binding usage is outside the protected closed set")
