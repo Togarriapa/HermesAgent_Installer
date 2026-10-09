@@ -24,13 +24,13 @@ import unittest
 import uuid
 from pathlib import Path
 
-from hermes_installer.authority.client import canonical_digest
+from hermes_installer.authority.client import canonical_bytes, canonical_digest
 from hermes_installer.authority.daemon import DEFAULT_SOCKET_DIR
 from hermes_installer.authority.service import AuthorityService, EffectRule, PrincipalBinding
 from hermes_installer.authority.types import Sensitivity
 from hermes_installer.managed_process_custodian import (
     ManagedProcessEffectHandler, ManagedProfileCustody,
-    process_control_target, process_start_target,
+    process_control_target, process_inspect_target, process_start_target,
 )
 
 
@@ -46,7 +46,8 @@ class _ControlledCustodyPolicy:
         return (context.purpose == "custody-kernel-ci"
                 and context.profile_id.startswith("ci-custody-")
                 and rule.capability in {"hermes-profile-invoke", "hermes-process-control"}
-                and rule.operation in {"process.start", "process.status", "process.read", "process.write", "process.stop"}
+                and rule.operation in {"process.start", "process.status", "process.read", "process.write",
+                                       "process.stop", "process.inspect"}
                 and len(request_digest) == 64 and retry_index == 0)
 
 
@@ -145,6 +146,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         self.server_thread: threading.Thread | None = None
         self.handler: ManagedProcessEffectHandler | None = None
         self.manager_diagnostics: list[bytes] = []
+        self.clients: list[subprocess.Popen[str]] = []
 
         self._useradd(self.service_user)
         self.user_created = True
@@ -204,6 +206,8 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         for operation in ("process.status", "process.read", "process.write", "process.stop"):
             target = process_control_target(self.profile, operation)
             effect_rules.append(EffectRule("hermes-process-control", operation, target))
+        effect_rules.append(EffectRule("hermes-process-control", "process.inspect",
+                                       process_inspect_target(self.profile)))
         handlers = ManagedProcessEffectHandler({self.profile_id: self.profile},
                                                 systemd_run=self.systemd_run,
                                                 systemctl=self.systemctl,
@@ -323,12 +327,14 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         }
         env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent",
                "PYTHONPATH": str(self.client_source_root), "PYTHONDONTWRITEBYTECODE": "1"}
-        return subprocess.Popen(
+        client = subprocess.Popen(
             [str(self.executable), str(self.client_harness)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, cwd="/", env=env, close_fds=True,
             preexec_fn=_drop_to(self.uid, self.gid),
         )
+        self.clients.append(client)
+        return client
 
     def _start_client(self, *, mode: str, child_code: str = "", child_args: list[str] | None = None,
                       wait_ready: bool = True, argv_override: list[str] | None = None,
@@ -548,6 +554,13 @@ time.sleep(30)
             self.server_thread.join(timeout=5)
             if self.server_thread.is_alive():
                 self.fail("root AuthorityService listener did not stop")
+        for client in self.clients:
+            if client.poll() is None:
+                client.kill()
+                client.wait(timeout=5)
+            for stream in (client.stdin, client.stdout, client.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
         if self.socket_path is not None:
             try:
                 self.socket_path.unlink()
