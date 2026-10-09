@@ -49,6 +49,7 @@ class WebResponse:
     connected_ip: str
     tls_verified: bool
     used_proxy: bool
+    tls_peer_sha256: str = ""
 
 
 class DirectHttpsReader(Protocol):
@@ -62,7 +63,7 @@ class PluginRuntime(Protocol):
     local_board_store: LocalBoardStore | None
     voice_session: VoiceSession | None
     voice_endpoints: dict[str, str]
-    direct_https_reader: DirectHttpsReader | None
+    plugin_effect_dispatcher: object | None
 
 
 class LocalKanbanImplementation:
@@ -92,10 +93,10 @@ class WyomingVoiceImplementation:
 class PublicWebImplementation:
     def register(self, ctx: ToolContext, runtime_context: PluginRuntime) -> None:
         _require_plugin_identity(runtime_context, "web")
-        reader = getattr(runtime_context, "direct_https_reader", None)
-        if not _has_methods(reader, "get_one_hop"):
-            raise PluginAdapterError("reviewed direct public HTTPS retrieval service is not enrolled")
-        PublicWebPlugin(reader).register(ctx, runtime_context)
+        dispatcher = getattr(runtime_context, "plugin_effect_dispatcher", None)
+        if not callable(getattr(dispatcher, "perform_plugin_action", None)):
+            raise PluginAdapterError("protected plugin effect dispatcher is not enrolled")
+        PublicWebPlugin(dispatcher).register(ctx, runtime_context)
 
 
 PLUGIN_IMPLEMENTATIONS = {
@@ -198,8 +199,10 @@ class PublicWebPlugin:
     MAX_BYTES = 1_000_000
     MAX_REDIRECTS = 4
 
-    def __init__(self, reader: DirectHttpsReader):
-        self.reader = reader
+    def __init__(self, dispatcher: object):
+        if not callable(getattr(dispatcher, "perform_plugin_action", None)):
+            raise TypeError("web retrieval requires a protected plugin effect dispatcher")
+        self.dispatcher = dispatcher
 
     def register(self, ctx: ToolContext, runtime_context: object) -> None:
         ctx.register_tool("web_retrieve", "web", {
@@ -208,30 +211,17 @@ class PublicWebPlugin:
         }, self.retrieve, description="Retrieve bounded public HTTPS content as untrusted source material.")
 
     def retrieve(self, *, url: str) -> dict[str, Any]:
-        current = _public_https_url(url)
-        for hop in range(self.MAX_REDIRECTS + 1):
-            response = self.reader.get_one_hop(current, timeout=10.0, max_bytes=self.MAX_BYTES)
-            if response.used_proxy or not response.tls_verified or not _public_ip(response.connected_ip):
-                raise PluginAdapterError("retrieval transport failed direct public TLS policy")
-            if response.final_url != current:
-                raise PluginAdapterError("transport followed an unchecked redirect")
-            if len(response.body) > self.MAX_BYTES:
-                raise PluginAdapterError("retrieved content exceeds the size limit")
-            if response.status in {301, 302, 303, 307, 308}:
-                location = _header(response.headers, "location")
-                if not location or hop == self.MAX_REDIRECTS:
-                    raise PluginAdapterError("redirect limit or missing location")
-                current = _public_https_url(urljoin(current, location))
-                continue
-            if response.status < 200 or response.status >= 300:
-                raise PluginAdapterError(f"public retrieval returned HTTP {response.status}")
-            content_type = _header(response.headers, "content-type") or "application/octet-stream"
-            if "text/" not in content_type and "json" not in content_type and "xml" not in content_type:
-                raise PluginAdapterError("only textual public content is supported")
-            text = response.body.decode("utf-8", errors="replace")
-            return {"url": current, "content_type": content_type, "content": text,
-                    "untrusted_source": True, "redirects": hop, "authority": "none"}
-        raise PluginAdapterError("redirect limit exceeded")
+        canonical = _public_https_url(url)
+        result = self.dispatcher.perform_plugin_action(
+            adapter_id="web", action_id="retrieve", arguments={"url": canonical})
+        if (not isinstance(result, dict) or result.get("state") != "read-complete"
+                or not isinstance(result.get("result"), dict)):
+            raise PluginAdapterError("protected web read effect returned an invalid response")
+        value = result["result"]
+        if (value.get("untrusted_source") is not True or value.get("authority") != "none"
+                or not isinstance(value.get("source_receipt"), dict)):
+            raise PluginAdapterError("protected web read result lacks untrusted source provenance")
+        return value
 
 
 def _bounded_text(value: object, label: str, maximum: int) -> None:
@@ -271,19 +261,26 @@ def _validate_item(item: object) -> dict[str, Any]:
 
 def _local_endpoint(value: str) -> bool:
     p = urlsplit(value)
-    if p.scheme not in {"http", "https"} or not p.hostname or p.username or p.password or p.query or p.fragment:
+    if (p.scheme != "tcp" or not p.hostname or p.username or p.password or p.query
+            or p.fragment or p.path or p.port is None):
         return False
     try:
-        return ip_address(p.hostname).is_loopback
+        address = ip_address(p.hostname)
+        return _is_trusted_local_ip(address)
     except ValueError:
-        return p.hostname in {"localhost", "wyoming", "homeassistant"}
+        return False
 
 
 def _public_https_url(value: str) -> str:
     if not isinstance(value, str) or len(value) > 2048:
         raise PluginAdapterError("URL is missing or too long")
-    p = urlsplit(value)
-    if p.scheme != "https" or not p.hostname or p.username or p.password or p.fragment:
+    try:
+        p = urlsplit(value)
+        port = p.port
+    except ValueError:
+        raise PluginAdapterError("URL is malformed") from None
+    if (p.scheme != "https" or not p.hostname or p.username or p.password
+            or "@" in p.netloc or p.fragment):
         raise PluginAdapterError("only public HTTPS URLs without credentials or fragments are allowed")
     host = p.hostname.rstrip(".").lower()
     try:
@@ -293,11 +290,16 @@ def _public_https_url(value: str) -> str:
     except ValueError:
         if "." not in host or host == "localhost" or host.endswith((".local", ".internal", ".localhost")):
             raise PluginAdapterError("private or non-public hostname is denied")
-    if p.port not in {None, 443}:
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError:
+            raise PluginAdapterError("hostname is malformed") from None
+    if port not in {None, 443}:
         raise PluginAdapterError("only HTTPS port 443 is permitted")
     if any(ord(c) < 32 for c in value):
         raise PluginAdapterError("control characters are denied")
-    return urlunsplit(("https", host, p.path or "/", p.query, ""))
+    rendered_host = f"[{host}]" if ":" in host else host
+    return urlunsplit(("https", rendered_host, p.path or "/", p.query, ""))
 
 
 def _public_ip(value: str) -> bool:
@@ -305,6 +307,18 @@ def _public_ip(value: str) -> bool:
         return ip_address(value).is_global
     except ValueError:
         return False
+
+
+def _is_trusted_local_ip(value: object) -> bool:
+    from ipaddress import IPv4Address, IPv6Address, ip_network
+    if not isinstance(value, (IPv4Address, IPv6Address)) or value.is_link_local or value.is_unspecified or value.is_multicast:
+        return False
+    if value.is_loopback:
+        return True
+    ranges = ((ip_network("10.0.0.0/8"), ip_network("172.16.0.0/12"),
+               ip_network("192.168.0.0/16")) if value.version == 4 else
+              (ip_network("fc00::/7"),))
+    return any(value in block for block in ranges)
 
 
 def _header(headers: dict[str, str], name: str) -> str | None:
