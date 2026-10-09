@@ -306,11 +306,7 @@ class RootTaskNativeObservationRegistry:
             write_handle = getattr(terminal, "stdin_write_receipt_handle", None)
             if not _opaque(write_handle):
                 raise AuthorityDenied("resource.native_stdin", "successful terminal lacks an actual stdin write receipt")
-            write_receipt = self.process_custody.resolve_task_stdin_write(
-                task_handle, write_handle)
-            if self.process_custody.resolve_task_stdin_write(
-                    task_handle, write_handle) is not write_receipt:
-                raise AuthorityDenied("resource.native_stdin", "custody returned a reconstructed stdin write receipt")
+            write_receipt = self._resolve_exact_stdin_write_receipt(task_handle, write_handle)
             self._validate_stdin_write_receipt(run, terminal, write_handle, write_receipt, now)
         except Exception:
             self._discard_run(task_handle.handle_id, run)
@@ -360,6 +356,15 @@ class RootTaskNativeObservationRegistry:
             self._consumed_terminals.add(key)
             self._completed_tasks[task_handle.handle_id] = run.deadline
             self._issued[receipt.native_execution_receipt_handle] = receipt
+        return receipt
+
+    def _resolve_exact_stdin_write_receipt(self, task_handle: Any,
+                                           receipt_handle: str) -> Any:
+        """Require custody's stable manager-owned receipt lookup, not a reconstructed DTO."""
+        receipt = self.process_custody.resolve_task_stdin_write(task_handle, receipt_handle)
+        if self.process_custody.resolve_task_stdin_write(task_handle, receipt_handle) is not receipt:
+            raise AuthorityDenied(
+                "resource.native_stdin", "custody returned a reconstructed stdin write receipt")
         return receipt
 
     def cancel_task_input(self, task_handle: Any, initial_input_receipt: Any) -> None:
