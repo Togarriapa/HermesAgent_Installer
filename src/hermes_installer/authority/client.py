@@ -21,8 +21,8 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
-    NativeEventHandle, NativeInvocationBinding, NativeInvocationContexts,
-    VerifiedEffectAuthorization, canonical_bytes, canonical_digest,
+    NativeEventHandle, NativeInvocationBinding, NativeInvocationContexts, NativeToolCallBinding,
+    VerifiedEffectAuthorization, canonical_bytes, canonical_digest, strict_json_loads,
 )
 from .process_controls import ProcessControlResponse
 
@@ -323,9 +323,12 @@ class AuthorityClient:
             "normalized_payload": base64.b64encode(normalized_payload).decode("ascii"),
             "retry_index": retry_index,
         }, timeout=min(float(timeout), self.timeout), cancelled=cancelled)
-        if (not isinstance(result, dict)
-                or set(result) not in ({"status", "body", "headers", "receipt_id"},
-                                      {"status", "body", "headers", "receipt_id", "source_receipt_handle"})):
+        base_fields = {"status", "body", "headers", "receipt_id"}
+        native_fields = {"producer_context_handle", "tool_call_bindings"}
+        allowed_fields = (base_fields, base_fields | {"source_receipt_handle"},
+                          base_fields | native_fields,
+                          base_fields | native_fields | {"source_receipt_handle"})
+        if not isinstance(result, dict) or set(result) not in allowed_fields:
             raise AuthorityDenied("native.dispatch", "authority returned a malformed dispatch result")
         try:
             body = base64.b64decode(result["body"], validate=True)
@@ -342,7 +345,20 @@ class AuthorityClient:
         if source_handle is not None and (not isinstance(source_handle, str)
                 or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle)):
             raise AuthorityDenied("native.dispatch", "authority returned a malformed source result handle")
-        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"], source_handle)
+        producer_handle = result.get("producer_context_handle")
+        tool_calls: tuple[NativeToolCallBinding, ...] = ()
+        if native_fields.issubset(result):
+            raw_calls = result["tool_call_bindings"]
+            if (not isinstance(raw_calls, list) or len(raw_calls) > 128
+                    or (producer_handle is None and raw_calls)
+                    or (producer_handle is not None and not 200 <= result["status"] < 300)):
+                raise AuthorityDenied("native.dispatch", "root provider invocation bindings are malformed")
+            if producer_handle is not None and (not isinstance(producer_handle, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", producer_handle)):
+                raise AuthorityDenied("native.dispatch", "root provider context handle is malformed")
+            tool_calls = tuple(NativeToolCallBinding.from_wire(item) for item in raw_calls)
+        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"],
+                                      source_handle, producer_handle, tool_calls)
 
     def authorize_effect(self, context: HostContext, *, capability: str,
                          target: str, recipient: str | None = None,
@@ -794,8 +810,8 @@ class AuthorityClient:
                 break
             if chunk == b"\n":
                 try:
-                    return json.loads(line.decode("ascii"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return strict_json_loads(line.decode("ascii"))
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                     raise AuthorityDenied("authority.protocol", "authority response is malformed") from None
             line.extend(chunk)
         raise AuthorityDenied("authority.bounds", "authority response is incomplete or oversized")

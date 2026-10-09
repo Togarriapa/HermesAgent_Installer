@@ -607,6 +607,30 @@ class NativeEventClientContracts(unittest.TestCase):
             "schema", "native_event_handle", "normalized_payload", "retry_index"})
         self.assertEqual(requests[1][1]["native_event_handle"], event.native_event_handle)
 
+    def test_dispatch_parses_only_root_bound_provider_tool_call_metadata(self):
+        client = AuthorityClient(Path("/unused"), server_uid=0, timeout=2)
+        client._rpc = lambda *_args, **_kwargs: {
+            "status": 200, "body": "b2s=", "headers": {}, "receipt_id": "root-receipt",
+            "producer_context_handle": "p" * 40,
+            "tool_call_bindings": [{
+                "observed_call_handle": "c" * 40, "provider_tool_call_id": "call_1",
+                "tool_name": "selected_tool", "arguments_sha256": "a" * 64,
+            }],
+        }
+        response = client.dispatch_native_request("h" * 40, b"normalized")
+        self.assertEqual(response.producer_context_handle, "p" * 40)
+        self.assertEqual(response.tool_call_bindings[0].observed_call_handle, "c" * 40)
+        client._rpc = lambda *_args, **_kwargs: {
+            "status": 200, "body": "b2s=", "headers": {}, "receipt_id": "root-receipt",
+            "producer_context_handle": "p" * 40,
+            "tool_call_bindings": [{
+                "observed_call_handle": "bad", "provider_tool_call_id": "call_1",
+                "tool_name": "selected_tool", "arguments_sha256": "a" * 64,
+            }],
+        }
+        with self.assertRaises(AuthorityDenied):
+            client.dispatch_native_request("h" * 40, b"normalized")
+
     def test_source_receipt_take_requires_root_delivery_adapter_and_authenticated_peer(self):
         class Delivery:
             def __init__(self):
@@ -704,6 +728,28 @@ class NativeEventClientContracts(unittest.TestCase):
         }
         with self.assertRaises(AuthorityDenied):
             client.begin_native_invocation("p" * 40, "c" * 40, b"{}")
+
+    def test_authority_wire_rejects_duplicate_keys_at_nested_depth(self):
+        wire = b'{"outer":{"schema":1,"schema":2}}\n'
+
+        class ByteSocket:
+            def __init__(self):
+                self.remaining = bytearray(wire)
+
+            def recv(self, _size):
+                return bytes([self.remaining.pop(0)]) if self.remaining else b""
+
+            def settimeout(self, _timeout):
+                pass
+
+            def sendall(self, _data):
+                pass
+
+        with self.assertRaises(AuthorityDenied):
+            AuthorityService._read_json_line(ByteSocket(), 1024)
+        client = AuthorityClient(Path("/unused"), server_uid=0)
+        with self.assertRaises(AuthorityDenied):
+            client._exchange(ByteSocket(), {"hello": 1}, time.monotonic() + 1)
 
 
 class RootResolvedProcessControlContracts(unittest.TestCase):
