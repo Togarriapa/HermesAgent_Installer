@@ -96,7 +96,7 @@ class PiLeaseTests(unittest.TestCase):
         value = request.to_dict()
         self.assertEqual("f" * 40, value["candidate_sha"])
         self.assertEqual(lease.manifest_sha256, value["target_manifest_sha256"])
-        self.assertEqual(("PATH", "PYTHONPATH"), request.environment_allowlist)
+        self.assertEqual(("PATH", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE"), request.environment_allowlist)
         self.assertEqual(120, request.timeout_seconds)
         self.assertEqual("/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/repo", request.cwd)
         self.assertEqual("-m", request.argv[1])

@@ -208,6 +208,7 @@ def build_pi_contract_test_request(
             "tests.contracts.test_registry_native",
             "tests.native.test_native_boundary_adapter", "-v",
         ),
-        cwd=TARGET_REPOSITORY, environment_allowlist=("PATH", "PYTHONPATH"),
+        cwd=TARGET_REPOSITORY,
+        environment_allowlist=("PATH", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE"),
         timeout_seconds=timeout, stdout_limit_bytes=262144, stderr_limit_bytes=262144,
     )
