@@ -146,3 +146,10 @@ The installer SHALL resolve resource profile tasks through selected protected pr
 #### Scenario: Manifest attempts process selection
 - **WHEN** a resource manifest or worker supplies executable, profile path, argv or reusable parent grant as execution authority
 - **THEN** root rejects and resolves only its selected per-node process binding with a fresh exact child grant
+
+### Requirement: Observed native metadata and bounded composite effects
+The installer SHALL resolve source observers from explicit selected adapter joins and deliver provider metadata only through peer/request/response-bound root lookup; composite effects SHALL preserve exact outer matching and fresh root child authority.
+
+#### Scenario: Composite tool requests an unselected child
+- **WHEN** worker code invokes a different action/digest or claims response metadata without exact root lookup
+- **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants

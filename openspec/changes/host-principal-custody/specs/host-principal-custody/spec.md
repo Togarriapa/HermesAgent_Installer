@@ -320,3 +320,10 @@ The installer SHALL authenticate initial provision through its installed root-lo
 #### Scenario: Worker fabricates bootstrap actor
 - **WHEN** a worker supplies root labels, another transaction receipt or a writable journal mapping
 - **THEN** root rejects before provision/state effects without requiring or inventing a first active worker context
+
+### Requirement: Observed native metadata and bounded composite effects
+The installer SHALL resolve source observers from explicit selected adapter joins and deliver provider metadata only through peer/request/response-bound root lookup; composite effects SHALL preserve exact outer matching and fresh root child authority.
+
+#### Scenario: Composite tool requests an unselected child
+- **WHEN** worker code invokes a different action/digest or claims response metadata without exact root lookup
+- **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants

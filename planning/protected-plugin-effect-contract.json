@@ -385,5 +385,55 @@
       }
     }
   },
-  "schema_rule": "Additional argument fields forbidden. IDs resolve current root principal/profile/generation and cannot encode paths/URLs/commands. These facade action schemas are not guessed upstream endpoint schemas; protected selected backend handler must separately validate source-reviewed API mapping. Unsupported requested original actions remain explicit incomplete."
+  "schema_rule": "Additional argument fields forbidden. IDs resolve current root principal/profile/generation and cannot encode paths/URLs/commands. These facade action schemas are not guessed upstream endpoint schemas; protected selected backend handler must separately validate source-reviewed API mapping. Unsupported requested original actions remain explicit incomplete.",
+  "native_composite_workflow": {
+    "pattern": "Strict outer native call remains exact adapter/action/arguments digest. Worker facade invokes ONE selected outer action; root selected backend executes finite reviewed workflow. Do not relax NativeInvocationContextProvider to accept different child actions/digests, and do not let worker mint child invocation contexts.",
+    "adapter_workflow_bindings": "adapter_records[*].workflow_bindings list {external_tool_name,external_action_id,external_argument_schema_id,external_result_schema_id,workflow_artifact_id,workflow_sha256}; actual root artifact contains reviewed finite workflow, source/action/module mapping matches original compiled package. Empty list means direct single-action only.",
+    "recipe_fields": [
+      "schema=1",
+      "workflow_id",
+      "adapter_id",
+      "external_action_id",
+      "argument_schema_id",
+      "result_schema_id",
+      "steps",
+      "maximum_runtime_seconds",
+      "maximum_actions",
+      "maximum_attempts"
+    ],
+    "step_fields": [
+      "step_id",
+      "action_id",
+      "depends_on",
+      "body_recipe_id",
+      "request_schema_id",
+      "result_schema_id",
+      "cleanup_on_failure"
+    ],
+    "recipe": "Exact actual source-pinned registered root workflow code/artifact; finite acyclic sequence<=16 actions, <=60s voice/original outer lease. Child arguments are root-derived from canonical actual outer call and validated owned prior step result capsules plus forced enrollment scope, using existing closed root body recipe/schema validators. No worker child graph/action/digest/result claims or arbitrary scripts.",
+    "root_call": "invoke_selected_plugin_workflow(root_native_invocation_handle) -> selected typed outer result; root independently resolves current binding, original observed call bytes, exact workflow artifact, action schemas, current actual session consent/role/profile/generation and step state.",
+    "child_admission": "Root private admit_plugin_workflow_step(workflow_job_handle,step_id) resolves immutable next step and canonical exact child bytes, inherits full source closure/private routing/recipient/budget and issues fresh reduced one-use grant for each exact child operation/target/recipient/digest. Consumed outer grant is admission/audit only. Each retry fresh within original bounds; no generic reused perform_delegated_effect authorization. Root owns serialized pending/running/terminal sequence and validated result capsules.",
+    "voice_transcribe": {
+      "external_argument_schema": "voice-transcribe-session-workflow-v1 strict {mode:general|home_control}; existing direct primitive voice_transcribe schema requiring owned session/audio remains unchanged",
+      "steps": [
+        "open_session(input,root-selected enrolled mic/current trusted human session permission)",
+        "capture_audio(owned root step session,rootselected duration<=30s)",
+        "voice_transcribe(owned captured artifact/root session,actual outer mode)",
+        "close_session(owned root session)"
+      ],
+      "result": "Existing exact bounded transcript/source receipt schema; root defaults no mic authorization. Missing trusted session permission/device/endpoint/capture remains unavailable."
+    },
+    "voice_speak": {
+      "external_argument_schema": "voice-speak-session-workflow-v1 strict {text:string<=16384chars}; existing direct primitive session/text schema unchanged",
+      "steps": [
+        "open_session(output,root-selected enrolled output/current trusted permission)",
+        "voice_speak(owned root step session,actual outer text)",
+        "close_session(owned root session)"
+      ],
+      "result": "Existing exact bounded audio artifact receipt schema; no PCM/path/cloud fallback."
+    },
+    "selection": "External tool name/action/schema/workflow variant fixed by selected compiled native package enrollment before invocation; worker/model cannot choose direct-vs-composite variant or session enrollment. These workflows use original voice primitives only, no new capabilities. Other original composite tools require source-reviewed finite artifact mapping under same exact pattern before enablement.",
+    "cleanup": "Root owned voice/session/workflow watchdog closes owned sessions and wipes ephemeral raw audio on cancellation/failure/revoke/original expiry, independently of expired effect grant; never closes sibling session. No external effect from cleanup. Restart inflight ambiguous, no blind child replay.",
+    "evidence": "Actual native outer SDK/tool call triggers root finite workflow and real local voice backend; exact outer matching plus fresh child grants/permission/scope/step/digest/result/replay/expiry negatives. Fixture recording or worker-selected subcalls cannot establish native acceptance."
+  }
 }

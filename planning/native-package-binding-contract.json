@@ -42,7 +42,9 @@
     "capability",
     "target_id",
     "recipient",
-    "generation"
+    "generation",
+    "observer_enrollment_ids",
+    "workflow_bindings"
   ],
   "mount": "Root resolves opaque package root/mount from custody profile enrollment; immutable read-only closure visible only to selected service UID/private mount namespace. Caller journal root is separate. Root verifies all closure files/digests/path containment/no symlink escape/executable roles; no caller path/mount/loader/module or mutable profile plugin injection. Native package absence leaves native adapter unavailable.",
   "binder": {
@@ -354,6 +356,77 @@
     "effect_admission": "Each root selected plugin/tool/memory effect additionally resolves current invocation handle, exact selected action/enrollment and final complete argument digest and uses a fresh one-use current policy grant. Source ancestry can parent multiple explicitly admitted effects but cannot authorize one by itself; root owns per-invocation effect sequence and retry bounds. No consumed provider/start grant reused.",
     "result_capture": "Actual root backend observer emits tool-result/memory-result/effect-result source receipt bound this invocation and actual result bytes, full parents and selected operation. Root peer-bound result receipt delivery supplies next transcript provenance; a worker completion message cannot mint result proof. Native-only unbrokered result remains UNKNOWN/private and cannot establish qualified backend/source acceptance.",
     "non_provider_ingress": "Manual/user/background tool entry requires an actual root-observed native-input/schedule/webhook event and fixed compiled action association in the pending observer event registry; use a root-private begin_observed_native_invocation(event_record_id,selected_action_binding,actual_arguments_bytes). No worker RPC can assert that event or select user/public authority; unenrolled manual ingress remains unavailable with integration next step.",
-    "failure_evidence": "Forged/cross-peer/stale response or call handle, changed arguments/tool mapping, missing loaded closure proof, duplicate concurrent admission, source receipt deletion, expiry/revocation and caller-context injection deny before backend bytes. Actual pinned Hermes dispatch + provider stream/tool/memory/result loops required; fixtures and static resolver rows do not close original acceptance."
+    "failure_evidence": "Forged/cross-peer/stale response or call handle, changed arguments/tool mapping, missing loaded closure proof, duplicate concurrent admission, source receipt deletion, expiry/revocation and caller-context injection deny before backend bytes. Actual pinned Hermes dispatch + provider stream/tool/memory/result loops required; fixtures and static resolver rows do not close original acceptance.",
+    "producer_response_transport": {
+      "header": "X-Hermes-Native-Response-Ref: opaque 43-character base64url random256bit lookup ref ONLY; untrusted until root lookup. No source/action/tool/sensitivity/context claims in headers or model-visible body.",
+      "root_creation": "Root private create_native_response_delivery(root_request_record,actual_completed_response_record,selected_gateway_peer) stores actual producer/gateway PIDFD identities, original prepare_native_event native_request_handle, profile/generations/current catalog/policy, exact actual response body digest, producer_context_handle/tool_call_bindings/full ancestry and finite expiry. Gateway receives only lookup ref for response transport; it cannot mint metadata.",
+      "method": "AuthorityClient.take_native_response_metadata(response_delivery_handle,response_body_sha256,native_request_handle) -> ProviderResponseMetadata",
+      "operation": "native.response.take",
+      "request_fields": [
+        "schema=1",
+        "delivery_handle",
+        "response_body_sha256",
+        "native_request_handle"
+      ],
+      "response_fields": [
+        "schema=1",
+        "producer_context_handle",
+        "tool_call_bindings",
+        "response_body_sha256",
+        "native_request_handle",
+        "expires_monotonic"
+      ],
+      "tool_call_binding_fields": [
+        "observed_call_handle",
+        "provider_tool_call_id",
+        "tool_name",
+        "arguments_sha256"
+      ],
+      "digest_domain": "SHA256 exact dechunked uncompressed HTTP response entity bytes sent by gateway and captured by producer raw SDK transport, before parsing/Unicode normalization; for SSE accumulate entire exact entity stream through terminal completion. Root gateway disables response content compression; reject unsupported content encoding or incomplete stream. Metadata is not derived from parsed model extras.",
+      "consumption": "At actual pinned chat_completion_helpers SDK response return/stream completion, installer-owned boundary captures header/raw body digest and lexical native_request_handle returned by preparation. Same-peer authenticated root RPC atomically consumes delivery once and validates exact original request correlation, both current enrolled identities/PIDFDs, response digest and lease. Only then attach immutable installer-owned ProviderResponseMetadata sidecar to response/lexical tool dispatch; never read metadata from model fields or arbitrary SDK attributes.",
+      "bounds": "<=128 tool bindings, <=64KiB metadata, finite expiry<=60s after actual completion and bounded by current source/job/consent/role state. Stored ancestor facts are provenance only, never revive expired effects/grants. A new effect still revalidates current policy/consent/lineage. Pending/failed/incomplete response yields no delivery handle/tool metadata.",
+      "deny": "Forged/swapped header, cross-request even same peer, changed raw bytes, cross-profile/PIDFD/generation, duplicate consume, expired/revoked handle or early streaming tool dispatch denies before tools. Raw response retained only in bounded owned memory/receipt store with original privacy policy."
+    }
+  },
+  "observer_derivation": {
+    "foreign_key": "adapter_records[*].observer_enrollment_ids is finite unique list referencing existing active source_issuers[*].observer_enrollment_id. Every enabled issuer must join exactly one selected package/adapter by this explicit key; never guess from shared role artifact SHA. No duplicate observer catalog.",
+    "multiplicity": "Different adapters may use same source channel/profile/generation; distinct observer IDs and exact unique adapter foreign-key joins are required. Earlier channel/profile/generation-only uniqueness is superseded by exact observer identity plus unique selected package/adapter binding, not weakened channel provenance.",
+    "derived_fields": {
+      "observer_enrollment_id": "active issuer observer_enrollment_id",
+      "channel_id": "issuer_channel_id",
+      "source_action_id": "one exact selected source_action_ids entry; current canonical channels each have their fixed action",
+      "profile_id": "producer_profile_id",
+      "generation": "issuer generation equals current service/process profile and package generation join",
+      "principal_id": "selected service profile principal_id",
+      "namespace_id": "selected service profile namespace_identity joined actual authority principal binding",
+      "enrollment_id": "selected service profile enrollment_id",
+      "producer_uid": "selected actual service UID",
+      "producer_executable_sha256": "selected profile actual executable_sha256",
+      "package_id": "unique joined native package package_id",
+      "package_sha256": "package compiled_closure_sha256 (not archive SHA)",
+      "role_id": "joined adapter adapter_id",
+      "role_artifact_id": "issuer producer_role_artifact_id must equal actual selected adapter_artifact_id",
+      "role_sha256": "issuer producer_role_sha256 must equal adapter_sha256 and ArtifactCatalog actual code artifact hash",
+      "origin_id": "observer_enrollment_id root origin identity",
+      "capture_schema_id": "issuer capture_schema_id resolves source-reviewed registered validator in sealed actual role code",
+      "target_id": "joined adapter target_id",
+      "recipient": "joined adapter recipient",
+      "allowed_parent_source_kinds": "exact fixed mapping of issuer allowed_parent_channels; unknown channel denies",
+      "max_event_bytes": "minimum1MiB and selected schema/service bound",
+      "lease_seconds": "minimum30s and current selected service/source policy deadline; never extends original job/consent"
+    },
+    "kind_mapping": {
+      "native-input": "native-input",
+      "tool-result": "tool-result",
+      "memory-result": "memory-record",
+      "effect-result": "provider-result ONLY actual provider.dispatch observer; otherwise tool-result actual selected backend result",
+      "delegated-child": "tool-result with exact root delegation ancestry",
+      "schedule-event": "schedule-event",
+      "webhook-event": "webhook-event"
+    },
+    "schema_and_action": "resolve_observer_schema(capture_schema_id,role_artifact_id,role_sha256) uses root fixed registered schema/action map in actual sealed role closure. Adapter request/result schemas and actual observed event operation/action must match selected channel. No caller dynamic import/validator. Missing static validator or root observer code remains unavailable, not guessed.",
+    "loaded_proof_call": "resolve_loaded_package_closure(live_peer_identity,derived_observer) -> existing LoadedPackageClosureProof from current custody private registry; exact code role/action proof and actual immutable mount/entrypoint/resolver/peer PIDFD/generation required. Do not construct proof from source_issuers or package metadata.",
+    "target_peer_call": "resolve_source_target_peer(derived_observer,root_parent_context) -> {pid,pidfd,uid,profile_id,generation,identity}; root live registry resolves same enrolled producer by default. A distinct counterpart is allowed ONLY from exact current HI11 native_bridges producer/gateway pair and root pending request/result registry. Never caller target PID/profile or generic role routing. Root duplicates owned PIDFD, independently resolves current kernel identity and closes FD on cancel/expiry.",
+    "source_event": "RootSourceObservationRegistry receives these derived typed records and actual pending event/context; current exact full closure/action/bytes/peer proof verification remains mandatory. Multiple matches or no actual loaded/delivery peer proof denies."
   }
 }
