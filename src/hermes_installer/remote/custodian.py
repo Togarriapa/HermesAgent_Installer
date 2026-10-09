@@ -39,7 +39,7 @@ class VerifierServiceConfig:
     identity: AccessPolicyIdentity
     issuer: str
     jwks: Mapping[str, Mapping[str, Any]]
-    credential_ref: str
+    policy_read_token_ref: str
     profile_id: str = PROFILE_ID
 
     @classmethod
@@ -56,7 +56,7 @@ class VerifierServiceConfig:
         value = json.loads(raw)
         if not isinstance(value, dict) or set(value) != {
             "version", "socket_path", "gateway_uid", "service_uid", "service_gid",
-            "identity", "issuer", "jwks", "credential_ref", "profile_id",
+            "identity", "issuer", "jwks", "policy_read_token_ref", "profile_id",
         } or type(value.get("version")) is not int or value["version"] != 1:
             raise ValueError("invalid exact verifier config schema")
         identity = value["identity"]
@@ -80,7 +80,7 @@ class VerifierServiceConfig:
                 policy_name=identity["policy_name"], identity_provider_name=identity["identity_provider_name"],
                 allowed_emails=frozenset(identity["allowed_emails"]), audience=identity["audience"],
             ),
-            issuer=value["issuer"], jwks=value["jwks"], credential_ref=value["credential_ref"],
+            issuer=value["issuer"], jwks=value["jwks"], policy_read_token_ref=value["policy_read_token_ref"],
             profile_id=value["profile_id"],
         )
         result.validate()
@@ -96,8 +96,8 @@ class VerifierServiceConfig:
             raise ValueError("distinct dedicated non-root verifier identity and fixed paths required")
         if not re.fullmatch(r"https://[a-z0-9-]+\.cloudflareaccess\.com", self.issuer):
             raise ValueError("fixed Cloudflare Access issuer required")
-        if not isinstance(self.credential_ref, str) or not re.fullmatch(
-            r"[A-Za-z0-9_.:/-]{1,256}", self.credential_ref
+        if not isinstance(self.policy_read_token_ref, str) or not re.fullmatch(
+            r"(?:keyring|secret|file|env)://[A-Za-z0-9_.:/%-]{1,2040}", self.policy_read_token_ref
         ):
             raise ValueError("separate verifier read-token reference required")
         if not isinstance(self.jwks, Mapping) or not 1 <= len(self.jwks) <= 16:
@@ -195,7 +195,7 @@ def build_runtime(config: VerifierServiceConfig, *, resolve_secret: SecretResolv
         allowed_emails=config.identity.allowed_emails, jwks=config.jwks,
     )
     authority = FreshAccessPolicyAuthority(
-        config.identity, config.credential_ref, resolve_secret, client_factory,
+        config.identity, config.policy_read_token_ref, resolve_secret, client_factory,
     )
     digest = verifier_config_digest(
         config.identity, issuer=config.issuer, audience=audience, profile_id=config.profile_id,

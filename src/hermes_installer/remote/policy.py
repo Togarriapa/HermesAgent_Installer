@@ -71,7 +71,7 @@ class FreshAccessPolicyAuthority:
     """No-cache current policy reader. Instantiate only inside the read custodian."""
 
     identity: AccessPolicyIdentity
-    credential_ref: str = field(repr=False)
+    policy_read_token_ref: str = field(repr=False)
     resolve_secret: Callable[[str], str] = field(repr=False, compare=False)
     client_factory: Callable[[str], CloudflareClient] = field(repr=False, compare=False)
     clock: Callable[[], float] = field(default=time.monotonic, repr=False, compare=False)
@@ -82,7 +82,7 @@ class FreshAccessPolicyAuthority:
 
     def __post_init__(self) -> None:
         i = self.identity
-        if not self.credential_ref or not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,256}", self.credential_ref):
+        if not self.policy_read_token_ref or not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,256}", self.policy_read_token_ref):
             raise ValueError("verifier read-credential reference is required")
         if not all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", x) for x in
                    (i.account_id, i.application_id, i.policy_id, i.identity_provider_id)):
@@ -129,7 +129,7 @@ class FreshAccessPolicyAuthority:
             return denied()
         client = None
         try:
-            token = self.resolve_secret(self.credential_ref)
+            token = self.resolve_secret(self.policy_read_token_ref)
             if not isinstance(token, str) or not token.strip():
                 return denied()
             if cancel.is_set() or self.clock() >= deadline:

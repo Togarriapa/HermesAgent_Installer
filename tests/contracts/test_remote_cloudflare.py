@@ -17,7 +17,7 @@ class Recorder:
   if method=="PUT":return {"id":path.rsplit("/",1)[-1],**(payload or {})}
   return {"id":path.rsplit("/",1)[-1]}
 class RemoteProvisionerTests(unittest.TestCase):
- def setUp(self):self.setup=RemoteSetup("desk.example.net",("owner@example.net",),CloudflareZone("z1","example.net","a1","active"),"team.cloudflareaccess.com","setup-secret")
+ def setUp(self):self.setup=RemoteSetup("desk.example.net",("owner@example.net",),CloudflareZone("z1","example.net","a1","active"),"team.cloudflareaccess.com","setup-secret","keyring://hermes/access-read")
  def make(self,api,operation="op1",ready=True):
   snapshots=[];p=RemoteCloudflareProvisioner(api,self.setup,RemoteJournal(operation,self.setup.hostname),checkpoint=lambda j:snapshots.append((j.operation_id,set(j.completed))),origin_ready=lambda:ready);return p,snapshots
  def test_policy_origin_tunnel_precede_dns_and_token_is_separate(self):
@@ -28,6 +28,19 @@ class RemoteProvisionerTests(unittest.TestCase):
   api=Recorder();p,_=self.make(api,"op2",False)
   with self.assertRaises(Exception):p.provision()
   self.assertFalse(any(m=="POST" and path.endswith("/dns_records") for m,path,_ in api.calls));self.assertFalse(p.journal.resources);self.assertEqual(p.journal.phase,RemotePhase.DISABLED)
+ def test_missing_policy_read_reference_checkpoints_access_and_never_activates(self):
+  from hermes_installer.remote.cloudflare_setup import PolicyReadReferenceRequired
+  setup=RemoteSetup("desk.example.net",("owner@example.net",),CloudflareZone("z1","example.net","a1","active"),"team.cloudflareaccess.com","setup-secret")
+  api=Recorder();snapshots=[]
+  p=RemoteCloudflareProvisioner(api,setup,RemoteJournal("op-read-ref",setup.hostname),checkpoint=lambda j:snapshots.append((j.phase,j.error_code,set(j.completed))),origin_ready=lambda:True)
+  with self.assertRaisesRegex(PolicyReadReferenceRequired,"policy_read_token_ref"):
+   p.provision()
+  self.assertEqual(p.journal.phase,RemotePhase.ACCESS_READY)
+  self.assertEqual(p.journal.error_code,"POLICY_READ_REFERENCE_REQUIRED")
+  self.assertTrue({"identity_provider","access_app","access_policy"}.issubset(p.journal.resources))
+  self.assertFalse(any(m=="POST" and path.endswith("/dns_records") for m,path,_ in api.calls))
+  self.assertFalse(any(path.endswith("/cfd_tunnel") and m in {"POST","PUT"} for m,path,_ in api.calls))
+  self.assertTrue(any("resume:policy_read_token_ref" in completed for _,_,completed in snapshots))
  def test_preflight_rejects_foreign_dns_before_any_mutation(self):
   api=Recorder();api.rows["/zones/z1/dns_records"]=[{"id":"foreign","name":self.setup.hostname,"type":"A","content":"192.0.2.1"}]
   p,_=self.make(api,"op3")

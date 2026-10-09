@@ -8,6 +8,8 @@ from .config import RemoteSetup
 from .lifecycle import OwnedResource,RemoteJournal
 
 class RemoteConflict(RuntimeError): pass
+class PolicyReadReferenceRequired(RuntimeError):
+    """Access setup is checkpointed, but no isolated read authority is configured."""
 @dataclass(frozen=True)
 class ProvisionedRemote:
     tunnel_id:str
@@ -182,10 +184,23 @@ class RemoteCloudflareProvisioner:
             idp=self.ensure_identity_provider()
             app=self.ensure_access_app(idp)
             self.ensure_email_policy(app)
+            if not self.setup.policy_read_token_ref:
+                from .lifecycle import RemotePhase
+                self.journal.phase=RemotePhase.ACCESS_READY
+                self.journal.error_code="POLICY_READ_REFERENCE_REQUIRED"
+                self.journal.completed.add("resume:policy_read_token_ref")
+                self.checkpoint(self.journal)
+                raise PolicyReadReferenceRequired(
+                    "Owned Access setup is checkpointed; configure remote_desktop.policy_read_token_ref and resume before tunnel activation"
+                )
             if not self.origin_ready():raise CloudflareError("Loopback gateway is not ready; hostname remains unpublished")
             tunnel,token=self.ensure_tunnel()
             dns=self.activate_dns(tunnel)
             return ProvisionedRemote(tunnel,app,idp,dns,token)
+        except PolicyReadReferenceRequired:
+            # Preserve the exact journal-owned Access checkpoint so the setup
+            # can resume when the separate verifier token reference is supplied.
+            raise
         except Exception:
             self.journal.error_code="REMOTE_SETUP_INCOMPLETE"
             self.checkpoint(self.journal)

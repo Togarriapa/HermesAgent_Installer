@@ -20,6 +20,20 @@ class RemoteSetup:
     zone: CloudflareZone
     auth_domain: str
     management_token: str = field(repr=False, compare=False)
+    # A locator for the isolated verifier's minimum-read token. It is never
+    # resolved by the setup client and cannot inherit the management token.
+    policy_read_token_ref: str | None = field(default=None, repr=False, compare=False)
+
+def validate_policy_read_reference(value: object) -> str | None:
+    if value in (None, ""):
+        return None
+    if (not isinstance(value, str) or len(value) > 2048 or
+            not value.startswith(("keyring://", "secret://", "file://", "env://")) or
+            any(ord(ch) < 32 for ch in value)):
+        raise RemoteConfigError("Use a secure keyring://, secret://, file:// or env:// policy-read token reference")
+    if value.startswith("env://") and not re.fullmatch(r"env://[A-Za-z_][A-Za-z0-9_]{0,127}", value):
+        raise RemoteConfigError("The policy-read environment reference is invalid")
+    return value
 
 def validate_hostname(value: str) -> str:
     value = value.strip().lower().rstrip(".")
@@ -50,12 +64,18 @@ def collect_remote_setup(*, interactive: bool, config: dict | None = None,
         token = read_hidden_token(prompt="Cloudflare API token (input hidden): ", reader=hidden_reader or getpass.getpass)
         if not token:
             raise CredentialError("A valid Cloudflare API token is required")
+        policy_read_ref = validate_policy_read_reference(input_fn(
+            "Minimum-read Access policy token reference (keyring://, secret://, file:// or env://; blank to configure later): "
+        ).strip())
     else:
         try:
             hostname = validate_hostname(remote["hostname"])
             emails = validate_emails(remote["allowed_emails"])
             token = resolve_secret(remote["management_token_ref"], environ=environ,
                                    keyring_lookup=keyring_lookup, secret_lookup=secret_lookup)
+            policy_read_ref = validate_policy_read_reference(remote.get("policy_read_token_ref"))
+            if policy_read_ref is not None and policy_read_ref == remote["management_token_ref"]:
+                raise RemoteConfigError("Policy-read token must use a separate reference from the setup-management token")
         except (KeyError, TypeError) as exc:
             raise RemoteConfigError("Noninteractive remote setup requires hostname, allowed_emails and management_token_ref") from None
     client = client_factory(token)
@@ -81,4 +101,4 @@ def collect_remote_setup(*, interactive: bool, config: dict | None = None,
         zone = matches[0]
     organization = client.organization(zone.account_id)
     auth_domain = organization.get("auth_domain")
-    return RemoteSetup(hostname, emails, zone, auth_domain, token)
+    return RemoteSetup(hostname, emails, zone, auth_domain, token, policy_read_ref)

@@ -29,7 +29,7 @@ def _payload(service_uid: int, gateway_uid: int) -> dict:
         },
         "issuer": "https://team.cloudflareaccess.com",
         "jwks": {"key-1": {"kty": "RSA", "kid": "key-1", "alg": "RS256", "n": "AQ", "e": "AQAB"}},
-        "credential_ref": "file:///var/lib/hermes-installer/remote/access-read-token",
+        "policy_read_token_ref": "file:///var/lib/hermes-installer/remote/access-read-token",
         "profile_id": "hermes-desktop",
     }
 
@@ -42,7 +42,7 @@ class VerifierCustodianConfigTests(unittest.TestCase):
             path.chmod(0o600)
             config = VerifierServiceConfig.load(path)
             self.assertEqual(config.identity.audience, "audience-tag")
-            self.assertEqual(config.credential_ref, "file:///var/lib/hermes-installer/remote/access-read-token")
+            self.assertEqual(config.policy_read_token_ref, "file:///var/lib/hermes-installer/remote/access-read-token")
             self.assertEqual(config.profile_id, "hermes-desktop")
 
     def test_secret_values_and_unknown_fields_are_rejected(self):
@@ -54,6 +54,22 @@ class VerifierCustodianConfigTests(unittest.TestCase):
             path.chmod(0o600)
             with self.assertRaises(ValueError):
                 VerifierServiceConfig.load(path)
+
+    def test_verifier_requires_explicit_policy_read_reference(self):
+        for field, value in (("policy_read_token_ref", "inline-secret"),
+                             ("credential_ref", "file:///var/lib/hermes-installer/remote/read")):
+            with self.subTest(field=field):
+                with tempfile.TemporaryDirectory() as directory:
+                    payload = _payload(os.geteuid(), os.geteuid() + 17)
+                    if field == "policy_read_token_ref":
+                        payload[field] = value
+                    else:
+                        payload[field] = payload.pop("policy_read_token_ref")
+                    path = Path(directory) / "verifier.json"
+                    path.write_text(json.dumps(payload), encoding="utf-8")
+                    path.chmod(0o600)
+                    with self.assertRaises(ValueError):
+                        VerifierServiceConfig.load(path)
 
     def test_group_or_world_readable_config_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
