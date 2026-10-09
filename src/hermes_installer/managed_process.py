@@ -157,6 +157,13 @@ class ManagedProcessHandle:
         self._launcher, self.identity = launcher, identity
         self._started = started
         self._closed = False
+        self._watchdog = asyncio.create_task(self._enforce_lifetime())
+
+    async def _enforce_lifetime(self) -> None:
+        remaining = max(0.0, self.spec.max_lifetime_seconds - (time.monotonic() - self._started))
+        await asyncio.sleep(remaining)
+        if not self._closed:
+            await self.stop("maximum lifetime expired", timeout=5.0)
 
     def _check_live(self) -> None:
         if self._closed:
@@ -250,17 +257,24 @@ class ManagedProcessHandle:
     async def wait(self, timeout: float) -> int | None:
         if not 0 <= timeout <= 30:
             raise ValueError("wait bound is invalid")
-        try:
-            await asyncio.wait_for(asyncio.to_thread(self._launcher.wait), timeout)
-        except asyncio.TimeoutError:
-            return None
-        return self._launcher.returncode
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if _show(self.unit, "ActiveState") not in {"active", "activating", "reloading"}:
+                    return self._launcher.poll()
+            except ManagedProcessError:
+                if self._launcher.poll() is not None:
+                    return self._launcher.poll()
+            await asyncio.sleep(0.05)
+        return None
 
     async def stop(self, reason: str, timeout: float = 5.0) -> None:
         if not reason or len(reason) > 160 or not 0 < timeout <= 10:
             raise ValueError("stop reason or bound is invalid")
         if self._closed:
             return
+        if asyncio.current_task() is not self._watchdog:
+            self._watchdog.cancel()
         # The unit is the custody handle; never signal a pid or process group.
         if _show(self.unit, "ControlGroup") == self.cgroup:
             try:
