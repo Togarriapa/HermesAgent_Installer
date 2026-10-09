@@ -133,7 +133,7 @@ class ProviderGatewayTests(unittest.TestCase):
         plugin=root.path("profiles/test/plugins/model-providers/"+LOCAL_PROVIDER_NAME)
         plugin.parent.mkdir(parents=True,mode=0o700)
         current=plugin.parent
-        while current != root.path("."):
+        while current != root.root:
             current.chmod(0o700)
             if current == root.path("profiles"):
                 break
