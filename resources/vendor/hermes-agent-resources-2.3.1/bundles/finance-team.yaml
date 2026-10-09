@@ -1,0 +1,15 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: finance-team
+  version: 1.0.0
+  description: Team-led accounting group combining Portuguese-context and international/IFRS accounting expertise.
+  tags: [bundle, team, accounting, portugal, international]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.1.0
+      - accountant-portugal@^1.0.0
+      - accountant-international@^1.0.0
+    crons:
+      - resource-sync@^1.0.0

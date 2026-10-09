@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: catholic-tradition-discernment
+  version: 1.0.1
+  description: "Discern Catholic traditional claims by source authority, rite, edition, jurisdiction, historical period, and the distinction among doctrine, law, discipline, custom, devotion, and opinion."
+  tags: [catholic, tradition, theology, discernment]
+spec:
+  purpose: "Evaluate claims about Catholic tradition without turning preference, historical practice, or private interpretation into ecclesiastical authority."
+  procedure:
+    - "Identify the rite, jurisdiction, edition or source corpus, historical period, and whether the question concerns doctrine, liturgical law, discipline, custom, devotion, or scholarship."
+    - "Prioritize authoritative primary sources and reliable critical or historical editions; record translation or edition choices when they affect interpretation."
+    - "Distinguish universal norms from local custom, historical practice from current law, and theological opinion from authoritative teaching while preserving legitimate disputed interpretations."
+    - "Cite material claims and state the limits of the conclusion, referring sacramental, canonical, pastoral, or clerical decisions to the appropriate competent authority."
+  verification:
+    - rite-edition-date-and-jurisdiction-are-explicit
+    - source-authority-and-historical-status-are-distinguished
+    - no-clerical-or-ecclesiastical-authority-is-implied
+  sideEffects: none

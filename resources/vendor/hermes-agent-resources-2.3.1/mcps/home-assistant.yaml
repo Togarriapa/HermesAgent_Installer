@@ -1,0 +1,28 @@
+apiVersion: hermes.togarriapa/v1
+kind: MCP
+metadata:
+  name: home-assistant
+  version: 1.1.0
+  description: Official Home Assistant MCP Server integration using Home Assistant's Streamable HTTP endpoint and runtime authentication.
+  tags: [home-assistant, mcp, official, smart-home]
+spec:
+  transport: streamable-http
+  endpoint: ${HOME_ASSISTANT_URL}/api/mcp
+  apiEndpoints:
+    assist: ${HOME_ASSISTANT_URL}/api/mcp/assist
+  authentication:
+    preferred: oauth
+    fallback: bearer-token
+    tokenRef: HOME_ASSISTANT_TOKEN
+  exposure:
+    source: home-assistant-exposed-entities
+    default: least-privilege
+  policy:
+    credentials: runtime-only
+    requireExplicitEntityExposure: true
+    controlSafetySensitiveEntities: confirm
+    preferredApi: assist
+  provenance:
+    provider: Home Assistant
+    officialIntegration: mcp_server
+    documentation: https://www.home-assistant.io/integrations/mcp_server/

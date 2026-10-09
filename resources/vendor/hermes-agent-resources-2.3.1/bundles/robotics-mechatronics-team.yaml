@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: robotics-mechatronics-team
+  version: 1.0.0
+  description: Team-led mechatronics group combining robotics, mechanical, electrical, systems, and software expertise.
+  tags: [bundle, team, robotics, mechatronics]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.1.0
+      - robotics-engineer@^1.0.0
+      - mechanical-engineer@^1.0.0
+      - electrical-engineer@^1.0.0
+      - systems-architect@^1.0.0
+      - developer@^1.0.0
+    crons:
+      - resource-sync@^1.0.0

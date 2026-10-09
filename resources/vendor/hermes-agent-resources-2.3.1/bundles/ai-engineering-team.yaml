@@ -1,0 +1,23 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: ai-engineering-team
+  version: 1.0.0
+  description: Internal AI engineering team covering HermesAgent architecture, AI systems, development, prompts, agents, evaluation, LLMOps, safety, and knowledge engineering.
+  tags: [bundle, ai, engineering, hermesagent]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.3.0
+      - hermesagent-expert@^1.0.0
+      - ai-systems-architect@^1.0.0
+      - ai-developer@^1.0.0
+      - ai-prompt-engineer@^1.0.0
+      - ai-agent-orchestration-engineer@^1.0.0
+      - ai-evaluation-engineer@^1.0.0
+      - llmops-engineer@^1.0.0
+      - ai-safety-reliability-engineer@^1.0.0
+      - ai-knowledge-engineer@^1.0.0
+  policy:
+    userFacing: false
+    authorityExpansion: deny

@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: privacy-impact-screening
+  version: 1.0.0
+  description: Screen systems and processes for personal-data flows, minimization, retention, access, transfer, and DPIA/escalation needs.
+spec:
+  procedure:
+    - Inventory data subjects, data categories, purposes, sources, recipients, locations, and retention.
+    - Identify high-risk processing, sensitive data, profiling, monitoring, and cross-border concerns.
+    - Propose minimization and control options while routing legal conclusions to appropriate legal specialists.

@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: forecast-uncertainty
+  version: 1.0.0
+  description: Communicate weather uncertainty using forecast horizon, ensemble spread, timing ranges, probabilities, scenario alternatives, and confidence.
+  tags: [weather, uncertainty, forecasting]
+spec:
+  procedure:
+    - Identify forecast horizon and variables with meaningful uncertainty.
+    - Compare independent guidance or ensemble information rather than relying on a single deterministic run.
+    - Express timing and magnitude as ranges or probabilities when appropriate.
+    - Translate uncertainty into practical decision triggers without implying false precision.

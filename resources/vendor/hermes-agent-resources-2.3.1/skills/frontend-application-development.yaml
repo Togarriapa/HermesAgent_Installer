@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: frontend-application-development
+  version: 1.0.0
+  description: Implement maintainable client applications with explicit state, data flow, navigation, error handling, and component boundaries.
+  tags: [frontend, web, development]
+spec:
+  procedure:
+    - Define page and component responsibilities, data ownership, navigation, and state transitions.
+    - Keep server state, local UI state, URL state, and derived state distinct where practical.
+    - Handle loading, empty, partial, offline, validation, permission, and failure states deliberately.
+    - Prefer platform semantics and small composable abstractions over unnecessary framework complexity.

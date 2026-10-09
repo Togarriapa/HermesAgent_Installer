@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: technology-risk-management
+  version: 1.0.1
+  description: "Manage technology risk through assets, threats, failure modes, dependencies, likelihood, impact, controls, recovery, ownership, and residual-risk review."
+  tags: [technology, risk, governance, security]
+spec:
+  purpose: "Prioritize technology risks from evidence and business impact without treating compliance activity as proof of effective control."
+  procedure:
+    - "Define systems and objectives at risk, scope, time horizon, owners, critical dependencies, regulatory obligations, and risk appetite or tolerance."
+    - "Identify threats and failure modes with likelihood drivers, impact pathways, correlated dependencies, existing preventive, detective, and recovery controls, and evidence quality."
+    - "Prioritize scenarios transparently and choose avoidance, reduction, transfer, acceptance, resilience, or recovery measures proportional to risk and authority."
+    - "Assign owners, residual risk, evidence requirements, thresholds, and review cadence; verify controls in practice and revisit assumptions after incidents or material change."
+  verification:
+    - risk-scenarios-link-assets-threats-impact-and-controls
+    - residual-risk-and-ownership-are-explicit
+    - control-effectiveness-is-evidenced-not-assumed
+  sideEffects: none

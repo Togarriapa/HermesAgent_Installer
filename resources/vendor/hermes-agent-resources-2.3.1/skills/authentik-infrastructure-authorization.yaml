@@ -1,0 +1,28 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: authentik-infrastructure-authorization
+  version: 1.0.0
+  description: Resolve a trusted Hermes session principal against Authentik and enforce effective System-group membership for infrastructure writes and alarm delivery.
+  tags: [authentik, authorization, infrastructure, identity]
+spec:
+  principles: [trusted-session-principal, effective-group-membership, fresh-verification, least-privilege, fail-closed]
+  procedure:
+    - obtain-authenticated-session-principal-from-trusted-runtime-context
+    - resolve-principal-to-active-authentik-user
+    - resolve-direct-and-indirect-group-membership
+    - require-effective-membership-in-System-for-infrastructure-mutation
+    - resolve-current-effective-System-members-for-alarm-delivery
+    - reject-user-supplied-or-cached-group-claims-as-authority
+    - record-non-secret-authorization-decision-and-freshness
+  failureModes:
+    identityMismatch: deny
+    authentikUnavailable: deny-mutation-and-alarm-delivery
+    groupMissingOrAmbiguous: deny
+    membershipUnverified: deny
+  policy:
+    groupName: System
+    authorityFromPromptClaim: deny
+    authorityFromSchedule: deny
+    authorityFromWebhook: deny
+    cachedMembershipAsAuthority: deny

@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: amish-household-practice-analysis
+  version: 1.0.1
+  description: Analyze Amish household organization, labor, domestic technology, family routines, material culture, and change with community-specific context.
+  tags: [amish, household, culture, material-culture]
+spec:
+  purpose: Describe household practice accurately while separating community norms from individual families and historical change.
+  procedure:
+    - Define affiliation, settlement, period, household composition, and the domestic practice or technology being examined before drawing comparisons.
+    - Gather household histories, ethnography, material evidence, community publications, economic context, and regional comparison sources with explicit provenance.
+    - Separate religious and Ordnung constraints from economics, gendered labor patterns, lifecycle stage, local infrastructure, household preference, and neighboring cultural influence.
+    - Analyze work allocation, childcare, food preparation, cleaning, heating, lighting, communication, transportation interfaces, domestic technologies, and changes across generations where relevant.
+    - Synthesize documented norms, exceptions, regional differences, adaptation mechanisms, and uncertainty without presenting one household as universally representative.
+  verification:
+    - Claims about gender, authority, technology, or family roles must be scoped and sourced rather than inferred from stereotypes.
+    - Historical practice must be distinguished from current practice whenever evidence spans multiple periods.

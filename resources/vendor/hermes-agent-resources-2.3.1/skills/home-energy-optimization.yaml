@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: home-energy-optimization
+  version: 1.0.0
+  description: Analyze household energy data and automations to reduce waste while preserving comfort, equipment constraints, and safety.
+  tags: [energy, home, optimization]
+spec:
+  procedure:
+    - Establish metering quality, tariffs, major loads, schedules, comfort requirements, and equipment constraints.
+    - Find avoidable standby load, scheduling opportunities, peak-demand drivers, and automation inefficiencies.
+    - Quantify expected benefit and avoid changes that increase wear, moisture risk, freeze risk, or unsafe thermal conditions.
+    - Measure post-change results and revert optimizations that fail comfort, safety, or cost objectives.

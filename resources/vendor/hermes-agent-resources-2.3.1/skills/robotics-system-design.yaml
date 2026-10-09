@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: robotics-system-design
+  version: 1.0.0
+  description: Architect robotic systems across mechanics, electronics, computation, communications, sensing, actuation, control, power, and safety.
+  tags: [robotics, systems, mechatronics]
+spec:
+  procedure:
+    - Define mission, environment, payload, speed, precision, autonomy, runtime, communications, human interaction, and safe-state requirements.
+    - Allocate functions across mechanical, electrical, embedded, software, perception, and supervisory layers with explicit interfaces.
+    - Budget power, bandwidth, latency, thermal load, compute, sensing coverage, and failure tolerance.
+    - Plan staged integration tests from component bench tests to low-energy system tests and full operational validation.

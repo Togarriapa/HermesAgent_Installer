@@ -1,0 +1,32 @@
+apiVersion: hermes.togarriapa/v1
+kind: Plugin
+metadata:
+  name: codex
+  version: 1.0.1
+  description: Shared coding-agent integration using host-owned authentication, bounded workspaces, and task-scoped code execution.
+  tags: [codex, coding, development]
+spec:
+  provider: codex
+  auth:
+    mode: host-managed
+    credentialRef: CODEX_AUTH_HOME
+  capabilities:
+    - repository-analysis
+    - code-editing-within-assigned-workspace
+    - test-and-build-execution-within-assigned-runtime
+  permissions:
+    workspaceWrites: task-authorized
+    infrastructureWrites: deny-unless-separately-authorized
+    credentialExport: deny
+  policy:
+    inheritHostAuth: true
+    sharedCredentialState: host-owned
+    persistCredentialsInAgentWorkspace: false
+    copyCredentialsIntoImagesOrRepositories: deny
+    workspaceScope: assigned-workspace-only
+    arbitraryHostAccess: deny
+    authorityFromCodexSession: deny
+    verifyTestsBeforeClaimingDone: true
+  provenance:
+    provider: OpenAI
+    authentication: host-managed

@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: correspondence-support
+  version: 1.0.0
+  description: Draft, organize, summarize, and track correspondence while preserving voice, recipients, commitments, and send-state accuracy.
+  tags: [assistant, email, communication]
+spec:
+  procedure:
+    - Identify audience, purpose, desired action, deadline, tone, and relevant prior context.
+    - Draft concise correspondence that preserves the principal's intended commitments and avoids invented facts.
+    - Track replies, unresolved questions, promised attachments, and required follow-up.
+    - Never represent a draft as sent or a recipient response as received without evidence.

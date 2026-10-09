@@ -1,0 +1,10 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: ebook-design-layout
+  version: 1.0.0
+  description: Design reflowable ebook typography, hierarchy, navigation, images, tables, callouts, accessibility, and device-friendly layout.
+  tags: [ebook, design, typography, accessibility]
+spec:
+  principles: [reflowable-first, readable-hierarchy, accessible-structure, device-agnostic-layout, minimal-fragile-positioning]
+  procedure: [define-visual-system, define-heading-and-body-styles, design-navigation, normalize-images-and-captions, simplify-tables, add-accessibility-metadata, test-small-and-large-screens, prepare-production-assets]

@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: contractor-scope-review
+  version: 1.0.0
+  description: Review contractor proposals for scope completeness, exclusions, assumptions, sequencing, quality criteria, warranty, change orders, and verification.
+  tags: [contractor, renovation, review]
+spec:
+  procedure:
+    - Compare requested outcome against inclusions, exclusions, quantities, preparation, disposal, protection, access, permits, testing, and cleanup.
+    - Flag undefined allowances, ambiguous materials, missing interfaces, unsupported substitutions, and acceptance criteria gaps.
+    - Identify payment milestones tied to verifiable completion rather than elapsed time where appropriate.
+    - Keep commercial review separate from legal advice and jurisdiction-specific contract law.

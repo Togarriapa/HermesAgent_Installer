@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: family-school-communication
+  version: 1.0.0
+  description: Communicate with families about learning, routines, concerns, achievements, and next steps using factual, respectful, privacy-conscious language.
+  tags: [education, family, communication]
+spec:
+  procedure:
+    - Separate observed facts, interpretation, impact, and proposed next steps.
+    - Share relevant achievements as well as concerns and avoid labels unsupported by qualified assessment.
+    - Protect student privacy and disclose sensitive information only through appropriate channels and recipients.
+    - Record agreed actions, owners, and follow-up dates when communication requires continued action.

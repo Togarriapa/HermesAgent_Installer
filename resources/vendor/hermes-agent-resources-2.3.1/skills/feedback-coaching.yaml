@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: feedback-coaching
+  version: 1.0.0
+  description: Give specific, behavior-focused feedback tied to outcomes and actionable improvement.
+  tags: [leadership, feedback]
+spec:
+  workflow:
+    - Describe the observed behavior or deliverable without mind-reading intent.
+    - Explain impact against an agreed standard or outcome.
+    - Ask for context and identify a concrete adjustment.
+    - Agree on follow-up evidence and timing.

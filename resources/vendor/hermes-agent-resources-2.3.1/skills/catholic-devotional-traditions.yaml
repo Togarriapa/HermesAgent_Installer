@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: catholic-devotional-traditions
+  version: 1.0.1
+  description: Research and explain Catholic devotional traditions using magisterial, liturgical, historical, regional, and pastoral sources while distinguishing doctrine from custom.
+  tags: [catholic, devotion, theology, history]
+spec:
+  purpose: Explain devotional practice faithfully without presenting optional private devotion or regional custom as universal Catholic obligation.
+  procedure:
+    - Identify the devotion, period, rite or regional context, and whether the question concerns doctrinal status, historical origin, liturgical relationship, approved practice, or private custom.
+    - Prioritize Scripture, magisterial documents, the Catechism, liturgical books, episcopal or Vatican guidance, and reliable historical scholarship according to the nature of the claim.
+    - Distinguish dogma, doctrine, discipline, liturgy, sacramental practice, sacramentals, approved private revelation, popular piety, and local cultural custom explicitly.
+    - Trace historical development and regional variation, noting reforms, suppressions, approvals, or changes in pastoral emphasis without assuming age proves authority.
+    - Present the devotion's purpose, proper limits, relationship to the liturgy and sacraments, optional character where applicable, and unresolved historical questions.
+  verification:
+    - Claims of obligation or Church approval must cite an appropriate authoritative source rather than devotional popularity alone.
+    - Cultural customs must be labeled as such and not represented as universal Catholic teaching.

@@ -28,7 +28,7 @@ The installer SHALL satisfy this obligation: Install the appropriate runtime and
 #### Scenario: R0042 fulfilled constraint
 - **WHEN** the hardware adapter evaluates recorded native ARM64 architecture, storage/model digests and detected USB or PCIe TPU facts before its selected verification workflow
 - **THEN** Install the appropriate runtime and permissions in an isolated dependency environment. Do not downgrade Hermes or the host Python to satisfy older PyCoral packages. Test actual TPU inference with a small official compiled sample model and record that the TPU delegate was used; device enumeration alone is insufficient. Keep Coral inference separate from LLM model routing.
-- **AND** evidence SHALL demonstrate the observable outcome using Denial fixture at actual dispatch/process/filesystem boundary: attempts beyond authorized scope fail before target side effect, including schedule/webhook/delegated identities and fresh lookup failure
+- **AND** evidence SHALL demonstrate the observable outcome using Run the official compiled quantized sample through the selected USB/PCIe TPU delegate in an isolated compatible environment; record delegate-used output and runtime/device/model digests. Reject CPU fallback and enumeration-only success, preserve Hermes/host Python, and keep missing-device native acceptance pending.
 
 #### Scenario: R0042 unavailable or failed prerequisite
 - **WHEN** engine or model identity mismatches, required storage/device access is unavailable or measured target behavior misses configured thresholds

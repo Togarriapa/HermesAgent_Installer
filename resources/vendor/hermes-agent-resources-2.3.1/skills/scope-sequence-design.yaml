@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: scope-sequence-design
+  version: 1.0.1
+  description: "Design educational scope and sequence from explicit outcomes, prerequisites, cognitive load, spacing, retrieval, assessment, and transfer requirements."
+  tags: [education, curriculum, scope, sequence]
+spec:
+  purpose: "Order learning so prerequisite knowledge is available when needed and important knowledge is revisited before it is lost."
+  procedure:
+    - "Define learner population, end outcomes, timeframe, available instructional time, prerequisites, and any mandated content."
+    - "Decompose outcomes into concepts and skills, identify dependency relationships, and sequence them from foundational to increasingly integrated performance."
+    - "Allocate time for explanation, guided practice, independent application, retrieval, spacing, interleaving, assessment, and remediation rather than simple topic coverage."
+    - "Audit the sequence for prerequisite gaps, overload, unnecessary repetition, and transfer opportunities, then revise from learner performance evidence."
+  verification:
+    - prerequisite-dependencies-are-explicit
+    - spacing-practice-and-assessment-are-planned
+    - sequence-can-be-revised-from-learning-evidence
+  sideEffects: none

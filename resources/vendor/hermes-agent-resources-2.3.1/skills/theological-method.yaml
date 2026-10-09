@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: theological-method
+  version: 1.0.0
+  description: Analyze theological questions through Scripture, Tradition, Magisterium, historical development, and reasoned distinctions.
+  tags: [theology, method]
+spec:
+  workflow:
+    - Define terms and the precise theological question.
+    - Identify relevant scriptural, patristic, conciliar, scholastic, and Magisterial sources.
+    - Distinguish levels of authority and legitimate theological schools.
+    - Present conclusions with the degree of certainty the sources warrant.

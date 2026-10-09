@@ -2,17 +2,36 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from hermes_installer.network import HTTPResult
-from hermes_installer.policy import (BudgetLedger, DispatchContext, DispatchPolicy, Dispatcher,
+from hermes_installer.policy import (BudgetLedger, DispatchAuthorization, DispatchContext, DispatchPolicy, Dispatcher,
     PolicyDenied, Route, Sensitivity, default_public_route)
 from hermes_installer.provider_transport import OPENROUTER_ENDPOINT, OpenRouterTransport
 from hermes_installer.eligibility import AccountEligibilityGate, EligibilityEvidence
 from hermes_installer.state import OwnedRoot
 
 MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
+
+
+def fixture_context(profile_id, purpose, sensitivity, **kwargs):
+    return DispatchContext(profile_id, purpose, sensitivity,
+        principal_id="fixture-principal", namespace="fixture-namespace",
+        provenance="sha256:" + "f" * 64,
+        capabilities=frozenset({"inference", "tool-call"}),
+        policy_revision="fixture-revision", grant_id="fixture-context-grant",
+        lease_expires_at=time.monotonic() + 3600, **kwargs)
+
+
+def synthetic_authorizer(context, capability, intent_id, now, timeout, cancelled):
+    import uuid
+    return DispatchAuthorization(context.principal_id, context.profile_id, context.namespace,
+        context.trace_id, context.capabilities, context.effective_sensitivity,
+        context.policy_revision, context.purpose, capability, intent_id,
+        context.provenance[7:], str(uuid.uuid4()),
+        min(now + min(60, timeout), context.lease_expires_at))
 
 
 class RecordingNetwork:
@@ -210,10 +229,10 @@ class ProviderTransportTests(unittest.TestCase):
             root.ensure()
             dispatcher = Dispatcher(
                 DispatchPolicy({"public": default_public_route()}, "public"),
-                BudgetLedger(root), transport,
+                BudgetLedger(root), transport, context_authorizer=synthetic_authorizer,
             )
             response = dispatcher.dispatch(
-                DispatchContext("hermes", "chat", Sensitivity.PUBLIC),
+                fixture_context("hermes", "chat", Sensitivity.PUBLIC),
                 MODEL,
                 b'{"messages":[{"role":"user","content":"hello"}]}',
                 input_tokens=8,

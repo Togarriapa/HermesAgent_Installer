@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: electrical-system-design
+  version: 1.0.0
+  description: Design electrical systems around load, source, distribution, protection, conductor sizing, grounding, environment, control, maintenance, and fault behavior.
+  tags: [electrical, power, design]
+spec:
+  procedure:
+    - Define supply, loads, duty, diversity, fault levels, distribution, environment, protection, earthing, isolation, and maintenance needs.
+    - Size and coordinate components using applicable standards, ratings, derating, voltage drop, thermal limits, and fault protection.
+    - Keep functional control separate from independent protective functions where required.
+    - Document single-line or interface logic, assumptions, calculations, labels, commissioning checks, and maintenance requirements.

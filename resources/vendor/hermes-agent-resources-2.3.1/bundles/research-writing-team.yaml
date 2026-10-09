@@ -1,0 +1,15 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: research-writing-team
+  version: 1.0.0
+  description: Orchestrated research-to-publication team with scientific research and writing specialists.
+  tags: [bundle, team, research, writing]
+spec:
+  imports:
+    profiles:
+      - orchestrator@^1.1.0
+      - scientific-researcher@^1.0.0
+      - writer@^1.0.0
+    crons:
+      - resource-sync@^1.0.0

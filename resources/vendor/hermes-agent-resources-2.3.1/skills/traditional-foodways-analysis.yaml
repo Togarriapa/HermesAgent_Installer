@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: traditional-foodways-analysis
+  version: 1.0.1
+  description: Analyze traditional foodways through historical, regional, agricultural, economic, household, ritual, migration, preservation, and material-culture evidence.
+  tags: [foodways, tradition, culture, history]
+spec:
+  purpose: Explain food traditions as changing systems of practice and meaning without treating authenticity as fixed or using tradition as evidence of health or safety.
+  procedure:
+    - Define community, region, period, migration history, household or institutional context, and whether the question concerns production, preparation, preservation, meals, ritual, identity, or commercialization.
+    - Gather recipes, oral histories, household records, agricultural evidence, trade data, cookbooks, ethnography, material culture, and local historical sources with provenance and date.
+    - Distinguish long-standing practice from revival, tourism, commercialization, scarcity adaptation, religious prescription, neighboring influence, and recent innovation.
+    - Analyze ingredients, seasonality, labor, equipment, preservation, meal structure, gender and household roles, exchange, status, and change across generations while accounting for regional variation.
+    - Present documented continuities, contested authenticity claims, adaptations, and uncertainty, and separate historical preparation from current nutrition or food-safety recommendations.
+  verification:
+    - Claims of authenticity or continuity must identify the evidence and period supporting them rather than relying on present-day branding.
+    - Historical or traditional preparation methods must not be treated as modern safety guidance without current evidence.

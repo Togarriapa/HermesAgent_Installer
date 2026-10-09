@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: emergency-checklist-design
+  version: 1.0.0
+  description: Design concise emergency checklists, communications trees, inventories, drills, and recovery priorities for household, farm, and operations contexts.
+spec:
+  procedure:
+    - Define hazard, trigger, immediate life-safety actions, communications, dependencies, and fallback paths.
+    - Keep checklists short, ordered, testable, and usable under stress.
+    - Include drill cadence, inventory checks, and post-event recovery steps.

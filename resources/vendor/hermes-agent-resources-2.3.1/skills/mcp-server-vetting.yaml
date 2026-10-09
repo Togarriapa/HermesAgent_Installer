@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: mcp-server-vetting
+  version: 1.0.0
+  description: Evaluate MCP servers by registry provenance, transport, authentication, tool scope, source, permissions, data flow, maintenance, and failure isolation before adoption.
+  tags: [mcp, security, integrations]
+spec:
+  procedure:
+    - Prefer the official MCP Registry and first-party vendor implementations when they satisfy the requirement.
+    - Review tool schemas, prompts or resources exposed, authentication, transport, network destinations, storage, logging, and execution privileges.
+    - Inspect source and release provenance where available and identify whether arbitrary shell, filesystem, browser, or credential access is possible.
+    - Sandbox and test with least-privilege credentials before production approval; never install directly from registry metadata without source review.

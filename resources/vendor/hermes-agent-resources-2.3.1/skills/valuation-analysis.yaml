@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: valuation-analysis
+  version: 1.0.1
+  description: Build and compare DCF, multiples, asset-based, scenario, and sensitivity valuation approaches.
+  tags: [valuation, finance]
+spec:
+  purpose: Express valuation as ranges and assumptions rather than false precision.
+  procedure:
+    - Define the asset, valuation date, ownership claim, currency, capital structure, normalized earnings or cash-flow basis, and purpose of the valuation.
+    - Select methods appropriate to the asset such as DCF, comparable multiples, precedent transactions, asset value, sum-of-the-parts, or scenario analysis and explain why each applies.
+    - Normalize operating and financial inputs, separate enterprise/equity value correctly, and make discount-rate, growth, margin, capital-intensity, dilution, and terminal assumptions explicit.
+    - Cross-check methods and investigate large discrepancies rather than mechanically averaging them.
+    - Present valuation ranges with sensitivity tables, downside cases, key drivers, and conditions that would invalidate the estimate.
+  verification:
+    - enterprise-equity-and-capital-structure-bridges-reconcile
+    - valuation-range-is-supported-by-explicit-assumptions
+    - sensitivity-and-cross-checks-cover-material-drivers

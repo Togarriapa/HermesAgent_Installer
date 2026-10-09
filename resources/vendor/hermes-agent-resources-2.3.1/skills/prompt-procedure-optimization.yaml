@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: prompt-procedure-optimization
+  version: 1.0.1
+  description: "Optimize prompts and agent procedures from representative failures, measurable objectives, capability boundaries, regression cases, and controlled comparison."
+  tags: [ai, prompts, procedure, optimization, evaluation]
+spec:
+  purpose: "Improve task performance without encoding hidden authority, overfitting to examples, or weakening safety and verification requirements."
+  procedure:
+    - "Define the task, measurable quality criteria, authority and tool boundaries, representative inputs, known failure cases, and baseline prompt or procedure."
+    - "Classify failures by missing context, decomposition, tool selection, instruction ambiguity, evidence handling, format, safety boundary, or model limitation before editing."
+    - "Change the smallest relevant instruction or procedure element and compare against baseline on normal, edge, adversarial, and preserved regression cases."
+    - "Accept a change only when aggregate performance improves without safety, permission, cost, latency, or robustness regression; record version and evaluation evidence."
+  verification:
+    - optimization-uses-representative-regression-cases
+    - prompts-do-not-create-structural-authority
+    - accepted-change-has-measurable-net-improvement
+  sideEffects: none

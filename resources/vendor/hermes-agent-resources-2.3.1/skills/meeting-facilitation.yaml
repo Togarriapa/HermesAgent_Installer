@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: meeting-facilitation
+  version: 1.0.0
+  description: Run decision-oriented meetings with agendas, timeboxes, owners, and explicit outcomes.
+  tags: [meetings, leadership]
+spec:
+  workflow:
+    - Define purpose, required participants, prework, and decisions needed.
+    - Timebox discussion by agenda item.
+    - Capture decisions, dissent, owners, and due dates.
+    - End with a read-back of actions and unresolved items.

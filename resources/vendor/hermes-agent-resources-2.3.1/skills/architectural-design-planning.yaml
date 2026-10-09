@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: architectural-design-planning
+  version: 1.0.0
+  description: Develop architectural concepts, spatial programs, circulation, envelope strategies, constructability questions, and coordinated design briefs.
+spec:
+  procedure:
+    - Translate site, household, functional, aesthetic, budget, climate, and accessibility constraints into design options.
+    - Coordinate structural, mechanical, electrical, water, planning, and code questions with specialists.
+    - Clearly distinguish conceptual design from licensed architectural/engineering approval.

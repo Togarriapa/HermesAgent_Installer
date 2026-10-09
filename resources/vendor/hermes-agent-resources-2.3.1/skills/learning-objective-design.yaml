@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: learning-objective-design
+  version: 1.0.1
+  description: "Design observable learning objectives with appropriate scope, cognitive demand, conditions, success criteria, and alignment to assessment."
+  tags: [education, objectives, curriculum, assessment]
+spec:
+  purpose: "Translate broad educational intentions into assessable outcomes that guide instruction and evidence collection."
+  procedure:
+    - "Clarify the learner population, larger goal, prerequisite knowledge, timeframe, and why the objective matters."
+    - "State what learners should know or be able to do using observable performance while separating essential outcome from teaching activity."
+    - "Set appropriate cognitive or practical demand, conditions, quality criteria, and boundaries so the objective is neither trivial nor unmeasurably broad."
+    - "Check alignment with instruction, practice, assessment, accessibility, and the next objective in the progression; revise when evidence cannot validly demonstrate attainment."
+  verification:
+    - objective-describes-observable-learning
+    - demand-conditions-and-success-criteria-are-clear
+    - instruction-and-assessment-can-validly-align
+  sideEffects: none

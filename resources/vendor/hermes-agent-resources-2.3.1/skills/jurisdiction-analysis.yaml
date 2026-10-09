@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: jurisdiction-analysis
+  version: 1.0.1
+  description: "Analyze subject-matter, personal, territorial, procedural, and forum jurisdiction from the facts and current governing authorities."
+  tags: [law, jurisdiction, procedure, research]
+spec:
+  purpose: "Determine which legal bodies may have authority over a matter and what jurisdictional questions remain unresolved."
+  procedure:
+    - "Identify parties, conduct, assets, locations, procedural posture, relevant dates, proposed forum, and the exact jurisdictional issue."
+    - "Locate current constitutional, statutory, treaty, regulatory, procedural, and controlling case authorities governing the relevant jurisdiction types."
+    - "Apply each jurisdictional element to the material facts, distinguishing threshold authority, venue, choice of law, service, and discretionary forum doctrines where relevant."
+    - "Surface factual dependencies, contrary authority, waiver or timing issues, and questions that require local procedural counsel rather than assuming jurisdiction from convenience."
+  verification:
+    - jurisdiction-type-and-forum-are-explicit
+    - each-element-is-linked-to-facts-and-authority
+    - venue-choice-of-law-and-jurisdiction-are-not-conflated
+  sideEffects: none

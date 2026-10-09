@@ -1,0 +1,22 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: explicit-financial-order-execution
+  version: 1.0.0
+  description: Validate and execute a real-money financial action only when Hermes carries an explicit one-shot user order and fresh confirmation bound to the exact transaction parameters.
+  tags: [finance, execution, authorization, confirmation]
+spec:
+  procedure:
+    - Accept executable work only from Hermes/Orchestrator with an authorization envelope generated from an explicit user order.
+    - Verify the envelope is fresh, one-shot, unexpired, and bound to the exact provider, account, operation, recipient/instrument, side, amount/quantity, currency, and price/limit where applicable.
+    - Present the final normalized action payload back through Hermes for fresh confirmation before any irreversible provider call or wallet signing step.
+    - Re-read current account/position/balance state after confirmation and reject the action if material conditions have changed.
+    - Simulate or estimate fees/slippage where the provider supports it and reject malformed, replayed, duplicate, or ambiguous actions.
+    - Execute exactly the confirmed action once; do not optimize, resize, substitute instruments/recipients, split orders, or add follow-on actions without a new user order.
+    - Capture provider transaction/order IDs and reconcile the observed result before reporting completion.
+    - Never infer authorization from a recommendation, portfolio target, prior conversation, standing preference, strategy, schedule, or user silence.
+  policy:
+    autonomousExecution: deny
+    standingAuthority: deny
+    oneShotOnly: true
+    freshConfirmationRequired: true

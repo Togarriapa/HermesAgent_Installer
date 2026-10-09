@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: homestead-agriculture-team
+  version: 1.0.0
+  description: Orchestrated homestead and agriculture team combining practical farming, agronomy, weather, resilience, and culinary expertise.
+  tags: [bundle, team, homestead, agriculture]
+spec:
+  imports:
+    profiles:
+      - orchestrator@^1.2.0
+      - homesteading-specialist@^1.0.0
+      - farming-specialist@^1.0.0
+      - agricultural-specialist@^1.0.0
+      - weather-analyst@^1.0.0
+      - personal-chef@^1.0.0
+    crons:
+      - resource-sync@^1.0.0

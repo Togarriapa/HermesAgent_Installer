@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: budgeting-forecasting
+  version: 1.0.1
+  description: "Build budgets and forecasts from traceable assumptions, timing, scenarios, liquidity needs, variance drivers, and explicit uncertainty."
+  tags: [finance, budgeting, forecasting, planning]
+spec:
+  purpose: "Support financial planning decisions without creating authority to move money or execute transactions."
+  procedure:
+    - "Define the planning horizon, entities or accounts in scope, base currency, starting position, required liquidity, obligations, and decision the forecast must support."
+    - "Build traceable revenue, income, cost, tax, debt-service, capital, and one-off assumptions with timing, recurrence, confidence ranges, and source provenance."
+    - "Run base, upside, downside, and stress scenarios to identify liquidity gaps, sensitivity drivers, breakpoints, and controllable versus noncontrollable variance."
+    - "Reconcile totals and timing to source data, document assumptions and variance triggers, and keep payment, transfer, borrowing, or investment execution outside the skill."
+  verification:
+    - source-data-and-assumptions-reconcile
+    - scenario-and-liquidity-sensitivity-is-explicit
+    - analysis-does-not-create-transaction-authority
+  sideEffects: none

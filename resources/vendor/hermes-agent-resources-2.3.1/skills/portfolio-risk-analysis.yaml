@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: portfolio-risk-analysis
+  version: 1.0.1
+  description: Analyze concentration, volatility, drawdown, liquidity, leverage, factor, counterparty, currency, and tail risks.
+  tags: [risk, portfolio]
+spec:
+  purpose: Surface risk contributions and stress scenarios instead of relying on a single metric.
+  procedure:
+    - Map exposures by asset, issuer, sector, geography, currency, factor, duration, leverage, counterparty, liquidity bucket, and correlated dependency.
+    - Measure volatility, drawdown, concentration, beta/factor exposures, duration or convexity where relevant, and risk contribution while documenting model assumptions.
+    - Stress historical episodes and forward-looking scenarios including correlation breaks, liquidity shocks, gaps, counterparty failure, currency moves, and forced deleveraging.
+    - Identify hidden concentration created by derivatives, funds, common factors, financing arrangements, or shared counterparties.
+    - Rank vulnerabilities by severity, plausibility, time-to-impact, and mitigability rather than collapsing risk into one score.
+  verification:
+    - risk-map-covers-market-liquidity-counterparty-and-tail-risk
+    - stress-results-identify-assumptions-and-correlation-changes
+    - hidden-and-look-through-concentrations-are-addressed

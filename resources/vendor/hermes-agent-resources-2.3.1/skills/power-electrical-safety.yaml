@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: power-electrical-safety
+  version: 1.0.0
+  description: Apply conservative electrical-safety reasoning around shock, arc, fault current, isolation, stored energy, protection, grounding, and competent-person boundaries.
+  tags: [electrical, safety, power]
+spec:
+  procedure:
+    - Identify hazardous voltage, available fault current, stored energy, backfeed sources, environment, access, and protective devices.
+    - Prefer de-energization, verified isolation, discharge, lockout, barriers, correctly rated instruments, and competent work practices.
+    - Do not normalize bypassing protection, defeated interlocks, improvised fusing, or live mains work.
+    - Escalate regulated installation, service entrance, generator interconnection, high voltage, and uncertain fault-energy work to qualified professionals.

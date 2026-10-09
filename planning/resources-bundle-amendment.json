@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "change": "resources-bundle-native-enrichment",
+  "amendment": "plans/amendments/2026-10-09-resources-bundle-v1.md",
+  "model_owner": "GPT-6.1 Sol",
+  "implementation_owner": "GPT-6 Luna",
+  "base_commit": "336e4031672a1aa36fb1533b64eb07a6d38b9703",
+  "baseline_unchanged": "653ac5fbc7a02613c9951859a7d794599603459b",
+  "original_requirement_count": 211,
+  "refines": [
+    "R0045",
+    "R0048",
+    "R0049",
+    "R0050",
+    "R0051",
+    "R0052",
+    "R0053",
+    "R0055",
+    "R0056",
+    "R0060",
+    "R0061"
+  ],
+  "source": {
+    "repository": "Togarriapa/HermesAgent_Resources",
+    "commit": "113f42d33be9e0c8f0f47f5ca998e687323dec83",
+    "tree": "c0c994b5e0b96b90cfd2fc564ea8632dff124308",
+    "version": "2.3.1",
+    "tracked_files": 739,
+    "yaml": 692,
+    "kind_counts": {
+      "profiles": 208,
+      "skills": 396,
+      "plugins": 18,
+      "mcps": 3,
+      "bundles": 55,
+      "channels": 5,
+      "crons": 4,
+      "webhooks": 3
+    },
+    "authorization": "User states ownership and explicitly authorizes local clone/read/package and bundling actual content; no deletion request or third-party licensing grant."
+  },
+  "requirements": [
+    {
+      "id": "RB01",
+      "name": "Self-contained owned source bundle",
+      "text": "Package the complete pristine tracked Resources snapshot, all eight catalog roots and catalog/quality/schema/validator/materializer/supporting files at the pinned revision. Installation and repair SHALL not fetch or require the Resources upstream repository.",
+      "when": "upstream DNS/network unavailable during install",
+      "then": "verify bundle digests and generate native artifacts using only packaged Resources input; no Resources HTTP/git request"
+    },
+    {
+      "id": "RB02",
+      "name": "Native materialization and discovery",
+      "text": "Compile every valid profile, skill, plugin, MCP, bundle, channel, cron and webhook into the installed Hermes native mechanism or an explicit reviewed operational adapter. SHALL preserve the all-item source-to-native crosswalk; YAML copies and inventory rows alone SHALL not count as materialization.",
+      "when": "all 692 declarations are processed",
+      "then": "every item has native destination/adapter identity and discoverability evidence or exact incomplete reason; profiles/skills have actual native discovery and selected workflow invocation"
+    },
+    {
+      "id": "RB03",
+      "name": "Compatible full-content enrichment",
+      "text": "Resolve referenced pinned projects to compatible full content, helpers, assets and hooks, preserving licenses/provenance and installing actual entrypoints with declared dependencies. SHALL wire that content into profile/orchestrator workflows rather than paste reference summaries.",
+      "when": "a referenced skill uses a relative helper and runtime hook",
+      "then": "native invocation resolves preserved helper/assets, exercises actual hook and reports its effect through the owning workflow; incompatible or unlicensed reference is incomplete"
+    },
+    {
+      "id": "RB04",
+      "name": "Ownership-safe generations and restoration",
+      "text": "Stage source, enrichment and native generations separately from user/private overlays; SHALL reject path escapes, preserve unrelated existing content, quarantine conflicting or permission-expanding overlays and restore the last working generation atomically.",
+      "when": "enrichment or health verification fails after staging against an existing customized installation",
+      "then": "previous generation and private/user bytes remain intact; staged incomplete artifacts do not become enabled; retry and restore reproduce the crosswalk"
+    },
+    {
+      "id": "RB05",
+      "name": "Honest completion and offline acceptance",
+      "text": "SHALL distinguish bundled, validated, materialized, discovered, authenticated, functional, enabled and target-verified states for every resource and enrichment. All required dependencies/accounts remain incomplete until genuinely verified. Full completion SHALL require meaningful native workflows and all applicable acceptance, not copied/import metadata.",
+      "when": "required MCP account is absent but its declaration and configuration exist",
+      "then": "resource and full-compliance remain incomplete with scoped next step; no fabricated native operation, account success or missing-required-as-optional status"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "RB-T01",
+      "requirement": "RB01",
+      "depends_on": [
+        "RG-F01"
+      ],
+      "evidence": "EV-RB01",
+      "state": "implementation-pending",
+      "method": "verify bundle digests and generate native artifacts using only packaged Resources input; no Resources HTTP/git request"
+    },
+    {
+      "id": "RB-T02",
+      "requirement": "RB02",
+      "depends_on": [
+        "RB-T01",
+        "RG-F02",
+        "RG-F03"
+      ],
+      "evidence": "EV-RB02",
+      "state": "implementation-pending",
+      "method": "every item has native destination/adapter identity and discoverability evidence or exact incomplete reason; profiles/skills have actual native discovery and selected workflow invocation"
+    },
+    {
+      "id": "RB-T03",
+      "requirement": "RB03",
+      "depends_on": [
+        "RB-T02"
+      ],
+      "evidence": "EV-RB03",
+      "state": "implementation-pending",
+      "method": "native invocation resolves preserved helper/assets, exercises actual hook and reports its effect through the owning workflow; incompatible or unlicensed reference is incomplete"
+    },
+    {
+      "id": "RB-T04",
+      "requirement": "RB04",
+      "depends_on": [
+        "RB-T02",
+        "RB-T03",
+        "RG-F04"
+      ],
+      "evidence": "EV-RB04",
+      "state": "implementation-pending",
+      "method": "previous generation and private/user bytes remain intact; staged incomplete artifacts do not become enabled; retry and restore reproduce the crosswalk"
+    },
+    {
+      "id": "RB-T05",
+      "requirement": "RB05",
+      "depends_on": [
+        "RB-T01",
+        "RB-T02",
+        "RB-T03",
+        "RB-T04"
+      ],
+      "evidence": "EV-RB05",
+      "state": "implementation-pending",
+      "method": "resource and full-compliance remain incomplete with scoped next step; no fabricated native operation, account success or missing-required-as-optional status"
+    },
+    {
+      "id": "RB-T06",
+      "requirement": "RB05",
+      "depends_on": [
+        "RB-T05"
+      ],
+      "evidence": "AC16",
+      "state": "verification-pending",
+      "method": "CI strict/frozen validation plus actual authorized native offline acceptance; all target/account obligations remain open until observed."
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "AC16",
+      "requirements": [
+        "RB01",
+        "RB02",
+        "RB03",
+        "RB04",
+        "RB05"
+      ],
+      "tasks": [
+        "RB-T01",
+        "RB-T02",
+        "RB-T03",
+        "RB-T04",
+        "RB-T05",
+        "RB-T06"
+      ],
+      "method": "On an identified authorized isolated target, block Resources network/upstream; install from release artifact, invoke native discovery and representative workflows for every kind plus all per-resource required functions; assert all739 pristine paths/digests,692 declaration crosswalk, full enrichment tree/hooks, user overlay preservation, conflict quarantine, failed-generation rollback and account/dependency incomplete statuses. Record exhaustive item ledger; sampling cannot establish all-item functional completion.",
+      "state": "not-run"
+    }
+  ],
+  "evidence": {
+    "planned_contracts": [
+      "tests/contracts/test_resources_bundle.py",
+      "tests/contracts/test_native_materialization.py",
+      "tests/contracts/test_resource_enrichment.py",
+      "tests/contracts/test_registry_generations.py"
+    ],
+    "target_workflow": "docs/resources-offline-native-acceptance.md",
+    "state": "not-run"
+  },
+  "blocked_live_only": [
+    "identified authorized Pi/native graphical session",
+    "required accounts/dependencies and third-party content permissions"
+  ],
+  "resolved_blocker_scope": "B-LICENSE no longer blocks vendoring user-owned Resources snapshot; retain third-party license and upstream notice review."
+}

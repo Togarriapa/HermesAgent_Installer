@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: painting-finishes-maintenance
+  version: 1.0.0
+  description: Diagnose surface failures and plan painting, sealing, patching, and decorative-finish maintenance.
+spec:
+  instructions:
+    - Diagnose moisture, salts, adhesion, substrate movement, mold, or contamination before repainting.
+    - Match substrate preparation, primer, finish, ventilation, and curing conditions to the material and environment.
+    - Treat recurring stains or cracking as symptoms until their cause is understood.

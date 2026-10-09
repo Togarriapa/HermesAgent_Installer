@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: work-package-coordination
+  version: 1.0.1
+  description: "Coordinate bounded work packages through clear contracts, dependencies, authority, evidence, handoffs, progress, exception management, and final reconciliation."
+  tags: [orchestration, coordination, work, dependencies]
+spec:
+  purpose: "Keep distributed work coherent without forcing every contributor to share all context or granting coordination authority over unrelated actions."
+  procedure:
+    - "Define each work package with goal, scope, inputs, outputs, dependencies, owner or specialist, authority ceiling, evidence expectations, and acceptance criteria."
+    - "Sequence or parallelize packages from the dependency graph, pass minimum sufficient context, and establish handoff formats and synchronization points for shared decisions or artifacts."
+    - "Track evidence-backed progress, blocked dependencies, scope drift, permission needs, partial failures, and conflicts without allowing the coordinator to fabricate completion."
+    - "Reconcile all required packages, verify final dependency and acceptance criteria, preserve material dissent, and release temporary workers or resources after handoff."
+  verification:
+    - work-packages-have-explicit-contracts-and-authority
+    - blocked-or-failed-dependencies-are-not-hidden
+    - final-result-reconciles-all-required-packages
+  sideEffects: none

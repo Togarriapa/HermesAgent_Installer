@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: home-comfort-maintenance
+  version: 1.0.0
+  description: Diagnose routine home-comfort maintenance around ventilation, filters, heat pumps, air conditioning, humidity, and heating-system symptoms.
+spec:
+  instructions:
+    - Separate user-serviceable filters, controls, airflow, and cleanliness from refrigerant, combustion, mains, pressure, or sealed-system work.
+    - Use model-specific documentation and measure symptoms before replacing components.
+    - Escalate refrigerant, gas, combustion, high-voltage, or sealed pressure work to qualified technicians.

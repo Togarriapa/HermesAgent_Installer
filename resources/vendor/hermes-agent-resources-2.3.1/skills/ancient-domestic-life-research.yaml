@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: ancient-domestic-life-research
+  version: 1.0.1
+  description: Research ancient domestic life using household archaeology, texts, artifacts, bioarchaeology, space use, economy, and social context.
+  tags: [ancient, household, archaeology, social-history]
+spec:
+  purpose: Reconstruct everyday domestic life while accounting for preservation, class, gender, age, status, region, and textual bias.
+  procedure:
+    - Define place, period, household type, social status, and the domestic activity or relationship under investigation.
+    - Combine architecture, room assemblages, ceramics, tools, food remains, inscriptions, papyri, legal or literary texts, burials, and comparative evidence while recording depositional context.
+    - Evaluate formation processes, elite textual bias, excavation history, reuse, abandonment, and modern category assumptions before assigning rooms or objects fixed functions.
+    - Analyze household composition, labor, food, storage, craft, hygiene, religion, childcare, slavery or dependency, consumption, and neighborhood interaction only to the extent supported by evidence.
+    - Synthesize multiple plausible household models where evidence is ambiguous and identify which conclusions are robust versus speculative.
+  verification:
+    - Claims about identity or behavior must not be inferred from a single artifact type without contextual support.
+    - Textual norms and archaeological practice must be compared rather than assumed to describe the same population.

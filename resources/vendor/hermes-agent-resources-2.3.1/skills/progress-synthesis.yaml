@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: progress-synthesis
+  version: 1.0.0
+  description: Combine parallel workstreams into a coherent status view while preserving provenance and unresolved conflicts.
+  tags: [status, orchestration]
+spec:
+  workflow:
+    - Collect deliverable state and evidence from each owner.
+    - Normalize status into completed, active, blocked, at-risk, or not-started.
+    - Identify dependency conflicts and incompatible conclusions.
+    - Produce a concise synthesis with next decisions and owners.

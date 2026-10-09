@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: skills-improvement-team
+  version: 1.0.0
+  description: Internal capability-improvement team for analysing, reviewing, improving, and governing skills and integrations.
+  tags: [bundle, skills, improvement]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.2.0
+      - improvement-manager@^1.0.0
+      - skills-analyser@^1.0.0
+      - skills-reviewer@^1.0.0
+      - skills-improver@^1.0.0
+      - integration-curator@^1.0.0
+  policy:
+    privateUserLearningMayPublish: false
+    recruitmentOpen: true

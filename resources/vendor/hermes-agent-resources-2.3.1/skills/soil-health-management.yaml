@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: soil-health-management
+  version: 1.0.0
+  description: Improve soil physical, chemical, and biological function using testing, organic matter, structure protection, nutrient balance, and erosion control.
+  tags: [soil, agriculture, stewardship]
+spec:
+  procedure:
+    - Establish soil type, drainage, compaction, organic matter, pH, nutrient status, erosion risk, and crop requirements.
+    - Prefer representative soil tests and field observations over visual guesswork for nutrient or amendment decisions.
+    - Protect structure through traffic management, ground cover, rotations, organic matter, and appropriate tillage intensity.
+    - Track changes over seasons and avoid excessive amendments that create salinity, nutrient loss, contamination, or runoff risk.

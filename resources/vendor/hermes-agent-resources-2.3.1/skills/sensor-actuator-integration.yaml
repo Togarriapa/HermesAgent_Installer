@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: sensor-actuator-integration
+  version: 1.0.0
+  description: Integrate sensors and actuators with attention to range, accuracy, calibration, interfaces, grounding, power, latency, noise, saturation, and failure modes.
+  tags: [sensors, actuators, robotics]
+spec:
+  procedure:
+    - Confirm electrical and mechanical interface compatibility, range, resolution, accuracy, update rate, load, and environmental rating.
+    - Plan power, grounding, shielding, cable routing, signal conditioning, communication errors, calibration, and diagnostic coverage.
+    - Define behavior for missing, stale, implausible, saturated, or contradictory sensor data and actuator faults.
+    - Verify end-to-end behavior under limit conditions before autonomous operation.

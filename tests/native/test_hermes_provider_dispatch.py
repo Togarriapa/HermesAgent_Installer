@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -17,13 +18,41 @@ from pathlib import Path
 INSTALLER_SRC = Path(__file__).resolve().parents[2] / "src"
 sys.path.insert(0, str(INSTALLER_SRC))
 
-from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Route, Sensitivity, default_public_route
+from hermes_installer.policy import BudgetLedger, DispatchAuthorization, DispatchContext, DispatchPolicy, Dispatcher, ProviderResponse, Route, Sensitivity, default_public_route
 from hermes_installer.provider_gateway import LocalProviderGateway, materialize_hermes_profile_config, materialize_hermes_provider_plugin
 from hermes_installer.state import OwnedRoot
 
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 HERMES_PIN = "7085fbf7753266fc4943c55ac04926186bc90005"
 FIXTURE_KEY = "native-local-fixture-key-0123456789abcdef"
+
+
+def synthetic_host_context_factory(*, profile_id, purpose, sensitivity, trace_id, cancelled, tool_request):
+    # Synthetic test authority only; this is not a production context issuer.
+    if profile_id != "native-fixture-private":
+        return DispatchContext(profile_id, purpose, sensitivity, trace_id=trace_id, cancelled=cancelled)
+    return DispatchContext(
+        profile_id, purpose, sensitivity, trace_id=trace_id, cancelled=cancelled,
+        principal_id="fixture-process", namespace="fixture-private-namespace",
+        provenance="sha256:" + "a" * 64, capabilities=frozenset({"inference", "tool-call"}),
+        policy_revision="synthetic-host-policy", grant_id="fixture-context-grant",
+        lease_expires_at=time.monotonic() + 60,
+    )
+
+
+def synthetic_host_authorizer(context, capability, intent_id, now, timeout, cancelled):
+    import uuid
+    if context.profile_id != "native-fixture-private" or capability not in {"inference", "tool-call"}:
+        return None
+    return DispatchAuthorization(
+        context.principal_id, context.profile_id, context.namespace,
+        context.trace_id, context.capabilities, Sensitivity.PRIVATE,
+        context.policy_revision, context.purpose, capability, intent_id,
+        context.provenance[7:], str(uuid.uuid4()),
+        min(context.lease_expires_at, now + min(60, timeout)),
+    )
+
+
 OPTIONS = {}
 for item in list(sys.argv[1:]):
     if item.startswith("--hermes-source="):
@@ -37,51 +66,65 @@ for item in list(sys.argv[1:]):
 class RecordingTransport:
     def __init__(self):
         self.calls = []
+        self.stream_calls = 0
+        self.response_actions = []
 
     def __call__(self, route, model, payload, *, output_token_limit, timeout, trace_id, cancelled=lambda: False):
-        import json
         request = json.loads(payload)
         self.calls.append((route.name, model, payload))
-        has_fixture_tool = any(
-            item.get("function", {}).get("name") == "fixture_echo"
+        tool_names = [
+            item.get("function", {}).get("name")
             for item in request.get("tools", []) if isinstance(item, dict)
+        ]
+        tool_results = [
+            item.get("name") for item in request.get("messages", [])
+            if isinstance(item, dict) and item.get("role") == "tool"
+        ]
+        stream_index = None
+        if request.get("stream") is True:
+            stream_index = self.stream_calls
+            self.stream_calls += 1
+        tool_call = None
+        if stream_index == 0:
+            tool_call = ("tool_search", {"queries": ["fixture_echo"], "limit": 5})
+        elif stream_index == 1:
+            tool_call = ("tool_describe", {"names": ["fixture_echo"]})
+        elif stream_index == 2:
+            tool_call = ("tool_call", {"calls": [{
+                "name": "fixture_echo",
+                "arguments": {"text": "SYNTHETIC_PRIVATE_CANARY_7f4c"},
+            }]})
+        self.response_actions.append(tool_call[0] if tool_call else "final-text")
+        response_text = (
+            "private fixture tool result received"
+            if stream_index is not None and stream_index >= 3 else "native fixture response"
         )
-        has_tool_result = any(
-            item.get("role") == "tool" and "SYNTHETIC_PRIVATE_CANARY_7f4c" in str(item.get("content", ""))
-            for item in request.get("messages", []) if isinstance(item, dict)
-        )
-        if has_fixture_tool and not has_tool_result:
-            message = {"role": "assistant", "content": None, "tool_calls": [{
-                "id": "call_fixture_echo_1", "type": "function",
-                "function": {"name": "fixture_echo", "arguments": json.dumps({"text": "SYNTHETIC_PRIVATE_CANARY_7f4c"})},
-            }]}
-            finish = "tool_calls"
-        elif has_fixture_tool:
-            message, finish = {"role": "assistant", "content": "private fixture tool result received"}, "stop"
-        else:
-            message, finish = {"role": "assistant", "content": "native fixture response"}, "stop"
-        created = 1
         completion_id = "chatcmpl-native-fixture"
         if request.get("stream") is True:
-            if finish == "tool_calls":
+            if tool_call is not None:
+                name, arguments = tool_call
                 delta = {"role": "assistant", "tool_calls": [{
-                    "index": 0, "id": "call_fixture_echo_1", "type": "function",
-                    "function": {"name": "fixture_echo",
-                                 "arguments": json.dumps({"text": "SYNTHETIC_PRIVATE_CANARY_7f4c"})},
+                    "index": 0, "id": "call-fixture-" + str(len(self.calls)),
+                    "type": "function", "function": {
+                        "name": name, "arguments": json.dumps(arguments, separators=(",", ":")),
+                    },
                 }]}
+                finish = "tool_calls"
             else:
-                delta = {"role": "assistant", "content": message.get("content")}
+                delta = {"role": "assistant", "content": response_text}
+                finish = "stop"
             chunk = {
-                "id": completion_id, "object": "chat.completion.chunk", "created": created,
+                "id": completion_id, "object": "chat.completion.chunk", "created": 1,
                 "model": MODEL, "choices": [{"index": 0, "delta": delta,
                                                "finish_reason": finish}],
             }
             body = ("data: " + json.dumps(chunk, separators=(",", ":")) + "\n\n"
                     + "data: [DONE]\n\n").encode("utf-8")
             return ProviderResponse(200, body, {"Content-Type": "text/event-stream"}, 5, 3)
+        message = {"role": "assistant", "content": response_text}
         body = json.dumps({
-            "id": completion_id, "object": "chat.completion", "created": created,
-            "model": MODEL, "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+            "id": completion_id, "object": "chat.completion", "created": 1,
+            "model": MODEL, "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
         }, separators=(",", ":")).encode("utf-8")
         return ProviderResponse(200, body, {"Content-Type": "application/json"}, 5, 3)
@@ -146,8 +189,13 @@ description: Native dispatch fixture
     },
 }
 ''', encoding="utf-8")
-                (fixture_plugin / "tools.py").write_text('''import json
+                (fixture_plugin / "tools.py").write_text('''import json, os
 def fixture_echo(args, **kwargs):
+    marker = os.environ.get("HERMES_FIXTURE_MARKER")
+    if not marker:
+        raise RuntimeError("fixture marker path missing")
+    with open(marker, "a", encoding="utf-8") as stream:
+        stream.write("x")
     return json.dumps({"result": "SYNTHETIC_PRIVATE_CANARY_7f4c"})
 ''', encoding="utf-8")
                 (fixture_plugin / "__init__.py").write_text('''from .schemas import FIXTURE_ECHO
@@ -203,13 +251,16 @@ plugins:
                 dispatcher = Dispatcher(
                     DispatchPolicy({"public": default_public_route(), "fixture-private": private_fixture},
                                    "public", private_route="fixture-private"),
-                    BudgetLedger(root), transport,
+                    BudgetLedger(root), transport, context_authorizer=synthetic_host_authorizer,
                 )
                 gateway = LocalProviderGateway(
                     dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-private",
                     sensitivity=Sensitivity.PRIVATE, model=MODEL, port=int(plugin["port"]),
+                    context_factory=synthetic_host_context_factory,
                 )
+                fixture_marker = Path(scratch) / "fixture-called"
                 worker_env = {
+                    "HERMES_FIXTURE_MARKER": str(fixture_marker),
                     "HOME": str(Path(scratch)),
                     "HERMES_HOME": str(profile_home),
                     "HERMES_AGENT_SOURCE_ROOT": str(source),
@@ -229,34 +280,72 @@ plugins:
                 request_summaries = []
                 for route_name, _model, raw_payload in transport.calls:
                     payload_summary = json.loads(raw_payload)
+                    messages = payload_summary.get("messages", [])
                     request_summaries.append({
+                        "response_action": transport.response_actions[len(request_summaries)]
+                            if len(request_summaries) < len(transport.response_actions) else None,
                         "route": route_name,
                         "tool_names": [item.get("function", {}).get("name")
                                        for item in payload_summary.get("tools", [])
                                        if isinstance(item, dict)],
-                        "tool_result_count": sum(1 for item in payload_summary.get("messages", [])
-                                                 if isinstance(item, dict) and item.get("role") == "tool"),
+                        "tool_schemas": [
+                            {"name": item.get("function", {}).get("name"),
+                             "parameters": item.get("function", {}).get("parameters")}
+                            for item in payload_summary.get("tools", [])
+                            if isinstance(item, dict) and isinstance(item.get("function"), dict)
+                            and item["function"].get("name") in {"tool_search", "tool_describe", "tool_call"}
+                        ],
+                        "assistant_tool_calls": [
+                            {"name": call.get("function", {}).get("name"),
+                             "arguments": call.get("function", {}).get("arguments")}
+                            for message in messages if isinstance(message, dict)
+                            and message.get("role") == "assistant"
+                            for call in message.get("tool_calls", []) if isinstance(call, dict)
+                        ],
+                        "tool_results": [
+                            {"name": item.get("name"), "tool_call_id": item.get("tool_call_id"),
+                             "content": str(item.get("content", ""))[:240]}
+                            for item in messages if isinstance(item, dict)
+                            and item.get("role") == "tool"
+                        ],
                     })
                 self.assertEqual(result.returncode, 0,
                     result.stdout[-2500:] + result.stderr[-4000:]
                     + " recording_requests=" + json.dumps(request_summaries, sort_keys=True))
+                self.assertTrue(fixture_marker.is_file(),
+                    "native AIAgent cycle did not invoke the real fixture tool handler")
+                self.assertEqual(fixture_marker.read_text(encoding="utf-8"), "x")
                 self.assertIn("NATIVE_DISPATCH_OK", result.stdout)
-                self.assertEqual(len(transport.calls), 4)
+                self.assertEqual(len(transport.calls), 6)
                 self.assertEqual([call[0] for call in transport.calls],
-                                 ["synthetic-private-fixture"] * 4)
-                self.assertEqual([call[1] for call in transport.calls], [MODEL] * 4)
-                conversation_payloads = [json.loads(call[2]) for call in transport.calls[:2]]
-                tool_messages = [message for message in conversation_payloads[1]["messages"]
+                                 ["synthetic-private-fixture"] * 6)
+                self.assertEqual([call[1] for call in transport.calls], [MODEL] * 6)
+                conversation_payloads = [json.loads(call[2]) for call in transport.calls[:4]]
+                tool_messages = [message for message in conversation_payloads[3]["messages"]
                                  if message.get("role") == "tool"]
-                self.assertEqual(len(tool_messages), 1)
-                self.assertIn("SYNTHETIC_PRIVATE_CANARY_7f4c", tool_messages[0]["content"])
+                self.assertTrue(any("SYNTHETIC_PRIVATE_CANARY_7f4c" in
+                                    str(message.get("content", "")) for message in tool_messages))
                 self.assertNotIn("SYNTHETIC_PRIVATE_CANARY_7f4c",
                                  json.dumps([call for call in transport.calls
                                              if call[0] == "openrouter-nemotron-free"]))
-                direct_payloads = [json.loads(call[2]) for call in transport.calls[2:]]
+                direct_payloads = [json.loads(call[2]) for call in transport.calls[4:]]
                 self.assertEqual([payload["messages"][0]["content"] for payload in direct_payloads],
                                  ["native primary fixture", "native auxiliary fixture"])
+                self.assertEqual(transport.response_actions[:4],
+                                 ["tool_search", "tool_describe", "tool_call", "final-text"])
                 self.assertFalse((Path(plugin["plugin"]) / "__pycache__").exists())
+                print("NATIVE_PROVIDER_PROBE_RESULT=" + json.dumps({
+                    "hermes_source_commit": HERMES_PIN,
+                    "profile_sensitivity": "PRIVATE",
+                    "upstream": "synthetic recording transport only",
+                    "agent_executor": "AIAgent.run_conversation",
+                    "deferred_tools": transport.response_actions[:3],
+                    "handler_invocations": 1,
+                    "gateway_requests": len(transport.calls),
+                    "routes": [call[0] for call in transport.calls],
+                    "primary_and_title_generation_auxiliary": "recorded",
+                    "external_account_or_provider_request": False,
+                }, sort_keys=True))
             finally:
                 if gateway is not None:
                     gateway.close()
@@ -350,15 +439,17 @@ def _run_native_worker():
     if not isinstance(runtime.get("base_url"), str) or not runtime["base_url"].startswith("http://127.0.0.1:"):
         raise SystemExit("Hermes runtime provider did not resolve to the owned loopback gateway")
     from run_agent import AIAgent
+    from agent.iteration_budget import IterationBudget
     agent = None
     try:
         agent = AIAgent(
             base_url=runtime["base_url"], api_key=runtime.get("api_key"),
             provider=runtime["provider"], api_mode=runtime.get("api_mode"),
             model=configured_model,
+            iteration_budget=IterationBudget(5),
             quiet_mode=True, enabled_toolsets=["hermes-installer-fixture"],
             skip_context_files=True, load_soul_identity=False, skip_memory=True,
-            skip_background_review=True, max_iterations=3,
+            skip_background_review=True, max_iterations=5,
         )
         if agent.provider != configured_provider or agent.model != configured_model:
             raise SystemExit("Hermes native config selection mismatch: provider="
@@ -370,10 +461,12 @@ def _run_native_worker():
             key: row.get(key) for key in ("name", "enabled", "status", "source", "tools")
             if key in row
         } for row in plugin_rows if "native-fixture" in str(row.get("name", ""))]
+        plugin_tool_names = sorted(getattr(get_plugin_manager(), "_plugin_tool_names", set()))
         print("NATIVE_TOOL_AVAILABILITY=" + json.dumps({
             "fixture_echo": "fixture_echo" in tool_names,
             "count": len(tool_names),
             "fixture_plugin_rows": fixture_plugins,
+            "registered_plugin_tools": plugin_tool_names,
         }, sort_keys=True))
         cycle = agent.run_conversation("Use fixture_echo once and report its returned result.")
         if cycle.get("completed") is not True or "private fixture tool result received" not in str(cycle.get("final_response", "")):

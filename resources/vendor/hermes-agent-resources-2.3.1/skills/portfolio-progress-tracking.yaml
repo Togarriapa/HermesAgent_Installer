@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: portfolio-progress-tracking
+  version: 1.0.1
+  description: "Track portfolio progress through outcome evidence, milestones, dependencies, risk, forecast variance, capacity, and decision-ready exception reporting."
+  tags: [portfolio, progress, tracking, management]
+spec:
+  purpose: "Maintain a trustworthy portfolio view that distinguishes activity from delivered outcomes and forecast confidence."
+  procedure:
+    - "Define portfolio objectives, item owners, milestones, expected outcomes, dependencies, capacity assumptions, baseline dates or costs, and reporting cadence."
+    - "Collect current evidence from authoritative work systems, separating completed activity, accepted deliverables, realized outcomes, forecast, and unsupported status claims."
+    - "Analyze schedule, scope, cost or capacity variance, dependency risk, blocked work, outcome movement, and forecast confidence at item and portfolio level."
+    - "Report material exceptions, decisions needed, trend and confidence changes, and agreed corrective ownership without silently changing baselines or success criteria."
+  verification:
+    - status-is-backed-by-current-source-evidence
+    - activity-output-and-outcome-are-distinguished
+    - baseline-changes-and-forecast-confidence-are-explicit
+  sideEffects: none

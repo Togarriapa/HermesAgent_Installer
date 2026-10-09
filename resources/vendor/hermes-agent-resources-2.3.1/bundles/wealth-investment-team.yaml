@@ -1,0 +1,22 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: wealth-investment-team
+  version: 1.0.0
+  description: Multi-disciplinary wealth and investment team for planning, portfolio management, research, risk, accounting and legal coordination.
+  tags: [wealth, investment, team]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.2.0
+      - wealth-manager@^1.0.0
+      - financial-advisor@^1.0.0
+      - portfolio-manager@^1.0.0
+      - investment-research-analyst@^1.0.0
+      - investment-risk-analyst@^1.0.0
+      - macroeconomic-analyst@^1.0.0
+  policy:
+    execution: research-and-planning-only
+    trading: deny
+    custody: deny
+    transfers: deny

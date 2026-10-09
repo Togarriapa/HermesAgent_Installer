@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: meeting-preparation
+  version: 1.0.0
+  description: Prepare meetings through objectives, attendees, context, agenda, materials, decisions needed, and follow-up structure.
+  tags: [assistant, meetings, preparation]
+spec:
+  procedure:
+    - Establish the meeting objective and decisions or outputs required.
+    - Gather relevant prior decisions, documents, open actions, attendees, and constraints.
+    - Build an agenda that allocates time to decisions and unresolved issues rather than status recitation.
+    - Prepare a simple structure for decisions, actions, owners, and due dates after the meeting.

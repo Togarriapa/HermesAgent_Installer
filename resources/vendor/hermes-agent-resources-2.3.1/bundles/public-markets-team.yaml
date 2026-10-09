@@ -1,0 +1,21 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: public-markets-team
+  version: 1.0.0
+  description: Public-markets team for equities, fixed income, macro, quantitative research and independent risk review.
+  tags: [markets, equities, bonds, team]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.2.0
+      - portfolio-manager@^1.0.0
+      - stocks-manager@^1.0.0
+      - equity-analyst@^1.0.0
+      - fixed-income-analyst@^1.0.0
+      - macroeconomic-analyst@^1.0.0
+      - quantitative-investment-analyst@^1.0.0
+      - investment-risk-analyst@^1.0.0
+  policy:
+    trading: deny
+    derivativesExecution: deny

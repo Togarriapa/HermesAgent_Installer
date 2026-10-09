@@ -304,7 +304,8 @@ class LocalProviderGateway:
     def __init__(self, dispatcher: Dispatcher, *, token: str, profile_id: str,
                  sensitivity: Sensitivity, model: str, max_output_tokens: int = 4096,
                  host: str = "127.0.0.1", port: int = 0, read_timeout_seconds: float = 10.0,
-                 max_connections: int = 16):
+                 max_connections: int = 16,
+                 context_factory: Callable[..., DispatchContext] | None = None):
         if host != "127.0.0.1":
             raise GatewayError("Provider gateway must bind IPv4 loopback only")
         if not isinstance(port, int) or isinstance(port, bool) or (port != 0 and not 1024 <= port <= 65535):
@@ -329,6 +330,9 @@ class LocalProviderGateway:
         self.requested_port = port
         self.read_timeout_seconds = read_timeout_seconds
         self.max_connections = max_connections
+        # The host must provide broker-issued principal, namespace and provenance
+        # claims. A missing factory yields an incomplete context and is denied.
+        self.context_factory = context_factory
         self._closing = threading.Event()
         self._active_lock = threading.Lock()
         self._active_requests: set[threading.Event] = set()
@@ -470,12 +474,19 @@ class LocalProviderGateway:
                         self._reply(503, _error_body("gateway.closing", "Gateway is shutting down"))
                         return
                     try:
-                        context = DispatchContext(
+                        context = (gateway.context_factory(
+                            profile_id=gateway.profile_id,
+                            purpose="native-hermes-chat",
+                            sensitivity=gateway.sensitivity,
+                            trace_id=str(uuid.uuid4()),
+                            cancelled=lambda: cancellation.is_set() or gateway._closing.is_set(),
+                            tool_request=tool_request,
+                        ) if gateway.context_factory is not None else DispatchContext(
                             profile_id=gateway.profile_id,
                             purpose="native-hermes-chat",
                             sensitivity=gateway.sensitivity,
                             cancelled=lambda: cancellation.is_set() or gateway._closing.is_set(),
-                        )
+                        ))
                         result = gateway.dispatcher.dispatch(
                             context, gateway.model, raw, input_tokens=input_tokens,
                             output_token_limit=output_cap, tool_request=tool_request,

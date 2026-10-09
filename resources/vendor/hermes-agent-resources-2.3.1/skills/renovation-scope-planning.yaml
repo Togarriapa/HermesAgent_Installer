@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: renovation-scope-planning
+  version: 1.0.0
+  description: Convert a renovation objective into measurable scope, dependencies, sequence, materials, tolerances, inspections, budget allowances, and acceptance criteria.
+  tags: [renovation, planning, home]
+spec:
+  procedure:
+    - Define existing condition, desired outcome, constraints, hidden-risk allowances, interfaces with other trades, and permit requirements.
+    - Sequence demolition, remediation, rough-in, enclosure, finishes, commissioning, and snagging with dependencies explicit.
+    - Specify performance requirements and acceptance criteria rather than only product names.
+    - Preserve contingency for hidden conditions and require change-control for scope growth.

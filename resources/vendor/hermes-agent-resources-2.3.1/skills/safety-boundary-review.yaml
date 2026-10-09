@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: safety-boundary-review
+  version: 1.0.1
+  description: "Review a resource or workflow for safety, authority, side-effect, data, physical, regulated, and escalation boundaries before approval or execution."
+  tags: [safety, governance, review, authority]
+spec:
+  purpose: "Detect hidden authority expansion and unsafe ambiguity before a resource, procedure, or change is relied upon."
+  procedure:
+    - "Define the resource or workflow, intended capability, users, tools, data, external targets, physical effects, credentials, and host or regulatory authority ceiling."
+    - "Trace every side-effect path and identify destructive, irreversible, financial, physical, privacy, medical, legal, child-safety, infrastructure, or other high-consequence boundaries."
+    - "Check whether authorization is explicit, fresh where required, least-privilege, non-inferential, and preserved across prompts, schedules, webhooks, Bundles, recruitment, scaling, and retries."
+    - "Document blocking findings, required mitigations, escalation or confirmation points, residual uncertainty, and verification needed before the boundary can be considered satisfied."
+  verification:
+    - every-material-side-effect-has-an-authority-path
+    - schedules-prompts-webhooks-and-bundles-do-not-create-authority
+    - unresolved-safety-boundaries-block-or-escalate
+  sideEffects: none

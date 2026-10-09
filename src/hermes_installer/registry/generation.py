@@ -124,7 +124,14 @@ class GenerationStore:
                     raise ValueError("invalid generation path")
                 if not isinstance(content, bytes): raise TypeError("generation content must be bytes")
                 output = staging / rel
-                output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                directory = staging
+                for part in rel.parts[:-1]:
+                    directory = directory / part
+                    try:
+                        directory.mkdir(mode=0o700)
+                    except FileExistsError:
+                        pass
+                    self._private_dir(directory)
                 for directory in (output.parent, *output.parent.parents):
                     if directory.is_relative_to(staging): self._private_dir(directory)
                 digest = hashlib.sha256()

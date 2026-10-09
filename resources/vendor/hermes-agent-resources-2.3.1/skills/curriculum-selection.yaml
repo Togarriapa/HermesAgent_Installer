@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: curriculum-selection
+  version: 1.0.1
+  description: "Evaluate and select curricula against learner needs, evidence quality, coverage, workload, accessibility, adaptability, and context."
+  tags: [education, curriculum, selection, pedagogy]
+spec:
+  purpose: "Compare curriculum options using explicit criteria instead of reputation, novelty, or preference alone."
+  procedure:
+    - "Define learner profile, required outcomes, language, schedule, budget, teaching capacity, accessibility needs, and any legal or institutional constraints."
+    - "Inspect candidate curricula for scope, sequence, pedagogy, assessment quality, evidence base, teacher support, workload, and prerequisite assumptions."
+    - "Compare options against weighted must-have and trade-off criteria, including adaptation burden and compatibility with existing materials."
+    - "Document the selection, known gaps, planned adaptations, and concrete evidence that would justify keeping, supplementing, or replacing it."
+  verification:
+    - required-outcomes-and-constraints-are-covered
+    - evidence-and-tradeoffs-are-traceable
+    - adaptation-and-review-plan-is-explicit
+  sideEffects: none

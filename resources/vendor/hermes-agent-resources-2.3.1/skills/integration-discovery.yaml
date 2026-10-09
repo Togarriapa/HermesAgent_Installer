@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: integration-discovery
+  version: 1.0.0
+  description: Discover candidate agent integrations from first-party catalogs, official registries, source repositories, and reputable indexes while preserving provenance.
+  tags: [integrations, discovery, agents]
+spec:
+  procedure:
+    - Define the exact capability gap, required permissions, runtime, protocol, data sensitivity, and maintenance expectations before searching.
+    - Prefer first-party provider directories and official protocol registries before marketplaces or aggregators.
+    - Record canonical source, publisher, repository, current version, release date, license, auth model, and install path for every candidate.
+    - Do not interpret popularity or marketplace ranking as a security review.

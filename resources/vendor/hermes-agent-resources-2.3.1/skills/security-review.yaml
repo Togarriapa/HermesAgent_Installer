@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: security-review
+  version: 1.0.0
+  description: Defensively review authorized systems for exposure, access control, secrets, patching, logging, and insecure defaults.
+  tags: [security, defensive]
+spec:
+  workflow:
+    - Confirm scope and authorization.
+    - Review externally reachable surfaces and identity boundaries first.
+    - Check secret handling, least privilege, patch level, logs, backups, and recovery.
+    - Rank remediation by exploitable impact and operational practicality.

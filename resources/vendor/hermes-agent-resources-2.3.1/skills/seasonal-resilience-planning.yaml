@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: seasonal-resilience-planning
+  version: 1.0.0
+  description: Prepare household and homestead systems for seasonal heat, cold, storms, drought, wet periods, outages, and workload peaks.
+  tags: [homestead, resilience, seasons]
+spec:
+  procedure:
+    - Identify seasonal hazards, maintenance windows, storage needs, biological cycles, and likely utility or access disruptions.
+    - Define preparation triggers, minimum reserves, inspections, backup methods, and recovery priorities.
+    - Avoid stockpiling or redundancy that creates unsafe storage, spoilage, excessive cost, or unmaintainable systems.
+    - Review the plan after each season using actual failures, near misses, and workload data.

@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: asset-lifecycle-management
+  version: 1.0.1
+  description: "Manage technical or physical asset lifecycle from inventory and ownership through maintenance, capacity, supportability, replacement, disposal, and evidence retention."
+  tags: [operations, assets, lifecycle, governance]
+spec:
+  purpose: "Make lifecycle decisions from condition, criticality, cost, supportability, risk, and dependency evidence."
+  procedure:
+    - "Inventory the asset, owner, location, version or condition, dependencies, criticality, warranty or support state, maintenance history, and expected service life."
+    - "Define operating, inspection, maintenance, capacity, security, backup, spares, and replacement criteria proportional to failure impact."
+    - "Evaluate repair, upgrade, redeploy, replace, retire, and disposal options across total cost, downtime, risk, compatibility, sustainability, and recovery requirements."
+    - "Record lifecycle state and decision evidence, verify decommissioning or handover, preserve required data and records, and remove obsolete access or dependencies safely."
+  verification:
+    - asset-owner-state-and-dependencies-are-current
+    - lifecycle-triggers-and-decision-criteria-are-explicit
+    - retirement-removes-data-access-and-dependency-risk
+  sideEffects: none

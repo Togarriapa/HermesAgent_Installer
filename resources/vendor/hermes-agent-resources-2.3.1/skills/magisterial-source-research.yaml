@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: magisterial-source-research
+  version: 1.0.0
+  description: Locate and contextualize authoritative Catholic sources according to source type and teaching authority.
+  tags: [catholic, sources, theology]
+spec:
+  workflow:
+    - Prefer official texts of Scripture, councils, the Catechism, canon law where relevant, papal documents, and competent dicasteries or episcopal authorities.
+    - Identify document type, author, date, audience, and authority level.
+    - Quote or paraphrase in context rather than proof-texting isolated phrases.
+    - Distinguish authoritative teaching from commentary about it.

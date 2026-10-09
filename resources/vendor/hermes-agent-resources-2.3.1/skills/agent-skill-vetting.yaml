@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: agent-skill-vetting
+  version: 1.0.0
+  description: Review reusable agent skills as executable policy artifacts, checking scope, activation, instructions, scripts, dependencies, data access, provenance, and prompt-injection risk.
+  tags: [skills, agents, security]
+spec:
+  procedure:
+    - Read the complete skill source including scripts, templates, referenced files, install instructions, and external fetches before adoption.
+    - Check trigger scope, hidden side effects, shell or network behavior, credential use, filesystem reach, destructive actions, and instructions that attempt to override host policy.
+    - Preserve attribution and license while rewriting or reimplementing only concepts that are appropriate for Hermes resource manifests.
+    - Treat Agent37 and similar directories as discovery indexes; trust comes from reviewed source and local policy, not the index ranking.
