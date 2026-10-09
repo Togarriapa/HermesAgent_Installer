@@ -51,10 +51,10 @@ class _Authority:
         self.handlers = build_registry_handlers()
         self.calls = []
 
-    def context(self, *, purpose, intent, source_contexts=(), **_kwargs):
-        if purpose != "native-hermes-chat" or not source_contexts:
+    def context(self, *, purpose, intent, source_receipt_handles=(), **_kwargs):
+        if purpose != "native-hermes-chat" or not source_receipt_handles:
             raise PermissionError("trusted invocation lineage required")
-        self._context = _context()
+        self._context = _context(sensitivity="public")
         return self._context
 
     def authorize_effect(self, context, *, capability, target, recipient, request_digest, retry_index=0, **_kwargs):
@@ -90,6 +90,16 @@ def _context(*, capabilities=frozenset({"registry-read", "registry-agent37-read"
         capabilities=capabilities, principal_id="principal", profile_id="profile",
         namespace_id="namespace", uid=1001, intent_id="intent", trace_id="trace",
         policy_revision="policy-1", lineage_hash="lineage", monotonic_expires_at=now + 25,
+    )
+
+
+def _lineage(**kwargs):
+    return SimpleNamespace(
+        schema=1, invocation_handle="i" * 32,
+        source_receipt_handles=("r" * 32,),
+        parent_closure_digest="c" * 64,
+        arguments_sha256=kwargs["arguments_sha256"],
+        expires_monotonic=time.monotonic() + 10,
     )
 
 
@@ -270,7 +280,7 @@ class PublicRegistryHandlerTests(unittest.TestCase):
                 content_digest="a" * 64,
             ),
             declared_capabilities=("registry-read",), authority=authority,
-            invocation_contexts=lambda **kwargs: (source,),
+            invocation_contexts=_lineage,
             selected_adapters=ReviewedPluginAdapterRegistry(),
         )
         tools = {}
@@ -347,7 +357,7 @@ class PublicRegistryHandlerTests(unittest.TestCase):
         runtime = NativePluginRuntimeContext(
             identity=identity, declared_capabilities=("registry-read",),
             authority=authority,
-            invocation_contexts=lambda **kwargs: (source,),
+            invocation_contexts=_lineage,
             selected_adapters=ReviewedPluginAdapterRegistry(),
         )
         tools = {}

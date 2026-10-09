@@ -2,6 +2,7 @@ import dataclasses
 import sys
 import types
 import unittest
+import unittest.mock
 
 from hermes_installer.remote.root_sessions import RootRemoteSessionClient, RootSessionDenied
 
@@ -72,8 +73,10 @@ class RootSessionAdapterTests(unittest.TestCase):
     def setUp(self):
         authority_module = types.ModuleType("hermes_installer.authority.remote_sessions")
         authority_module.RemoteAdmissionRequest = Request
-        sys.modules[authority_module.__name__] = authority_module
-        self.addCleanup(sys.modules.pop, authority_module.__name__, None)
+        modules_patch = unittest.mock.patch.dict(
+            sys.modules, {authority_module.__name__: authority_module})
+        modules_patch.start()
+        self.addCleanup(modules_patch.stop)
         self.authority = FakeAuthority()
         self.client = RootRemoteSessionClient(
             self.authority, "desk.example.net", "https://desk.example.net",

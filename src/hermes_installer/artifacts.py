@@ -146,6 +146,15 @@ class ArtifactSpec:
         if self.tree_files and sum(item.size_bytes for item in self.tree_files) > self.max_tree_bytes:
             raise ValueError("artifact tree exceeds its enrolled expanded-size bound")
 
+    @property
+    def tree_manifest_sha256(self) -> str:
+        """Hash the exact sorted content-tree contract enrolled for this archive."""
+        rows = [{"path": row.path, "sha256": row.sha256,
+                 "size_bytes": row.size_bytes, "executable": row.executable}
+                for row in sorted(self.tree_files, key=lambda item: item.path)]
+        body = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(body).hexdigest()
+
 
 @dataclass(frozen=True, slots=True)
 class PackageSpec:

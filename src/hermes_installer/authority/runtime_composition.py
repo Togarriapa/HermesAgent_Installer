@@ -32,6 +32,8 @@ class RootAuthorityRuntime:
     boot_epoch: str
     backend_enrollments: Mapping[str, Any]
     body_recipes: Mapping[str, Any]
+    scope_bindings: Mapping[str, Any]
+    validators: Mapping[str, Any]
     job_enrollments: Mapping[tuple[str, str], Any]
     job_authority: Any | None
 
@@ -58,6 +60,17 @@ class RootAuthorityRuntime:
     @property
     def source_observer_registry(self) -> Any | None:
         return self.service.source_observer_registry
+
+    @property
+    def source_observer_enrollments(self) -> Mapping[str, Any]:
+        """Typed candidates derived from exact active issuer/package joins.
+
+        These are enrollment metadata, not proof that a package is currently
+        loaded or that a receipt may be issued. Registry construction still
+        requires the live loader and recipient PIDFD proof resolvers.
+        """
+        records = getattr(self.bindings, "source_observer_enrollments", {})
+        return MappingProxyType(dict(records)) if isinstance(records, Mapping) else MappingProxyType({})
 
     @property
     def native_runtime_observer(self) -> Any | None:
@@ -123,6 +136,26 @@ class RootAuthorityRuntime:
             raise AuthorityDenied("native.unavailable", "root process custody has no loaded package resolver")
         return resolver(process_id, generation)
 
+    def resolve_root_journal(self, root_id: str, *,
+                             expected_active_generation_digest: str) -> Any:
+        """Resolve a journal only inside this exact active protected snapshot.
+
+        The protected enrollment catalog revalidates its selected root row and
+        filesystem identity. This wrapper prevents a caller from asking the
+        catalog for a root under a stale or caller-selected generation.
+        """
+        if (not isinstance(root_id, str) or not root_id
+                or expected_active_generation_digest
+                != self.enrollment.protected_enrollment_digest):
+            raise AuthorityDenied("journal.unavailable", "journal root is outside the active protected generation")
+        resolver = getattr(self.bindings, "resolve_root_journal", None)
+        if not callable(resolver):
+            raise AuthorityDenied("journal.unavailable", "root bindings have no protected journal resolver")
+        return resolver(
+            root_id,
+            expected_active_generation_digest=expected_active_generation_digest,
+        )
+
 
 def compose_root_authority_runtime(
     *,
@@ -156,10 +189,15 @@ def compose_root_authority_runtime(
     from .resource_jobs import (
         ResourceJobAuthority, index_resource_job_records,
         parse_resource_backend_records, parse_resource_body_recipes,
+        parse_resource_scope_binding_records, parse_resource_validator_records,
     )
 
     backends = parse_resource_backend_records(enrollment.resource_backend_enrollment_records)
     recipes = parse_resource_body_recipes(enrollment.resource_body_recipe_records)
+    scope_bindings = parse_resource_scope_binding_records(
+        getattr(enrollment, "resource_scope_binding_records", ()))
+    validators = parse_resource_validator_records(
+        getattr(enrollment, "resource_validator_records", ()))
     source_observers = service.source_observer_registry
     observer_records = getattr(source_observers, "observers", MappingProxyType({}))
     issuer_records = {
@@ -169,6 +207,8 @@ def compose_root_authority_runtime(
         enrollment.resource_job_records,
         backend_enrollments=backends,
         body_recipes=recipes,
+        scope_bindings=scope_bindings,
+        validators=validators,
         source_issuers=issuer_records,
         source_observers=observer_records,
     )
@@ -216,5 +256,7 @@ def compose_root_authority_runtime(
         boot_epoch=service.authority_epoch,
         backend_enrollments=MappingProxyType(dict(backends)),
         body_recipes=MappingProxyType(dict(recipes)),
+        scope_bindings=MappingProxyType(dict(scope_bindings)),
+        validators=MappingProxyType(dict(validators)),
         job_enrollments=MappingProxyType(dict(jobs)), job_authority=job_authority,
     )
