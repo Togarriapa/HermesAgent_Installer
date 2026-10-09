@@ -29,7 +29,7 @@ class CloudflareClient:
             raise ValueError("Invalid Cloudflare resource identifier")
         return quote(value, safe="")
     def request(self, method: str, path: str, payload: Mapping[str, Any] | None = None) -> Any:
-        if not path.startswith("/") or path.startswith("//") or "?" in path or "#" in path:
+        if path != "/zones?per_page=100&status=active" and (not re.fullmatch(r"/(?:accounts|zones)/[A-Za-z0-9_-]{1,128}(?:/[A-Za-z0-9._/-]*)?", path) or ".." in path):
             raise ValueError("Cloudflare API path must be fixed and relative")
         body = None if payload is None else json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
         try:

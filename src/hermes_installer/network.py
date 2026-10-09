@@ -4,7 +4,11 @@ import multiprocessing, ssl, time
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler, HTTPSHandler
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 @dataclass(frozen=True)
 class HTTPResult:
@@ -18,7 +22,8 @@ class NetworkError(RuntimeError):
 def _urllib_request(url, method, headers, body, socket_timeout, max_bytes):
     request = Request(url, data=body, headers=headers, method=method)
     try:
-        with urlopen(request, timeout=socket_timeout, context=ssl.create_default_context()) as response:
+        opener = build_opener(ProxyHandler({}), HTTPSHandler(context=ssl.create_default_context()), _NoRedirect())
+        with opener.open(request, timeout=socket_timeout) as response:
             data = response.read(max_bytes + 1)
             if len(data) > max_bytes:
                 raise NetworkError("Response exceeded configured size limit")
@@ -41,7 +46,8 @@ def _worker(send, fn, args):
 
 class BoundedNetwork:
     """Run work in a killable child so DNS/connect/read share one wall deadline."""
-    def __init__(self, *, deadline_seconds=8.0, socket_timeout=4.0, max_response_bytes=1_048_576, requester=_urllib_request):
+    def __init__(self, *, deadline_seconds=8.0, socket_timeout=None, max_response_bytes=1_048_576, requester=_urllib_request):
+        socket_timeout = min(4.0, deadline_seconds) if socket_timeout is None else socket_timeout
         if not 0.1 <= deadline_seconds <= 30 or not 0.1 <= socket_timeout <= deadline_seconds or not 1024 <= max_response_bytes <= 8_388_608:
             raise ValueError("Invalid network bounds")
         self.deadline_seconds, self.socket_timeout = deadline_seconds, socket_timeout
