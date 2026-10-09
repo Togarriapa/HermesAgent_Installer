@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "requirement_id": "R0092",
+  "task_id": "SK-R0092",
+  "evidence_id": "EV-R0092",
+  "change": "skills-memory-applications",
+  "source_identity": {
+    "repository": "abi/screenshot-to-code",
+    "commit": "d026163f586dfa8c5c10d28c36edd59a9d3b0e88",
+    "git_tree": "e51f235b7d11da98422f3ad1036b889aec9ea73c"
+  },
+  "allowed_link": {
+    "path": "CLAUDE.md",
+    "original_git_mode": "120000",
+    "original_blob_sha1": "47dc3e3d863cfb5727b87d785d09abf9743c0a72",
+    "original_blob_bytes": 9,
+    "literal_target": "AGENTS.md",
+    "target_git_mode": "100644",
+    "target_blob_sha1": "672da2a499f770cc98f3727feac4b214ddb89649",
+    "target_bytes": 3383,
+    "target_sha256": "0d44a766fe4e9e2c78fae984b867cd7f38a213b523430cea0c02a2165ad13e4a"
+  },
+  "source_preservation": "Verify entire pinned recursive Git tree includingoriginal mode120000/blob/tree IDs, retain originalsymlinkblob bytes and rawsourcevirtualobjectmanifest or exact sourcearchive outside compiledactivation. Neverrewrite originalGit source identity into compiledregularfile tree orclaim sameSHA. Complete trackedsource/lock/helper/license closure preserved; rawsymlinkmetadata doesnotneed dereferencingfilesystem.",
+  "compiled_materialization": "For ONLY exactabovepinned row, verifyrootstable regularAGENTS.md bytes/Gitblob against tree first; materialize regularreadonly CLAUDE.md with IDENTICALtargetbytes mode100644 in newownedcompiledgeneration. No filesystemsymlink/hardlink created/retained in runtimeclosure. Compiledfile records originalGitlink/sourceblob/targetblob/materialization-policyID, actualSHA/size/mode andcompiledclosuredigest separately. Rootverifies source stableinode/bytes/parents/noescape beforeandaftercopy, atomicnewgeneration andno unrelated/useroverwrite. Wholeclosurehashincludescopieddocument andpreservedactualtargetfile.",
+  "denials": [
+    "any other symlink or samepath at anotherunreviewed revision/blob",
+    "absolute/escaping/dotdot/NUL target",
+    "linkchain/cycle or targetsymlink/hardlink/specialfile",
+    "targetmissing/changeddigest/mode/source tree truncation",
+    "casecollision/pathancestorlink/unownedconflict",
+    "executablelink/dynamicmodule/privilegeconfiguration target"
+  ],
+  "trust": "AGENTS.md/CLAUDE.md are untrusted upstream source documentation/data preserved forfullcontent, NEVER thisinstaller governance/skills/authorization or execution instructions. Userengineeringcontract remainssoleauthorized governance. Compiledcopy conveys no extraprivilege or runtimefunctionproof.",
+  "evidence": "VerifyoriginalGitSHA1blobpreimages/tree+sourcehash, exactcopiedbytes anddistinctcompiledhash, fullsourceclosure/lock retained; all denialcases +rootunstablecopy/siblingconflict/recovery tests. Actualscreenshotpipelinefixture/nativevision acceptance separate."
+}
