@@ -208,13 +208,20 @@ class OpenAIIDTokenVerifier:
         now = self.clock()
         subject, issuer = claims.get("sub"), claims.get("iss")
         token_aud = claims.get("aud")
-        audiences = {token_aud} if isinstance(token_aud, str) else set(token_aud) if isinstance(token_aud, list) else set()
+        if isinstance(token_aud, str):
+            audiences = {token_aud}
+        elif isinstance(token_aud, list) and all(isinstance(item, str) for item in token_aud):
+            audiences = set(token_aud)
+        else:
+            audiences = set()
         expiry, not_before, issued = claims.get("exp"), claims.get("nbf", 0), claims.get("iat", now)
-        if (issuer != ISSUER or audience not in audiences or not isinstance(subject, str) or not subject
+        if (isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now)
+                or issuer != ISSUER or audience not in audiences or not isinstance(subject, str) or not subject
                 or isinstance(expiry, bool) or not isinstance(expiry, (int, float)) or not math.isfinite(expiry)
                 or expiry <= now or isinstance(not_before, bool) or not isinstance(not_before, (int, float))
-                or not_before > now or isinstance(issued, bool) or not isinstance(issued, (int, float))
-                or issued > now + 60):
+                or not math.isfinite(not_before) or not_before > now
+                or isinstance(issued, bool) or not isinstance(issued, (int, float))
+                or not math.isfinite(issued) or issued > now + 60):
             raise OAuthAttemptError("OpenAI ID token issuer, audience or lifetime is invalid")
         azp = claims.get("azp")
         if (len(audiences) > 1 and azp != audience) or (azp is not None and azp != audience):
@@ -349,7 +356,7 @@ class ChatGPTPlanAuth:
                 or not secrets.compare_digest(nonce, attempt.nonce)
                 or (expected_subject and not secrets.compare_digest(subject, expected_subject))):
             raise OAuthAttemptError("OpenAI ID token identity, audience, issuer or nonce did not match")
-        email = claims.get("email")
+        email = claims.get("email") if claims.get("email_verified") is True else None
         if email is not None:
             email = _nonempty(email, "verified account email", 512)
         account = ChatGPTAccount(client_id, self.host_id, subject, email, scopes,
