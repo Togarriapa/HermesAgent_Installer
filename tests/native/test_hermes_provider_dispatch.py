@@ -87,29 +87,31 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 profile_home = Path(plugin["home"])
                 materialize_hermes_profile_config(
                     data_root, home_relative=profile_relative, port=int(plugin["port"]), model=MODEL)
-                # Reconcile dependencies only through Hermes' pinned PM runtime
-                # path; runtime-only avoids publishing shell config or launchers.
                 prep_env = {
-                    "HOME": str(Path(scratch)),
-                    "HERMES_HOME": str(profile_home),
-                    "HERMES_AGENT_SOURCE_ROOT": str(source),
-                    "HERMES_RUNTIME_DIR": str(data_path / "tools"),
-                    "PATH": "/usr/bin:/bin",
-                    "UV_NO_CONFIG": "1",
-                    "PYTHONNOUSERSITE": "1",
-                }
-                preparation = subprocess.run(
-                    [str(source / "scripts" / "run-in-hermes-env"), "python3", "-c",
-                     "import ruamel.yaml, openai; print('PM_CORE_DEPENDENCIES_READY')"],
-                    cwd=str(source), env=prep_env, capture_output=True, text=True, timeout=600,
-                )
-                self.assertEqual(preparation.returncode, 0,
-                    "Pinned PM runtime dependency preparation failed: " + preparation.stderr[-3000:])
-                self.assertIn("PM_CORE_DEPENDENCIES_READY", preparation.stdout)
-                selected_venv = committed_venv(source)
-                self.assertIsNotNone(selected_venv, "pinned source has no committed PM environment")
-                command_prefix = venv_command(source, selected_venv)
-                self.assertTrue(command_prefix)
+                "HOME": str(Path(scratch)),
+                "HERMES_HOME": str(profile_home),
+                "HERMES_AGENT_SOURCE_ROOT": str(source),
+                "HERMES_RUNTIME_DIR": str(data_path / "tools"),
+                "PATH": "/usr/bin:/bin",
+                "UV_NO_CONFIG": "1",
+                "PYTHONNOUSERSITE": "1",
+                "PYTHONPATH": str(source),
+            }
+            os.environ["HERMES_HOME"] = str(profile_home)
+            selected_venv = committed_venv(source)
+            self.assertIsNotNone(selected_venv, "pinned source has no committed PM environment")
+            command_prefix = venv_command(source, selected_venv)
+            self.assertTrue(command_prefix)
+            # Do not provision from the acceptance test: a separately completed, pinned
+            # PM repair is a prerequisite, and missing core packages fail before gateway start.
+            preparation = subprocess.run(
+                [*command_prefix, "-c",
+                 "import ruamel.yaml, openai; print('PM_CORE_DEPENDENCIES_READY')"],
+                cwd=str(source), env=prep_env, capture_output=True, text=True, timeout=20,
+            )
+            self.assertEqual(preparation.returncode, 0,
+                "Selected profile PM environment is not ready: " + preparation.stderr[-1500:])
+            self.assertIn("PM_CORE_DEPENDENCIES_READY", preparation.stdout)
             finally:
                 if old_home is None:
                     os.environ.pop("HOME", None)
@@ -190,6 +192,23 @@ def _run_native_worker():
     os.environ["HERMES_HOME"] = str(home)
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     sys.dont_write_bytecode = True
+
+    # The selected PM generation is read-only at process boot; attach its committed
+    # packages before Hermes config/provider imports, matching the supported launcher.
+    from pm.environments import activate_dependencies, committed_venv
+    selected_venv = committed_venv(source)
+    print("NATIVE_WORKER_IDENTITY=" + json.dumps({
+        "executable": sys.executable,
+        "python": sys.version.split()[0],
+        "prefix": sys.prefix,
+        "selected_venv": str(selected_venv) if selected_venv else None,
+    }, sort_keys=True))
+    if selected_venv is None:
+        raise SystemExit("pinned PM environment is not committed for this Hermes source")
+    activate_dependencies(source)
+    import importlib.util
+    if importlib.util.find_spec("ruamel") is None:
+        raise SystemExit("selected PM environment lacks core ruamel package after activation")
 
     from providers import get_provider_profile
     provider_name = "hermes-installer-dispatch"

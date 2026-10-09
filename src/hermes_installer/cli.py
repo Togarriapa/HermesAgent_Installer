@@ -10,6 +10,7 @@ import sqlite3
 import stat
 import contextlib
 import fcntl
+import math
 import shlex
 from dataclasses import asdict
 from pathlib import Path
@@ -201,7 +202,12 @@ def _resume_checkpoint_exists(state_path: Path) -> bool:
         with _quiescent_journal(state_path) as db:
             row = db.execute("SELECT 1 FROM operations WHERE id='installer:selection'").fetchone()
         return row is not None
-    except (OSError, RuntimeError, sqlite3.Error, ValueError):
+    except RuntimeError as exc:
+        # A committed WAL needs SQLite recovery under the exclusive installer lock.
+        # Active writers are also allowed through this structural gate; process_lock
+        # below will reject them without opening the journal.
+        return "journal has an active or uncheckpointed WAL" in str(exc) or "installer operation is active" in str(exc)
+    except (OSError, sqlite3.Error, ValueError):
         return False
 
 
@@ -236,7 +242,12 @@ def _recorded_component_findings(state_path: Path, component: str | None = None)
             report = {}
     except (ValueError, TypeError):
         return (Finding("installer.state", "Recorded installer checkpoint is malformed", OutcomeState.PENDING),)
-    timestamp = float(row["updated_at"])
+    try:
+        timestamp = float(row["updated_at"])
+        if not math.isfinite(timestamp) or timestamp < 0:
+            raise ValueError("invalid checkpoint timestamp")
+    except (ValueError, TypeError, OverflowError):
+        return (Finding("installer.state", "Recorded installer checkpoint is malformed", OutcomeState.PENDING),)
     findings = [
         Finding("installer.operation", f"Recorded installer operation: {row['status']} (updated_at={timestamp:.3f})",
                 OutcomeState.PENDING, {"recorded_at": timestamp, "historical": True}),
@@ -323,11 +334,13 @@ def run(args: argparse.Namespace) -> CommandResult:
                 return CommandResult("resume", OutcomeState.FAILED, "There is no readable installer checkpoint to resume; the state directory was not created.", exit_code=2)
             data_root = OwnedRoot(data_path); data_root.ensure()
             state_root = OwnedRoot(state_path); state_root.ensure()
-            journal = Journal(state_root.path("journal.sqlite3"))
             selection = {"schema_version": config.schema_version, "timezone": config.timezone,
                 "paths": config.paths, "components": config.components, "privacy": config.privacy,
                 "remote_desktop": config.remote_desktop}
             with process_lock(state_root.path("installer.lock")):
+                # Journal initialization can create/recover WAL state; keep it under
+                # the exclusive lock shared by status's immutable-reader gate.
+                journal = Journal(state_root.path("journal.sqlite3"))
                 prior = journal.operation("installer:selection")
                 if args.command == "resume" and prior is None:
                     return CommandResult("resume", OutcomeState.FAILED, "There is no installer operation to resume; no stages were started.", exit_code=2)
@@ -341,7 +354,7 @@ def run(args: argparse.Namespace) -> CommandResult:
                     "config_path": str(args.config) if args.config else None, "commit": report.commit,
                     "generation": report.generation, "agent_ready": report.agent_ready,
                     "desktop_built": report.desktop_built})
-        except (BootstrapError, OwnershipError, OSError, RuntimeError, ValueError) as exc:
+        except (BootstrapError, OwnershipError, OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
             return CommandResult(args.command, OutcomeState.FAILED, str(exc),
                 resume_command=resume_command, exit_code=1)
         findings = (
