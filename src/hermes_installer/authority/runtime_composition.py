@@ -35,7 +35,9 @@ class RootAuthorityRuntime:
     scope_bindings: Mapping[str, Any]
     validators: Mapping[str, Any]
     job_enrollments: Mapping[tuple[str, str], Any]
+    memory_runtime: Any | None
     job_authority: Any | None
+    build_execution_service: Any | None
 
     @property
     def process_manager(self) -> Any:
@@ -93,12 +95,25 @@ class RootAuthorityRuntime:
             close = getattr(component, "close", None)
             if callable(close):
                 close()
+        directories = (self.memory_runtime.get("state_directories", {})
+                       if isinstance(self.memory_runtime, Mapping) else {})
+        for directory in directories.values() if isinstance(directories, Mapping) else ():
+            close = getattr(directory, "close", None)
+            if callable(close):
+                close()
         stop = getattr(self.remote_session_authority, "stop_watchdog", None)
         if callable(stop):
             stop()
 
     def resolve_native_package(self, package_id: str, generation: str) -> Any:
         return self.bindings.resolve_native_package(package_id, generation)
+
+    def resolve_selected_native_principal(
+        self, profile_id: str, generation: str, service_generation_digest: str,
+    ) -> Any:
+        return self.bindings.resolve_selected_native_principal(
+            profile_id, generation, service_generation_digest,
+        )
 
     def resolve_device(self, enrollment_id: str, generation: str) -> Any:
         return self.bindings.resolve_device(enrollment_id, generation)
@@ -206,6 +221,188 @@ def compose_root_authority_runtime(
         source_observers=observer_records,
     )
 
+    memory_runtime = None
+    if enrollment.memory_enrollments:
+        if (bindings.enrollment_catalog is None
+                or not callable(getattr(bindings, "resolve_root_journal", None))
+                or bindings.process_manager is not service.process_effect_handler):
+            raise AuthorityDenied(
+                "authority.composition",
+                "active memory enrollments require the protected service catalog, journal resolver, and shared process custody",
+            )
+        from hermes_installer.memory.broker import build_memory_handlers, build_memory_runtime
+        from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+
+        memory_targets: dict[tuple[str, str, str], Any] = {}
+        by_profile_generation: dict[tuple[str, str], Any] = {}
+        for item in enrollment.memory_enrollments.values():
+            if not isinstance(item, MemoryServiceEnrollment):
+                raise AuthorityDenied("authority.composition", "active memory enrollment is not a typed protected record")
+            principal_resolver = getattr(bindings, "resolve_selected_native_principal", None)
+            catalog_digest = getattr(bindings.enrollment_catalog, "digest", None)
+            if not callable(principal_resolver) or not isinstance(catalog_digest, str):
+                raise AuthorityDenied("authority.composition", "active memory principal binding resolver is unavailable")
+            try:
+                principal = principal_resolver(
+                    item.profile_id, item.service_generation, catalog_digest,
+                )
+            except Exception:
+                raise AuthorityDenied("authority.composition", "active memory principal is stale or absent") from None
+            if (getattr(principal, "principal_id", None) != item.principal_id
+                    or getattr(principal, "profile_id", None) != item.profile_id
+                    or getattr(principal, "namespace_id", None) != item.namespace_identity
+                    or service.profile_generations.get(item.profile_id) != item.service_generation):
+                raise AuthorityDenied("authority.composition", "memory enrollment differs from its selected authority principal")
+            target_key = (item.profile_id, item.namespace_identity, item.provider)
+            prior_target = memory_targets.get(target_key)
+            if prior_target is not None and prior_target != item:
+                raise AuthorityDenied("authority.composition", "active memory target enrollment is ambiguous")
+            memory_targets[target_key] = item
+            profile_key = (item.profile_id, item.service_generation)
+            prior_enrollment = by_profile_generation.get(profile_key)
+            if prior_enrollment is not None and prior_enrollment != item:
+                raise AuthorityDenied("authority.composition", "active memory profile generation resolves ambiguously")
+            by_profile_generation[profile_key] = item
+
+        def resolve_memory_enrollment(profile_id: str, generation: str) -> Any:
+            selected = by_profile_generation.get((profile_id, generation))
+            if selected is None:
+                raise AuthorityDenied("memory.unavailable", "memory enrollment is not active in this generation")
+            return selected
+
+        memory_runtime = build_memory_runtime(
+            memory_targets, service,
+            root_journal_resolver=bindings.resolve_root_journal,
+            expected_active_generation_digest=enrollment.protected_enrollment_digest,
+            vault=vault, service_catalog=bindings.enrollment_catalog,
+            process_manager=bindings.process_manager,
+            enrollment_resolver=resolve_memory_enrollment,
+        )
+        if memory_runtime.get("state_root_ready") is True:
+            step_authority = memory_runtime.get("step_authority")
+            # Derive only fixed handlers whose selected route has a complete
+            # protected compound recipe and a corresponding unique HI12 rule.
+            # Capture remains unavailable until a root-observed event joins it.
+            generated = build_memory_handlers(
+                targets=memory_runtime["targets"],
+                owner_state=memory_runtime["owner_state"],
+                queue=memory_runtime["queue"], ipc=memory_runtime["ipc"],
+                engines=memory_runtime["engines"],
+                eligibility=memory_runtime["eligibility"],
+                maximum_timeout=memory_runtime["maximum_timeout"],
+                compound_executor=memory_runtime["compound_executor"],
+            )
+            for key, handler in generated.items():
+                operation, target = key
+                if operation != "memory.search":
+                    continue
+                target_entry = next((value for value in memory_runtime["targets"].values()
+                                     if "memory:" + value.provider + ":search" == target), None)
+                route_id = target_entry.route_for("search") if target_entry is not None else None
+                connector_key = (("connector.open", target_entry.enrollment.target_id)
+                                 if target_entry is not None and target_entry.enrollment is not None
+                                 else None)
+                installed_connector = (service.handlers.get(connector_key)
+                                       if connector_key is not None else None)
+                internal_handler = (getattr(step_authority, "handle_connector_open", None)
+                                    if step_authority is not None else None)
+                same_connector = (
+                    installed_connector is internal_handler
+                    or (getattr(installed_connector, "__self__", None) is step_authority
+                        and getattr(installed_connector, "__func__", None)
+                        is getattr(internal_handler, "__func__", None))
+                )
+                if (route_id is None or route_id not in target_entry.enrollment.fixed_route_map
+                        or service.memory_step_effect_authority is not step_authority
+                        or not same_connector
+                        or not callable(internal_handler)
+                        or not any(rule.operation == operation and rule.target == target
+                                   for rule in service.rules.values())):
+                    continue
+                if key in service.handlers:
+                    raise AuthorityDenied("authority.composition", "active memory route duplicates an installed handler")
+                service.handlers[key] = handler
+
+    build_execution_service = None
+    build_catalog = getattr(bindings, "build_catalog", None)
+    build_store = getattr(bindings, "build_store", None)
+    process_manager = bindings.process_manager
+    if (build_catalog is not None and build_store is not None
+            and bindings.enrollment_catalog is not None
+            and isinstance(enrollment.artifact_staging_directory, Path)
+            and callable(getattr(bindings, "resolve_build_process_profile", None))):
+        # The root store and process manager are the same protected instances
+        # already held by RootRuntimeBindings; no second store, key, or manager
+        # is created here. Without a root CPython probe, handlers() exposes
+        # Colibri only and leaves Coral unavailable.
+        from .build_execution import (
+            LinuxBuildOutputFactInspector, ProtectedBuildArtifactRootResolver,
+            RootBuildExecutionService,
+        )
+        from hermes_installer.managed_process_custodian import ManagedBuildJobRunner
+
+        artifact_roots = ProtectedBuildArtifactRootResolver(
+            artifact_catalog, enrollment.artifact_staging_directory,
+            owner_uid=vault.expected_uid,
+        )
+        inspector = LinuxBuildOutputFactInspector(
+            toolchain_root_resolver=artifact_roots.toolchain_root,
+            source_root_resolver=artifact_roots.source_root,
+            runtime_probe=None,
+            owner_uid=vault.expected_uid,
+        )
+        candidate_build_execution_service = RootBuildExecutionService(
+            build_catalog=build_catalog,
+            service_catalog=bindings.enrollment_catalog,
+            artifact_catalog=artifact_catalog,
+            artifact_staging_root=enrollment.artifact_staging_directory,
+            launcher=ManagedBuildJobRunner(
+                process_manager,
+                process_profile_resolver=bindings.resolve_build_process_profile,
+            ),
+            fact_inspector=inspector,
+            store=build_store,
+            expected_uid=vault.expected_uid,
+            monotonic=service.monotonic,
+        )
+        installed_build_routes = 0
+        for key, handler in candidate_build_execution_service.handlers().items():
+            operation, target = key
+            # A catalog profile alone is not activation. Install only if the
+            # active service snapshot also grants this exact selected route.
+            selected = False
+            if not any(rule.operation == operation and rule.target == target
+                       for rule in service.rules.values()):
+                continue
+            for protected_build_row in enrollment.protected_build_records:
+                if not isinstance(protected_build_row, Mapping):
+                    continue
+                generation = protected_build_row.get("generation")
+                if (protected_build_row.get("target_id") != target
+                        or not isinstance(generation, str) or not generation):
+                    continue
+                try:
+                    profile = build_catalog.resolve(target, generation)
+                    service_profile = bindings.enrollment_catalog.resolve(
+                        profile.build_service_enrollment_id,
+                        profile.build_service_generation,
+                    )
+                except Exception:
+                    continue
+                if (service_profile.profile_id in service.profile_generations
+                        and service.profile_generations[service_profile.profile_id]
+                        == service_profile.generation):
+                    selected = True
+                    break
+            if not selected:
+                continue
+            if key in service.handlers:
+                raise AuthorityDenied("authority.composition", "build route duplicates an installed handler")
+            service.handlers[key] = handler
+            installed_build_routes += 1
+        if installed_build_routes:
+            build_execution_service = candidate_build_execution_service
+
     job_authority = None
     if jobs:
         if not isinstance(resource_job_store, Path) or not resource_job_store.is_absolute():
@@ -251,5 +448,6 @@ def compose_root_authority_runtime(
         body_recipes=MappingProxyType(dict(recipes)),
         scope_bindings=MappingProxyType(dict(scope_bindings)),
         validators=MappingProxyType(dict(validators)),
-        job_enrollments=MappingProxyType(dict(jobs)), job_authority=job_authority,
+        job_enrollments=MappingProxyType(dict(jobs)), memory_runtime=memory_runtime,
+        job_authority=job_authority, build_execution_service=build_execution_service,
     )
