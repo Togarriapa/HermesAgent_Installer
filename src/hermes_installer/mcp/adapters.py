@@ -154,7 +154,7 @@ class ReadOnlyAdapter:
     async def read(self, name: str, arguments: Mapping, *, timeout: float = 9.0):
         if not 0 < timeout <= 9:
             raise ValueError("MCP read deadline must be in (0, 9] seconds")
-        if not self.selection or name not in self.service.allowed_tools:
+        if not self.selection or name not in self._allowed_tools:
             raise PermissionError("read outside the reviewed tool and selected-resource policy")
         if not self._authorization_ready():
             raise PermissionError("trusted host authorization is unavailable")
