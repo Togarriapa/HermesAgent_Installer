@@ -38,6 +38,7 @@ class _Definition:
     account_requirement: str | None
     metered_cost_usd: Decimal
     build: Callable[[Mapping[str, object], Mapping[str, str], Mapping[str, str]], tuple[ComponentInvocation, ...]]
+    verify: Callable[[object], object] | None = None
 
 
 def _browser_fixture(args, runtime_roots, work_roots):
@@ -48,6 +49,14 @@ def _browser_fixture(args, runtime_roots, work_roots):
         runtime_roots["browser-use"], url, work_roots["browser-use"]
     )
     return (invocation,)
+
+
+def _verify_browser_fixture(result: object) -> object:
+    from hermes_installer.components.browser_use import verify_browser_use_fixture_result
+    try:
+        return verify_browser_use_fixture_result(result)
+    except Exception as exc:
+        raise RuntimeError("Browser Use fixture did not prove navigation, interaction, and screenshot") from exc
 
 
 def _graphify_fixture(args, runtime_roots, work_roots):
@@ -72,6 +81,7 @@ _REGISTERED: Mapping[str, _Definition] = MappingProxyType({
         frozenset({"fixture_url"}),
         frozenset({"component.browser-use.local-fixture", "network:localhost"}),
         2048, 180, "localhost", None, Decimal("0"), _browser_fixture,
+        _verify_browser_fixture,
     ),
     "graphify-code-fixture": _Definition(
         frozenset(),
@@ -167,7 +177,7 @@ class WorkloadScheduler:
                 result = self.run(invocation)
                 if not isinstance(result, Mapping) or result.get("exit_code") != 0:
                     raise RuntimeError("registered workload stage failed; dependent stages were not launched")
-            return result
+            return definition.verify(result) if definition.verify is not None else result
         finally:
             with self._lock:
                 self._active -= 1

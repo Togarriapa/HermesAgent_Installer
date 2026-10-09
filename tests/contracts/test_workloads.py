@@ -11,6 +11,11 @@ class WorkloadSchedulerTests(unittest.TestCase):
 
         def run(invocation):
             self.calls.append(invocation)
+            if invocation.component_id == "browser-use":
+                return {
+                    "exit_code": 0,
+                    "stdout": 'HERMES_BROWSER_USE_PROOF={"navigation":true,"interaction":"interaction-ok","screenshot_bytes":128}\n',
+                }
             return {"exit_code": 0, "output": "fixture-complete"}
 
         self.scheduler = WorkloadScheduler(
@@ -42,7 +47,8 @@ class WorkloadSchedulerTests(unittest.TestCase):
         result = self.scheduler.execute(Workload(
             "browser-fixture", {"fixture_url": "http://127.0.0.1:8765/fixture"}
         ))
-        self.assertEqual("fixture-complete", result["output"])
+        self.assertEqual(True, result["navigation"])
+        self.assertEqual("interaction-ok", result["interaction"])
         invocation = self.calls[0]
         self.assertEqual("/owned/browser/bin/python", invocation.executable)
         self.assertEqual("browser-use", invocation.component_id)
@@ -80,6 +86,19 @@ class WorkloadSchedulerTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "capability denied"):
             scheduler.execute(Workload("browser-fixture", {"fixture_url": "http://127.0.0.1:9000/"}))
         self.assertEqual([], self.calls)
+
+    def test_browser_process_success_without_interaction_screenshot_proof_is_rejected(self):
+        calls = []
+        scheduler = WorkloadScheduler(
+            lambda invocation: calls.append(invocation) or {"exit_code": 0, "stdout": ""},
+            self.scheduler.granted,
+            runtime_roots={"browser-use": "/owned/browser/bin/python"},
+            work_roots={"browser-use": "/owned/work/browser"},
+            memory_budget_mb=2048,
+        )
+        with self.assertRaisesRegex(RuntimeError, "did not prove navigation"):
+            scheduler.execute(Workload("browser-fixture", {"fixture_url": "http://127.0.0.1:8765/fixture"}))
+        self.assertEqual(1, len(calls))
 
     def test_graphify_invocations_are_sequenced_and_dependent_query_stops_on_failure(self):
         self.scheduler.execute(Workload("graphify-code-fixture"))
