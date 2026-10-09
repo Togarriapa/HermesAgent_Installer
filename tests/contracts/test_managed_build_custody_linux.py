@@ -8,6 +8,7 @@ UID, namespaces, mount flags, network denial and terminal cleanup in Ubuntu CI.
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 import platform
@@ -168,24 +169,27 @@ class BuildCustodyLinuxTests(unittest.TestCase):
     def _inputs(self):
         source_rows, source_digest = self._tree(self.source)
         tool_rows, tool_digest = self._tree(self.toolchain)
+        # The root-selected recipe carries only one no-newline literal token;
+        # encoded fixture source is test data, never supplied by a worker.
         code = (
-            "import json,pathlib,socket,time\n"
+            "import json,pathlib,socket,time,os\n"
             "def denied_write(path):\n"
-            " try: open(path,'wb').write(b'x'); return False\n"
+            " try:\n  open(path,'wb').write(b'x'); return False\n"
             " except OSError: return True\n"
             "def can_connect(address):\n"
-            " try: socket.create_connection(address,timeout=.3).close(); return True\n"
+            " try:\n  socket.create_connection(address,timeout=.3).close(); return True\n"
             " except OSError: return False\n"
-            "result={'uid':__import__('os').geteuid(),"
+            "result={'uid':os.geteuid(),"
             "'source_write_denied':denied_write('/run/hermes-installer/build/source/input.txt'),"
             "'toolchain_write_denied':denied_write('/run/hermes-installer/build/toolchain/bin/tool.txt'),"
-            "'loopback_reached':can_connect(('127.0.0.1',PORT)),"
+            f"'loopback_reached':can_connect(('127.0.0.1',{self.loopback_port})),"
             "'external_reached':can_connect(('1.1.1.1',80))}\n"
             "pathlib.Path('/run/hermes-installer/build/output/effects.json').write_text(json.dumps(result))\n"
             "print('build-fixture-complete',flush=True)\n"
             "time.sleep(1.0)\n"
         )
-        code = code.replace("PORT", str(self.loopback_port))
+        encoded = base64.b64encode(code.encode()).decode("ascii")
+        code_arg = f"exec(__import__('base64').b64decode('{encoded}'))"
         return SimpleNamespace(
             target_id=self.target, generation="build-" + self.token,
             service_generation_digest="a" * 64,
@@ -202,7 +206,7 @@ class BuildCustodyLinuxTests(unittest.TestCase):
             builder_artifact_id="ci-builder-" + self.token, builder_sha256=self.builder_sha256,
             builder_executable=self.builder,
             argv_recipe=({"build_path": {"mount_id": "builder", "relative_path": ""}},
-                         {"literal": "-c"}, {"literal": code}),
+                         {"literal": "-c"}, {"literal": code_arg}),
             environment={"LANG": "C", "LC_ALL": "C"}, output_specs={},
             output_root=self.output, output_root_id="output-" + self.token,
             output_owner_uid=self.uid, max_lifetime_seconds=30,
