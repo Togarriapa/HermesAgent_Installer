@@ -308,7 +308,10 @@ class ResourcesRuntimeTests(unittest.TestCase):
         self.assertIsNone(artifact.native_path)
         self.assertFalse(artifact.readiness.materialized)
         self.assertIn(f"{contract.resource_id}: {contract.blocker}.", artifact.blockers)
-        self.assertTrue(any("trusted PluginContext loader" in blocker for blocker in artifact.blockers))
+        if contract.handler_available:
+            self.assertTrue(any("trusted PluginContext loader" in blocker for blocker in artifact.blockers))
+        else:
+            self.assertIn("no reviewed native PluginContext handler is installed", artifact.discoverability)
 
     def test_selected_cron_handler_delegates_only_the_pinned_profile_launch(self):
         with tempfile.TemporaryDirectory() as temp:
