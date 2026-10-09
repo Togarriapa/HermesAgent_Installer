@@ -332,12 +332,10 @@ class ResourcesRuntimeTests(unittest.TestCase):
                 selected_resources=SelectedResourceRegistry((selected,)),
                 profile_targets=Profiles(), authority_service=service,
             )
-            self.assertEqual(
-                selected_resource_effect_blockers(
-                    SelectedResourceRegistry((selected,)), profile_targets=Profiles(),
-                ),
-                {},
+            blockers = selected_resource_effect_blockers(
+                SelectedResourceRegistry((selected,)), profile_targets=Profiles(),
             )
+            self.assertIn("protected timer event issuer", blockers[(selected.operation, selected.target)])
             handler = handlers[(selected.operation, selected.target)]
             request = {"profile_id": "hermes", "scheduled_for": "2026-10-10T01:00:00Z"}
             payload = json.dumps(request, sort_keys=True, separators=(",", ":")).encode()

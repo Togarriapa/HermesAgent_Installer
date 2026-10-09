@@ -868,9 +868,15 @@ def selected_resource_effect_blockers(
             elif selected.profile_id is None or profile_targets is None or profile_targets.resolve_profile(selected.profile_id) is None:
                 reason = "the selected cron profile lacks a custody-resolved pinned Hermes process target"
             else:
-                # Handler factory assembly also needs a fixed root delegation
-                # rule for this exact selected resource and child process.
-                continue
+                # A profile-launch handler is only the effect backend. Until a
+                # root-owned timer producer captures an actual due event and
+                # the job admission path mints a fresh child grant, a selected
+                # cron must not appear operational merely because its target
+                # and launch recipe resolve.
+                reason = (
+                    "the protected timer event issuer and fresh resource-job "
+                    "child-admission handler are not registered"
+                )
         elif selected.identity.kind == "channels":
             reason = "the official Hermes channel connector and protected account enrollment are unavailable"
         elif selected.identity.kind == "webhooks":
