@@ -51,6 +51,7 @@ _AUTHORITY_OPERATIONS = frozenset({
     "process.inspect", "connector.open", "connector.read", "connector.write",
     "connector.close", "native.event.prepare", "native.request.dispatch",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.job.admit", "resource.job.child.admit",
     "resource.orchestrator.recruit",
 })
 

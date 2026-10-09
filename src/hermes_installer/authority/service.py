@@ -61,6 +61,7 @@ _OPERATIONS = frozenset({
     "process.start", "process.status",
     "process.read", "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.job.admit", "resource.job.child.admit",
     "resource.orchestrator.recruit",
     "process.inspect", "connector.open", "connector.read",
     "connector.write", "connector.close", "native.event.prepare", "native.request.dispatch",
@@ -184,7 +185,9 @@ class AuthorityService:
                  process_effect_handler: Any | None = None,
                  native_bridge_broker: Any | None = None,
                  selected_operation_resolver: Callable[[str, str, str, str], Any] | None = None,
-                 remote_session_authority: Any | None = None):
+                 remote_session_authority: Any | None = None,
+                 source_receipt_delivery: Any | None = None,
+                 source_observer_registry: Any | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
@@ -216,6 +219,8 @@ class AuthorityService:
         self.native_bridge_broker = native_bridge_broker
         self.selected_operation_resolver = selected_operation_resolver
         self.remote_session_authority = remote_session_authority
+        self.source_receipt_delivery = source_receipt_delivery
+        self.source_observer_registry = source_observer_registry
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -230,6 +235,21 @@ class AuthorityService:
         self._observed_event_ids: set[str] = set()
         self._lock = threading.RLock()
         self._client_nonces: dict[str, float] = {}
+
+    def attach_source_observer_registry(self, registry: Any) -> None:
+        """Attach one root-built source registry after service construction.
+
+        Registry construction needs the service's epoch and signing methods,
+        so daemon assembly constructs the service first and then attaches the
+        strict protected registry exactly once.
+        """
+        if (self.source_observer_registry is not None
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "consume_observation_proof", None))):
+            raise AuthorityDenied("source.enrollment", "root source observer registry binding is invalid")
+        self.source_observer_registry = registry
+        if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
+            self.source_receipt_delivery = registry
 
     def perform_delegated_effect(self, parent_authorization: EffectAuthorization, *,
                                  delegation_id: str, payload: bytes, peer_pid: int,
@@ -410,6 +430,10 @@ class AuthorityService:
         )
         if not isinstance(observation, VerifiedSourceObservation):
             raise AuthorityDenied("source.observation", "only a root observer proof can issue source evidence")
+        registry = self.source_observer_registry
+        consume_proof = getattr(registry, "consume_observation_proof", None)
+        if not callable(consume_proof) or consume_proof(observation) is not True:
+            raise AuthorityDenied("source.observation", "proof is not issued by the active root source registry")
         context = observation.parent_context
         now = self.monotonic()
         if (observation.authority_epoch != self.authority_epoch
@@ -482,8 +506,20 @@ class AuthorityService:
                 if parent is None:
                     raise AuthorityDenied("source.lineage", "root observer parent receipt handle is unavailable")
                 supplied_parent_ids.add(parent.receipt_id)
-            if not supplied_parent_ids.issubset(parent_ids):
-                raise AuthorityDenied("source.lineage", "root observer parent handle is outside its verified closure")
+            by_parent_id = {item.receipt_id: item for item in self._source_receipt_handles.values()}
+            closure_ids = set(supplied_parent_ids)
+            pending_ids = list(supplied_parent_ids)
+            while pending_ids:
+                parent_id = pending_ids.pop()
+                parent = by_parent_id.get(parent_id)
+                if parent is None:
+                    raise AuthorityDenied("source.lineage", "root observer parent closure is incomplete")
+                for ancestor_id in parent.parent_receipt_ids:
+                    if ancestor_id not in closure_ids:
+                        closure_ids.add(ancestor_id)
+                        pending_ids.append(ancestor_id)
+            if closure_ids != parent_ids:
+                raise AuthorityDenied("source.lineage", "root observer parent handles do not match the verified closure")
             if observation.event_record_id in self._observed_event_ids:
                 raise AuthorityDenied("source.replay", "root observer event was already issued")
             if len(self._observed_event_ids) >= 100_000 or len(self._source_receipt_handles) >= 100_000:
@@ -706,6 +742,23 @@ class AuthorityService:
                 raise AuthorityDenied("native.unavailable", "native provider gateway is not enrolled")
             return broker.dispatch(uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                                    payload=payload, cancelled=cancelled)
+        if operation == "source.receipt.take":
+            delivery = self.source_receipt_delivery
+            if delivery is None or peer_pidfd is None:
+                raise AuthorityDenied("source.delivery", "peer-bound source receipt delivery is unavailable")
+            if (not isinstance(payload, dict) or set(payload) != {"schema", "receipt_handle"}
+                    or payload.get("schema") != 1
+                    or not isinstance(payload.get("receipt_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["receipt_handle"])):
+                raise AuthorityDenied("source.delivery", "source receipt take request is malformed")
+            take = getattr(delivery, "take_source_receipt", None)
+            if not callable(take):
+                raise AuthorityDenied("source.delivery", "peer-bound source delivery adapter is unavailable")
+            result = take(payload["receipt_handle"], peer_uid=uid, peer_pid=peer_pid,
+                          peer_pidfd=peer_pidfd)
+            if str(result) != payload["receipt_handle"]:
+                raise AuthorityDenied("source.delivery", "source receipt delivery adapter returned another handle")
+            return {"schema": 1, "receipt_handle": str(result)}
         if operation in {
             "admit_remote_session", "challenge_remote_session", "renew_remote_session",
             "close_remote_session", "open_remote_connector", "read_remote_connector",
