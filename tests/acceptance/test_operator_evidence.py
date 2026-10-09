@@ -176,6 +176,7 @@ class OperatorEvidenceTests(unittest.TestCase):
         assertions["selected_native_workflow_invoked"] = None
         verified = verify_operator_result(request, result_value(request, enrolled, assertions=assertions), enrolled)
         self.assertEqual(EvidenceState.PENDING, verified.state)
+        self.assertIn("selected_native_workflow_invoked", verified.blocker)
         self.assertIn("not observed", verified.blocker)
         false_assertions = dict(assertions)
         false_assertions["selected_native_workflow_invoked"] = False

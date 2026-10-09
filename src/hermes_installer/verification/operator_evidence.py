@@ -364,9 +364,9 @@ def verify_operator_result(
     if exit_code != 0:
         state, blocker = EvidenceState.FAIL, f"Target probe exited with status {exit_code}"
     elif any(value is False for value in assertions.values()):
-        state, blocker = EvidenceState.FAIL, "One or more required target assertions were observed false"
+        state, blocker = EvidenceState.FAIL, "Required target assertions were observed false: " + ", ".join(sorted(key for key, value in assertions.items() if value is False))
     elif any(value is None for value in assertions.values()):
-        state, blocker = EvidenceState.PENDING, "One or more required target assertions were not observed"
+        state, blocker = EvidenceState.PENDING, "Required target assertions were not observed: " + ", ".join(sorted(key for key, value in assertions.items() if value is None))
     elif not effects:
         state, blocker = EvidenceState.PENDING, "No observed target effects were supplied"
     
