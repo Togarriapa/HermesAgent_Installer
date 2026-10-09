@@ -16,7 +16,7 @@ hermes-installer = "hermes_installer.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-hermes_installer = ["registry/bundle_data/*.json", "registry/bundle_data/*.tar.gz"]
+hermes_installer = ["registry/bundle_data/*.json", "registry/bundle_data/*.tar.gz", "authority/artifact-catalog.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
