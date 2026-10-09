@@ -155,11 +155,11 @@ def build_memory_request(*, provider: str, route_id: str, recipe: Mapping[str, A
     elif provider == "openviking" and route_id == "openviking-find" and body_recipe == "openviking-find-owned-v1":
         if set(body) != {"query", "limit"}:
             raise MemoryRecipeDenied("OpenViking find accepts only query and limit")
-        target_uri = scope_bindings.get("backend_project_ref")
-        target_uri = _nonempty_text(target_uri, "root target URI", 2048)
-        payload = {"query": _nonempty_text(body["query"], "query", 16384),
-                   "limit": _positive_limit(body["limit"]), "target_uri": target_uri,
-                   "telemetry": False}
+        # The provider project reference is opaque enrollment metadata, not
+        # an OpenViking URI. Until the protected resolver supplies a validated
+        # root-owned viking:// target, do not serialize a guessed search scope.
+        raise MemoryRecipeUnavailable(
+            "root-owned OpenViking target URI resolver is not enrolled")
     elif provider == "openviking" and route_id == "openviking-session-capture":
         if body_recipe == "openviking-create-owned-session-v1":
             if body:
