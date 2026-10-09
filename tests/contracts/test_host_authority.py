@@ -635,6 +635,68 @@ class NativeEventClientContracts(unittest.TestCase):
         self.assertEqual(client.take_source_receipt("h" * 40), "h" * 40)
         self.assertEqual(requests, [("source.receipt.take", payload)])
 
+    def test_native_invocation_rpcs_bind_exact_peer_and_argument_digest(self):
+        import base64
+        import hashlib
+
+        binding = PrincipalBinding(1234, "principal:native", "profile:native", "namespace:native",
+                                   frozenset({"native.request.dispatch"}))
+        arguments = b'{"prompt":"fixture"}'
+        calls = []
+
+        class Registry:
+            def begin_native_invocation(self, **kwargs):
+                calls.append(("begin", kwargs))
+                return {
+                    "schema": 1, "invocation_handle": "i" * 40, "package_id": "pkg:fixture",
+                    "profile_id": "profile:native", "generation": "generation:1",
+                    "adapter_id": "adapter:fixture", "action_id": "action:fixture",
+                    "arguments_sha256": hashlib.sha256(arguments).hexdigest(),
+                    "parent_closure_digest": "a" * 64, "expires_monotonic": time.monotonic() + 10,
+                    "binding_sha256": "b" * 64,
+                }
+
+            def get_invocation_contexts(self, **kwargs):
+                calls.append(("contexts", kwargs))
+                return {
+                    "schema": 1, "invocation_handle": "i" * 40,
+                    "source_receipt_handles": ["r" * 40],
+                    "parent_closure_digest": "a" * 64,
+                    "arguments_sha256": hashlib.sha256(arguments).hexdigest(),
+                    "expires_monotonic": time.monotonic() + 10,
+                }
+
+        service = AuthorityService(
+            signing_key=b"n" * 32, key_id="native-invocation-fixture",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={}, policy=FixturePolicy(),
+            native_invocation_registry=Registry(),
+        )
+        begin = service._dispatch(binding.uid, 123, 8, "native.invocation.begin", {
+            "schema": 1, "producer_context_handle": "p" * 40,
+            "observed_call_handle": "c" * 40,
+            "canonical_arguments_b64": base64.b64encode(arguments).decode("ascii"),
+        }, cancelled=lambda: False)
+        contexts = service._dispatch(binding.uid, 123, 8, "native.invocation.contexts", {
+            "schema": 1, "invocation_handle": begin["invocation_handle"],
+        }, cancelled=lambda: False)
+        self.assertEqual(begin["arguments_sha256"], hashlib.sha256(arguments).hexdigest())
+        self.assertEqual(contexts["source_receipt_handles"], ["r" * 40])
+        self.assertEqual(calls[0][1]["peer_pidfd"], 8)
+        self.assertEqual(calls[0][1]["canonical_arguments"], arguments)
+        self.assertEqual(calls[1][1]["peer_uid"], binding.uid)
+
+    def test_native_invocation_client_rejects_mismatched_argument_binding(self):
+        client = AuthorityClient(Path("/unused"), server_uid=0)
+        client._rpc = lambda *_args, **_kwargs: {
+            "schema": 1, "invocation_handle": "i" * 40, "package_id": "pkg:fixture",
+            "profile_id": "profile:native", "generation": "generation:1",
+            "adapter_id": "adapter:fixture", "action_id": "action:fixture",
+            "arguments_sha256": "a" * 64, "parent_closure_digest": "b" * 64,
+            "expires_monotonic": time.monotonic() + 10, "binding_sha256": "c" * 64,
+        }
+        with self.assertRaises(AuthorityDenied):
+            client.begin_native_invocation("p" * 40, "c" * 40, b"{}")
+
 
 class RootResolvedProcessControlContracts(unittest.TestCase):
     def test_control_selects_target_and_binds_exact_nested_body(self):
