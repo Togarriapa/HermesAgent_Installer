@@ -21,7 +21,7 @@ class ApplicationHandlerTests(unittest.TestCase):
             "pyproject.toml": manifest.encode(),
             "uv.lock": lock.encode(),
         })
-        self.assertEqual("source-locks-reviewed; functional-probe-pending", result.evidence_state)
+        self.assertEqual("lockfile-integrity-reviewed; functional-probe-pending", result.evidence_state)
         self.assertEqual("5b74d7d74911cf435c8f1636b6f96ea202cc6246", result.source_revision)
         self.assertEqual(1, len(result.lock_digests))
         self.assertFalse(result.blockers)
@@ -38,7 +38,7 @@ class ApplicationHandlerTests(unittest.TestCase):
         hyper = review_isolated_runtime("hyperframes", {
             "package.json": b"{}",
             "packages/cli/package.json": b'{"engines":{"node":">=22"}}',
-            "bun.lock": b'{"lockfileVersion":1}',
+            "bun.lock": b'{"lockfileVersion":1,"workspaces":{"":{"name":"hyperframes"},"packages/cli":{"name":"@hyperframes/cli"}},"packages":{"react":["react@19.0.0"]}}',
         })
         self.assertEqual("source-locks-reviewed; functional-probe-pending", hyper.evidence_state)
         omni = review_isolated_runtime("omniroute", {

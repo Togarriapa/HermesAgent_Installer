@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import json
 import tomllib
+
+from hermes_installer.components.isolated_locks import lockfile_errors
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Mapping, Protocol
@@ -108,6 +110,7 @@ def review_isolated_runtime(component_id: str, files: Mapping[str, bytes]) -> Ru
             blockers.append(f"isolated dependency lock is empty: {path}")
             continue
         locks.append((path, hashlib.sha256(body).hexdigest()))
+        blockers.extend(f"{path}: {problem}" for problem in lockfile_errors(path, body))
 
     def toml(path: str) -> dict:
         try:
@@ -157,7 +160,7 @@ def review_isolated_runtime(component_id: str, files: Mapping[str, bytes]) -> Ru
             blockers.append("Hyperframes CLI package.json is invalid")
         if package.get("engines", {}).get("node") != ">=22":
             blockers.append("Hyperframes CLI Node engine constraint differs from the reviewed pinned manifest")
-    state = "source-locks-reviewed; functional-probe-pending" if not blockers else "pending-isolated-runtime"
+    state = "lockfile-integrity-reviewed; functional-probe-pending" if not blockers else "pending-isolated-runtime"
     return RuntimeReview(
         component_id=component_id,
         source_url=contract.selected_source_url,
