@@ -223,7 +223,8 @@ def _recorded_component_findings(state_path: Path, component: str | None = None)
                 "SELECT kind,state,COUNT(*) AS count FROM owned_resources GROUP BY kind,state ORDER BY kind,state"
             ).fetchall()
     except RuntimeError as exc:
-        detail = "Installer operation is active" if "active" in str(exc) else "Installer journal has uncheckpointed changes"
+        detail = ("Installer operation is active" if str(exc) == "installer operation is active"
+                  else "Installer journal has uncheckpointed changes")
         return (Finding("installer.state", detail + "; status is indeterminate until it is quiescent", OutcomeState.PENDING),)
     except (OSError, sqlite3.Error, ValueError):
         return (Finding("installer.state", "No safely readable, quiescent installer checkpoint is available", OutcomeState.PENDING),)
