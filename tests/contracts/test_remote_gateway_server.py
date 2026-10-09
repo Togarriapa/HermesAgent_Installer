@@ -3,33 +3,44 @@ import unittest
 from unittest.mock import patch
 from hermes_installer.remote.gateway import GatewayDenied
 from hermes_installer.remote.jwks import JWKSCache
-class FakeResponse:
- status=200
- def __init__(self,body,headers=None):self.body=body;self.headers=headers or {"Content-Length":str(len(body))}
- def getheader(self,key):return self.headers.get(key)
- def read(self,n):return self.body[:n]
-class FakeConnection:
- def __init__(self,host,port,timeout,context,response):self.host,self.port,self.timeout,self.context,self.response=host,port,timeout,context,response;self.requested=None;self.closed=False
- def request(self,*a,**kw):self.requested=(a,kw)
- def getresponse(self):return self.response
- def close(self):self.closed=True
+from hermes_installer.network import HTTPResult
+
+class FakeNetwork:
+ def __init__(self,**kwargs):self.options=kwargs;self.requested=None;self.result=None
+ def request(self,url,*,method,headers,cancelled=None):
+  self.requested=(url,method,headers)
+  if cancelled is not None and cancelled():raise GatewayDenied("cancelled")
+  return self.result
+
 class RemoteJWKSUnitTests(unittest.TestCase):
  def test_issuer_and_key_set_are_fixed_bounded_and_cached(self):
   with self.assertRaises(ValueError):JWKSCache("https://evil.example")
   body=b'{"keys":[{"kty":"RSA","kid":"kid1","use":"sig","alg":"RS256","n":"a","e":"AQAB"},{"kty":"oct","kid":"bad"}]}'
-  response=FakeResponse(body);seen=[]
-  def factory(host,port,timeout,context):
-   c=FakeConnection(host,port,timeout,context,response);seen.append(c);return c
+  seen=[]
+  def factory(**kw):
+   network=FakeNetwork(**kw);network.result=HTTPResult(200,{"Content-Length":str(len(body))},body);seen.append(network);return network
   cache=JWKSCache("https://team.cloudflareaccess.com")
-  with patch("hermes_installer.remote.jwks.http.client.HTTPSConnection",factory):
-   first=cache.load();self.assertEqual(set(first),{"kid1"});self.assertEqual(cache.key("kid1")["kty"],"RSA");self.assertEqual(len(seen),1)
-   self.assertEqual(seen[0].requested[0][1],"/cdn-cgi/access/certs");self.assertTrue(seen[0].closed)
-  with self.assertRaises(GatewayDenied):cache.key("missing")
- def test_jwks_redirect_and_oversize_are_rejected(self):
-  for response in (FakeResponse(b'{"keys":[]}',{"Location":"https://evil.example"}),FakeResponse(b'{}',{"Content-Length":"999999"})):
+  with patch("hermes_installer.remote.jwks.BoundedNetwork",factory):
+   first=cache.load();self.assertEqual(set(first),{"kid1"});self.assertEqual(cache.key("kid1")["kty"],"RSA")
+   self.assertEqual(len(seen),1);self.assertEqual(seen[0].requested[0],"https://team.cloudflareaccess.com/cdn-cgi/access/certs")
+   with self.assertRaises(GatewayDenied):cache.key("missing")
+   self.assertEqual(len(seen),2)
+   with self.assertRaises(GatewayDenied):cache.key("still-missing")
+   self.assertEqual(len(seen),2)
+ def test_jwks_redirect_compression_and_oversize_are_rejected(self):
+  cases=(
+   HTTPResult(302,{"Location":"https://evil.example"},b"{}"),
+   HTTPResult(200,{"Content-Encoding":"gzip"},b"{}"),
+   HTTPResult(200,{"Content-Length":"999999"},b"{}"),
+   HTTPResult(200,{},b"x"*(262144+1)),
+  )
+  for result in cases:
+   def factory(**kw):
+    network=FakeNetwork(**kw);network.result=result;return network
    cache=JWKSCache("https://team.cloudflareaccess.com")
-   with patch("hermes_installer.remote.jwks.http.client.HTTPSConnection",lambda *a,**k:FakeConnection(*a,response=response,**k)):
+   with patch("hermes_installer.remote.jwks.BoundedNetwork",factory):
     with self.assertRaises(GatewayDenied):cache.load()
+
 @unittest.skipUnless(importlib.util.find_spec("aiohttp"),"isolated remote aiohttp runtime not installed")
 class RemoteGatewayPacketTests(unittest.IsolatedAsyncioTestCase):
  async def asyncSetUp(self):
@@ -49,6 +60,17 @@ class RemoteGatewayPacketTests(unittest.IsolatedAsyncioTestCase):
   from aiohttp.client_exceptions import WSServerHandshakeError
   with self.assertRaises(WSServerHandshakeError):await self.client.ws_connect("/client/?lease=forged",headers=host)
 
+
+class FixtureVerifier:
+ def __init__(self,monotonic,wall,membership):
+  self.monotonic,self.wall,self.membership=monotonic,wall,membership
+  self.actions=[]
+ async def authorize(self,*,action,session_id,access_jwt,expected):
+  self.actions.append((action,session_id))
+  if not self.membership[0]:raise GatewayDenied("fixture policy removed")
+  start=self.monotonic[0];jwt_deadline=start+max(0,expected.expires_at-self.wall)
+  from hermes_installer.remote.verifier_ipc import PolicyGrant
+  return PolicyGrant(action,session_id,expected,start,start,jwt_deadline,min(start+60,jwt_deadline),"a"*64,"b"*40)
 
 CRYPTO_AVAILABLE=importlib.util.find_spec("jwt") is not None and importlib.util.find_spec("cryptography") is not None
 @unittest.skipUnless(CRYPTO_AVAILABLE and importlib.util.find_spec("aiohttp"),"install isolated remote lock before HTTP/WebSocket cohort")
@@ -79,7 +101,8 @@ class RemoteGatewayAuthorizedFlowTests(unittest.IsolatedAsyncioTestCase):
   upstream_app.router.add_get("/index.html",index);upstream_app.router.add_get("/css/client.css",css);upstream_app.router.add_get("/",echo)
   self.upstream=TestServer(upstream_app);await self.upstream.start_server()
   self.membership=[True]
-  runtime=GatewayRuntime(self.policy,upstream=str(self.upstream.make_url("/")),monotonic=lambda:self.monotonic[0],policy_current=lambda email:self.membership[0] and email=="owner@example.net",max_lease_seconds=1,watchdog_seconds=1)
+  verifier=FixtureVerifier(lambda:self.monotonic[0],self.wall,self.membership)
+  runtime=GatewayRuntime(self.policy,upstream=str(self.upstream.make_url("/")),monotonic=lambda:self.monotonic[0],verifier=verifier,max_lease_seconds=1,watchdog_seconds=1)
   self.gateway=TestClient(TestServer(create_app(runtime)));await self.gateway.start_server()
   self.headers={"Host":self.policy.hostname,"Origin":"https://"+self.policy.hostname,"Cf-Access-Jwt-Assertion":self.token}
  async def asyncTearDown(self):

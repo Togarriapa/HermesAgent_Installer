@@ -5,6 +5,7 @@ from dataclasses import dataclass,field
 from typing import Callable
 from urllib.parse import quote,unquote,urlsplit
 from .gateway import GatewayDenied,RemotePolicy,SocketLease,authorize_request,websocket_target
+from .verifier_ipc import PolicyGrant, PolicyVerifierClient
 
 def canonical_asset(raw:str)->str:
     path=raw.split("?",1)[0]
@@ -23,7 +24,7 @@ class GatewayRuntime:
     profile_id:str="hermes-desktop"
     clock:Callable[[],float]=time.time
     monotonic:Callable[[],float]=time.monotonic
-    policy_current:Callable[[str],bool]|None=None
+    verifier:PolicyVerifierClient|None=None
     max_lease_seconds:int=60
     max_active_sockets:int=4
     watchdog_seconds:int=5
@@ -35,29 +36,38 @@ class GatewayRuntime:
         if self.profile_id!="hermes-desktop":raise ValueError("only the pinned Hermes Desktop profile may be exposed")
     def principal(self,request,method,path):
         return authorize_request(token=request.headers.get("Cf-Access-Jwt-Assertion"),policy=self.policy,method=method,path=path,host=request.headers.get("Host",""),origin=request.headers.get("Origin"),now=self.clock)
-    def assert_current_access(self, principal):
-        authority = self.policy_current
-        try:
-            if authority is None or authority(principal.email) is not True:
-                raise GatewayDenied("fresh Access policy authority denied")
-        except GatewayDenied:
-            raise
-        except Exception:
-            raise GatewayDenied("fresh Access policy authority unavailable") from None
-    def create_lease(self,principal,*,current_access_checked=False):
-        if not current_access_checked:self.assert_current_access(principal)
-        key=secrets.token_urlsafe(24)
+    async def authorize_current(self,*,action,session_id,access_jwt,principal):
+        if self.verifier is None:raise GatewayDenied("isolated current Access verifier is not configured")
+        grant=await self.verifier.authorize(action=action,session_id=session_id,access_jwt=access_jwt,expected=principal)
+        if not isinstance(grant,PolicyGrant) or grant.action!=action or grant.session_id!=session_id or grant.principal.token_fingerprint!=principal.token_fingerprint:
+            raise GatewayDenied("isolated Access verifier returned an unbound decision")
+        return grant
+    def create_lease(self,principal,grant,session_id):
+        if (grant.action!="issue" or grant.session_id!=session_id or
+                grant.principal.token_fingerprint!=principal.token_fingerprint or session_id in self.leases):
+            raise GatewayDenied("session grant binding mismatch")
+        key=session_id
         for old_key,old in tuple(self.leases.items()):
             try:old.authorize_frame(now=self.monotonic())
             except GatewayDenied:self.leases.pop(old_key,None)
         if len(self.leases)>=self.max_active_sockets or any(x.principal.subject==principal.subject for x in self.leases.values()):raise GatewayDenied("profile session limit reached")
-        lease=SocketLease.create(principal,now=self.monotonic(),wall_now=self.clock(),requested_seconds=self.max_lease_seconds)
+        lease=SocketLease.create(principal,now=self.monotonic(),wall_now=self.clock(),requested_seconds=self.max_lease_seconds,
+            authorization_started_monotonic=grant.observed_start_monotonic,
+            authorization_deadline_monotonic=grant.valid_until_monotonic,
+            jwt_deadline_monotonic=grant.jwt_deadline_monotonic)
         self.leases[key]=lease;return key,lease
-    def renew(self,key,principal,challenge,*,current_access_checked=False):
+    def renew(self,key,principal,challenge,grant):
         lease=self.leases.get(key)
         if lease is None:raise GatewayDenied("unknown lease")
-        if not current_access_checked:self.assert_current_access(principal)
-        lease.renew(principal,challenge=challenge,now=self.monotonic(),wall_now=self.clock(),policy_current=lambda email: email==principal.email,requested_seconds=self.max_lease_seconds);return lease
+        if (grant.action!="renew" or grant.session_id!=key or
+                grant.principal.token_fingerprint!=principal.token_fingerprint):
+            raise GatewayDenied("renewal grant binding mismatch")
+        lease.renew(principal,challenge=challenge,now=self.monotonic(),wall_now=self.clock(),
+            policy_current=lambda email:email==grant.principal.email,requested_seconds=self.max_lease_seconds,
+            authorization_started_monotonic=grant.observed_start_monotonic,
+            authorization_deadline_monotonic=grant.valid_until_monotonic,
+            jwt_deadline_monotonic=grant.jwt_deadline_monotonic)
+        return lease
 
 _BOOTSTRAP="""<!doctype html><meta charset=utf-8><title>Hermes Desktop</title><p id=s>Starting protected Desktop session…</p><script>
 (async()=>{try{const r=await fetch('/session',{method:'POST',cache:'no-store',credentials:'same-origin'});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-lease',x.lease_id);sessionStorage.setItem('hd-challenge',x.renewal_challenge);location.replace('/client/index.html?path='+encodeURIComponent('/client/?lease='+encodeURIComponent(x.lease_id)+'&profile=hermes-desktop&nonce='+encodeURIComponent(x.socket_nonce)))}catch(e){document.getElementById('s').textContent='Access authorization required.'}})();
@@ -67,13 +77,6 @@ _RENEW="""<script>(()=>{let busy=false;async function renew(){if(busy)return;bus
 def create_app(runtime:GatewayRuntime):
     from aiohttp import ClientSession,web,WSMsgType
     app=web.Application(client_max_size=2048);app["runtime"]=runtime
-    async def fresh_access(principal):
-        try:
-            await asyncio.wait_for(asyncio.to_thread(runtime.assert_current_access,principal),timeout=9)
-        except GatewayDenied:
-            raise
-        except Exception:
-            raise GatewayDenied("fresh Access policy authority unavailable") from None
     async def startup(a):a["client"]=ClientSession(timeout=__import__("aiohttp").ClientTimeout(total=30,connect=3,sock_read=10),connector=__import__("aiohttp").TCPConnector(limit=12,limit_per_host=8),trust_env=False,auto_decompress=False)
     async def cleanup(a):await a["client"].close()
     @web.middleware
@@ -86,8 +89,10 @@ def create_app(runtime:GatewayRuntime):
     async def create(request):
         p=runtime.principal(request,"POST","/session")
         if request.can_read_body:raise GatewayDenied("request body forbidden")
-        await fresh_access(p)
-        key,lease=runtime.create_lease(p,current_access_checked=True)
+        token=request.headers.get("Cf-Access-Jwt-Assertion","")
+        session_id=secrets.token_urlsafe(24)
+        grant=await runtime.authorize_current(action="issue",session_id=session_id,access_jwt=token,principal=p)
+        key,lease=runtime.create_lease(p,grant,session_id)
         return web.json_response({"lease_id":key,"profile_id":runtime.profile_id,"renewal_challenge":lease.renewal_challenge,"socket_nonce":lease.socket_nonce,"expires_in":max(0,int(lease.expires_at-runtime.monotonic()))},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
     async def renew(request):
         p=runtime.principal(request,"POST","/renew")
@@ -95,8 +100,9 @@ def create_app(runtime:GatewayRuntime):
         try:body=await asyncio.wait_for(request.json(),timeout=3)
         except Exception:raise GatewayDenied("invalid renewal body") from None
         if not isinstance(body,dict) or set(body)!={"lease_id","challenge"} or not all(isinstance(body[x],str) for x in body):raise GatewayDenied("invalid renewal fields")
-        await fresh_access(p)
-        lease=runtime.renew(body["lease_id"],p,body["challenge"],current_access_checked=True)
+        token=request.headers.get("Cf-Access-Jwt-Assertion","")
+        grant=await runtime.authorize_current(action="renew",session_id=body["lease_id"],access_jwt=token,principal=p)
+        lease=runtime.renew(body["lease_id"],p,body["challenge"],grant)
         return web.json_response({"renewal_challenge":lease.renewal_challenge,"expires_in":max(0,int(lease.expires_at-runtime.monotonic()))},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
     async def client(request):
         if request.path=="/client/" and request.headers.get("Upgrade","").casefold()=="websocket":return await stream(request)
@@ -141,7 +147,9 @@ def create_app(runtime:GatewayRuntime):
         if set(request.query)!={"lease","profile","nonce"} or request.query["profile"]!=runtime.profile_id:raise GatewayDenied("socket profile/lease binding required")
         key=request.query["lease"];lease=runtime.leases.get(key)
         if lease is None or (lease.principal.subject,lease.principal.email)!=(p.subject,p.email):raise GatewayDenied("socket/principal mismatch")
-        await fresh_access(p)
+        token=request.headers.get("Cf-Access-Jwt-Assertion","")
+        grant=await runtime.authorize_current(action="socket",session_id=key,access_jwt=token,principal=p)
+        if grant.valid_until_monotonic<=runtime.monotonic():raise GatewayDenied("socket policy grant expired")
         lease.claim_socket(request.query["nonce"],now=runtime.monotonic())
         from yarl import URL
         up=urlsplit(runtime.upstream);wsurl=URL.build(scheme="ws",host=up.hostname,port=up.port or 80,path="/")

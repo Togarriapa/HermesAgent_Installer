@@ -23,19 +23,24 @@ class Principal:
  subject:str
  expires_at:float
  token_fingerprint:str=field(repr=False)
-def validate_access_jwt(token:str,*,policy:RemotePolicy,now:Callable[[],float]=time.time)->Principal:
+def validate_access_jwt(token:str,*,policy:RemotePolicy,now:Callable[[],float]=time.time,cancel_event=None,deadline_monotonic:float|None=None)->Principal:
  try:
   import jwt
   from jwt import PyJWK
+  if cancel_event is not None and cancel_event.is_set():raise GatewayDenied("Access verification cancelled")
+  if deadline_monotonic is not None and time.monotonic()>=deadline_monotonic:raise GatewayDenied("Access verification deadline expired")
   if not isinstance(token,str) or len(token)>16384 or token.count(".")!=2:raise GatewayDenied("invalid Access token")
   hdr=jwt.get_unverified_header(token);kid=hdr.get("kid")
   if hdr.get("alg")!="RS256" or hdr.get("crit") is not None or any(k in hdr for k in ("jku","jwk","x5u","x5c")) or not isinstance(kid,str) or not 1<=len(kid)<=128:raise GatewayDenied("unsupported Access token algorithm")
-  jwk=policy.jwks.key(kid) if callable(getattr(policy.jwks,"key",None)) else policy.jwks.get(kid)
+  resolver=getattr(policy.jwks,"key",None)
+  jwk=resolver(kid,cancel_event=cancel_event,deadline_monotonic=deadline_monotonic) if callable(resolver) else policy.jwks.get(kid)
   if not isinstance(jwk,Mapping) or jwk.get("kty")!="RSA" or jwk.get("alg") not in (None,"RS256") or jwk.get("use") not in (None,"sig"):raise GatewayDenied("Access signing key unavailable")
   key=PyJWK.from_dict(dict(jwk),algorithm="RS256").key
   claims=jwt.decode(token,key,algorithms=["RS256"],issuer=policy.issuer,audience=None,leeway=0,options={"require":["iss","aud","exp","nbf","iat","sub","email"],"verify_signature":True,"verify_exp":False,"verify_nbf":False,"verify_iat":False,"verify_aud":False})
  except GatewayDenied:raise
  except Exception:raise GatewayDenied("Access token validation failed") from None
+ if cancel_event is not None and cancel_event.is_set():raise GatewayDenied("Access verification cancelled")
+ if deadline_monotonic is not None and time.monotonic()>=deadline_monotonic:raise GatewayDenied("Access verification deadline expired")
  ts=now()
  try:
   if isinstance(ts,bool) or not isinstance(ts,(int,float)):raise ValueError
@@ -74,14 +79,18 @@ class SocketLease:
  _closed:bool=False
  socket_consumed:bool=False
  @classmethod
- def create(cls,principal:Principal,*,now:float,wall_now:float,requested_seconds:int=60):
+ def create(cls,principal:Principal,*,now:float,wall_now:float,requested_seconds:int=60,authorization_started_monotonic:float|None=None,authorization_deadline_monotonic:float|None=None,jwt_deadline_monotonic:float|None=None):
   seconds=min(MAX_LEASE_SECONDS,max(1,int(requested_seconds)));remaining=principal.expires_at-wall_now
   if remaining<=0:raise GatewayDenied("Access token expired")
-  expiry=now+min(seconds,remaining)
-  return cls(principal,secrets.token_urlsafe(24),expiry,now+remaining)
+  start=now if authorization_started_monotonic is None else float(authorization_started_monotonic)
+  jwt_deadline=now+remaining if jwt_deadline_monotonic is None else float(jwt_deadline_monotonic)
+  policy_deadline=start+MAX_LEASE_SECONDS if authorization_deadline_monotonic is None else float(authorization_deadline_monotonic)
+  expiry=min(start+seconds,policy_deadline,jwt_deadline)
+  if not all(math.isfinite(x) for x in (start,jwt_deadline,policy_deadline,expiry)) or expiry<=now:raise GatewayDenied("Access authorization grant is expired or malformed")
+  return cls(principal,secrets.token_urlsafe(24),expiry,jwt_deadline)
  def authorize_frame(self,*,now:float):
   if self._closed or now>=self.expires_at or now>=self.max_jwt_expiry:self._closed=True;raise GatewayDenied("WebSocket authorization lease expired")
- def renew(self,fresh:Principal,*,challenge:str,now:float,wall_now:float,policy_current:Callable[[str],bool]|None,requested_seconds:int=60):
+ def renew(self,fresh:Principal,*,challenge:str,now:float,wall_now:float,policy_current:Callable[[str],bool]|None,requested_seconds:int=60,authorization_started_monotonic:float|None=None,authorization_deadline_monotonic:float|None=None,jwt_deadline_monotonic:float|None=None):
   self.authorize_frame(now=now)
   try:
    member=policy_current is not None and policy_current(fresh.email) is True
@@ -91,7 +100,13 @@ class SocketLease:
    self._closed=True;raise GatewayDenied("fresh protected HTTP membership renewal was denied")
   remaining=fresh.expires_at-wall_now
   if remaining<=0:self._closed=True;raise GatewayDenied("renewal token expired")
-  self.principal=fresh;self.max_jwt_expiry=now+remaining;self.expires_at=min(now+min(MAX_LEASE_SECONDS,max(1,int(requested_seconds))),self.max_jwt_expiry);self._renew_nonce=secrets.token_urlsafe(32)
+  start=now if authorization_started_monotonic is None else float(authorization_started_monotonic)
+  jwt_deadline=now+remaining if jwt_deadline_monotonic is None else float(jwt_deadline_monotonic)
+  policy_deadline=start+MAX_LEASE_SECONDS if authorization_deadline_monotonic is None else float(authorization_deadline_monotonic)
+  expiry=min(start+min(MAX_LEASE_SECONDS,max(1,int(requested_seconds))),policy_deadline,jwt_deadline)
+  if not all(math.isfinite(x) for x in (start,jwt_deadline,policy_deadline,expiry)) or expiry<=now:
+   self._closed=True;raise GatewayDenied("fresh authorization grant is expired or malformed")
+  self.principal=fresh;self.max_jwt_expiry=jwt_deadline;self.expires_at=expiry;self._renew_nonce=secrets.token_urlsafe(32)
  def claim_socket(self,nonce:str,*,now:float):
   self.authorize_frame(now=now)
   if self.socket_consumed or not secrets.compare_digest(nonce,self.socket_nonce):
