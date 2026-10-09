@@ -453,20 +453,37 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
         engines: Mapping[str,PrivateEngine]|None=None,
         eligibility: Callable[[MemoryTarget,str,HostContext],bool]|None=None,
         maximum_timeout: float=20.0):
-    """Return fixed root handler registrations, one exact target per provider/profile."""
+    """Return one fixed handler per provider/action; signed context resolves profile.
+
+    Authority targets intentionally omit profile IDs, so the service selects the
+    enrolled immutable instance only from its verified HostContext. No request
+    field can select a sibling service or data root.
+    """
     if not 0 < maximum_timeout <= 30: raise ValueError("timeout must be <=30 seconds")
-    result={}
-    for key,target in targets.items():
+    table = dict(targets)
+    for key, target in table.items():
         if key != (target.profile_id,target.namespace_id,target.provider):
             raise ValueError("target map key differs from immutable enrollment")
+    result={}
+    engines = dict(engines or {})
+    for provider in PROVIDERS:
+        if not any(target.provider == provider for target in table.values()):
+            continue
         for action in ACTIONS:
-            opaque="memory:"+target.provider+":"+action
+            opaque="memory:"+provider+":"+action
             binding=("memory."+action,opaque)
-            if binding in result: raise ValueError("duplicate protected memory target")
-            result[binding]=_handler(target,action,ipc=ipc,queue=queue,owner_state=owner_state,
-                engines=engines or {},eligibility=eligibility,maximum_timeout=maximum_timeout)
+            def dispatch(*, context: HostContext, authorization: EffectAuthorization,
+                         payload: bytes, timeout: float, peer_pid: int,
+                         cancelled: Callable[[], bool], _provider=provider, _action=action):
+                target=table.get((context.profile_id,context.namespace_id,_provider))
+                if target is None:
+                    return _reply({"error":"no enrolled memory target for signed profile"},403)
+                return _handler(target,_action,ipc=ipc,queue=queue,owner_state=owner_state,
+                    engines=engines,eligibility=eligibility,maximum_timeout=maximum_timeout)(
+                        context=context,authorization=authorization,payload=payload,
+                        timeout=timeout,peer_pid=peer_pid,cancelled=cancelled)
+            result[binding]=dispatch
     return result
-
 
 class MemoryJobWorker:
     """Single durable worker; authority callback fresh-authorizes each stage."""
