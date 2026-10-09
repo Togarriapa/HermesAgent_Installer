@@ -1538,7 +1538,7 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("resource.task_admission", "root task admission or prompt digest is invalid")
         if (profile.generation != task_handle.process_generation
                 or profile.enrollment_id != task_handle.process_enrollment_id
-                or self.profiles.get(profile.profile_id) is not profile
+                or self.profiles.get(profile.profile_id) != profile
                 or not isinstance(profile.operation_recipes, Mapping)
                 or task_handle.operation_id not in profile.operation_recipes
                 or task_handle.deadline_monotonic <= self.monotonic()
@@ -1900,7 +1900,7 @@ class ManagedProcessEffectHandler:
                 reason = "cancelled"
             elif self.monotonic() >= launch_deadline:
                 reason = "deadline"
-            elif self.profiles.get(profile.profile_id) is not (registered_profile or profile):
+            elif self.profiles.get(profile.profile_id) != (registered_profile or profile):
                 reason = "profile-generation"
             elif start_guard is not None and not start_guard():
                 reason = "admission-currentness"
@@ -2508,8 +2508,8 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.inspect", "inspection request is malformed or stale")
         with self._lock:
             handle = self._handles.get(item["process_id"])
-        if (handle is None or handle.registered_profile is not profile
-                or self.profiles.get(profile.profile_id) is not profile or handle.stopped
+        if (handle is None or handle.registered_profile != profile
+                or self.profiles.get(profile.profile_id) != profile or handle.stopped
                 or context.principal_id != handle.principal_id
                 or context.namespace_id != handle.authority_namespace_id
                 or cancelled() or self.monotonic() >= handle.expires
@@ -2920,7 +2920,7 @@ class ManagedProcessEffectHandler:
         with self._lock:
             handle = self._handles.get(process_id)
         if (handle is None or handle.profile.generation != generation or handle.stopped
-                or self.profiles.get(handle.profile.profile_id) is not handle.registered_profile
+                or self.profiles.get(handle.profile.profile_id) != handle.registered_profile
                 or handle.native_mount_receipt is None or handle.native_mount_source is None
                 or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
                 or handle.pid not in self._pids(handle.cgroup)):
