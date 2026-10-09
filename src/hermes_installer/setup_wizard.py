@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import re
 import stat
 import uuid
 from dataclasses import dataclass, field
@@ -54,7 +55,7 @@ class SetupAdapter(Protocol):
 
     def configure(self, config: Mapping[str, Any], *, input_fn: Callable[[str], str],
                   output_fn: Callable[[str], None], secret_reader: Callable[[str], str],
-                  credential_store: CredentialStore) -> AdapterResult: ...
+                  credential_store: CredentialStore, remote_journal: Any = None) -> AdapterResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,7 +164,7 @@ class CloudflareDesktopAdapter:
 
     def configure(self, config: Mapping[str, Any], *, input_fn: Callable[[str], str],
                   output_fn: Callable[[str], None], secret_reader: Callable[[str], str],
-                  credential_store: CredentialStore) -> AdapterResult:
+                  credential_store: CredentialStore, remote_journal: Any = None) -> AdapterResult:
         from .remote.config import validate_emails, validate_hostname
 
         remote = dict(config.get("remote_desktop", {}))
@@ -221,7 +222,7 @@ class CloudflareDesktopAdapter:
                                  {"remote_desktop": selected},
                                  ("Check the token scope and network, then run hermes-installer configure remote-desktop.",))
 
-        output_fn(f"Cloudflare connection test passed: active zone {setup.zone.name}, account {setup.zone.account_id}; Access organization {setup.auth_domain} is reachable.")
+        output_fn(f"Cloudflare account discovery passed: active zone {setup.zone.name}, account {setup.zone.account_id}; Access organization {setup.auth_domain} is reachable.")
         selected["zone_id"] = setup.zone.zone_id
         # Access API setup permission cannot be inferred from a successful read.
         # The actual owned-resource provisioning adapter verifies it before writes.
@@ -236,33 +237,115 @@ class CloudflareDesktopAdapter:
             try:
                 read_token = secret_reader("Cloudflare Access policy-read token (input hidden): ")
                 policy_ref = credential_store.put("cloudflare-policy-read", read_token)
-                self._test_policy_read(policy_ref, setup)
             except (CredentialError, RemoteConfigError, OSError, ValueError) as exc:
                 return AdapterResult("pending", f"Separate policy-read connection test did not complete: {exc}",
                                      {"remote_desktop": selected},
                                      ("Check the read-only token scope, then resume remote setup.",))
             selected["policy_read_token_ref"] = policy_ref
         else:
-            try:
-                self._test_policy_read(policy_ref, setup)
-            except (CredentialError, RemoteConfigError, OSError, ValueError) as exc:
-                return AdapterResult("pending", f"Separate policy-read connection test did not complete: {exc}",
-                                     {"remote_desktop": selected},
-                                     ("Check the read-only token scope, then resume remote setup.",))
+            # Preserve the ref across resume. Its eligibility cannot be tested
+            # until the resource-owning stage has created/checkpointed exact IDs.
             selected["policy_read_token_ref"] = policy_ref
-        return AdapterResult("ready", "Cloudflare account, active zone, and separate policy-read authority were tested; owned resource provisioning remains an install step.",
+        if remote_journal is not None:
+            try:
+                self.verify_owned_policy_read(policy_ref, setup, remote_journal)
+            except (CredentialError, RemoteConfigError, OSError, RuntimeError, ValueError) as exc:
+                return AdapterResult("pending", f"Cloudflare policy-read eligibility remains pending: {exc}",
+                                     {"remote_desktop": selected},
+                                     ("Keep the checkpointed owned Access resources, correct the separate read-only token if needed, then run the setup resume command.",))
+            return AdapterResult("ready", "The distinct policy-read credential passed the exact journal-owned app, policy, and OTP identity-provider reads.",
+                                 {"remote_desktop": selected},
+                                 ("Continue remote setup; the protected local gateway must be ready before any public route is activated.",))
+        # Account discovery and storing two secret references do not prove that
+        # the read credential can read the exact resources used by the runtime
+        # verifier. Those IDs are only authoritative after the remote setup
+        # journal checkpoints this operation's app, policy, and OTP provider.
+        # Keep the component pending so no incomplete remote config is
+        # installable; the remote provisioning stage resumes this probe after
+        # creating/checkpointing the Access resources.
+        return AdapterResult("pending", "Cloudflare discovery and credential storage passed; policy-read eligibility remains pending until this setup operation has checkpointed its Access app, email policy, and OTP identity provider and the read token verifies those exact resources.",
                              {"remote_desktop": selected},
-                             ("Run hermes-installer install to provision only the owned tunnel, DNS, Access, and email-code resources.",))
+                             ("Resume remote setup after the installer-owned Access resources are checkpointed; the separate read token will then be tested against their exact IDs before remote access can be enabled.",))
 
-    def _test_policy_read(self, reference: str, setup: Any) -> None:
-        """Exercise the distinct read token against the exact discovered account."""
-        verifier = self.client_factory(resolve_secret(reference))
+    def _test_policy_read(self, reference: str, setup: Any, journal: Any = None) -> None:
+        """Verify read authority on exact journal-owned app, policy and OTP IDs.
+
+        Call this from the remote setup continuation only after its durable
+        journal has checkpointed all three resources. Account/zone discovery
+        is deliberately insufficient for readiness.
+        """
+        return self.verify_owned_policy_read(reference, setup, journal)
+
+    def verify_owned_policy_read(self, reference: str, setup: Any, journal: Any) -> None:
+        """Public continuation hook for the remote resource provisioning stage."""
+        if journal is None:
+            raise RemoteConfigError("Installer-owned Access app, policy, and OTP identity-provider IDs are not checkpointed yet; policy-read eligibility remains pending")
+        operation_id = getattr(journal, "operation_id", None)
+        journal_hostname = getattr(journal, "hostname", None)
+        resources = getattr(journal, "resources", None)
+        if (not isinstance(operation_id, str) or not operation_id
+                or not isinstance(resources, Mapping)
+                or not isinstance(journal_hostname, str)
+                or journal_hostname.casefold() != setup.hostname.casefold()):
+            raise RemoteConfigError("Remote setup journal does not match the selected hostname")
+        expected_kinds = ("access_app", "access_policy", "identity_provider")
+        resource_ids: dict[str, str] = {}
+        for kind in expected_kinds:
+            resource = resources.get(kind)
+            if (resource is None or getattr(resource, "kind", None) != kind
+                    or getattr(resource, "owner_marker", None) != operation_id):
+                raise RemoteConfigError("Installer-owned Access app, policy, and OTP identity-provider IDs are not all checkpointed yet; policy-read eligibility remains pending")
+            resource_id = getattr(resource, "resource_id", None)
+            if not isinstance(resource_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", resource_id):
+                raise RemoteConfigError("Remote setup journal contains an invalid Access resource ID")
+            resource_ids[kind] = resource_id
+
+        read_token = resolve_secret(reference)
+        setup_token = getattr(setup, "management_token", None)
+        if not isinstance(setup_token, str) or not read_token or read_token.strip() == setup_token.strip():
+            raise RemoteConfigError("Policy-read credential must be a distinct token from the setup-management credential")
+        verifier = self.client_factory(read_token)
         zones = verifier.discover_zones(setup.hostname)
         if not any(zone.zone_id == setup.zone.zone_id for zone in zones):
             raise RemoteConfigError("Policy-read credential cannot see the selected active zone")
         org = verifier.organization(setup.zone.account_id)
         if org.get("auth_domain") != setup.auth_domain:
             raise RemoteConfigError("Policy-read credential resolved a different Access organization")
+        app_path = f"/accounts/{setup.zone.account_id}/access/apps/{resource_ids['access_app']}"
+        try:
+            app = verifier.request("GET", app_path)
+        except Exception:
+            raise RemoteConfigError("Policy-read credential cannot read the exact installer-owned Access application") from None
+        if not isinstance(app, Mapping) or app.get("id") != resource_ids["access_app"]:
+            raise RemoteConfigError("Policy-read credential did not resolve the exact installer-owned Access application")
+        audience = app.get("aud")
+        if not isinstance(audience, str) or not audience:
+            raise RemoteConfigError("Installer-owned Access application has no valid audience tag")
+
+        # Reuse the runtime verifier's complete, bounded, no-cache checks so
+        # setup tests exactly the app, complete policy set, and selected IdP
+        # reads that must succeed during every remote session.
+        from .remote.policy import AccessPolicyIdentity, FreshAccessPolicyAuthority
+        marker = f"HermesInstaller:{operation_id}"
+        authority = FreshAccessPolicyAuthority(
+            AccessPolicyIdentity(
+                account_id=setup.zone.account_id,
+                application_id=resource_ids["access_app"],
+                policy_id=resource_ids["access_policy"],
+                identity_provider_id=resource_ids["identity_provider"],
+                hostname=setup.hostname,
+                application_name=marker + ":desktop",
+                policy_name=marker + ":allowed-emails",
+                identity_provider_name=marker + ":email-code",
+                allowed_emails=frozenset(setup.allowed_emails),
+                audience=audience,
+            ),
+            reference,
+            resolve_secret,
+            self.client_factory,
+        )
+        if not authority.allows(setup.allowed_emails[0]):
+            raise RemoteConfigError("Separate policy-read credential could not verify the exact installer-owned Access app, policies, and OTP identity provider")
 
 
 def _choice(input_fn: Callable[[str], str], output_fn: Callable[[str], None], prompt: str,
@@ -283,6 +366,7 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
                      adapters: Mapping[str, SetupAdapter] | None = None,
                      credential_store: CredentialStore | None = None,
                      journal: Any = None,
+                     remote_journal: Any = None,
                      interactive: bool = True,
                      resume_command: str = "hermes-installer setup") -> WizardResult:
     """Run setup prompts and return an installable config plus pending selections.
@@ -299,6 +383,23 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
     current.setdefault("privacy", {"additional_metered_budget": 0})
     current.setdefault("remote_desktop", {"hostname": "", "allowed_emails": []})
     selected_components = dict(current["components"])
+    # The saved config deliberately keeps incomplete account components off.
+    # Restore only the user's account-component choices from the prior private
+    # checkpoint, so a resume can continue enrollment without asking them to
+    # reselect it. The current config remains authoritative for installable
+    # components and paths.
+    if journal is not None:
+        operation = getattr(journal, "operation", None)
+        prior = operation("installer:setup") if callable(operation) else None
+        prior_payload = prior.get("payload") if isinstance(prior, Mapping) else None
+        prior_selected = prior_payload.get("selected_components") if isinstance(prior_payload, Mapping) else None
+        if (isinstance(prior_selected, Mapping)
+                and isinstance(prior, Mapping)
+                and prior.get("status") in {"pending", "failed", "cancelled"}):
+            for name in ("remote_desktop", "providers", "mcp", "memory"):
+                value = prior_selected.get(name)
+                if isinstance(value, bool):
+                    selected_components[name] = value
     states: dict[str, str] = {}
     pending: list[str] = []
     failures: list[str] = []
@@ -337,7 +438,12 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
         install_mode = str(current.get("setup_mode", "adopt" if current.get("components") else "fresh"))
         if install_mode not in {"fresh", "adopt"}:
             return WizardResult("failed", selected_components, current, "setup_mode must be fresh or adopt", resume_command, exit_code=2)
-        selected_components.update({k: bool(v) for k, v in current.get("components", {}).items()})
+        for name, value in current.get("components", {}).items():
+            if name in {"remote_desktop", "providers", "mcp", "memory"} and name in selected_components:
+                # These account selections may be false in config because the
+                # last run correctly kept a pending component non-installable.
+                continue
+            selected_components[name] = bool(value)
 
     adapters_by_name: dict[str, SetupAdapter] = dict(adapters or {})
     if selected_components.get("remote_desktop") and "remote_desktop" not in adapters_by_name:
@@ -368,7 +474,8 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
             next_steps.append("Install or select a verified Cloudflare account adapter, then rerun setup.")
         elif interactive:
             result = adapter.configure(installable, input_fn=input_fn, output_fn=output_fn,
-                                       secret_reader=secret_reader, credential_store=credential_store)
+                                       secret_reader=secret_reader, credential_store=credential_store,
+                                       remote_journal=remote_journal)
             states["remote_desktop"] = result.state
             installable.update(result.config)
             if result.state == "ready":
@@ -401,11 +508,15 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
                     setup = None
                 if setup is not None:
                     try:
-                        adapter._test_policy_read(policy_ref, setup)
+                        adapter._test_policy_read(policy_ref, setup, remote_journal)
                     except (CredentialError, RemoteConfigError, OSError, RuntimeError, ValueError) as exc:
                         states["remote_desktop"] = "pending"
                         pending.append("remote_desktop")
-                        next_steps.append(f"Policy-read connection test failed: {exc}; correct its reference, then run {resume_command}.")
+                        detail = str(exc)
+                        if "not checkpointed yet" in detail or "not all checkpointed yet" in detail:
+                            next_steps.append(f"{detail}; finish the installer-owned Access resource checkpoint, then run {resume_command}.")
+                        else:
+                            next_steps.append(f"Policy-read eligibility is not verified: {detail}; check the separate read-only token and run {resume_command}.")
                         setup = None
             if setup is not None:
                 states["remote_desktop"] = "ready"

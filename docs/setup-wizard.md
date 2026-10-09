@@ -29,10 +29,15 @@ explains the scoped setup token and separate read-only policy token before
 collecting either through hidden terminal input. The setup token and policy
 read token are saved separately under the verified private installer state
 root in mode `0600`; configuration retains only `file://` references. The
-setup token is used for account and zone discovery, while the read token is
-independently tested against the selected zone and Access organization. The
-actual owned Cloudflare tunnel, DNS, Access, and OTP changes run during install
-after the protected local gateway is ready.
+setup token is used for account and zone discovery. That discovery and storing
+the second token are only an enrollment checkpoint; the Remote Desktop choice
+remains pending until the resource stage has checkpointed this operation's
+Access app, email policy, and OTP identity-provider IDs. The separate read
+token must then pass the same fresh app, complete-policy-set, and OTP-provider
+reads used by the runtime verifier. A foreign app or account-wide listing
+cannot satisfy this check. Only after this exact read probe passes may the
+remote-access stage continue toward the protected local gateway and publish no
+route before its origin is ready.
 
 The scoped setup token needs account access for Cloudflare Tunnel Edit,
 Access: Apps and Policies Edit, and Access: Organizations, Identity Providers,
@@ -51,8 +56,11 @@ automatically, buy a plan, or request an account-wide API key.
 installable `config`, original `selected_components`, per-account states,
 `resume_command`, and concrete `next_steps`. Incomplete remote choices remain
 outside `config.components`, so ordinary install validation cannot activate
-them. The private journal records only component selections, paths, and
-redacted account states; it does not receive credential values or references.
+them. The remote setup journal checkpoints owned Cloudflare resource IDs so a
+resume can retry the policy-read probe without recreating resources or asking
+for successful inputs again. The private setup journal records only component
+selections, paths, and redacted account states; it does not receive credential
+values or references.
 
 The CLI maps pending setup to exit code `4`, invalid setup to `2`, and failed
 account checks to a nonzero failure result. JSON output uses the same structured
