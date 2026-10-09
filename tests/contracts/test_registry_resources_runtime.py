@@ -8,19 +8,20 @@ import time
 from contextlib import closing
 import unittest
 from pathlib import Path
+import base64
 from unittest.mock import patch
 
 from hermes_installer.registry.resources_runtime import (
     FixedResourceEffect,
     HermesProfileExecutionTarget,
     NativePluginRuntimeContext,
+    ReviewedPluginAdapterRegistry,
     PluginAdapterUnavailable,
     ResourceIdentity,
     ResourceOverlayStore,
     ReplayStoreFull,
     SelectedResourceExecution,
     SelectedResourceRegistry,
-    ReviewedPluginAdapterRegistry,
     selected_resource_specs_by_generation,
     ResourceRuntimeError,
     SelectedResourceUnavailable,
@@ -90,6 +91,24 @@ class ResourcesRuntimeTests(unittest.TestCase):
             selected_adapters=_NoPluginAdapters(),
         )
         return context, authority
+
+    def test_native_plugin_voice_enrollment_is_only_an_opaque_bounded_reference(self):
+        context, _ = self._context()
+        self.assertIsNone(context.voice_session_enrollment_id)
+        selected = NativePluginRuntimeContext(
+            identity=context.identity, declared_capabilities=(), authority=context.authority,
+            invocation_contexts=context.invocation_contexts,
+            selected_adapters=context.selected_adapters,
+            voice_session_enrollment_id="voice-device-gen-4",
+        )
+        self.assertEqual(selected.voice_session_enrollment_id, "voice-device-gen-4")
+        with self.assertRaises(ValueError):
+            NativePluginRuntimeContext(
+                identity=context.identity, declared_capabilities=(), authority=context.authority,
+                invocation_contexts=context.invocation_contexts,
+                selected_adapters=context.selected_adapters,
+                voice_session_enrollment_id="../../raw/device/path",
+            )
 
     def test_fixed_effect_gets_fresh_source_lineage_and_one_bound_grant(self):
         context, authority = self._context()
@@ -503,7 +522,7 @@ class ResourcesRuntimeTests(unittest.TestCase):
             authority = _FakeAuthority()
             runtime = NativePluginRuntimeContext(
                 identity=ResourceIdentity(
-                    "resource-overlay-store", "plugins", "1.0.0", "plugins/resource-overlay-store.yaml",
+                    "resource-overlay-store", "plugins", "1.0.1", "plugins/resource-overlay-store.yaml",
                     "a" * 40, "b" * 64,
                 ),
                 declared_capabilities=("overlay.read", "overlay.write"),
@@ -546,6 +565,49 @@ class ResourcesRuntimeTests(unittest.TestCase):
             os.chmod(parent, 0o755)
             with self.assertRaisesRegex(ResourceRuntimeError, "unsafe ownership or permissions"):
                 view.read("record-1")
+
+    def test_reviewed_plugin_registry_runs_overlay_tools_against_scoped_store(self):
+        """Prove the resolver returns an executable adapter over the real CAS store."""
+        from hermes_installer.components.native_plugins import create_native_plugin_handler
+
+        with tempfile.TemporaryDirectory() as temp:
+            owned = OwnedRoot(Path(temp) / "installer")
+            owned.ensure()
+            store = ResourceOverlayStore(owned, Journal(owned.path("state.sqlite3")))
+            identity = ResourceIdentity(
+                "resource-overlay-store", "plugins", "1.0.1", "plugins/resource-overlay-store.yaml",
+                "a" * 40, "b" * 64,
+            )
+            context = NativePluginRuntimeContext(
+                identity=identity, declared_capabilities=(), authority=object(),
+                invocation_contexts=lambda **_: (),
+                selected_adapters=ReviewedPluginAdapterRegistry(),
+                local_overlay_store=store.for_profile("hermes"),
+            )
+
+            class PluginContext:
+                def __init__(self):
+                    self.tools = {}
+
+                def register_tool(self, *, name, toolset, schema, handler, **kwargs):
+                    self.tools[name] = handler
+
+            plugin = PluginContext()
+            create_native_plugin_handler("resource-overlay-store", context)(plugin)
+            self.assertEqual(set(plugin.tools), {
+                "resource_overlay_read", "resource_overlay_write",
+                "resource_overlay_history", "resource_overlay_delete",
+            })
+            first = plugin.tools["resource_overlay_write"]({
+                "record_id": "source-proof", "value_base64": base64.b64encode(b"durable").decode(),
+            })
+            self.assertTrue(plugin.tools["resource_overlay_read"]({"record_id": "source-proof"})["found"])
+            with self.assertRaisesRegex(ResourceRuntimeError, "compare-and-swap"):
+                plugin.tools["resource_overlay_write"]({
+                    "record_id": "source-proof", "value_base64": base64.b64encode(b"stale").decode(),
+                    "expected_revision": "0" * 64,
+                })
+            self.assertEqual(plugin.tools["resource_overlay_history"]({"record_id": "source-proof"})["revisions"], [first["revision"]])
 
 
 if __name__ == "__main__":

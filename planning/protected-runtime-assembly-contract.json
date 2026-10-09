@@ -47,6 +47,7 @@
       "resource_scope_bindings",
       "resource_validators",
       "root_journal_roots",
+      "resource_controller_roles",
       "generation_digest"
     ],
     "types": "single selected generation record; each catalog is bounded list<=1024 strict existing inner source-backed records, duplicates/unknown fields rejected. generation_id opaque rootissued string. Empty lists valid only affected actions explicitly unavailable.",
@@ -82,7 +83,8 @@
       "resolution": "Root-owned installed setup selection supplies path before first snapshot; create/validate root0700 directory with held nofollow ancestor walk, then record actual fstat device/inode and root-issued journal generation. Entire strict row in active digest. Only root path resolver consumes absolute_path; workers receive root_id only. No service/caller data root aliases, symlink, group/worldwrite/ACL access or nonzero production UID. Custom root requires explicit reviewed root selection before creation, never worker request.",
       "calls": "resolve_root_journal(root_id,expected_active_generation_digest)->RootJournalSelection(root_id,path) after actual path owner/mode/dev/inode/generation checks. Memory authority_state_root_id exact row root_id; bootstrap receipt/session stores use child bootstrap-receipts/setup-sessions; neither hardcoded separate root nor mutable mapping fallback.",
       "state": "First root-local setup may use verified initial selection before authority file exists, then includes observed row in prepared snapshot. Initial constructor root trust is not an active worker rule. Later daemon uses active digest-bound row only."
-    }
+    },
+    "resource_controller_roles": "Exact root_controller_role_catalog rows from protected-resource-job-contract.json; entire active list generation_digest bound, current actual daemon kernel/module/source-observer/backend joins mandatory."
   },
   "device_kernel_enforcement": {
     "profile_fields": [
@@ -415,6 +417,53 @@
       "receiver": "RootNativeLoaderObservationStore(custody_resolver,active_catalog_resolver,clock); root composition supplies concrete custody manager and digest-bound catalog, not worker callbacks. register_launch(owned_process_handle,parent_socket,expected_loader_role_artifact_id,expected_loader_role_sha256,launch_nonce,deadline_monotonic) -> opaque launch_observation_handle; root-private selected launch only. receive_loader_progress(launch_observation_handle,cancelled) -> immutable ready_event_id; bounded frame reads authenticate retained actual PIDFD/current kernel identity and selected role on every frame.",
       "proof": "resolve_loaded_package_closure(live_peer,observer) resolves immutable ready record and current mount receipt, joins current observer adapter/action/role and returns existing exact DTO. No caller receiver/role/socket/nonce selector. Root record constructor owns fixed issued/expires; expiry <= original launch observation deadline and current service lease.",
       "failure": "Unexpected EOF before ready, extra frame, malformed/noncanonical JSON, phase/sequence/nonce/hash/action mismatch, peer exit/relaunch or cancellation invalidates observation. Any restart loses active observations and requires a fresh actual launch; no ready-state file recovery."
+    },
+    "systemd_transport": {
+      "supersedes": "v12 inherited socketpair launch transfer only: systemd-run --pipe does not forward client pass_fds. Keep finite progress framing/events and root proof invariants. Use supported named OpenFile manager FD, no path proxy.",
+      "source": "https://github.com/systemd/systemd/blob/v253/man/systemd.service.xml OpenFile path:fd-name:options connects AF_UNIX and passes descriptor to service using sd_listen_fds. Target must support and actually verify this property; older unsupported manager remains unavailable with upgrade/resume, no global replacement implied.",
+      "setup": "Root creates launch-private0700 directory/socket0600 outside service-writable mounts, enables SO_PASSCRED before listen/accept. Fixed selected unit property OpenFile=<root resolved socket path>:hermes-loader-progress, never graceful. Path only root manager property, not worker env/argv selector. Manager hands connected FD to selected loader; loader retrieves exactly named activation FD with LISTEN_PID matching actual current process and one matching name, validates socket type, closes unrelated inherited FDs.",
+      "authentication": "Connection SO_PEERCRED may name manager, not child. It is never child proof. Root sends one fresh challenge nonce over owned connected FD; loader progress echoes it. Every recvmsg segment must include kernel SCM_CREDENTIALS matching actual selected child UID/GID/PID plus root custody PIDFD/starttime/cgroup/executable/role/generation; segments cannot mix peers. Root forbids ancillary rights. No intermediary proxy or user-writable socket.",
+      "api": "register_launch retains root-owned listener/accepted channel and actual manager process handle. receive_loader_progress authenticates actual child per-message credentials after process launched; missing credentials/version/FD transfer/readiness denies. Root unlinks socket/dir after single accepted channel and closes retained FD after ready/failure. Failed connect or manager/client sender never readiness.",
+      "evidence": "Actual Linux transient unit receives named socket FD, actual child credentials verified per frame, sibling substitution/proxy/manager frame/missing creds/replay denied; fixture proof alone not target acceptance."
+    },
+    "pending_pair_selector": "NativeBridgeBroker.resolve_pending_pair_for_context(parent_context)->RootPendingNativePair is root-private lookup by exact signed parent context identity (grant_id/intent_id/trace_id/context digest/full lineage) stored at prepare/dispatch admission. Require exactly one current unconsumed pending pair, exact active bridge enrollment and process generations/lease; duplicate/absent denies. Return producer/gateway actual identities and duplicated PIDFDs. Source target resolver may select only declared counterpart in that pair matching observer protected target role; no caller opaque handle or PID selects target. Root registry must retain exact context index alongside existing _pending handle map; no guessed profile-only match.",
+    "pending_pair_DTO": {
+      "type": "RootPendingNativePair, immutable root-private non-wire DTO owned by NativeBridgeBroker; no worker constructor accepted.",
+      "fields": {
+        "schema": "int=1",
+        "pair_id": "str opaque rootregistry ID",
+        "bridge_enrollment_id": "str",
+        "native_request_handle": "str",
+        "parent_context_sha256": "str SHA256",
+        "parent_grant_id": "str",
+        "intent_id": "str",
+        "trace_id": "str",
+        "parent_closure_digest": "str SHA256",
+        "service_generation_digest": "str SHA256",
+        "producer": "RootPendingNativePeer",
+        "gateway": "RootPendingNativePeer",
+        "observer_delivery_bindings": "tuple[RootObserverDeliveryBinding,...]",
+        "expires_monotonic": "float finite"
+      },
+      "peer_fields": {
+        "role": "producer|gateway",
+        "principal_id": "str",
+        "profile_id": "str",
+        "generation": "str",
+        "pid": "int positive",
+        "pidfd": "int owned duplicate",
+        "uid": "int nonnegative",
+        "identity": "existing actual kernel LivePeerIdentity",
+        "role_artifact_id": "str",
+        "role_artifact_sha256": "str SHA256"
+      },
+      "binding_fields": {
+        "observer_enrollment_id": "str",
+        "delivery_role": "producer|gateway"
+      },
+      "active_mapping": "Existing protected native_bridges row gains observer_delivery_bindings list of exact two-field records. Observer ID joins active derived SourceObserverEnrollment, unique per bridge; delivery_role selects exact enrolled producer or gateway counterpart. No role inferred from effect target/recipient strings. Bridge producer/gateway profile/artifact/current generation joins already required. Missing explicit cross-peer mapping denies cross-peer delivery; same-peer default still verifies exact current producer identity.",
+      "predicate": "resolve_source_target_peer(observer,parent_context) resolves unique actual pending pair by full context index; finds exactly one observer_delivery_bindings row matching observer.observer_enrollment_id, selects that exact role peer, verifies observer current protected enrollment/event relation and selected peer current PIDFD/cgroup/exe/profile/gen. observer.role_id identifies source observer role, not destination. Neither target_id nor recipient is treated as destination role authority.",
+      "ownership": "Broker retains originals; each resolve duplicates both PIDFDs. Selector transfers selected peer duplicate to SourceObserverRegistry and closes unselected duplicate immediately. Registry closes selected duplicate on pending event/delivery completion/cancel/expiry. Exception closes all duplicates. Repeated proof lookup never consumes original pair/PIDFD."
     }
   }
 }

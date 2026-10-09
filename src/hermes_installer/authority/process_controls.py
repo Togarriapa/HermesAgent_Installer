@@ -34,6 +34,7 @@ class ProcessControlResponse:
     state: str
     result: Mapping[str, Any]
     expires_monotonic: float
+    receipt_id: str
 
 
 def _control_fields(operation: str, fields: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -85,13 +86,22 @@ def _decode_response(value: Any, *, operation: str, process_id: str,
     if not isinstance(value, dict) or set(value) != {"status", "body", "headers", "receipt_id"}:
         raise AuthorityDenied("effect.invalid", "root process control broker response is malformed")
     if (type(value["status"]) is not int or value["status"] != 200
-            or not isinstance(value["body"], str)
+            or not isinstance(value["body"], str) or len(value["body"]) > 3 * 1024 * 1024
             or not isinstance(value["headers"], dict) or len(value["headers"]) > 32
             or not isinstance(value["receipt_id"], str)
-            or not 1 <= len(value["receipt_id"]) <= 256):
+            or not 1 <= len(value["receipt_id"]) <= 256
+            or any(ord(char) < 0x20 or ord(char) == 0x7f for char in value["receipt_id"])):
         raise AuthorityDenied("effect.denied", "root process control effect was denied")
+    if any(not isinstance(key, str) or not isinstance(item, str)
+           or not 1 <= len(key) <= 128 or len(item) > 2048
+           or any(char in key + item for char in "\r\n\x00")
+           for key, item in value["headers"].items()):
+        raise AuthorityDenied("effect.invalid", "root process control broker headers are malformed")
+    receipt_id = value["receipt_id"]
     try:
         body = base64.b64decode(value["body"], validate=True)
+        if base64.b64encode(body).decode("ascii") != value["body"]:
+            raise ValueError("non-canonical base64")
         value = json.loads(body.decode("ascii"))
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
         raise AuthorityDenied("effect.invalid", "root process control body is malformed") from None
@@ -118,7 +128,9 @@ def _decode_response(value: Any, *, operation: str, process_id: str,
         raise AuthorityDenied("effect.bounds", "root process control result exceeds its operation bound")
     if operation == "process.read":
         data_value = result.get("data_bytes")
-        if not isinstance(data_value, str) or type(result.get("eof")) is not bool:
+        if (set(result) != {"data_bytes", "eof", "redacted"}
+                or not isinstance(data_value, str) or type(result.get("eof")) is not bool
+                or type(result.get("redacted")) is not bool):
             raise AuthorityDenied("effect.invalid", "root process read result is malformed")
         try:
             data = base64.b64decode(data_value, validate=True)
@@ -130,18 +142,38 @@ def _decode_response(value: Any, *, operation: str, process_id: str,
     elif operation == "process.write":
         accepted, sequence = result.get("accepted_bytes"), result.get("sequence")
         submitted = base64.b64decode(fields["data_bytes"], validate=True)
-        if (type(accepted) is not int or not 0 <= accepted <= len(submitted)
+        if (set(result) != {"accepted_bytes", "sequence"}
+                or type(accepted) is not int or not 0 <= accepted <= len(submitted)
                 or type(sequence) is not int or sequence != fields["sequence"] + 1):
             raise AuthorityDenied("effect.invalid", "root process write result is malformed")
     elif operation == "process.stop":
-        if (type(result.get("closed")) is not bool
+        if (set(result) != {"closed", "reap_state"}
+                or type(result.get("closed")) is not bool
                 or not isinstance(result.get("reap_state"), str)
                 or not 1 <= len(result["reap_state"]) <= 64):
             raise AuthorityDenied("effect.invalid", "root process stop result is malformed")
+    elif operation == "process.status":
+        exit_code = result.get("exit_code")
+        if set(result) != {"exit_code"} or (exit_code is not None and type(exit_code) is not int):
+            raise AuthorityDenied("effect.invalid", "root process status result is malformed")
+    elif operation == "process.inspect":
+        if (set(result) != {"profile_id", "cgroup_identity", "observation_monotonic", "complete", "processes"}
+                or not isinstance(result.get("profile_id"), str)
+                or not 1 <= len(result["profile_id"]) <= 128
+                or not isinstance(result.get("cgroup_identity"), str)
+                or not 1 <= len(result["cgroup_identity"]) <= 512
+                or type(result.get("complete")) is not bool
+                or not isinstance(result.get("processes"), list)
+                or not 1 <= len(result["processes"]) <= 128):
+            raise AuthorityDenied("effect.invalid", "root process inspection result is malformed")
+        observed = result.get("observation_monotonic")
+        if (isinstance(observed, bool) or not isinstance(observed, (int, float))
+                or not math.isfinite(observed) or observed > now):
+            raise AuthorityDenied("effect.invalid", "root process inspection observation is malformed")
     return ProcessControlResponse(
         schema=1, process_id=process_id, generation=generation, operation=operation,
         state=value["state"], result=MappingProxyType(dict(result)),
-        expires_monotonic=float(expires),
+        expires_monotonic=float(expires), receipt_id=receipt_id,
     )
 
 

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import threading
 import unittest
+import os
 from dataclasses import dataclass, replace
 from unittest.mock import patch
 
 from hermes_installer.authority.source_observers import (
+    LiveSourceProducer,
     SourceObserverEnrollment,
     SourceObserverRegistry,
     SourceReceiptHandle,
@@ -145,7 +147,8 @@ class _Service:
             receipt_id=f"receipt-{self._issued}", issuer_id="host-authority",
             source_kind=observation.source_kind, principal_id=observation.principal_id,
             profile_id=observation.profile_id, namespace_id=observation.namespace_id,
-            uid=observation.producer_uid, origin_id=observation.origin_id,
+            uid=observation.producer_uid,
+            origin_id=observation.origin_id,
             process_generation=observation.generation,
             payload_digest=observation.payload_sha256, sensitivity=Sensitivity.PRIVATE,
             parent_lineage_hash=observation.parent_context.lineage_hash,
@@ -236,6 +239,7 @@ class SourceObserverContracts(unittest.TestCase):
         self.target_identity = _Identity("gateway-profile", "gen-8", 2002, 992, _digest("f"))
         self.selected_package = _Package()
         self.closed = []
+        self.proof_peers = []
         self.patches = [
             patch("hermes_installer.authority.source_observers.os.dup", side_effect=lambda fd: fd + 100),
             patch("hermes_installer.authority.source_observers.os.close", side_effect=self.closed.append),
@@ -267,7 +271,8 @@ class SourceObserverContracts(unittest.TestCase):
     def target_peer(self, _observer, _context):
         return _TargetPeer(844, 1401, 2002, "gateway-profile", "gen-8", self.target_identity)
 
-    def loaded_package_proof(self, identity, _observer):
+    def loaded_package_proof(self, identity, _observer, *, peer_pid, peer_pidfd):
+        self.proof_peers.append((peer_pid, peer_pidfd))
         return _LoadedProof(
             "proof-1", self.selected_package.package_id, self.selected_package.profile_id,
             self.selected_package.generation, self.selected_package.compiled_closure_sha256,
@@ -307,13 +312,26 @@ class SourceObserverContracts(unittest.TestCase):
         self.assertEqual(observation.target_peer_profile_id, "gateway-profile")
         self.assertEqual(observation.target_peer_generation, "gen-8")
         self.assertEqual(observation.parent_receipts, ())
-        self.assertEqual(set(self.closed), {1001, 1501})
+        self.assertEqual(self.proof_peers, [(733, 901), (733, 1001)])
+        self.assertEqual(set(self.closed), {1001, 1401, 1501})
         delivered = self.registry.take_source_receipt(
             str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
         self.assertEqual(delivered, result)
         with self.assertRaises(AuthorityDenied):
             self.registry.take_source_receipt(
                 str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+
+    def test_atomic_root_ingress_capture_does_not_expose_generated_event_id(self):
+        result = self.registry.capture_observed_ingress(
+            self.enrollment.observer_enrollment_id,
+            payload_bytes=b"captured request",
+            parent_context=_context(self.service, b"captured request"),
+            peer_pid=733, peer_pidfd=901,
+        )
+        self.assertIsInstance(result, SourceReceiptHandle)
+        self.assertEqual(self.registry._pending, {})
+        self.assertNotIn("event_record_id", str(result))
+        self.assertEqual(self.registry._capsule_bytes, len(b"captured request"))
 
     def test_root_recipe_capsule_is_resolved_from_signed_receipt_and_consumed_once(self):
         event_id = self.record()
@@ -340,6 +358,34 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.registry.consume_source_payload_capsule(
                 lookup, signed_context=context, peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+
+    def test_live_source_producer_resolution_is_peer_bound_one_use_and_lease_limited(self):
+        event_id = self.record()
+        handle = self.registry.capture_observed_source(
+            self.enrollment.observer_enrollment_id, event_id, b"captured request")
+        receipt = self.service._source_receipt_handles[handle]
+        args = dict(
+            receipt_id=receipt.receipt_id, profile_id=receipt.profile_id,
+            generation=receipt.process_generation,
+            native_process_identity=receipt.native_process_identity,
+            expires_monotonic=receipt.monotonic_expires_at,
+        )
+        with self.assertRaises(AuthorityDenied):
+            self.registry.resolve_live_source_producer(**{**args, "generation": "stale"})
+        producer = self.registry.resolve_live_source_producer(**args)
+        self.assertIsInstance(producer, LiveSourceProducer)
+        self.assertEqual(producer.pid, 733)
+        self.assertEqual(producer.pidfd, 1201)
+        self.assertEqual(producer.identity, self.identity)
+        self.assertEqual(producer.observer_enrollment_id, self.enrollment.observer_enrollment_id)
+        self.assertEqual(producer.source_action_id, self.enrollment.source_action_id)
+        self.assertEqual(producer.channel_id, self.enrollment.channel_id)
+        self.assertEqual(producer.loaded_package_proof,
+                         self.service.observations[-1].loaded_package_proof)
+        self.assertEqual(producer.authority_epoch, self.service.authority_epoch)
+        os.close(producer.pidfd)
+        with self.assertRaises(AuthorityDenied):
+            self.registry.resolve_live_source_producer(**args)
 
     def test_capsule_wrong_profile_or_forged_receipt_context_denied_and_scrubbed(self):
         event_id = self.record()
@@ -394,6 +440,21 @@ class SourceObserverContracts(unittest.TestCase):
             self.registry.take_source_receipt(
                 str(handle), peer_uid=2002, peer_pid=844, peer_pidfd=1501), handle)
 
+    def test_invocation_cancel_revokes_receipt_lookup_and_peer_delivery(self):
+        event_id = self.record()
+        handle = self.registry.capture_observed_source(
+            self.enrollment.observer_enrollment_id, event_id, b"captured request")
+        receipt_id = self.service._source_receipt_handles[handle].receipt_id
+        retained = self.registry._payload_capsules[str(handle)][2]
+        self.assertEqual(self.registry.cancel_invocation_payload_capsules("grant-1"), 1)
+        self.assertEqual(retained, bytearray(len(retained)))
+        self.assertNotIn(str(handle), self.service._source_receipt_handles)
+        self.assertNotIn(receipt_id, self.registry._receipt_process_bindings)
+        self.assertNotIn(str(handle), self.registry._receipt_delivery_bindings)
+        with self.assertRaises(AuthorityDenied):
+            self.registry.take_source_receipt(
+                str(handle), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+
     def test_unknown_or_forged_event_id_cannot_mint_and_event_is_one_use(self):
         with self.assertRaises(AuthorityDenied):
             self.registry.capture_observed_source(
@@ -426,7 +487,9 @@ class SourceObserverContracts(unittest.TestCase):
                 target_peer_pid=844, target_peer_pidfd=1401,
                 target_peer_profile_id="gateway-profile", target_peer_generation="gen-8",
                 target_peer_identity=self.target_identity,
-                loaded_package_proof=self.loaded_package_proof(event.producer_identity, self.enrollment),
+                loaded_package_proof=self.loaded_package_proof(
+                    event.producer_identity, self.enrollment,
+                    peer_pid=event.producer_pid, peer_pidfd=event.producer_pidfd),
                 package_id=self.enrollment.package_id,
                 package_sha256=self.enrollment.package_sha256, source_revision="pinned-revision",
                 source_tree_sha256="c" * 64, compiled_closure_artifact_id="compiled-closure",
@@ -477,7 +540,7 @@ class SourceObserverContracts(unittest.TestCase):
             self.registry.capture_observed_source(
                 self.enrollment.observer_enrollment_id, event_id, b"forged payload")
         self.assertEqual(self.registry._pending, {})
-        self.assertEqual(set(self.closed), {1001, 1501})
+        self.assertEqual(set(self.closed), {1001, 1401, 1501})
 
     def test_parent_closure_requires_registered_handle_and_same_live_process_generation(self):
         first_event = self.record()
@@ -514,7 +577,7 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.registry.capture_observed_source(
                 self.enrollment.observer_enrollment_id, event_id, b"captured request")
-        self.assertEqual(set(self.closed), {1001, 1501})
+        self.assertEqual(set(self.closed), {1001, 1401, 1501})
 
     def test_package_or_adapter_replacement_after_event_capture_denies(self):
         event_id = self.record()
@@ -527,8 +590,8 @@ class SourceObserverContracts(unittest.TestCase):
     def test_changed_loaded_package_closure_proof_after_event_capture_denies(self):
         event_id = self.record()
         original = self.loaded_package_proof
-        self.registry.loaded_package_proof_resolver = lambda identity, _observer: replace(
-            original(identity, self.enrollment), loader_ready_event_id="replacement-event")
+        self.registry.loaded_package_proof_resolver = lambda identity, _observer, **peer: replace(
+            original(identity, self.enrollment, **peer), loader_ready_event_id="replacement-event")
         with self.assertRaises(AuthorityDenied):
             self.registry.capture_observed_source(
                 self.enrollment.observer_enrollment_id, event_id, b"captured request")
@@ -609,7 +672,8 @@ class SourceObserverContracts(unittest.TestCase):
                 producer_identity=self.identity, target_peer_uid=2002, target_peer_pid=844,
                 target_peer_pidfd=1, target_peer_profile_id="gateway-profile",
                 target_peer_generation="gen-8", target_peer_identity=self.target_identity,
-                loaded_package_proof=self.loaded_package_proof(self.identity, self.enrollment),
+                loaded_package_proof=self.loaded_package_proof(
+                    self.identity, self.enrollment, peer_pid=733, peer_pidfd=901),
                 package_id="package", package_sha256=_digest("a"),
                 source_revision="revision", source_tree_sha256=_digest("a"),
                 compiled_closure_artifact_id="closure", entrypoint_artifact_id="entrypoint",

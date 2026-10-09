@@ -1,18 +1,12 @@
-"""Official Google Workspace MCP catalog adapter.
+from .adapters import MCPService,ReadOnlyAdapter
+READ_TOOLS={"gmail":{"search_emails","get_email","list_labels"},"drive":{"search_files","get_file","list_files"},"docs":{"get_document","export_document"},"sheets":{"get_spreadsheet","get_values","list_sheets"},"calendar":{"list_events","get_event","list_calendars"},"contacts":{"search_contacts","get_contact","list_contacts"}}
+def adapter(client,*,service:str,resource_id:str):
+    """Build a read-only catalog adapter; this does not assert account eligibility.
 
-Developer Preview membership and project service enablement are verified by the
-host policy at each effect; this adapter accepts no caller-provided eligibility
-booleans. See Google's primary setup guide in the service source metadata.
-"""
-from __future__ import annotations
-
-from .adapters import ReadOnlyAdapter, SERVICES
-
-
-def adapter(client, *, service: str, resource_id: str):
-    service_id = "google-" + service
-    if service_id not in SERVICES:
-        raise ValueError("unsupported official Google Workspace service")
-    if not isinstance(resource_id, str) or not resource_id.strip() or len(resource_id) > 512:
-        raise ValueError("select one bounded Google resource identifier")
-    return ReadOnlyAdapter(SERVICES[service_id], client, resource_id)
+    Live inspection and reads still require the root-issued MCP authority path.
+    Google preview/account eligibility remains unavailable until the host can
+    verify the actual selected account and reviewed provider policy.
+    """
+    if service not in READ_TOOLS:raise ValueError("unsupported Google service")
+    policy=MCPService("google-"+service,None,frozenset(READ_TOOLS[service]),"Developer Preview OAuth","selected resource")
+    return ReadOnlyAdapter(policy,client,resource_id)

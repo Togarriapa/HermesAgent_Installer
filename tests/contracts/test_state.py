@@ -102,6 +102,24 @@ class StateContractTests(unittest.TestCase):
             self.assertEqual(events[0]["details"]["authorization"], "[REDACTED]")
             self.assertNotIn("secret-value", events[0]["details"]["error"])
 
+    def test_operations_query_is_prefix_status_and_count_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = OwnedRoot(Path(temporary) / "state")
+            root.ensure()
+            journal = Journal(root.path("journal.sqlite3"))
+            journal.checkpoint("lifecycle:backup:first", "running", {"credential_token": "hidden"})
+            journal.checkpoint("lifecycle:backup:second", "complete", {"safe": True})
+            journal.checkpoint("lifecycle:restore:third", "running", {})
+
+            rows = journal.operations(prefix="lifecycle:backup:", statuses=("running",), limit=1)
+            self.assertEqual([row["id"] for row in rows], ["lifecycle:backup:first"])
+            self.assertEqual(rows[0]["payload"]["credential_token"], "[REDACTED]")
+            self.assertEqual(journal.operations(prefix="lifecycle:restore:", limit=1)[0]["id"], "lifecycle:restore:third")
+            with self.assertRaises(ValueError):
+                journal.operations(prefix="", limit=1)
+            with self.assertRaises(ValueError):
+                journal.operations(prefix="lifecycle:", limit=0)
+
 
 if __name__ == "__main__":
     unittest.main()

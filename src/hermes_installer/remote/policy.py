@@ -60,11 +60,18 @@ class AccessPolicyIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class PolicyReadOutcome:
+    allowed: bool
+    started_monotonic: float
+    ended_monotonic: float
+
+
+@dataclass(frozen=True, slots=True)
 class FreshAccessPolicyAuthority:
     """No-cache current policy reader. Instantiate only inside the read custodian."""
 
     identity: AccessPolicyIdentity
-    credential_ref: str = field(repr=False)
+    policy_read_token_ref: str = field(repr=False)
     resolve_secret: Callable[[str], str] = field(repr=False, compare=False)
     client_factory: Callable[[str], CloudflareClient] = field(repr=False, compare=False)
     clock: Callable[[], float] = field(default=time.monotonic, repr=False, compare=False)
@@ -75,7 +82,7 @@ class FreshAccessPolicyAuthority:
 
     def __post_init__(self) -> None:
         i = self.identity
-        if not self.credential_ref or not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,256}", self.credential_ref):
+        if not self.policy_read_token_ref or not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,256}", self.policy_read_token_ref):
             raise ValueError("verifier read-credential reference is required")
         if not all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", x) for x in
                    (i.account_id, i.application_id, i.policy_id, i.identity_provider_id)):
@@ -103,19 +110,30 @@ class FreshAccessPolicyAuthority:
     def allows(self, email: str, *, cancel_event: threading.Event | None = None,
                deadline_monotonic: float | None = None) -> bool:
         """Freshly read app, every policy page and the selected OTP IdP; deny all uncertainty."""
+        return self.inspect(email, cancel_event=cancel_event,
+                            deadline_monotonic=deadline_monotonic).allowed
+
+    def inspect(self, email: str, *, cancel_event: threading.Event | None = None,
+                deadline_monotonic: float | None = None) -> PolicyReadOutcome:
+        """Return the exact monotonic interval used by one bounded fresh read."""
         if not isinstance(email, str) or email.casefold() not in self.identity.allowed_emails:
-            return False
+            now = self.clock()
+            return PolicyReadOutcome(False, now, now)
         cancel = cancel_event or threading.Event()
         started = self.clock()
+        def denied() -> PolicyReadOutcome:
+            return PolicyReadOutcome(False, started, self.clock())
         deadline = min(started + self.MAX_READ_SECONDS,
                        deadline_monotonic if deadline_monotonic is not None else started + self.MAX_READ_SECONDS)
         if deadline <= started or cancel.is_set() or self.clock() >= deadline:
-            return False
+            return denied()
         client = None
         try:
-            token = self.resolve_secret(self.credential_ref)
+            token = self.resolve_secret(self.policy_read_token_ref)
             if not isinstance(token, str) or not token.strip():
-                return False
+                return denied()
+            if cancel.is_set() or self.clock() >= deadline:
+                return denied()
             client = self.client_factory(token)
             i = self.identity
             app_path = f"/accounts/{i.account_id}/access/apps/{i.application_id}"
@@ -124,20 +142,20 @@ class FreshAccessPolicyAuthority:
 
             before_app = self._get(client, app_path, deadline, cancel)
             if not self._exact_application(before_app):
-                return False
+                return denied()
             first_policies = self._all_policies(client, policies_path, deadline, cancel)
             if not self._exact_policy_set(first_policies):
-                return False
+                return denied()
             idp = self._get(client, idp_path, deadline, cancel)
             if not self._exact_idp(idp):
-                return False
+                return denied()
 
             # Cloudflare has no atomic snapshot endpoint. Re-read the app, complete
             # policy set, and selected provider; deny any change observed in flight.
             after_policies = self._all_policies(client, policies_path, deadline, cancel)
             after_idp = self._get(client, idp_path, deadline, cancel)
             after_app = self._get(client, app_path, deadline, cancel)
-            return (
+            allowed = (
                 not cancel.is_set()
                 and self.clock() <= deadline
                 and self._exact_application(after_app)
@@ -147,8 +165,10 @@ class FreshAccessPolicyAuthority:
                 and self._exact_idp(after_idp)
                 and self._idp_signature(idp) == self._idp_signature(after_idp)
             )
+            ended = self.clock()
+            return PolicyReadOutcome(bool(allowed), started, ended)
         except Exception:
-            return False
+            return denied()
         finally:
             # Drop transient bearer-secret references as soon as this read ends.
             client = None

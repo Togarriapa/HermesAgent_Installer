@@ -35,8 +35,7 @@ def apply_pinned_window_patch(source:str,allowed_classes:Iterable[str])->str:
  replacement="""        # Rebuild filters from the installer-owned finite class allowlist.
         self.window_filters = [
             (self.uuid, get_window_filter("window", "class-instance", "=", value))
-            for value in os.environ.get("HERMES_XPRA_ALLOWED_CLASSES", "").split(",")
-            if value in {"""+", ".join(repr(c) for c in classes)+"""}
+            for value in {"""+", ".join(repr(c) for c in classes)+"""}
         ]
         if not self.window_filters:
             raise RuntimeError("Hermes Desktop window allowlist is empty")
