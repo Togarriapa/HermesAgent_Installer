@@ -1,4 +1,5 @@
 from types import MappingProxyType
+from types import SimpleNamespace
 
 import pytest
 
@@ -41,6 +42,14 @@ def test_candidate_index_manifest_without_index_is_pending():
     manifest = _manifest()
     del manifest["candidate_index"]
     assert NativeCandidateIndexManifestEntry.from_entrypoint_manifest(manifest, _binding()) is None
+
+
+def test_candidate_index_manifest_accepts_root_selected_structural_binding_dto():
+    selected = SimpleNamespace(package_id="package-a", profile_id="profile-a",
+                               generation="generation-a")
+    assert NativeCandidateIndexManifestEntry.from_entrypoint_manifest(_manifest(), selected).artifact_id == (
+        "native-candidate-index:package-a:generation-a"
+    )
 
 
 @pytest.mark.parametrize("change", [
