@@ -253,8 +253,9 @@ def _case(*, selected_generation=None, consent_revision=None):
 
 def test_root_event_issuer_signs_exact_fresh_effect_and_commits_full_private_lineage():
     issuer, request, registry, service, record = _case()
+    service.attach_resource_event_context_issuer(issuer)
 
-    context, grant = issuer.issue(request)
+    context, grant = service.issue_resource_job_context(request)
 
     assert context.operation == "resource.cron.run"
     assert context.final_payload_digest == request.canonical_payload_sha256
