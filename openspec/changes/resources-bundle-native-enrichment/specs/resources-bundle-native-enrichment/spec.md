@@ -282,3 +282,10 @@ The implementation SHALL resolve exact selected argument/result schema artifacts
 #### Scenario: Tool name exists without selected schema bytes
 - **WHEN** no verified selected schema artifact resolves
 - **THEN** the candidate remains unavailable without inferring schema from the name or ordinary cache
+
+### Requirement: Root observed selected audio and HTTP ingress
+The implementation SHALL use the distinct selected capture/JWT/session provenance schemas of v40 under existing native-input semantics.
+
+#### Scenario: Microphone permission exists
+- **WHEN** actual selected scoped capture is authorized
+- **THEN** input remains UNKNOWN/private and no human identity or public clearance is inferred from device permission

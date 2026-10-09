@@ -23,3 +23,5 @@ None; no runtime capability is currently implemented in this greenfield reposito
 ## Impact
 
 Planned modules: src/hermes_installer/registry/, src/hermes_installer/runtime/authorization.py, src/hermes_installer/runtime/orchestration.py. Depends on installer-bootstrap-desktop. All implementation belongs to GPT-6 Luna; specification/refinement belongs to GPT-6.1 Sol. See design.md and explicit task/evidence DAG.
+
+Audio/HTTP native input transport v40: `plans/amendments/2026-10-09-native-input-audio-http-channels-v40.md`; original5 channels retain required pending scope.
