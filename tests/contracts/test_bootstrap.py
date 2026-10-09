@@ -27,7 +27,7 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertEqual(help_run.returncode, 0, help_run.stderr)
         self.assertIn("plan", help_run.stdout)
         self.assertIn("verify", help_run.stdout)
-        guide_run = subprocess.run([str(ROOT / "install.sh")], cwd=tempfile.gettempdir(), env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")}, capture_output=True, text=True, check=False)
+        guide_run = subprocess.run([str(ROOT / "install.sh")], cwd=tempfile.gettempdir(), env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")}, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
         self.assertEqual(guide_run.returncode, 0, guide_run.stderr)
         self.assertIn("guided setup", guide_run.stdout)
 
@@ -54,6 +54,19 @@ class BootstrapContractTests(unittest.TestCase):
                 runner.run(["/tmp/uname", "-m"], cwd=root)
             with self.assertRaises(CommandRejected):
                 runner.run(["uname", "-m"], cwd=root, env={"PATH": "/tmp"})
+
+    def test_runner_rejects_git_output_and_helper_flags_before_side_effect(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "should-not-exist"
+            runner = CommandRunner(allowed_programs={"git", "lsblk"})
+            with self.assertRaises(CommandRejected):
+                runner.run(["git", "show", f"--output={output}", "HEAD"], cwd=root)
+            with self.assertRaises(CommandRejected):
+                runner.run(["git", "show", "--ext-diff", "HEAD"], cwd=root)
+            with self.assertRaises(CommandRejected):
+                runner.run(["lsblk", "--json", f"--output={output}"], cwd=root)
+            self.assertFalse(output.exists())
 
     def test_runner_discards_output_after_fixed_capture_limit(self) -> None:
         chunks: list[bytes] = []

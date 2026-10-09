@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -28,38 +29,22 @@ class ProcessResult:
 class CommandRunner:
     """Runs an allowlisted read-only probe; argument vectors are never shell parsed."""
 
-    _SAFE_SUBCOMMANDS = {
-        "uname": {"-a", "-m", "-r"},
-        "lsblk": {"--json", "-J"},
-        "findmnt": {"--json", "-J", "--target"},
-        "df": {"-P", "-h", "-k"},
-        "systemctl": {"is-active", "show", "list-units", "list-unit-files"},
-        "dpkg-query": {"-W"},
-        "rpm": {"-qa", "-q"},
-        "git": {"rev-parse", "show"},
-        "sha256sum": set(),
-        "shasum": {"-a"},
-    }
+    _SAFE_PROGRAMS = {"uname", "lsblk", "findmnt", "df", "systemctl", "dpkg-query", "rpm", "sha256sum", "shasum"}
     _PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
     MAX_OUTPUT_BYTES = 1024 * 1024
 
     def __init__(self, allowed_programs: set[str] | None = None, timeout: float = 30.0):
-        self.allowed_programs = allowed_programs or set(self._SAFE_SUBCOMMANDS)
+        self.allowed_programs = allowed_programs or set(self._SAFE_PROGRAMS)
         self.timeout = timeout
 
     def run(self, argv: Sequence[str], *, cwd: Path, env: Mapping[str, str] | None = None, timeout: float | None = None) -> ProcessResult:
         if not argv or not argv[0] or Path(argv[0]).name not in self.allowed_programs or Path(argv[0]).name != argv[0]:
             raise CommandRejected("Executable is not in the reviewed allowlist")
         program = Path(argv[0]).name
-        safe_subcommands = self._SAFE_SUBCOMMANDS.get(program)
-        if safe_subcommands is None:
-            raise CommandRejected(f"No reviewed invocation policy exists for {program}")
-        if safe_subcommands and (len(argv) < 2 or argv[1] not in safe_subcommands):
-            raise CommandRejected(f"Invocation is not an approved read-only operation for {program}")
-        if any(arg in {"-c", "--exec", "--upload-file", "--output", "--output-document", "--config", "--init-file"} for arg in argv[1:]):
-            raise CommandRejected("Invocation contains a command, output, or configuration override option")
         if any(not isinstance(arg, str) or "\x00" in arg for arg in argv):
             raise CommandRejected("Arguments must be NUL-free strings")
+        if not _approved_invocation(program, tuple(argv[1:])):
+            raise CommandRejected(f"Invocation is not an approved read-only operation for {program}")
         executable = shutil.which(program, path=self._PATH)
         if executable is None:
             raise CommandRejected(f"Required executable not found: {Path(argv[0]).name}")
@@ -139,3 +124,42 @@ def _decode(value: str | bytes | None) -> str:
     if value is None:
         return ""
     return value.decode(errors="replace") if isinstance(value, bytes) else value
+
+
+def _approved_invocation(program: str, args: tuple[str, ...]) -> bool:
+    """Exact grammars keep output/config/helper flags out of the probe boundary."""
+    if program == "uname":
+        return len(args) == 1 and args[0] in {"-a", "-m", "-r"}
+    if program == "lsblk":
+        return args == ("--json", "--bytes", "--output", "PATH,TYPE,TRAN,SIZE,FSTYPE,PKNAME,MODEL,MOUNTPOINTS")
+    if program == "findmnt":
+        return len(args) == 3 and args[0] == "--json" and args[1] == "--target" and _safe_path_arg(args[2])
+    if program == "df":
+        return len(args) == 3 and args[:2] == ("-P", "-B1") and _safe_path_arg(args[2])
+    if program == "systemctl":
+        return args == ("list-units", "--all", "--type", "service", "--no-legend", "--no-pager") or (
+            len(args) == 4 and args[:2] == ("show", "--property") and args[2] in {"ActiveState", "UnitFileState", "LoadState"} and _safe_unit_name(args[3])
+        )
+    if program == "dpkg-query":
+        return len(args) == 2 and args[0] == "--show" and _safe_package_name(args[1])
+    if program == "rpm":
+        return args == ("--query", "--all") or (len(args) == 2 and args[0] == "--query" and _safe_package_name(args[1]))
+    if program == "sha256sum":
+        return len(args) == 1 and _safe_path_arg(args[0])
+    if program == "shasum":
+        return len(args) == 3 and args[:2] == ("-a", "256") and _safe_path_arg(args[2])
+    # git, shell interpreters, package managers and network clients are not
+    # generic probe tools. Their mutation-capable interfaces need dedicated adapters.
+    return False
+
+
+def _safe_path_arg(value: str) -> bool:
+    return bool(value) and not value.startswith("-") and "\x00" not in value
+
+
+def _safe_unit_name(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_.@:-]{1,128}", value)) and value.endswith(".service")
+
+
+def _safe_package_name(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,127}", value))

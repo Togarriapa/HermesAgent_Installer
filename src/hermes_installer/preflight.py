@@ -253,7 +253,7 @@ def _service_conflicts(use_subprocess: bool) -> tuple[str, ...]:
     try:
         from .runner import CommandRunner
 
-        p = CommandRunner(allowed_programs={"systemctl"}, timeout=3).run(["systemctl", "list-units", "--all", "--type=service", "--no-legend", "--no-pager"], cwd=Path("/"))
+        p = CommandRunner(allowed_programs={"systemctl"}, timeout=3).run(["systemctl", "list-units", "--all", "--type", "service", "--no-legend", "--no-pager"], cwd=Path("/"))
         return _matching_service_units(p.stdout) if p.returncode == 0 else ()
     except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError):
         return ()
