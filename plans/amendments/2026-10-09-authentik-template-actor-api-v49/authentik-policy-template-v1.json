@@ -1,0 +1,1 @@
+{"id":"installer-authentik-policy-template-v1","identity_effect_authority":false,"identity_read_paths":["/api/v3/core/users/me/","/api/v3/core/groups/{root_observed_group_id}/"],"max_identity_lease_seconds":30,"policy_revision":"authentik-policy-v1","schema":1}

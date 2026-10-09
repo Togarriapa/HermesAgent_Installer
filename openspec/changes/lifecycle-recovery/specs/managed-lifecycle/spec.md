@@ -334,3 +334,45 @@ The implementation SHALL resolve the exact selected official committed PM depend
 #### Scenario: PM source or sync receipt alone exists
 - **WHEN** actual selected runtime executable identity and source/lock/tool joins have not been verified
 - **THEN** runtime activation and functional health remain pending, without substituting a source archive digest or system Python
+
+### Requirement: Root initial compilation precedes policy session
+The implementation SHALL create and verify the exact v42 internal stage0 compilation context without requiring a policy-dependent setup session.
+
+#### Scenario: No bootstrap policy exists yet
+- **WHEN** the actual installed root actor compiles initial selected policy
+- **THEN** root internal stage0 custody authorizes fixed compilation and one-use publication handoff before normal setup session creation
+
+### Requirement: Root secure initial identity intake
+The implementation SHALL bind the exact v47 masked intake and policy selection to the actual root stage0 transaction.
+
+#### Scenario: User journal contains a credential reference
+- **WHEN** it has no verified root vault custody/scope receipt
+- **THEN** it cannot authorize identity observation or policy publication and exact secure intake remains pending
+
+### Requirement: Verified initial identity template revision
+The implementation SHALL resolve the exact v49 immutable identity template through the actual root installed deployment closure.
+
+#### Scenario: Only a session digest exists
+- **WHEN** identity policy revision is needed
+- **THEN** root resolves actual verified template bytes rather than inventing a module constant or trusting a caller revision
+
+### Requirement: Verified release plan and active compilation
+The implementation SHALL apply v53 exact source template/deployed plan and active receipt compilation joins.
+
+#### Scenario: Runtime outputs become available after preparation
+- **WHEN** publishing runnable active policy
+- **THEN** root active compiler verifies actual current runtime/materialization/identity receipts rather than using an initial-only claim or caller authority rows
+
+### Requirement: Live selected native health control
+The installer SHALL begin native health observation from a root-retained live selected process control before fixture input, retaining actual native events and a separate semantic health receipt.
+
+#### Scenario: Terminal-only health presentation
+- **WHEN** only stdout or exit status exists without the required live native event closure
+- **THEN** health remains incomplete and functional acceptance is not asserted
+
+### Requirement: Non-circular first source bootstrap
+The installer SHALL verify actual selected source, isolated interpreter and current root module actor before first release publication without requiring an existing deployment pointer.
+
+#### Scenario: Raw root identity or source receipt only
+- **WHEN** a bootstrap caller supplies only UID0 or source inventory without actual interpreter/module closure proof
+- **THEN** privileged release publication remains denied
