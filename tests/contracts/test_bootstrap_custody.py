@@ -45,6 +45,7 @@ class BootstrapCustodyContractTests(unittest.TestCase):
         self.assertEqual(receipt, "artifact-receipt")
         context_call = next(call for call in client.calls if call[0] == "context")
         self.assertEqual(context_call[1]["purpose"], "hermes-bootstrap")
+        self.assertEqual(context_call[1]["operation"], "artifact.fetch")
         grant_call = next(call for call in client.calls if call[0] == "authorize")
         self.assertEqual(grant_call[1]["target"], f"artifact:hermes-installer-fixture:{digest}")
         request = json.dumps({"schema": 1, "artifact_id": "hermes-installer-fixture",
@@ -85,11 +86,13 @@ class BootstrapCustodyContractTests(unittest.TestCase):
                 class Client:
                     def __init__(self):
                         self.context_count = 0
+                        self.context_calls = []
                         self.grants = []
                         self.control_calls = []
 
                     def context(self, **kwargs):
                         self.context_count += 1
+                        self.context_calls.append(kwargs)
                         return SimpleNamespace(profile_id="profile-a")
 
                     def authorize_effect(self, context, **kwargs):
@@ -131,13 +134,19 @@ class BootstrapCustodyContractTests(unittest.TestCase):
                 self.assertTrue(result.cleanup_verified)
                 self.assertEqual(result.process_id, "process-1")
                 self.assertEqual(client.launch["child_artifact_refs"], {store_id: "a" * 64})
-                self.assertEqual(client.context_count, 3)
+                self.assertEqual(client.context_count, 4)
                 self.assertEqual([call[0] for call in client.control_calls],
                                  ["process.status", "process.read"])
-                self.assertTrue(all(call[1] == f"hermes-profile-control:profile-a:{data_root.resolve()}" for call in client.control_calls))
+                self.assertTrue(all(call[1] == f"hermes-profile-control:profile-a:{data_root.resolve()}:" + call[0].removeprefix("process.") for call in client.control_calls))
                 self.assertTrue(all(grant["capability"] == "hermes-bootstrap" for grant in client.grants))
                 status_payload = client.control_calls[0][2]
                 self.assertEqual(client.grants[1]["request_digest"], canonical_digest(status_payload))
+                effect_contexts = [item for item in client.context_calls
+                    if item.get("final_payload_digest") is not None]
+                self.assertEqual([item["operation"] for item in effect_contexts],
+                    ["process.start", "process.status", "process.read"])
+                self.assertEqual(effect_contexts[0]["final_payload_digest"], canonical_digest(client.launch))
+                self.assertEqual(effect_contexts[1]["final_payload_digest"], canonical_digest(status_payload))
         finally:
             if prior is None:
                 sys.modules.pop("hermes_installer.authority", None)

@@ -92,7 +92,8 @@ class BootstrapCustody:
                    "max_bytes": max_bytes}
         digest = hashlib.sha256(_canonical_bytes(payload)).hexdigest()
         context = client.context(purpose="hermes-bootstrap",
-                                 intent=f"Fetch pinned artifact {artifact_id}")
+            intent=f"Fetch pinned artifact {artifact_id}", operation="artifact.fetch",
+            final_payload_digest=digest)
         grant = client.authorize_effect(context, capability="hermes-bootstrap",
             target=target, recipient=None, request_digest=digest)
         response = client.fetch_artifact(grant, target=target, artifact_id=artifact_id,
@@ -117,9 +118,14 @@ class BootstrapCustody:
                  payload: Mapping[str, Any], timeout: float = 5.0) -> dict[str, Any]:
         client = self._required_client()
         body = _canonical_bytes(payload)
-        target = f"hermes-profile-control:{profile_id}:{data_root.resolve(strict=True)}"
+        verb = operation.removeprefix("process.")
+        if verb not in {"status", "read", "write", "stop"}:
+            raise BootstrapCustodyError("Host process control verb is not fixed")
+        target = f"hermes-profile-control:{profile_id}:{data_root.resolve(strict=True)}:{verb}"
         context = client.context(purpose="hermes-bootstrap",
-            intent=f"Control owned Hermes bootstrap process: {operation}")
+            intent=f"Control owned Hermes bootstrap process: {operation}",
+            operation=operation,
+            final_payload_digest=hashlib.sha256(body).hexdigest())
         if context.profile_id != profile_id:
             raise BootstrapCustodyError("Host authority profile does not match the requested process")
         grant = client.authorize_effect(context, capability="hermes-bootstrap", target=target,
@@ -147,9 +153,13 @@ class BootstrapCustody:
             from .authority import canonical_digest, canonical_profile_target, profile_launch_envelope
         except ImportError:
             raise BootstrapCustodyError("Host process launch contract is not installed") from None
-        context = client.context(purpose="hermes-bootstrap",
-            intent="Run one pinned Hermes bootstrap stage under host custody")
-        bound_profile = context.profile_id
+        # The first context is used only to obtain the host-selected profile
+        # identity. The effect context below is issued after the exact launch
+        # envelope and digest have been computed.
+        discovery = client.context(purpose="hermes-bootstrap",
+            intent="Resolve the host-enrolled profile for a pinned bootstrap stage",
+            operation="process.start")
+        bound_profile = discovery.profile_id
         if profile_id is not None and profile_id != bound_profile:
             raise BootstrapCustodyError("Host authority profile does not match the requested launch")
         profile_id = bound_profile
@@ -169,8 +179,15 @@ class BootstrapCustody:
                 raise BootstrapCustodyError("Host launch contract cannot pin opaque installer artifact references")
             launch_args["child_artifact_refs"] = dict(child_artifact_refs)
         launch = profile_launch_envelope(**launch_args)
+        launch_digest = canonical_digest(launch)
+        context = client.context(purpose="hermes-bootstrap",
+            intent="Run one pinned Hermes bootstrap stage under host custody",
+            operation="process.start", final_payload_digest=launch_digest,
+            source_contexts=(discovery,))
+        if context.profile_id != profile_id:
+            raise BootstrapCustodyError("Host authority profile changed while binding the launch")
         grant = client.authorize_effect(context, capability="hermes-bootstrap",
-            target=launch_target, recipient=None, request_digest=canonical_digest(launch))
+            target=launch_target, recipient=None, request_digest=launch_digest)
         start_response = client.process_start(grant, target=launch_target,
             launch=launch, timeout=min(5.0, timeout))
         self._record_receipt("process.start", launch_target, start_response)
