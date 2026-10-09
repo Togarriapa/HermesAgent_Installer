@@ -1,0 +1,3 @@
+# Closed bootstrap compiler template v30
+
+BD-F01/BD-F03/LC-F03/HI-T01 need concrete first-stage source, not an absent policy file. This amendment packages exact closed literal primary identity/root/profile/health-task recipe template bytes and a finite actual-root fact binding grammar. Stage is root-private prepared setup and produces official runtime receipts before runnable profile/health. No fabricated executable hashes, authority principals, namespace facts or open-ended raw rows. Other original components remain required by their existing templates/receipts. Baseline unchanged and acceptance pending.
