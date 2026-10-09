@@ -88,13 +88,18 @@ def _safe_runtime_dir(path: Path, *, create: bool) -> bool:
 _RUN_PROBE_SOURCE = (
     "import json,os,signal,socket,subprocess,sys,time\n"
     "root_pid=__ROOT_PID__; home_secret=__HOME_SECRET__; credential=__CREDENTIAL__\n"
-    "expected={'HOME':'/hermes','HERMES_HOME':'/hermes','PATH':'/usr/bin','LANG':'C'}\n"
+    "expected={'HOME':'/hermes','HERMES_HOME':'/hermes','PATH':'/usr/bin','LANG':'C','LC_ALL':'C'}\n"
     "def denied(path):\n"
     "    try:\n"
     "        with open(path,'rb') as source: source.read(1)\n"
     "        return False\n"
     "    except OSError: return True\n"
-    "result={'environment_exact':dict(os.environ)==expected,\n"
+    "actual_env=dict(os.environ)\n"
+    "result={'environment_exact':actual_env==expected,\n"
+    "        'environment_keys':sorted(actual_env),\n"
+    "        'environment_unexpected_keys':sorted(set(actual_env)-set(expected)),\n"
+    "        'environment_missing_keys':sorted(set(expected)-set(actual_env)),\n"
+    "        'environment_mismatch_keys':sorted(key for key in set(expected)&set(actual_env) if expected[key]!=actual_env[key]),\n"
     "        'root_home_hidden':denied(home_secret),'credential_directory_hidden':denied(credential),\n"
     "        'root_proc_hidden':denied('/proc/'+str(root_pid)+'/environ')}\n"
     "try: os.kill(root_pid,signal.SIGTERM); result['root_signal_denied']=False\n"
@@ -330,7 +335,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             "artifact_sha256": self.digest, "service_user": self.service_user,
             "trace_id": "ci-trace-" + self.token[:12], "operation_id": "ci-op-" + self.token[:12],
             "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes",
-                            "PATH": "/usr/bin", "LANG": "C"},
+                            "PATH": "/usr/bin", "LANG": "C", "LC_ALL": "C"},
             "mode": mode, "artifact_ref": self.run_store_id if mode == "run" else self.parent_store_id,
             "child_artifact_refs": self.child_refs,
         }
@@ -355,7 +360,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             "artifact_sha256": self.digest, "service_user": self.service_user,
             "trace_id": "ci-trace-" + self.token[:12], "operation_id": "ci-op-" + self.token[:12],
             "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes",
-                            "PATH": "/usr/bin", "LANG": "C"},
+                            "PATH": "/usr/bin", "LANG": "C", "LC_ALL": "C"},
             "mode": mode, "artifact_ref": self.run_store_id if mode == "run" else self.parent_store_id,
             "child_artifact_refs": self.child_refs,
             "expect_denial": expect_denial,
@@ -411,7 +416,13 @@ def denied(path):
         return False
     except OSError:
         return True
-result={"environment_exact":dict(os.environ)==expected,
+actual_env=dict(os.environ)
+result={"environment_exact":actual_env==expected,
+        "environment_keys":sorted(actual_env),
+        "environment_unexpected_keys":sorted(set(actual_env)-set(expected)),
+        "environment_missing_keys":sorted(set(expected)-set(actual_env)),
+        "environment_mismatch_keys":sorted(key for key in set(expected)&set(actual_env)
+                                              if expected[key]!=actual_env[key]),
         "root_home_hidden":denied(home_secret),"credential_directory_hidden":denied(credential),
         "root_proc_hidden":denied('/proc/'+str(root_pid)+'/environ')}
 try:
@@ -433,7 +444,8 @@ result['descendant_pid']=descendant.pid
 print(json.dumps(result,sort_keys=True),flush=True)
 time.sleep(30)
 '''
-        env_allowlist = {"HOME": "/hermes", "HERMES_HOME": "/hermes", "PATH": "/usr/bin", "LANG": "C"}
+        env_allowlist = {"HOME": "/hermes", "HERMES_HOME": "/hermes", "PATH": "/usr/bin",
+                         "LANG": "C", "LC_ALL": "C"}
         args = [str(os.getpid()), str(self.home_secret), str(self.credential_path), json.dumps(env_allowlist)]
         client, started = self._start_client(mode="run", child_code=child, child_args=args)
         try:
@@ -457,7 +469,9 @@ time.sleep(30)
             except json.JSONDecodeError as exc:
                 self.fail(f"child stdout is not its bounded JSON probe; stdout={result.get('stdout')!r}; "
                           f"stderr={result.get('stderr')!r}; error={exc.msg} at {exc.pos}")
-            self.assertEqual(child_effects["environment_exact"], True)
+            self.assertEqual(child_effects["environment_exact"], True,
+                             {key: child_effects[key] for key in ("environment_keys", "environment_unexpected_keys",
+                                                                  "environment_missing_keys", "environment_mismatch_keys")})
             for key in ("root_home_hidden", "credential_directory_hidden", "root_proc_hidden",
                         "root_signal_denied", "ipv4_denied", "ipv6_denied"):
                 self.assertIs(child_effects[key], True, key)
