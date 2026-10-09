@@ -367,12 +367,14 @@ def _run_native_worker():
     if not isinstance(runtime.get("base_url"), str) or not runtime["base_url"].startswith("http://127.0.0.1:"):
         raise SystemExit("Hermes runtime provider did not resolve to the owned loopback gateway")
     from run_agent import AIAgent
+    from agent.iteration_budget import IterationBudget
     agent = None
     try:
         agent = AIAgent(
             base_url=runtime["base_url"], api_key=runtime.get("api_key"),
             provider=runtime["provider"], api_mode=runtime.get("api_mode"),
             model=configured_model,
+            iteration_budget=IterationBudget(5),
             quiet_mode=True, enabled_toolsets=["hermes-installer-fixture"],
             skip_context_files=True, load_soul_identity=False, skip_memory=True,
             skip_background_review=True, max_iterations=5,
