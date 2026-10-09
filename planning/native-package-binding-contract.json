@@ -291,5 +291,69 @@
     "source_issuers": "list records exactly issuer_channel_id,producer_profile_id,producer_role_artifact_id,producer_role_sha256,capture_schema_id,allowed_parent_channels,generation,observer_enrollment_id,source_action_ids",
     "source_action_ids": "finite root-selected actions per channel; native-input=authenticated-input; tool-result=registered-tool-result; memory-result=registered-memory-result; effect-result=registered-effect-result; delegated-child=registered-child-result; schedule-event=root-timer-event. These are observer contract IDs, not caller selectable source kinds. webhook-event=authenticated-webhook-event; root ingress only after protocol verification and durable replay claim.",
     "joins": "source observer_enrollment_id joins actual root registered ingress/backend result/job observer; channel/actions must match captured actual event/action. Package profile/generation joins root process_profiles/principals; adapter effect_enrollment_id joins selected_plugin_effects finite operation/schema/recipient. Missing actual observer/mount/closure identity remains unavailable; file presence not execution proof."
+  },
+  "native_invocation_context": {
+    "requirements": [
+      "HI08",
+      "HI09",
+      "HI11",
+      "RB08"
+    ],
+    "tasks": [
+      "HI-T08",
+      "HI-T09",
+      "HI-T11",
+      "RB-T09"
+    ],
+    "state": "exact boundary schema; runtime and native evidence pending",
+    "root_response_capture": "Root observes actual bounded provider response bytes (stream aggregated through actual terminal completion), validates selected provider result schema, records full consumed request source closure and actual response digest. Root extracts finite tool calls only using source-reviewed selected provider parser; incomplete/ambiguous/invalid tool arguments never create tool admission.",
+    "brokered_response_extension": {
+      "producer_context_handle": "opaque256bit same-enrolled-producer peer-bound source ancestry handle; not effect grant",
+      "tool_call_bindings": "bounded list <=128 {observed_call_handle,provider_tool_call_id,tool_name,arguments_sha256}; root-created from actual response, no worker appended calls",
+      "delivery": "HI11 selected gateway-to-producer receipt channel authenticates both process identities and exact response digest. SDK-visible content remains the actual result; opaque handles are transport metadata, never model arguments. Gateway cannot synthesize bindings."
+    },
+    "begin_api": "AuthorityClient.begin_native_invocation(producer_context_handle, observed_call_handle, canonical_arguments:bytes) -> NativeInvocationBinding",
+    "begin_operation": "native.invocation.begin",
+    "begin_request_fields": [
+      "schema=1",
+      "producer_context_handle",
+      "observed_call_handle",
+      "canonical_arguments_b64"
+    ],
+    "begin_checks": "Root SO_PEERCRED/PIDFD resolves selected currently loaded native package/producer role/generation. Both handles must be root response registry records for this exact producer and complete same request/response ancestry. Root maps observed tool_name to one exact selected compiled action binding (native plugin OR reviewed built-in tool mapping); canonical arguments must equal actual parsed tool call arguments SHA and selected strict argument schema. Root atomically reserves observed call once; no caller profile/adapter/action/source-kind/sensitivity/PID or arbitrary tool name creates authority. Model tool call is untrusted data and preserves inherited private/unknown sensitivity.",
+    "binding_response_fields": [
+      "schema=1",
+      "invocation_handle",
+      "package_id",
+      "profile_id",
+      "generation",
+      "adapter_id",
+      "action_id",
+      "arguments_sha256",
+      "parent_closure_digest",
+      "expires_monotonic",
+      "binding_sha256"
+    ],
+    "binding_digest": "Canonical UTF8 sorted compact JSON ensure_ascii=false allow_nan=false excluding binding_sha256, no newline. Digest presentation only; authority uses protected registry identity, never trusts returned row as grant. Registry record additionally pins current producer peer/PIDFD/role, loaded closure proof, response source receipt, root policy revision, selected effect enrollment/target/recipient and observation nonce.",
+    "ancestry_api": "AuthorityClient.get_invocation_contexts(invocation_handle) -> NativeInvocationContexts",
+    "ancestry_operation": "native.invocation.contexts",
+    "ancestry_request_fields": [
+      "schema=1",
+      "invocation_handle"
+    ],
+    "ancestry_response_fields": [
+      "schema=1",
+      "invocation_handle",
+      "source_receipt_handles",
+      "parent_closure_digest",
+      "arguments_sha256",
+      "expires_monotonic"
+    ],
+    "ancestry_semantics": "Root-private current invocation registry lookup authenticated same producer peer/package generation; bounded <=128 opaque source handles representing complete retained closure, not caller labels or a reusable grant. No no-argument ambient current invocation, caller parent handles, fabricated invocation IDs or process-global mutable default context. Expired/mismatched/revoked/unknown invocation denies. Re-reading ancestry within lease does not repeat effect authorization.",
+    "facade_binding": "Patched actual Hermes tool dispatch boundary begins invocation before calling selected tool, carries NativeInvocationBinding in installer-owned in-process lexical context into PluginEffectsFacade. Its invocation_contexts provider calls the exact lookup for that handle and verifies action and canonical arguments SHA. Tool/model args cannot supply or replace this handle. Built-in tool and memory callbacks require the same actual boundary mapping; plugin-only interception cannot claim full HI08 coverage.",
+    "effect_admission": "Each root selected plugin/tool/memory effect additionally resolves current invocation handle, exact selected action/enrollment and final complete argument digest and uses a fresh one-use current policy grant. Source ancestry can parent multiple explicitly admitted effects but cannot authorize one by itself; root owns per-invocation effect sequence and retry bounds. No consumed provider/start grant reused.",
+    "result_capture": "Actual root backend observer emits tool-result/memory-result/effect-result source receipt bound this invocation and actual result bytes, full parents and selected operation. Root peer-bound result receipt delivery supplies next transcript provenance; a worker completion message cannot mint result proof. Native-only unbrokered result remains UNKNOWN/private and cannot establish qualified backend/source acceptance.",
+    "non_provider_ingress": "Manual/user/background tool entry requires an actual root-observed native-input/schedule/webhook event and fixed compiled action association in the pending observer event registry; use a root-private begin_observed_native_invocation(event_record_id,selected_action_binding,actual_arguments_bytes). No worker RPC can assert that event or select user/public authority; unenrolled manual ingress remains unavailable with integration next step.",
+    "failure_evidence": "Forged/cross-peer/stale response or call handle, changed arguments/tool mapping, missing loaded closure proof, duplicate concurrent admission, source receipt deletion, expiry/revocation and caller-context injection deny before backend bytes. Actual pinned Hermes dispatch + provider stream/tool/memory/result loops required; fixtures and static resolver rows do not close original acceptance."
   }
 }
