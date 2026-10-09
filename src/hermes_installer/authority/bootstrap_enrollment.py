@@ -69,6 +69,11 @@ class EnrollmentPolicy:
     generation_id: str
     source_artifact_id: str
     records: tuple[Mapping[str, Any], ...]
+    # These active root catalogs must be selected explicitly, even when the
+    # selected generation declares a capability unavailable with an empty list.
+    resource_controller_roles: tuple[Mapping[str, Any], ...]
+    native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
+    remote_observation_enrollments: tuple[Mapping[str, Any], ...]
     protected_devices: tuple[Mapping[str, Any], ...] = ()
     protected_build_records: tuple[Mapping[str, Any], ...] = ()
     native_packages: tuple[Mapping[str, Any], ...] = ()
@@ -1521,7 +1526,10 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "resource_body_recipes": [dict(row) for row in policy.resource_body_recipes],
              "resource_scope_bindings": [dict(row) for row in policy.resource_scope_bindings],
              "resource_validators": [dict(row) for row in policy.resource_validators],
-             "root_journal_roots": [dict(row) for row in policy.root_journal_roots]}
+             "root_journal_roots": [dict(row) for row in policy.root_journal_roots],
+             "resource_controller_roles": [dict(row) for row in policy.resource_controller_roles],
+             "native_mcp_tool_bindings": [dict(row) for row in policy.native_mcp_tool_bindings],
+             "remote_observation_enrollments": [dict(row) for row in policy.remote_observation_enrollments]}
     value["generation_digest"] = hashlib.sha256(_canonical(value, ensure_ascii=False)).hexdigest()
     from .enrollment import _validate_service_generations
     try:
