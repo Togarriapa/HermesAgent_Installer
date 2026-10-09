@@ -19,6 +19,11 @@ class CredentialTests(unittest.TestCase):
             self.assertEqual(resolve_secret("file://"+str(p)),"private-token")
             p.chmod(0o644)
             with self.assertRaises(CredentialError): resolve_secret("file://"+str(p))
+    def test_secret_file_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            secret=Path(td)/"secret"; secret.write_text("private-token\n"); secret.chmod(0o600)
+            link=Path(td)/"token-link"; link.symlink_to(secret)
+            with self.assertRaises(CredentialError): resolve_secret("file://"+str(link))
     def test_hidden_input_validates_without_echo(self):
         seen=[]
         self.assertEqual(read_hidden_token(reader=lambda prompt:(seen.append(prompt) or "token-value")),"token-value")
