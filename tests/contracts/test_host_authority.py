@@ -21,7 +21,8 @@ from hermes_installer.authority.service import (
     AuthorityService, ChildDelegationRule, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
-    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle, Sensitivity,
+    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle,
+    NativeResponseMetadata, NativeToolCallBinding, Sensitivity,
     canonical_bytes, canonical_digest,
 )
 
@@ -728,6 +729,41 @@ class NativeEventClientContracts(unittest.TestCase):
         }
         with self.assertRaises(AuthorityDenied):
             client.begin_native_invocation("p" * 40, "c" * 40, b"{}")
+
+    def test_native_response_metadata_take_is_peer_bound_and_one_use_at_registry(self):
+        binding = PrincipalBinding(1234, "principal:native", "profile:native", "namespace:native",
+                                   frozenset({"native.request.dispatch"}))
+        calls = []
+
+        class Registry:
+            def take_native_response_metadata(self, *args):
+                calls.append(args)
+                return NativeResponseMetadata("p" * 40, (NativeToolCallBinding(
+                    observed_call_handle="c" * 40, provider_tool_call_id="call_1",
+                    tool_name="selected_tool", arguments_sha256="a" * 64,
+                ),))
+
+        service = AuthorityService(
+            signing_key=b"n" * 32, key_id="native-response-take-fixture",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={}, policy=FixturePolicy(),
+            native_invocation_registry=Registry(),
+        )
+        request = {"schema": 1, "delivery_handle": "d" * 43,
+                   "response_body_sha256": "b" * 64, "native_request_handle": "r" * 40}
+        result = service._dispatch(binding.uid, 123, 8, "native.response.take", request,
+                                   cancelled=lambda: False)
+        self.assertEqual(set(result), {"producer_context_handle", "tool_call_bindings"})
+        self.assertEqual(calls, [(binding.uid, 123, 8, "d" * 43, "b" * 64, "r" * 40)])
+        client = AuthorityClient(Path("/unused"), server_uid=0)
+        requests = []
+        client._rpc = lambda operation, payload, **_kwargs: requests.append((operation, payload)) or result
+        metadata = client.take_native_response_metadata("d" * 43, "b" * 64, "r" * 40)
+        self.assertEqual(metadata.producer_context_handle, "p" * 40)
+        self.assertEqual(metadata.tool_call_bindings[0].tool_name, "selected_tool")
+        self.assertEqual(requests, [("native.response.take", request)])
+        with self.assertRaises(AuthorityDenied):
+            service._dispatch(binding.uid, 123, 8, "native.response.take",
+                              {**request, "delivery_handle": "bad"}, cancelled=lambda: False)
 
     def test_authority_wire_rejects_duplicate_keys_at_nested_depth(self):
         wire = b'{"outer":{"schema":1,"schema":2}}\n'
