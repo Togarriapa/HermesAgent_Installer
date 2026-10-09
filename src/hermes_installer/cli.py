@@ -138,12 +138,87 @@ def _resume_checkpoint_exists(state_path: Path) -> bool:
             or database.is_symlink() or not stat.S_ISREG(db_info.st_mode)
             or db_info.st_uid != os.getuid() or stat.S_IMODE(db_info.st_mode) & 0o077):
             return False
-        uri = database.as_uri() + "?mode=ro"
+        uri = database.as_uri() + "?mode=ro&immutable=1"
         with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=2)) as db:
             row = db.execute("SELECT 1 FROM operations WHERE id='installer:selection'").fetchone()
         return row is not None
     except (OSError, sqlite3.Error, ValueError):
         return False
+
+def _recorded_component_findings(state_path: Path, component: str | None = None) -> tuple[Finding, ...]:
+    """Read the durable installer journal without creating or modifying state."""
+    path = state_path.expanduser().absolute()
+    if path.is_symlink() or not path.is_dir():
+        return (Finding("installer.state", "No installer-owned state directory is available", OutcomeState.PENDING),)
+    marker = path / ".hermes-installer-owned"
+    database = path / "journal.sqlite3"
+    try:
+        root_info = path.lstat()
+        marker_info = marker.lstat()
+        db_info = database.lstat()
+        if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.getuid()
+                or stat.S_IMODE(root_info.st_mode) & 0o077
+                or marker.is_symlink() or not stat.S_ISREG(marker_info.st_mode)
+                or marker_info.st_uid != os.getuid() or stat.S_IMODE(marker_info.st_mode) & 0o077
+                or marker.read_bytes() != b"schema=1\n"
+                or database.is_symlink() or not stat.S_ISREG(db_info.st_mode)
+                or db_info.st_uid != os.getuid() or stat.S_IMODE(db_info.st_mode) & 0o077):
+            return (Finding("installer.state", "Installer state ownership could not be verified", OutcomeState.PENDING),)
+        uri = database.as_uri() + "?mode=ro"
+        with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=2)) as db:
+            db.row_factory = sqlite3.Row
+            try:
+                row = db.execute(
+                    "SELECT status,payload FROM operations WHERE id='installer:selection'"
+                ).fetchone()
+                resources = db.execute(
+                    "SELECT kind,state,COUNT(*) AS count FROM owned_resources GROUP BY kind,state ORDER BY kind,state"
+                ).fetchall()
+            except sqlite3.Error:
+                return (Finding("installer.state", "Installer journal has no readable component records", OutcomeState.PENDING),)
+        if row is None:
+            return (Finding("installer.state", "No installation operation has been recorded", OutcomeState.PENDING),)
+        payload = json.loads(row["payload"])
+        if not isinstance(payload, dict):
+            raise ValueError("invalid journal payload")
+        report = payload.get("report", payload)
+        if not isinstance(report, dict):
+            report = {}
+        findings = [
+            Finding("installer.operation", f"Last installer operation: {row['status']}",
+                    OutcomeState.READY if row["status"] == "bootstrap-complete" else OutcomeState.PENDING),
+            Finding("hermes.agent.bootstrap", "Pinned Hermes Agent bootstrap is verified" if report.get("agent_ready") is True
+                    else "Pinned Hermes Agent runtime verification is pending",
+                    OutcomeState.READY if report.get("agent_ready") is True else OutcomeState.PENDING),
+            Finding("hermes.desktop.build", "Official Desktop build artifact is recorded" if report.get("desktop_built") is True
+                    else "Official Desktop build is not recorded",
+                    OutcomeState.READY if report.get("desktop_built") is True else OutcomeState.PENDING),
+        ]
+        for item in resources:
+            findings.append(Finding(
+                "resource." + str(item["kind"]),
+                f"Owned {item['kind']} resources in state {item['state']}: {int(item['count'])}",
+                OutcomeState.READY if item["state"] == "active" else OutcomeState.PENDING,
+                {"count": int(item["count"])},
+            ))
+        if component:
+            aliases = {
+                "hermes-agent": "hermes_agent", "agent": "hermes_agent",
+                "hermes-desktop": "hermes_desktop", "desktop": "hermes_desktop",
+                "provider": "provider", "gateway": "provider_gateway",
+                "remote-desktop": "remote_desktop", "remote": "remote_desktop",
+            }
+            selected = aliases.get(component, component).replace("-", "_")
+            matching = tuple(item for item in findings
+                             if selected in item.code.replace("-", "_")
+                             or item.code.replace("-", "_").startswith("resource." + selected))
+            return matching or (Finding("component." + selected,
+                f"No durable status is recorded for component {selected}",
+                OutcomeState.PENDING),)
+        return tuple(findings)
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return (Finding("installer.state", "Installer journal could not be read safely", OutcomeState.PENDING),)
+
 
 def run(args: argparse.Namespace) -> CommandResult:
     if args.command == "init-config":
@@ -158,11 +233,18 @@ def run(args: argparse.Namespace) -> CommandResult:
     except ConfigError as exc:
         return CommandResult(args.command, OutcomeState.FAILED, str(exc), exit_code=2)
 
-    if args.command in {"plan", "doctor", "status"}:
+    if args.command in {"plan", "doctor"}:
         findings = _host_findings(config)
         state = OutcomeState.READY if all(f.state == OutcomeState.READY for f in findings) else OutcomeState.PENDING
         suffix = "No files, services, packages, or accounts were changed."
         return CommandResult(args.command, state, suffix, findings, exit_code=0 if state != OutcomeState.FAILED else 1)
+    if args.command == "status":
+        state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
+        host = _host_findings(config)
+        recorded = _recorded_component_findings(state_path, getattr(args, "component", None))
+        findings = tuple(recorded) if getattr(args, "component", None) else tuple(host) + tuple(recorded)
+        state = OutcomeState.READY if findings and all(f.state == OutcomeState.READY for f in findings) else OutcomeState.PENDING
+        return CommandResult("status", state, "Read-only host and durable component status; no state was changed.", findings)
     if args.command == "verify":
         if args.target is None or args.output is None:
             return CommandResult("verify", OutcomeState.FAILED, "An authorized target manifest and evidence directory are required.", resume_command="hermes-installer verify --target <authorized-target.json> --output <evidence-dir>", exit_code=2)
