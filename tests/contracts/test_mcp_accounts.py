@@ -22,7 +22,7 @@ class MCPAccountTests(unittest.TestCase):
         self.assertEqual(SERVICES["google-sheets"].allowed_tools, frozenset({"get_spreadsheet", "get_values"}))
         self.assertEqual(SERVICES["google-calendar"].allowed_tools, frozenset({"get_event", "list_events"}))
         self.assertEqual(SERVICES["google-contacts"].endpoint, "https://people.googleapis.com/mcp/v1")
-        self.assertEqual(SERVICES["google-contacts"].allowed_tools, frozenset({"search_contacts", "get_user_profile"}))
+        self.assertEqual(SERVICES["google-contacts"].allowed_tools, frozenset({"search_contacts"}))
 
     def test_home_assistant_targets_existing_instance_and_selected_entities(self):
         with self.assertRaises(ValueError):
