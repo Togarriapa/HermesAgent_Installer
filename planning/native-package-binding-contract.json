@@ -145,7 +145,24 @@
       "operation_id",
       "parameters"
     ],
-    "constraints": "Root resolves executable/cwd/child artifacts from protected catalog and opaque roots, verifies actual pins. argv_recipe finite literals and typed parameter placeholders only; no caller shell/argv/path/env/URL/executable/substitution. cwd_subpath protected enrollment literal validated containment/no symlinks. environment root finite sanitized literals/ref bindings, never caller env or secret argv. stdin_mode closed|bounded-typed-bytes per schema, max lifetime<=600s unless separately reviewed existing operation cap. Parameters exact schema extra fields forbidden, argument output bounds required. Operation recipe selection not independent authorization: fixed process.start effect target and exact operation_id/parameters digest in grant. Missing recipe/pin/build dependencies unavailable."
+    "constraints": "Root resolves executable/cwd/child artifacts from protected catalog and opaque roots, verifies actual pins. argv_recipe finite literals and typed parameter placeholders only; no caller shell/argv/path/env/URL/executable/substitution. cwd_subpath protected enrollment literal validated containment/no symlinks. environment root finite sanitized literals/ref bindings, never caller env or secret argv. stdin_mode closed|bounded-typed-bytes per schema, max lifetime<=600s unless separately reviewed existing operation cap. Parameters exact schema extra fields forbidden, argument output bounds required. Operation recipe selection not independent authorization: fixed process.start effect target and exact operation_id/parameters digest in grant. Missing recipe/pin/build dependencies unavailable.",
+    "typed_parameter_catalog": {
+      "file": "/etc/hermes-installer/operation-parameters.json",
+      "top_level_fields": [
+        "schema=1",
+        "parameter_schemas"
+      ],
+      "parameter_schemas": "list unique exact records {id,fields}; fields list unique {name,type,required,enum,max_length,minimum,maximum}; only applicable bounds populated, unknown keys forbidden",
+      "types": [
+        "string",
+        "integer",
+        "boolean"
+      ],
+      "constraints": "Finite fields, exact required/optional keys; extra parameters forbidden. Every string requires max_length<=4096 and either finite enum or reviewed plain-text validator, reject NUL/newline and all control chars; no path/URL/shell/secret fields. Every integer explicit inclusive min/max (not bool). Boolean exact JSON true/false. Structured arrays/maps disallowed in argv parameters. Opaque resource selections resolved by root enrollment before recipe, never substituted caller path. Missing required bounds/validator unavailable.",
+      "argv_recipe": "list token objects, each EXACTLY {literal:string} or {parameter:string}; parameter names refer to schema fields. No concatenation/interpolation/conditional/default/shell expansion. Each token yields exactly one argv element; literals protected exact strings; strings preserved, integers canonical base10, booleans literal true or false. Optional absent parameter cannot occur in argv recipe; choose separately enrolled recipe instead. First executable not an argv token, fixed enrolled executable.",
+      "operation_id": "Opaque finite recipe ID, distinct from effect operation process.start. operation_targets maps process.start exact admission target; selected recipe ID+parameters+enrollment/generation all part of canonical effect request digest. Reject unsupported recipe before custody launch.",
+      "device_join": "Root-selected HW02 device enrollment joins selected process profile/generation via opaque device_enrollment_id in protected profile, never RPC parameter. Build HW03 recipes normally have no TPU device access. Inference worker exact selected device identity only; no all-device defaults."
+    }
   },
   "protected_file_schema": {
     "file": "/etc/hermes-installer/native-packages.json",

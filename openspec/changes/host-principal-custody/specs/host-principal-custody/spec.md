@@ -159,3 +159,10 @@ The installer SHALL validate strict root-owned package/issuer catalogs and disti
 #### Scenario: Partial hash or unobserved configured issuer
 - **WHEN** policy/module digest is missing or source observer only exists as configuration text
 - **THEN** keep affected native effect unavailable and require actual identity/observer evidence.
+
+### Requirement: Fixed recipe parameter grammar
+The installer SHALL validate only bounded root-selected scalar parameter schemas and exact literal/parameter argv tokens, one element each, with no interpolation or caller physical resource selection.
+
+#### Scenario: Caller injects path or extra parameter
+- **WHEN** parameter is untyped, unbounded, extra or outside exact scalar grammar
+- **THEN** reject before launch without shell expansion or alternate recipe fallback.
