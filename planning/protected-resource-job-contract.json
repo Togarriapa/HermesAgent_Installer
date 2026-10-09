@@ -976,7 +976,7 @@
     "authority": "Authenticated peer delivery only; DTO handles do not themselves mint context, public clearance or effect grants."
   },
   "composio_trigger_artifact_derivation": {
-    "owner_module": "hermes_installer.authority.artifacts",
+    "owner_module": "hermes_installer.authority.composio_trigger_artifacts",
     "registry": "RootComposioTriggerArtifactRegistry",
     "constructor": "from_root_setup(selected_session_registry,catalog_exchange_registry,owned_artifact_store,artifact_catalog,journal,signer)",
     "API": "persist_selected_trigger_type(exchange_receipt_handle,selected_returned_slug)->RootComposioTriggerArtifactReceipt root-local. Resolves exact actual authenticated fixed GET detail exchange/current selected project/version; slug must equal returned detail and selected authenticated list candidate. No caller schema/body/artifact/path/URL/account readiness fields.",
@@ -1020,7 +1020,8 @@
       "signature"
     ],
     "consumer": "resolve_selected_trigger_artifact(receipt_handle,current_setup_session)->typed root retained receipt and immutable exact bytes; active trigger_type_artifact_id/sha256 use stored artifact ID/exact byte hash. Root factory selects and persists through this registry; helper never independently publishes caller dict or claims account readiness. Actual connected account/Business/phone/trigger instance/signed webhook/sender pointer enrollments remain separate authenticated setup receipts, unknown until configured.",
-    "lease": "<=30 seconds and actual exchange/session original expiry for selection effect; immutable artifact persists with source receipts. New session may re-observe actual source/current authenticated catalog; stale exchange cannot silently reactivate configuration."
+    "lease": "<=30 seconds and actual exchange/session original expiry for selection effect; immutable artifact persists with source receipts. New session may re-observe actual source/current authenticated catalog; stale exchange cannot silently reactivate configuration.",
+    "public_reexport": "hermes_installer.authority.artifacts may provide tiny public re-export only; implementation/registry ownership stays dedicated source-specific module. Existing v77 exchange/source/CAS fields and API unchanged. Root factory resolves actual exchange record and private retained request/response bytes; a single actual GET exchange handle retains distinct domain-specific byte getters. Actual derived artifact publication uses held typed CAS output observation, not invented static seed catalog hash."
   },
   "fresh_node_attempt_context": {
     "existing_type": "hermes_installer.registry.resource_jobs.ResourceChildAdmission; no new worker retry DTO. Existing actual job ledger issues separate admission_id and retry_index per bounded attempt.",
