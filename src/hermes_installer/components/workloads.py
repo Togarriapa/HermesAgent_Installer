@@ -43,7 +43,7 @@ class WorkloadScheduler:
     ) -> None:
         if memory_budget_mb <= 0 or max_workers <= 0:
             raise ValueError("scheduler resource limits must be positive")
-        if not metered_budget_usd.is_finite() or metered_budget_usd < 0:
+        if not isinstance(metered_budget_usd, Decimal) or not metered_budget_usd.is_finite() or metered_budget_usd < 0:
             raise ValueError("metered budget must be a finite non-negative amount")
         self.run = run
         self.granted = granted
@@ -80,13 +80,13 @@ class WorkloadScheduler:
             raise PermissionError("capability denied: " + ", ".join(sorted(missing)))
         if work.account_requirement and work.account_requirement not in self.eligible_accounts:
             raise PermissionError("required account is not eligible for this workload")
-        if not work.metered_cost_usd.is_finite() or work.metered_cost_usd < 0:
+        if not isinstance(work.metered_cost_usd, Decimal) or not work.metered_cost_usd.is_finite() or work.metered_cost_usd < 0:
             raise ValueError("workload metered cost must be finite and non-negative")
         for key, value in work.environment.items():
             if not key.isidentifier() or not isinstance(value, str) or "\x00" in value:
                 raise ValueError("workload environment contains an invalid entry")
-            normalized = key.casefold()
-            if any(marker in normalized for marker in ("token", "secret", "password", "api_key", "credential")):
+            normalized = "".join(character for character in key.casefold() if character.isalnum())
+            if any(marker in normalized for marker in ("token", "secret", "password", "passwd", "apikey", "credential", "authorization")):
                 raise ValueError("workload secrets must be supplied by protected credential reference")
         if any(not reference or "\x00" in reference for reference in work.credential_references):
             raise ValueError("credential references must be non-empty opaque identifiers")

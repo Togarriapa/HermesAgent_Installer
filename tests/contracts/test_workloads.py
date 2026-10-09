@@ -58,9 +58,15 @@ class WorkloadSchedulerTests(unittest.TestCase):
         self.assertEqual(Decimal("0"), self.scheduler.metered_spend_usd)
 
     def test_secret_values_cannot_cross_the_environment_boundary(self):
-        work = Workload("unsafe", ("/bin/true",), environment={"PROVIDER_API_KEY": "plaintext"})
-        with self.assertRaisesRegex(ValueError, "protected credential reference"):
-            self.scheduler.execute(work)
+        for key in ("PROVIDER_API_KEY", "ProviderApiKey", "AUTHORIZATION_HEADER", "db_passwd"):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "protected credential reference"):
+                self.scheduler.execute(Workload("unsafe", ("/bin/true",), environment={key: "plaintext"}))
+        self.assertEqual([], self.calls)
+
+    def test_non_decimal_cost_estimates_are_rejected_before_runner_effect(self):
+        for value in (0.01, "0.01", None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "finite and non-negative"):
+                self.scheduler.execute(Workload("bad-cost", ("/bin/true",), metered_cost_usd=value))
         self.assertEqual([], self.calls)
 
     def test_estimated_metered_cost_is_reserved_even_when_runner_fails(self):
