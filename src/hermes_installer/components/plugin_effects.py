@@ -13,6 +13,7 @@ import json
 import math
 import re
 import time
+from dataclasses import dataclass, replace
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -781,6 +782,43 @@ def build_native_plugin_effect_binding(*, authority: PluginAuthority,
         selected_package=selected_package,
     )
     return NativePluginEffectBinding(provider, effects)
+
+
+def bind_plugin_effects_to_runtime_context(*, authority: PluginAuthority,
+                                          selected_package: object,
+                                          current_binding: Any,
+                                          runtime_context: object,
+                                          action_schemas: PluginActionSchemaRegistry | None = None,
+                                          ) -> object:
+    """Return the trusted context with its paired root invocation/effect facades.
+
+    This is the narrow composition point for the protected native runtime
+    factory. It accepts only the installer runtime DTO, checks that the DTO's
+    authority and selected resource identity agree with the root-selected
+    package, and replaces both facade fields together. The lexical binding
+    getter is supplied only by the pinned Hermes executor integration.
+    """
+    try:
+        from hermes_installer.registry.resources_runtime import NativePluginRuntimeContext
+    except ImportError:
+        raise PluginEffectUnavailable("trusted native Plugin runtime context type is unavailable") from None
+    if (not isinstance(runtime_context, NativePluginRuntimeContext)
+            or runtime_context.authority is not authority
+            or not callable(current_binding)
+            or runtime_context.identity.kind != "plugins"
+            or selected_package.manifest_digest_for_adapter(runtime_context.identity.resource_id)
+            != runtime_context.identity.content_digest):
+        raise PluginEffectUnavailable("runtime context does not match the selected native Plugin package")
+    pair = build_native_plugin_effect_binding(
+        authority=authority, selected_package=selected_package,
+        identity=runtime_context.identity, current_binding=current_binding,
+        action_schemas=action_schemas,
+    )
+    try:
+        return replace(runtime_context, invocation_contexts=pair.invocation_contexts,
+                       plugin_effects=pair.plugin_effects)
+    except (TypeError, ValueError):
+        raise PluginEffectUnavailable("trusted runtime context cannot accept the native effect binding") from None
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
