@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from hermes_installer.authority.native_materialization import (
+    PINNED_HERMES_REVISION,
     NativeMaterializationDenied,
     NativeMaterializationReceipt,
     NativeMaterializationSelection,
@@ -89,6 +90,20 @@ def test_crosswalk_path_tampering_is_rejected_before_writes() -> None:
         _selected_files(compiled, profile_id)
 
 
+def test_duplicate_hermes_destination_is_rejected() -> None:
+    registry = _registry()
+    profile_id = sorted(key.split("/", 1)[1].split("@", 1)[0]
+                        for key in registry.resolver.raw if key.startswith("profiles/"))[0]
+    compiled = dict(registry.materialize(registry.discover([f"profiles/{profile_id}@*"])))
+    ledger = json.loads(compiled["installer-registry/crosswalk.json"])
+    first = next(row for row in ledger["native_materialization"]["files"]
+                 if row["staged"].startswith("homes/profiles/"))
+    ledger["native_materialization"]["files"].append(dict(first))
+    compiled["installer-registry/crosswalk.json"] = json.dumps(ledger).encode()
+    with pytest.raises(NativeMaterializationDenied, match="multiple files"):
+        _selected_files(compiled, profile_id)
+
+
 def test_public_materialization_receipt_cannot_contain_filesystem_paths() -> None:
     names = set(NativeMaterializationReceipt.__dataclass_fields__)
     assert not any("path" in name.casefold() or name.endswith("_root") for name in names)
@@ -118,19 +133,53 @@ def test_discovery_receipt_is_durably_inserted_and_keeps_exact_selection(tmp_pat
         """)
     selection = NativeMaterializationSelection(
         "enrollment", "generation", "service", "b" * 64, 123, 456,
-        "home-id", "data-id", "source-artifact", "c" * 32)
+        "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32)
     discovery = NativeInstallReceipt(
-        "hermes-revision", "3.14.7", "profile", True, True,
+        PINNED_HERMES_REVISION, "3.14.7", "profile", True, True,
         ("skill-one",), ("skill-one",), {"profile": "d" * 64})
     operation._record_receipt(
         "e" * 32, selection, "profile", "f" * 64,
-        (NativeMaterializedItem("profile", "profile", "d" * 64, "installed"),),
+        (NativeMaterializedItem("profile", "profile", "d" * 64, "installed"),
+         NativeMaterializedItem("skill", "skill-one", "e" * 64, "installed")),
         70.0, "operation", discovery)
     stored = operation._receipt("e" * 32)
     assert stored["enrollment_id"] == "enrollment"
     assert stored["service_generation"] == "generation"
     assert stored["resource_profile_id"] == "profile"
     assert stored["state"] == "discovered"
+    public = operation._public_receipt(stored, "discovered")
+    assert public.hermes_revision == PINNED_HERMES_REVISION
+    assert public.python_version == "3.14.7"
+
+
+def test_pm_python_resolver_is_bound_to_the_selected_receipt(tmp_path: Path) -> None:
+    executable = tmp_path / "python3.14"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    seen = {}
+
+    class Resolver:
+        def resolve_python(self, **kwargs):
+            seen.update(kwargs)
+            return executable
+
+    operation = RootNativeMaterialization.__new__(RootNativeMaterialization)
+    operation._pm_runtime_resolver = Resolver()
+    selection = NativeMaterializationSelection(
+        "enrollment", "generation", "service", "b" * 64, 123, 456,
+        "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32)
+    assert operation._resolve_hermes_python(selection) == executable
+    assert seen == {
+        "pm_runtime_handle": "d" * 32,
+        "enrollment_id": "enrollment",
+        "service_generation": "generation",
+        "source_artifact_id": "source-artifact",
+    }
+
+    operation._pm_runtime_resolver = SimpleNamespace(
+        resolve_python=lambda **_kwargs: str(executable))
+    with pytest.raises(NativeMaterializationDenied, match="did not resolve an executable"):
+        operation._resolve_hermes_python(selection)
 
 
 def test_fixed_home_write_is_atomic_service_owned_and_symlink_safe(tmp_path: Path) -> None:
