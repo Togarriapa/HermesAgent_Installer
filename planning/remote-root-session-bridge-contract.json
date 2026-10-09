@@ -259,5 +259,54 @@
     ],
     "issuer": "Rootcustody/selectedtrustedloader observer afteractualrootselectedlaunch+immutable verifiedroleentrypoint/closure and actualcurrentkernelpeer/readycontrol event. Root registryobservedroleproof comparedexactHI13row/currentprofilegen eachadmission/frame. Metadataartifactexists notexecutedroleproof; normalworkerready/hashlabels insufficient.",
     "mapping": "No new worker/profilecallerfieldrequired; root registry storesactualrole observations keyed actualprocesshandle/profilegen andprotectedHI13 association. Missingactualroleattestation remoteunavailable withexactlauncherproofstep, not relaxexpectedhash."
+  },
+  "setup_token_transfer": {
+    "active_join": "remote_session_enrollments[*].setup_writer_binding, included complete service_generations digest",
+    "binding_fields": [
+      "setup_profile_id",
+      "setup_generation",
+      "setup_role_artifact_id",
+      "setup_role_sha256",
+      "setup_enrollment_id",
+      "setup_transaction_policy_id",
+      "allowed_tunnel_enrollment_ids",
+      "token_writer_enrollment_id",
+      "origin_probe_enrollment_id"
+    ],
+    "principal": "Dedicated enrolled installer setup process, separate UID/profile/role from cloudflared, gateway, Desktop and policy verifier. Root authenticates current SO_PEERCRED+PIDFD/starttime/executable+cgroup and protected setup role closure, actual authorized setup transaction/current journal selection. Never infer setup authority from runtime tunnel profile.",
+    "operation": "write_provisioned_tunnel_token",
+    "capability": "installer-remote-setup",
+    "target": "remote-setup:<root-selected-tunnel-enrollment-id>:<generation>:token",
+    "request_fields": [
+      "schema=1",
+      "setup_transaction_handle",
+      "tunnel_enrollment_id",
+      "account_id",
+      "tunnel_id",
+      "generation",
+      "runtime_token_b64"
+    ],
+    "bounds": "Token decoded bytes <=16KiB on authenticated private AF_UNIX frame only; no logs/evidence/argv/exception token text. Caller selection fields must equal root transaction journal/current owned tunnel row; one-use transaction stage nonce consumed atomically. Existing client without setup_transaction_handle cannot write production token.",
+    "provenance": "Root must bind token digest to actual successful owned Cloudflare setup response captured by enrolled setup role in the authorized transaction, not caller owned=true or token envelope alone. Protected transaction response record binds account/tunnel/request/response digest and setup peer/current stage; root setup observer captures bytes before transfer. If no actual response observer/transaction binding exists, writer remains unavailable with exact integration step.",
+    "root_private_call": "write_provisioned_tunnel_token(selected_tunnel, token_bytes, root_verified_setup_transaction) -> ProtectedTunnelTokenReceipt; selected sink/UID resolved only root. Public fixed RPC validates dedicated setup peer and fresh exact payload grant then calls this bounded writer. Not generic vault upload.",
+    "recovery": "Prepared/committed token digest+inode receipt durable journal, ambiguity no blind replay, prior token rollback preserved. Setup bytes wiped after sink verification; management token not copied into runtime. Receipt fields and fixed sink unchanged."
+  },
+  "private_origin_probe": {
+    "active_join": "setup_writer_binding.origin_probe_enrollment_id resolves protected fixed service/role record for root remote-origin probe; joins selected gateway/native/tunnel generations and current catalog digest.",
+    "signature": "issue_selected_origin_probe(remote_enrollment_id,root_setup_transaction_handle) -> opaque root_probe_handle; probe_selected_app(SelectedRemoteOrigin,root_probe_handle) -> exact existing eight-key proof map",
+    "handle": "Root-private registry random256bit peer-bound one-use handle with selected setup transaction, root probe role PIDFD/executable/cgroup, gateway/native profile generations, fixed connector target/routes, original deadline<=30s and next sequence. No worker caller boolean/self-signed probe token can authorize.",
+    "transport": "Root-created AF_UNIX control channel authenticates exact protected probe process and gateway peer. Gateway probe admission is a separate internal finite route for pinned assets/Xpra app stream only; inaccessible on public HTTP or ordinary worker socket. Root issues fresh HI12 dual-controller/native-profile connector effects for exact canonical payload/sequence/digest. No normal HostContext relabel or public Access JWT bypass.",
+    "observations": [
+      "loopback_only",
+      "unauthenticated_denied",
+      "authorized_asset_served",
+      "authorized_websocket_attached",
+      "official_desktop_window_observed",
+      "arbitrary_route_denied",
+      "shell_route_denied",
+      "full_host_desktop_denied"
+    ],
+    "trust": "Proof map constructed only from actual bounded HTTP/WS/native-window/custody observations and root authenticated probe receipt, never returned booleans alone. Unauthenticated HTTP still rejected before bytes. Private probe proves selected local origin readiness only; does not prove actual Cloudflare Access JWT/OTP public admission. Full AC13..15 and EV-HI13 require actual authorized target/account JWT/policy/lease acceptance separately.",
+    "receipt": "Existing RootOriginReadinessReceipt adds probe_receipt_handle bound exact eight observations+request/result digests/current peer/mount/sandbox/route/lease; root registry resolves and validates before setup activation. Expired/reused/mismatched setup/profile/gateway/catalog denied and probe streams closed."
   }
 }
