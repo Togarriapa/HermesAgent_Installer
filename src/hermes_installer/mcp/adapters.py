@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass
 from typing import Mapping
 
+from ..authority import AuthorityClient
+
 
 @dataclass(frozen=True, slots=True)
 class MCPService:
@@ -85,6 +87,10 @@ class ReadOnlyAdapter:
         self._last_failure: str | None = None
 
     def _authorization_ready(self) -> bool:
+        if type(getattr(self.client, "authority_client", None)) is AuthorityClient:
+            return True
+        # The legacy local authorizer seam is retained for synthetic tests only;
+        # production registry construction requires the first-party authority.
         return bool(getattr(self.client, "context", None)
                     and getattr(self.client, "authorizer", None) is not None)
 
@@ -131,7 +137,7 @@ class ReadOnlyAdapter:
         for name, schema in discovered.items():
             annotations = schema.get("annotations", {})
             if (name in self.client.allowed_tools
-                    and annotations.get("readOnlyHint") is not False
+                    and annotations.get("readOnlyHint") is True
                     and annotations.get("destructiveHint") is not True):
                 accepted[name] = schema
         self.client._tools = accepted
