@@ -35,6 +35,15 @@ class Grant:
     def __init__(self, profile, namespace, target, digest):
         self.profile_id, self.namespace_id = profile, namespace
         self.target, self.request_digest = target, digest
+        action = target.rsplit(":", 1)[-1]
+        self.capability = {"doctor":"memory-retrieval","search":"memory-retrieval",
+            "extract":"memory-extraction","embed":"memory-embedding","capture":"memory-capture",
+            "enqueue":"memory-capture","export":"memory-export","backup":"memory-backup",
+            "restore":"memory-restore","delete":"memory-delete","result":"memory-retrieval"}[action]
+        self.principal_id, self.uid = "principal", 1001
+        self.purpose, self.intent_id = "memory-capture", "intent"
+        self.trace_id, self.policy_revision = "trace-one", "policy1"
+        self.lineage_hash = "a" * 64
 
 
 class IPC:

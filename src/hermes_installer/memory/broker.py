@@ -483,10 +483,18 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                cancelled: Callable[[], bool], peer_pidfd: int | None = None) -> Mapping[str, Any]:
         try:
             if (authorization.target != "memory:" + target.provider + ":" + action
-                    or authorization.profile_id != target.profile_id
-                    or authorization.namespace_id != target.namespace_id
+                    or authorization.capability != CAPABILITIES[action]
+                    or authorization.principal_id != context.principal_id
+                    or authorization.uid != context.uid
+                    or authorization.profile_id != context.profile_id
+                    or authorization.namespace_id != context.namespace_id
+                    or authorization.purpose != context.purpose
+                    or authorization.intent_id != context.intent_id
+                    or authorization.trace_id != context.trace_id
+                    or authorization.policy_revision != context.policy_revision
+                    or authorization.lineage_hash != context.lineage_hash
                     or authorization.request_digest != hashlib.sha256(payload).hexdigest()):
-                raise BrokerDenied("effect grant is not bound to this exact payload and target")
+                raise BrokerDenied("effect grant is not bound to this exact host context, capability, target and payload")
             if not 0 < timeout <= maximum_timeout:
                 raise ValueError("memory timeout is out of bounds")
             body = parse_request(payload)
