@@ -55,7 +55,7 @@ ROUTES: dict[str, dict[str, dict[str, RouteStep]]] = {
         },
         "worker-observation": {
             "claude-worker-capture": _route("POST", "/api/memory/save"),
-            "claude-worker-search-get": _route("GET", "/api/search", body="none"),
+            "claude-worker-search-get": _route("GET", "/api/search", body="query"),
             "claude-worker-search-post": _route("POST", "/api/mem-search"),
             "claude-worker-delete": _route("DELETE", "/api/observation/{owned_id}", body="none"),
         },
