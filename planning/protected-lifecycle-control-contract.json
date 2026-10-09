@@ -402,6 +402,57 @@
         ],
         "plan_generation": "RootInstalledReleaseBuilder generates plans/root-setup-plan-v1.json actualcanonicalbytes from exact verified template; id installer-root-setup-plan-v1, candidateGitactualverifieddistribution. amendment_manifest_sha256 = SHA256 canonical sortedcompact path->actualSHA map of selected source plans/amendments files (including template) BEFORE rendered output; no selfreference. allowed_artifact_ids sortedunique exact nonnullhash reviewed ArtifactCatalog record IDs in actualverifiedrelease catalog, not caller list. Generated nativeoutputroles are separately rootreceipt-bound dynamicoutputs, not unconstrained source allowlist. Reverify sourcecatalog/modulebuilderclosure and entire rendered plan before receipt. Actualdeployed planSHA comes buildreceipt, not fake fixedsourcehash. Fields strict, IDs/digests bounded existinggrammar, <=4096artifactIDs/<=128templates/18exactAC list."
       }
+    },
+    "first_source_bootstrap": {
+      "owner_module": "hermes_installer.authority.installer_release_build",
+      "CAS": "RootInstallerDistributionSourceCAS.acquire_selected(candidate_git_sha)->opaque distribution handle; fixed authorized repository HTTPS/Git origin only, exact selected commit/full tree/frozen tag/amendments verified, bounded root-owned staging. This read-only source acquisition and owned CAS staging precedes installed release/initial compilation; neither is required as input. No installer/service/account effects during unverified acquisition.",
+      "distribution": "RootInstallerDistributionRegistry.resolve(handle)->VerifiedInstallerDistributionReceipt binds actual retained root sourceCAS bytes/tree/catalog/baseline/candidate. Source handle alone cannot attest running actor or interpreter.",
+      "interpreter": "RootInstallerInterpreterRegistry.observe_current_bootstrap_interpreter(distribution_handle)->VerifiedInstallerInterpreterReceipt; resolve(handle,distribution_handle)->same actual retained proof. No caller executable path/hash/UID. Observe actual current root bootstrap process executable via /proc/self/exe and held FD; selected dedicated installer runtime prefix/rootownership/nofollow/module origins/import closure must match current source lock and verified runtime dependency artifacts. Python>=3.11 per actual installer pyproject; Hermes runtime remains separate exact official PM Python3.14. No global downgrade/system dependency mutation.",
+      "interpreter_fields": [
+        "schema",
+        "receipt_handle",
+        "distribution_receipt_handle",
+        "candidate_git_sha",
+        "runtime_artifact_receipt_handles",
+        "executable_sha256",
+        "executable_device",
+        "executable_inode",
+        "runtime_prefix_sha256",
+        "stdlib_closure_sha256",
+        "dependency_closure_sha256",
+        "python_version",
+        "implementation",
+        "cache_tag",
+        "soabi",
+        "machine",
+        "owner_uid",
+        "owner_gid",
+        "mode",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "actor": "RootSourceBootstrapActorVerifier.from_verified_source(distribution_registry,interpreter_registry).verify_current(distribution_handle,interpreter_handle)->VerifiedRootSourceBootstrapActor; actual kernel euid0/PIDFD/starttime/executable and loaded module byte origins must match held sourceCAS closure and interpreter receipt. Root selected entry module hermes_installer.authority.installer_release_build, callable bootstrap_selected_release, plus exact recursively imported installer modules under verified src/hermes_installer; no ambient PYTHONPATH/user site/cwd imports/unpinned third-party modules. Current raw install.sh ambient python/PYTHONPATH behavior cannot establish this proof; verified root bootstrap wrapper must launch isolated selected interpreter with explicit sealed source/module path map and recheck byte/inode closure. This actor verification is independent of deployments/current.json and any compiled policy.",
+      "actor_fields": [
+        "schema",
+        "receipt_handle",
+        "distribution_receipt_handle",
+        "interpreter_receipt_handle",
+        "candidate_git_sha",
+        "entry_module",
+        "entry_symbol",
+        "module_closure_sha256",
+        "executable_sha256",
+        "pid",
+        "pid_start_ticks",
+        "pidfd_identity",
+        "uid",
+        "gid",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "call": "bootstrap_selected_release(candidate_git_sha)->VerifiedInstallerReleaseReceipt is the finite root-local first-entry action: acquire selected source -> observe/verify actual isolated bootstrap interpreter and source actor -> RootInstalledReleaseBuilder.build_selected(distribution_handle,interpreter_handle) with retained actor proof -> publish_installed_stage. Builder resolves actual actor proof from same root registry, never caller fabricated assertion. All metadata IDs/hashes derive actual observed bytes/receipts, no invented source pin used as executable hash. After deployment, normal RootInitialCompilationRegistry uses installed release actor proof; no circular preinstalled release requirement.",
+      "CLI": "User-mode install/resume cannot invoke root-only factory/worker RPC. It gives exact selected root-local bootstrap/installed setup launcher command for authorized operator invocation and retains only nonsecret choice/journal presentation. Root-mode verified launcher collects actual choices/credentials securely and calls finite root APIs. No generic sudo shell/argv/root RPC; original routine setup authorization remains unchanged.",
+      "recovery": "Root journal retains source/interpreter/actor/build/deployment handles and actual stage states. Lost actor/PIDFD or changed source/runtime closure invalidates current operational lease and requires re-observation; CAS immutable source evidence retained. No absent pointer synthesized as active setup session."
     }
   },
   "native_health_receipt": {

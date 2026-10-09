@@ -380,3 +380,10 @@ The installer SHALL derive first-publication key identity and authenticated sele
 #### Scenario: Generic bootstrap authority substituted
 - **WHEN** bootstrap enrollment authorization is presented as Composio catalog or channel effect permission
 - **THEN** the separate selected catalog authority denies the substitution
+
+### Requirement: Non-circular first source bootstrap
+The installer SHALL verify actual selected source, isolated interpreter and current root module actor before first release publication without requiring an existing deployment pointer.
+
+#### Scenario: Raw root identity or source receipt only
+- **WHEN** a bootstrap caller supplies only UID0 or source inventory without actual interpreter/module closure proof
+- **THEN** privileged release publication remains denied
