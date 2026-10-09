@@ -86,7 +86,7 @@ class ProviderPolicyTests(unittest.TestCase):
             policy = DispatchPolicy({"public": default_public_route(), "private": paid}, "public", "private")
             dispatcher = Dispatcher(policy, BudgetLedger(self.ledger_root(Path(td))), provider)
             with self.assertRaisesRegex(PolicyDenied, "No eligible provider route"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PRIVATE), "local/test", b"{}", input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PRIVATE), "local/test", b'{"messages":[]}', input_tokens=1, output_token_limit=1)
             self.assertEqual(provider.calls, [])
 
     def test_ledger_reserves_and_accounts_across_dispatchers(self):
@@ -96,7 +96,7 @@ class ProviderPolicyTests(unittest.TestCase):
             policy = DispatchPolicy({"public": default_public_route(), "private": paid}, "public", "private", metered_budget_usd=0.003)
             ledger_root = self.ledger_root(root)
             first = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider([ProviderResponse(200, b"ok", input_tokens=100, output_tokens=100)]))
-            first.dispatch(DispatchContext("one", "chat", Sensitivity.PRIVATE), "local/test", b"{}", input_tokens=100, output_token_limit=100)
+            first.dispatch(DispatchContext("one", "chat", Sensitivity.PRIVATE), "local/test", b'{"messages":[]}', input_tokens=100, output_token_limit=100)
             self.assertAlmostEqual(BudgetLedger(ledger_root).spent(), 0.002)
             second = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider())
             with self.assertRaisesRegex(PolicyDenied, "Aggregate metered budget"):
@@ -110,7 +110,7 @@ class ProviderPolicyTests(unittest.TestCase):
             policy=DispatchPolicy({"unknown":unknown},"unknown")
             dispatcher=Dispatcher(policy,BudgetLedger(self.ledger_root(Path(td))),provider)
             with self.assertRaisesRegex(PolicyDenied,"No eligible provider route"):
-                dispatcher.dispatch(DispatchContext("hermes","chat",Sensitivity.PUBLIC),MODEL,b"{}",input_tokens=1,output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("hermes","chat",Sensitivity.PUBLIC),MODEL,b'{"messages":[]}',input_tokens=1,output_token_limit=1)
             self.assertEqual(provider.calls,[])
 
     def test_ambiguous_paid_timeout_keeps_attempt_reservation(self):

@@ -303,13 +303,14 @@ class Dispatcher:
                     continue
                 if route.input_usd_per_million is None or route.output_usd_per_million is None:
                     continue
-                input_bound = max(input_tokens, len(payload))
+                # Validate and normalize only after trusted route, sensitivity,
+                # cancellation and deadline eligibility have passed. Costing uses
+                # the exact canonical bytes that the transport will send.
+                normalized_payload = normalize_chat_request(payload, model, output_token_limit)
+                input_bound = max(input_tokens, len(normalized_payload))
                 estimate = (input_bound * route.input_usd_per_million + output_token_limit * route.output_usd_per_million) / 1_000_000
                 if estimate > 0 and self.policy.metered_budget_usd <= 0:
                     continue
-                # Validate and normalize only after trusted route, sensitivity,
-                # cancellation, deadline and budget eligibility have passed.
-                normalized_payload = normalize_chat_request(payload, model, output_token_limit)
                 for attempt in range(self.policy.max_attempts):
                     if context.cancelled():
                         raise PolicyDenied("dispatch.cancelled", "Request was cancelled before attempt")

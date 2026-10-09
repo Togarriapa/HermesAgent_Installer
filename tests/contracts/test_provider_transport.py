@@ -69,7 +69,7 @@ class ProviderTransportTests(unittest.TestCase):
         self.assertEqual(json.loads(networks[0].calls[0][3])["model"],MODEL)
         for bad in (b"[]",b"not-json",b'{"messages":"not-an-array"}'):
             with self.assertRaises(PolicyDenied):
-                transport(route,MODEL,bad,timeout=2,trace_id="trace")
+                transport(route,MODEL,bad,output_token_limit=8,timeout=2,trace_id="trace")
 
     def test_unapproved_model_and_unbounded_timeout_are_denied(self):
         transport,_=self.make()
