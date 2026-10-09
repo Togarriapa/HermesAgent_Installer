@@ -93,15 +93,29 @@ Root timer, webhook, and channel adapters must be attached to the active
 receives an opaque per-instance capability and can create a one-use
 `RootResourceSourceEventProof` only at its native accepted-event seam. The
 proof is not serializable and carries the exact canonical event bytes plus an
-opaque producer observation that is revalidated when consumed. The issuer
-rechecks current resource generation and consent, the selected observer and
-source policy, and live root controller custody before it signs the original
-private `HostContext` and source receipt. The controller registry then admits
-that signed closure as the retained root event; child-node issuance separately
-revalidates the selected backend/body recipe and live controller custody.
+opaque producer observation that is revalidated when consumed. Before an
+event or receipt exists, `RootResourceControllerRegistry` resolves the
+selected role/issuer/backend through `resolve_selected_ingress_controller` and
+retains a one-use `RootIngressControllerProof` backed by live systemd MainPID,
+PIDFD, executable, namespace, and loaded-role evidence. The registry's
+`capture_selected_ingress` consumes that retained proof and the exact producer
+observation together. The issuer rechecks current resource generation and
+consent, the selected observer and source policy, and the live controller
+proof, then signs the original private `HostContext` and source receipt. The
+HTTP/audio adapter's exact proof-bound receipt handles are resolved once by
+its root observer to actual service-signed `SourceReceipt` objects; the issuer
+rechecks signature, current profile/principal/generation, source-kind policy,
+expiry, and complete parent closure before signing the event receipt with those
+parents. The event context carries the sorted parent receipts and event receipt
+together, so the registry can verify the full signed closure without trusting
+receipt objects supplied in an RPC or event DTO. Missing resolver wiring fails
+closed. The registry atomically retains that signed closure as the root event; child-node
+issuance separately revalidates the selected backend/body recipe and current
+controller custody.
 
 The proof/capsule interfaces are root-internal only. Worker RPCs, reconstructed
 dataclasses, caller-supplied root contexts, event labels, and serialized HMAC
 or timer claims cannot enter this path. A producer without a concrete native
-provenance verifier or root-stage custody resolver remains unavailable; in
-particular, channel adapters must not substitute another transport's proof.
+provenance verifier and the root registry's pre-event custody proof remains
+unavailable. HTTP and audio channel inputs use distinct v40 typed selection
+and observation proofs; they cannot reuse Telegram/Discord or webhook proof.
