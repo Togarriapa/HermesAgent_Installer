@@ -123,7 +123,7 @@ class ProviderPolicyTests(unittest.TestCase):
             dispatcher = Dispatcher(DispatchPolicy({"public": default_public_route()}, "public"),
                 BudgetLedger(root), provider, context_authorizer=changing_authorizer,
                 sleep=lambda _delay: None)
-            with self.assertRaisesRegex(PolicyDenied, "authorization changed"):
+            with self.assertRaisesRegex(PolicyDenied, "authorization is stale"):
                 dispatcher.dispatch(fixture_context("hermes", "chat", Sensitivity.PUBLIC), MODEL,
                     b'{"messages":[{"role":"user","content":"retry"}]}',
                     input_tokens=2, output_token_limit=8)
