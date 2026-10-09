@@ -23,7 +23,10 @@ daemon's fixed private store path.
 The source registry, native result observer, and remote session authority are
 read from the live service so daemon code may attach each actual root-built
 instance after this factory returns. `prune()` and `close()` delegate to those
-instances and stop the remote lease watchdog. Active source/job rows without
+instances and stop the remote lease watchdog. Derived source-observer
+enrollments are exposed as typed metadata candidates; they cannot issue
+receipts until live loaded-closure and peer-bound delivery resolvers are
+available. Active source/job rows without
 the required root observer and proof joins remain unroutable. A successful
 local fixture composition proves constructor wiring only; it does not establish
 native invocation, account, tunnel, or Raspberry Pi acceptance.

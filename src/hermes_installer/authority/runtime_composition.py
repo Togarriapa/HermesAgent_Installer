@@ -62,6 +62,17 @@ class RootAuthorityRuntime:
         return self.service.source_observer_registry
 
     @property
+    def source_observer_enrollments(self) -> Mapping[str, Any]:
+        """Typed candidates derived from exact active issuer/package joins.
+
+        These are enrollment metadata, not proof that a package is currently
+        loaded or that a receipt may be issued. Registry construction still
+        requires the live loader and recipient PIDFD proof resolvers.
+        """
+        records = getattr(self.bindings, "source_observer_enrollments", {})
+        return MappingProxyType(dict(records)) if isinstance(records, Mapping) else MappingProxyType({})
+
+    @property
     def native_runtime_observer(self) -> Any | None:
         return getattr(self.service, "native_runtime_observer", None)
 

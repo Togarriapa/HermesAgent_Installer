@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -8,6 +9,7 @@ from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.runtime_composition import compose_root_authority_runtime
 from hermes_installer.authority.service import AuthorityService, PrincipalBinding
 from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.protected_enrollment import EnrollmentDenied
 
 
 def _inputs():
@@ -24,6 +26,8 @@ def _inputs():
         memory_enrollments={}, operation_parameter_schemas=[], source_issuers=(),
         resource_job_records=(), remote_session_records=(),
         resource_backend_enrollment_records=(), resource_body_recipe_records=(),
+        resource_scope_binding_records=(), resource_validator_records=(),
+        root_journal_root_records=(),
     )
     uid = 1001
     binding = PrincipalBinding(
@@ -36,21 +40,23 @@ def _inputs():
     )
     connector = object()
     process_manager = None
+    observer_candidate = object()
     runtime_bindings = RootRuntimeBindings(
         enrollment_catalog=None, build_catalog=None, device_catalog=None,
         process_manager=process_manager, effect_handlers={}, native_bridges={},
         artifact_catalog=artifact_catalog, build_store=None,
         service_connector=connector,
+        source_observer_enrollments=MappingProxyType({"observer-a": observer_candidate}),
     )
     # The test verifies object identity and epoch wiring; it never resolves
     # credentials. The production caller passes the initialized vault made by
     # the protected root loader.
     vault = object.__new__(RootCredentialVault)
-    return service, enrollment, runtime_bindings, artifact_catalog, vault, connector
+    return service, enrollment, runtime_bindings, artifact_catalog, vault, connector, observer_candidate
 
 
 def test_composition_uses_exact_service_bindings_catalog_vault_and_epoch():
-    service, enrollment, bindings, catalog, vault, connector = _inputs()
+    service, enrollment, bindings, catalog, vault, connector, observer_candidate = _inputs()
 
     runtime = compose_root_authority_runtime(
         service=service, enrollment=enrollment, bindings=bindings,
@@ -70,12 +76,15 @@ def test_composition_uses_exact_service_bindings_catalog_vault_and_epoch():
     assert dict(runtime.scope_bindings) == {}
     assert dict(runtime.validators) == {}
     assert dict(runtime.job_enrollments) == {}
+    assert runtime.source_observer_enrollments["observer-a"] is observer_candidate
+    with pytest.raises(TypeError):
+        runtime.source_observer_enrollments["forged"] = object()
     runtime.prune()
     runtime.close()
 
 
 def test_composition_rejects_stale_artifact_catalog_identity():
-    service, enrollment, bindings, _catalog, vault, _connector = _inputs()
+    service, enrollment, bindings, _catalog, vault, _connector, _candidate = _inputs()
 
     with pytest.raises(AuthorityDenied, match="do not match this service epoch and catalog"):
         compose_root_authority_runtime(
@@ -85,7 +94,7 @@ def test_composition_rejects_stale_artifact_catalog_identity():
 
 
 def test_root_journal_resolution_is_bound_to_active_generation_and_protected_catalog():
-    service, enrollment, bindings, catalog, vault, _connector = _inputs()
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
     runtime = compose_root_authority_runtime(
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=catalog, vault=vault,
@@ -95,7 +104,7 @@ def test_root_journal_resolution_is_bound_to_active_generation_and_protected_cat
         runtime.resolve_root_journal(
             "state-root", expected_active_generation_digest="b" * 64,
         )
-    with pytest.raises(AuthorityDenied, match="no protected journal resolver"):
+    with pytest.raises(EnrollmentDenied, match="protected root journal catalog is unavailable"):
         runtime.resolve_root_journal(
             "state-root", expected_active_generation_digest=enrollment.protected_enrollment_digest,
         )

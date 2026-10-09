@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import dataclass
 from types import ModuleType
 from types import SimpleNamespace
 
