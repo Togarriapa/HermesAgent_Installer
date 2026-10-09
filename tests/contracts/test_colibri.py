@@ -92,13 +92,17 @@ def test_readiness_uses_measured_memory_thermal_and_throttling_facts(tmp_path: P
 def test_service_plan_is_loopback_only_and_key_never_enters_argv(tmp_path: Path) -> None:
     executable, models = tmp_path / "colibri", tmp_path / "generation"
     executable.write_text("binary")
+    (tmp_path / "coli").write_text("#!/usr/bin/env python3\n")
     models.mkdir()
     bounds = ServiceBounds(12 * 1024**3, 75, 80)
-    plan = ColibriServicePlan.create(executable, tmp_path, models, "vault://colibri/key", bounds, port=8421)
+    plan = ColibriServicePlan.create(executable, tmp_path, models, "vault://colibri/key", bounds)
     assert plan.bind_host == "127.0.0.1"
     assert plan.model_revision == "6bbb01ed3e515a8730b694dfae73aadfd6774581"
     assert "vault://colibri/key" not in plan.argv
+    assert "127.0.0.1" in plan.argv and "8000" in plan.argv
     assert "COLI_MODEL" in dict(plan.environment)
+    with pytest.raises(ValueError, match="fixed to loopback port 8000"):
+        ColibriServicePlan.create(executable, tmp_path, models, "vault://colibri/key", bounds, port=8421)
     with pytest.raises(ValueError, match="positive"):
         ServiceBounds(0, 20, 1024)
     with pytest.raises(ValueError, match="exactly one"):
@@ -108,6 +112,7 @@ def test_service_plan_is_loopback_only_and_key_never_enters_argv(tmp_path: Path)
 def test_service_stays_unavailable_without_measured_bounds_and_loopback_bridge(tmp_path: Path) -> None:
     executable, models = tmp_path / "colibri", tmp_path / "generation"
     executable.write_text("binary")
+    (tmp_path / "coli").write_text("#!/usr/bin/env python3\n")
     models.mkdir()
     plan = ColibriServicePlan.create(executable, tmp_path, models, "vault://colibri/key",
         ServiceBounds(12 * 1024**3, 75, 80))
@@ -122,6 +127,7 @@ def test_service_stays_unavailable_without_measured_bounds_and_loopback_bridge(t
 def test_service_accepts_only_matching_cgroup_readbacks_and_stops_managed_generation(tmp_path: Path) -> None:
     executable, models = tmp_path / "colibri", tmp_path / "generation"
     executable.write_text("binary")
+    (tmp_path / "coli").write_text("#!/usr/bin/env python3\n")
     models.mkdir()
     plan = ColibriServicePlan.create(executable, tmp_path, models, "vault://colibri/key",
         ServiceBounds(12 * 1024**3, 75, 100))
