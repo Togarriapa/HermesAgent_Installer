@@ -4,7 +4,7 @@ from pathlib import Path
 from hermes_installer.bootstrap import (BootstrapError, EXPECTED_STAGES, HERMES_COMMIT,
     INSTALL_SCRIPT_ARTIFACT_ID, INSTALL_SCRIPT_SHA256,
     HermesBootstrap, git_blob_sha1)
-from hermes_installer.bootstrap_custody import BootstrapCustodyError, ManagedCommandResult
+from hermes_installer.bootstrap_custody import BootstrapCustodyError
 from hermes_installer.lifecycle import LifecycleBlocked, LifecycleRecovery
 from hermes_installer.state import Journal, OwnedRoot
 
@@ -90,15 +90,21 @@ class BootstrapTests(unittest.TestCase):
                 out.mkdir(parents=True,exist_ok=True); (out/"index.html").write_text("<html>"+"x"*200+"</html>")
                 return 0,b""
             bootstrap=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
-            bootstrap.install(include_desktop=True)
+            report=bootstrap.install(include_desktop=True)
             first_stage_count=sum(1 for call in runner.calls if "--stage" in call[0])
-            bootstrap.install(include_desktop=True)
+            report=bootstrap.install(include_desktop=True)
             stages=[call[0][call[0].index("--stage")+1] for call in runner.calls if "--stage" in call[0]]
             self.assertEqual(sum(1 for call in runner.calls if "--stage" in call[0]),first_stage_count)
             self.assertEqual(stages,list(EXPECTED_STAGES))
             self.assertTrue(all("--non-interactive" in call[0] for call in runner.calls if "--stage" in call[0]))
             self.assertTrue(all("--skip-browser" in call[0] and "--skip-computer-use" in call[0] for call in runner.calls if "--stage" in call[0]))
-            self.assertEqual(journal.operation("hermes-agent:"+HERMES_COMMIT)["status"],"complete")
+            self.assertTrue(report.fixture_only)
+            self.assertFalse(report.agent_ready)
+            self.assertFalse(report.desktop_built)
+            self.assertEqual(journal.operation("hermes-agent:"+HERMES_COMMIT)["status"],"fixture-only")
+            self.assertEqual(next(row for row in journal.owned("hermes-generation")
+                if row["resource_id"] == str(bootstrap.install_dir))["state"],"staged")
+            self.assertFalse(bootstrap.status()["complete"])
     def test_failed_stage_can_resume_and_skip_verified_stages(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
@@ -108,7 +114,8 @@ class BootstrapTests(unittest.TestCase):
                 boot.install()
             prior=sum(1 for call in runner.calls if "--stage" in call[0])
             report=boot.install()
-            self.assertTrue(report.agent_ready)
+            self.assertFalse(report.agent_ready)
+            self.assertTrue(report.fixture_only)
             second=[call[0][call[0].index("--stage")+1] for call in runner.calls[prior:] if "--stage" in call[0]]
             self.assertEqual(second,["products","products","setup","gateway","complete"])
 
@@ -185,16 +192,12 @@ class BootstrapTests(unittest.TestCase):
                     raise BootstrapCustodyError("unparseable receipt",
                         receipt_id="start-receipt-1",cleanup_verified=False)
 
-            boot=HermesBootstrap(data,journal,runner=None,desktop_builder=fake_desktop(data),
-                agent_probe=lambda:True)
+            boot=HermesBootstrap(data,journal)
             boot.custody=InvalidReceiptCustody()
             with self.assertRaises(BootstrapError):
                 boot.install(include_desktop=False)
-            process=next(row for row in journal.owned("process")
-                if row["resource_id"] == "unresolved-start:start-receipt-1")
-            self.assertEqual(process["state"],"active")
-            with self.assertRaises(LifecycleBlocked):
-                LifecycleRecovery(data,state_root,journal).uninstall()
+            self.assertFalse(any(row["kind"] == "process" and row["state"] == "active"
+                                 for row in journal.owned()))
 
     def test_verified_stage_receipts_are_stopped_and_generation_only_becomes_installed_after_probe(self):
         with tempfile.TemporaryDirectory() as td:
@@ -203,31 +206,15 @@ class BootstrapTests(unittest.TestCase):
             journal=Journal(state_root.path("journal.sqlite3"))
             runner=FakeRunner()
 
-            class CustodyFixture:
-                def __init__(self):
-                    self.index=0
-                def fetch_artifact(self, **kwargs):
-                    return f"artifact:{INSTALL_SCRIPT_ARTIFACT_ID}:{INSTALL_SCRIPT_SHA256}","fetch-receipt"
-                def run_process(self, **kwargs):
-                    self.index += 1
-                    code, output=runner(kwargs["argv"][2:], timeout=kwargs["timeout"], capture=True)
-                    return ManagedCommandResult(code, output, b"bounded diagnostic", False, True,
-                        f"receipt-{self.index}",f"process-{self.index}","host-gen-1",1000)
-
-            boot=HermesBootstrap(data,journal,runner=None,desktop_builder=fake_desktop(data),
-                agent_probe=lambda:True)
-            boot.custody=CustodyFixture()
+            boot=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,
+                desktop_builder=fake_desktop(data),agent_probe=lambda:True,
+                expected_script_blob=git_blob_sha1(SCRIPT))
             report=boot.install(include_desktop=False)
-            self.assertTrue(report.agent_ready)
-            processes=journal.owned("process")
-            self.assertEqual({row["resource_id"] for row in processes},
-                {f"process-{index}" for index in range(1,len(EXPECTED_STAGES)+2)})
-            self.assertTrue(all(row["state"] == "stopped" for row in processes))
+            self.assertFalse(report.agent_ready)
+            self.assertTrue(report.fixture_only)
             generation=next(row for row in journal.owned("hermes-generation")
                 if row["resource_id"] == str(boot.install_dir))
-            self.assertEqual(generation["state"],"installed")
-            self.assertEqual(len([event for event in journal.events(boot.operation)
-                if event["event"] == "process_generation_receipt"]),len(EXPECTED_STAGES)+1)
+            self.assertEqual(generation["state"],"staged")
 
     def test_interrupted_operation_is_durable_and_resumable_after_power_loss(self):
         with tempfile.TemporaryDirectory() as td:
@@ -243,8 +230,9 @@ class BootstrapTests(unittest.TestCase):
             recovered=Journal(state_root.path("journal.sqlite3"))
             self.assertEqual(recovered.operation(boot.operation)["status"],"running:products")
             report=HermesBootstrap(data,recovered,network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT)).install(include_desktop=False)
-            self.assertTrue(report.agent_ready)
-            self.assertEqual(recovered.operation(boot.operation)["status"],"complete")
+            self.assertFalse(report.agent_ready)
+            self.assertTrue(report.fixture_only)
+            self.assertEqual(recovered.operation(boot.operation)["status"],"fixture-only")
 
     def test_cancellation_records_safe_resume_and_preserves_private_overlay(self):
         with tempfile.TemporaryDirectory() as td:
@@ -293,7 +281,7 @@ class BootstrapTests(unittest.TestCase):
                 return fake_desktop(data)(timeout=timeout)
             boot.desktop_builder=build
             boot.install(include_desktop=True)
-            self.assertTrue(boot.status()["complete"])
+            self.assertFalse(boot.status()["complete"])
             self.assertEqual(len(desktop_calls),1)
 
     def test_partial_desktop_dist_is_not_reported_as_built(self):
@@ -336,7 +324,7 @@ class BootstrapTests(unittest.TestCase):
             state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
             boot.script_store_id=f"artifact:{INSTALL_SCRIPT_ARTIFACT_ID}:{INSTALL_SCRIPT_SHA256}"
-            with self.assertRaisesRegex(BootstrapError,"(?i)host-authorized Hermes process start"):
+            with self.assertRaisesRegex(BootstrapError,"(?i)root-enrolled Hermes stage operation"):
                 boot._run_process(["--manifest"],timeout=5,capture=True)
 
     def test_install_records_download_broker_block_without_network_effect(self):

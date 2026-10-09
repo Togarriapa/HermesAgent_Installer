@@ -94,13 +94,15 @@ class ProviderGatewayTests(unittest.TestCase):
 
     def test_production_gateway_uses_one_atomic_native_broker_call(self):
         class NativeBridge:
-            def __init__(self): self.calls = []
+            def __init__(self): self.calls = []; self.omit_response_ref = False
             def dispatch_native_request(self, handle, payload, *, retry_index, timeout, cancelled=None):
                 self.calls.append((handle, payload, retry_index, timeout, cancelled()))
                 class Response:
                     status = 200
                     body = b'{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
                     headers = {"Content-Type": "application/json"}
+                    if not bridge.omit_response_ref:
+                        headers["X-Hermes-Native-Response-Ref"] = "r" * 40
                 return Response()
 
         bridge = NativeBridge()
@@ -112,14 +114,23 @@ class ProviderGatewayTests(unittest.TestCase):
         port = gateway.start()
         self.addCleanup(gateway.close)
         body = json.dumps({"model": MODEL, "messages": [{"role": "user", "content": "fixture"}]}).encode()
-        status, response, _ = self.request_at(
+        status, response, headers = self.request_at(
             port, body=body,
             headers={"X-Hermes-Installer-Context": "opaque-native-event-handle-00011",
                      "X-Hermes-Installer-Retry-Index": "2"},
         )
         self.assertEqual(status, 200)
         self.assertIn(b'"choices"', response)
+        self.assertEqual(headers.get("X-Hermes-Native-Response-Ref"), "r" * 40)
         self.assertEqual(len(bridge.calls), 1)
+        bridge.omit_response_ref = True
+        missing_ref, _, missing_headers = self.request_at(
+            port, body=body,
+            headers={"X-Hermes-Installer-Context": "opaque-native-event-handle-00012",
+                     "X-Hermes-Installer-Retry-Index": "3"},
+        )
+        self.assertEqual(missing_ref, 502)
+        self.assertIsNone(missing_headers.get("X-Hermes-Native-Response-Ref"))
         handle, normalized, retry_index, _timeout, cancelled = bridge.calls[0]
         self.assertEqual(handle, "opaque-native-event-handle-00011")
         self.assertEqual(json.loads(normalized)["model"], MODEL)
@@ -136,7 +147,7 @@ class ProviderGatewayTests(unittest.TestCase):
                 "X-Hermes-Installer-Retry-Index": "2",
             })
             self.assertEqual(denied, 400)
-        self.assertEqual(len(bridge.calls), 1)
+        self.assertEqual(len(bridge.calls), 2)
 
     def request_at(self, port, *, body, headers):
         url=f"http://127.0.0.1:{port}/v1/chat/completions"

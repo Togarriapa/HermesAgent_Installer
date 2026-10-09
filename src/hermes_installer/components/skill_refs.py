@@ -55,6 +55,7 @@ class SkillReferenceAudit:
     resolved_targets: tuple[str, ...]
     problems: tuple[SkillReferenceProblem, ...]
     skill_resolved_targets: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    quarantined_skill_problems: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -241,3 +242,60 @@ def audit_skill_file_map(
         problems=tuple(problems),
         skill_resolved_targets=tuple((name, tuple(sorted(targets))) for name, targets in sorted(skill_resolved.items())),
     )
+
+
+def audit_component_skill_file_map(
+    component_id: str, revision: str, files: dict[str, bytes], *,
+    skill_files: tuple[str, ...] | None = None,
+) -> SkillReferenceAudit:
+    """Apply only exact reviewed source-specific Markdown template rules.
+
+    Obsidian's pinned format skill uses literal ``[text](url)`` as a prose
+    template, not as a path to a bundled file. Audit a transformed copy while
+    retaining the original pinned bytes unchanged for provenance/staging.
+    """
+    audit_files = files
+    if (component_id == "obsidian-skills"
+            and revision == "3ccff5338ea700537839b21900aa5358a0402c98"):
+        path = "skills/obsidian-markdown/SKILL.md"
+        body = files.get(path)
+        placeholder = b"[text](url)"
+        if isinstance(body, bytes) and body.count(placeholder) == 1:
+            audit_files = dict(files)
+            audit_files[path] = body.replace(placeholder, b"[text](https://example.invalid/)")
+    if (component_id == "ecc"
+            and revision == "ef648e01899ba3e8dc6371642deaaf64b4477775"
+            and skill_files is None):
+        full = audit_skill_file_map(audit_files)
+        closure_by_skill = {
+            skill: {skill, *targets}
+            for skill, targets in full.skill_resolved_targets
+        }
+        issues_by_skill: dict[str, list[str]] = {skill: [] for skill in full.skill_files}
+        for issue in full.problems:
+            for skill, closure in closure_by_skill.items():
+                if issue.source_path in closure:
+                    issues_by_skill[skill].append(
+                        f"{issue.source_path}:{issue.line}: {issue.reason} ({issue.target})"
+                    )
+        quarantined = tuple(
+            (skill, tuple(issues))
+            for skill, issues in sorted(issues_by_skill.items()) if issues
+        )
+        eligible = tuple(skill for skill in full.skill_files if not issues_by_skill[skill])
+        if eligible:
+            selected = audit_skill_file_map(audit_files, skill_files=eligible)
+            return SkillReferenceAudit(
+                skill_files=selected.skill_files,
+                checked_markdown=selected.checked_markdown,
+                resolved_targets=selected.resolved_targets,
+                problems=selected.problems,
+                skill_resolved_targets=selected.skill_resolved_targets,
+                quarantined_skill_problems=quarantined,
+            )
+        return SkillReferenceAudit(
+            skill_files=(), checked_markdown=full.checked_markdown,
+            resolved_targets=full.resolved_targets, problems=(),
+            skill_resolved_targets=(), quarantined_skill_problems=quarantined,
+        )
+    return audit_skill_file_map(audit_files, skill_files=skill_files)

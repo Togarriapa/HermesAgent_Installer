@@ -295,6 +295,24 @@ class ResourcesRuntimeTests(unittest.TestCase):
         self.assertFalse(artifact.readiness.materialized)
         self.assertTrue(any("PluginContext loader" in blocker for blocker in artifact.blockers))
 
+    def test_plugin_keeps_canonical_adapter_and_specific_pending_blocker(self):
+        from hermes_installer.components.native_plugins import NATIVE_PLUGIN_ADAPTERS
+
+        contract = next(row for row in NATIVE_PLUGIN_ADAPTERS if row.blocker)
+        artifact = materialize_runtime_resource(
+            "plugins", contract.resource_id, "1.0.0",
+            f"plugins/{contract.resource_id}.yaml", {"name": contract.resource_id},
+            {}, "a" * 40, "2.3.1",
+        )
+        self.assertEqual(artifact.adapter_id, contract.adapter_id)
+        self.assertIsNone(artifact.native_path)
+        self.assertFalse(artifact.readiness.materialized)
+        self.assertIn(f"{contract.resource_id}: {contract.blocker}.", artifact.blockers)
+        if contract.handler_available:
+            self.assertTrue(any("trusted PluginContext loader" in blocker for blocker in artifact.blockers))
+        else:
+            self.assertIn("no reviewed native PluginContext handler is installed", artifact.discoverability)
+
     def test_selected_cron_handler_delegates_only_the_pinned_profile_launch(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
