@@ -146,6 +146,34 @@ def test_stdin_write_receipt_must_join_exact_initial_input_and_terminal():
         registry._validate_stdin_write_receipt(run, terminal, write.receipt_handle, wrong_input, 6.0)
 
 
+def test_stdin_write_lookup_requires_stable_manager_retained_object():
+    registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    handle = object()
+    receipt = object()
+    calls = []
+    registry.process_custody = SimpleNamespace(
+        resolve_task_stdin_write=lambda task, receipt_handle:
+            calls.append((task, receipt_handle)) or receipt)
+
+    assert registry._resolve_exact_stdin_write_receipt(handle, "w" * 40) is receipt
+    assert calls == [(handle, "w" * 40), (handle, "w" * 40)]
+
+
+def test_stdin_write_lookup_rejects_reconstructed_receipt():
+    registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    calls = 0
+
+    def resolve(_task, _receipt_handle):
+        nonlocal calls
+        calls += 1
+        return object()
+
+    registry.process_custody = SimpleNamespace(resolve_task_stdin_write=resolve)
+    with pytest.raises(AuthorityDenied):
+        registry._resolve_exact_stdin_write_receipt(object(), "w" * 40)
+    assert calls == 2
+
+
 def test_issued_receipt_is_identity_bound_and_one_use():
     registry = _registry({})
     value = _dto()
