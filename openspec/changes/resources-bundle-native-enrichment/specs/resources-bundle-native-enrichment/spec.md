@@ -296,3 +296,10 @@ The implementation SHALL obtain native server/toolset ownership and presentation
 #### Scenario: Tool name resembles a different server
 - **WHEN** registering a protected native candidate
 - **THEN** ownership follows the explicit root-selected server field and parameters-only schema digest, without parsing its name
+
+### Requirement: Exact first selection and live input target
+The implementation SHALL enforce v43 exact first-publication predecessor and admitted-source plus actual-process target join.
+
+#### Scenario: Admission exists before process launch
+- **WHEN** no actual managed producer and loader proof exists
+- **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge

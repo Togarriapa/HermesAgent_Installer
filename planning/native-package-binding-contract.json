@@ -571,6 +571,30 @@
       "resolve_call": "resolve_native_schema(schema_id,native_package_id,native_package_generation,adapter_id,action_id,schema_kind)->verified schema mapping",
       "joins": "id equals action argument_schema_id/result_schema_id, or MCP binding request_schema_id/result_schema_id, for exact selected package/action. Root resolves row current active generation, actual ArtifactCatalog bytes/sha/source receipt/package selection; native_schema_sha256 equals canonical arguments schema SHA, not schema ID. Every required argument/result schema must resolve; no tool-name/service-label inference. Row source receipt is actual packaged selected action schema artifact or root selected authenticated MCP tools/list discovery schema receipt with current service/tool selection. Discovery unselected or changed schema cannot be silently enabled.",
       "compiler": "Native materializer copies exact verified schema bodies into candidate index and pins resulting index artifact/manifest; no generation from cache/model comments/default labels. MCP result schema is actual selected static root bounded MCP result envelope contract, or supported selected output schema if explicitly enrolled; do not fabricate an upstream output schema. Missing approved result artifact remains pending with exact selection step."
+    },
+    "initial_execution_selection": {
+      "owner_module": "hermes_installer.authority.source_observers",
+      "dto": "RootSelectedNativeExecution",
+      "dto_fields": [
+        "schema",
+        "selection_handle",
+        "kind",
+        "execution_handle",
+        "process_handle",
+        "profile_id",
+        "generation",
+        "native_package_id",
+        "native_package_generation",
+        "observer_enrollment_id",
+        "source_action_id",
+        "service_generation_digest",
+        "expires_monotonic"
+      ],
+      "kind_enum": "resource-task|native-health|desktop-input",
+      "constructors": "RootNativeExecutionSelectionRegistry.select_resource_task(admission_handle:RootResourceJobAdmissionHandle,node_id,managed_task_handle:ManagedTaskHandle)->RootSelectedNativeExecution; select_health(root_health_control_handle,current_managed_process_handle); select_desktop(root_verified_desktop_session_handle,current_managed_process_handle). All root-private exact registry objects/handles, no worker selectors.",
+      "task_join": "Admission handle alone has no actual process; ManagedTaskHandle alone has no admitted source selection. Root joins both through current running-task registry after selected start, same node/task/profile/service generations/payload hashes/lease/actual custody process ID. observer_enrollment_id/source_action_id derived exact active source_issuers and selected package adapter observer joins for native-input admitted task/health/Desktop channel; not caller ID or generic first observer.",
+      "resolver": "resolve_selected_native_input_target(selected_execution:RootSelectedNativeExecution)->LiveNativeInputTarget, retaining v33 output fields and FD ownership. Root registry resolves selection_handle against exact stored join/current custody PIDFD/kernel/loader proof; does not accept fabricated DTO as proof.",
+      "ordering": "For resource task, root launch establishes managed process then waits bounded actual loader readiness, captures/delivers admitted exact stdin source context to selected producer and writes/drains/closes stdin once within the original selected launch operation. Root owned internal phase bookkeeping only; no reused grant or caller callbacks. Cancellation/expiry/failure before readiness/input delivery closes whole owned cgroup and prevents stdin/effect. Task selection is retained only original deadline. Native health/desktop analogously require actual producer launch/session before source delivery; neither needs a pending HI11 pair."
     }
   }
 }

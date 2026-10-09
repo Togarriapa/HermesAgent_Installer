@@ -387,3 +387,10 @@ The implementation SHALL create and verify the exact v42 internal stage0 compila
 #### Scenario: No bootstrap policy exists yet
 - **WHEN** the actual installed root actor compiles initial selected policy
 - **THEN** root internal stage0 custody authorizes fixed compilation and one-use publication handoff before normal setup session creation
+
+### Requirement: Exact first selection and live input target
+The implementation SHALL enforce v43 exact first-publication predecessor and admitted-source plus actual-process target join.
+
+#### Scenario: Admission exists before process launch
+- **WHEN** no actual managed producer and loader proof exists
+- **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge
