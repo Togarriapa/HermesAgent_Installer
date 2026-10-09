@@ -39,49 +39,56 @@ class RecordingTransport:
         self.calls = []
 
     def __call__(self, route, model, payload, *, output_token_limit, timeout, trace_id, cancelled=lambda: False):
-        import json
         request = json.loads(payload)
         self.calls.append((route.name, model, payload))
-        has_fixture_tool = any(
-            item.get("function", {}).get("name") == "fixture_echo"
+        tool_names = [
+            item.get("function", {}).get("name")
             for item in request.get("tools", []) if isinstance(item, dict)
+        ]
+        tool_results = [
+            item.get("name") for item in request.get("messages", [])
+            if isinstance(item, dict) and item.get("role") == "tool"
+        ]
+        tool_call = None
+        if "tool_search" in tool_names and "tool_search" not in tool_results:
+            tool_call = ("tool_search", {"queries": ["fixture_echo"], "limit": 5})
+        elif "tool_describe" in tool_names and "tool_describe" not in tool_results:
+            tool_call = ("tool_describe", {"names": ["fixture_echo"]})
+        elif "tool_call" in tool_names and "tool_call" not in tool_results:
+            tool_call = ("tool_call", {"calls": [{
+                "name": "fixture_echo",
+                "arguments": {"text": "SYNTHETIC_PRIVATE_CANARY_7f4c"},
+            }]})
+        response_text = (
+            "private fixture tool result received"
+            if "tool_call" in tool_results else "native fixture response"
         )
-        has_tool_result = any(
-            item.get("role") == "tool" and "SYNTHETIC_PRIVATE_CANARY_7f4c" in str(item.get("content", ""))
-            for item in request.get("messages", []) if isinstance(item, dict)
-        )
-        if has_fixture_tool and not has_tool_result:
-            message = {"role": "assistant", "content": None, "tool_calls": [{
-                "id": "call_fixture_echo_1", "type": "function",
-                "function": {"name": "fixture_echo", "arguments": json.dumps({"text": "SYNTHETIC_PRIVATE_CANARY_7f4c"})},
-            }]}
-            finish = "tool_calls"
-        elif has_fixture_tool:
-            message, finish = {"role": "assistant", "content": "private fixture tool result received"}, "stop"
-        else:
-            message, finish = {"role": "assistant", "content": "native fixture response"}, "stop"
-        created = 1
         completion_id = "chatcmpl-native-fixture"
         if request.get("stream") is True:
-            if finish == "tool_calls":
+            if tool_call is not None:
+                name, arguments = tool_call
                 delta = {"role": "assistant", "tool_calls": [{
-                    "index": 0, "id": "call_fixture_echo_1", "type": "function",
-                    "function": {"name": "fixture_echo",
-                                 "arguments": json.dumps({"text": "SYNTHETIC_PRIVATE_CANARY_7f4c"})},
+                    "index": 0, "id": "call-fixture-" + str(len(self.calls)),
+                    "type": "function", "function": {
+                        "name": name, "arguments": json.dumps(arguments, separators=(",", ":")),
+                    },
                 }]}
+                finish = "tool_calls"
             else:
-                delta = {"role": "assistant", "content": message.get("content")}
+                delta = {"role": "assistant", "content": response_text}
+                finish = "stop"
             chunk = {
-                "id": completion_id, "object": "chat.completion.chunk", "created": created,
+                "id": completion_id, "object": "chat.completion.chunk", "created": 1,
                 "model": MODEL, "choices": [{"index": 0, "delta": delta,
                                                "finish_reason": finish}],
             }
             body = ("data: " + json.dumps(chunk, separators=(",", ":")) + "\n\n"
                     + "data: [DONE]\n\n").encode("utf-8")
             return ProviderResponse(200, body, {"Content-Type": "text/event-stream"}, 5, 3)
+        message = {"role": "assistant", "content": response_text}
         body = json.dumps({
-            "id": completion_id, "object": "chat.completion", "created": created,
-            "model": MODEL, "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+            "id": completion_id, "object": "chat.completion", "created": 1,
+            "model": MODEL, "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
         }, separators=(",", ":")).encode("utf-8")
         return ProviderResponse(200, body, {"Content-Type": "application/json"}, 5, 3)
@@ -251,19 +258,19 @@ plugins:
                     "native AIAgent cycle did not invoke the real fixture tool handler")
                 self.assertEqual(fixture_marker.read_text(encoding="utf-8"), "fixture_echo_invoked")
                 self.assertIn("NATIVE_DISPATCH_OK", result.stdout)
-                self.assertEqual(len(transport.calls), 4)
+                self.assertEqual(len(transport.calls), 6)
                 self.assertEqual([call[0] for call in transport.calls],
-                                 ["synthetic-private-fixture"] * 4)
-                self.assertEqual([call[1] for call in transport.calls], [MODEL] * 4)
-                conversation_payloads = [json.loads(call[2]) for call in transport.calls[:2]]
-                tool_messages = [message for message in conversation_payloads[1]["messages"]
+                                 ["synthetic-private-fixture"] * 6)
+                self.assertEqual([call[1] for call in transport.calls], [MODEL] * 6)
+                conversation_payloads = [json.loads(call[2]) for call in transport.calls[:4]]
+                tool_messages = [message for message in conversation_payloads[3]["messages"]
                                  if message.get("role") == "tool"]
-                self.assertEqual(len(tool_messages), 1)
-                self.assertIn("SYNTHETIC_PRIVATE_CANARY_7f4c", tool_messages[0]["content"])
+                self.assertTrue(any("SYNTHETIC_PRIVATE_CANARY_7f4c" in
+                                    str(message.get("content", "")) for message in tool_messages))
                 self.assertNotIn("SYNTHETIC_PRIVATE_CANARY_7f4c",
                                  json.dumps([call for call in transport.calls
                                              if call[0] == "openrouter-nemotron-free"]))
-                direct_payloads = [json.loads(call[2]) for call in transport.calls[2:]]
+                direct_payloads = [json.loads(call[2]) for call in transport.calls[4:]]
                 self.assertEqual([payload["messages"][0]["content"] for payload in direct_payloads],
                                  ["native primary fixture", "native auxiliary fixture"])
                 self.assertFalse((Path(plugin["plugin"]) / "__pycache__").exists())
@@ -387,8 +394,6 @@ def _run_native_worker():
             "fixture_plugin_rows": fixture_plugins,
             "registered_plugin_tools": plugin_tool_names,
         }, sort_keys=True))
-        if "fixture_echo" not in tool_names:
-            raise SystemExit("pinned Hermes agent did not expose the enabled fixture tool")
         cycle = agent.run_conversation("Use fixture_echo once and report its returned result.")
         if cycle.get("completed") is not True or "private fixture tool result received" not in str(cycle.get("final_response", "")):
             summary = {key: cycle.get(key) for key in
