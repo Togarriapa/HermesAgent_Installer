@@ -153,6 +153,9 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
 
         server = await asyncio.start_server(serve, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
+        transport = StreamableHTTPTransport(
+            f"http://127.0.0.1:{port}/mcp", service_id="fixture", timeout=2,
+        )
         from pathlib import Path
         import os
         import tempfile
@@ -209,7 +212,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
             rule = EffectRule(
                 capability=capability, operation="mcp.request", target="mcp:fixture:http",
             )
-            rules[(rule.capability, rule.target)] = rule
+            rules[(rule.capability, rule.operation, rule.target)] = rule
         authority_service = AuthorityService(
             signing_key=b"fixture-authority-key-32-bytes-long!!",
             key_id="mcp-http-fixture", bindings_by_uid={uid: binding},
