@@ -202,8 +202,8 @@ def normalize_responses_request(payload: bytes) -> tuple[bytes, str, bool]:
     return canonical, model, uses_tools
 
 
-def validate_responses_sse(body: bytes, content_type: str) -> tuple[int, int]:
-    """Require a bounded Responses SSE stream with a successful terminal event."""
+def _parse_responses_sse(body: bytes, content_type: str) -> tuple[int, int, dict[str, object]]:
+    """Require a bounded Responses SSE stream and return its terminal object."""
     media_type = content_type.split(";", 1)[0].strip().casefold() if isinstance(content_type, str) else ""
     if (not isinstance(body, bytes) or not 1 <= len(body) <= MAX_RESPONSE_BYTES
             or media_type != "text/event-stream"):
@@ -220,6 +220,7 @@ def validate_responses_sse(body: bytes, content_type: str) -> tuple[int, int]:
     if len(frames) > MAX_SSE_EVENTS:
         raise PolicyDenied("response.stream_bounds", "Codex event stream exceeds its event limit")
     completed = False
+    completed_response: dict[str, object] | None = None
     input_tokens = output_tokens = 0
     for frame in frames:
         if not frame:
@@ -249,7 +250,8 @@ def validate_responses_sse(body: bytes, content_type: str) -> tuple[int, int]:
         if len(raw_data) > MAX_SSE_EVENT_BYTES:
             raise PolicyDenied("response.stream_bounds", "Codex event data exceeds its frame limit")
         try:
-            event = json.loads(raw_data, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("constant")))
+            event = json.loads(raw_data, object_pairs_hook=_pairs_no_duplicates,
+                               parse_constant=lambda _: (_ for _ in ()).throw(ValueError("constant")))
         except (ValueError, UnicodeDecodeError, RecursionError):
             raise PolicyDenied("response.stream_format", "Codex event JSON is malformed") from None
         if not isinstance(event, dict) or not isinstance(event.get("type"), str):
@@ -285,10 +287,23 @@ def validate_responses_sse(body: bytes, content_type: str) -> tuple[int, int]:
                 raise PolicyDenied("response.stream_usage", "Codex completed response usage is malformed")
             input_tokens = min(input_value, 1_000_000)
             output_tokens = min(output_value, MAX_OUTPUT_TOKENS)
+            completed_response = response
             completed = True
-    if not completed:
+    if not completed or completed_response is None:
         raise PolicyDenied("provider.codex_partial", "Codex Responses stream ended before response.completed")
+    return input_tokens, output_tokens, completed_response
+
+
+def validate_responses_sse(body: bytes, content_type: str) -> tuple[int, int]:
+    """Require a bounded Responses SSE stream with a successful terminal event."""
+    input_tokens, output_tokens, _response = _parse_responses_sse(body, content_type)
     return input_tokens, output_tokens
+
+
+def completed_responses_object(body: bytes, content_type: str) -> dict[str, object]:
+    """Return the exact response object from a fully validated terminal event."""
+    _input_tokens, _output_tokens, response = _parse_responses_sse(body, content_type)
+    return response
 
 
 class CodexResponsesTransport:
@@ -353,6 +368,20 @@ class CodexResponsesTransport:
         if isinstance(content_type, str) and content_type.split(";", 1)[0].strip().casefold() in {
                 "application/json", "text/event-stream"}:
             safe_headers["Content-Type"] = content_type
+        response_refs = [value for key, value in headers.items()
+                         if isinstance(key, str)
+                         and key.casefold() == "x-hermes-native-response-ref"]
+        if len(response_refs) > 1:
+            raise PolicyDenied("response.metadata", "Host broker returned an ambiguous response reference")
+        if response_refs:
+            response_ref = response_refs[0]
+            if (not isinstance(response_ref, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", response_ref)):
+                raise PolicyDenied("response.metadata", "Host broker returned an invalid response reference")
+            safe_headers["X-Hermes-Native-Response-Ref"] = response_ref
+        elif 200 <= status < 300:
+            raise PolicyDenied("response.metadata_unavailable",
+                               "Root response metadata delivery is unavailable")
         retry_after = headers.get("Retry-After")
         if retry_after is not None:
             try:

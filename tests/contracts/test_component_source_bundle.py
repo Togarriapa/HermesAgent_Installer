@@ -322,7 +322,7 @@ class ComponentSourceBundleTests(unittest.TestCase):
                 revision,
             )
 
-    def test_broken_skill_reference_fails_before_generation_staging(self):
+    def test_ecc_full_source_retains_broken_skill_for_quarantine_reporting(self):
         contract = resolve_component_adapter("affaan-m/ECC")
         broken = archive_bytes(self.IDENTITY, self.REVISION, [
             ("skills/demo/SKILL.md", b"[missing](scripts/missing.py)\n", 0o644, "file"),
@@ -331,8 +331,10 @@ class ComponentSourceBundleTests(unittest.TestCase):
         broken_tree_sha = _git_tree(
             broken_files, {"skills/demo/SKILL.md": 0o644}
         )[0]
-        with self.assertRaisesRegex(ComponentSourceError, "referenced file or directory is missing"):
-            self.make_fetcher(broken, broken_tree_sha)[0].fetch(contract)
+        source = self.make_fetcher(broken, broken_tree_sha)[0].fetch(contract)
+        self.assertEqual(b"[missing](scripts/missing.py)\n", source.files["skills/demo/SKILL.md"])
+        self.assertEqual("skills/demo/SKILL.md", source.quarantined_skill_problems[0][0])
+        self.assertIn("referenced file or directory is missing", source.quarantined_skill_problems[0][1][0])
 
 
 if __name__ == "__main__":

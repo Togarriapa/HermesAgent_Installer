@@ -297,7 +297,7 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
 
 
 def test_output_cleanup_rejects_replaced_job_root_instead_of_succeeding():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         target = base / "target"
         target.mkdir(mode=0o700)
