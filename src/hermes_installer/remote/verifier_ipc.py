@@ -215,12 +215,14 @@ class PolicyVerifierService:
     """Cancellable bounded verifier service over one protected AF_UNIX socket."""
 
     def __init__(self, runtime: VerifierRuntime, *, gateway_uid: int,
-                 service_uid: int | None = None, service_gid: int | None = None):
-        if gateway_uid <= 0:
-            raise ValueError("dedicated gateway UID is required")
+                 service_uid: int, service_gid: int | None = None):
+        if (type(gateway_uid) is not int or gateway_uid <= 0
+                or type(service_uid) is not int or service_uid <= 0
+                or service_uid == gateway_uid):
+            raise ValueError("distinct dedicated non-root gateway and verifier UIDs are required")
         self.runtime = runtime
         self.gateway_uid = gateway_uid
-        self.service_uid = os.geteuid() if service_uid is None else service_uid
+        self.service_uid = service_uid
         self.service_gid = service_gid
         self._pool = ThreadPoolExecutor(max_workers=MAX_PENDING_READS, thread_name_prefix="access-policy-read")
         self._slots = threading.BoundedSemaphore(MAX_PENDING_READS)
@@ -228,12 +230,15 @@ class PolicyVerifierService:
         self._seen: dict[str, float] = {}
         self._seen_lock = threading.Lock()
         self._active_cancellations: set[threading.Event] = set()
+        self._active_futures: set[asyncio.Future] = set()
         self._active_lock = threading.Lock()
         self._server = None
         self._socket_path: Path | None = None
         self._socket_identity: tuple[int, int] | None = None
 
     async def start(self, socket_path: Path) -> None:
+        if os.geteuid() != self.service_uid:
+            raise RuntimeError("verifier must run under its own dedicated service UID")
         if not socket_path.is_absolute() or socket_path.exists() or socket_path.is_symlink():
             raise RuntimeError("verifier socket path must be absolute and unoccupied")
         parent = socket_path.parent
@@ -267,6 +272,14 @@ class PolicyVerifierService:
         with self._active_lock:
             for event in tuple(self._active_cancellations):
                 event.set()
+        pending = tuple(self._active_futures)
+        if pending:
+            _done, still_running = await asyncio.wait(pending, timeout=MAX_IPC_SECONDS + 1)
+            if still_running:
+                # Do not block the event loop or pretend that cancellation killed
+                # an arbitrary callback. The owning systemd scope must stop its
+                # cgroup and supply custody evidence before this service is gone.
+                raise RuntimeError("verifier worker exceeded bounded shutdown; stop the owned service scope")
         self._pool.shutdown(wait=True, cancel_futures=True)
         if self._socket_path is not None:
             try:
@@ -311,7 +324,9 @@ class PolicyVerifierService:
             loop = asyncio.get_running_loop()
             future = loop.run_in_executor(self._pool, self._evaluate, request, cancel)
             operation["future"] = future
+            self._active_futures.add(future)
             def finished(_):
+                self._active_futures.discard(future)
                 if operation and not operation["released"]:
                     operation["future_done"] = True
                     operation["released"] = True

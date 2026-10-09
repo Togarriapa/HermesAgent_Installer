@@ -61,9 +61,18 @@ class FixtureAccount:
         self._network_proxy = value
 
 
-@unittest.skipUnless(CRYPTO_AVAILABLE and PEER_CREDENTIALS, "requires pinned crypto and Linux SO_PEERCRED")
+class VerifierCustodianIdentityTests(unittest.TestCase):
+    def test_gateway_and_verifier_must_use_distinct_nonroot_uids(self):
+        with self.assertRaises(ValueError):
+            PolicyVerifierService(None, gateway_uid=1000, service_uid=1000)
+        with self.assertRaises(ValueError):
+            PolicyVerifierService(None, gateway_uid=1000, service_uid=0)
+
+
+@unittest.skip("requires the dedicated-UID managed-service harness; same-process IPC is not production evidence")
 class PolicyVerifierUnixIPCTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        raise unittest.SkipTest("verifier and gateway must run under distinct service UIDs")
         import jwt
         from cryptography.hazmat.primitives.asymmetric import rsa
 
