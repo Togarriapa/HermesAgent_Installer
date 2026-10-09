@@ -44,3 +44,12 @@ SHALL distinguish bundled, validated, materialized, discovered, authenticated, f
 
 - **WHEN** required MCP account is absent but its declaration and configuration exist
 - **THEN** resource and full-compliance remain incomplete with scoped next step; no fabricated native operation, account success or missing-required-as-optional status
+
+### Requirement: Fixed read-only registry discovery (RB06)
+
+Implement the bundled mcp-registry and agent37-discovery plugins through host-authorized fixed registry.read metadata operations. SHALL bind public query provenance, exact service/action and bounded parameters before network bytes; deny caller URL/method, redirects, publication, installation and execution. Discovery results remain untrusted and never activate resources.
+
+#### Scenario: Authorized bounded metadata discovery
+
+- **WHEN** selected native discovery plugin submits an authorized public metadata query
+- **THEN** root performs only enrolled bounded read, returns untrusted metadata, and rejects private/unknown query, arbitrary destination and activation
