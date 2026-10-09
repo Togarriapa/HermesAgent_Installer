@@ -91,7 +91,7 @@ class ProviderTransportTests(unittest.TestCase):
             evidence=evidence, clock=lambda: 1001, allow_test_evidence=True)
         with self.assertRaisesRegex(PolicyDenied, "does not match"):
             fixture_gate.require_eligible(model=MODEL, credential_ref="file:///other/key")
-        with self.assertRaisesRegex(PolicyDenied, "identity"):
+        with self.assertRaisesRegex(PolicyDenied, "does not match"):
             fixture_gate.require_eligible(model="other/model", credential_ref=ref)
         fixture_gate.require_eligible(model=MODEL, credential_ref=ref)
         with self.assertRaisesRegex(PolicyDenied, "credential"):
