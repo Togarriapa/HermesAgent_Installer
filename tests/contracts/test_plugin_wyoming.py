@@ -45,15 +45,38 @@ def test_endpoint_must_be_root_selected_numeric_local_address():
             WyomingEndpoint("bad", 1, address, 10300, "stt")
 
 
-def test_session_service_uses_synthetic_authorized_capture_and_fixed_endpoint(monkeypatch):
+def test_session_service_uses_root_selected_sealed_artifact_and_zeroes_pcm(monkeypatch):
     import hermes_installer.components.plugin_wyoming as module
+    import hashlib
+    from hermes_installer.components.plugin_channel_provenance import (
+        AudioIngressSelection, SelectedAudioIngressProducer,
+    )
 
-    class Boundary:
-        def __init__(self): self.played=[]; self.captured=[]
-        def current(self): return ("session-1", True)
-        def capture(self, session_id, *, max_bytes, timeout):
-            self.captured.append((session_id, max_bytes, timeout)); return b"synthetic-pcm"
-        def play(self, session_id, audio): self.played.append((session_id, audio))
+    pcm = bytearray(b"synthetic-pcm!")
+    digest = hashlib.sha256(pcm).hexdigest()
+    class Observer:
+        def observe_selected_audio_ingress(self, selection_handle, root_capture_record): return proof
+        def validate_audio_observation(self, selection, observed, *, now_monotonic):
+            if observed is not proof: raise PermissionError
+            return {"schema":1,"proof_handle":"audio-proof-0001","selection_id":selection.id,
+                "session_handle":"audio-session-0001","consent_receipt_handle":"consent-0001",
+                "capture_receipt_handle":"capture-0001","audio_artifact_id":"artifact-0001",
+                "audio_sha256":digest,"size_bytes":len(pcm),"format_schema_id":selection.sample_format_schema_id,
+                "controller_identity_digest":"a"*64,"service_generation_digest":"b"*64,
+                "issued_monotonic":95.0,"expires_monotonic":110.0}
+    proof = object()
+    selection=AudioIngressSelection("audio-selection","audio-channel",1,"profile-001","role-001",
+        "issuer-001","device-001","backend-001","d"*64,"session-policy-001",16384,10,"pcm16-v1")
+    producer=SelectedAudioIngressProducer(selection,"selected-handle-001",Observer(),clock=lambda:100.0)
+    class Capture:
+        def capture_selected_audio(self, handle, session_handle, *, max_bytes, max_seconds):
+            assert handle=="selected-handle-001" and max_bytes==16384 and max_seconds==10
+            assert session_handle=="session-handle-001"
+            return object()
+        def discard_selected_capture(self,*_args): pass
+    class Store:
+        def read_selected_capture(self,handle,observed,*,max_bytes): return pcm
+        def consume_selected_capture(self,*_args): pass
 
     calls=[]
     class Client:
@@ -61,31 +84,25 @@ def test_session_service_uses_synthetic_authorized_capture_and_fixed_endpoint(mo
         def transcribe(self, audio): calls.append(("stt",audio)); return "synthetic transcript"
         def synthesize(self, text): calls.append(("tts",text)); return b"synthetic-output"
     monkeypatch.setattr(module, "WyomingClient", Client)
-    boundary=Boundary()
     endpoints={
         "stt":WyomingEndpoint("stt",1,"127.0.0.1",10300,"stt"),
         "home_stt":WyomingEndpoint("home",1,"127.0.0.1",10301,"home_stt"),
         "tts":WyomingEndpoint("piper",1,"127.0.0.1",10200,"tts"),
     }
-    service=WyomingSessionService(boundary,endpoints)
-    assert service.capture_current_session(max_bytes=900_000,timeout=10)==b"synthetic-pcm"
-    assert service.transcribe_local(endpoints["stt"].uri,b"synthetic-pcm",timeout=15)=="synthetic transcript"
+    service=WyomingSessionService(Capture(),Store(),producer,endpoints)
+    transcript, observed=service.transcribe_selected_capture("session-handle-001",endpoints["stt"].uri,timeout=15)
+    assert transcript=="synthetic transcript" and observed.proof is proof
+    assert calls[1][0]=="stt" and calls[1][1] is pcm
+    assert pcm==bytearray(len(pcm))
     audio=service.synthesize_local(endpoints["tts"].uri,"hello",timeout=15)
-    service.play_current_session("session-1",audio)
-    assert boundary.captured[0][0]=="session-1"
-    assert boundary.played==[("session-1",b"synthetic-output")]
+    assert audio==b"synthetic-output"
     with pytest.raises(Exception, match="not root-selected"):
-        service.transcribe_local("tcp://127.0.0.1:1",b"data",timeout=1)
+        service.transcribe_selected_capture("session-handle-001","tcp://127.0.0.1:1",timeout=1)
 
 
-def test_session_service_denies_unauthorized_microphone_capture():
-    class Boundary:
-        def current(self): return ("session-1",False)
-        def capture(self,*_args,**_kwargs): raise AssertionError("must not capture")
-        def play(self,*_args): pass
-    service=WyomingSessionService(Boundary(),{})
-    with pytest.raises(Exception,match="not authorized"):
-        service.capture_current_session(max_bytes=900_000,timeout=10)
+def test_session_service_denies_missing_selected_capture_authority():
+    with pytest.raises(TypeError,match="root-selected audio provenance"):
+        WyomingSessionService(object(),object(),object(),{})
 
 
 def test_wyoming_stt_client_describes_selects_and_sends_bounded_pcm(monkeypatch):
