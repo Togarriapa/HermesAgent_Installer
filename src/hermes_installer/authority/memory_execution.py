@@ -112,32 +112,29 @@ def _validate_parent(enrollment: MemoryServiceEnrollment, recipe: MemoryRouteRec
     target = f"memory:{enrollment.provider}:{action}"
     operation = f"memory.{action}"
     digest = hashlib.sha256(parent_request_payload).hexdigest()
-    mismatches = [name for name, valid in {
-        "context.profile": context.profile_id == enrollment.profile_id,
-        "context.namespace": context.namespace_id == enrollment.namespace_identity,
-        "context.principal": context.principal_id == enrollment.principal_id,
-        "context.operation": context.operation == operation,
-        "context.payload_digest": context.final_payload_digest == digest,
-        "grant.profile": parent.profile_id == context.profile_id,
-        "grant.namespace": parent.namespace_id == context.namespace_id,
-        "grant.principal": parent.principal_id == context.principal_id,
-        "grant.uid": parent.uid == context.uid,
-        "grant.operation": parent.operation == operation,
-        "grant.capability": parent.capability == capability,
-        "grant.target": parent.target == target,
-        # AuthorityService verifies the original signed context before dispatch,
-        # then gives root handlers a reconstructed context marked
-        # ``verified-in-service``. Its signature is intentionally different,
-        # so context_digest is bound to the already-verified parent grant in
-        # the durable ledger rather than recomputed from that handler view.
-        "grant.request_digest": parent.request_digest == digest,
-        "grant.final_digest": parent.final_payload_digest == digest,
-        "grant.receipts": parent.source_receipts == context.source_receipts,
-        "grant.lineage": parent.lineage_hash == context.lineage_hash,
-        "grant.sensitivity": parent.sensitivity == context.sensitivity,
-    }.items() if not valid]
-    if mismatches:
-        raise MemoryExecutionDenied("parent grant/source/action binding differs: " + ",".join(mismatches))
+    # AuthorityService verifies the original signed context before dispatch,
+    # then gives root handlers a reconstructed context marked
+    # ``verified-in-service``. Its signature is intentionally different,
+    # so context_digest is bound to the already-verified parent grant in
+    # the durable ledger rather than recomputed from that handler view.
+    if (context.profile_id != enrollment.profile_id
+            or context.namespace_id != enrollment.namespace_identity
+            or context.principal_id != enrollment.principal_id
+            or context.operation != operation
+            or context.final_payload_digest != digest
+            or parent.profile_id != context.profile_id
+            or parent.namespace_id != context.namespace_id
+            or parent.principal_id != context.principal_id
+            or parent.uid != context.uid
+            or parent.operation != operation
+            or parent.capability != capability
+            or parent.target != target
+            or parent.request_digest != digest
+            or parent.final_payload_digest != digest
+            or parent.source_receipts != context.source_receipts
+            or parent.lineage_hash != context.lineage_hash
+            or parent.sensitivity != context.sensitivity):
+        raise MemoryExecutionDenied("parent grant, source context, and selected memory action differ")
     return context, digest
 
 
@@ -873,18 +870,14 @@ class RootMemoryStepEffectAuthority:
             "request_digest": payload_digest, "retry_index": 0,
         })
         authorization = EffectAuthorization.from_wire(authorization_wire)
-        grant_mismatches = [name for name, valid in {
-            "operation": authorization.operation == "connector.open",
-            "target": authorization.target == enrollment.target_id,
-            "request_digest": authorization.request_digest == payload_digest,
-            "final_payload_digest": authorization.final_payload_digest == payload_digest,
-            "context_digest": authorization.context_digest == canonical_digest(
-                {**context.claims(), "signature": context.signature}),
-            "deadline": authorization.monotonic_expires_at <= binding["deadline_monotonic"],
-        }.items() if not valid]
-        if grant_mismatches:
-            raise MemoryExecutionDenied("AuthorityService returned a differently bound memory HI12 grant: "
-                                        + ",".join(grant_mismatches))
+        if (authorization.operation != "connector.open"
+                or authorization.target != enrollment.target_id
+                or authorization.request_digest != payload_digest
+                or authorization.final_payload_digest != payload_digest
+                or authorization.context_digest != canonical_digest(
+                    {**context.claims(), "signature": context.signature})
+                or authorization.monotonic_expires_at > binding["deadline_monotonic"]):
+            raise MemoryExecutionDenied("AuthorityService returned a differently bound memory HI12 grant")
         result = self.service._perform_effect(source.uid, os.getpid(), {
             "authorization": authorization.to_wire(), "operation": "connector.open",
             "payload": __import__("base64").b64encode(child_payload).decode("ascii"),
