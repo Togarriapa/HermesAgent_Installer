@@ -35,7 +35,7 @@ def validate_access_jwt(token:str,*,policy:RemotePolicy,now:Callable[[],float]=t
   hdr=jwt.get_unverified_header(token)
   kid=hdr.get("kid")
   if hdr.get("alg")!="RS256" or not isinstance(kid,str) or not 1<=len(kid)<=128:raise GatewayDenied("unsupported Access token algorithm")
-  jwk=policy.jwks.get(kid)
+  jwk=policy.jwks.key(kid) if callable(getattr(policy.jwks, 'key', None)) else policy.jwks.get(kid)
   if not isinstance(jwk,Mapping) or jwk.get("kty")!="RSA" or jwk.get("alg") not in (None,"RS256") or jwk.get("use") not in (None,"sig"):raise GatewayDenied("Access signing key unavailable")
   key=PyJWK.from_dict(dict(jwk),algorithm="RS256").key
   claims=jwt.decode(token,key,algorithms=["RS256"],issuer=policy.issuer,audience=policy.audience,leeway=policy.clock_skew_seconds,options={"require":["iss","aud","exp","nbf","iat","sub","email"],"verify_signature":True})
