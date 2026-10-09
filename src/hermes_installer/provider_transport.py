@@ -79,6 +79,8 @@ class OpenRouterTransport:
         # traffic requires a signed one-use grant and the fixed host egress broker.
         if route.name != "openrouter-nemotron-free" or route.endpoint.rstrip("/") != OPENROUTER_ENDPOINT:
             raise PolicyDenied("route.endpoint", "Route is not the pinned public OpenRouter endpoint")
+        if model not in route.models or model not in ALLOWED_MODELS:
+            raise PolicyDenied("route.model", "Model does not match the approved public OpenRouter route")
         if route.maximum_sensitivity.value != 0 or not route.free_only:
             raise PolicyDenied("route.sensitivity", "OpenRouter public route cannot receive non-public data")
         if route.input_usd_per_million != 0 or route.output_usd_per_million != 0:
@@ -87,15 +89,19 @@ class OpenRouterTransport:
             raise PolicyDenied("request.deadline", "Provider transport deadline is outside its hard bound")
         if not trace_id or len(trace_id) > 128 or any(ord(c) < 33 for c in trace_id):
             raise PolicyDenied("request.trace", "Provider trace identifier is invalid")
-        body = self._request_body(payload, model, output_token_limit)
+        # Enforce cheap envelope bounds before policy lookup, but defer parsing
+        # and normalization until account eligibility has passed.
+        if not isinstance(payload, bytes) or len(payload) > MAX_REQUEST_BYTES:
+            raise PolicyDenied("request.bounds", "Provider request exceeds its byte limit")
+        if not 0 <= output_token_limit <= 65_536:
+            raise PolicyDenied("request.bounds", "Output token limit is outside the supported range")
         if effect_grant is None:
-            # Eligibility is checked before credentials or network setup. Valid
-            # account evidence alone cannot enable direct worker networking.
             self._eligibility.require_eligible(model=model, credential_ref=self._credential_ref)
             if not self._allow_direct_fixture_transport:
                 raise PolicyDenied("authorization.unavailable", "Direct provider network access is disabled; host broker is required")
         elif self._authority_client is None:
             raise PolicyDenied("authorization.unavailable", "Root-owned provider egress broker is unavailable")
+        body = self._request_body(payload, model, output_token_limit)
         if effect_grant is not None:
             expected_target = canonical_provider_target(model)
             expected_digest = __import__("hashlib").sha256(body).hexdigest()
