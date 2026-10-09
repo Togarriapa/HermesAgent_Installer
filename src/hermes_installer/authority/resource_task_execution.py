@@ -205,6 +205,7 @@ class RootResourceTaskRunner:
         self, admission_handle: RootResourceJobAdmissionHandle, node_id: str,
     ) -> RootResourceProcessReceipt:
         """Consume a selected admission, start one task, wait, then validate it."""
+        self._expire_capsules()
         admission = self.jobs.consume_task_handle(admission_handle, node_id)
         source: RootAdmittedTaskSource | None = None
         controller: RootTaskController | None = None
@@ -242,8 +243,9 @@ class RootResourceTaskRunner:
             start = getattr(self.service, "perform_admitted_resource_process_start", None)
             if not callable(start):
                 raise AuthorityDenied("resource.task_unavailable", "root selected process.start effect is unavailable")
+            task_deadline = min(float(task.deadline_monotonic), float(source.expires_monotonic))
             timeout = min(float(backend.maximum_seconds),
-                          float(admission.expires_monotonic - self.service.monotonic()))
+                          task_deadline - self.service.monotonic())
             if timeout <= 0:
                 raise AuthorityDenied("resource.task_expired", "selected task deadline expired before launch")
             managed_handle = start(
@@ -257,11 +259,11 @@ class RootResourceTaskRunner:
                 raise AuthorityDenied("resource.task_unavailable", "root task terminal monitor is unavailable")
             terminal = wait(
                 managed_handle,
-                deadline_monotonic=min(float(task.deadline_monotonic),
-                                       float(source.expires_monotonic)),
+                deadline_monotonic=task_deadline,
                 cancelled=cancelled,
             )
-            self._validate_terminal(admission, task, managed_handle, terminal)
+            self._validate_terminal(admission, task, managed_handle, terminal,
+                                    deadline_monotonic=task_deadline)
             result_validator = self.results.resolve_selected_result(
                 admission.backend_enrollment_id, backend.result_schema_id,
                 self.service.service_generation_digest,
@@ -350,12 +352,22 @@ class RootResourceTaskRunner:
             raise AuthorityDenied("resource.task_binding", "selected backend generation changed")
         return enrollment, backend
 
+    def _expire_capsules(self) -> None:
+        now = self.service.monotonic()
+        with self._lock:
+            expired = [key for key, capsule in self._capsules.items()
+                       if now >= capsule.receipt.expires_monotonic]
+            for key in expired:
+                self._capsules.pop(key, None)
+
     @staticmethod
     def _validate_terminal(
         admission: RootResourceJobAdmissionHandle,
         task: RootAdmittedTask,
         managed_handle: ManagedTaskHandle,
         terminal: Any,
+        *,
+        deadline_monotonic: float,
     ) -> None:
         required = (
             "task_handle_id", "terminal_receipt_id", "job_id", "node_id",
@@ -402,6 +414,6 @@ class RootResourceTaskRunner:
                 or not math.isfinite(terminal.finished_monotonic)
                 or terminal.started_monotonic > terminal.finished_monotonic
                 or terminal.finished_monotonic > terminal.observed_monotonic
-                or terminal.observed_monotonic > task.deadline_monotonic
-                or terminal.finished_monotonic > task.deadline_monotonic):
+                or terminal.observed_monotonic > deadline_monotonic
+                or terminal.finished_monotonic > deadline_monotonic):
             raise AuthorityDenied("resource.task_terminal", "task exit or cleanup proof is incomplete")

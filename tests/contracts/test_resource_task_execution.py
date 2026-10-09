@@ -102,6 +102,5 @@ def test_runner_never_accepts_unproven_terminal_as_a_result(changes):
         RootResourceTaskRunner._validate_terminal(
             admission=None, task=task,
             managed_handle=ManagedTaskHandle("opaque-managed-task-handle", "process-generation-1"),
-            terminal=receipt,
+            terminal=receipt, deadline_monotonic=10.0,
         )
-
