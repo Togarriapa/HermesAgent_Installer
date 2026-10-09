@@ -146,3 +146,41 @@ The installer SHALL resolve resource profile tasks through selected protected pr
 #### Scenario: Manifest attempts process selection
 - **WHEN** a resource manifest or worker supplies executable, profile path, argv or reusable parent grant as execution authority
 - **THEN** root rejects and resolves only its selected per-node process binding with a fresh exact child grant
+
+### Requirement: Observed native metadata and bounded composite effects
+The installer SHALL resolve source observers from explicit selected adapter joins and deliver provider metadata only through peer/request/response-bound root lookup; composite effects SHALL preserve exact outer matching and fresh root child authority.
+
+#### Scenario: Composite tool requests an unselected child
+- **WHEN** worker code invokes a different action/digest or claims response metadata without exact root lookup
+- **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants
+
+### Requirement: Exact selected finite voice recipes
+The installer SHALL verify the actual immutable selected voice workflow recipe and registered primitive handlers while preserving session-specific permission and fresh child authority.
+
+#### Scenario: Recipe bytes available without handler
+- **WHEN** a selected recipe is verified but actual root engine, primitive handler or trusted session permission is missing
+- **THEN** capability remains incomplete and no recipe/fixture status claims native effect success
+
+### Requirement: Resource profile task terminal protocol
+
+The implementation SHALL enforce this protocol. RB-T08 / EV-RB07: use the exact root task runner protocol in planning/protected-resource-job-contract.json, including one-shot admitted UTF8 stdin plus EOF, actual terminal validation and result-capsule lineage; launch or fixture status cannot establish completion.
+
+#### Scenario: Missing concrete runtime proof
+- **WHEN** the exact protocol or current kernel/native observations are unavailable
+- **THEN** the affected task remains incomplete and no fixture or mount-only evidence establishes acceptance.
+
+### Requirement: Native health and typed task proof
+
+The implementation SHALL enforce the applicable native health receipt and typed task admission contracts. Use planning/protected-lifecycle-control-contract.json native_health_receipt for actual native health and planning/protected-resource-job-contract.json typed_admission/service_methods/recipe_domain for RB-T08. Original tasks/acceptance remain pending.
+
+#### Scenario: Status without native result
+- **WHEN** only source/status/exit evidence is available
+- **THEN** functional health and task result acceptance remain incomplete.
+
+### Requirement: Root observed initial input closure
+
+The implementation SHALL resolve actual installed release custody and full admitted source receipt closure before issuing native input provenance. Private or unknown sensitivity SHALL remain unchanged absent separate reviewed clearance.
+
+#### Scenario: Digest without source closure
+- **WHEN** only a digest or caller provenance label is available
+- **THEN** no trusted input receipt or admitted native effect is created.

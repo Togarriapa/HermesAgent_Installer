@@ -46,6 +46,7 @@
       "resource_body_recipes",
       "resource_scope_bindings",
       "resource_validators",
+      "root_journal_roots",
       "generation_digest"
     ],
     "types": "single selected generation record; each catalog is bounded list<=1024 strict existing inner source-backed records, duplicates/unknown fields rejected. generation_id opaque rootissued string. Empty lists valid only affected actions explicitly unavailable.",
@@ -57,7 +58,31 @@
     "remote_session_enrollments": "Active exact HI13 rows and protected selected OTP/JWT/policy/principal/gateway joins from remote-root-session-bridge-contract.json, fully included generation_digest. Prior top-level declaration is staging/import only; no mutable sidecar/alternate active parser fallback.",
     "resource_backend_enrollments": "Strict activeRB07backend/action/recipe schema in protected-resource-job-contract.json, fullrows includedcanonicalgenerationdigest; no mutable sidecarfallback.",
     "resource_scope_bindings": "Strict active rows defined in protected-resource-job-contract.json closed_resolvers; fully included generation_digest, no mutable sidecar/worker resolver fallback.",
-    "resource_validators": "Strict active rows defined in protected-resource-job-contract.json closed_resolvers; fully included generation_digest, no mutable sidecar/worker resolver fallback."
+    "resource_validators": "Strict active rows defined in protected-resource-job-contract.json closed_resolvers; fully included generation_digest, no mutable sidecar/worker resolver fallback.",
+    "root_journal_roots": {
+      "row_fields": [
+        "root_id",
+        "absolute_path",
+        "owner_uid",
+        "owner_gid",
+        "mode",
+        "device",
+        "inode",
+        "generation",
+        "purpose"
+      ],
+      "purpose": "authority-journal",
+      "initial_selection": {
+        "root_id": "installer-authority-journal-v1",
+        "absolute_path": "/var/lib/hermes-installer/authority-journal",
+        "owner_uid": 0,
+        "owner_gid": 0,
+        "mode": 448
+      },
+      "resolution": "Root-owned installed setup selection supplies path before first snapshot; create/validate root0700 directory with held nofollow ancestor walk, then record actual fstat device/inode and root-issued journal generation. Entire strict row in active digest. Only root path resolver consumes absolute_path; workers receive root_id only. No service/caller data root aliases, symlink, group/worldwrite/ACL access or nonzero production UID. Custom root requires explicit reviewed root selection before creation, never worker request.",
+      "calls": "resolve_root_journal(root_id,expected_active_generation_digest)->RootJournalSelection(root_id,path) after actual path owner/mode/dev/inode/generation checks. Memory authority_state_root_id exact row root_id; bootstrap receipt/session stores use child bootstrap-receipts/setup-sessions; neither hardcoded separate root nor mutable mapping fallback.",
+      "state": "First root-local setup may use verified initial selection before authority file exists, then includes observed row in prepared snapshot. Initial constructor root trust is not an active worker rule. Later daemon uses active digest-bound row only."
+    }
   },
   "device_kernel_enforcement": {
     "profile_fields": [
@@ -350,5 +375,46 @@
       "issued_monotonic"
     ],
     "evidence": "Root actual terminal wait, bounded logs and cgroup teardown; consumed parent authorization remains consumed. If a worker asks control through public API, existing fresh process.control exact verb authorization is still required."
+  },
+  "native_custody_proof_protocol": {
+    "root_api": "resolve_loaded_package_closure(live_peer:LivePeerIdentity,observer:SourceObserverEnrollment)->LoadedPackageClosureProof; resolve_source_target_peer(observer:SourceObserverEnrollment,parent_context:HostContext)->ResolvedTargetPeer. Existing callback signatures retained.",
+    "mount_prerequisite": "Actual ManagedProcessEffectHandler.resolve_native_package_for_peer(peer_pid,peer_pidfd) mount receipt proves only verified immutable mount, not loader readiness. Require unique current enrolled process, pidfd/starttime/executable/cgroup/mount namespace and all closure/entrypoint/resolver pins.",
+    "readiness_channel": "Root creates a dedicated inherited AF_UNIX socketpair before selected native launch, pins reviewed loader executable/interpreter/module closure and an instance nonce, and retains parent endpoint and actual child PIDFD. Only this selected loader role writes the finite loader progress protocol; ordinary worker RPC readiness assertions are rejected. No named worker-writable ready file/socket fallback.",
+    "progress_record_fields": [
+      "schema=1",
+      "launch_nonce",
+      "sequence",
+      "phase",
+      "package_id",
+      "generation",
+      "entrypoint_sha256",
+      "resolver_sha256",
+      "registered_action_ids"
+    ],
+    "phases": [
+      "entrypoint-imported",
+      "actions-registered",
+      "ready"
+    ],
+    "observation": "Pinned reviewed loader emits only after actual selected immutable entrypoint import and registration succeeded. Root authenticates channel peer/current PIDFD/cgroup/role artifact and checks exact finite manifest actions, ordered phases/sequence and original deadline. These are loader-role observations, not human provenance, PUBLIC clearance or actual action execution proof. Unreviewed code/imports, missing trusted loader or mismatched action registry keep readiness unavailable.",
+    "stable_registry": "Root stores immutable ready event and one LoadedPackageClosureProof per launch/peer/mount/observer join with fixed proof_id, issued/expires and action tuple. Repeated lookup during capture/admission returns equal immutable DTO, while every lookup separately revalidates kernel custody/mount/generation/current lease. Never renew expiry or mint new proof on lookup. Stop/relaunch/mount/module/action change revokes entry.",
+    "fields": "Use existing loaded_package_closure_proof.fields unchanged. observed_entrypoint_action_ids means root-observed registered entrypoints, not successful action execution. Actual effects require separate observed invocation and root backend result receipt.",
+    "target_peer_fields": [
+      "pid",
+      "pidfd",
+      "uid",
+      "profile_id",
+      "generation",
+      "identity"
+    ],
+    "target_peer": "Resolver returns duplicated owned PIDFD and actual kernel identity; same producer by default. Different peer only from exact current root pending HI11 producer/gateway bridge binding and full parent context. No caller PID/profile selector or relabelled gateway context. Root closes duplicates on cancellation/expiry.",
+    "evidence": "HI-T08 / HI-T09 and EV-HI08 / EV-HI09 remain pending: real launch/import/register/ready/action boundary observations plus forged worker ready, substituted closure/module/action, stale PIDFD, replay/relaunch and expiry negatives.",
+    "progress_wire": {
+      "encoding": "4-byte unsigned big-endian payload length followed by UTF8 canonical JSON: sort_keys=true, separators=(comma,colon), ensure_ascii=false, allow_nan=false; strict duplicate-key/unknown-field rejection, no ancillary FDs accepted from loader.",
+      "limits": "Each payload <=65536 bytes, exactly three phase records; sequence 0/1/2 in listed phase order; registered_action_ids sorted unique exact manifest finite allowlist <=256 IDs; empty until actions-registered, ready must repeat identical registered tuple. Root-created 256-bit base64url launch_nonce, no worker chosen nonce. Socket closes after ready or any failure.",
+      "receiver": "RootNativeLoaderObservationStore(custody_resolver,active_catalog_resolver,clock); root composition supplies concrete custody manager and digest-bound catalog, not worker callbacks. register_launch(owned_process_handle,parent_socket,expected_loader_role_artifact_id,expected_loader_role_sha256,launch_nonce,deadline_monotonic) -> opaque launch_observation_handle; root-private selected launch only. receive_loader_progress(launch_observation_handle,cancelled) -> immutable ready_event_id; bounded frame reads authenticate retained actual PIDFD/current kernel identity and selected role on every frame.",
+      "proof": "resolve_loaded_package_closure(live_peer,observer) resolves immutable ready record and current mount receipt, joins current observer adapter/action/role and returns existing exact DTO. No caller receiver/role/socket/nonce selector. Root record constructor owns fixed issued/expires; expiry <= original launch observation deadline and current service lease.",
+      "failure": "Unexpected EOF before ready, extra frame, malformed/noncanonical JSON, phase/sequence/nonce/hash/action mismatch, peer exit/relaunch or cancellation invalidates observation. Any restart loses active observations and requires a fresh actual launch; no ready-state file recovery."
+    }
   }
 }
