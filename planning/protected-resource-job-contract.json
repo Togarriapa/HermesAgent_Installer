@@ -312,6 +312,59 @@
       "result_capsule_handle",
       "expires_monotonic"
     ],
-    "terminal": "Root owns bounded terminal wait/read/stop bookkeeping as assembly contract; output/error actual bytes become root observed result capsule after selected result schema validation. Launch success alone is not native task completion. Source/PM/native boundary unavailable leaves this original route incomplete with exact prerequisite."
+    "terminal": "Root owns bounded terminal wait/read/stop bookkeeping as assembly contract; output/error actual bytes become root observed result capsule after selected result schema validation. Launch success alone is not native task completion. Source/PM/native boundary unavailable leaves this original route incomplete with exact prerequisite.",
+    "task_runner_protocol": {
+      "owner": "RootResourceTaskRunner, separate from ManagedBuildJobLauncher; root composition installs this concrete runner into ResourceJobAdmissionService. No worker RPC or arbitrary callable runner selector.",
+      "start": "start_admitted_task(admission_handle:str,node_id:str)->RootTaskHandle; existing launch_resource_profile_task delegates to this method. Root resolves and consumes the frozen one-use node admission, validates current job/node/backend/process/native generations, consent, source closure and deadline, resolves exact hermes-resource-profile-task-v1 recipe.",
+      "handle_fields": [
+        "schema=1",
+        "task_handle",
+        "job_id",
+        "node_id",
+        "backend_enrollment_id",
+        "process_id",
+        "process_generation",
+        "native_package_generation",
+        "task_payload_sha256",
+        "stdin_sha256",
+        "stdin_size_bytes",
+        "parent_closure_digest",
+        "deadline_monotonic"
+      ],
+      "handle_authority": "Opaque 256-bit random task_handle resolves an instance-private root registry; other fields are presentation. Not constructable bearer authority; root registry stores actual manager/PIDFD/cgroup/starttime, consumed admission audit and selected validators.",
+      "launch_effect": "One fresh reduced process.start child authorizes the root-private launch envelope including existing selection-only fields plus admission_handle, node_id, task_payload_sha256, stdin_sha256 and stdin_size_bytes. These additions are internal only; public process.start schema unchanged. Exact UTF8 prompt bytes from protected body recipe, nonempty <=262144 bytes, no extra newline or shell interpolation.",
+      "stdin": "Custody root-only write_initial_task_stdin_and_close(task_handle,exact_bytes) verifies live owned process/initial digest/size, writes once with bounded partial-write handling and concurrent bounded output drain, then closes its owned stdin FD to signal EOF. This is completion of the same admitted launch effect, not a later reuse of its grant. No worker close_stdin flag, arbitrary extra writes, FD/PID/path selection or stdin reopening. Partial write/cancel/deadline is failed or ambiguous, never completed.",
+      "wait": "wait_owned_task_terminal(task_handle:str,deadline_monotonic:float,cancelled:Callable[[],bool])->RootTaskTerminalReceipt; requested deadline may shorten only. Root-owned wait/read/status/stop bookkeeping revalidates exact live PIDFD/cgroup/starttime/generation; no new external effect or reused parent grant. Cancellation stops only owned unit and closes FDs. ECHILD/lost custody/restart ambiguity cannot assert exit success or kill unknown PID.",
+      "terminal_fields": [
+        "schema=1",
+        "terminal_receipt_handle",
+        "task_handle",
+        "process_id",
+        "process_generation",
+        "exit_code",
+        "terminal_state",
+        "stdout_sha256",
+        "stderr_sha256",
+        "stdout_size_bytes",
+        "stderr_size_bytes",
+        "observed_monotonic",
+        "parent_closure_digest"
+      ],
+      "terminal_state_values": [
+        "completed",
+        "failed",
+        "cancelled",
+        "ambiguous"
+      ],
+      "validate": "validate_selected_task_result(task_handle:str,terminal_receipt_handle:str)->RootResourceProcessReceipt; root resolves stored actual bounded output bytes and exact selected result_schema_id/validator artifact, requires observed exit 0 plus semantic result validation and native boundary provenance. No worker result bytes/schema/success label accepted. Exit 0 alone is not native functionality proof.",
+      "capsule": "record_resource_result receives actual validated backend bytes and full original event/input/provider/tool/memory/delegation lineage from root registry; resulting capsule is PRIVATE/UNKNOWN unless separately reviewed clearance, bounded and peer/job/node/generation bound. RootResourceProcessReceipt retains existing exact fields. Failed/ambiguous tasks never advance dependent DAG nodes.",
+      "attachment": "ResourceJobAdmissionService attaches root-only runner at composition; root handle lookup start/terminal/validate methods only. AuthorityService fixed resource operation handlers invoke admission service; no public task-runner verbs or generic process command transport.",
+      "evidence": "RB-T08 / EV-RB07 and HI-T09: actual selected Hermes query-file EOF operation, bounded output and terminal validation, prompt digest/lineage, replay/concurrency/generation/consent/deadline/partial-write/cancellation/lost-custody negatives; fixtures remain implementation evidence only.",
+      "typed_admission": "start_admitted_task(admission_handle:RootResourceJobAdmissionHandle,node_id:str) uses existing frozen non-wire root handle, not a new string registry. Root consumes consume_task_handle exactly once; start_task_handle, task_handle_cancelled and release_task_handle preserve existing job service lifecycle. RootAdmittedTask is root-created immutable snapshot of consumed IDs/generations/recipe+payload digests/closure/deadline, not worker authority.",
+      "custody_call": "start_selected_task(profile,context,authorization,selection_payload,*,task_handle:RootAdmittedTask,exact_stdin,expected_stdin_sha256,peer_pid,peer_pidfd,timeout,cancelled)->ManagedTaskHandle is root-only; actual root resolution/fresh reduced grant/exact internal envelope and single initial stdin+EOF remain mandatory.",
+      "service_methods": "AuthorityService.launch_resource_profile_task(handle:RootResourceJobAdmissionHandle,node_id)->RootResourceProcessReceipt orchestrates admitted start, owned terminal wait and semantic capsule validation. consume_resource_task_completion(receipt:RootResourceProcessReceipt,*,cancelled)->{status,body,headers,receipt_id,result_fields} resolves only immutable actual root capsule/current job binding, consumes once; no caller body/status acceptance. Result bounded by selected result schema and inherited source privacy.",
+      "source_resolver": "resolve_admitted_task_source(handle:RootResourceJobAdmissionHandle,node_id:str)->RootAdmittedTaskSource is root-private admission service method. At admission store immutable verified _JobEvent plus complete receipt closure/selected scope/consent/native package and actual original parent context in same frozen handle registry; do not keep only digest. Resolve after actual handle/instance/node consumption reservation and current generation/consent/deadline checks; returns immutable full source receipts, lineage, sensitivity, recipient ceiling, principal/profile/namespace and digest. Root fresh reduced child issuer verifies full closure digest, never reconstructs ancestry from digest/caller labels. Hash mismatch/missing closure denies launch."
+    },
+    "recipe_domain": "task_body_recipe_id/task_request_schema_id select inner Hermes prompt recipe/schema; node/body_recipe_id and backend/body_recipe_id select outer resource request recipe/schema. Distinct domains, no automatic equality requirement. Both protected/current/source-pinned/forced-scope joins are mandatory; caller cannot choose either."
   }
 }

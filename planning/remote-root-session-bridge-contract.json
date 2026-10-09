@@ -307,6 +307,68 @@
       "full_host_desktop_denied"
     ],
     "trust": "Proof map constructed only from actual bounded HTTP/WS/native-window/custody observations and root authenticated probe receipt, never returned booleans alone. Unauthenticated HTTP still rejected before bytes. Private probe proves selected local origin readiness only; does not prove actual Cloudflare Access JWT/OTP public admission. Full AC13..15 and EV-HI13 require actual authorized target/account JWT/policy/lease acceptance separately.",
-    "receipt": "Existing RootOriginReadinessReceipt adds probe_receipt_handle bound exact eight observations+request/result digests/current peer/mount/sandbox/route/lease; root registry resolves and validates before setup activation. Expired/reused/mismatched setup/profile/gateway/catalog denied and probe streams closed."
+    "receipt": "Existing RootOriginReadinessReceipt adds probe_receipt_handle bound exact eight observations+request/result digests/current peer/mount/sandbox/route/lease; root registry resolves and validates before setup activation. Expired/reused/mismatched setup/profile/gateway/catalog denied and probe streams closed.",
+    "connector_authority": {
+      "pattern": "Separate root-private setup probe binding/issuer/consumer; never construct a RemoteSessionBinding, fake Access JWT or normal worker native-profile HostContext. Existing public HI13 issuer remains unchanged.",
+      "binding_fields": [
+        "schema=1",
+        "probe_handle",
+        "setup_transaction_handle",
+        "probe_actor_identity",
+        "gateway_identity",
+        "native_profile_id",
+        "native_generation",
+        "enrollment_id",
+        "target_id",
+        "approved_route_ids",
+        "session_id",
+        "expires_monotonic",
+        "service_generation_digest",
+        "principal_id"
+      ],
+      "selection": "Root resolves exact current root-setup transaction plus setup_writer_binding.origin_probe_enrollment_id and actual protected probe role/peer PIDFD; independently verifies current actual gateway role proof and native custody/mount/sandbox/profile generation. target_id fixed xpra-native, approved routes xpra-http/xpra-websocket only. session_id root issued unique setup-probe:<random nonce>, no public Access session reuse.",
+      "issuer_signature": "issue_probe_connector_effect(root_probe_handle,operation,canonical_payload_bytes,sequence) -> InternalProbeConnectorAuthorization; root-private instance method only, no AuthorityClient/worker RPC.",
+      "operation_enum": [
+        "connector.open",
+        "connector.read",
+        "connector.write",
+        "connector.close"
+      ],
+      "capability": "hermes-service-connect",
+      "target": "xpra-native",
+      "authorization_fields": [
+        "schema=1",
+        "issuer_instance_id",
+        "authorization_id",
+        "probe_handle",
+        "setup_transaction_handle",
+        "probe_actor_identity_digest",
+        "gateway_identity_digest",
+        "native_profile_id",
+        "native_generation",
+        "enrollment_id",
+        "target_id",
+        "route_id",
+        "operation",
+        "canonical_payload_sha256",
+        "sequence",
+        "nonce",
+        "issued_monotonic",
+        "expires_monotonic",
+        "service_generation_digest",
+        "signature"
+      ],
+      "auth_semantics": "Issuer independently resolves live probe registry and exact next sequence/operation/route/root stream state. Root actual probe+gateway identities are kernel-observed uid/gid/pid/starttime/PIDFD/executable dev/inode/SHA/cgroup/mountns/netns/profile generation, never call assertions. root signature plus exact private registry instance/one-use nonce authenticates authorization; serialized wire alone not privileged object. expiry min original<=30s probe/current transaction/current process/route lease, no renewal.",
+      "open_payload": "Exact existing HI07 canonical JSON {schema:1,enrollment_id,generation,target_id,action:\"open\",approved_route_id,session_id,deadline}; generation native_generation, native enrollment ID selected root, deadline<=probe lease. Hash entire canonical payload using existing canonical_bytes, never smaller context preimage.",
+      "frame_payload": "Exact existing HI12 canonical JSON {schema:1,target_id,route_id,connector_id,session_id,generation,deadline,sequence}; read adds max_bytes, write adds data_b64; close adds neither. All selected state fields root-derived and deadline<=probe expiry, read/write<=1MiB, aggregate selected pinned asset/stream limit with hard32MiB ceiling. Strict extra-field deny.",
+      "consumer_signature": "SetupProbeConnectorBackend.open(root_probe_binding,authorization)->opaque stream handle; read/write/close(root_probe_binding,stream_handle,authorization,exact frame fields)->existing bounded connector results. Construct only in root composition with issuer registry and existing FixedServiceConnector; no worker registration or public route.",
+      "consumer_checks": "Before connect/read/write bytes, root revalidates current actual setup/probe/gateway/native PIDFD/generation/catalog/role/route and atomically consumes exact operation/target/full digest/sequence nonce. Retained shutdown closes both directions on any mismatch/cancel/expiry. Existing RemoteConnectorEffectAuthority accepts only real RemoteSessionBinding and must reject this type; separate setup consumer validates InternalProbeConnectorAuthorization and does not relax ordinary worker/public auth.",
+      "gateway_probe_transport": "Private root-created inherited AF_UNIX control channel authenticates exact root probe and gateway role. Fixed command schema {schema:1,probe_handle,action,asset_id}, action asset-get|asset-head|websocket-attach; asset_id only pinned asset catalog opaque ID for HTTP, null for WS. Root/private gateway resolves exact GET/HEAD client path or binary app WS; no URL/port/headers/callerprofile. Commands not exposed by public HTTP. Separate actual public/loopback unauthenticated request checks remain denied before app bytes.",
+      "cleanup": "Root-only close_owned_probe_stream(probe_handle,stream_handle) resolves owner and closes/wipes after expired lease without new grant; cannot affect other probe/public sessions. Terminal probe receipt includes actual bounded operations/results/digests and eight proof keys; booleans alone notproof.",
+      "evidence": "Actual app-only private gateway/connector positive and public unauthenticated denial, wrong setup/probe/gateway/profile/payload/nonce/route/generation/replay/expiry/sibling negatives. This setup probe never proves actual external AccessJWT/OTP policy/lease AC.",
+      "principal_join": "principal_id is resolved only through current protected PrincipalBinding whose profile_id equals selected native_profile_id and uid equals current selected native service profile UID. Require exactly one current binding, expected namespace and current catalog digest; do not derive ID text from enrollment/profile or use gateway principal. resolve_selected_native_principal(native_profile_id,native_generation,service_generation_digest)->existing PrincipalBinding is root-private catalog accessor.",
+      "sequence_domains": "Separate effect_sequence monotonic per child probe authorization from connector frame sequence. Open consumes effect_sequence0 but has no frame sequence and leaves first read/write/close frame sequence0 as existing HI07. Each subsequent authorization increments effect_sequence independently; signed authorization.sequence is effect_sequence, canonical frame payload.sequence is current connector frame sequence. Registry pins both and checks each exactly; do not require them equal or modify public connector sequencing.",
+      "per_action_probe": "issue_selected_origin_probe returns aggregate parent handle only. Root-private mint_probe_action(parent_probe_handle,action,asset_id)->child_probe_handle validates current parent/setup/peers/catalog, exact finite action and pinned asset ID/null WS, and stores immutable action/asset/route plus fresh child sequence state and original parent deadline. AF_UNIX command uses child handle. Each child executes one selected action; cannot switch asset/action after mint, expiry cannot extend parent. Root aggregates actual child receipts into eight-key readiness map; no aggregate caller wire."
+    }
   }
 }
