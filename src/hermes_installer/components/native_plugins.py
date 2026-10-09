@@ -7,11 +7,13 @@ resolved from the installer-owned selected-adapter registry.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 import base64
 import binascii
 import re
 from collections.abc import Mapping
+
+from hermes_installer.components.public_registries import invoke_public_registry_read
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +47,27 @@ _PLUGIN_IDS = (
     "web",
 )
 
+_PLUGIN_BLOCKERS = {
+    "agent-live-wallet": "Unavailable: no enrolled wallet runtime, encrypted host vault, network/asset allowlist or one-shot explicit-order confirmation path. Resume after the user selects an exact wallet backend, network, assets and protected signer; mainnet activity is not enabled.",
+    "agent-sandbox-wallet": "Unavailable: no isolated wallet runtime or reviewed Sepolia/Solana Devnet RPC and test-asset route is enrolled. Resume after selecting a sandbox backend and fixed test-network recipients; never connect mainnet or user funds.",
+    "agent37-discovery": "Handler is implemented; public reads still require root `registry-agent37-read` enrollment and the protected installer loader before native discovery/invocation.",
+    "authentik-authorization": "Unavailable: Authentik base URL, read-only token reference, System group identity and signed principal-resolution bridge are not securely enrolled. Resume with those protected references and a direct/indirect membership negative test.",
+    "cloudflare-homelab": "Unavailable: no owned account/zone/tunnel enrollment, scoped runtime token reference or live Authentik System check is bound. Resume only after the root operator identifies owned resources and reviews fixed DNS/tunnel effect verbs.",
+    "codex": "Unavailable: no host-owned Codex authentication provider, assigned-workspace identity or bounded task runner is injected. Resume when the trusted host runtime supplies these without copying credentials into plugin state.",
+    "composio": "Unavailable: no user-authorized Composio connection, per-profile toolkit allowlist or runtime credential-vault reference is enrolled. Resume after the user selects toolkits and connects the account through its protected OAuth flow.",
+    "ebook-toolchain": "Unavailable: no fixed ebook component adapter or isolated, installer-managed pandoc/epubcheck/calibre executable registry is implemented. Resume by adding a fixed-builder adapter and proving EPUB/PDF outputs in an owned fixture; DRM removal and arbitrary shell stay denied.",
+    "epic-kanban": "Unavailable: no per-Epic local board store/adapter is registered and no GitHub Projects v2 account or project scope is enrolled. Resume with the chosen local-only or user-authorized Projects backend and ephemeral board lifecycle tests.",
+    "financial-data-hub": "Unavailable: no user-consented read-only institution/provider connections or namespaced token vault is enrolled. Resume through each provider's consent flow and verify read scopes; payment, trading, signing and transfer operations remain excluded.",
+    "financial-execution-gateway": "Unavailable: no provider execution adapters, independently enrolled account scopes, duplicate protection or fresh one-shot confirmation verifier exists. Resume only after a separately reviewed explicit-order workflow; no standing or autonomous financial actions.",
+    "github": "Unavailable: no host credential-vault reference, repository scope or reviewed fixed GitHub effect catalog is injected. Resume after selecting an account/repository and enrolling least-privilege scopes; write operations require separate task authorization and post-write verification.",
+    "homelab-ops-broker": "Unavailable: no protected operations-broker target IDs, read/write capability enrollment, Authentik System verifier or bounded fixed-operation transport is injected. Resume after operator enrollment of exact owned Hermes/Nextcloud targets and negative cross-target tests; raw shell/SSH remain denied.",
+    "kobo-bridge": "Unavailable: no detected Kobo model, exported-notebook source, USB mount ownership or user-authorized Dropbox/Drive connection is available. Resume after a model/capability probe and explicit non-DRM file transfer choice; account scraping and notebook writes remain denied.",
+    "mcp-registry": "Handler is implemented; public reads still require root `registry-read` enrollment and the protected installer loader before native discovery/invocation.",
+    "resource-overlay-store": "Encrypted backup is unavailable until lifecycle provides a host-managed encrypted backup/restore API; local private CAS read/write/history/delete remains profile-scoped.",
+    "voice-pipeline": "Unavailable: no selected local Wyoming STT/TTS endpoints, session-authorized microphone adapter or audio boundary is enrolled. Resume after confirming bounded local endpoints and session permissions; cloud fallback and raw-audio persistence remain denied.",
+    "web": "Unavailable: no reviewed public-web retrieval runtime with fixed URL policy, redirect handling, TLS and host dispatch mediation is injected. Resume when the selected browser/retriever adapter is registered; authenticated actions and credential-bearing requests remain denied.",
+}
+
 # Plugin resources are source identities from the user's preserved registry,
 # not aliases for unrelated seed repositories. A matching source adapter ID is
 # attached only after a reviewed one-to-one source crosswalk exists.
@@ -53,9 +76,11 @@ NATIVE_PLUGIN_ADAPTERS = tuple(
         adapter_id=plugin_id,
         resource_id=plugin_id,
         component_adapter_id=None,
-        handler_available=(plugin_id == "resource-overlay-store"),
-        status=("reviewed-local-profile-handler" if plugin_id == "resource-overlay-store" else "typed-adapter-registry-required"),
-        blocker=(None if plugin_id == "resource-overlay-store" else "No one-to-one reviewed seed-source crosswalk or registered native handler yet"),
+        handler_available=(plugin_id in {"resource-overlay-store", "mcp-registry", "agent37-discovery"}),
+        status=("reviewed-local-profile-handler" if plugin_id == "resource-overlay-store"
+                else "reviewed-root-brokered-public-read" if plugin_id in {"mcp-registry", "agent37-discovery"}
+                else "typed-adapter-registry-required"),
+        blocker=_PLUGIN_BLOCKERS[plugin_id],
     )
     for plugin_id in _PLUGIN_IDS
 )
@@ -230,6 +255,147 @@ class ResourceOverlayStoreImplementation:
 RESOURCE_OVERLAY_STORE_IMPLEMENTATION = ResourceOverlayStoreImplementation()
 
 
+class MCPRegistryImplementation:
+    """Fixed read-only tools for the official public MCP Registry."""
+
+    def register(self, ctx: object, runtime_context: object) -> None:
+        if getattr(getattr(runtime_context, "identity", None), "resource_id", None) != "mcp-registry":
+            raise NativePluginUnavailable("mcp-registry: selected source identity does not match")
+        register_tool = getattr(ctx, "register_tool", None)
+        if not callable(register_tool):
+            raise NativePluginUnavailable("mcp-registry: Hermes PluginContext.register_tool is unavailable")
+        discovery_schema = {"type": "object", "properties": {
+            "search": {"type": "string", "maxLength": 200},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 30},
+            "cursor": {"type": ["string", "null"], "maxLength": 1024},
+            "latest_only": {"type": "boolean"},
+        }, "additionalProperties": False}
+        inspect_schema = {"type": "object", "properties": {
+            "server_name": {"type": "string", "minLength": 1, "maxLength": 200},
+            "version": {"type": "string", "maxLength": 128},
+        }, "required": ["server_name"], "additionalProperties": False}
+
+        def discover(args: object) -> dict[str, Any]:
+            fields = _tool_object(args, fields=frozenset({"search", "limit", "cursor", "latest_only"}))
+            query: dict[str, Any] = {}
+            if "search" in fields:
+                query["search"] = fields["search"]
+            if fields.get("latest_only") is True:
+                query["version"] = "latest"
+            elif "latest_only" in fields and type(fields["latest_only"]) is not bool:
+                raise ValueError("latest_only must be a boolean")
+            return invoke_public_registry_read(
+                runtime_context, service_id="registry:modelcontextprotocol", query=query,
+                limit=_bounded_page(fields.get("limit"), 30), cursor=_cursor(fields.get("cursor")),
+                intent="Discover public MCP server metadata without installing or executing it",
+            )
+
+        def inspect(args: object) -> dict[str, Any]:
+            fields = _tool_object(args, fields=frozenset({"server_name", "version"}))
+            server_name = _server_name(fields.get("server_name"))
+            query: dict[str, Any] = {"name": server_name}
+            if "version" in fields:
+                query["version"] = fields["version"]
+            return invoke_public_registry_read(
+                runtime_context, service_id="registry:modelcontextprotocol", query=query,
+                limit=20, cursor=None,
+                intent="Inspect public MCP server metadata and version history only",
+            )
+
+        for name, schema, handler, description in (
+            ("mcp_registry_discover", discovery_schema, discover,
+             "Search the official public MCP Registry. Results are untrusted metadata; this does not install or run servers."),
+            ("mcp_registry_inspect", inspect_schema, inspect,
+             "Read public MCP server version metadata by exact registry name; no server execution or installation."),
+        ):
+            register_tool(name=name, toolset="mcp_registry", schema=schema, handler=handler,
+                          requires_env=None, is_async=False, description=description)
+
+
+class Agent37DiscoveryImplementation:
+    """Fixed read-only Agent37 skill-index search and metadata tools."""
+
+    def register(self, ctx: object, runtime_context: object) -> None:
+        if getattr(getattr(runtime_context, "identity", None), "resource_id", None) != "agent37-discovery":
+            raise NativePluginUnavailable("agent37-discovery: selected source identity does not match")
+        register_tool = getattr(ctx, "register_tool", None)
+        if not callable(register_tool):
+            raise NativePluginUnavailable("agent37-discovery: Hermes PluginContext.register_tool is unavailable")
+        discover_schema = {"type": "object", "properties": {
+            "search": {"type": "string", "minLength": 1, "maxLength": 160},
+            "owner": {"type": "string", "maxLength": 64},
+            "repo": {"type": "string", "maxLength": 128},
+            "sort": {"type": "string", "enum": ["relevance", "updated"]},
+            "minimum_stars": {"type": "integer", "enum": [10]},
+            "recently_updated": {"type": "boolean"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 30},
+            "cursor": {"type": ["string", "null"], "pattern": "^(0|[1-9][0-9]{0,5})$"},
+        }, "required": ["search"], "additionalProperties": False}
+        inspect_schema = {"type": "object", "properties": {
+            "skill_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        }, "required": ["skill_id"], "additionalProperties": False}
+
+        def discover(args: object) -> dict[str, Any]:
+            fields = _tool_object(args, fields=frozenset({"search", "owner", "repo", "sort", "minimum_stars", "recently_updated", "limit", "cursor"}))
+            query = {key: fields[source] for source, key in (
+                ("search", "search"), ("owner", "owner"), ("repo", "repo"),
+                ("sort", "sort"), ("minimum_stars", "min_stars"),
+            ) if source in fields}
+            if fields.get("recently_updated") is True:
+                query["recent"] = True
+            elif "recently_updated" in fields and type(fields["recently_updated"]) is not bool:
+                raise ValueError("recently_updated must be a boolean")
+            return invoke_public_registry_read(
+                runtime_context, service_id="registry:agent37", query=query,
+                limit=_bounded_page(fields.get("limit"), 30), cursor=_cursor(fields.get("cursor")),
+                intent="Discover public Agent37 skill metadata; do not import or execute candidates",
+            )
+
+        def inspect(args: object) -> dict[str, Any]:
+            fields = _tool_object(args, fields=frozenset({"skill_id"}))
+            return invoke_public_registry_read(
+                runtime_context, service_id="registry:agent37", query={"id": fields.get("skill_id")},
+                limit=1, cursor=None,
+                intent="Inspect a public Agent37 metadata record without importing its skill content",
+            )
+
+        for name, schema, handler, description in (
+            ("agent37_discover_skills", discover_schema, discover,
+             "Search the public Agent37 skills index. Skill content and ranking remain untrusted; results are not installed or executed."),
+            ("agent37_inspect_skill", inspect_schema, inspect,
+             "Read bounded public metadata for an exact Agent37 skill ID. Instructions are omitted."),
+        ):
+            register_tool(name=name, toolset="agent37_discovery", schema=schema, handler=handler,
+                          requires_env=None, is_async=False, description=description)
+
+
+MCP_REGISTRY_IMPLEMENTATION = MCPRegistryImplementation()
+AGENT37_DISCOVERY_IMPLEMENTATION = Agent37DiscoveryImplementation()
+
+
+def _bounded_page(value: object, maximum: int) -> int:
+    if value is None:
+        return min(20, maximum)
+    if type(value) is not int or not 1 <= value <= maximum:
+        raise ValueError(f"limit must be an integer from 1 to {maximum}")
+    return value
+
+
+def _cursor(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > 1024 or any(ord(ch) < 32 for ch in value):
+        raise ValueError("cursor must be an opaque bounded string")
+    return value
+
+
+def _server_name(value: object) -> str:
+    if (not isinstance(value, str) or not value or len(value) > 512
+            or any(ord(ch) < 33 or ch in "?#\\" for ch in value)):
+        raise ValueError("server_name must be one exact bounded registry name")
+    return value
+
+
 def resolve_native_plugin_implementation(adapter_id: str) -> NativePluginImplementation | None:
     """Return the actual implementation, never the metadata crosswalk record."""
     contract = resolve_native_plugin_adapter(adapter_id)
@@ -237,4 +403,8 @@ def resolve_native_plugin_implementation(adapter_id: str) -> NativePluginImpleme
         return None
     if adapter_id == "resource-overlay-store":
         return RESOURCE_OVERLAY_STORE_IMPLEMENTATION
+    if adapter_id == "mcp-registry":
+        return MCP_REGISTRY_IMPLEMENTATION
+    if adapter_id == "agent37-discovery":
+        return AGENT37_DISCOVERY_IMPLEMENTATION
     return None
