@@ -79,6 +79,7 @@ class EnrollmentPolicy:
     resource_body_recipes: tuple[Mapping[str, Any], ...] = ()
     resource_scope_bindings: tuple[Mapping[str, Any], ...] = ()
     resource_validators: tuple[Mapping[str, Any], ...] = ()
+    root_journal_roots: tuple[Mapping[str, Any], ...] = ()
     activation_state: str = "active"
     authority_base: Mapping[str, Any] | None = None
     home_root: Path = Path("/var/lib/hermes-installer/services/default/home")
@@ -786,7 +787,8 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "resource_backend_enrollments": [dict(row) for row in policy.resource_backend_enrollments],
              "resource_body_recipes": [dict(row) for row in policy.resource_body_recipes],
              "resource_scope_bindings": [dict(row) for row in policy.resource_scope_bindings],
-             "resource_validators": [dict(row) for row in policy.resource_validators]}
+             "resource_validators": [dict(row) for row in policy.resource_validators],
+             "root_journal_roots": [dict(row) for row in policy.root_journal_roots]}
     value["generation_digest"] = hashlib.sha256(_canonical(value, ensure_ascii=False)).hexdigest()
     from .enrollment import _validate_service_generations
     try:
@@ -903,7 +905,8 @@ def _validate_prepared_policy(policy: EnrollmentPolicy) -> None:
     catalog_names = ("protected_devices", "protected_build_records", "native_packages",
                      "memory_enrollments", "operation_parameter_schemas", "source_issuers",
                      "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
-                     "resource_body_recipes", "resource_scope_bindings", "resource_validators")
+                     "resource_body_recipes", "resource_scope_bindings", "resource_validators",
+                     "root_journal_roots")
     if any(getattr(policy, name) for name in catalog_names):
         raise BootstrapEnrollmentError("prepared generation cannot activate dependent catalogs")
 
