@@ -53,7 +53,7 @@ class RootBuildExecutionLinuxTests(unittest.TestCase):
             fixture_type.setUpClass()
         except unittest.SkipTest as exc:
             self.skipTest(str(exc))
-        fixture = fixture_type("test_successful_managed_build_fixture")
+        fixture = fixture_type("test_build_runs_under_real_isolation_and_emits_terminal_cleanup_proof")
         fixture.setUp()
         peer_pidfd = None
         try:
