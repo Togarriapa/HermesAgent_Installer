@@ -69,6 +69,15 @@ class MemoryEnrollmentTests(unittest.TestCase):
         with self.assertRaises(MemoryEnrollmentError):
             MemoryServiceEnrollment.from_protected_record(worker)
 
+    def test_service_generation_is_an_opaque_host_id_and_owner_epoch_stays_integer(self):
+        value = record()
+        value["service_generation"] = "svc-generation-opaque-17"
+        self.assertEqual(MemoryServiceEnrollment.from_protected_record(value).service_generation,
+                         "svc-generation-opaque-17")
+        value["service_generation"] = 17
+        with self.assertRaises(MemoryEnrollmentError):
+            MemoryServiceEnrollment.from_protected_record(value)
+
     def test_scope_generation_and_limits_are_bound_to_protected_record(self):
         value = record()
         value["fixed_project_account_user_scope"]["user_id"] = "sibling-profile"

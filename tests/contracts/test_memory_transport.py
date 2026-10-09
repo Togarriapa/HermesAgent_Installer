@@ -99,9 +99,9 @@ def make_ipc(stream, calls):
 
 
 def response(status=200, body=b'{"healthy":true}', extra_headers=b""):
-    return (f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n"
-            f"Content-Length: {len(body)}\r\n".encode() + extra_headers
-            + b"Connection: close\r\n\r\n" + body)
+    head = (f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n").encode("ascii")
+    return head + extra_headers + b"Connection: close\r\n\r\n" + body
 
 
 class MemoryTransportTests(unittest.TestCase):
@@ -138,7 +138,7 @@ class MemoryTransportTests(unittest.TestCase):
             with self.assertRaises(MemoryTransportDenied):
                 ipc.request(context=context, authorization=Authorization(),
                     service_id="memory-service-one",
-                    service_generation=changes.get("service_generation", 8),
+                    service_generation=changes.get("service_generation", "generation-eight"),
                     provider="agentmemory", route_id="agentmemory-ready",
                     session_id="trace-one", deadline_monotonic=time.monotonic()+5,
                     payload=b'{"schema":1}', timeout=2, peer_pid=1001,
@@ -149,7 +149,7 @@ class MemoryTransportTests(unittest.TestCase):
         calls = []
         ipc, _ = make_ipc(Stream(response()), calls)
         args = dict(context=Context(), authorization=Authorization(),
-            service_id="memory-service-one", service_generation=8,
+            service_id="memory-service-one", service_generation="generation-eight",
             provider="agentmemory", session_id="trace-one",
             deadline_monotonic=time.monotonic()+5, payload=b'{"schema":1}',
             timeout=2, peer_pid=1001, peer_pidfd=None, cancelled=lambda: False)
