@@ -1,0 +1,245 @@
+"""Root-native immutable CAS receipt producer contracts."""
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+import tarfile
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from hermes_installer.authority.native_output_receipts import (
+    NativeOutputMember,
+    NativeOutputReceiptDenied,
+    NativeOutputSelection,
+    RootMaterializationReceiptRegistry,
+    _read_archive_member,
+    _archive_manifest,
+    _member_manifest_digest,
+    _normalize_members,
+    _verify_payload,
+    _verify_resources_source,
+    _validate_role_selection_payload,
+    _parse_canonical_json,
+)
+
+
+def _archive(path: str, content: bytes) -> bytes:
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        info = tarfile.TarInfo(path)
+        info.size = len(content)
+        info.mode = 0o644
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        info.mtime = 0
+        archive.addfile(info, io.BytesIO(content))
+    return stream.getvalue()
+
+
+def _compiled_closure(candidate: bytes | None = None) -> tuple[bytes, tuple[NativeOutputMember, ...]]:
+    if candidate is None:
+        candidate = (b'{"candidates":[],"generation":"generation-1",'
+                 b'"package_id":"package-1","profile_id":"demo",'
+                 b'"resolver_sha256":"' + b"a" * 64 + b'","schema":1}')
+    resolver = b'{"schema":1}'
+    leaf = b"selected native module"
+    overlay = json.dumps({
+        "compiler_artifact_id": "installer-module:native_materializer",
+        "compiler_sha256": "3" * 64,
+        "members": [{"mode": 420, "path": "module.py",
+                     "sha256": hashlib.sha256(leaf).hexdigest(), "size_bytes": len(leaf)}],
+        "schema": 1, "source_commit": "d" * 40,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    closure_row = {"relative_path": "module.py", "sha256": hashlib.sha256(leaf).hexdigest(),
+                   "size_bytes": len(leaf), "mode": 0o644}
+    manifest = json.dumps({
+        "candidate_index": {"artifact_id": "native-candidate-index:package-1:generation-1",
+                            "relative_path": "catalog/native-candidates.json",
+                            "sha256": hashlib.sha256(candidate).hexdigest(),
+                            "size_bytes": len(candidate)},
+        "closure_files": [closure_row],
+        "adapters": [],
+        "dependencies": [],
+        "generation": "generation-1",
+        "package_id": "package-1",
+        "profile_id": "demo",
+        "schema": 1,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    files = {"manifest.json": manifest, "resolver/resolver": resolver,
+             "catalog/native-candidates.json": candidate, "closure/module.py": leaf,
+             "overlay/manifest.json": overlay}
+    stream = io.BytesIO()
+    members = []
+    with tarfile.open(fileobj=stream, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for path, content in sorted(files.items()):
+            info = tarfile.TarInfo(path)
+            info.size = len(content)
+            info.mode = 0o644
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            info.mtime = 0
+            archive.addfile(info, io.BytesIO(content))
+            members.append(NativeOutputMember(path, hashlib.sha256(content).hexdigest(),
+                                              len(content), 0o644))
+    return stream.getvalue(), tuple(members)
+
+
+def _closure_tree_sha256(payload: bytes) -> str:
+    rows = json.loads(_read_archive_member(payload, "manifest.json"))["closure_files"]
+    canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def test_resources_source_receipt_input_is_exact_full_pinned_archive() -> None:
+    bundle = (Path(__file__).parents[2] / "src/hermes_installer/registry/bundle_data"
+              / "hermes-agent-resources-2.3.1.tar.gz").read_bytes()
+    members = _archive_manifest(bundle, source_archive=True)
+    assert len(members) == 739
+    _verify_resources_source(bundle)
+    with pytest.raises(NativeOutputReceiptDenied, match="file count"):
+        _archive_manifest(_archive("one.txt", b"bad"), source_archive=True)
+
+
+def test_member_manifest_commits_to_mode_size_and_content() -> None:
+    content = b"profile instructions"
+    row = NativeOutputMember("profiles/demo/SOUL.md",
+                             hashlib.sha256(content).hexdigest(), len(content), 0o644)
+    changed_mode = NativeOutputMember(row.path, row.sha256, row.size_bytes, 0o600)
+    assert _member_manifest_digest((row,)) != _member_manifest_digest((changed_mode,))
+    with pytest.raises(NativeOutputReceiptDenied, match="malformed"):
+        _normalize_members((NativeOutputMember("../escape", row.sha256,
+                                                row.size_bytes, 0o644),))
+
+
+def test_compiled_closure_requires_candidate_index_as_fixed_member() -> None:
+    payload, members = _compiled_closure()
+    _verify_payload("native-compiled-closure", "compiled-closure", payload, members)
+    index = _read_archive_member(payload, "catalog/native-candidates.json")
+    assert _read_archive_member(payload, "catalog/native-candidates.json") == index
+    _verify_payload("native-candidate-index", "candidate-index-json", index,
+                    (NativeOutputMember("catalog/native-candidates.json",
+                                        hashlib.sha256(index).hexdigest(), len(index), 0o644),))
+
+    broken, broken_members = _compiled_closure(b'{"candidates":[],"schema":1}')
+    with pytest.raises(NativeOutputReceiptDenied, match="schema is unsupported"):
+        _verify_payload("native-compiled-closure", "compiled-closure", broken,
+                        broken_members)
+
+    without_index = _archive("profiles/demo/SOUL.md", b"profile")
+    profile = NativeOutputMember("profiles/demo/SOUL.md",
+                                 hashlib.sha256(b"profile").hexdigest(), 7, 0o644)
+    with pytest.raises(NativeOutputReceiptDenied, match="required native member"):
+        _verify_payload("native-compiled-closure", "compiled-closure", without_index,
+                        (profile,))
+
+
+def test_closure_role_binds_index_manifest_and_selected_generation() -> None:
+    payload, _members = _compiled_closure()
+    selection = NativeOutputSelection(
+        "native-output:native-compiled-closure:package-1:generation-1",
+        "native-compiled-closure", "compiled-closure", "package-1", "demo", "generation-1",
+        "session-1", "transaction-" + "1" * 64, "2" * 64,
+        "generation-1", "installer-module:native_materializer", "3" * 64,
+        "installer-module:native_materializer", "5" * 64,
+        ("A" * 48, "B" * 48), "4" * 64, hashlib.sha256(payload).hexdigest(),
+        len(payload), _closure_tree_sha256(payload), 10_000.0)
+    _validate_role_selection_payload(selection, "native-compiled-closure", payload)
+    with pytest.raises(NativeOutputReceiptDenied, match="selected package generation"):
+        _validate_role_selection_payload(replace(selection, generation="other"),
+                                         "native-compiled-closure", payload)
+
+
+def test_native_json_must_be_canonical_and_reject_duplicate_keys() -> None:
+    with pytest.raises(NativeOutputReceiptDenied, match="canonical UTF-8"):
+        _parse_canonical_json(b'{ "schema":1}')
+    with pytest.raises(NativeOutputReceiptDenied, match="malformed"):
+        _parse_canonical_json(b'{"schema":1,"schema":2}')
+
+
+def test_non_root_cannot_construct_or_publish_native_output_receipts(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("non-root denial is covered by root Linux fixture")
+
+    class Binding:
+        def authorize_native_output(self, **_kwargs):
+            raise AssertionError("must not authorize outside root")
+
+        def revalidate_native_output(self, _selection):
+            return False
+
+    cas, journal = tmp_path / "cas", tmp_path / "journal"
+    cas.mkdir(mode=0o700)
+    journal.mkdir(mode=0o700)
+    with pytest.raises(NativeOutputReceiptDenied, match="root setup factory"):
+        RootMaterializationReceiptRegistry(Binding(), cas_root=cas,
+                                           journal_root=journal, authority_uid=os.getuid())
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="requires isolated root-owned Linux CAS fixture")
+def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None:
+    content = b"native selected profile"
+    payload, members = _compiled_closure()
+    archive_contents = {member.path: _read_archive_member(payload, member.path)
+                        for member in members}
+    outputs = {
+        "native-entrypoint-manifest": ("entrypoint-json", "manifest.json"),
+        "native-action-resolver": ("resolver-json", "resolver/resolver"),
+        "native-boundary-overlay": ("boundary-overlay", "overlay/manifest.json"),
+        "native-candidate-index": ("candidate-index-json", "catalog/native-candidates.json"),
+        "native-compiled-closure": ("compiled-closure", ""),
+    }
+    closure_tree_sha256 = _closure_tree_sha256(payload)
+
+    class Binding:
+        def authorize_native_output(self, *, artifact_role, output_kind,
+                                    member_tree_sha256, output_sha256,
+                                    output_size_bytes):
+            artifact_id = ("native-candidate-index:package-1:generation-1"
+                           if artifact_role == "native-candidate-index" else
+                           f"native-output:{artifact_role}:package-1:generation-1")
+            return NativeOutputSelection(
+                artifact_id,
+                artifact_role, output_kind, "package-1", "demo", "generation-1",
+                "session-1", "transaction-" + "1" * 64, "2" * 64,
+                "generation-1", "installer-module:native_materializer",
+                "3" * 64, "installer-module:native_materializer", "5" * 64,
+                ("A" * 48, "B" * 48), member_tree_sha256,
+                output_sha256, output_size_bytes, closure_tree_sha256, 10_000.0,
+            )
+
+        def revalidate_native_output(self, selection):
+            return selection.transaction_handle == "transaction-" + "1" * 64
+
+    cas, journal = tmp_path / "cas", tmp_path / "journal"
+    cas.mkdir(mode=0o700)
+    journal.mkdir(mode=0o700)
+    registry = RootMaterializationReceiptRegistry._from_root_factory(
+        binding=Binding(), cas_root=cas, journal_root=journal)
+    receipts = {}
+    for role, (kind, path) in outputs.items():
+        data = payload if role == "native-compiled-closure" else archive_contents[path]
+        rows = members if role == "native-compiled-closure" else (
+            NativeOutputMember(path, hashlib.sha256(data).hexdigest(), len(data), 0o644),)
+        receipts[role] = registry.publish_selected(
+            artifact_role=role, output_kind=kind, payload=data, members=rows)
+    receipt = receipts["native-compiled-closure"]
+    object_path = cas / receipt.sha256[:2] / receipt.sha256
+    assert object_path.read_bytes() == payload
+    assert object_path.stat().st_uid == 0 and object_path.stat().st_mode & 0o777 == 0o400
+    assert receipt.artifact_id == "native-output:native-compiled-closure:package-1:generation-1"
+    consumed = None
+    for role in outputs:
+        consumed = registry.resolve_for_activation(
+            receipts[role].receipt_id, artifact_role=role,
+            prepared_generation_id="generation-1")
+    assert consumed is not None
+    assert consumed.store_id == receipt.store_id
+    with pytest.raises(NativeOutputReceiptDenied, match="spent"):
+        registry.resolve_for_activation(
+            receipt.receipt_id, artifact_role="native-compiled-closure",
+            prepared_generation_id="generation-1")
