@@ -12,6 +12,7 @@ import json
 import os
 import platform
 import secrets
+import shutil
 import signal
 import socket
 import stat
@@ -112,10 +113,22 @@ class TwoUidVerifierSubprocessTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="hermes-remote-uid-", dir="/run") as raw:
             root = Path(raw)
-            os.chown(root, verifier_uid, gateway_gid)
-            os.chmod(root, 0o750)
-            socket_path = root / "policy.sock"
-            config_path = root / "fixture.json"
+            fixture_root = root / "fixture-repo"
+            (fixture_root / "tests" / "fixtures").mkdir(parents=True)
+            shutil.copy2(HELPER, fixture_root / "tests" / "fixtures" / HELPER.name)
+            shutil.copytree(HELPER.parents[2] / "src", fixture_root / "src")
+            for current, dirs, files in os.walk(fixture_root):
+                os.chmod(current, 0o755)
+                for name in files:
+                    path = Path(current) / name
+                    if not path.is_symlink():
+                        os.chmod(path, 0o644)
+            runtime_root = root / "runtime"
+            runtime_root.mkdir(mode=0o750)
+            os.chown(runtime_root, verifier_uid, gateway_gid)
+            os.chmod(runtime_root, 0o750)
+            socket_path = runtime_root / "policy.sock"
+            config_path = runtime_root / "fixture.json"
             payload = {
                 "gateway_uid": gateway_uid, "gateway_gid": gateway_gid,
                 "socket_path": str(socket_path), "account_id": identity.account_id,
@@ -142,11 +155,11 @@ class TwoUidVerifierSubprocessTests(unittest.TestCase):
 
             service_env = {
                 "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                "HOME": str(root), "PYTHONPATH": str(HELPER.parents[2] / "src"),
+                "HOME": str(runtime_root), "PYTHONPATH": str(fixture_root / "src"),
                 "PYTHONDONTWRITEBYTECODE": "1",
             }
             service = subprocess.Popen(
-                [sys.executable, str(HELPER), "service", str(config_path)],
+                [sys.executable, str(fixture_root / "tests" / "fixtures" / HELPER.name), "service", str(config_path)],
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 env=service_env, preexec_fn=_drop(verifier_uid, verifier_uid, (gateway_gid,)),
                 text=True,
@@ -172,7 +185,7 @@ class TwoUidVerifierSubprocessTests(unittest.TestCase):
                 }
                 gateway_env = dict(service_env)
                 gateway = subprocess.run(
-                    [sys.executable, str(HELPER), "gateway"], input=json.dumps(request),
+                    [sys.executable, str(fixture_root / "tests" / "fixtures" / HELPER.name), "gateway"], input=json.dumps(request),
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=gateway_env,
                     preexec_fn=_drop(gateway_uid, gateway_gid), text=True, timeout=8,
                 )
@@ -184,7 +197,7 @@ class TwoUidVerifierSubprocessTests(unittest.TestCase):
                 })
 
                 foreign = subprocess.run(
-                    [sys.executable, str(HELPER), "foreign"], input=json.dumps(request),
+                    [sys.executable, str(fixture_root / "tests" / "fixtures" / HELPER.name), "foreign"], input=json.dumps(request),
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=gateway_env,
                     preexec_fn=_drop(foreign_uid, foreign_uid), text=True, timeout=4,
                 )
