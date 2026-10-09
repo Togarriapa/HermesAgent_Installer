@@ -50,9 +50,10 @@ def build_provider_runtime_selection(*, service: AuthorityService,
     from hermes_installer.authority.enrollment import NativeBridgeEnrollment, ProtectedEnrollment
     from hermes_installer.authority.source_observers import SourceObserverEnrollment
     from hermes_installer.provider_effect_handlers import (
-        NormalizationPolicy, ProviderEnrollment, _FixedProviderHandler,
+        NormalizationPolicy, OpenRouterLiveAdmission, ProviderEnrollment, _FixedProviderHandler,
         canonical_provider_request,
     )
+    from hermes_installer.network import BoundedNetwork
     from hermes_installer.provider_response_observer import parse_successful_provider_tool_calls
 
     if (not isinstance(service, AuthorityService) or not isinstance(enrollment, ProtectedEnrollment)
@@ -115,7 +116,10 @@ def build_provider_runtime_selection(*, service: AuthorityService,
         handler = handler_map.get(("provider.dispatch", bridge.target))
         if (type(handler) is not _FixedProviderHandler
                 or handler._enrollment != route or handler._vault is not vault
-                or not callable(getattr(handler._admission, "check_attempt", None))):
+                or not callable(getattr(handler._admission, "check_attempt", None))
+                or route.provider != "openrouter"
+                or type(handler._admission) is not OpenRouterLiveAdmission
+                or handler._network_factory is not BoundedNetwork):
             raise ProviderRuntimeUnavailable("provider is not currently selected with a root vault and live admission")
         policy = {
             "id": bridge.normalization_policy_id,
