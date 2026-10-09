@@ -119,6 +119,13 @@ class OperatorEvidenceTests(unittest.TestCase):
                 "budget_concurrency_runtime_payload_replay_limits_enforced",
                 "unselected_stale_or_replayed_event_denied_before_effect",
             },
+            ("AC16", "EV-RB08"): {
+                "root_enrolled_finite_action_and_handler_digest_bound", "exact_capability_operation_target_generation_bound",
+                "canonical_arguments_and_final_digest_bound_to_one_use_grant", "principal_profile_recipient_and_credential_scope_verified",
+                "confirmation_and_idempotency_enforced",
+                "wrong_action_identity_scope_confirmation_replay_and_duplicate_denied_before_effect",
+                "private_recipient_and_cancellation_preserved", "unsupported_or_unqualified_actions_unavailable",
+            },
             ("AC08", "EV-PR01"): {
                 "public_client_pkce_state_nonce_loopback_bound",
                 "id_token_signature_issuer_audience_expiry_nonce_account_checked",
