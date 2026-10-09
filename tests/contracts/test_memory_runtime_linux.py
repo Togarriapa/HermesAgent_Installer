@@ -386,7 +386,9 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
                     self.fail("loopback responder diagnostic: " + diagnostic)
                 result = json.loads(base64.b64decode(effect["body"], validate=True))
                 self.assertEqual(result.get("status"), "ok", result)
-                self.assertEqual(result["result"], {"mode": "compact", "results": []})
+                # The broker's public result is the scoped record projection,
+                # not the provider's raw service envelope.
+                self.assertEqual(result["result"], {"records": []})
 
                 def attempt(consent_wire=None):
                     source_context, parent_effect = current_source_and_parent()
