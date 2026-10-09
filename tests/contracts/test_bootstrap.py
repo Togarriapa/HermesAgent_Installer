@@ -24,7 +24,11 @@ class FakeRunner:
             directory=Path(args[args.index("--dir")+1])
             if stage=="repository":
                 if directory.exists() and any(directory.iterdir()):
-                    return 77,b""
+                    head=directory/".git"/"HEAD"
+                    if not head.is_file() or head.read_text()!=HERMES_COMMIT:
+                        directory.rename(directory.with_name(directory.name+".broken-fixture"))
+                    else:
+                        return 77,b""
                 if self.fail_once==stage:
                     self.fail_once=None
                     if self.partial_repository:
