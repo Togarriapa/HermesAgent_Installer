@@ -28,13 +28,14 @@ class Recorder:
 class RemoteProvisionerTests(unittest.TestCase):
  def setUp(self):self.setup=RemoteSetup("desk.example.net",("owner@example.net",),CloudflareZone("z1","example.net","a1","active"),"team.cloudflareaccess.com","setup-secret","keyring://hermes/access-read")
  def make(self,api,operation="op1",ready=True):
-  snapshots=[];p=RemoteCloudflareProvisioner(api,self.setup,RemoteJournal(operation,self.setup.hostname),checkpoint=lambda j:snapshots.append((j.operation_id,set(j.completed))),origin_ready=lambda:ready,policy_read_check=lambda _journal:True);return p,snapshots
+  snapshots=[];p=RemoteCloudflareProvisioner(api,self.setup,RemoteJournal(operation,self.setup.hostname),checkpoint=lambda j:snapshots.append((j.operation_id,set(j.completed))),policy_read_check=lambda _journal:True);return p,snapshots
  def receipts(self):
   from hermes_installer.authority.remote_origin import _canonical
   signer=HMACReceiptSigner(b"t"*32);now=time.monotonic()
   origin=RootOriginReadinessReceipt(1,"origin-receipt","remote-enrollment","a"*64,"desktop-generation","xpra-native","b"*64,"policy-revision","c"*64,("probe:http","probe:websocket"),now,now+20,b"")
   origin=RootOriginReadinessReceipt(*[getattr(origin,f) for f in ("schema","receipt_id","remote_enrollment_id","gateway_identity_digest","desktop_generation","connector_target_id","policy_config_digest","policy_revision","service_generation_digest","observed_assertion_ids","issued_monotonic","expires_monotonic")],signer.sign(origin.payload()))
-  def writer(enrollment,token,*,account_id,tunnel_id,generation):
+  def writer(enrollment,token,*,setup_transaction_handle,account_id,tunnel_id,generation):
+   if setup_transaction_handle!="setup-handle-"+"x"*32:raise AssertionError("setup transaction binding missing")
    receipt=ProtectedTunnelTokenReceipt(1,"token-receipt",enrollment,tunnel_id,generation,"sink",1,2,0,0o400,now,now+20,b"")
    return ProtectedTunnelTokenReceipt(*[getattr(receipt,f) for f in ("schema","receipt_id","tunnel_enrollment_id","tunnel_id","generation","sink_id","file_device","file_inode","owner_uid","mode","issued_monotonic","expires_monotonic")],signer.sign(receipt.payload()))
   return signer,origin,writer
@@ -42,6 +43,7 @@ class RemoteProvisionerTests(unittest.TestCase):
   default_signer,default_origin,default_writer=self.receipts()
   signer=signer or default_signer;origin=origin or default_origin;writer=writer or default_writer
   return p.provision_protected(runtime_token_writer=writer,
+      setup_transaction_handle="setup-handle-"+"x"*32,
       tunnel_enrollment_id="tunnel-enrollment",tunnel_generation="cloudflared-generation",
       remote_enrollment_id="remote-enrollment",origin_receipt=origin,receipt_signer=signer)
  def activate(self,p,writer=None):
@@ -82,6 +84,18 @@ class RemoteProvisionerTests(unittest.TestCase):
   with self.assertRaisesRegex(CloudflareError,"Protected writer"):
    p.provision_protected()
   self.assertEqual(api.calls,[])
+ def test_missing_or_malformed_setup_transaction_handle_has_no_effects(self):
+  api=Recorder();p,_=self.make(api,"op-no-transaction")
+  signer,origin,writer=self.receipts()
+  with self.assertRaisesRegex(CloudflareError,"Protected writer"):
+   p.provision_protected(runtime_token_writer=writer,
+       tunnel_enrollment_id="tunnel-enrollment",tunnel_generation="cloudflared-generation",
+       remote_enrollment_id="remote-enrollment",origin_receipt=origin,receipt_signer=signer)
+  with self.assertRaisesRegex(CloudflareError,"Protected writer"):
+   p.provision_protected(runtime_token_writer=writer,setup_transaction_handle="short",
+       tunnel_enrollment_id="tunnel-enrollment",tunnel_generation="cloudflared-generation",
+       remote_enrollment_id="remote-enrollment",origin_receipt=origin,receipt_signer=signer)
+  self.assertEqual(api.calls,[])
  def test_unready_origin_rolls_back_owned_resources_and_never_publishes_dns(self):
   api=Recorder();p,_=self.make(api,"op2",False)
   signer,origin,_=self.receipts()
@@ -92,7 +106,7 @@ class RemoteProvisionerTests(unittest.TestCase):
   from hermes_installer.remote.cloudflare_setup import PolicyReadReferenceRequired
   setup=RemoteSetup("desk.example.net",("owner@example.net",),CloudflareZone("z1","example.net","a1","active"),"team.cloudflareaccess.com","setup-secret")
   api=Recorder();snapshots=[]
-  p=RemoteCloudflareProvisioner(api,setup,RemoteJournal("op-read-ref",setup.hostname),checkpoint=lambda j:snapshots.append((j.phase,j.error_code,set(j.completed))),origin_ready=lambda:True)
+  p=RemoteCloudflareProvisioner(api,setup,RemoteJournal("op-read-ref",setup.hostname),checkpoint=lambda j:snapshots.append((j.phase,j.error_code,set(j.completed))))
   signer,origin,writer=self.receipts()
   with self.assertRaisesRegex(PolicyReadReferenceRequired,"policy_read_token_ref"):
    self.activation(p,writer,origin,signer)
@@ -103,7 +117,7 @@ class RemoteProvisionerTests(unittest.TestCase):
   self.assertFalse(any(path.endswith("/cfd_tunnel") and m in {"POST","PUT"} for m,path,_ in api.calls))
   self.assertTrue(any("resume:policy_read_token_ref" in completed for _,_,completed in snapshots))
   resumed_setup=RemoteSetup(setup.hostname,setup.allowed_emails,setup.zone,setup.auth_domain,setup.management_token,"keyring://hermes/access-read")
-  resumed=RemoteCloudflareProvisioner(api,resumed_setup,p.journal,checkpoint=lambda _j:None,origin_ready=lambda:True,policy_read_check=lambda _journal:True)
+  resumed=RemoteCloudflareProvisioner(api,resumed_setup,p.journal,checkpoint=lambda _j:None,policy_read_check=lambda _journal:True)
   signer,origin,writer=self.receipts()
   activated=self.activation(resumed,writer,origin,signer)
   self.assertEqual(resumed.journal.phase,RemotePhase.ACTIVE)
