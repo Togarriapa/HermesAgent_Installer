@@ -100,6 +100,68 @@ class MemoryCompoundTests(unittest.TestCase):
             MemoryRouteRecipe.from_protected_record(
                 "agentmemory-search", route, backend_variant="default", limits=limits)
 
+    def test_memory_enrollment_joins_each_route_to_compound_scope(self):
+        from hermes_installer.memory.enrollment import (
+            MemoryEnrollmentError, MemoryServiceEnrollment, SOURCE_PINS,
+        )
+
+        scope_bindings = {
+            "profile_id": "profile-1", "service_generation": "service-gen-1",
+            "memory_owner_generation": 1, "backend_project_ref": "project-1",
+            "backend_agent_ref": "profile-1", "backend_session_ref": None,
+            "private_provider_route_ref": None, "credential_reference_id": "vault-ref-1",
+        }
+        route = {
+            "approved_route_id": "agentmemory-search", "backend_variant": "default",
+            "steps": [{
+                "step_id": "search", "method": "POST",
+                "path_template": "/agentmemory/smart-search",
+                "body_recipe_id": "agentmemory-search-owned-v1",
+                "response_schema_id": "agentmemory-search-result-v1",
+                "capture_fields": [], "next_step_id": None,
+            }],
+            "request_schema_id": "agentmemory-search-request-v1",
+            "result_schema_id": "agentmemory-search-result-v1",
+            "scope_bindings": scope_bindings,
+            "credential_reference_id": "vault-ref-1",
+            "maximum_seconds": 10, "maximum_bytes": 65536,
+        }
+        record = {
+            "target_id": "memory-agentmemory:profile-1", "provider": "agentmemory",
+            "backend_variant": "default", "profile_id": "profile-1",
+            "principal_id": "principal-1", "service_enrollment_id": "service-1",
+            "source_revision": SOURCE_PINS["agentmemory"],
+            "service_generation": "service-gen-1", "namespace_identity": "ns-1",
+            "literal_loopback_port": 3111, "fixed_route_map": {"agentmemory-search": route},
+            "data_root_id": "data-1", "auth_reference_id": "vault-ref-1",
+            "fixed_project_account_user_scope": {
+                "project_id": "project-1", "account_id": "account-1", "user_id": "profile-1",
+            },
+            "memory_owner_generation": 1,
+            "private_extraction_embedding_routes": {
+                "extract": "private-extract-1", "embed": "private-embed-1",
+            },
+            "background_consent_revision": "consent-policy-1",
+            "limits": {
+                "request_bytes": 262144, "response_bytes": 2097152, "result_limit": 100,
+                "operation_timeout_seconds": 15, "whole_compound_timeout_seconds": 60,
+            },
+        }
+        enrollment = MemoryServiceEnrollment.from_protected_record(record)
+        self.assertEqual(enrollment.fixed_route_map["agentmemory-search"].steps[0].step_id, "search")
+
+        mismatched = json.loads(json.dumps(record))
+        mismatched["fixed_route_map"]["agentmemory-search"]["scope_bindings"]["backend_project_ref"] = "sibling-project"
+        with self.assertRaises(MemoryEnrollmentError):
+            MemoryServiceEnrollment.from_protected_record(mismatched)
+
+        legacy = json.loads(json.dumps(record))
+        legacy["fixed_route_map"]["agentmemory-search"] = {
+            "method": "POST", "path": "/agentmemory/smart-search", "body": "json",
+        }
+        with self.assertRaises(MemoryEnrollmentError):
+            MemoryServiceEnrollment.from_protected_record(legacy)
+
     def test_envelope_requires_exact_fields_and_canonical_bytes(self):
         value = {"schema": 1, "handle_id": "handle-1", "generation": "gen-1",
                  "sequence": 1, "compound_job_handle": "job-1", "step_id": "create",
