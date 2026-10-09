@@ -60,9 +60,11 @@ class ProviderAdmission(Protocol):
 
     def check_attempt(self, *, provider: str, account_id: str, profile_id: str,
                       principal_id: str, namespace_id: str, sensitivity: str,
-                      capability: str, model: str, request_digest: str,
-                      retry_index: int, additional_metered_fee_usd: float,
-                      credential_ref: str) -> None: ...
+                      capability: str, target: str, recipient: str, endpoint: str,
+                      model: str, request_digest: str, retry_index: int,
+                      additional_metered_fee_usd: float, credential_ref: str,
+                      expected_zero_price: bool, allow_fallbacks: bool,
+                      plugins_enabled: bool, data_collection: str) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,10 +274,15 @@ class _FixedProviderHandler:
             provider=enrollment.provider, account_id=enrollment.account_id,
             profile_id=context.profile_id, principal_id=context.principal_id,
             namespace_id=context.namespace_id, sensitivity=_sensitivity(context),
-            capability=capability, model=model, request_digest=digest,
+            capability=capability, target=enrollment.target,
+            recipient=enrollment.recipient,
+            endpoint=OPENROUTER_ENDPOINT if enrollment.provider == "openrouter" else CODEX_ENDPOINT,
+            model=model, request_digest=digest,
             retry_index=retry_index,
             additional_metered_fee_usd=enrollment.additional_metered_fee_usd,
             credential_ref=enrollment.credential_ref,
+            expected_zero_price=(enrollment.provider == "openrouter"),
+            allow_fallbacks=False, plugins_enabled=False, data_collection="deny",
         )
         if cancelled() or time.monotonic() >= authorization.monotonic_expires_at:
             raise ProviderHandlerDenied("provider.expired", "Provider grant expired before network dispatch")
