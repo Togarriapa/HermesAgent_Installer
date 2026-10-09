@@ -8,7 +8,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from hermes_installer.remote.launcher import XpraLauncher
+from hermes_installer.remote.launcher import build_xpra_command
 from hermes_installer.remote.session import SessionSpec, XPRA_CLI_SOURCE_COMMIT
 
 
@@ -63,11 +63,7 @@ class PinnedXpraCliTests(unittest.TestCase):
             hermes_arguments=("--user-data-dir=/var/lib/hermes-remote/profile",),
             hermes_environment={"HERMES_HOME": "/opt/hermes"},
         )
-        command = XpraLauncher(
-            spec, xpra="/usr/bin/xpra", runtime_dir=runtime,
-            sandbox_probe=lambda _pid: (True, False), process_probe=lambda _pid: {},
-            window_patch_ready=lambda _classes: True, stop_scope=lambda _pid: None,
-        ).command()
+        command = build_xpra_command(spec, "/usr/bin/xpra", runtime)
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(
             value for value in (str(source), env.get("PYTHONPATH", "")) if value
