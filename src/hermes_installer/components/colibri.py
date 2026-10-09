@@ -166,7 +166,41 @@ def _checked_source_rows(rows: object) -> list[dict[str, object]]:
     return checked
 
 
-def _verify_source_rows(root: Path, rows: Sequence[Mapping[str, object]]) -> None:
+def _verify_source_rows(root: Path, rows: Sequence[Mapping[str, object]], *,
+                        allow_engine_binary: bool = False, require_marker: bool = False) -> None:
+    expected_files = {str(row["path"]) for row in rows}
+    if require_marker:
+        expected_files.add(".hermes-colibri-source.json")
+    expected_directories = {
+        PurePosixPath(name).parent.as_posix()
+        for name in expected_files if PurePosixPath(name).parent != PurePosixPath(".")
+    }
+    for name in tuple(expected_directories):
+        parent = PurePosixPath(name).parent
+        while parent != PurePosixPath("."):
+            expected_directories.add(parent.as_posix())
+            parent = parent.parent
+    allowed_files = expected_files | ({"c/colibri"} if allow_engine_binary else set())
+
+    observed_files: set[str] = set()
+    observed_directories: set[str] = set()
+    for current, directories, files in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        for name in directories:
+            path = current_path / name
+            if path.is_symlink() or not path.is_dir():
+                raise ColibriError("pinned Colibri source contains a symlink or non-directory entry")
+            observed_directories.add(path.relative_to(root).as_posix())
+        for name in files:
+            path = current_path / name
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink() or not path.is_file():
+                raise ColibriError(f"pinned Colibri source contains a symlink or special file: {relative}")
+            observed_files.add(relative)
+    if (observed_directories != expected_directories or observed_files - allowed_files
+            or expected_files - observed_files):
+        raise ColibriError("pinned Colibri source contains missing or unlisted paths")
+
     for row in rows:
         parts = PurePosixPath(str(row["path"])).parts
         parent = root
@@ -230,7 +264,7 @@ def fetch_pinned_colibri_source(component_root: Path, *, catalog: _ArtifactCatal
             raise ColibriError("existing Colibri source marker is unreadable") from None
         if existing != expected_marker:
             raise ColibriError("existing Colibri source marker does not match its protected artifact receipt")
-        _verify_source_rows(destination, rows)
+        _verify_source_rows(destination, rows, allow_engine_binary=True, require_marker=True)
         return destination
 
     temporary = component_root / (".colibri-stage-" + uuid.uuid4().hex)
@@ -265,7 +299,7 @@ def fetch_pinned_colibri_source(component_root: Path, *, catalog: _ArtifactCatal
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
-    _verify_source_rows(destination, rows)
+    _verify_source_rows(destination, rows, require_marker=True)
     return destination
 
 def build_colibri_arm64(source: Path, *, expected_revision: str = COLIBRI_REVISION,
@@ -311,7 +345,7 @@ def build_colibri_arm64(source: Path, *, expected_revision: str = COLIBRI_REVISI
             or marker.get("artifact_archive_bytes") != COLIBRI_ARCHIVE_BYTES
             or marker.get("tree_manifest_sha256") != manifest_digest):
         raise ColibriError("Colibri source checkout does not match the reviewed artifact receipt")
-    _verify_source_rows(source, source_rows)
+    _verify_source_rows(source, source_rows, allow_engine_binary=True, require_marker=True)
     setup = source / "c" / "setup.sh"
     if setup.is_symlink() or not setup.is_file():
         raise ColibriError("pinned Colibri source is missing its reviewed c/setup.sh build entry point")
@@ -333,6 +367,14 @@ def build_colibri_arm64(source: Path, *, expected_revision: str = COLIBRI_REVISI
     finally:
         shutil.rmtree(probe_dir, ignore_errors=True)
     env = {"PATH": "/usr/bin:/bin", "ARCH": "native", "LC_ALL": "C", "HOME": "/tmp"}
+    prior_binary = source / "c" / "colibri"
+    if prior_binary.is_symlink():
+        raise ColibriError("existing Colibri build output cannot be a symlink")
+    if prior_binary.exists():
+        if not prior_binary.is_file():
+            raise ColibriError("existing Colibri build output is not a regular file")
+        prior_binary.unlink()
+    _verify_source_rows(source, source_rows, require_marker=True)
     build_result = bounded_run(("bash", str(setup)), cwd=source / "c", env=env, request_timeout=600)
     if build_result.returncode:
         tail = build_result.stdout[-2400:].strip()
