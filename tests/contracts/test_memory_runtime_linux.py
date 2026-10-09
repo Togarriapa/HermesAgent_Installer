@@ -165,6 +165,10 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
             for selected_route in raw["fixed_route_map"].values():
                 selected_route["scope_bindings"]["memory_owner_generation"] = 1
             enrollment = MemoryServiceEnrollment.from_protected_record(raw)
+            # The trusted fixture root is shared by both protected service
+            # roots and the authority-journal catalog selection.
+            journal_parent = Path(tempfile.mkdtemp(
+                prefix="memory-root-journal-", dir="/run"))
             recipe = enrollment.fixed_route_map["agentmemory-search"]
             assert isinstance(recipe, MemoryRouteRecipe)
             scope = dict(recipe.scope_bindings)
@@ -254,8 +258,6 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
             # The production catalog rejects a path below world-writable /tmp,
             # including when the final directory itself is root-owned. Model
             # the installer-owned journal beneath /run in this disposable CI.
-            journal_parent = Path(tempfile.mkdtemp(
-                prefix="memory-root-journal-", dir="/run"))
             journal = journal_parent / "authority-journal"
             journal.mkdir(mode=0o700)
             os.chown(journal, 0, 0)
