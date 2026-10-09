@@ -764,11 +764,15 @@ class ManagedProcessSupervisor:
             raise
         except ManagedProcessError:
             raise
-        except BaseException:
+        except BaseException as exc:
             await asyncio.to_thread(spec.journal.checkpoint, spec.journal_operation,
                                     "start-failed", {"service_identity": spec.service_identity,
                                     "reason": "root process start or receipt validation failed"})
-            raise ManagedProcessError("root process start failed or returned invalid evidence") from None
+            # The authority denial code is a bounded non-sensitive diagnostic;
+            # preserve it so Linux integration can distinguish kernel admission
+            # failures without returning manager output, paths, or argv.
+            code = exc.code if isinstance(exc, AuthorityDenied) else "receipt-invalid"
+            raise ManagedProcessError(f"root process start failed ({code})") from None
 
     @staticmethod
     def close_child_snapshot(children: Sequence[ChildIdentity]) -> None:
