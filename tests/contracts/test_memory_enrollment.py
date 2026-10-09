@@ -74,7 +74,9 @@ def record(provider="agentmemory", variant="default", port=3111):
         "service_enrollment_id": f"service-{provider}-one", "source_revision": SOURCE_PINS[provider],
         "service_generation": "service-gen-7", "namespace_identity": "namespace-one",
         "literal_loopback_port": port, "fixed_route_map": fixed_routes,
-        "data_root_id": f"memory-data-{provider}-one", "auth_reference_id": f"memory-auth-{provider}-one",
+        "data_root_id": f"memory-data-{provider}-one",
+        "authority_state_root_id": "installer-authority-journal-v1",
+        "auth_reference_id": f"memory-auth-{provider}-one",
         "fixed_project_account_user_scope": {"project_id": "project-one", "account_id": "account-one", "user_id": "profile-one"},
         "memory_owner_generation": 4,
         "private_extraction_embedding_routes": {"extract": "private-extract-route-one", "embed": "private-embed-route-one"},
@@ -122,6 +124,15 @@ class MemoryEnrollmentTests(unittest.TestCase):
         value["service_generation"] = 17
         with self.assertRaises(MemoryEnrollmentError):
             MemoryServiceEnrollment.from_protected_record(value)
+
+    def test_authority_state_root_is_a_separate_required_protected_selection(self):
+        selected = MemoryServiceEnrollment.from_protected_record(record())
+        self.assertEqual(selected.data_root_id, "memory-data-agentmemory-one")
+        self.assertEqual(selected.authority_state_root_id, "installer-authority-journal-v1")
+        self.assertNotEqual(selected.data_root_id, selected.authority_state_root_id)
+        missing = record(); del missing["authority_state_root_id"]
+        with self.assertRaises(MemoryEnrollmentError):
+            MemoryServiceEnrollment.from_protected_record(missing)
 
     def test_scope_generation_and_limits_are_bound_to_protected_record(self):
         value = record(); value["fixed_project_account_user_scope"]["user_id"] = "sibling-profile"
