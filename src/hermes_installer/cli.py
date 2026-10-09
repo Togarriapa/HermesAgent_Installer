@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Sequence
 
 from . import __version__
+from .bootstrap import BootstrapError, HermesBootstrap
+from .state import Journal, OwnedRoot, OwnershipError, process_lock
 from .config import ConfigError, InstallerConfig, load_config, validate_config, write_example
 from .preflight import discover_host
 from .results import CommandResult, Finding, OutcomeState
@@ -134,11 +136,41 @@ def run(args: argparse.Namespace) -> CommandResult:
         if args.target is None or args.output is None:
             return CommandResult("verify", OutcomeState.FAILED, "An authorized target manifest and evidence directory are required.", resume_command="hermes-installer verify --target <authorized-target.json> --output <evidence-dir>", exit_code=2)
         return CommandResult("verify", OutcomeState.PENDING, "Target verification adapter is not implemented yet; no target was contacted.", resume_command=f"hermes-installer verify --target {args.target} --output {args.output}")
-    if args.command in {"install", "resume", "configure", "test-connection", "select-memory", "resolve-source", "component", "update", "data"}:
+    if args.command in {"install", "resume"}:
         facts = discover_host()
         if not facts.supported_arm64_linux:
-            return CommandResult(args.command, OutcomeState.FAILED, "Installation and service changes are restricted to supported Linux ARM64 targets. This host was not changed.", findings=_host_findings(config), exit_code=3)
-        return CommandResult(args.command, OutcomeState.PENDING, "The selected operation has no configured component handler or target authorization yet.", resume_command=f"hermes-installer {args.command}" + (f" --config {args.config}" if args.config else ""))
+            return CommandResult(args.command, OutcomeState.FAILED, "Installation is restricted to supported Linux ARM64 targets; this host was not changed.", findings=_host_findings(config), exit_code=3)
+        if facts.package_locks or facts.package_lock_probe_errors:
+            details = facts.package_locks or facts.package_lock_probe_errors
+            return CommandResult(args.command, OutcomeState.PENDING,
+                "Package manager activity could not be ruled out safely; no installation stage was started.",
+                tuple(Finding("package.lock", str(item), OutcomeState.PENDING) for item in details),
+                resume_command=f"hermes-installer {args.command}" + (f" --config {args.config}" if args.config else ""))
+        if args.command == "install" and getattr(args, "dry_run", False):
+            return CommandResult("install", OutcomeState.READY, "Dry run completed; no installer files, packages, services, or accounts were changed.", _host_findings(config))
+        data_path = Path(config.paths.get("data_root", "~/HermesInstaller/data")).expanduser()
+        state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
+        try:
+            data_root = OwnedRoot(data_path); data_root.ensure()
+            state_root = OwnedRoot(state_path); state_root.ensure()
+            journal = Journal(state_root.path("journal.sqlite3"))
+            with process_lock(state_root.path("installer.lock")):
+                report = HermesBootstrap(data_root, journal).install(include_desktop=config.components.get("hermes_desktop", True))
+        except (BootstrapError, OwnershipError, OSError, RuntimeError, ValueError) as exc:
+            return CommandResult(args.command, OutcomeState.FAILED, str(exc),
+                resume_command=f"hermes-installer resume" + (f" --config {args.config}" if args.config else ""), exit_code=1)
+        findings = (
+            Finding("hermes.agent.bootstrap", "Pinned Hermes source and runtime stages completed", OutcomeState.READY if report.agent_ready else OutcomeState.PENDING, {"commit": report.commit, "generation": report.generation}),
+            Finding("hermes.desktop.build", "Official ARM64 Desktop artifact was produced" if report.desktop_built else "Official Desktop artifact remains unavailable", OutcomeState.READY if report.desktop_built else OutcomeState.PENDING),
+            Finding("hermes.configuration", report.configuration_state, OutcomeState.PENDING),
+        )
+        state = OutcomeState.READY if report.agent_ready and (not config.components.get("hermes_desktop", True) or report.desktop_built) else OutcomeState.PENDING
+        return CommandResult(args.command, state, "Official pinned bootstrap stages completed; user configuration and service activation remain separate.", findings, "hermes-installer resume")
+    if args.command in {"configure", "test-connection", "select-memory", "resolve-source", "component", "update", "data"}:
+        facts = discover_host()
+        if not facts.supported_arm64_linux:
+            return CommandResult(args.command, OutcomeState.FAILED, "This operation is restricted to supported Linux ARM64 targets; this host was not changed.", findings=_host_findings(config), exit_code=3)
+        return CommandResult(args.command, OutcomeState.PENDING, "The selected component adapter is not available yet; no external account or service was changed.", resume_command=f"hermes-installer {args.command}" + (f" --config {args.config}" if args.config else ""))
     raise AssertionError(f"Unhandled CLI command: {args.command}")
 
 
