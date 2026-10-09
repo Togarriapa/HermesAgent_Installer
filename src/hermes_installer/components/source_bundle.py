@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import base64
 import re
 import tarfile
 import time
@@ -14,11 +15,24 @@ from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from hermes_installer.components.adapters import ComponentAdapterContract
-from hermes_installer.components.skill_refs import audit_skill_file_map
+from hermes_installer.components.skill_refs import audit_component_skill_file_map
 
 
 class ComponentSourceError(RuntimeError):
     """A pinned component source could not be verified or safely staged."""
+
+
+_DOCUMENT_LINK_COMPONENT = "screenshot-to-code"
+_DOCUMENT_LINK_IDENTITY = "abi/screenshot-to-code"
+_DOCUMENT_LINK_REVISION = "d026163f586dfa8c5c10d28c36edd59a9d3b0e88"
+_DOCUMENT_LINK_TREE = "e51f235b7d11da98422f3ad1036b889aec9ea73c"
+_DOCUMENT_LINK_PATH = "CLAUDE.md"
+_DOCUMENT_LINK_TARGET = "AGENTS.md"
+_DOCUMENT_LINK_BLOB = "47dc3e3d863cfb5727b87d785d09abf9743c0a72"
+_DOCUMENT_LINK_TARGET_BLOB = "672da2a499f770cc98f3727feac4b214ddb89649"
+_DOCUMENT_LINK_TARGET_SHA256 = "0d44a766fe4e9e2c78fae984b867cd7f38a213b523430cea0c02a2165ad13e4a"
+_DOCUMENT_LINK_TARGET_SIZE = 3383
+_DOCUMENT_LINK_POLICY = "pinned-source-document-link-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,17 +152,86 @@ class VerifiedComponentSource:
     def generation_id(self) -> str:
         return f"component-{self.component_id}-{self.revision[:12]}"
 
+    def compiled_files(self) -> tuple[dict[str, bytes], dict[str, int]]:
+        """Return an activation-safe generation while retaining original Git evidence.
+
+        The one reviewed screenshot-to-code documentation link is preserved in
+        the verified virtual source map, then materialized as a read-only
+        regular copy in the private generation. No filesystem link is emitted.
+        """
+        files = dict(self.files)
+        modes = dict(self.file_modes)
+        link_names = {name for name, mode in modes.items() if mode == 0o120000}
+        if not link_names:
+            return files, modes
+        if (self.component_id != _DOCUMENT_LINK_COMPONENT
+                or self.source_identity != _DOCUMENT_LINK_IDENTITY
+                or self.revision != _DOCUMENT_LINK_REVISION
+                or self.source_tree_sha != _DOCUMENT_LINK_TREE
+                or link_names != {_DOCUMENT_LINK_PATH}
+                or files.get(_DOCUMENT_LINK_PATH) != _DOCUMENT_LINK_TARGET.encode("ascii")
+                or hashlib.sha1(b"blob 9\0AGENTS.md").hexdigest() != _DOCUMENT_LINK_BLOB):
+            raise ComponentSourceError("component source contains an unreviewed symbolic link")
+        target = files.get(_DOCUMENT_LINK_TARGET)
+        target_mode = modes.get(_DOCUMENT_LINK_TARGET)
+        if (not isinstance(target, bytes) or target_mode != 0o644
+                or len(target) != _DOCUMENT_LINK_TARGET_SIZE
+                or hashlib.sha1(b"blob " + str(len(target)).encode() + b"\0" + target).hexdigest()
+                != _DOCUMENT_LINK_TARGET_BLOB
+                or hashlib.sha256(target).hexdigest() != _DOCUMENT_LINK_TARGET_SHA256):
+            raise ComponentSourceError("pinned documentation link target is missing or changed")
+        if ("INSTALLER-ORIGINAL-SOURCE-VIRTUAL-MANIFEST.json" in files):
+            raise ComponentSourceError("component source conflicts with the original-source manifest path")
+        copied = dict(files)
+        copied_modes = dict(modes)
+        copied[_DOCUMENT_LINK_PATH] = target
+        copied_modes[_DOCUMENT_LINK_PATH] = 0o644
+        virtual_manifest = {
+            "schema": 1,
+            "policy_id": _DOCUMENT_LINK_POLICY,
+            "source_identity": self.source_identity,
+            "source_revision": self.revision,
+            "source_git_tree_sha": self.source_tree_sha,
+            "original_link": {
+                "path": _DOCUMENT_LINK_PATH,
+                "git_mode": "120000",
+                "git_blob_sha1": _DOCUMENT_LINK_BLOB,
+                "blob_bytes_base64": base64.b64encode(files[_DOCUMENT_LINK_PATH]).decode("ascii"),
+                "literal_target": _DOCUMENT_LINK_TARGET,
+            },
+            "verified_target": {
+                "path": _DOCUMENT_LINK_TARGET,
+                "git_mode": "100644",
+                "git_blob_sha1": _DOCUMENT_LINK_TARGET_BLOB,
+                "sha256": _DOCUMENT_LINK_TARGET_SHA256,
+                "size": _DOCUMENT_LINK_TARGET_SIZE,
+            },
+            "compiled_copy": {
+                "path": _DOCUMENT_LINK_PATH,
+                "mode": "100644",
+                "sha256": hashlib.sha256(target).hexdigest(),
+                "size": len(target),
+            },
+            "trust": "untrusted upstream documentation data; no installer authority",
+        }
+        copied["INSTALLER-ORIGINAL-SOURCE-VIRTUAL-MANIFEST.json"] = (
+            json.dumps(virtual_manifest, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+        )
+        copied_modes["INSTALLER-ORIGINAL-SOURCE-VIRTUAL-MANIFEST.json"] = 0o644
+        return copied, copied_modes
+
     def stage(self, store):
         """Stage under the caller's existing installer mutation lock and journal."""
         target = store.root / self.generation_id
+        files, modes = self.compiled_files()
         if target.exists() or target.is_symlink():
             try:
                 existing, manifest, _ = store._verify(self.generation_id)
             except Exception as exc:
                 raise ComponentSourceError("existing component generation is not verified") from exc
             expected = {}
-            for name, content in self.files.items():
-                mode = store._private_mode(self.file_modes[name])
+            for name, content in files.items():
+                mode = store._private_mode(modes[name])
                 expected[name] = {
                     "sha256": hashlib.sha256(content).hexdigest(),
                     "mode": mode,
@@ -156,7 +239,7 @@ class VerifiedComponentSource:
             if manifest.get("files") != expected:
                 raise ComponentSourceError("pinned component generation conflicts with owned data")
             return existing
-        return store.stage(self.generation_id, self.files, file_modes=self.file_modes)
+        return store.stage(self.generation_id, files, file_modes=modes)
 
 
 class GitHubComponentSourceFetcher:
@@ -188,7 +271,12 @@ class GitHubComponentSourceFetcher:
             raise ComponentSourceError("component source identity is not an owner/repository")
         return identity, revision
 
-    def fetch(self, contract: ComponentAdapterContract) -> VerifiedComponentSource:
+    def fetch(
+        self,
+        contract: ComponentAdapterContract,
+        *,
+        skill_files: tuple[str, ...] | None = None,
+    ) -> VerifiedComponentSource:
         if contract.unresolved_reason():
             raise ComponentSourceError(contract.unresolved_reason())
         identity, revision = self._identity(contract)
@@ -245,7 +333,9 @@ class GitHubComponentSourceFetcher:
             raise ComponentSourceError("component archive contents differ from the pinned Git tree")
         if not files:
             raise ComponentSourceError("refusing an empty component source tree")
-        audit = audit_skill_file_map(files)
+        audit = audit_component_skill_file_map(
+            contract.component_id, revision, files, skill_files=skill_files,
+        )
         if audit.problems:
             first = audit.problems[0]
             raise ComponentSourceError(
@@ -338,7 +428,24 @@ class GitHubComponentSourceFetcher:
                         raise ComponentSourceError("component archive path is not normalized")
                     if member.isdir():
                         continue
-                    if member.issym() or member.islnk():
+                    if member.issym():
+                        if (identity != _DOCUMENT_LINK_IDENTITY
+                                or revision != _DOCUMENT_LINK_REVISION
+                                or relative != _DOCUMENT_LINK_PATH
+                                or member.linkname != _DOCUMENT_LINK_TARGET
+                                or relative in files):
+                            raise ComponentSourceError(f"component archive contains unsupported link: {relative}")
+                        link_blob = member.linkname.encode("utf-8")
+                        total_size += len(link_blob)
+                        if total_size > self.max_unpacked_bytes:
+                            raise ComponentSourceError("component source exceeds the unpacked size limit")
+                        if (hashlib.sha1(b"blob " + str(len(link_blob)).encode() + b"\0" + link_blob).hexdigest()
+                                != _DOCUMENT_LINK_BLOB):
+                            raise ComponentSourceError("pinned documentation link blob differs from the reviewed link")
+                        files[relative] = link_blob
+                        modes[relative] = 0o120000
+                        continue
+                    if member.islnk():
                         raise ComponentSourceError(f"component archive contains unsupported link: {relative}")
                     if not member.isfile():
                         raise ComponentSourceError(f"component archive contains a special file: {relative}")
@@ -363,4 +470,15 @@ class GitHubComponentSourceFetcher:
             raise
         except (OSError, tarfile.TarError, EOFError) as exc:
             raise ComponentSourceError("pinned component archive is invalid or truncated") from exc
+        if _DOCUMENT_LINK_PATH in files:
+            target = files.get(_DOCUMENT_LINK_TARGET)
+            if (identity != _DOCUMENT_LINK_IDENTITY
+                    or revision != _DOCUMENT_LINK_REVISION
+                    or modes.get(_DOCUMENT_LINK_PATH) != 0o120000
+                    or modes.get(_DOCUMENT_LINK_TARGET) != 0o644
+                    or not isinstance(target, bytes) or len(target) != _DOCUMENT_LINK_TARGET_SIZE
+                    or hashlib.sha1(b"blob " + str(len(target)).encode() + b"\0" + target).hexdigest()
+                    != _DOCUMENT_LINK_TARGET_BLOB
+                    or hashlib.sha256(target).hexdigest() != _DOCUMENT_LINK_TARGET_SHA256):
+                raise ComponentSourceError("pinned documentation link target is missing or changed")
         return files, modes

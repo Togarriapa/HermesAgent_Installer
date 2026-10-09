@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from hermes_installer.authority.types import AuthorityDenied
-from hermes_installer.remote.host_process import parse_process_inspection
+from hermes_installer.authority.client import AuthorityClient
+from hermes_installer.authority.process_controls import ProcessControlResponse
+from hermes_installer.remote.host_process import inspect_managed_process, parse_process_inspection
 
 
 class RootProcessInspectionReceiptTests(unittest.TestCase):
@@ -89,6 +92,29 @@ class RootProcessInspectionReceiptTests(unittest.TestCase):
         row["sandbox_attestation"] = {**row["sandbox_attestation"], "forbidden_flags_present": True}
         with self.assertRaises(AuthorityDenied):
             self.parse({**self.value, "processes": [self.value["processes"][0], row]})
+
+    def test_inspect_consumer_uses_typed_root_result_and_receipt(self):
+        authority = AuthorityClient(Path("/unused"), server_uid=0, timeout=1)
+        authority.monotonic = lambda: 21.0
+        result = {key: self.value[key] for key in (
+            "profile_id", "cgroup_identity", "observation_monotonic", "complete", "processes",
+        )}
+        authority.inspect_profile_process = lambda *_args, **_kwargs: ProcessControlResponse(
+            schema=1, process_id="process-1", generation="generation-1",
+            operation="process.inspect", state="running", result=result,
+            expires_monotonic=25.0, receipt_id="root-receipt",
+        )
+        receipt = inspect_managed_process(
+            authority, process_id="process-1", generation="generation-1",
+            profile_id="hermes-desktop",
+        )
+        self.assertEqual(receipt.receipt_id, "root-receipt")
+        self.assertEqual(len(receipt.processes), 2)
+        with self.assertRaises(AuthorityDenied):
+            inspect_managed_process(
+                authority, process_id="process-1", generation="generation-1",
+                profile_id="caller-selected-other-profile",
+            )
 
 
 if __name__ == "__main__":

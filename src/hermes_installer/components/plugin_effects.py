@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import re
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -46,7 +47,9 @@ class SelectedPluginEffectsResolver(Protocol):
 
 class PluginAuthority(Protocol):
     def context(self, *, purpose: str, intent: str, operation: str,
-                source_contexts: Sequence[object], final_payload_digest: str,
+                source_contexts: Sequence[object] = (),
+                source_receipt_handles: Sequence[str] = (),
+                final_payload_digest: str,
                 lease_seconds: float) -> object: ...
 
     def authorize_effect(self, context: object, *, capability: str, target: str,
@@ -62,7 +65,58 @@ class PluginAuthority(Protocol):
 
 
 class InvocationContexts(Protocol):
-    def __call__(self, *, purpose: str, intent: str) -> Sequence[object]: ...
+    def __call__(self, *, adapter_id: str, action_id: str,
+                 arguments_sha256: str, purpose: str, intent: str) -> object: ...
+
+
+class NativeInvocationContexts(Protocol):
+    """Root response for one currently executing pinned Hermes tool call."""
+    invocation_handle: str
+    source_receipt_handles: Sequence[str]
+    parent_closure_digest: str
+    arguments_sha256: str
+    expires_monotonic: float
+
+
+def root_invocation_source_receipt_handles(
+    invocation_contexts: InvocationContexts, *, adapter_id: str, action_id: str,
+    arguments_sha256: str, purpose: str, intent: str,
+) -> tuple[str, ...]:
+    """Resolve root-owned lineage for this exact selected tool invocation.
+
+    The provider is expected to read only the opaque invocation binding scoped
+    by the trusted native tool executor, then call the root get-contexts RPC.
+    This helper validates the bounded response DTO; receipt handles remain
+    opaque and are accepted only by AuthorityClient.context.
+    """
+    lineage = invocation_contexts(
+        adapter_id=adapter_id, action_id=action_id,
+        arguments_sha256=arguments_sha256, purpose=purpose, intent=intent,
+    )
+    handles = getattr(lineage, "source_receipt_handles", None)
+    handles_valid = (
+        isinstance(handles, tuple) and len(handles) <= 64
+        and all(isinstance(handle, str)
+                and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
+                for handle in handles)
+    )
+    expires = getattr(lineage, "expires_monotonic", None)
+    missing_schema = object()
+    schema = getattr(lineage, "schema", missing_schema)
+    # AuthorityClient's typed NativeInvocationContexts validates schema=1
+    # while parsing the RPC response and intentionally omits the wire-only
+    # schema field from the immutable DTO. Structural test doubles may include
+    # it, in which case it must still be the exact integer 1.
+    if ((schema is not missing_schema and (type(schema) is not int or schema != 1))
+            or not isinstance(getattr(lineage, "invocation_handle", None), str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", lineage.invocation_handle)
+            or not _HEX.fullmatch(getattr(lineage, "parent_closure_digest", ""))
+            or getattr(lineage, "arguments_sha256", None) != arguments_sha256
+            or isinstance(expires, bool) or not isinstance(expires, (int, float))
+            or not time.monotonic() < expires <= time.monotonic() + 30
+            or not handles_valid):
+        raise PluginEffectUnavailable("trusted invocation lineage is unavailable")
+    return tuple(handles)
 
 
 @dataclass(frozen=True, slots=True)
@@ -438,12 +492,15 @@ class PluginEffectDispatcher:
         if len(payload) > schema.request_bytes_limit:
             raise PluginEffectUnavailable("plugin action exceeds its enrolled request byte bound")
         intent = f"Invoke selected native Plugin action {adapter_id}/{action_id}"
-        source_contexts = self.invocation_contexts(purpose="native-hermes-chat", intent=intent)
-        if not isinstance(source_contexts, Sequence) or not source_contexts:
-            raise PluginEffectUnavailable("trusted invocation lineage is unavailable")
+        arguments_digest = hashlib.sha256(_canonical(args)).hexdigest()
+        source_receipt_handles = root_invocation_source_receipt_handles(
+            self.invocation_contexts, adapter_id=adapter_id, action_id=action_id,
+            arguments_sha256=arguments_digest,
+            purpose="native-hermes-chat", intent=intent,
+        )
         context = self.authority.context(
             purpose="native-hermes-chat", intent=intent, operation=selected.operation,
-            source_contexts=source_contexts, final_payload_digest=digest,
+            source_receipt_handles=source_receipt_handles, final_payload_digest=digest,
             lease_seconds=min(30.0, float(schema.deadline_seconds)),
         )
         if (not isinstance(getattr(context, "principal_id", None), str)
@@ -527,28 +584,48 @@ class PluginEffectDispatcher:
 def build_plugin_effects_facade(*, authority: PluginAuthority,
                                 invocation_contexts: InvocationContexts,
                                 identity: object,
-                                action_schemas: PluginActionSchemaRegistry | None = None
+                                action_schemas: PluginActionSchemaRegistry | None = None,
+                                selected_package: object | None = None,
                                 ) -> PluginEffectDispatcher:
     """Bind a facade to the root-selected immutable Plugin package.
 
     This factory is for the protected installer loader only. It deliberately
     requires a trusted invocation-context provider; a plugin, tool argument,
     manifest, or caller-provided principal/source label cannot supply one.
-    The native binding API is imported lazily so source-only/fixture installs
-    remain inspectable without constructing a live binder.
+    The protected loader may pass its already verified SelectedNativePackage;
+    otherwise this function binds the package itself. Resolver metadata only
+    selects an action. The AuthorityClient still re-resolves the root grant for
+    every effect and consumes its one-use authorization before performing it.
     """
-    binder = getattr(authority, "bind_selected_native_package", None)
-    if not callable(binder):
-        raise PluginEffectUnavailable("root native-package binding is unavailable")
     if not callable(getattr(invocation_contexts, "__call__", None)):
         raise PluginEffectUnavailable("root trusted invocation-context provider is unavailable")
-    if getattr(identity, "kind", None) != "plugins" or not getattr(identity, "resource_id", None):
+    identity_digest = getattr(identity, "content_digest", None)
+    if (getattr(identity, "kind", None) != "plugins"
+            or not isinstance(getattr(identity, "resource_id", None), str)
+            or not getattr(identity, "resource_id", None)
+            or not isinstance(identity_digest, str) or not _HEX.fullmatch(identity_digest)):
         raise PluginEffectUnavailable("trusted selected Plugin identity is unavailable")
     if action_schemas is None:
         action_schemas = component_plugin_action_schema_registry()
     try:
-        from hermes_installer.native_plugin_bindings import bind_selected_plugin_effects
-        selected = bind_selected_plugin_effects(authority)
+        from hermes_installer.native_plugin_loader import (
+            SelectedNativePackage,
+            bind_current_native_plugin_package,
+        )
+        if selected_package is None:
+            binder = getattr(authority, "bind_selected_native_package", None)
+            if not callable(binder):
+                raise ValueError("root native-package binding is unavailable")
+            selected = bind_current_native_plugin_package(authority)
+        elif isinstance(selected_package, SelectedNativePackage):
+            selected = selected_package
+        else:
+            raise ValueError("the protected native package loader is required")
+        if (not callable(getattr(selected, "resolve", None))
+                or not callable(getattr(selected, "manifest_digest_for_adapter", None))
+                or selected.manifest_digest_for_adapter(identity.resource_id)
+                != identity_digest):
+            raise ValueError("selected Plugin manifest digest does not match the protected source identity")
     except (ImportError, RuntimeError, ValueError, PermissionError):
         raise PluginEffectUnavailable("root-selected Plugin package binding is unavailable") from None
     return PluginEffectDispatcher(authority=authority,

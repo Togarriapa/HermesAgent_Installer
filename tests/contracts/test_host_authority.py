@@ -133,6 +133,60 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
         self.assertEqual(effects, [("profile:a", payload)])
         self.assertEqual(result["status"], 200)
 
+    def test_completed_effect_observer_sees_exact_validated_result_and_is_peer_delivered(self):
+        binding = PrincipalBinding(os.getuid(), "principal:result", "profile:result",
+                                   "namespace:result", frozenset({"provider-result"}))
+        rule = EffectRule("provider-result", "provider.dispatch", "provider:fixture", "recipient:fixture")
+        calls = []
+        deliveries = []
+
+        class Observer:
+            effect_observer_ids = {(rule.capability, rule.operation, rule.target): "observer:fixture"}
+
+            def observe_effect_result(self, **kwargs):
+                calls.append(kwargs)
+                return "R" * 40
+
+        class Delivery:
+            def take_source_receipt(self, handle, *, peer_uid, peer_pid, peer_pidfd):
+                deliveries.append((handle, peer_uid, peer_pid, peer_pidfd))
+                return handle
+
+        service = AuthorityService(
+            signing_key=b"o" * 32, key_id="result-observer-fixture",
+            bindings_by_uid={binding.uid: binding},
+            rules={(rule.capability, rule.operation, rule.target): rule},
+            handlers={(rule.operation, rule.target): lambda **_kwargs: {
+                "status": 200, "body": b"validated-result", "headers": {}, "receipt_id": "receipt"}},
+            policy=FixturePolicy(), native_runtime_observer=Observer(),
+            source_receipt_delivery=Delivery(),
+        )
+        payload = b"request"
+        context = HostContext.from_wire(service._issue_context(binding.uid, {
+            "purpose": "provider-request", "intent": "fixture", "trace_id": "trace-result",
+            "lease_seconds": 10, "source_contexts": [],
+            "final_payload_digest": canonical_digest(payload), "operation": rule.operation,
+        }))
+        grant = service._authorize_effect(binding.uid, {
+            "context": context.to_wire(), "capability": rule.capability,
+            "target": rule.target, "recipient": rule.recipient,
+            "request_digest": canonical_digest(payload), "retry_index": 0,
+        })
+        import base64
+        result = service._perform_effect(binding.uid, os.getpid(), {
+            "authorization": grant, "operation": rule.operation,
+            "payload": base64.b64encode(payload).decode("ascii"), "timeout": 1,
+        }, cancelled=lambda: False, enforce_peer_identity=False, peer_pidfd=77)
+        self.assertEqual(result["body"], base64.b64encode(b"validated-result").decode("ascii"))
+        self.assertEqual(result["source_receipt_handle"], "R" * 40)
+        self.assertEqual(calls[0]["result_payload"], b"validated-result")
+        self.assertEqual(calls[0]["context"].profile_id, context.profile_id)
+        self.assertEqual(calls[0]["context"].principal_id, context.principal_id)
+        self.assertEqual(calls[0]["context"].generation, context.generation)
+        self.assertEqual(calls[0]["authorization"].grant_id, grant["grant_id"])
+        self.assertEqual(calls[0]["peer_pidfd"], 77)
+        self.assertEqual(deliveries, [("R" * 40, binding.uid, os.getpid(), 77)])
+
     def test_root_observed_source_is_unavailable_without_composed_registry(self):
         binding = PrincipalBinding(
             1234, "principal:source", "profile:source", "namespace:source",
@@ -553,6 +607,30 @@ class NativeEventClientContracts(unittest.TestCase):
             "schema", "native_event_handle", "normalized_payload", "retry_index"})
         self.assertEqual(requests[1][1]["native_event_handle"], event.native_event_handle)
 
+    def test_dispatch_parses_only_root_bound_provider_tool_call_metadata(self):
+        client = AuthorityClient(Path("/unused"), server_uid=0, timeout=2)
+        client._rpc = lambda *_args, **_kwargs: {
+            "status": 200, "body": "b2s=", "headers": {}, "receipt_id": "root-receipt",
+            "producer_context_handle": "p" * 40,
+            "tool_call_bindings": [{
+                "observed_call_handle": "c" * 40, "provider_tool_call_id": "call_1",
+                "tool_name": "selected_tool", "arguments_sha256": "a" * 64,
+            }],
+        }
+        response = client.dispatch_native_request("h" * 40, b"normalized")
+        self.assertEqual(response.producer_context_handle, "p" * 40)
+        self.assertEqual(response.tool_call_bindings[0].observed_call_handle, "c" * 40)
+        client._rpc = lambda *_args, **_kwargs: {
+            "status": 200, "body": "b2s=", "headers": {}, "receipt_id": "root-receipt",
+            "producer_context_handle": "p" * 40,
+            "tool_call_bindings": [{
+                "observed_call_handle": "bad", "provider_tool_call_id": "call_1",
+                "tool_name": "selected_tool", "arguments_sha256": "a" * 64,
+            }],
+        }
+        with self.assertRaises(AuthorityDenied):
+            client.dispatch_native_request("h" * 40, b"normalized")
+
     def test_source_receipt_take_requires_root_delivery_adapter_and_authenticated_peer(self):
         class Delivery:
             def __init__(self):
@@ -588,6 +666,90 @@ class NativeEventClientContracts(unittest.TestCase):
         client._rpc = lambda operation, value, **_kwargs: requests.append((operation, value)) or value
         self.assertEqual(client.take_source_receipt("h" * 40), "h" * 40)
         self.assertEqual(requests, [("source.receipt.take", payload)])
+
+    def test_native_invocation_rpcs_bind_exact_peer_and_argument_digest(self):
+        import base64
+        import hashlib
+
+        binding = PrincipalBinding(1234, "principal:native", "profile:native", "namespace:native",
+                                   frozenset({"native.request.dispatch"}))
+        arguments = b'{"prompt":"fixture"}'
+        calls = []
+
+        class Registry:
+            def begin_native_invocation(self, **kwargs):
+                calls.append(("begin", kwargs))
+                return {
+                    "schema": 1, "invocation_handle": "i" * 40, "package_id": "pkg:fixture",
+                    "profile_id": "profile:native", "generation": "generation:1",
+                    "adapter_id": "adapter:fixture", "action_id": "action:fixture",
+                    "arguments_sha256": hashlib.sha256(arguments).hexdigest(),
+                    "parent_closure_digest": "a" * 64, "expires_monotonic": time.monotonic() + 10,
+                    "binding_sha256": "b" * 64,
+                }
+
+            def get_invocation_contexts(self, **kwargs):
+                calls.append(("contexts", kwargs))
+                return {
+                    "schema": 1, "invocation_handle": "i" * 40,
+                    "source_receipt_handles": ["r" * 40],
+                    "parent_closure_digest": "a" * 64,
+                    "arguments_sha256": hashlib.sha256(arguments).hexdigest(),
+                    "expires_monotonic": time.monotonic() + 10,
+                }
+
+        service = AuthorityService(
+            signing_key=b"n" * 32, key_id="native-invocation-fixture",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={}, policy=FixturePolicy(),
+            native_invocation_registry=Registry(),
+        )
+        begin = service._dispatch(binding.uid, 123, 8, "native.invocation.begin", {
+            "schema": 1, "producer_context_handle": "p" * 40,
+            "observed_call_handle": "c" * 40,
+            "canonical_arguments_b64": base64.b64encode(arguments).decode("ascii"),
+        }, cancelled=lambda: False)
+        contexts = service._dispatch(binding.uid, 123, 8, "native.invocation.contexts", {
+            "schema": 1, "invocation_handle": begin["invocation_handle"],
+        }, cancelled=lambda: False)
+        self.assertEqual(begin["arguments_sha256"], hashlib.sha256(arguments).hexdigest())
+        self.assertEqual(contexts["source_receipt_handles"], ["r" * 40])
+        self.assertEqual(calls[0][1]["peer_pidfd"], 8)
+        self.assertEqual(calls[0][1]["canonical_arguments"], arguments)
+        self.assertEqual(calls[1][1]["peer_uid"], binding.uid)
+
+    def test_native_invocation_client_rejects_mismatched_argument_binding(self):
+        client = AuthorityClient(Path("/unused"), server_uid=0)
+        client._rpc = lambda *_args, **_kwargs: {
+            "schema": 1, "invocation_handle": "i" * 40, "package_id": "pkg:fixture",
+            "profile_id": "profile:native", "generation": "generation:1",
+            "adapter_id": "adapter:fixture", "action_id": "action:fixture",
+            "arguments_sha256": "a" * 64, "parent_closure_digest": "b" * 64,
+            "expires_monotonic": time.monotonic() + 10, "binding_sha256": "c" * 64,
+        }
+        with self.assertRaises(AuthorityDenied):
+            client.begin_native_invocation("p" * 40, "c" * 40, b"{}")
+
+    def test_authority_wire_rejects_duplicate_keys_at_nested_depth(self):
+        wire = b'{"outer":{"schema":1,"schema":2}}\n'
+
+        class ByteSocket:
+            def __init__(self):
+                self.remaining = bytearray(wire)
+
+            def recv(self, _size):
+                return bytes([self.remaining.pop(0)]) if self.remaining else b""
+
+            def settimeout(self, _timeout):
+                pass
+
+            def sendall(self, _data):
+                pass
+
+        with self.assertRaises(AuthorityDenied):
+            AuthorityService._read_json_line(ByteSocket(), 1024)
+        client = AuthorityClient(Path("/unused"), server_uid=0)
+        with self.assertRaises(AuthorityDenied):
+            client._exchange(ByteSocket(), {"hello": 1}, time.monotonic() + 1)
 
 
 class RootResolvedProcessControlContracts(unittest.TestCase):
