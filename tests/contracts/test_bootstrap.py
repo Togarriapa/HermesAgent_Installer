@@ -14,7 +14,7 @@ class FakeNetwork:
         from hermes_installer.network import HTTPResult
         return HTTPResult(200, {}, SCRIPT)
 class FakeRunner:
-    def __init__(self, fail_once=None): self.calls=[]; self.fail_once=fail_once
+    def __init__(self, fail_once=None, partial_repository=False): self.calls=[]; self.fail_once=fail_once; self.partial_repository=partial_repository
     def __call__(self,args,*,timeout,capture=False):
         self.calls.append((args,timeout,capture))
         if capture:
@@ -25,6 +25,11 @@ class FakeRunner:
             if stage=="repository":
                 if directory.exists() and any(directory.iterdir()):
                     return 77,b""
+                if self.fail_once==stage:
+                    self.fail_once=None
+                    if self.partial_repository:
+                        (directory/".git").mkdir(parents=True,exist_ok=True)
+                    return 1,b""
                 directory.mkdir(parents=True,exist_ok=True)
                 (directory/".git").mkdir(parents=True)
                 (directory/".git"/"HEAD").write_text(HERMES_COMMIT)
@@ -71,6 +76,16 @@ class BootstrapTests(unittest.TestCase):
             self.assertTrue(report.agent_ready)
             second=[call[0][call[0].index("--stage")+1] for call in runner.calls[prior:] if "--stage" in call[0]]
             self.assertEqual(second,["products","products","setup","gateway","complete"])
+    def test_repository_failures_before_and_during_clone_resume(self):
+        for partial in (False, True):
+            with self.subTest(partial=partial), tempfile.TemporaryDirectory() as td:
+                data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
+                runner=FakeRunner(fail_once="repository",partial_repository=partial)
+                boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=runner,expected_script_blob=git_blob_sha1(SCRIPT))
+                with self.assertRaisesRegex(BootstrapError,"stage repository"):
+                    boot.install()
+                boot.install(include_desktop=False)
+                self.assertEqual(boot._source_head(),HERMES_COMMIT)
     def test_changed_pinned_source_head_is_preserved_and_denied(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()

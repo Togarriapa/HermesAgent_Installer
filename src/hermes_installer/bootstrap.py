@@ -249,10 +249,12 @@ class HermesBootstrap:
         if self.install_dir.exists() and not owned:
             return False
         if not self.install_dir.exists():
-            return not marker.exists()
+            if not marker.exists():
+                return True
+            return owned and bool(previous and previous.get("status") in {"running:repository", "failed:repository"})
         head = self._source_head()
         if head is None:
-            return bool(previous and previous.get("status") == "running:repository")
+            return bool(owned and previous and previous.get("status") in {"running:repository", "failed:repository"})
         return head == HERMES_COMMIT
 
     def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 7200) -> BootstrapReport:
