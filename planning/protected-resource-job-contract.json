@@ -108,5 +108,97 @@
     "lineage": "all source and prior node result receipts inherited; private/unknown cannot become public, recipient scope only narrows",
     "failure": "cancel descendants and owned work at original deadline; independent already terminal result receipts preserved; generation/revoke invalidates pending/running child grants"
   },
-  "evidence": "actual native/backend selected cron/webhook/channel/bundle positive invocation in authorized isolated environment; recording fixtures not external test messaging; signature/replay/unselected/crossaccount/private/reuse/cycle/concurrency/revoke negatives before effects"
+  "evidence": "actual native/backend selected cron/webhook/channel/bundle positive invocation in authorized isolated environment; recording fixtures not external test messaging; signature/replay/unselected/crossaccount/private/reuse/cycle/concurrency/revoke negatives before effects",
+  "active_storage": {
+    "file": "/etc/hermes-installer/authority.json",
+    "field": "service_generations.resource_jobs",
+    "row_fields": [
+      "resource_id",
+      "kind",
+      "selected_enabled",
+      "profile_id",
+      "principal_id",
+      "generation",
+      "consent_revision",
+      "approved_action_ids",
+      "fixed_target_ids",
+      "credential_reference_ids",
+      "recipient_scope",
+      "source_policy",
+      "schedule_or_route_id",
+      "max_children",
+      "max_concurrency",
+      "max_runtime_seconds",
+      "max_payload_bytes",
+      "max_replay_entries",
+      "enrollment_id",
+      "source_issuer_channel_id",
+      "observer_enrollment_id",
+      "backend_enrollment_id",
+      "approved_dag"
+    ],
+    "dag_fields": [
+      "dag_sha256",
+      "nodes"
+    ],
+    "node_fields": [
+      "node_id",
+      "resource_id",
+      "action_id",
+      "operation",
+      "target_id",
+      "recipient",
+      "request_schema_id",
+      "body_recipe_id",
+      "depends_on",
+      "maximum_attempts"
+    ],
+    "digest": "dag_sha256 canonical full nodes list sorted node_id, same UTF8sortedcompact rules; root validates finite bounds/acyclicdeps, all entire rows included activegeneration_digest. No mutable caller DAG.",
+    "joins": "resource_id pinned nativecrosswalk/profile/package/action generation, backend_enrollment_id fixed selected protectedhandler/account scope, observer/sourcechannel actual root currentevent; credentials opaque vault refs, recipients narrow. Generation currentselectedsnapshot plusownresourcegen, consentcurrentnotclaimed. Exact source_issuers active9fieldrows and observerregistry joins before anyevent/child effect; unselected records cannot autorun."
+  },
+  "backend_enrollments": {
+    "placement": "authority.json service_generations.resource_backend_enrollments",
+    "row_fields": [
+      "id",
+      "resource_id",
+      "profile_id",
+      "principal_id",
+      "generation",
+      "consent_revision",
+      "source_issuer_channel_id",
+      "observer_enrollment_id",
+      "native_package_id",
+      "native_package_generation",
+      "handler_artifact_id",
+      "handler_sha256",
+      "approved_action_ids",
+      "operation",
+      "target_id",
+      "recipient",
+      "credential_reference_ids",
+      "request_schema_id",
+      "result_schema_id",
+      "body_recipe_id",
+      "scope_binding_id",
+      "maximum_request_bytes",
+      "maximum_response_bytes",
+      "maximum_seconds"
+    ],
+    "joins": "Jobrowbackend_enrollment_id exactid, DAGnodeaction/operation/target/recipient/schema/bodyrecipe subsetmatchrootbackendrow; currentconsent andsourceissueractualpendingevent/rootobserver; exactnativepackage/loadedclosure/action/profile/principal/gen; actualroot selected handlerartifact/SHA andopaquecredential/scope references. No legacySelectedResourceExecution metadata authorizesbackend.",
+    "body_recipe_fields": [
+      "id",
+      "schema_id",
+      "source_artifact_id",
+      "source_sha256",
+      "output_fields",
+      "scope_bindings",
+      "maximum_bytes"
+    ],
+    "body_recipe_placement": "service_generations.resource_body_recipes",
+    "output_fields": "Finite list {name,source,value,validator_id}; source exactly literal|observed-event-field|owned-parent-result-field. Literal protectedtypedvalue; event/result source value is rootpreselected field key of capturedboundedverifiedschema, neverpath/URL/role/credential. Scope fields resolved fromroot scope_binding_id, cannot override viaevent/modeldata. Rawcaptureddata remainsuntrusted/private source closure, no authorityupgrade.",
+    "scope_binding": "Opaque rootselected immutable account/channel/backend scope record in selectedexistingconnector/provider/plugin enrollment; no publiceventURL/account inferred orcallerselectable. Credential refs resolved only rootbackendrole, no secretexport; missingactualsource schema/recipe/validator/backend remainsincomplete.",
+    "root_private_signature": "invoke_resource_backend(backend_enrollment_id,node_id,root_job_admission_handle,canonical_payload_bytes) -> bounded typed result plus rootobserved source result receipt",
+    "effect": "Root resolvesactualjob/node/currentinstanceadmission, freshchildspecific sourcecontext+oneuse grant andexactpayload/recipe beforeselectedhandler. This rootprivateAPI notworkerbearerproxy. Nativeworkflow tools/provider/plugin/channel sideeffects require their OWN fresh reduced childgrants/currentrecipient/budget/account policy, never resource.run blanketpermission. Root backend invokes actualenrolled nativeaction/connector, notrecordingfakebackend.",
+    "bounds": "Jobenrolledlimits tighten backend maxima; maxbytes finite<=256KiBrequest/2MiBresponse default, runtime<=600s/originaljoblease, children/concurrencyfinite. Revoke/gen/currentconsent/failure canceldescendants, no repeatingconsumedparent."
+  }
 }
