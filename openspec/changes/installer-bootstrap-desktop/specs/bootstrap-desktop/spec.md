@@ -450,3 +450,10 @@ The installer SHALL begin native health observation from a root-retained live se
 #### Scenario: Terminal-only health presentation
 - **WHEN** only stdout or exit status exists without the required live native event closure
 - **THEN** health remains incomplete and functional acceptance is not asserted
+
+### Requirement: Exact native output byte encoding
+The installer SHALL bind generated native CAS artifacts to the fixed reviewed role encoding, source/member receipts and distinct archive/member-tree digests.
+
+#### Scenario: Alternate or unverified native output
+- **WHEN** generated output uses unknown archive members, alternate encoding or mismatched source/member hashes
+- **THEN** activation is denied and native acceptance remains pending

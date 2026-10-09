@@ -359,3 +359,10 @@ The installer SHALL require actual custody write/EOF receipts for task completio
 #### Scenario: Forged or mismatched receipt
 - **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
 - **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+### Requirement: Exact native output byte encoding
+The installer SHALL bind generated native CAS artifacts to the fixed reviewed role encoding, source/member receipts and distinct archive/member-tree digests.
+
+#### Scenario: Alternate or unverified native output
+- **WHEN** generated output uses unknown archive members, alternate encoding or mismatched source/member hashes
+- **THEN** activation is denied and native acceptance remains pending
