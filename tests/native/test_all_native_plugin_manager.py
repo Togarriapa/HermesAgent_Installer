@@ -162,8 +162,6 @@ assert effects.calls == [("github", "repo.get", {"repository": "owner/private"})
                  str(overlay), str(HERMES_SOURCE), str(root / "home")],
                 env=env, capture_output=True, text=True, timeout=60,
             )
-            if completed.returncode and "ModuleNotFoundError" in completed.stderr:
-                self.skipTest("pinned Hermes runtime dependencies are not installed in this interpreter")
             self.assertEqual(completed.returncode, 0, completed.stderr[-5000:])
 
 
