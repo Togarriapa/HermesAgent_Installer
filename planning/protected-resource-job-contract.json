@@ -802,5 +802,30 @@
     "source_path": "src/hermes_installer/registry/resource_backends.py",
     "sha256": "d06e5b13444a690ce19f36698e5b3c244ba1e09950cdf3c03815c70577d541cd",
     "evidence": "Sol independently hashed actual module at source owner checkout; includes fixed handler plus RootArtifactValidator. Actual deployed protected row must match bytes/current catalog; source pin not functional acceptance."
+  },
+  "actual_stdin_write_receipt": {
+    "owner_module": "hermes_installer.authority.managed_process_custodian",
+    "dto_module": "hermes_installer.registry.resource_jobs",
+    "dto": "RootTaskStdinWriteReceipt",
+    "fields": {
+      "schema": "literal1",
+      "receipt_handle": "opaque str",
+      "task_handle": "opaque str",
+      "process_id": "opaque str",
+      "process_generation": "opaque str",
+      "initial_input_receipt_handle": "opaque str",
+      "stdin_sha256": "lowercase SHA256",
+      "stdin_size_bytes": "int1..262144",
+      "sequence": "literal0",
+      "write_complete": "literal true",
+      "drained": "literal true",
+      "stdin_closed": "literal true",
+      "service_generation_digest": "lowercase SHA256",
+      "issued_monotonic": "finite float",
+      "expires_monotonic": "finite float"
+    },
+    "issue": "Custody mints only after actual exact admitted prompt UTF8 bytes have been completely written with bounded partial-write handling, bounded output drain and actual owned stdin FD close/EOF. No newline/BOM/normalization. Partial write, EPIPE, cancellation or expired deadline never issues a successful receipt. Internal completion of the same admitted start effect; no new worker verb or reused grant.",
+    "resolve": "ManagedProcessEffectHandler.resolve_task_stdin_write(task_handle,receipt_handle)->RootTaskStdinWriteReceipt; stable non-consuming retained root registry lookup validates exact process/task/input receipt/generation/hash/size and lease. Caller DTO or boolean is not proof.",
+    "joins": "ManagedTaskHandle and subsequent immutable RootTaskTerminalReceipt carry stdin_write_receipt_handle issued before terminal. RootTaskNativeObservationRegistry resolves actual custody receipt and requires same task, process, initial-input receipt, exact stdin SHA/size, active service generation and EOF before companion success. Companion links existing terminal; never rewrite terminal. Registry audit lookup does not reconsume initial input or authorize another write."
   }
 }
