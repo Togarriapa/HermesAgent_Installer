@@ -28,7 +28,8 @@ class RemoteJWKSUnitTests(unittest.TestCase):
   seen=[]
   def factory(**kw):
    network=FakeNetwork(**kw);network.result=HTTPResult(200,{"Content-Length":str(len(body))},body);seen.append(network);return network
-  cache=JWKSCache("https://team.cloudflareaccess.com")
+  now=[0.0]
+  cache=JWKSCache("https://team.cloudflareaccess.com",clock=lambda:now[0])
   with patch("hermes_installer.remote.jwks.BoundedNetwork",factory):
    first=cache.load();self.assertEqual(set(first),{"kid1"});self.assertEqual(cache.key("kid1")["kty"],"RSA")
    self.assertEqual(len(seen),1);self.assertEqual(seen[0].requested[0],"https://team.cloudflareaccess.com/cdn-cgi/access/certs")
@@ -36,6 +37,15 @@ class RemoteJWKSUnitTests(unittest.TestCase):
    self.assertEqual(len(seen),2)
    with self.assertRaises(GatewayDenied):cache.key("still-missing")
    self.assertEqual(len(seen),2)
+ def test_read_deadline_uses_the_injected_monotonic_clock(self):
+  body=b'{"keys":[{"kty":"RSA","kid":"kid1","use":"sig","alg":"RS256","n":"a","e":"AQAB"}]}'
+  now=[0.0];seen=[]
+  def factory(**kwargs):
+   network=FakeNetwork(**kwargs);network.result=HTTPResult(200,{"Content-Length":str(len(body))},body);seen.append(network);return network
+  cache=JWKSCache("https://team.cloudflareaccess.com",clock=lambda:now[0])
+  with patch("hermes_installer.remote.jwks.BoundedNetwork",factory):
+   self.assertEqual(set(cache.load(deadline_monotonic=2)),{"kid1"})
+  self.assertEqual(len(seen),1)
  def test_jwks_redirect_compression_and_oversize_are_rejected(self):
   cases=(
    HTTPResult(302,{"Location":"https://evil.example"},b"{}"),
