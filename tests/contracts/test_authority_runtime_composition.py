@@ -115,7 +115,7 @@ def test_root_journal_resolution_is_bound_to_active_generation_and_protected_cat
         )
 
 
-def test_runtime_closes_attached_native_loader_observation_store():
+def test_runtime_closes_attached_observation_stores():
     service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
     closed = []
 
@@ -123,15 +123,21 @@ def test_runtime_closes_attached_native_loader_observation_store():
         def close(self):
             closed.append(True)
 
-    store = LoaderObservationStore()
-    service.native_loader_observation_store = store
+    loader_store = LoaderObservationStore()
+    gateway_observer = LoaderObservationStore()
+    native_window_observer = LoaderObservationStore()
+    service.native_loader_observation_store = loader_store
+    service.gateway_boundary_observer = gateway_observer
+    service.native_window_observer = native_window_observer
     runtime = compose_root_authority_runtime(
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=catalog, vault=vault,
     )
-    assert runtime.native_loader_observation_store is store
+    assert runtime.native_loader_observation_store is loader_store
+    assert runtime.gateway_boundary_observer is gateway_observer
+    assert runtime.native_window_observer is native_window_observer
     runtime.close()
-    assert closed == [True]
+    assert closed == [True, True, True]
 
 
 def test_memory_rows_do_not_fall_back_when_protected_service_catalog_is_missing():

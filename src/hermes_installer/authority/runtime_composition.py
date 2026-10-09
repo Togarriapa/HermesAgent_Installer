@@ -83,6 +83,14 @@ class RootAuthorityRuntime:
         return getattr(self.service, "native_loader_observation_store", None)
 
     @property
+    def gateway_boundary_observer(self) -> Any | None:
+        return getattr(self.service, "gateway_boundary_observer", None)
+
+    @property
+    def native_window_observer(self) -> Any | None:
+        return getattr(self.service, "native_window_observer", None)
+
+    @property
     def remote_session_authority(self) -> Any | None:
         return self.service.remote_session_authority
 
@@ -103,7 +111,8 @@ class RootAuthorityRuntime:
     def close(self) -> None:
         """Close attached root observers and stop the active remote lease worker."""
         for component in (self.native_runtime_observer, self.source_observer_registry,
-                          self.native_loader_observation_store):
+                          self.native_loader_observation_store,
+                          self.gateway_boundary_observer, self.native_window_observer):
             close = getattr(component, "close", None)
             if callable(close):
                 close()
