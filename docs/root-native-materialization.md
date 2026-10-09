@@ -36,17 +36,22 @@ use the pinned Hermes source APIs and the factory-selected Hermes Python 3.14
 interpreter to discover this profile and load every skill in its selected
 closure. It does not invoke a model or contact an account. The receipt contains
 only opaque handles, profile/skill IDs, source and closure digests,
-per-resource states, and expiry. It is not a `RootRuntimeArtifactReceipt` and
-does not prove executable identity, functional health, credentials, or effect
-authorization. After the fixed health step, lifecycle may consume this receipt
+per-resource states, Hermes revision, verified Python version, and expiry. It
+is not a `RootRuntimeArtifactReceipt` and does not prove executable identity,
+functional health, credentials, or effect authorization. After the fixed
+health step, lifecycle may consume this receipt
 once with the exact current enrollment, generation, and selected resource
 profile. A new generation or protected digest invalidates the pending receipt.
 
-The factory must resolve the Hermes source and Python interpreter from trusted
-source/runtime receipts and keep both paths private. No host Python fallback is
-permitted. If the official PM-managed Python 3.14 runtime is not available, the
-operation fails closed and reports that runtime prerequisite; it does not
-substitute the development interpreter.
+The factory resolves the Hermes source from the verified source handoff and
+passes a root-private PM runtime resolver. The selected binding carries an
+opaque runtime receipt handle; immediately before discovery the operation
+resolves that handle with the current enrollment, generation, and source
+artifact identity. It accepts only an absolute executable path from that
+resolver. No host Python fallback is permitted. If the official PM-managed
+Python 3.14 runtime is not available, the operation fails closed and reports
+that runtime prerequisite; it does not substitute the development
+interpreter.
 
 Development fixtures validate compilation and crosswalk selection using the
 full vendored registry, along with path-tamper rejection and the root-only call
