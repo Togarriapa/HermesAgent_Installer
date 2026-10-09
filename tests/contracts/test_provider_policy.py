@@ -74,7 +74,7 @@ class ProviderPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             provider = RecordingProvider([ProviderResponse(429, b"", {"Retry-After": "999"}), ProviderResponse(200, b"ok")])
             sleeps = []
-            result = self.make(Path(td), provider, sleep=sleeps.append).dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL, b'{"messages":[]}', input_tokens=1, output_token_limit=5)
+            result = self.make(Path(td), provider, sleep=sleeps.append).dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=5)
             self.assertEqual(result.status, 200)
             self.assertEqual(len(provider.calls), 2)
             self.assertAlmostEqual(sum(sleeps), 15.0)
@@ -87,7 +87,7 @@ class ProviderPolicyTests(unittest.TestCase):
             policy = DispatchPolicy({"public": default_public_route(), "private": paid}, "public", "private")
             dispatcher = Dispatcher(policy, BudgetLedger(self.ledger_root(Path(td))), provider)
             with self.assertRaisesRegex(PolicyDenied, "No eligible provider route"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PRIVATE), "local/test", b'{"messages":[]}', input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PRIVATE), "local/test", b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
             self.assertEqual(provider.calls, [])
 
     def test_ledger_reserves_and_accounts_across_dispatchers(self):
@@ -97,11 +97,11 @@ class ProviderPolicyTests(unittest.TestCase):
             policy = DispatchPolicy({"public": default_public_route(), "private": paid}, "public", "private", metered_budget_usd=0.003)
             ledger_root = self.ledger_root(root)
             first = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider([ProviderResponse(200, b"ok", input_tokens=100, output_tokens=100)]))
-            first.dispatch(DispatchContext("one", "chat", Sensitivity.PRIVATE), "local/test", b'{"messages":[]}', input_tokens=100, output_token_limit=100)
+            first.dispatch(DispatchContext("one", "chat", Sensitivity.PRIVATE), "local/test", b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=100, output_token_limit=100)
             self.assertAlmostEqual(BudgetLedger(ledger_root).spent(), 0.002)
             second = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider())
             with self.assertRaisesRegex(PolicyDenied, "Aggregate metered budget"):
-                second.dispatch(DispatchContext("two", "summary", Sensitivity.PRIVATE), "local/test", b"{}", input_tokens=100, output_token_limit=100)
+                second.dispatch(DispatchContext("two", "summary", Sensitivity.PRIVATE), "local/test", b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=100, output_token_limit=100)
 
 
     def test_unknown_prices_are_never_treated_as_free(self):
@@ -111,7 +111,7 @@ class ProviderPolicyTests(unittest.TestCase):
             policy=DispatchPolicy({"unknown":unknown},"unknown")
             dispatcher=Dispatcher(policy,BudgetLedger(self.ledger_root(Path(td))),provider)
             with self.assertRaisesRegex(PolicyDenied,"No eligible provider route"):
-                dispatcher.dispatch(DispatchContext("hermes","chat",Sensitivity.PUBLIC),MODEL,b'{"messages":[]}',input_tokens=1,output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("hermes","chat",Sensitivity.PUBLIC),MODEL,b'{"messages":[{"role":"user","content":"test"}]}',input_tokens=1,output_token_limit=1)
             self.assertEqual(provider.calls,[])
 
     def test_ambiguous_paid_timeout_keeps_attempt_reservation(self):
@@ -126,7 +126,7 @@ class ProviderPolicyTests(unittest.TestCase):
             ledger=BudgetLedger(root)
             dispatcher=Dispatcher(policy,ledger,transport)
             with self.assertRaisesRegex(PolicyDenied,"Aggregate metered budget"):
-                dispatcher.dispatch(DispatchContext("private","chat",Sensitivity.PRIVATE),"local/test",b'{"messages":[]}',input_tokens=1,output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("private","chat",Sensitivity.PRIVATE),"local/test",b'{"messages":[{"role":"user","content":"test"}]}',input_tokens=1,output_token_limit=1)
             self.assertEqual(calls,["private"])
             self.assertAlmostEqual(ledger.spent(),0.000016)
 
@@ -153,11 +153,11 @@ class ProviderPolicyTests(unittest.TestCase):
             provider = RecordingProvider()
             dispatcher = self.make(Path(td), provider)
             with self.assertRaisesRegex(PolicyDenied, "cancelled"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC, cancelled=lambda: True), MODEL, b'{"messages":[]}', input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC, cancelled=lambda: True), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
             with self.assertRaisesRegex(PolicyDenied, "No private-capable route"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.UNKNOWN), MODEL, b'{"messages":[]}', input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.UNKNOWN), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
             with self.assertRaisesRegex(PolicyDenied, "deadline"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC, deadline=1), MODEL, b'{"messages":[]}', input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC, deadline=1), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
             self.assertEqual(provider.calls, [])
 
 
