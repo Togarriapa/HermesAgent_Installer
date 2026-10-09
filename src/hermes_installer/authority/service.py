@@ -384,17 +384,6 @@ class AuthorityService:
             raise AuthorityDenied("native.turn.finish", "root native turn registry binding is invalid")
         self.native_turn_observation_registry = registry
 
-    def attach_native_turn_observation_registry(self, registry: Any) -> None:
-        """Attach the root-native whole-turn observation registry exactly once."""
-        from .native_turn_observation import RootNativeTurnObservationRegistry
-
-        if (self.native_turn_observation_registry is not None
-                or type(registry) is not RootNativeTurnObservationRegistry
-                or getattr(registry, "service", None) is not self
-                or not callable(getattr(registry, "finish_selected_native_turn", None))):
-            raise AuthorityDenied("native.turn.finish", "root native turn registry binding is invalid")
-        self.native_turn_observation_registry = registry
-
     def attach_memory_step_effect_authority(self, authority: Any) -> None:
         """Attach the root-only memory compound step issuer exactly once."""
         if (self.memory_step_effect_authority is not None
@@ -1549,7 +1538,7 @@ class AuthorityService:
         result = delivery.to_wire()
         expected = {"schema", "source_receipt_handle", "selected_execution_handle",
                     "input_sha256", "input_size_bytes", "expires_monotonic"}
-        if (not isinstance(result, Mapping) or set(result) != expected
+        if (not isinstance(result, Mapping) or set(result) not in (expected, expected | {"turn_handle"})
                 or type(result.get("schema")) is not int or result["schema"] != 1
                 or not isinstance(result.get("source_receipt_handle"), str)
                 or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["source_receipt_handle"])
@@ -1561,7 +1550,10 @@ class AuthorityService:
                 or not 1 <= result["input_size_bytes"] <= 1_048_576
                 or isinstance(result.get("expires_monotonic"), bool)
                 or type(result.get("expires_monotonic")) not in (int, float)
-                or not self.monotonic() < result["expires_monotonic"] <= self.monotonic() + 30.0):
+                or not self.monotonic() < result["expires_monotonic"] <= self.monotonic() + 30.0
+                or result.get("turn_handle") is not None and (
+                    not isinstance(result.get("turn_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["turn_handle"]))):
             raise AuthorityDenied("native.input.take", "root input delivery fields exceed their bounds")
         return dict(result)
 
