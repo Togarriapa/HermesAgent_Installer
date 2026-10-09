@@ -8,6 +8,7 @@ because their source files were copied.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import subprocess
 import tempfile
@@ -94,6 +95,146 @@ def discover_ecc_skills(files: Mapping[str, bytes]) -> EccSkillSet:
         excluded_skill_problems=excluded,
         reference_audit=audit,
         hook_review=review_host_hooks(contract.component_id, files),
+    )
+
+
+def stage_ecc_skills_for_profile(
+    source: object,
+    store: object,
+    *,
+    profile_id: str,
+    profile_data_root: Path,
+    selected_skill_files: tuple[str, ...] | None = None,
+):
+    """Stage only complete reviewed ECC skill closures for one profile.
+
+    The full immutable source generation remains available for audit. The
+    profile-facing ``external_dirs`` generation contains only eligible skill
+    roots and their transitive references; broken sibling skills are recorded
+    in the installer selection manifest and never exposed to Hermes discovery.
+    """
+    from hermes_installer.components.skill_binding import ComponentSkillBinding
+    from hermes_installer.components.source_bundle import VerifiedComponentSource
+    from hermes_installer.components.runtime_source import bind_component_runtime_source
+
+    contract = resolve_component_adapter("ecc")
+    if (not isinstance(source, VerifiedComponentSource)
+            or source.component_id != contract.component_id
+            or source.source_identity != contract.source_identity
+            or source.revision != contract.revision):
+        raise SkillAdapterError("ECC staging requires the complete selected verified source bundle")
+    if not isinstance(profile_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", profile_id):
+        raise SkillAdapterError("profile id is not a safe native profile identifier")
+    profile_root = Path(profile_data_root)
+    try:
+        if profile_root.is_symlink() or profile_root.resolve(strict=True) != profile_root:
+            raise SkillAdapterError("profile data root must be canonical and symlink-free")
+        if store.owned.root.resolve(strict=True) != profile_root:
+            raise SkillAdapterError("ECC generation store is not rooted in the selected profile")
+    except (OSError, AttributeError):
+        raise SkillAdapterError("selected profile data root is not initialized") from None
+
+    # This stages and fully re-verifies the original tree, including quarantined
+    # skills, before selecting any profile-facing subset.
+    bind_component_runtime_source(source, store, component_id="ecc")
+    skill_set = discover_ecc_skills(source.files)
+    eligible = set(skill_set.eligible_skill_files)
+    selected = tuple(sorted(eligible if selected_skill_files is None else set(selected_skill_files)))
+    if not selected or not set(selected).issubset(eligible):
+        raise SkillAdapterError("ECC selection must contain only complete eligible pinned skill roots")
+
+    references = dict(skill_set.reference_audit.skill_resolved_targets)
+    selected_paths: set[str] = set()
+    for skill_file in selected:
+        selected_paths.add(skill_file)
+        for target in references.get(skill_file, ()):
+            if target in source.files:
+                selected_paths.add(target)
+            else:
+                prefix = target.rstrip("/") + "/"
+                descendants = {name for name in source.files if name.startswith(prefix)}
+                if not descendants:
+                    raise SkillAdapterError("ECC reference closure changed after source verification")
+                selected_paths.update(descendants)
+    selected_paths.update(
+        name for name in source.files
+        if PurePosixPath(name).name.casefold().startswith(("license", "copying", "notice"))
+    )
+    selected_paths.add("INSTALLER-SOURCE-PROVENANCE.json")
+    missing = selected_paths - set(source.files)
+    if missing:
+        raise SkillAdapterError("ECC source closure contains a missing file")
+    extra_roots = {
+        name for name in selected_paths
+        if PurePosixPath(name).name == "SKILL.md" and name not in selected
+    }
+    if extra_roots:
+        raise SkillAdapterError("ECC skill closure crosses into a separate skill root")
+
+    from hermes_installer.components.skill_handlers import discover_component_skills
+    selected_discovery = discover_component_skills("ecc", source.files, skill_files=selected)
+    if not selected_discovery.importable:
+        raise SkillAdapterError("selected ECC skill closure failed its independent reference audit")
+    filtered_files = {name: source.files[name] for name in sorted(selected_paths)}
+    selection_document = {
+        "schema": 1,
+        "component_id": "ecc",
+        "source_identity": source.source_identity,
+        "source_revision": source.revision,
+        "source_git_tree_sha": source.source_tree_sha,
+        "selected_skill_files": list(selected),
+        "quarantined_skill_problems": [
+            {"skill_file": skill, "problems": list(problems)}
+            for skill, problems in skill_set.excluded_skill_problems
+        ],
+    }
+    selection_bytes = json.dumps(selection_document, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+    selection_path = "INSTALLER-ECC-SKILL-SELECTION.json"
+    if selection_path in filtered_files:
+        raise SkillAdapterError("ECC source collides with the installer skill-selection manifest")
+    filtered_files[selection_path] = selection_bytes
+    digest = hashlib.sha256()
+    for name, body in sorted(filtered_files.items()):
+        digest.update(name.encode("utf-8") + b"\0" + hashlib.sha256(body).digest())
+    generation_id = f"ecc-skills-{source.revision[:12]}-{digest.hexdigest()[:12]}"
+    modes = {name: source.file_modes.get(name, 0o644) for name in filtered_files}
+    modes[selection_path] = 0o644
+    staged = store.stage(generation_id, filtered_files, file_modes=modes).resolve(strict=True)
+    try:
+        verified_root, manifest, _generation_digest = store._verify(generation_id)
+        expected_files = {
+            name: {
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "mode": store._private_mode(modes[name]),
+            }
+            for name, body in filtered_files.items()
+        }
+        if (verified_root.resolve(strict=True) != staged or staged.is_symlink()
+                or not staged.is_relative_to(store.root.resolve(strict=True))
+                or manifest.get("files") != expected_files):
+            raise SkillAdapterError("staged ECC profile generation failed ownership or content verification")
+    except SkillAdapterError:
+        raise
+    except Exception as exc:
+        raise SkillAdapterError("staged ECC profile generation failed ownership or content verification") from exc
+    actual = {
+        path.relative_to(staged).as_posix(): path.read_bytes()
+        for path in staged.rglob("*") if path.is_file()
+    }
+    actual_discovery = discover_component_skills("ecc", actual, skill_files=selected)
+    if (not actual_discovery.importable
+            or tuple(item.skill_file for item in actual_discovery.skills) != selected):
+        raise SkillAdapterError("staged ECC profile skill closure differs from the audited selection")
+    source_digest = hashlib.sha256()
+    for name in sorted(source.files):
+        source_digest.update(name.encode("utf-8") + b"\0")
+        source_digest.update(hashlib.sha256(source.files[name]).digest())
+    return ComponentSkillBinding(
+        profile_id=profile_id, component_id="ecc", source_identity=source.source_identity,
+        revision=source.revision, external_dir=staged, skill_files=selected,
+        names=tuple(item.name for item in actual_discovery.skills),
+        source_sha256=source_digest.hexdigest(),
+        redistribution_license_review_required=source.redistribution_license_review_required,
     )
 
 

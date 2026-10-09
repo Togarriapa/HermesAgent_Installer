@@ -558,6 +558,48 @@ class NativeToolCallBinding:
             raise AuthorityDenied("native.tool-call", "native tool call response is malformed") from None
 
 
+@dataclass(frozen=True, slots=True)
+class NativeResponseMetadata:
+    """Root response metadata released by a one-use peer-bound lookup."""
+
+    producer_context_handle: str
+    tool_call_bindings: tuple[NativeToolCallBinding, ...]
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.producer_context_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.producer_context_handle)
+                or not isinstance(self.tool_call_bindings, tuple)
+                or len(self.tool_call_bindings) > 128
+                or any(not isinstance(item, NativeToolCallBinding) for item in self.tool_call_bindings)
+                or len({item.observed_call_handle for item in self.tool_call_bindings})
+                    != len(self.tool_call_bindings)):
+            raise AuthorityDenied("native.response.take", "provider response metadata is malformed")
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "producer_context_handle": self.producer_context_handle,
+            "tool_call_bindings": [
+                {"observed_call_handle": item.observed_call_handle,
+                 "provider_tool_call_id": item.provider_tool_call_id,
+                 "tool_name": item.tool_name,
+                 "arguments_sha256": item.arguments_sha256}
+                for item in self.tool_call_bindings
+            ],
+        }
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "NativeResponseMetadata":
+        fields = {"producer_context_handle", "tool_call_bindings"}
+        if (not isinstance(value, dict) or set(value) != fields
+                or not isinstance(value["tool_call_bindings"], list)
+                or len(value["tool_call_bindings"]) > 128):
+            raise AuthorityDenied("native.response.take", "provider response metadata fields are invalid")
+        return cls(
+            value["producer_context_handle"],
+            tuple(NativeToolCallBinding.from_wire(item) for item in value["tool_call_bindings"]),
+        )
+
+
 def canonical_bytes(value: bytes | Mapping[str, Any] | list[Any]) -> bytes:
     if isinstance(value, bytes):
         return value

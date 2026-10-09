@@ -131,6 +131,11 @@ class PluginAdapterRegistry(Protocol):
 
 class NativePluginRuntimeContext(Protocol):
     selected_adapters: PluginAdapterRegistry
+    # Root loader supplies the per-call RB08 facade for selected external
+    # effects. Local-only implementations may not need it, while handlers
+    # that reach protected effects fail closed when it is absent.
+    plugin_effects: object | None
+    invocation_contexts: object | None
 
 
 class NativePluginUnavailable(RuntimeError):

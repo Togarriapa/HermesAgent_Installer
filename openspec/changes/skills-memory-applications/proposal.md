@@ -43,3 +43,5 @@ Pinned source document link v1: plans/amendments/2026-10-09-pinned-source-docume
 Additive root-state/build-mount refinement (SK01 / SK-T01): see plans/amendments/2026-10-09-root-memory-state-build-mounts-v1.md; selected protected mount nodes and separate UID0 authority journal state are mandatory. Original scope and pending target acceptance unchanged.
 
 Immutable source-buffer materialization v2: plans/amendments/2026-10-09-immutable-source-buffer-materialization-v2.md; exact retained original Git bytes may replace source-filesystem inode checks only when no mutable source path is used. Destination/root closure checks and existing SK-R0092 target gates remain.
+
+Root setup/journal selection v8: plans/amendments/2026-10-09-root-setup-session-journal-catalog-v8.md specifies installed root-local initial session/intent/receipt transport and active root journal catalog. Existing HI/BD/LC/SK tasks and target evidence remain open.
