@@ -6,6 +6,11 @@ import json
 import time
 import unittest
 
+from hermes_installer.authority.types import (
+    BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity,
+    canonical_bytes, canonical_digest,
+)
+from hermes_installer.mcp.broker import mcp_intent
 from hermes_installer.mcp.client import MCPClient
 from hermes_installer.mcp.transports import StdioTransport, StreamableHTTPTransport, TransportError
 from hermes_installer.policy import DispatchAuthorization, DispatchContext, Sensitivity
@@ -152,9 +157,68 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
         transport = StreamableHTTPTransport(
             f"http://127.0.0.1:{port}/mcp", service_id="fixture", timeout=2,
         )
+        class InProcessAuthority:
+            """Synthetic signed-authority boundary; the HTTP request stays loopback-only."""
+            def __init__(self, bound_transport):
+                self.transport = bound_transport
+                self.context_value = None
+
+            def context(self, *, purpose, intent, lease_seconds, cancelled=None, **_kwargs):
+                now = time.monotonic()
+                ctx = HostContext(
+                    principal_id="fixture-principal", profile_id="fixture-profile",
+                    namespace_id="fixture-namespace", uid=1000, purpose=purpose,
+                    intent_id=canonical_digest({"purpose": purpose, "intent": intent}),
+                    trace_id="fixture-trace", sensitivity=Sensitivity.UNKNOWN,
+                    lineage_hash="a" * 64, policy_revision="fixture-policy",
+                    capabilities=frozenset({"mcp:fixture:connect", "mcp:fixture:read",
+                                             "mcp:test:loopback"}),
+                    issued_at_monotonic=now, monotonic_expires_at=now + min(lease_seconds, 20),
+                    nonce="fixture-context-nonce", grant_id="fixture-context-grant",
+                    signature="fixture-context-signature",
+                )
+                self.context_value = ctx
+                return ctx
+
+            def authorize_effect(self, context, *, capability, target, recipient,
+                                 request_digest, retry_index, cancelled=None):
+                now = time.monotonic()
+                return EffectAuthorization(
+                    principal_id=context.principal_id, profile_id=context.profile_id,
+                    namespace_id=context.namespace_id, uid=context.uid,
+                    purpose=context.purpose, sensitivity=context.sensitivity,
+                    trace_id=context.trace_id, policy_revision=context.policy_revision,
+                    lineage_hash=context.lineage_hash, capability=capability,
+                    intent_id=context.intent_id, target=target, recipient=recipient,
+                    request_digest=request_digest, retry_index=retry_index,
+                    issued_at_monotonic=now, monotonic_expires_at=min(
+                        context.monotonic_expires_at, now + 5),
+                    grant_id="fixture-effect-grant", nonce="fixture-effect-nonce",
+                    context_digest=canonical_digest(context.claims()),
+                    signature="fixture-effect-signature",
+                )
+
+            def mcp_request(self, authorization, *, target, payload, timeout, cancelled=None):
+                if (authorization.target != target or target != "mcp:fixture:http"
+                        or canonical_digest(payload) != authorization.request_digest
+                        or self.context_value is None or cancelled and cancelled()):
+                    raise PermissionError("fixture authority binding mismatch")
+                envelope = json.loads(payload.decode("utf-8"))
+                request = {"jsonrpc": "2.0", "id": envelope["request_id"],
+                           "method": envelope["method"], "params": envelope["params"]}
+                response = asyncio.run(self.transport.request(
+                    request, dispatch_context=self.context_value,
+                    dispatch_authorization=authorization,
+                ))
+                body = canonical_bytes(response) if envelope["request_id"] is not None else b""
+                return BrokeredEffectResponse(
+                    status=200, body=body, headers={"content-type": "application/json"},
+                    receipt_id="fixture-effect-receipt",
+                )
+
+        authority = InProcessAuthority(transport)
         client = MCPClient(transport, {"get_state"}, service_id="fixture",
-                           selection="sensor.office", dispatch_context=context,
-                           context_authorizer=FixtureAuthority(), timeout=2)
+                           selection="sensor.office", authority_client=authority, timeout=2)
         async with server:
             await client.initialize()
             await client.discover()
