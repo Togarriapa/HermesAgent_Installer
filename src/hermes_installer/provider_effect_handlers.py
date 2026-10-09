@@ -152,6 +152,7 @@ def _validate_binding(context: object, authorization: object, *,
     if (getattr(authorization, "target", None) != enrollment.target
             or getattr(authorization, "recipient", None) != enrollment.recipient
             or getattr(authorization, "request_digest", None) != digest
+            or getattr(authorization, "capability", None) != capability
             or getattr(authorization, "retry_index", None) != retry_index):
         raise ProviderHandlerDenied("provider.grant_binding", "Provider effect grant does not match this attempt")
     capabilities = getattr(context, "capabilities", frozenset())
@@ -237,7 +238,7 @@ class _FixedProviderHandler:
         body, model, capability = _canonical_request(enrollment, payload)
         digest = hashlib.sha256(body).hexdigest()
         retry_index = getattr(authorization, "retry_index", None)
-        if type(retry_index) is not int or not 0 <= retry_index <= 100:
+        if type(retry_index) is not int or not 0 <= retry_index < 3:
             raise ProviderHandlerDenied("provider.retry", "Provider retry index is outside its bound")
         if body != payload:
             raise ProviderHandlerDenied("provider.noncanonical", "Provider request was not normalized before grant issuance")
@@ -247,9 +248,23 @@ class _FixedProviderHandler:
             raise ProviderHandlerDenied("provider.model", "Model is not enrolled for this provider account")
         if cancelled():
             raise ProviderHandlerDenied("provider.cancelled", "Provider request was cancelled")
-        # This protected callback must re-read eligibility, current account terms,
-        # the actual account/model endpoint and aggregate budget for every attempt.
-        # It is intentionally required; a catalog or test fixture is insufficient.
+        remaining = min(float(timeout),
+                        float(authorization.monotonic_expires_at) - time.monotonic())
+        if remaining < 0.1 or cancelled():
+            raise ProviderHandlerDenied("provider.expired", "Provider grant expired before network dispatch")
+        try:
+            token = self._vault.resolve_reference(
+                enrollment.credential_reference, peer_uid=context.uid,
+                required_scope=enrollment.credential_scope)
+        except Exception:
+            raise ProviderHandlerDenied("provider.credential_unavailable", "Protected provider credential is unavailable") from None
+        if (not isinstance(token, str) or not token or len(token) > 4096
+                or any(ord(char) < 33 or ord(char) == 127 for char in token)):
+            raise ProviderHandlerDenied("provider.credential_invalid", "Protected provider credential is invalid")
+        if cancelled() or time.monotonic() >= authorization.monotonic_expires_at:
+            raise ProviderHandlerDenied("provider.cancelled", "Provider request was cancelled or expired")
+        # Re-read the protected account, terms, exact model endpoint and
+        # aggregate budget after vault access and immediately before egress.
         self._admission.check_attempt(
             provider=enrollment.provider, account_id=enrollment.account_id,
             profile_id=context.profile_id, principal_id=context.principal_id,
@@ -259,21 +274,8 @@ class _FixedProviderHandler:
             additional_metered_fee_usd=enrollment.additional_metered_fee_usd,
             credential_reference=enrollment.credential_reference,
         )
-        remaining = min(float(timeout),
-                        float(authorization.monotonic_expires_at) - time.monotonic())
-        if remaining < 0.1 or cancelled():
-            raise ProviderHandlerDenied("provider.expired", "Provider grant expired before network dispatch")
-        try:
-            token = self._vault.resolve_reference(
-                enrollment.credential_reference, peer_uid=0,
-                required_scope=enrollment.credential_scope)
-        except Exception:
-            raise ProviderHandlerDenied("provider.credential_unavailable", "Protected provider credential is unavailable") from None
-        if (not isinstance(token, str) or not token or len(token) > 4096
-                or any(ord(char) < 33 or ord(char) == 127 for char in token)):
-            raise ProviderHandlerDenied("provider.credential_invalid", "Protected provider credential is invalid")
         if cancelled() or time.monotonic() >= authorization.monotonic_expires_at:
-            raise ProviderHandlerDenied("provider.cancelled", "Provider request was cancelled or expired")
+            raise ProviderHandlerDenied("provider.expired", "Provider grant expired before network dispatch")
         endpoint = OPENROUTER_ENDPOINT if enrollment.provider == "openrouter" else CODEX_ENDPOINT
         try:
             network = self._network_factory(
