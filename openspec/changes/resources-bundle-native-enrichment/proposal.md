@@ -47,3 +47,5 @@ Native protected config v3: plans/amendments/2026-10-09-native-protected-config-
 RB08 voice result receipts v3: plans/amendments/2026-10-09-voice-result-receipts-v3.md defines exact STT/TTS typed output without raw PCM/path/secret; actual root-observed receipts required, existing RB-T09 remains open.
 
 Hermes/resource selection v3: plans/amendments/2026-10-09-hermes-bootstrap-resource-job-selection-v3.md defines fixed stage/health recipes and activegeneration resourcejob/DAG/source/backend joins; BD-F03/LC-F03/LC-F04/HI-T09/RB-T08 tasks and nativeevidence remainopen.
+
+Resource backend/remote role v4: plans/amendments/2026-10-09-resource-backend-remote-role-v4.md defines activeRB07 selectedbackend/bodyrecipe joins/freshchildeffects andexplicitHI13profile-role plusactualrootlaunchproof. ExistingRB-T08/HI-T13remainopen.

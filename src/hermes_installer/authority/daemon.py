@@ -37,7 +37,8 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
                             selected_operation_resolver: Any | None = None,
                             remote_session_authority: Any | None = None,
                             source_receipt_delivery: Any | None = None,
-                            source_observer_registry: Any | None = None) -> AuthorityService:
+                            source_observer_registry: Any | None = None,
+                            service_generation_digest: str | None = None) -> AuthorityService:
     """Build the root service from already validated protected enrollments.
 
     `process_profiles`, policy, rules and handler adapters must be created by
@@ -65,6 +66,7 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
         remote_session_authority=remote_session_authority,
         source_receipt_delivery=source_receipt_delivery,
         source_observer_registry=source_observer_registry,
+        service_generation_digest=service_generation_digest,
     )
 
 
@@ -189,6 +191,7 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
         register_process_handlers=runtime_bindings is None,
         selected_operation_resolver=(runtime_bindings.resolve_selected_operation
                                      if runtime_bindings is not None else None),
+        service_generation_digest=enrollment.protected_enrollment_digest,
     )
     service.root_runtime_bindings = runtime_bindings
     service_ref["service"] = service

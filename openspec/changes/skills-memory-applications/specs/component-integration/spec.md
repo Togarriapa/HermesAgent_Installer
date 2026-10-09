@@ -593,3 +593,10 @@ The installer SHALL exercise actual pinned screenshot application vision pipelin
 #### Scenario: Source library or lock absent despite adapter inventory
 - **WHEN** only custom protocol/parser or skill metadata exists without actual pinned upstream pipeline execution
 - **THEN** keep R0092/R0093 incomplete and report exact missing source/runtime/model fixture, never claim native functionality.
+
+### Requirement: Pinned source document link preservation
+The installer SHALL preserve original screenshot source Git mode/blob/tree proof and MAY materialize only the exact pinned in-tree document link as verified regular target bytes in separate compiled generation; source and compiled digests SHALL remain distinct.
+
+#### Scenario: Unknown or escaping source link
+- **WHEN** link differs from pinned CLAUDE.md literal AGENTS.md or target is unstable/nonregular/unverified
+- **THEN** reject compiled activation without following link or importing upstream governance, preserve exact source proof and prior generation.
