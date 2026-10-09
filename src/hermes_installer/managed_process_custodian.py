@@ -289,12 +289,12 @@ class ManagedProcessEffectHandler:
             raise ValueError("child artifact references are invalid")
         recipe = profile.argv_recipe
         if (not isinstance(recipe, tuple) or not recipe or len(recipe) > 128
-                or recipe[0] != str(executable)
+                or recipe[0] != str(exe)
                 or any(not isinstance(arg, str) or "\x00" in arg or len(arg) > 4096
                        for arg in recipe)
                 or recipe.count("{child_artifact}") > 1):
             raise ValueError("protected process argv recipe is invalid")
-        if _code_interpreter(executable.name) and recipe != (str(executable), "{child_artifact}"):
+        if _code_interpreter(exe.name) and recipe != (str(exe), "{child_artifact}"):
             raise ValueError("code interpreters require one immutable child-artifact operand")
         sock = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
         if sock != Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock"):

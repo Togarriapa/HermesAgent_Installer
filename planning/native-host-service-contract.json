@@ -65,7 +65,26 @@
       "colibri-main": "selected namespace-localIPv4loopback8000; inferenceAPI only"
     },
     "forbidden": "calleraddress/PID/port/URL or arbitraryAF_INET; generalworkersremainAF_UNIX-only",
-    "lifetime": "owned watchdog; prior Access lease unchanged during renewal; bidirectional revoke/timeout/cancel and bounded reap"
+    "lifetime": "owned watchdog; prior Access lease unchanged during renewal; bidirectional revoke/timeout/cancel and bounded reap",
+    "authority_operation": "connector.open",
+    "capability": "hermes-service-connect",
+    "effect_target": "exact enrolled target_id: xpra-native or colibri-main; generation/action/route/session in canonical payload digest",
+    "stream_api": {
+      "schema": 1,
+      "response": [
+        "connector_id",
+        "generation",
+        "expires_monotonic",
+        "max_frame_bytes",
+        "remaining_byte_budget"
+      ],
+      "methods": [
+        "read",
+        "write",
+        "close"
+      ],
+      "constraints": "peer/context/session-bound opaque handle; sequence/replay checks; approved protocol frames only; root deadlines/byte limits and retained bidirectional shutdown; no caller URL/socket/descriptor authority"
+    }
   },
   "source_receipt": {
     "issuer": "trusted host broker only",
@@ -118,5 +137,42 @@
     "per_effect": "authority validates canonicalbody digest, fixedcapability/target/recipient/retry, freshcontext+one-usegrant at actualeffectboundary"
   },
   "native_wiring": "reviewed installer-owned boundary adapter/overlay for actual core provider/tool/memory/aux/retry/background/delegation call sites; preserve pristine source. PluginContext/register(ctx) alone is not complete coverage. Missing wiring stays open, not permanentdefaultdeny completion.",
-  "evidence": "actual installednative producer positiveflow plus hostile forged/stale/droppedparents/unknownsource/crossPID/childdelegation and mixedroots negativeeffects; fixtures/kernel/native/account distinctly labeled"
+  "evidence": "actual installednative producer positiveflow plus hostile forged/stale/droppedparents/unknownsource/crossPID/childdelegation and mixedroots negativeeffects; fixtures/kernel/native/account distinctly labeled",
+  "process_inspect": {
+    "operation": "process.inspect",
+    "capability": "hermes-process-control",
+    "target": "<enrolled-profile-id>:inspect",
+    "payload": [
+      "schema=1",
+      "process_id",
+      "generation"
+    ],
+    "resolution": "root _handles registry only; registered systemd cgroup descendants via cgroup.procs, PIDFD/starttime identity; never caller PID/path/argv",
+    "response": [
+      "schema",
+      "process_id",
+      "generation",
+      "profile_id",
+      "cgroup_identity",
+      "observation_monotonic",
+      "expires_monotonic",
+      "complete",
+      "processes"
+    ],
+    "process_fields": [
+      "opaque_member_id",
+      "parent_member_id",
+      "kernel_uid",
+      "pidfd_identity",
+      "starttime",
+      "exe_device",
+      "exe_inode",
+      "exe_sha256",
+      "cgroup_identity",
+      "role",
+      "sandbox_attestation"
+    ],
+    "failure": "incomplete/changed generation/identity, inaccessible process, relaunch or renderer lineage unknown cannot authorize remote exposure; no merely mainPID-only success",
+    "sensitive_output": "no environment/secrets/raw unrestricted argv; fixed sandbox evidence fields and bounded process count"
+  }
 }
