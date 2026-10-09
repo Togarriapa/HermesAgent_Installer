@@ -3,6 +3,9 @@ import hashlib
 import hmac
 import json
 import tempfile
+import threading
+import time
+from contextlib import closing
 from types import ModuleType
 import unittest
 from pathlib import Path
@@ -17,10 +20,12 @@ from hermes_installer.registry.resources_runtime import (
     PluginAdapterUnavailable,
     ResourceIdentity,
     ResourceOverlayStore,
+    ReplayStoreFull,
     SelectedResourceExecution,
     SelectedResourceRegistry,
     ResourceRuntimeError,
     WebhookVerifier,
+    SQLiteReplayStore,
     create_native_plugin_handler,
     build_selected_resource_effect_handlers,
     selected_resource_effect_blockers,
@@ -167,12 +172,19 @@ class ResourcesRuntimeTests(unittest.TestCase):
             "replayProtection": {"deliveryIdHeader": "X-Delivery"},
             "policy": {"authorityFromWebhookReceipt": "deny"},
         }
+        with self.assertRaisesRegex(ResourceRuntimeError, "signature header name"):
+            WebhookVerifier(_ReplayStore()).verify(
+                "example", {**spec, "authentication": {"type": "hmac-sha256", "signatureHeader": "X-Bad\r\nHeader"}},
+                {}, body, secret,
+            )
         headers = {"Content-Type": "application/json", "X-Signature": signature, "X-Delivery": "d-1"}
         verifier = WebhookVerifier(_ReplayStore(), now=lambda: 100.0)
         receipt = verifier.verify("example", spec, headers, body, secret)
         self.assertEqual(receipt.body_sha256, hashlib.sha256(body).hexdigest())
         with self.assertRaisesRegex(ResourceRuntimeError, "duplicate"):
             verifier.verify("example", spec, headers, body, secret)
+        with self.assertRaisesRegex(ResourceRuntimeError, "identity header is missing"):
+            verifier.verify("example", spec, {key: value for key, value in headers.items() if key != "X-Delivery"}, body, secret)
         with self.assertRaises(ResourceRuntimeError):
             verifier.verify("example", spec, {**headers, "X-Signature": "sha256=" + "0" * 64}, body, secret)
 
@@ -194,6 +206,62 @@ class ResourcesRuntimeTests(unittest.TestCase):
             body, secret,
         )
         self.assertEqual(policy_receipt.event_id, "d-2")
+
+    def test_durable_webhook_replay_store_survives_restart_and_fails_closed_when_full(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            store_path = root / "replay.sqlite3"
+            store = SQLiteReplayStore(store_path, max_entries=1)
+            self.assertTrue(store.claim("example", "delivery-1", time.time() + 60))
+            self.assertFalse(SQLiteReplayStore(store_path, max_entries=1).claim(
+                "example", "delivery-1", time.time() + 60
+            ))
+            with self.assertRaises(ReplayStoreFull):
+                store.claim("example", "delivery-2", time.time() + 60)
+            # The private database persists only a digest of the resource/event pair.
+            import sqlite3
+            with closing(sqlite3.connect(store_path)) as db:
+                raw = " ".join(str(value) for row in db.execute("SELECT * FROM replay_claims") for value in row)
+            self.assertNotIn("delivery-1", raw)
+
+    def test_durable_webhook_replay_claim_prunes_expired_rows_atomically(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            store = SQLiteReplayStore(root / "replay.sqlite3", max_entries=1)
+            with patch("hermes_installer.registry.resources_runtime.time.time", return_value=100.0):
+                self.assertTrue(store.claim("example", "expired", 101.0))
+            with patch("hermes_installer.registry.resources_runtime.time.time", return_value=102.0):
+                self.assertTrue(store.claim("example", "current", 103.0))
+
+    def test_durable_webhook_replay_claim_is_atomic_across_ingress_workers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            path = root / "replay.sqlite3"
+            stores = [SQLiteReplayStore(path, max_entries=4) for _ in range(2)]
+            gate = threading.Barrier(2)
+            results = []
+
+            def claim(store):
+                gate.wait(timeout=2)
+                results.append(store.claim("example", "same-delivery", time.time() + 60))
+
+            workers = [threading.Thread(target=claim, args=(store,)) for store in stores]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(timeout=4)
+            self.assertTrue(all(not worker.is_alive() for worker in workers))
+            self.assertEqual(sorted(results), [False, True])
+
+    def test_durable_webhook_replay_store_rejects_unprivate_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o755)
+            with self.assertRaisesRegex(ResourceRuntimeError, "private"):
+                SQLiteReplayStore(root / "replay.sqlite3")
 
     def test_cron_and_channel_fail_closed_on_missing_policy(self):
         with self.assertRaisesRegex(ResourceRuntimeError, "authority"):

@@ -10,9 +10,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
+import sqlite3
+import stat
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 
@@ -1252,6 +1256,11 @@ def _freeze_json(value: Any) -> Any:
 
 _CRON_FIELD = re.compile(r"^(?:\*|\d+(?:-\d+)?)(?:/\d+)?(?:,(?:\*|\d+(?:-\d+)?)(?:/\d+)?)*$")
 _CRON_LIMITS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
+_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+
+def _valid_header_name(value: Any) -> bool:
+    return isinstance(value, str) and len(value) <= 128 and bool(_HTTP_HEADER_NAME.fullmatch(value))
 
 
 def _validate_cron(spec: Mapping[str, Any], *, expected_source_revision: str | None = None) -> None:
@@ -1432,6 +1441,8 @@ def _validate_webhook_declaration(spec: Mapping[str, Any]) -> None:
     auth = spec.get("authentication")
     if not isinstance(auth, Mapping) or auth.get("type") not in {"hmac-sha256", "bearer"}:
         raise ResourceRuntimeError("webhook must declare HMAC-SHA256 or bearer authentication")
+    if auth.get("type") == "hmac-sha256" and not _valid_header_name(auth.get("signatureHeader")):
+        raise ResourceRuntimeError("webhook signature header name is invalid")
     policy = spec.get("policy")
     if not isinstance(policy, Mapping) or policy.get("authorityFromWebhookReceipt") != "deny":
         raise ResourceRuntimeError("webhook receipts must not create authority")
@@ -1443,7 +1454,7 @@ def _validate_webhook_declaration(spec: Mapping[str, Any]) -> None:
     if action.get("mutate") not in (None, False):
         raise ResourceRuntimeError("webhook actions cannot mutate from receipt authority")
     event = spec.get("event")
-    if event is not None and (not isinstance(event, Mapping) or not isinstance(event.get("header"), str)
+    if event is not None and (not isinstance(event, Mapping) or not _valid_header_name(event.get("header"))
                               or not isinstance(event.get("allowed"), (list, tuple)) or not event["allowed"]):
         raise ResourceRuntimeError("webhook event types must be explicitly allowlisted")
     replay = spec.get("replayProtection")
@@ -1453,12 +1464,14 @@ def _validate_webhook_declaration(spec: Mapping[str, Any]) -> None:
     policy_header = policy.get("deliveryIdHeader")
     policy_id_enabled = policy.get("deduplicateByDeliveryId") is True
     body_digest_enabled = isinstance(replay, Mapping) and replay.get("requireEventIdentity") is True
-    if (not isinstance(replay_header, str) and not (policy_id_enabled and isinstance(policy_header, str))
+    if (not _valid_header_name(replay_header) and not (policy_id_enabled and _valid_header_name(policy_header))
             and not body_digest_enabled):
         raise ResourceRuntimeError("webhook requires a provider event identity or bounded body deduplication")
-    if replay_header is not None and not isinstance(replay_header, str):
+    if replay_header is not None and not _valid_header_name(replay_header):
         raise ResourceRuntimeError("webhook delivery identity header is invalid")
-    if policy_id_enabled and (not isinstance(policy_header, str) or not policy_header):
+    if policy_header is not None and not _valid_header_name(policy_header):
+        raise ResourceRuntimeError("webhook policy delivery-ID header is invalid")
+    if policy_id_enabled and not _valid_header_name(policy_header):
         raise ResourceRuntimeError("webhook delivery-ID deduplication requires an exact header")
     if policy.get("staticRecipientListAsAuthority") not in (None, "deny"):
         raise ResourceRuntimeError("webhook static recipients cannot create authority")
@@ -1466,6 +1479,134 @@ def _validate_webhook_declaration(spec: Mapping[str, Any]) -> None:
 
 class ReplayStore(Protocol):
     def claim(self, resource_id: str, event_id: str, expires_at: float) -> bool: ...
+
+
+class ReplayStoreFull(ResourceRuntimeError):
+    """The durable replay ledger is full; delivery must fail closed."""
+
+
+class SQLiteReplayStore:
+    """Bounded, restart-durable webhook replay ledger in a private root directory.
+
+    The caller supplies a host-selected file path beneath a root-owned service
+    directory. Resource and event identities are stored only as a
+    domain-separated digest. Live entries are never evicted to make room;
+    expired rows are pruned atomically with each claim. A full or unavailable
+    store raises, so ingress cannot turn a storage failure into a dispatch.
+    """
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS replay_claims (
+            resource_event_digest TEXT PRIMARY KEY,
+            expires_at REAL NOT NULL
+        ) WITHOUT ROWID
+    """
+
+    def __init__(self, path: Path, *, max_entries: int = 100_000,
+                 timeout_seconds: float = 2.0):
+        if not isinstance(path, Path) or not path.is_absolute():
+            raise ValueError("replay database path must be an absolute Path")
+        if type(max_entries) is not int or not 1 <= max_entries <= 1_000_000:
+            raise ValueError("replay ledger capacity is outside supported bounds")
+        if (type(timeout_seconds) not in (int, float)
+                or not 0.05 <= timeout_seconds <= 10.0):
+            raise ValueError("replay database timeout is outside supported bounds")
+        self.path = path
+        self.max_entries = max_entries
+        self.timeout_seconds = float(timeout_seconds)
+        self._prepare_private_path()
+        db = self._connect()
+        try:
+            db.execute(self._SCHEMA)
+        finally:
+            db.close()
+
+    def _prepare_private_path(self) -> None:
+        parent = self.path.parent
+        try:
+            parent_stat = parent.lstat()
+        except OSError as exc:
+            raise ResourceRuntimeError("replay store parent must already exist") from exc
+        if (not stat.S_ISDIR(parent_stat.st_mode) or stat.S_ISLNK(parent_stat.st_mode)
+                or parent_stat.st_uid != os.geteuid()
+                or stat.S_IMODE(parent_stat.st_mode) != 0o700):
+            raise ResourceRuntimeError("replay store parent must be private and owned by the service identity")
+        try:
+            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            fd = None
+        except OSError as exc:
+            raise ResourceRuntimeError("replay database could not be created safely") from exc
+        if fd is not None:
+            os.close(fd)
+        try:
+            info = self.path.lstat()
+        except OSError as exc:
+            raise ResourceRuntimeError("replay database is unavailable") from exc
+        if (not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or info.st_uid != os.geteuid() or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ResourceRuntimeError("replay database must be a private service-owned regular file")
+        if stat.S_IMODE(info.st_mode) != 0o600:
+            try:
+                self.path.chmod(0o600)
+            except OSError as exc:
+                raise ResourceRuntimeError("replay database permissions could not be restricted") from exc
+
+    def _connect(self) -> sqlite3.Connection:
+        db: sqlite3.Connection | None = None
+        try:
+            db = sqlite3.connect(self.path, timeout=self.timeout_seconds, isolation_level=None)
+            db.execute("PRAGMA journal_mode=DELETE")
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute(f"PRAGMA busy_timeout={int(self.timeout_seconds * 1000)}")
+            return db
+        except sqlite3.Error as exc:
+            if db is not None:
+                db.close()
+            raise ResourceRuntimeError("replay ledger is unavailable") from exc
+
+    @staticmethod
+    def _claim_digest(resource_id: str, event_id: str) -> str:
+        if (not isinstance(resource_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,95}", resource_id)
+                or not isinstance(event_id, str) or not event_id or len(event_id) > 256
+                or any(ord(char) < 0x20 for char in event_id)):
+            raise ResourceRuntimeError("replay claim identity is malformed")
+        material = b"hermes-resource-webhook-replay-v1\0" + resource_id.encode() + b"\0" + event_id.encode()
+        return hashlib.sha256(material).hexdigest()
+
+    def claim(self, resource_id: str, event_id: str, expires_at: float) -> bool:
+        if type(expires_at) not in (int, float) or not float("-inf") < float(expires_at) < float("inf"):
+            raise ResourceRuntimeError("replay expiry must be a finite timestamp")
+        now = time.time()
+        if not now < float(expires_at) <= now + 7 * 86_400:
+            raise ResourceRuntimeError("replay expiry must be in the next seven days")
+        digest = self._claim_digest(resource_id, event_id)
+        db: sqlite3.Connection | None = None
+        try:
+            db = self._connect()
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM replay_claims WHERE expires_at <= ?", (now,))
+            if db.execute("SELECT 1 FROM replay_claims WHERE resource_event_digest=?", (digest,)).fetchone():
+                db.rollback()
+                return False
+            count = db.execute("SELECT count(*) FROM replay_claims").fetchone()[0]
+            if count >= self.max_entries:
+                db.rollback()
+                raise ReplayStoreFull("durable webhook replay ledger is full")
+            db.execute("INSERT INTO replay_claims(resource_event_digest, expires_at) VALUES (?, ?)",
+                       (digest, float(expires_at)))
+            db.commit()
+            return True
+        except ReplayStoreFull:
+            raise
+        except sqlite3.Error as exc:
+            if db is not None:
+                db.rollback()
+            raise ResourceRuntimeError("durable webhook replay claim failed closed") from exc
+        finally:
+            if db is not None:
+                db.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1536,8 +1677,11 @@ class WebhookVerifier:
         delivery_header = replay.get("deliveryIdHeader") if isinstance(replay, Mapping) else None
         if delivery_header is None and isinstance(policy, Mapping):
             delivery_header = policy.get("deliveryIdHeader")
-        event_id = normalized.get(delivery_header.lower(), "") if isinstance(delivery_header, str) else ""
-        if not event_id:
+        if isinstance(delivery_header, str):
+            event_id = normalized.get(delivery_header.lower(), "")
+            if not event_id:
+                raise ResourceRuntimeError("configured webhook delivery identity header is missing")
+        else:
             event_id = hashlib.sha256(body).hexdigest()
         if not event_id or len(event_id) > 256 or any(ord(c) < 0x20 for c in event_id):
             raise ResourceRuntimeError("webhook delivery identity is missing or invalid")

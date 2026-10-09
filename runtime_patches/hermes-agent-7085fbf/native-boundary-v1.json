@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "id": "hi08-native-boundary-v1",
+  "requirement_ids": ["HI08"],
+  "upstream": {
+    "repository": "https://github.com/NousResearch/hermes-agent",
+    "commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "patch_preimages": "Each complete edited file is SHA-256 pinned by native_boundary_patch.py before any overlay write."
+  },
+  "overlay": {
+    "builder": "hermes_installer.native_boundary_patch.apply_native_boundary_overlay",
+    "source_tree_mutation": false,
+    "output": "Separate file overlay; patched files inherit only source read/execute bits and are verified non-writable.",
+    "files": [
+      {
+        "path": "agent/chat_completion_helpers.py",
+        "source_sha256": "fbd79987a8257f79de6ed291d398f455456385f828631dd8d9d0e6cea3ba46f2",
+        "overlay_sha256": "ef55b2bed0e91328345e66fd07733cda90df2e0800cf96f9f954023e2b122818",
+        "hooks": ["codex-response terminal call", "OpenAI-compatible non-stream call", "OpenAI-compatible stream call", "direct Anthropic and Bedrock primary paths denied", "MoA primary direct fan-out denied"]
+      },
+      {
+        "path": "agent/auxiliary_client.py",
+        "source_sha256": "cdaf4384374eaa906a51e3060b41aa656f88fff336f44160bd053726ed1dec73",
+        "overlay_sha256": "876a97cc1c81fb1e4bc97d92872e03ceb0b1d8f43680d551d974b4376e8950c6",
+        "hooks": ["each observed auxiliary chat-completions attempt", "retry/fallback/stream negotiation attempts that use those call sites", "SDK automatic retries disabled for auxiliary OpenAI clients"]
+      },
+      {
+        "path": "agent/tool_executor.py",
+        "source_sha256": "8b145fbc70936f028f18e59cb7f9c8723fc992a067fe068f06e7f9f876e9c679",
+        "overlay_sha256": "fd671a435cbeda36cfbec3a2b278ff34f66f8cbe37a8a87b0a372a5170e777aa",
+        "hooks": ["attempts a tool-result capture before transcript append; current generic worker capture is retired so this seam fails closed until root-observed role issuer exists"]
+      }
+    ]
+  },
+  "source_capture": {
+    "authority_method": "AuthorityClient.prepare_native_event(payload: bytes, parent_receipt_handles=(), purpose, intent_id, trace_id, retry_index=0)",
+    "worker_claimable_fields": [],
+    "host_assigned_fields": ["event_id", "native process identity", "profile", "generation", "sensitivity", "receipt handle"],
+    "classification": "private/unknown only; no human-origin or public clearance",
+    "provider_context_header": "X-Hermes-Installer-Context",
+    "provider_retry_index_header": "X-Hermes-Installer-Retry-Index",
+    "retry_index_header_semantics": "Root-derived bounded decimal transport claim; gateway passes it to the root, which must compare it with the one-use event's stored retry index.",
+    "tool_result_source": "unavailable; generic worker capture_source is retired and the root-observed role-specific result issuer is not installed",
+    "native_package_binding": "root-selected no-argument bind_selected_native_package plus read_native_resolver; resolver rows are presentation only, never effect grants",
+    "attempt_semantics": "Fresh complete SDK request-envelope capture and opaque bridge handle per attempted request; exact-envelope repeat increments retry_index with unchanged intent/trace and retained parents. Changed envelopes start a distinct intent at retry_index=0 until host retry admission is wired.",
+    "limits": [
+      "The current worktree does not yet contain the HI11 AuthorityClient bridge API or enrolled producer-to-gateway pair.",
+      "Changed-envelope upstream fallback chains do not yet carry explicit root retry admission.",
+      "The current AuthorityClient API does not supply authenticated UI-origin, effect-result, memory-result, or public-clearance issuers.",
+      "Root broker must resolve full lineage and bind normalized final request digest, operation, purpose, generation, retry, cancellation and one-effect grant before egress.",
+      "Do not enable native provider egress from this overlay until the gateway-to-authority handle bridge is implemented and enrolled."
+    ]
+  },
+  "coverage_state": "partial; HI-T08 remains open",
+  "transport_controls": {
+    "SDK_automatic_retries": "forced to zero for primary request-scoped OpenAI clients and patched auxiliary OpenAI clients; Hermes-observed attempts require a fresh native event",
+    "request_timeout": "clamped to the live host-issued event lease before SDK call",
+    "retry_admission": "only exact-envelope repeats retain intent and increment retry_index; changed-envelope retries require an explicit host retry-admission integration"
+  },
+  "explicitly_uncovered": [
+    "Hermes PluginContext.register(ctx) runtime-context injection and protected component/plugin loader",
+    "Auxiliary Anthropic/Bedrock/MoA internals and direct non-chat-completions paths",
+    "memory retrieval/extraction/embedding issuers",
+    "background schedules/webhooks/child delegation role issuers",
+    "authenticated user-interface origin and public clearance",
+    "host effect broker bypass denial and actual target-native acceptance"
+  ],
+  "acceptance": "Patch-unit tests establish only exact-pin transformations, fail-closed source capture adapter behavior, digest/mode invariants and Python syntax. They do not establish installed native acceptance."
+}
