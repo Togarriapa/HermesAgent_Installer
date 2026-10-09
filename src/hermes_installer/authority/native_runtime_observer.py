@@ -85,6 +85,7 @@ class NativeInvocationContextProvider:
                 or type(getattr(contexts, "expires_monotonic", None)) not in (int, float)
                 or self.monotonic() >= contexts.expires_monotonic
                 or not isinstance(getattr(contexts, "source_receipt_handles", None), tuple)
+                or not contexts.source_receipt_handles
                 or len(contexts.source_receipt_handles) > 128
                 or any(not isinstance(handle, str)
                        or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)

@@ -253,6 +253,29 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="a" * 64,
                      purpose="native-hermes-chat", intent="x")
 
+    def test_invocation_provider_rejects_empty_lineage(self):
+        binding = SimpleNamespace(
+            invocation_handle="i" * 40, package_id="package-a", profile_id="profile-a",
+            generation="generation-a", adapter_id="adapter-a", action_id="action-a",
+            arguments_sha256="a" * 64, parent_closure_digest="b" * 64,
+            expires_monotonic=20.0,
+        )
+        contexts = SimpleNamespace(
+            invocation_handle="i" * 40, source_receipt_handles=(),
+            parent_closure_digest="b" * 64, arguments_sha256="a" * 64,
+            expires_monotonic=19.0,
+        )
+        provider = NativeInvocationContextProvider(
+            authority=SimpleNamespace(get_invocation_contexts=lambda _handle: contexts),
+            selected_package=SimpleNamespace(
+                package_id="package-a", profile_id="profile-a", generation="generation-a"),
+            current_binding=lambda: binding,
+            monotonic=lambda: 10.0,
+        )
+        with self.assertRaises(AuthorityDenied):
+            provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="a" * 64,
+                     purpose="native-hermes-chat", intent="x")
+
 
 if __name__ == "__main__":
     unittest.main()
