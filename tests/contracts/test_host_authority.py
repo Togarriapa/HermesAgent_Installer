@@ -19,7 +19,7 @@ from hermes_installer.authority.service import (
     AuthorityService, ChildDelegationRule, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
-    AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
+    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle, Sensitivity, canonical_digest,
 )
 
 
@@ -409,29 +409,46 @@ class HostAuthorityIPCContracts(unittest.TestCase):
         self.assertEqual(policy.calls, 2)
         self.assertEqual(self.effects, [])
 
-    def test_source_receipt_is_private_process_bound_and_one_use(self):
-        payload = b"derived-memory-payload"
-        source_bytes = b"private source bytes"
-        handle = self.client.capture_source(source_bytes)
-        context = self.client.context(
-            purpose="memory-capture", intent="derived memory write",
-            operation="memory.capture", source_receipt_handles=(handle,),
-            final_payload_digest=canonical_digest(payload))
-        self.assertEqual(len(context.source_receipts), 1)
-        receipt = context.source_receipts[0]
-        self.assertIs(receipt.sensitivity, Sensitivity.UNKNOWN)
-        self.assertEqual(receipt.payload_digest, canonical_digest(source_bytes))
-        self.assertEqual(receipt.native_process_identity, context.native_process_identity)
-        grant = self.client.authorize_effect(
-            context, capability="memory-capture", target="memory:openviking:capture",
-            request_digest=canonical_digest(payload))
-        self.client.perform_effect(grant, operation="memory.capture", payload=payload, timeout=1)
-        replay = self.client.authorize_effect(
-            context, capability="memory-capture", target="memory:openviking:capture",
-            request_digest=canonical_digest(payload))
-        with self.assertRaises(AuthorityDenied):
-            self.client.perform_effect(replay, operation="memory.capture", payload=payload, timeout=1)
-        self.assertEqual(self.effects, [payload])
+    def test_generic_worker_cannot_mint_source_receipts(self):
+        with self.assertRaises(AuthorityDenied) as raised:
+            self.client.capture_source(b"invented source bytes")
+        self.assertEqual(raised.exception.code, "source.issuer")
+        with self.assertRaises(AuthorityDenied) as raised:
+            self.service._dispatch(
+                self.binding.uid, os.getpid(), None, "capture_source",
+                {"schema": 1, "payload": "aW52ZW50ZWQgc291cmNlIGJ5dGVz", "parent_receipt_handles": []},
+                cancelled=lambda: False)
+        self.assertEqual(raised.exception.code, "protocol.operation")
+        self.assertEqual(self.effects, [])
+
+
+class NativeEventClientContracts(unittest.TestCase):
+    def test_preparation_and_gateway_dispatch_are_distinct_fixed_rpcs(self):
+        client = AuthorityClient(Path("/unused"), server_uid=0, timeout=2)
+        client.monotonic = lambda: 50.0
+        requests = []
+
+        def rpc(operation, payload, *, timeout=None, cancelled=None):
+            requests.append((operation, payload, timeout))
+            if operation == "prepare_native_event":
+                return {"native_event_handle": "h" * 40, "expires_monotonic": 70.0}
+            return {"status": 200, "body": "b2s=", "headers": {}, "receipt_id": "root-receipt"}
+
+        client._rpc = rpc
+        event = client.prepare_native_event(
+            b'{"messages":[]}', purpose="native-chat", intent_id="intent-1",
+            trace_id="trace-1", retry_index=0)
+        self.assertIsInstance(event, NativeEventHandle)
+        self.assertEqual(requests[0][0], "prepare_native_event")
+        self.assertEqual(set(requests[0][1]), {
+            "schema", "payload", "parent_receipt_handles", "purpose", "intent_id",
+            "trace_id", "retry_index"})
+        response = client.dispatch_native_request(event.native_event_handle, b'{"model":"fixed"}')
+        self.assertEqual(response.body, b"ok")
+        self.assertEqual(requests[1][0], "dispatch_native_request")
+        self.assertEqual(set(requests[1][1]), {
+            "schema", "native_event_handle", "normalized_payload", "retry_index"})
+        self.assertEqual(requests[1][1]["native_event_handle"], event.native_event_handle)
 
 
 if __name__ == "__main__":

@@ -152,7 +152,8 @@ def write_authority_config(document: Mapping[str, Any], *, expected_uid: int = 0
     root = dict(document)
     _reject_secret_material(root)
     required = {"schema", "key_id", "principals", "rules", "authentik", "process_profiles",
-                "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "delegations"}
+                "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers",
+                "native_bridges", "delegations"}
     root = _exact(root, required, "authority")
     if root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "authority configuration schema version is unsupported")
@@ -313,6 +314,31 @@ def _read_id(value: Any, label: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class NativeBridgeEnrollment:
+    """Root-selected producer/gateway pair and exact canonical provider route."""
+
+    bridge_id: str
+    producer_profile_id: str
+    producer_uid: int
+    producer_generation: str
+    producer_executable: Path
+    producer_executable_sha256: str
+    producer_principal_id: str
+    gateway_profile_id: str
+    gateway_uid: int
+    gateway_generation: str
+    gateway_executable: Path
+    gateway_executable_sha256: str
+    gateway_principal_id: str
+    canonicalizer_artifact_id: str
+    canonicalizer_sha256: str
+    approved_operation: str
+    provider_enrollment_id: str
+    target: str
+    recipient: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProtectedEnrollment:
     key_id: str
     bindings_by_uid: Mapping[int, PrincipalBinding]
@@ -324,6 +350,7 @@ class ProtectedEnrollment:
     mcp_http_bindings: Mapping[str, Any]
     delegations: Mapping[str, ChildDelegationRule]
     memory_providers: Mapping[str, Any]
+    native_bridges: Mapping[str, NativeBridgeEnrollment]
     artifact_catalog: Mapping[str, Any]
     package_catalog: Mapping[str, Any]
     artifact_catalog_path: Path
@@ -341,7 +368,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                            object_pairs_hook=_unique_pairs)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         raise AuthorityDenied("enrollment.schema", "protected authority configuration is malformed") from None
-    root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "delegations"}, "authority")
+    root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges", "delegations"}, "authority")
     _reject_secret_material(root)
     if type(root["schema"]) is not int or root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "protected authority schema version is unsupported")
@@ -565,6 +592,59 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                 or isinstance(item["additional_metered_fee_usd"], bool)
                 or item["additional_metered_fee_usd"] < 0):
             raise AuthorityDenied("enrollment.provider", "provider enrollment lacks a precise protected route binding")
+    # HI11 root role pairing. The producer and gateway are selected only from
+    # protected process/principal records; worker payloads never name either.
+    raw_bridges = root["native_bridges"]
+    if not isinstance(raw_bridges, list) or len(raw_bridges) > 128:
+        raise AuthorityDenied("enrollment.native_bridge", "protected native bridge catalog is invalid")
+    native_bridges: dict[str, Any] = {}
+    bridge_pairs: set[tuple[str, str]] = set()
+    binding_by_profile = {binding.profile_id: binding for binding in bindings.values()}
+    for raw in raw_bridges:
+        item = _exact(raw, {"id", "producer_profile_id", "gateway_profile_id",
+                            "canonicalizer_artifact_id", "canonicalizer_sha256",
+                            "approved_operation"}, "native bridge")
+        bridge_id = _read_id(item["id"], "native bridge ID")
+        producer_id = _read_id(item["producer_profile_id"], "native producer profile")
+        gateway_id = _read_id(item["gateway_profile_id"], "native gateway profile")
+        canonicalizer_id = _read_id(item["canonicalizer_artifact_id"], "native canonicalizer artifact")
+        canonicalizer_sha = item["canonicalizer_sha256"]
+        pair = (producer_id, gateway_id)
+        producer = process_profiles.get(producer_id)
+        gateway = process_profiles.get(gateway_id)
+        producer_binding = binding_by_profile.get(producer_id)
+        gateway_binding = binding_by_profile.get(gateway_id)
+        if (bridge_id in native_bridges or pair in bridge_pairs or producer_id == gateway_id
+                or item["approved_operation"] != "provider.dispatch"
+                or not isinstance(canonicalizer_sha, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", canonicalizer_sha)
+                or producer is None or gateway is None
+                or producer_binding is None or gateway_binding is None
+                or producer.owner_uid == gateway.owner_uid
+                or producer_binding.uid != producer.owner_uid
+                or gateway_binding.uid != gateway.owner_uid):
+            raise AuthorityDenied("enrollment.native_bridge", "native bridge identity or canonicalizer binding is invalid")
+        provider_routes = [route for route in catalogs["provider_enrollments"].values()
+                           if route["principal_id"] == producer_binding.principal_id]
+        if len(provider_routes) != 1 or "provider-dispatch" not in producer_binding.capabilities:
+            raise AuthorityDenied("enrollment.native_bridge", "producer must have one exact enrolled provider route")
+        route = provider_routes[0]
+        provider_target = _read_id(route["target"], "native provider target")
+        provider_recipient = _read_id(route["recipient"], "native provider recipient")
+        native_bridges[bridge_id] = NativeBridgeEnrollment(
+            bridge_id=bridge_id, producer_profile_id=producer_id,
+            producer_uid=producer.owner_uid, producer_generation=producer.generation,
+            producer_executable=producer.executable, producer_executable_sha256=producer.artifact_sha256,
+            producer_principal_id=producer_binding.principal_id,
+            gateway_profile_id=gateway_id, gateway_uid=gateway.owner_uid,
+            gateway_generation=gateway.generation, gateway_executable=gateway.executable,
+            gateway_executable_sha256=gateway.artifact_sha256,
+            gateway_principal_id=gateway_binding.principal_id,
+            canonicalizer_artifact_id=canonicalizer_id, canonicalizer_sha256=canonicalizer_sha,
+            approved_operation="provider.dispatch", provider_enrollment_id=route["id"],
+            target=provider_target, recipient=provider_recipient,
+        )
+        bridge_pairs.add(pair)
     mcp_bindings: dict[str, Any] = {}
     raw_bindings = root["mcp_http_bindings"]
     if not isinstance(raw_bindings, list) or len(raw_bindings) > 256:
@@ -669,7 +749,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         used_memory_paths.add(uniqueness)
     return ProtectedEnrollment(key_id, bindings, rules, policy, process_profiles,
                                catalogs["provider_enrollments"], catalogs["mcp_services"],
-                               mcp_bindings, delegations, catalogs["memory_providers"], {}, {}, ARTIFACT_CATALOG_PATH,
+                               mcp_bindings, delegations, catalogs["memory_providers"],
+                               native_bridges, {}, {}, ARTIFACT_CATALOG_PATH,
                                ARTIFACT_STAGING_DIRECTORY)
 
 

@@ -64,3 +64,5 @@ Dependencies: installer-bootstrap-desktop, resource-registry-import, providers-c
 ## 3. Protected memory service connectors
 
 - [ ] 3.1 `SK-T01` Implement SK01 exact selected memory provider/backend/service/route/private owner connector enrollment; prerequisites HI-T07, HI-T08, HI-T09, HI-T12, PR-F01. Evidence EV-SK01: actual isolated selected backend capture/search/remove/export/restore/private extraction/embedding plus wrong profile/variant/project/URI/owner/secret/source/retry/generation/cancel/restore negatives. Unsupported required routes remain incomplete; no fixture/health-only native acceptance.
+
+SK01 / SK-T01 route identity clarification: see plans/amendments/2026-10-09-memory-route-identities-v2.md and planning/memory-service-connector-contract.json. Stable per-backend Claude approved_route_ids join distinct outer effect and connector targets; no inferred missing health/delete or variant fallback. Existing task remains open.

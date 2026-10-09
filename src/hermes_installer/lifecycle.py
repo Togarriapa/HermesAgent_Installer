@@ -709,7 +709,7 @@ class LifecycleRecovery:
                             shutil.rmtree(path)
                             removed.append(name)
                     self.journal.record_owned("generation", name, "uninstalled")
-                if row["kind"] == "hermes-generation" and row["state"] == "active":
+                if row["kind"] == "hermes-generation" and row["state"] in {"active", "staged", "installed"}:
                     candidate = Path(str(row["resource_id"])).absolute()
                     expected_root = self.data_root.path("generations").absolute()
                     if candidate.is_symlink() or not candidate.is_relative_to(expected_root) or not candidate.is_dir():

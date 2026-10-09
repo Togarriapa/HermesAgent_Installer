@@ -33,13 +33,25 @@ _AUTHORITY_OPERATIONS = frozenset({
     "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor",
     "memory.capture", "memory.search", "memory.export", "memory.delete", "memory.extract",
     "memory.embed", "memory.backup", "memory.restore", "memory.enqueue", "memory.result",
-    "host.write", "alert.deliver", "process.start", "process.status", "process.read",
+    "host.write", "alert.deliver", "plugin.agent-live-wallet.execute",
+    "plugin.agent-live-wallet.read", "plugin.agent-sandbox-wallet.execute",
+    "plugin.agent-sandbox-wallet.read", "plugin.authentik-authorization.read",
+    "plugin.cloudflare-homelab.read", "plugin.cloudflare-homelab.write",
+    "plugin.codex.run", "plugin.composio.invoke", "plugin.ebook-toolchain.run",
+    "plugin.epic-kanban.delete", "plugin.epic-kanban.read", "plugin.epic-kanban.write",
+    "plugin.financial-data-hub.read", "plugin.financial-execution-gateway.execute",
+    "plugin.github.admin", "plugin.github.read", "plugin.github.write",
+    "plugin.homelab-ops-broker.read", "plugin.homelab-ops-broker.write",
+    "plugin.kobo-bridge.deliver", "plugin.kobo-bridge.read",
+    "plugin.resource-overlay-store.backup", "plugin.resource-overlay-store.read",
+    "plugin.resource-overlay-store.write", "plugin.voice-pipeline.session",
+    "plugin.voice-pipeline.stt", "plugin.voice-pipeline.tts", "plugin.web.read",
+    "process.start", "process.status", "process.read",
     "process.write", "process.stop", "artifact.fetch", "package.install",
     "process.inspect", "connector.open", "connector.read", "connector.write",
     "connector.close", "native.event.prepare", "native.request.dispatch",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
     "resource.orchestrator.recruit",
-    "source.capture",
 })
 
 
@@ -386,6 +398,22 @@ class BrokeredEffectResponse:
     body: bytes
     headers: Mapping[str, str]
     receipt_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class NativeEventHandle:
+    """Opaque short-lived root lookup handle for one native dispatch attempt."""
+
+    native_event_handle: str
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.native_event_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.native_event_handle)):
+            raise AuthorityDenied("native.handle", "native event handle is malformed")
+        expiry = _time(self.expires_monotonic, "native event expiry")
+        if expiry <= 0:
+            raise AuthorityDenied("native.handle", "native event expiry is invalid")
 
 
 def canonical_bytes(value: bytes | Mapping[str, Any] | list[Any]) -> bytes:

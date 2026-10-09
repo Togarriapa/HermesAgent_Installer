@@ -588,7 +588,9 @@ def _validate_package_set_runtime(spec: PackageSetSpec, runtime: PackageSetRunti
         raise AuthorityDenied("package-set.runtime", "runtime attestation does not match protected package-set enrollment")
     if _version_tuple(runtime.glibc_version) < _version_tuple(spec.target_glibc_min):
         raise AuthorityDenied("package-set.glibc", "runtime glibc is below the reviewed wheel minimum")
-    python = _secure_executable(Path(runtime.runtime_executable), runtime.service_uid)
+    # The builder publishes an immutable root-owned runtime executable; the
+    # package installer drops to service UID before the enrolled runtime runs.
+    python = _secure_executable(Path(runtime.runtime_executable), 0)
     if _hash_file(python, 256 * 1024 * 1024)[0] != spec.runtime_executable_sha256:
         raise AuthorityDenied("package-set.runtime", "runtime executable differs from its protected attestation")
     _secure_directory(Path(runtime.venv_root), runtime.service_uid)
@@ -698,7 +700,7 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
         os.chown(manifest, owner, runtime.service_gid)
         os.chmod(manifest, 0o444)
         temporary_env = work / "venv"
-        python = _secure_executable(Path(runtime.runtime_executable), owner)
+        python = _secure_executable(Path(runtime.runtime_executable), 0)
         safe_env = {"PATH": "/usr/bin:/bin", "HOME": str(work), "PIP_CONFIG_FILE": os.devnull,
                     "PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1",
                     "PYTHONNOUSERSITE": "1", "PYTHONUTF8": "1"}
@@ -1644,16 +1646,25 @@ def _secure_file(path: Path, expected_uid: int, *, max_bytes: int) -> None:
 
 def _secure_executable(path: Path, expected_uid: int) -> Path:
     try:
-        resolved = path.resolve(strict=True)
-        info = resolved.lstat()
-        parent = resolved.parent.lstat()
+        if not path.is_absolute() or ".." in path.parts:
+            raise OSError
+        current = Path("/")
+        for part in path.parts[1:-1]:
+            current = current / part
+            ancestor = current.lstat()
+            if (not stat.S_ISDIR(ancestor.st_mode) or stat.S_ISLNK(ancestor.st_mode)
+                    or ancestor.st_uid != expected_uid or ancestor.st_mode & 0o022):
+                raise OSError
+        info = path.lstat()
+        parent = path.parent.lstat()
     except OSError:
         raise AuthorityDenied("package.runtime", "enrolled Python runtime is unavailable") from None
-    if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid or info.st_mode & 0o022
+    if (not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)
+            or info.st_uid != expected_uid or info.st_mode & 0o022
             or not info.st_mode & 0o111 or not stat.S_ISDIR(parent.st_mode)
             or parent.st_uid != expected_uid or parent.st_mode & 0o022):
         raise AuthorityDenied("package.runtime", "enrolled Python runtime custody is unsafe")
-    return resolved
+    return path
 
 
 def _mkdir_chain(path: Path, expected_uid: int) -> Path:

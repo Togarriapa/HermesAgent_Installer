@@ -43,7 +43,26 @@
           "scope": "reviewed exact worker backend with automatic Claude hooks/local-history capture disabled; no implicit mixing with server-v1 APIs"
         }
       },
-      "constraints": "backend_variant mandatory, one selected packaged backend/config/route schema; IDs/project/team forced root; backup/export/restore need reviewed owning store protocol, cannot invent absent REST endpoints"
+      "constraints": "backend_variant mandatory, one selected packaged backend/config/route schema; IDs/project/team forced root; backup/export/restore need reviewed owning store protocol, cannot invent absent REST endpoints",
+      "approved_route_ids": {
+        "server-v1-sqlite": {
+          "claude-sqlite-ready": "GET /healthz",
+          "claude-sqlite-search": "POST /v1/search",
+          "claude-sqlite-capture": "POST /v1/memories"
+        },
+        "server-v1-postgres": {
+          "claude-postgres-ready": "GET /healthz",
+          "claude-postgres-search": "POST /v1/search",
+          "claude-postgres-capture": "POST /v1/memories",
+          "claude-postgres-delete": "DELETE /v1/memories/{root-scoped-observation-id}"
+        },
+        "worker-observation": {
+          "claude-worker-capture": "POST /api/memory/save",
+          "claude-worker-search-get": "GET /api/search",
+          "claude-worker-search-post": "POST /api/mem-search",
+          "claude-worker-delete": "DELETE /api/observation/{root-scoped-id}"
+        }
+      }
     },
     "agentmemory": {
       "target_id": "memory-agentmemory:<root-enrolled-profile-id>",
@@ -108,5 +127,6 @@
     "https://github.com/thedotmack/claude-mem/blob/fa8ab09f06aa05f958c5225cf3756ce52a3ebb96/src/server/routes/v1/ServerV1PostgresRoutes.ts",
     "https://github.com/rohitg00/agentmemory/blob/df3d4a83b966d8d415cb9180d5a4724b07f729dc/plugin/skills/agentmemory-rest-api/REFERENCE.md"
   ],
-  "source_evidence": "Sol independently read listed pinned routes/docs; worker family/config details additionally reviewed by memory owner from pinned primary source; no target functionality claimed"
+  "source_evidence": "Sol independently read listed pinned routes/docs; worker family/config details additionally reviewed by memory owner from pinned primary source; no target functionality claimed",
+  "outer_effect_binding": "Outer target memory:<provider>:<action> and connector target memory-<provider>:<root-enrolled-profile-id> are distinct exact root-enrolled identities. Both bind same principal/profile/owner generation, backend variant, typed action/digest/source closure and selected route. Neither arbitrary target substitution nor cross-variant route fallback is permitted; every connector operation retains HI12 fresh one-use grant."
 }
