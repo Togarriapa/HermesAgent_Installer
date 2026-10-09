@@ -8,9 +8,11 @@ from hermes_installer.artifacts import ArtifactCatalog
 from hermes_installer.authority.enrollment import ProtectedEnrollment, RootCredentialVault
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.runtime_composition import compose_root_authority_runtime
+from hermes_installer.authority.runtime_composition import _root_resource_job_ledger_path
 from hermes_installer.authority.service import AuthorityService, PrincipalBinding
 from hermes_installer.authority.source_observers import SourceObserverEnrollment
 from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.protected_enrollment import RootJournalSelection
 from hermes_installer.protected_enrollment import EnrollmentDenied
 
 
@@ -120,6 +122,27 @@ def test_root_journal_resolution_is_bound_to_active_generation_and_protected_cat
         )
 
 
+def test_resource_job_ledger_path_comes_only_from_active_journal_selection():
+    _service, enrollment, _bindings, _catalog, _vault, _connector, _candidate = _inputs()
+    selected_root = Path("/private/var/lib/hermes-installer/authority-journal")
+    bindings = type("JournalBindings", (), {
+        "resolve_root_journal": staticmethod(lambda root_id, *, expected_active_generation_digest:
+            RootJournalSelection(root_id, selected_root, 1, 2, "journal-gen",
+                                 expected_active_generation_digest))
+    })()
+
+    assert _root_resource_job_ledger_path(bindings, enrollment) == (
+        selected_root / "resource-jobs.sqlite3"
+    )
+
+    stale_bindings = type("StaleJournalBindings", (), {
+        "resolve_root_journal": staticmethod(lambda root_id, *, expected_active_generation_digest:
+            RootJournalSelection(root_id, selected_root, 1, 2, "journal-gen", "b" * 64))
+    })()
+    with pytest.raises(AuthorityDenied, match="selection is malformed"):
+        _root_resource_job_ledger_path(stale_bindings, enrollment)
+
+
 def test_runtime_closes_attached_observation_stores():
     service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
     closed = []
@@ -134,6 +157,14 @@ def test_runtime_closes_attached_observation_stores():
     service.native_loader_observation_store = loader_store
     service.gateway_boundary_observer = gateway_observer
     service.native_window_observer = native_window_observer
+    task_observer = LoaderObservationStore()
+    invocation_registry = LoaderObservationStore()
+    bridge_broker = LoaderObservationStore()
+    mcp_dispatcher = LoaderObservationStore()
+    service.task_native_observations = task_observer
+    service.native_invocation_registry = invocation_registry
+    service.native_bridge_broker = bridge_broker
+    service.native_mcp_dispatcher = mcp_dispatcher
     runtime = compose_root_authority_runtime(
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=catalog, vault=vault,
@@ -141,8 +172,12 @@ def test_runtime_closes_attached_observation_stores():
     assert runtime.native_loader_observation_store is loader_store
     assert runtime.gateway_boundary_observer is gateway_observer
     assert runtime.native_window_observer is native_window_observer
+    assert runtime.task_native_observations is task_observer
+    assert runtime.native_invocation_registry is invocation_registry
+    assert runtime.native_bridge_broker is bridge_broker
+    assert runtime.native_mcp_dispatcher is mcp_dispatcher
     runtime.close()
-    assert closed == [True, True, True]
+    assert closed == [True] * 7
 
 
 def test_runtime_closes_remaining_stores_when_one_observer_close_fails():
@@ -160,13 +195,14 @@ def test_runtime_closes_remaining_stores_when_one_observer_close_fails():
 
     service.source_observer_registry = CloseFailure()
     service.native_loader_observation_store = CloseStore()
+    service.native_bridge_broker = CloseStore()
     runtime = compose_root_authority_runtime(
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=catalog, vault=vault,
     )
     with pytest.raises(RuntimeError, match="fixture close failure"):
         runtime.close()
-    assert closed == ["registry", "store"]
+    assert closed == ["store", "registry", "store"]
 
 
 def test_source_metadata_stays_unavailable_without_real_manager_and_pair_joins():

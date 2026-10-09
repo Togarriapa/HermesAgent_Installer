@@ -12,6 +12,8 @@ from hermes_installer.authority.enrollment import (
     _reject_secret_material, _unique_pairs, _verify_active_process_rules, write_authority_config,
     write_protected_file, _validate_service_generations, _parse_observer_delivery_bindings,
     _parse_source_issuers, _validate_root_key_selection,
+    _parse_source_issuers, _parse_native_schema_artifact_records,
+    _parse_composio_channel_enrollment_records, _parse_channel_delivery_binding_records,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
@@ -36,6 +38,64 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(AuthorityDenied):
                 _validate_root_key_selection(invalid)
+    def test_composio_channel_enrollment_is_exact_and_bounded(self):
+        row = {
+            "id": "channel-enrollment", "channel_resource_id": "resource-a",
+            "resource_generation": "resource-generation", "profile_id": "profile-a",
+            "controller_role_id": "controller-a", "source_issuer_id": "observer-a",
+            "composio_enrollment_id": "composio-a", "composio_user_id": "user-a",
+            "connected_account_id": "account-a", "auth_config_id": "auth-a",
+            "toolkit_version": "20260721_00", "trigger_artifact_id": "trigger-a",
+            "trigger_artifact_sha256": "a" * 64, "trigger_slug": "messages.received",
+            "trigger_instance_id": "instance-a", "webhook_subscription_id": "subscription-a",
+            "webhook_route_enrollment_id": "route-a", "webhook_secret_reference_id": "secret-a",
+            "allowed_user_numbers": ["+14155550123"],
+            "payload_field_bindings": {name: [name] for name in
+                                        ("sender_number", "message_id", "message_text", "event_timestamp")},
+            "max_event_age_seconds": 120, "account_receipt_handle": "account-receipt-a",
+            "setup_receipt_handle": "setup-receipt-a",
+        }
+        parsed = _parse_composio_channel_enrollment_records([row])
+        self.assertEqual(parsed[0]["account_receipt_handle"], "account-receipt-a")
+        self.assertEqual(parsed[0]["allowed_user_numbers"], ("+14155550123",))
+        with self.assertRaises(AuthorityDenied):
+            _parse_composio_channel_enrollment_records([{**row, "toolkit_version": "latest"}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_composio_channel_enrollment_records([{**row, "allowed_user_numbers": ["*"]}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_composio_channel_enrollment_records([{**row, "extra": "caller claim"}])
+
+    def test_channel_delivery_binding_is_exact_and_bounded(self):
+        row = {
+            "id": "delivery-a", "profile_id": "profile-a", "process_generation": "process-a",
+            "native_package_id": "package-a", "native_package_generation": "package-generation-a",
+            "authority_endpoint_id": "authority-a", "allowed_channel_ingress_ids": ["channel-a"],
+            "source_observer_enrollment_ids": ["observer-a"], "generation": "root-generation-a",
+        }
+        parsed = _parse_channel_delivery_binding_records([row])
+        self.assertEqual(parsed[0]["allowed_channel_ingress_ids"], ("channel-a",))
+        with self.assertRaises(AuthorityDenied):
+            _parse_channel_delivery_binding_records([{**row, "source_observer_enrollment_ids": []}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_channel_delivery_binding_records([{**row, "extra": True}])
+
+    def test_native_schema_artifact_rows_are_exact_bounded_and_unique_per_action_kind(self):
+        row = {
+            "id": "arguments-v1", "artifact_id": "schema-arguments-v1",
+            "sha256": "a" * 64, "schema_kind": "arguments",
+            "native_package_id": "package-a", "native_package_generation": "generation-a",
+            "adapter_id": "adapter-a", "action_id": "action-a",
+            "source_receipt_handle": "receipt-handle-a",
+        }
+        parsed = _parse_native_schema_artifact_records([row])
+        self.assertEqual(parsed[0]["source_receipt_handle"], "receipt-handle-a")
+        self.assertEqual(parsed[0]["sha256"], "a" * 64)
+        with self.assertRaises(AuthorityDenied):
+            _parse_native_schema_artifact_records([{**row, "unreviewed": True}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_native_schema_artifact_records([row, dict(row)])
+        with self.assertRaises(AuthorityDenied):
+            _parse_native_schema_artifact_records([{**row, "schema_kind": "discovery"}])
 
     def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
         issuer = _parse_source_issuers([{
@@ -98,7 +158,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "resource_backend_enrollments": [], "resource_body_recipes": [],
                 "resource_scope_bindings": [], "resource_validators": [], "root_journal_roots": [],
                 "resource_controller_roles": [], "native_mcp_tool_bindings": bindings,
-                "remote_observation_enrollments": [],
+                "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -167,7 +227,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -219,7 +279,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -287,7 +347,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "resource_scope_bindings": [], "resource_validators": [],
                 "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -361,7 +421,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -411,7 +471,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [scope], "resource_validators": [validator],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [],
         }
 
         def sign(value):
@@ -465,7 +525,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [],
         }
 
         def sign(value):
@@ -498,7 +558,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [root],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [],
         }
         unsigned = dict(snapshot)
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(

@@ -22,6 +22,7 @@ from hermes_installer.registry.resource_jobs import (
     RootAdmittedTaskSource,
     RootResourceJobAdmissionHandle,
     RootTaskController,
+    RootTaskNativeExecutionReceipt,
     ResourceJobDenied,
 )
 
@@ -195,3 +196,33 @@ def test_runner_never_accepts_unproven_terminal_as_a_result(changes):
             managed_handle=ManagedTaskHandle("opaque-managed-task-handle", "process-generation-1", "process-1"),
             terminal=receipt, deadline_monotonic=10.0,
         )
+
+
+def test_runner_rejects_same_shape_native_companion_not_issued_by_registry():
+    task = admitted_task()
+    handle = ManagedTaskHandle("m" * 32, "process-generation-1", "process-1")
+    terminal = terminal_receipt(
+        task_handle=handle.handle_id,
+        terminal_receipt_handle="t" * 32,
+        native_loader_ready_event_id="l" * 32,
+    )
+    companion = RootTaskNativeExecutionReceipt(
+        schema=1, native_execution_receipt_handle="n" * 32,
+        task_handle=handle.handle_id, process_id=handle.process_id,
+        process_generation=task.process_generation,
+        native_package_generation=task.native_package_generation,
+        loader_ready_event_id=terminal.native_loader_ready_event_id,
+        initial_input_event_id="i" * 32,
+        native_request_event_ids=("r" * 32,), native_result_event_ids=("s" * 32,),
+        required_tool_result_event_ids=(),
+        parent_closure_digest=task.parent_closure_digest,
+        task_payload_sha256=task.task_payload_sha256,
+        terminal_receipt_handle=terminal.terminal_receipt_handle,
+        observed_monotonic=3.0,
+    )
+    runner = object.__new__(RootResourceTaskRunner)
+    runner.native_observations = SimpleNamespace(verify_receipt=lambda _receipt: False)
+
+    with pytest.raises(AuthorityDenied, match="forged or replayed"):
+        runner._validate_native_execution(
+            task, handle, terminal, companion, deadline_monotonic=10.0)

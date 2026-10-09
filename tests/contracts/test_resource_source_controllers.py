@@ -4,7 +4,9 @@ import pytest
 
 from hermes_installer.authority.resource_source_controllers import (
     RootControllerRoleEnrollment,
+    RootResourceEventIssuerCapability,
     RootResourceControllerRegistry,
+    RootResourceSourceEventProof,
     _event_fields_from_payload,
     parse_root_controller_role_records,
 )
@@ -115,3 +117,39 @@ def test_recipe_event_fields_are_derived_from_unambiguous_authenticated_payload(
     ):
         with pytest.raises(AuthorityDenied):
             _event_fields_from_payload(payload)
+
+
+def test_event_issuer_attachment_is_instance_scoped_and_single_use():
+    class Issuer:
+        calls = 0
+
+        def issue_source_event(self, proof, capability):
+            self.calls += 1
+            return object()
+
+    registry = object.__new__(RootResourceControllerRegistry)
+    registry._lock = __import__("threading").RLock()
+    registry._event_issuer = None
+    registry._event_issuer_capability = None
+    registry.job_enrollments = {}
+    registry.source_observers = type("Observers", (), {"observers": {}})()
+    registry.selected_specs = {}
+    issuer = Issuer()
+    capability = registry.attach_event_issuer(issuer)
+    assert isinstance(capability, RootResourceEventIssuerCapability)
+    with pytest.raises(AuthorityDenied):
+        registry.attach_event_issuer(Issuer())
+
+    proof = RootResourceSourceEventProof(
+        producer_handle="p" * 32, event_id="e" * 32,
+        resource_id="resource-v1", resource_generation="a" * 64,
+        source_observer_enrollment_id="observer-v1", source_kind="schedule-event",
+        payload=b'{"delivery":"fixture"}', verified_provenance=object(),
+        issuer_token=capability._token,
+    )
+    with pytest.raises(AuthorityDenied):
+        registry.register_issued_event(proof, issuer=Issuer())
+    assert issuer.calls == 0
+    with pytest.raises(AuthorityDenied):
+        registry.register_issued_event(proof, issuer=issuer)
+    assert issuer.calls == 0
