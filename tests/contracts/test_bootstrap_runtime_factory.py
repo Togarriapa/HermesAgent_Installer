@@ -67,6 +67,14 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaises(TypeError):
             RootBootstrapRuntimeFactory(selection_path="/tmp/caller-selection.json")
 
+    def test_session_id_lookup_only_resolves_an_existing_root_issued_session(self):
+        factory = object.__new__(RootBootstrapRuntimeFactory)
+        factory._sessions = {}
+        with self.assertRaises(BootstrapEnrollmentPending):
+            factory.resolve_live_session_id("not-a-session")
+        with self.assertRaises(BootstrapEnrollmentPending):
+            factory.resolve_live_session_id("a" * 64)
+
     def test_factory_refuses_non_linux_or_uninstalled_root_trust(self):
         if os.geteuid() == 0 and Path("/proc/sys/kernel/ostype").exists() \
                 and Path("/etc/hermes-installer/root-setup-selection.json").exists():
@@ -96,13 +104,14 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
                 "operation_parameter_schemas", "source_issuers", "resource_jobs", "remote_session_enrollments",
                 "resource_backend_enrollments", "resource_body_recipes", "resource_scope_bindings",
                 "resource_validators", "root_journal_roots", "resource_controller_roles",
-                "native_mcp_tool_bindings", "remote_observation_enrollments")},
+                "native_mcp_tool_bindings", "remote_observation_enrollments",
+                "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings")},
             receipt_binding_rules=(),
         )
 
         class Resolver:
             @staticmethod
-            def resolve_policy(_plan_id):
+            def resolve_policy(_plan_id, **_kwargs):
                 return policy
 
         authorization = VerifiedRootSetupAuthorization(
@@ -148,7 +157,8 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
                 "operation_parameter_schemas", "source_issuers", "resource_jobs", "remote_session_enrollments",
                 "resource_backend_enrollments", "resource_body_recipes", "resource_scope_bindings",
                 "resource_validators", "root_journal_roots", "resource_controller_roles",
-                "native_mcp_tool_bindings", "remote_observation_enrollments")},
+                "native_mcp_tool_bindings", "remote_observation_enrollments",
+                "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings")},
             receipt_binding_rules=({"receipt_role": "official-pm-runtime",
                                     "allowed_artifact_ids": ["pm-runtime-fixture"],
                                     "allowed_output_kinds": ["source-archive"],
@@ -160,7 +170,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
 
         class Resolver:
             @staticmethod
-            def resolve_policy(_plan_id):
+            def resolve_policy(_plan_id, **_kwargs):
                 return policy
 
         authorization = VerifiedRootSetupAuthorization(
@@ -206,7 +216,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
     def test_receipt_rules_bind_one_exact_role_artifact_phase_and_output_kind(self):
         row = {"receipt_role": "official-pm-runtime",
                "allowed_artifact_ids": ["pm-runtime-314"],
-               "allowed_output_kinds": ["source-archive"],
+               "allowed_output_kinds": ["pm-runtime"],
                "required_phase": "runnable", "field_bindings": []}
         parsed = InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
             [row], ["pm-runtime-314"])
@@ -214,7 +224,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         for mutate in (
                 lambda value: value.update(allowed_artifact_ids=["unselected-runtime"]),
                 lambda value: value.update(required_phase="functional-health"),
-                lambda value: value.update(allowed_output_kinds=["shell-script"]),
+                lambda value: value.update(allowed_output_kinds=["native-health"]),
                 lambda value: value.update(receipt_role=["official-pm-runtime"]),
                 lambda value: value.update(allowed_artifact_ids=[{}]),
                 lambda value: value.update(allowed_output_kinds=[{}]),
@@ -236,6 +246,36 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaises(BootstrapEnrollmentPending):
             InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
                 [row], ["pm-runtime-314"])
+
+    def test_receipt_rules_require_role_specific_output_kind(self):
+        for role, output in (("official-pm-runtime", "pm-runtime"),
+                             ("native-compiled-closure", "compiled-closure"),
+                             ("native-entrypoint-manifest", "entrypoint-json"),
+                             ("native-action-resolver", "resolver-json"),
+                             ("native-boundary-overlay", "boundary-overlay"),
+                             ("native-candidate-index", "candidate-index-json"),
+                             ("native-health", "native-health")):
+            row = {"receipt_role": role, "allowed_artifact_ids": ["selected-output"],
+                   "allowed_output_kinds": [output],
+                   "required_phase": "functional-health" if role == "native-health" else "runnable",
+                   "field_bindings": []}
+            parsed = InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
+                [row], ["selected-output"])
+            self.assertEqual(parsed, [row])
+            invalid = {**row, "allowed_output_kinds": ["source-archive"]}
+            with self.subTest(role=role), self.assertRaises(BootstrapEnrollmentPending):
+                InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
+                    [invalid], ["selected-output"])
+
+    def test_empty_runtime_receipt_ids_only_allowed_for_prepared_dormant_roles(self):
+        row = {"receipt_role": "native-compiled-closure", "allowed_artifact_ids": [],
+               "allowed_output_kinds": ["compiled-closure"], "required_phase": "runnable",
+               "field_bindings": []}
+        self.assertEqual(
+            InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
+                [row], [], dormant_prepared=True), [row])
+        with self.assertRaises(BootstrapEnrollmentPending):
+            InstalledBootstrapPolicyResolver._validate_receipt_binding_rules([row], [])
 
 
 if __name__ == "__main__":
