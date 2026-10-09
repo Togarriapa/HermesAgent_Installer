@@ -113,25 +113,28 @@ def _validate_parent(enrollment: MemoryServiceEnrollment, recipe: MemoryRouteRec
     operation = f"memory.{action}"
     digest = hashlib.sha256(parent_request_payload).hexdigest()
     context_digest = canonical_digest({**context.claims(), "signature": context.signature})
-    if (context.profile_id != enrollment.profile_id
-            or context.namespace_id != enrollment.namespace_identity
-            or context.principal_id != enrollment.principal_id
-            or context.operation != operation
-            or context.final_payload_digest != digest
-            or parent.profile_id != context.profile_id
-            or parent.namespace_id != context.namespace_id
-            or parent.principal_id != context.principal_id
-            or parent.uid != context.uid
-            or parent.operation != operation
-            or parent.capability != capability
-            or parent.target != target
-            or parent.context_digest != context_digest
-            or parent.request_digest != digest
-            or parent.final_payload_digest != digest
-            or parent.source_receipts != context.source_receipts
-            or parent.lineage_hash != context.lineage_hash
-            or parent.sensitivity != context.sensitivity):
-        raise MemoryExecutionDenied("parent grant, source context, and selected memory action differ")
+    mismatches = [name for name, valid in {
+        "context.profile": context.profile_id == enrollment.profile_id,
+        "context.namespace": context.namespace_id == enrollment.namespace_identity,
+        "context.principal": context.principal_id == enrollment.principal_id,
+        "context.operation": context.operation == operation,
+        "context.payload_digest": context.final_payload_digest == digest,
+        "grant.profile": parent.profile_id == context.profile_id,
+        "grant.namespace": parent.namespace_id == context.namespace_id,
+        "grant.principal": parent.principal_id == context.principal_id,
+        "grant.uid": parent.uid == context.uid,
+        "grant.operation": parent.operation == operation,
+        "grant.capability": parent.capability == capability,
+        "grant.target": parent.target == target,
+        "grant.context_digest": parent.context_digest == context_digest,
+        "grant.request_digest": parent.request_digest == digest,
+        "grant.final_digest": parent.final_payload_digest == digest,
+        "grant.receipts": parent.source_receipts == context.source_receipts,
+        "grant.lineage": parent.lineage_hash == context.lineage_hash,
+        "grant.sensitivity": parent.sensitivity == context.sensitivity,
+    }.items() if not valid]
+    if mismatches:
+        raise MemoryExecutionDenied("parent grant/source/action binding differs: " + ",".join(mismatches))
     return context, digest
 
 
