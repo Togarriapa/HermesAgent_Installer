@@ -67,6 +67,31 @@ class ProviderResponseDelivery:
     response_delivery_handle: str
 
 
+@dataclass(frozen=True, slots=True)
+class RootNativeMCPInvocation:
+    """Opaque root-resolved native MCP action admitted for one dispatch.
+
+    Instances are also tracked by object identity inside NativeInvocationRegistry;
+    copying or constructing this DTO does not create an active dispatch.
+    """
+
+    invocation_handle: str
+    tool_name: str
+    adapter_id: str
+    action_id: str
+    package_id: str
+    profile_id: str
+    generation: str
+    arguments_sha256: str
+    parent_closure_digest: str
+    expires_monotonic: float
+    source_receipt_handles: tuple[str, ...]
+    native_process_identity: Any
+    service_generation_digest: str
+
+
+
+
 @dataclass(slots=True)
 class _ObservedProviderResponse:
     handle: str
@@ -121,12 +146,15 @@ class _NativeInvocation:
     generation: str
     adapter_id: str
     action_id: str
+    tool_name: str
     arguments_sha256: str
     parent_closure_digest: str
     receipt_handles: tuple[str, ...]
     observer_id: str
     loaded_package_proof: Any
     expires_monotonic: float
+    service_generation_digest: str
+    mcp_dispatch_consumed: bool = False
 
 
 class NativeRuntimeObserverUnavailable(PermissionError):
@@ -255,6 +283,7 @@ class NativeInvocationRegistry:
         self._deliveries: dict[str, _ObservedProviderResponse] = {}
         self._calls: dict[str, tuple[str, str, str, str, str, bytes]] = {}
         self._invocations: dict[str, _NativeInvocation] = {}
+        self._mcp_dispatches: dict[str, tuple[_NativeInvocation, RootNativeMCPInvocation]] = {}
         self._issued_handles: set[str] = set()
         self._retained_response_bytes = 0
         self._native_turn_registry: Any | None = None
@@ -775,8 +804,9 @@ class NativeInvocationRegistry:
                 peer_pid, os.dup(peer_pidfd), response.gateway_identity,
                 response.gateway_pid, os.dup(response.gateway_pidfd),
                 response.package_id, response.profile_id,
-                response.generation, adapter_id, action_id, digest, closure_digest,
+                response.generation, adapter_id, action_id, tool_name, digest, closure_digest,
                 response.receipt_handles, response.observer_id, current_proof, lease,
+                self.service.service_generation_digest,
             )
             # Consume the observed call before publishing a binding. No failed
             # or concurrent begin can re-open this response call.
@@ -806,6 +836,128 @@ class NativeInvocationRegistry:
                 binding_sha256=binding_digest,
             )
 
+    def consume_native_mcp_invocation(self, peer_uid: int, peer_pid: int, peer_pidfd: int,
+                                     invocation_handle: str,
+                                     canonical_arguments: bytes) -> RootNativeMCPInvocation:
+        """Consume one lexical invocation for one root MCP dispatch.
+
+        This is a root-to-root API. It joins the opaque handle to the actual
+        provider response, producer PIDFD, loaded package proof, root-selected
+        action, exact canonical arguments and retained receipt closure before
+        publishing an immutable capability record to the dispatcher.
+        """
+        if (type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or not self._valid_handle(invocation_handle)
+                or not isinstance(canonical_arguments, bytes)
+                or not 1 <= len(canonical_arguments) <= _MAX_TOOL_ARGUMENT_BYTES):
+            raise AuthorityDenied("native.mcp.invocation", "native MCP invocation lookup is malformed")
+        try:
+            parsed = json.loads(canonical_arguments.decode("utf-8"))
+            if not isinstance(parsed, dict) or json.dumps(
+                    parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                    allow_nan=False).encode("utf-8") != canonical_arguments:
+                raise ValueError
+        except (ValueError, TypeError, UnicodeError):
+            raise AuthorityDenied("native.mcp.invocation", "native MCP arguments are not canonical JSON") from None
+        with self._lock:
+            self._ensure_open()
+            self._prune_locked(self.monotonic())
+            invocation = self._invocations.get(invocation_handle)
+            if invocation is None or invocation.mcp_dispatch_consumed:
+                raise AuthorityDenied("native.mcp.invocation", "native MCP invocation is unknown or consumed")
+            if not self._native_mcp_peer_current(invocation, peer_uid, peer_pid, peer_pidfd,
+                                                 canonical_arguments):
+                raise AuthorityDenied("native.mcp.invocation", "native MCP invocation binding is stale")
+            dto = RootNativeMCPInvocation(
+                invocation_handle=invocation.invocation_handle,
+                tool_name=invocation.tool_name,
+                adapter_id=invocation.adapter_id,
+                action_id=invocation.action_id,
+                package_id=invocation.package_id,
+                profile_id=invocation.profile_id,
+                generation=invocation.generation,
+                arguments_sha256=invocation.arguments_sha256,
+                parent_closure_digest=invocation.parent_closure_digest,
+                expires_monotonic=invocation.expires_monotonic,
+                source_receipt_handles=invocation.receipt_handles,
+                native_process_identity=invocation.producer_identity,
+                service_generation_digest=invocation.service_generation_digest,
+            )
+            invocation.mcp_dispatch_consumed = True
+            self._mcp_dispatches[invocation_handle] = (invocation, dto)
+            return dto
+
+    def is_current_native_mcp_invocation(self, record: RootNativeMCPInvocation,
+                                         peer_uid: int, peer_pid: int,
+                                         peer_pidfd: int) -> bool:
+        """Revalidate the same consumed DTO before each effect or result release."""
+        if (type(record) is not RootNativeMCPInvocation
+                or type(peer_uid) is not int or type(peer_pid) is not int
+                or type(peer_pidfd) is not int or peer_uid <= 0 or peer_pid <= 0
+                or peer_pidfd < 0):
+            return False
+        with self._lock:
+            if self._closed or self.monotonic() >= record.expires_monotonic:
+                return False
+            held = self._mcp_dispatches.get(record.invocation_handle)
+            if held is None or held[1] is not record or held[0].mcp_dispatch_consumed is not True:
+                return False
+            invocation = held[0]
+            if any((getattr(record, name, None) != getattr(invocation, source_name, None))
+                   for name, source_name in (
+                       ("tool_name", "tool_name"), ("adapter_id", "adapter_id"),
+                       ("action_id", "action_id"), ("package_id", "package_id"),
+                       ("profile_id", "profile_id"), ("generation", "generation"),
+                       ("arguments_sha256", "arguments_sha256"),
+                       ("parent_closure_digest", "parent_closure_digest"),
+                       ("source_receipt_handles", "receipt_handles"),
+                       ("native_process_identity", "producer_identity"),
+                       ("service_generation_digest", "service_generation_digest"))):
+                return False
+            return self._native_mcp_peer_current(invocation, peer_uid, peer_pid,
+                                                 peer_pidfd, None)
+
+    def _native_mcp_peer_current(self, invocation: _NativeInvocation,
+                                 peer_uid: int, peer_pid: int, peer_pidfd: int,
+                                 canonical_arguments: bytes | None) -> bool:
+        if (self.service.service_generation_digest != invocation.service_generation_digest
+                or peer_uid != invocation.producer_identity.kernel_uid
+                or peer_pid != invocation.producer_pid
+                or self.monotonic() >= invocation.expires_monotonic
+                or (canonical_arguments is not None
+                    and hashlib.sha256(canonical_arguments).hexdigest() != invocation.arguments_sha256)):
+            return False
+        try:
+            identity = self.process_resolver(peer_pid, peer_pidfd,
+                                             profile_id=invocation.profile_id,
+                                             generation=invocation.generation)
+            gateway = self.process_resolver(invocation.gateway_pid, invocation.gateway_pidfd,
+                                             profile_id=invocation.bridge.gateway_profile_id,
+                                             generation=invocation.bridge.gateway_generation)
+            proof = self._loaded_proof(invocation.observer_id, identity, peer_pid, peer_pidfd)
+            action = self.action_resolver(invocation.bridge, identity, invocation.tool_name)
+            if (identity != invocation.producer_identity or gateway != invocation.gateway_identity
+                    or proof != invocation.loaded_package_proof
+                    or not isinstance(action, NativeActionSelection)
+                    or (action.package_id, action.profile_id, action.generation,
+                        action.adapter_id, action.action_id)
+                    != (invocation.package_id, invocation.profile_id, invocation.generation,
+                        invocation.adapter_id, invocation.action_id)):
+                return False
+            with self.service._lock:
+                receipts = [self.service._source_receipt_handles.get(handle)
+                            for handle in invocation.receipt_handles]
+            return (bool(receipts) and all(
+                receipt is not None and receipt.profile_id == invocation.profile_id
+                and receipt.process_generation == invocation.generation
+                and receipt.uid == peer_uid and receipt.monotonic_expires_at > self.monotonic()
+                for receipt in receipts
+            ))
+        except Exception:
+            return False
+
     def get_invocation_contexts(self, peer_uid: int, peer_pid: int, peer_pidfd: int,
                                 invocation_handle: str):
         """Return repeatable ancestry for one live invocation; it is not a grant."""
@@ -819,7 +971,7 @@ class NativeInvocationRegistry:
             self._ensure_open()
             self._prune_locked(self.monotonic())
             invocation = self._invocations.get(invocation_handle)
-            if invocation is None:
+            if invocation is None or invocation.mcp_dispatch_consumed:
                 raise AuthorityDenied("native.invocation.contexts", "native invocation is unknown or expired")
             if peer_uid != invocation.producer_identity.kernel_uid or peer_pid != invocation.producer_pid:
                 raise AuthorityDenied("native.invocation.peer", "invocation context belongs to another process")
@@ -865,6 +1017,7 @@ class NativeInvocationRegistry:
             self._deliveries.clear()
             self._calls.clear()
             self._invocations.clear()
+            self._mcp_dispatches.clear()
             self._issued_handles.clear()
 
     def _loaded_proof(self, observer_id: str, identity: Any, peer_pid: int,
@@ -901,6 +1054,7 @@ class NativeInvocationRegistry:
         for handle, invocation in tuple(self._invocations.items()):
             if invocation.expires_monotonic <= now:
                 self._invocations.pop(handle, None)
+                self._mcp_dispatches.pop(handle, None)
                 try:
                     os.close(invocation.producer_pidfd)
                     os.close(invocation.gateway_pidfd)

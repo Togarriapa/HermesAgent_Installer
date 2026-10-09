@@ -436,7 +436,32 @@
     ],
     "nullable": "provider_result_event_id nullable only when the reviewed fixture explicitly requires no provider. Required loader/request/tool/result/terminal fields never nullable for functional health success. status enum passed|failed|incomplete; failed/incomplete do not activate functional health.",
     "consume": "consume_selected_health_receipt(handle,committed_enrollment_receipt_id)->typed RootNativeHealthReceipt root registry lookup/current generation/event closure validation. Lifecycle may display typed presentation, but cannot construct/pass status as authority. Receipt is local functional health evidence, not all18AC or actual external account acceptance.",
-    "failure": "Changed profile/catalog/peer/mount/fixture, stale events, unrelated tool response, replay/cancel/expiry or semantic mismatch deny passed. Rollback preserves previous owned generation/data."
+    "failure": "Changed profile/catalog/peer/mount/fixture, stale events, unrelated tool response, replay/cancel/expiry or semantic mismatch deny passed. Rollback preserves previous owned generation/data.",
+    "live_control_binding": {
+      "owner_module": "hermes_installer.authority.managed_process_custodian",
+      "dto": "RootSelectedHealthControl",
+      "fields": {
+        "schema": "literal1",
+        "control_handle": "opaque str",
+        "managed_process_handle": "opaque str",
+        "process_id": "opaque str",
+        "operation_id": "literal hermes-agent-health-v1",
+        "enrollment_id": "opaque str",
+        "profile_id": "opaque str",
+        "process_generation": "opaque str",
+        "service_generation_digest": "lowercase SHA256",
+        "bootstrap_transaction_handle": "opaque str",
+        "committed_enrollment_receipt_id": "opaque str",
+        "health_fixture_artifact_id": "opaque selected ID",
+        "health_fixture_sha256": "lowercase SHA256",
+        "issued_monotonic": "finite float",
+        "expires_monotonic": "finite float"
+      },
+      "issuer": "Custody retains control only for actual started selected health operation after fresh process.start authorization, fixed enrolled recipe and live PIDFD/cgroup/starttime/executable checks. Profile/process selectors, physical paths and caller constructed DTOs are never authority. Prepared snapshot cannot health-start.",
+      "API": "ManagedProcessEffectHandler.resolve_selected_health_control(control_handle)->RootSelectedHealthControl; stable root registry lookup and current live peer resolution. RootSelectedHermesOperations attaches concrete RootNativeHealthObserver at construction; during run_selected_operation of hermes-agent-health-v1, custody invokes observer.begin_selected_health(control_handle) after retaining actual live managed process and before delivering fixture input. The root observer uses selected health execution registry and actual loader readiness/input issuer; it does not wait for terminal to reconstruct live identity.",
+      "completion": "Actual native request/provider/tool/result events accumulate while owned process is live. Custody then waits terminal, preserving immutable terminal receipt, and observer.finish_selected_health produces separate health receipt. SelectedHermesRun presentation may carry health_receipt_handle only from this exact actual root registry result. Terminal stdout/exit alone cannot fill health fields.",
+      "cancellation": "Lease bounded by original selected operation deadline; cancellation or generation/fixture/peer mismatch cancels only owned cgroup and invalidates pending health observation/input. Registry retains immutable failed/incomplete audit evidence, never promotes stale terminal."
+    }
   },
   "first_stage_policy_compiler": {
     "tasks": "BD-F01/BD-F03/LC-F03/HI-T01 original usable installer first setup, no new human approval gate.",
@@ -514,7 +539,29 @@
         "compiler_identity": "compiler_artifact_id+SHA from actual selected installed root native materializer module/closure role artifact verified deployment receipt, no planning template/sourcearchivehash substituted. Actual root compiler observed generation manifest and source/overlay/resolver byte receipts verified before CAS writes; source and compiled digests distinct.",
         "source_call": "RootMaterializationReceiptRegistry.mint_packaged_resources_source(prepared_setup_receipt_handle,verified_installer_release_receipt)->opaque source_receipt_handle",
         "source": "Resolve exact selected Resources packaged archive artifact resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83 and295368byte/SHA b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1 through actual held installerrelease packagedartifact/catalog entry. Root CAS import validates entire739file/692declaration source pin/tree, no upstream network/sourcegovernance import. Return role resources-source-bundle RootRuntimeArtifactReceipt with fixed source ID, not generatednative-outputprefix.",
-        "handles": "Every source/materialization/output receipt handle scoped actual setupsession/transaction/plan/preparedgeneration/ownedroot/lease/issuerregistry; activation consumes each intended role handle exactlyonce. Same immutable verified CAS bytes may be audit-retained/referenced across explicitownedresume with fresh current transaction authorization, never re-mint caller bytes as proof. Actual compiler source receipt tuple includes Resources and pinnedHermes/overlaydependencies as needed; none conflated."
+        "handles": "Every source/materialization/output receipt handle scoped actual setupsession/transaction/plan/preparedgeneration/ownedroot/lease/issuerregistry; activation consumes each intended role handle exactlyonce. Same immutable verified CAS bytes may be audit-retained/referenced across explicitownedresume with fresh current transaction authorization, never re-mint caller bytes as proof. Actual compiler source receipt tuple includes Resources and pinnedHermes/overlaydependencies as needed; none conflated.",
+        "output_kind_by_role": {
+          "resources-source-bundle": "source-archive",
+          "native-compiled-closure": "compiled-closure",
+          "native-entrypoint-manifest": "entrypoint-json",
+          "native-action-resolver": "resolver-json",
+          "native-boundary-overlay": "boundary-overlay",
+          "native-candidate-index": "candidate-index-json"
+        },
+        "byte_encoding": {
+          "version": "native-output-encoding-v1",
+          "writer": "RootMaterializationReceiptRegistry.publish_selected(*,artifact_role,output_kind,payload:bytes,members:Sequence[NativeOutputMember])->RuntimeArtifactReceipt; root compiler-produced exact role selection only, never arbitrary worker bytes",
+          "json": "entrypoint-json, resolver-json and candidate-index-json are canonical UTF8 JSON ensure_ascii=False sort_keys=True separators=(comma,colon), no BOM/newline/NaN/duplicate keys. Existing exact document schemas unchanged; SHA hashes these stored bytes.",
+          "compiled_closure": "compiled-closure payload is an uncompressed deterministic POSIX PAX tar, regular files and directories only. Paths relative UTF8 without leading slash, dot/dotdot/NUL; lexicographic path order; mtime=0 uid=gid=0 uname=gname empty; file modes exactly0644 or0755 from reviewed source/compiler manifest, dirs0755; no symlinks/hardlinks/sparse/device/FIFO/socket/xattrs. PAX metadata only required path encoding/length, no ambient creation/access timestamps. One manifest.json, resolver/resolver, catalog/native-candidates.json and closure/ selected executable/module members. Raw tar stored bytes <=128MiB, expanded regular bytes<=512MiB and <=50000 regular members. No compression auto-detection or alternate archive encoding under this version.",
+          "digest_domains": "Original native_entrypoint_manifest contract is authoritative: compiled_closure_sha256 = SHA256 of canonical sorted closure_files list {relative_path,sha256,size_bytes,mode}, relative to closure/ only. Tar stored bytes hash is distinct artifact_sha256/archive_artifact_sha256 in artifact CAS receipt. entrypoint_sha256 hashes manifest.json bytes. Full archive member_tree_sha256 hashes canonical sorted {path,sha256,size_bytes,mode} rows including manifest/resolver/index/closure, separate from compiled closure tree. v56 archive-as-compiled_closure wording is superseded; mount derivation/binder retain original compiled tree hash.",
+          "member_rows": "NativeOutputMember has exactly path:str relative,sha256:lowercaseSHA256,size_bytes:nonnegative int,mode:literal0644|0755. Rows sorted unique exact regular payload members, no directory rows. For JSON role one row names its fixed member path and hashes exact payload.",
+          "boundary_overlay": "boundary-overlay is canonical JSON manifest {schema:1,source_commit,compiler_artifact_id,compiler_sha256,members:[NativeOutputMember]}. It references finite selected source-pinned overlay modules whose actual bytes are included under closure/ in compiled-closure. It is not executable JSON, a second archive or dynamic code path. Root compiler and registry require every row match the actual selected compiled closure member and original source/approved patch closure receipts. Manifest-only without matching actual member bytes cannot activate.",
+          "source_archive": "resources-source-bundle remains exact original pinned archive bytes, not rewritten by output encoding. Hermes source likewise remains original official archive/source normalization receipts.",
+          "selection": "Compiler emits immutable RootNativeOutputSelection {schema:1,artifact_role,output_kind,artifact_id,package_id,generation,payload_sha256,size_bytes,member_tree_sha256,compiler_artifact_id,compiler_sha256,source_receipt_handles}; stored registry binding verifies actual prepared transaction/source receipts and exact role/kind/member mapping before writer publishes. Caller-provided selection document alone cannot authorize.",
+          "member_modes": "JSON mode integers exactly420 or493 (octal0644/0755), not strings; tar permission bits correspond. Entry point closure_files schema exactly {relative_path:str,sha256:str,size_bytes:int,mode:int}; normalized path relative to closure/, sorted unique complete tree. No mode coercion.",
+          "overlay_member_path": "overlay/manifest.json is the sole member row for boundary-overlay JSON role. Exact JSON fields schema=1,source_commit,compiler_artifact_id,compiler_sha256,members; no unknown fields. members use NativeOutputMember path/sha256/size_bytes/mode rows referencing actual closure/... members. Boundary overlay document itself may be included at fixed archive overlay/manifest.json; it is outside compiled closure tree."
+        },
+        "candidate_index_identity": "Exception preserving existing native index_delivery: native-candidate-index role artifact_id is exactly native-candidate-index:<package_id>:<generation>, same string in output receipt, ArtifactCatalog and entrypoint candidate_index.artifact_id. Other roles use native-output:<artifact_role>:<package_id>:<generation>. No separate presentation alias/different manifest identity. Components bounded as existing selection, exact receipt bytes/hash required."
       }
     },
     "resources_source": {

@@ -882,7 +882,7 @@ class RootTaskInitialInputReceipt:
                 or any(not isinstance(getattr(self, name), str)
                        or not _ID.fullmatch(getattr(self, name)) for name in identities)
                 or any(not _DIGEST.fullmatch(getattr(self, name)) for name in digests)
-                or type(self.stdin_size_bytes) is not int or not 0 <= self.stdin_size_bytes <= 262_144
+                or type(self.stdin_size_bytes) is not int or not 1 <= self.stdin_size_bytes <= 262_144
                 or any(isinstance(value, bool) or not isinstance(value, (int, float))
                        or not math.isfinite(value)
                        for value in (self.issued_monotonic, self.expires_monotonic))
@@ -935,6 +935,49 @@ class RootTaskNativeExecutionReceipt:
                 or not isinstance(self.observed_monotonic, (int, float))
                 or not math.isfinite(self.observed_monotonic)):
             raise ResourceJobDenied("root native execution receipt is malformed")
+
+
+@dataclass(frozen=True, slots=True)
+class RootTaskStdinWriteReceipt:
+    """Custody proof that the exact admitted stdin frame reached EOF once."""
+
+    schema: int
+    receipt_handle: str
+    task_handle: str
+    process_id: str
+    process_generation: str
+    initial_input_receipt_handle: str
+    stdin_sha256: str
+    stdin_size_bytes: int
+    sequence: int
+    write_complete: bool
+    drained: bool
+    stdin_closed: bool
+    service_generation_digest: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        opaque_fields = ("receipt_handle", "task_handle", "process_id",
+                         "initial_input_receipt_handle")
+        if (type(self.schema) is not int or self.schema != 1
+                or any(not isinstance(getattr(self, name), str)
+                       or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", getattr(self, name))
+                       for name in opaque_fields)
+                or not isinstance(self.process_generation, str)
+                or not _ID.fullmatch(self.process_generation)
+                or not _DIGEST.fullmatch(self.stdin_sha256)
+                or type(self.stdin_size_bytes) is not int
+                or not 1 <= self.stdin_size_bytes <= 262_144
+                or type(self.sequence) is not int or self.sequence != 0
+                or self.write_complete is not True or self.drained is not True
+                or self.stdin_closed is not True
+                or not _DIGEST.fullmatch(self.service_generation_digest)
+                or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                       or not math.isfinite(value)
+                       for value in (self.issued_monotonic, self.expires_monotonic))
+                or not self.issued_monotonic < self.expires_monotonic):
+            raise ResourceJobDenied("root task stdin write receipt is malformed")
 
 
 @dataclass(frozen=True, slots=True)
