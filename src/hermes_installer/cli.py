@@ -612,6 +612,20 @@ def run(args: argparse.Namespace) -> CommandResult:
             f"Read-only {action}: verified {len(bindings)} declarations from the packaged bundle; materialization is planned, selected-target discovery and native operation remain pending.",
             (finding,), resume_command="hermes-installer resources status")
     if args.command == "verify":
+        if os.geteuid() == 0:
+            if args.target is not None:
+                return CommandResult("verify", OutcomeState.FAILED,
+                    "Root verification derives target identity from protected enrollment; --target is not accepted.",
+                    exit_code=2)
+            if args.output is None:
+                return CommandResult("verify", OutcomeState.FAILED,
+                    "A private output directory name is required for root verification.", exit_code=2)
+            from .verification.runtime_workflows import run_root_verify_cli
+            return run_root_verify_cli(
+                output_path=args.output,
+                requested_acceptance=tuple(args.acceptance or ()),
+                request_path=args.request, result_path=args.result,
+            )
         if args.target is None or args.output is None:
             return CommandResult("verify", OutcomeState.FAILED, "A scoped target lease and private evidence directory are required.", resume_command="hermes-installer verify --target <scope.json> --output <evidence-dir>", exit_code=2)
         from .verification.runtime_workflows import run_verify_cli

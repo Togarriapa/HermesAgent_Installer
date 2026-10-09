@@ -460,14 +460,13 @@ class RootTargetWorkflowAdmission:
 
 
 @dataclass(frozen=True, slots=True)
-class RootSetupSelectionContext:
-    """Opaque root-internal references resolved by the setup receipt registry."""
+class _ActiveRootPrincipal:
+    """Facts re-resolved from the current root enrollment on each admission."""
 
-    registry: Any
-    receipt_handle: str
-    setup_session_handle: str
-    transaction_handle: str
-    plan_digest: str
+    profile_id: str
+    username: str
+    generation: str
+    principal: Any
 
 
 class InstallerTrustedTargetAuthorizer:
@@ -479,7 +478,7 @@ class InstallerTrustedTargetAuthorizer:
                  platform_id: str, principal: Any, generation: str,
                  _seal: object | None = None):
         if _seal is not _SEAL:
-            raise TypeError("target authorizers can only be assembled from root-verified selection receipts")
+            raise TypeError("target authorizers can only be assembled from protected root runtime state")
         self.runtime, self.selection = runtime, selection
         self.candidate_receipts, self.journal = candidate_receipts, journal
         self.target_id, self.machine_digest, self.platform_id = target_id, machine_digest, platform_id
@@ -489,86 +488,29 @@ class InstallerTrustedTargetAuthorizer:
         runtime = _root_runtime(self.runtime)
         if _host_facts() != (self.target_id, self.machine_digest, self.platform_id):
             raise TargetAuthorityError("kernel target identity changed since verifier assembly")
-        now = runtime.service.monotonic()
-        selection = self.selection
-        if selection.expires_monotonic <= now:
-            raise TargetAuthorityError("root setup principal-selection lease expired")
-        try:
-            principal = runtime.resolve_selected_native_principal(
-                selection.service_profile_id, self.generation,
-                runtime.service.service_generation_digest,
-            )
-        except Exception as exc:
-            raise TargetAuthorityError("selected active principal or generation is no longer enrolled") from exc
+        current = _active_root_principal(runtime)
+        principal = current.principal
         if (principal.uid != self.principal.uid
                 or principal.principal_id != self.principal.principal_id
                 or principal.profile_id != self.principal.profile_id
                 or principal.namespace_id != self.principal.namespace_id
-                or principal.capabilities != self.principal.capabilities):
-            raise TargetAuthorityError("selected principal changed since verifier assembly")
+                or principal.capabilities != self.principal.capabilities
+                or current.generation != self.generation
+                or current.username != self.selection.username):
+            raise TargetAuthorityError("active enrolled principal changed since verifier assembly")
 
     @classmethod
     def from_root_runtime(cls, root_runtime_composition: RootAuthorityRuntime,
-                          verified_setup_or_active_enrollment_receipt: Any,
                           installed_candidate_receipt_registry: InstalledCandidateReceiptRegistry,
                           *, test_uid: int | None = None) -> "InstallerTrustedTargetAuthorizer":
         runtime = _root_runtime(root_runtime_composition)
         if (not isinstance(installed_candidate_receipt_registry, InstalledCandidateReceiptRegistry)
                 or installed_candidate_receipt_registry.runtime is not runtime):
             raise TargetAuthorityError("candidate receipts are not bound to this root runtime")
-        try:
-            from ..authority.bootstrap_enrollment import (
-                RootSetupPrincipalSelectionRegistry, VerifiedRootSetupPrincipalSelection,
-            )
-        except ImportError as exc:
-            raise TargetAuthorityError("root setup principal-selection receipts are unavailable") from exc
-        context = verified_setup_or_active_enrollment_receipt
-        if (not isinstance(context, RootSetupSelectionContext)
-                or not isinstance(context.registry, RootSetupPrincipalSelectionRegistry)
-                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", context.receipt_handle)
-                or not isinstance(context.setup_session_handle, str)
-                or not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", context.setup_session_handle)
-                or not isinstance(context.transaction_handle, str) or not context.transaction_handle
-                or not _SHA64.fullmatch(context.plan_digest)):
-            raise TargetAuthorityError("root setup receipt registry context is unavailable or malformed")
-        try:
-            selection = context.registry.resolve_selected_principal(
-                context.receipt_handle, context.setup_session_handle,
-                context.transaction_handle, context.plan_digest,
-            )
-        except Exception as exc:
-            raise TargetAuthorityError("root setup selection receipt could not be revalidated") from exc
-        if not isinstance(selection, VerifiedRootSetupPrincipalSelection):
-            raise TargetAuthorityError("setup registry returned an untyped principal selection")
-        now = runtime.service.monotonic()
-        if (selection.schema != 1 or not selection.receipt_id
-                or not selection.setup_session_id or not selection.transaction_handle
-                or not _SHA64.fullmatch(selection.plan_digest)
-                or not selection.principal_id or not selection.service_profile_id
-                or not selection.namespace_id or type(selection.expires_monotonic) not in {int, float}
-                or selection.expires_monotonic <= now or selection.issued_monotonic > now):
-            raise TargetAuthorityError("setup principal-selection receipt is expired or malformed")
         target_id, machine_digest, platform_id = _host_facts()
-        catalog = runtime.bindings.enrollment_catalog
-        matches = [row for row in catalog._records.values()
-                   if row.profile_id == selection.service_profile_id]
-        if len(matches) != 1:
-            raise TargetAuthorityError("setup-selected profile is absent or ambiguous in the active catalog")
-        service_row = matches[0]
-        generation = service_row.generation
-        try:
-            principal = runtime.resolve_selected_native_principal(
-                selection.service_profile_id, generation,
-                runtime.service.service_generation_digest,
-            )
-        except Exception as exc:
-            raise TargetAuthorityError("setup-selected principal is not active in current managed custody") from exc
-        if (principal.principal_id != selection.principal_id
-                or principal.profile_id != selection.service_profile_id
-                or principal.namespace_id != selection.namespace_id
-                or frozenset(selection.capabilities) != principal.capabilities
-                or principal.uid != service_row.service_uid):
-            raise TargetAuthorityError("setup identity does not match the protected active profile and principal")
+        selection = _active_root_principal(runtime)
+        principal = selection.principal
+        generation = selection.generation
         return cls(runtime, selection, installed_candidate_receipt_registry,
                    _RootReceiptJournal(runtime, test_uid=test_uid), target_id=target_id,
                    machine_digest=machine_digest, platform_id=platform_id,
@@ -581,22 +523,13 @@ class InstallerTrustedTargetAuthorizer:
                 or type(maximum_seconds) not in {int, float} or not 0 < maximum_seconds <= 600):
             raise TargetAuthorityError("acceptance action or admission lifetime is invalid")
         candidate = self.candidate_receipts.get_current(candidate_git_sha)
-        try:
-            from ..authority.bootstrap_enrollment import VerifiedRootSetupPrincipalSelection
-        except ImportError:
-            raise TargetAuthorityError("root setup principal-selection receipts are unavailable") from None
-        selection = self.selection
-        if not isinstance(selection, VerifiedRootSetupPrincipalSelection):
-            raise TargetAuthorityError("root setup selection no longer has a trusted type")
         now = self.runtime.service.monotonic()
-        if selection.expires_monotonic <= now:
-            raise TargetAuthorityError("root setup principal-selection lease expired")
         profile = _profile_for_acceptance(acceptance_id)
         if profile is None:
             raise TargetAuthorityError("no installer-owned assertion profile is registered for this acceptance ID")
         handle = secrets.token_urlsafe(32)
         nonce = secrets.token_urlsafe(32)
-        expiry = min(now + float(maximum_seconds), float(selection.expires_monotonic))
+        expiry = now + float(maximum_seconds)
         claims = {
             "schema": 1, "workflow_handle": handle, "acceptance_id": acceptance_id,
             "target_id": self.target_id,
@@ -607,7 +540,8 @@ class InstallerTrustedTargetAuthorizer:
             "enrollment_generation_id": self.generation,
             "service_generation_digest": self.runtime.service.service_generation_digest,
             "principal_id": self.principal.principal_id,
-            "intent_id": selection.transaction_handle, "run_nonce": nonce,
+            "intent_id": f"active-enrollment:{self.runtime.service.service_generation_digest}",
+            "run_nonce": nonce,
             "issued_monotonic": now, "expires_monotonic": expiry,
         }
         receipt_digest = self.journal.put_once("admissions", handle, claims)
@@ -618,6 +552,34 @@ def _profile_for_acceptance(acceptance_id: str):
     from .profiles import PROBE_PROFILES
     matches = [row for row in PROBE_PROFILES.values() if acceptance_id in row.acceptance_ids]
     return matches[0] if matches else None
+
+
+_ACCEPTANCE_SERVICE_PROFILE = "hermes-agent-native-v1"
+
+
+def _active_root_principal(runtime: RootAuthorityRuntime) -> _ActiveRootPrincipal:
+    """Resolve the one installer-managed Hermes profile from current root catalogs."""
+    catalog = runtime.bindings.enrollment_catalog
+    matches = [row for row in catalog._records.values()
+               if row.profile_id == _ACCEPTANCE_SERVICE_PROFILE]
+    if len(matches) != 1:
+        raise TargetAuthorityError("current root enrollment has no unique Hermes service profile")
+    service_row = matches[0]
+    try:
+        principal = runtime.resolve_selected_native_principal(
+            service_row.profile_id, service_row.generation,
+            runtime.service.service_generation_digest,
+        )
+    except Exception as exc:
+        raise TargetAuthorityError("current Hermes principal or managed generation is unavailable") from exc
+    if (principal.profile_id != service_row.profile_id
+            or principal.principal_id != service_row.principal_id
+            or principal.namespace_id != service_row.namespace_identity
+            or principal.uid != service_row.service_uid
+            or not principal.capabilities):
+        raise TargetAuthorityError("root-resolved Hermes principal does not match its protected service profile")
+    return _ActiveRootPrincipal(service_row.profile_id, service_row.service_user,
+                                service_row.generation, principal)
 
 
 @dataclass(frozen=True, slots=True)
@@ -707,6 +669,7 @@ class RootObservationReceiptRegistry:
                 "evidence_id": record.evidence_id,
                 "assertion_id": assertion_id, "observed_value": value,
                 "target_id": admission.target_id,
+                "target_machine_identity_sha256": admission.target_machine_identity_sha256,
                 "candidate_git_sha": candidate.candidate_git_sha,
                 "candidate_artifact_closure_sha256": candidate.candidate_artifact_closure_sha256,
                 "service_generation_digest": self.runtime.service.service_generation_digest,
@@ -721,6 +684,7 @@ class RootObservationReceiptRegistry:
             "acceptance_id": admission.acceptance_id,
             "evidence_ids": [record.evidence_id], "target_id": admission.target_id,
             "platform": admission.platform,
+            "target_machine_identity_sha256": admission.target_machine_identity_sha256,
             "candidate_git_sha": candidate.candidate_git_sha,
             "candidate_artifact_closure_sha256": candidate.candidate_artifact_closure_sha256,
             "service_generation_digest": self.runtime.service.service_generation_digest,
@@ -743,17 +707,20 @@ class RootObservationReceiptRegistry:
         if claims.get("expires_monotonic", 0) <= self.runtime.service.monotonic():
             raise TargetAuthorityError("workflow admission expired")
 
-    def verify_result(self, workflow_handle: str, structured_result_receipt_handle: str,
-                      *, authorizer: InstallerTrustedTargetAuthorizer) -> VerifiedRootWorkflowResult:
-        if authorizer.runtime is not self.runtime:
-            raise TargetAuthorityError("result verifier is bound to another root runtime")
-        authorizer._ensure_current()
+    def verify_result(self, workflow_handle: str,
+                      structured_result_receipt_handle: str) -> VerifiedRootWorkflowResult:
+        runtime = _root_runtime(self.runtime)
+        target_id, machine_digest, platform_id = _host_facts()
+        active = _active_root_principal(runtime)
         claims, _receipt_digest = self.journal.get("results", structured_result_receipt_handle)
         admission_claims, _ = self.journal.get("admissions", workflow_handle)
         if (claims.get("workflow_handle") != workflow_handle
-                or claims.get("target_id") != authorizer.target_id
-                or claims.get("platform") != authorizer.platform_id
+                or claims.get("target_id") != target_id
+                or claims.get("target_machine_identity_sha256") != machine_digest
+                or claims.get("platform") != platform_id
                 or claims.get("service_generation_digest") != self.runtime.service.service_generation_digest
+                or admission_claims.get("principal_id") != active.principal.principal_id
+                or admission_claims.get("enrollment_generation_id") != active.generation
                 or claims.get("candidate_git_sha") != self.candidate_receipts.get_current(
                     claims.get("candidate_git_sha", "")).candidate_git_sha
                 or claims.get("run_nonce") != admission_claims.get("run_nonce")
@@ -784,6 +751,7 @@ class RootObservationReceiptRegistry:
                     or assertion.get("acceptance_id") != claims.get("acceptance_id")
                     or assertion.get("evidence_id") != record.evidence_id
                     or assertion.get("target_id") != claims.get("target_id")
+                    or assertion.get("target_machine_identity_sha256") != claims.get("target_machine_identity_sha256")
                     or assertion.get("candidate_git_sha") != claims.get("candidate_git_sha")
                     or assertion.get("candidate_artifact_closure_sha256") != claims.get("candidate_artifact_closure_sha256")
                     or assertion.get("service_generation_digest") != claims.get("service_generation_digest")
@@ -846,12 +814,11 @@ class InstallerTrustedResultVerifier:
                    current_active_catalog)
 
     def verify_result(self, workflow_handle: str, structured_result_receipt_handle: str,
-                      *, authorizer: InstallerTrustedTargetAuthorizer) -> VerifiedRootWorkflowResult:
-        if (authorizer.runtime is not self.runtime
-                or self.current_active_catalog is not self.runtime.bindings.enrollment_catalog):
+                      ) -> VerifiedRootWorkflowResult:
+        if self.current_active_catalog is not self.runtime.bindings.enrollment_catalog:
             raise TargetAuthorityError("active protected catalog changed since result-verifier assembly")
         return self.observations.verify_result(
-            workflow_handle, structured_result_receipt_handle, authorizer=authorizer,
+            workflow_handle, structured_result_receipt_handle,
         )
 
 
@@ -965,11 +932,18 @@ class InstallerOwnedTargetWorkflowRunner:
             if len(retained) > _MAX_RESULT:
                 raise TargetAuthorityError("fixed workflow result artifact exceeds its bound")
         handle = self.observations._issue(self, admission, result, retained)
-        trusted = self.result_verifier.verify_result(admission.workflow_handle, handle,
-                                                      authorizer=self.authorizer)
+        trusted = self.result_verifier.verify_result(admission.workflow_handle, handle)
+        result_state = trusted.record.state
+        if result_state == EvidenceState.PASS:
+            result_state = EvidenceState.PENDING
+            message = (f"Root-observed {trusted.record.evidence_id} was retained and authenticated; "
+                       "the overall acceptance remains pending other required evidence.")
+        elif result_state == EvidenceState.FAIL:
+            message = f"Root-observed {trusted.record.evidence_id} contains a failed assertion."
+        else:
+            message = f"Root-observed {trusted.record.evidence_id} remains {result_state.value}: {trusted.record.blocker}"
         return WorkflowResult(
-            acceptance_id, EvidenceState.PENDING,
-            f"Root-observed {trusted.record.evidence_id} retained and authenticated; acceptance remains pending other required assertions.",
+            acceptance_id, result_state, message,
             trusted.record,
         )
 
@@ -992,3 +966,49 @@ def _internal_target(authorizer: InstallerTrustedTargetAuthorizer,
     )
     target.validate()
     return target
+
+
+@dataclass(frozen=True, slots=True)
+class RootAcceptanceWorkflowRuntime:
+    """One current-root composition of candidate, admission and result verifiers."""
+
+    candidate_receipts: InstalledCandidateReceiptRegistry
+    authorizer: InstallerTrustedTargetAuthorizer
+    adapters: InstallerOwnedWorkflowAdapterRegistry
+    observations: RootObservationReceiptRegistry
+    runner: InstallerOwnedTargetWorkflowRunner
+    result_verifier: InstallerTrustedResultVerifier
+
+    @classmethod
+    def from_current_root_runtime(
+            cls, runtime: RootAuthorityRuntime, candidate_git_sha: str | None = None,
+            *, test_uid: int | None = None) -> "RootAcceptanceWorkflowRuntime":
+        runtime = _root_runtime(runtime)
+        candidates = InstalledCandidateReceiptRegistry.from_root_runtime(
+            runtime, test_uid=test_uid,
+        )
+        try:
+            selected_sha = candidate_git_sha or candidates.release.release_commit
+            if not isinstance(selected_sha, str) or not _SHA40.fullmatch(selected_sha):
+                raise TargetAuthorityError("current root release has no exact candidate commit")
+            candidates.get_current(selected_sha)
+            authorizer = InstallerTrustedTargetAuthorizer.from_root_runtime(
+                runtime, candidates, test_uid=test_uid,
+            )
+            observations = RootObservationReceiptRegistry.from_root_runtime(
+                runtime, candidates, test_uid=test_uid,
+            )
+            adapters = InstallerOwnedWorkflowAdapterRegistry.from_root_runtime(
+                runtime, candidates, selected_sha,
+            )
+            runner = InstallerOwnedTargetWorkflowRunner.from_root_runtime(
+                authorizer, adapters, observations,
+            )
+            return cls(candidates, authorizer, adapters, observations, runner,
+                       runner.result_verifier)
+        except BaseException:
+            candidates.close()
+            raise
+
+    def close(self) -> None:
+        self.candidate_receipts.close()

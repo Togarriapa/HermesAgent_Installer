@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import platform
 import pwd
+import re
 import stat
 import subprocess
 from typing import Any, Mapping
@@ -355,3 +356,91 @@ def run_verify_cli(*, target_path: Path, output_path: Path, checkout: Path,
     }))
     return CommandResult("verify", OutcomeState.PENDING, message, tuple(result_findings),
                          resume_command=f"hermes-installer verify --target {target_path} --output {output_path}")
+
+
+def run_root_verify_cli(*, output_path: Path, requested_acceptance: tuple[str, ...] = (),
+                        request_path: Path | None = None,
+                        result_path: Path | None = None) -> CommandResult:
+    """Execute fixed workflows using the installed root runtime and its receipts."""
+    if os.geteuid() != 0:
+        return CommandResult("verify", OutcomeState.FAILED,
+                             "Root verification requires the installed root authority process.", exit_code=2)
+    if request_path is not None or result_path is not None:
+        return CommandResult("verify", OutcomeState.FAILED,
+                             "Root verification does not ingest operator-authored request/result files.", exit_code=2)
+    if (output_path.name in {"", ".", ".."}
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", output_path.name)):
+        return CommandResult("verify", OutcomeState.FAILED,
+                             "Root verification output must use a simple directory name.", exit_code=2)
+    selected = requested_acceptance or tuple(f"AC{i:02d}" for i in range(1, 19))
+    if len(set(selected)) != len(selected):
+        return CommandResult("verify", OutcomeState.FAILED,
+                             "Acceptance IDs must be unique; no probe ran.", exit_code=2)
+
+    from .target_authority import RootAcceptanceWorkflowRuntime, TargetAuthorityError
+
+    authority_service = None
+    accepted_runtime = None
+    root_runtime = None
+    try:
+        from ..authority.daemon import build_enrolled_authority_service
+        authority_service, _enrollment = build_enrolled_authority_service()
+        root_runtime = getattr(authority_service, "root_authority_runtime", None)
+        if root_runtime is None:
+            return CommandResult("verify", OutcomeState.PENDING,
+                "No protected root authority runtime is active; no acceptance workflow ran.",
+                (Finding("verify.root-runtime", "Protected enrollment did not produce a complete root runtime.",
+                         OutcomeState.PENDING, {"runtime_composed": False}),),
+                resume_command="hermes-installer verify --output <private-output-name>")
+        accepted_runtime = RootAcceptanceWorkflowRuntime.from_current_root_runtime(root_runtime)
+        candidate_sha = accepted_runtime.candidate_receipts.release.release_commit
+        destination = Path("/tmp/hermes-installer-verify") / output_path.name
+        output_root = OwnedRoot(destination)
+        output_root.ensure()
+        records = []
+        findings = []
+        for acceptance_id in selected:
+            observed = accepted_runtime.runner.run(acceptance_id, candidate_sha)
+            if observed.record is not None:
+                records.append(observed.record)
+            state = observed.state
+            findings.append(Finding(
+                f"verify.{acceptance_id.lower()}", observed.message,
+                OutcomeState.FAILED if state == EvidenceState.FAIL else OutcomeState.PENDING,
+                {"acceptance_id": acceptance_id,
+                 "evidence_id": observed.record.evidence_id if observed.record else None,
+                 "observation_state": state.value,
+                 "target_id": observed.record.target_id if observed.record else None,
+                 "candidate_sha": candidate_sha,
+                 "root_receipt_verified": observed.record is not None},
+            ))
+        catalog = load_acceptance_catalog(Path(__file__).resolve().parents[3] / "planning")
+        report = acceptance_report(candidate_sha=candidate_sha, traceability=catalog, records=records)
+        report_path, report_digest = _retain_report(output_root, report)
+        findings.append(Finding("verify.report", "Root-authenticated evidence report retained; full acceptance remains pending.",
+            OutcomeState.PENDING, {"path": str(report_path), "sha256": report_digest,
+                                   "candidate_sha": candidate_sha, "full_acceptance": False}))
+        failed = any(item.state == OutcomeState.FAILED for item in findings)
+        return CommandResult("verify", OutcomeState.FAILED if failed else OutcomeState.PENDING,
+            "Root fixed workflows completed; every unobserved requirement remains pending.",
+            tuple(findings), resume_command=f"hermes-installer verify --output {output_path.name}",
+            exit_code=1 if failed else 0)
+    except (OSError, PermissionError, RuntimeError, ValueError, TargetAuthorityError) as exc:
+        # Keep the blocker precise while avoiding traceback or environment disclosure.
+        message = str(exc).replace("\n", " ")[:256] or type(exc).__name__
+        return CommandResult("verify", OutcomeState.PENDING,
+            f"Root verification is not available: {message}",
+            (Finding("verify.root-prerequisite", message, OutcomeState.PENDING,
+                     {"exception_type": type(exc).__name__}),),
+            resume_command=f"hermes-installer verify --output {output_path.name}")
+    finally:
+        if accepted_runtime is not None:
+            try:
+                accepted_runtime.close()
+            except Exception:
+                pass
+        if root_runtime is not None:
+            try:
+                root_runtime.close()
+            except Exception:
+                pass
