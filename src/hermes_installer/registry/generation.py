@@ -245,4 +245,16 @@ class GenerationStore:
                     if digest != payload.get("previous_digest"): raise GenerationError("rollback digest changed")
                     self.journal.checkpoint("registry-active-pointer", "active", {"generation": target, "manifest_digest": digest, "previous": None, "previous_digest": None})
                 return "rollback_reconciled"
+            if actual == payload.get("generation"):
+                _, _, digest = self._verify(self._id(actual))
+                if digest != payload.get("manifest_digest"):
+                    raise GenerationError("active generation digest changed during rollback recovery")
+                restored = {
+                    "generation": actual,
+                    "manifest_digest": digest,
+                    "previous": target,
+                    "previous_digest": payload.get("previous_digest"),
+                }
+                self.journal.checkpoint("registry-active-pointer", "active", restored)
+                return "rollback_not_applied"
         return "intent_pending_operator_review"
