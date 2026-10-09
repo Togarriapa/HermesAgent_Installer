@@ -818,9 +818,10 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         vault: Any = None, connector_factory: RootConnectorFactory | None = None) -> dict[str, Any]:
     """Assemble the static root runtime from protected enrollment only.
 
-    The authority daemon passes its root-signed consent issuer. Service IPC and
-    private model engines are deliberately absent until the process custodian
-    enrolls authenticated per-service IPC and eligible local/private runtimes.
+    The authority daemon passes its root-signed consent issuer. Service IPC
+    and private model engines are deliberately absent until the process custodian
+    enrolls the typed fixed-memory compound executor and eligible local/private
+    runtimes. Raw HTTP connector factories are rejected.
     In that state handlers are still real, bounded handlers and data-plane
     operations truthfully return unavailable; no service is started or lazily
     installed here. The vault argument is reserved for the future root-only
@@ -851,11 +852,13 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
     data_roots = [target.data_root_id for target in targets.values()]
     if len(service_ids) != len(set(service_ids)) or len(data_roots) != len(set(data_roots)):
         raise ValueError("memory services and data roots must be separately isolated per profile")
-    enrollments = {(target.profile_id, target.namespace_id, target.provider): target.enrollment
-                   for target in targets.values() if target.enrollment is not None}
-    ipc = (MemoryServiceIPC(enrollments, connector_factory)
-           if connector_factory is not None and len(enrollments) == len(targets)
-           else None)
+    # Raw HTTP streams are not a valid SK01 memory transport. The only
+    # accepted data plane is fixed-memory-compound-json-v1 with root-owned
+    # job/step state and a fresh HI12 grant for each step. Until that typed
+    # executor is composed, all service actions remain explicitly unavailable.
+    if connector_factory is not None:
+        raise ValueError("raw memory HTTP connector factories are not supported")
+    ipc = None
     return {
         "targets": targets,
         "owner_ledger": ledger,
