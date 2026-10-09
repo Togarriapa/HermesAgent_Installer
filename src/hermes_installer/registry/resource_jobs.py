@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
+import os
 import secrets
 import sqlite3
 import stat
@@ -88,6 +88,140 @@ class ResourceBodyRecipeField:
         if self.source not in {"literal", "observed-event-field", "owned-parent-result-field"}:
             raise ResourceJobDenied("body recipe source is not protected")
         object.__setattr__(self, "value", _freeze_json(self.value))
+        if self.source == "observed-event-field":
+            _ident(self.value, "observed event field key")
+        elif self.source == "owned-parent-result-field":
+            if (not isinstance(self.value, Mapping) or set(self.value) != {"node_id", "field"}):
+                raise ResourceJobDenied("owned parent result selector must name one node and field")
+            _ident(self.value["node_id"], "owned parent result node ID")
+            _ident(self.value["field"], "owned parent result field key")
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceBodyRecipeScope:
+    name: str
+    scope_binding_id: str
+    field: str
+    validator_id: str
+
+    def __post_init__(self) -> None:
+        for name in ("name", "scope_binding_id", "field", "validator_id"):
+            _ident(getattr(self, name), f"body recipe scope {name}")
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceScopeBinding:
+    scope_binding_id: str
+    resource_id: str
+    profile_id: str
+    principal_id: str
+    resource_generation: str
+    profile_generation: str
+    backend_enrollment_id: str
+    fixed_fields: Mapping[str, Any]
+    credential_reference_ids: frozenset[str]
+    recipient: str | None
+
+    def __post_init__(self) -> None:
+        for name in ("scope_binding_id", "resource_id", "profile_id", "principal_id",
+                     "resource_generation", "profile_generation", "backend_enrollment_id"):
+            _ident(getattr(self, name), name)
+        if self.recipient is not None:
+            _ident(self.recipient, "scope recipient")
+        if not isinstance(self.fixed_fields, Mapping) or len(self.fixed_fields) > 64:
+            raise ResourceJobDenied("scope fixed fields are malformed")
+        frozen = {}
+        for name, value in self.fixed_fields.items():
+            _ident(name, "scope field name")
+            frozen[name] = _freeze_json(value)
+        object.__setattr__(self, "fixed_fields", MappingProxyType(frozen))
+        if not isinstance(self.credential_reference_ids, (set, frozenset)):
+            raise ResourceJobDenied("scope credential references must be a protected set")
+        object.__setattr__(self, "credential_reference_ids",
+                           frozenset(_ident(value, "scope credential reference")
+                                     for value in self.credential_reference_ids))
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceValidator:
+    validator_id: str
+    kind: str
+    maximum_bytes: int | None
+    minimum: int | None
+    maximum: int | None
+    allowed_values: tuple[Any, ...] | None
+    schema_artifact_id: str | None
+    schema_sha256: str | None
+
+    def __post_init__(self) -> None:
+        _ident(self.validator_id, "validator id")
+        if self.kind not in {"utf8-string", "opaque-id", "integer", "boolean", "enum", "bounded-json"}:
+            raise ResourceJobDenied("validator kind is not in the protected closed set")
+        if self.kind in {"utf8-string", "opaque-id", "bounded-json"}:
+            if type(self.maximum_bytes) is not int or not 1 <= self.maximum_bytes <= 262_144:
+                raise ResourceJobDenied("validator byte bound is invalid")
+        elif self.maximum_bytes is not None:
+            raise ResourceJobDenied("validator has an inapplicable byte bound")
+        if self.kind == "integer":
+            if (type(self.minimum) is not int or type(self.maximum) is not int
+                    or self.minimum > self.maximum):
+                raise ResourceJobDenied("integer validator bounds are invalid")
+        elif self.minimum is not None or self.maximum is not None:
+            raise ResourceJobDenied("validator has inapplicable integer bounds")
+        if self.kind == "enum":
+            if (not isinstance(self.allowed_values, tuple) or not 1 <= len(self.allowed_values) <= 128
+                    or any(type(value) not in {str, int, bool} for value in self.allowed_values)
+                    or len({(type(value), value) for value in self.allowed_values}) != len(self.allowed_values)):
+                raise ResourceJobDenied("enum validator values are invalid")
+        elif self.allowed_values is not None:
+            raise ResourceJobDenied("validator has inapplicable enum values")
+        if self.kind == "bounded-json":
+            if (not isinstance(self.schema_artifact_id, str)
+                    or not isinstance(self.schema_sha256, str)
+                    or not _DIGEST.fullmatch(self.schema_sha256)):
+                raise ResourceJobDenied("bounded JSON validator needs a pinned schema artifact")
+        elif self.schema_artifact_id is not None or self.schema_sha256 is not None:
+            raise ResourceJobDenied("validator has inapplicable schema artifact fields")
+
+    def validate_scalar(self, value: Any) -> Any:
+        if self.kind == "utf8-string":
+            if (not isinstance(value, str) or not value
+                    or len(value.encode("utf-8")) > self.maximum_bytes):
+                raise ResourceJobDenied("value failed the protected UTF-8 string validator")
+        elif self.kind == "opaque-id":
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
+                raise ResourceJobDenied("value failed the protected opaque ID validator")
+        elif self.kind == "integer":
+            if type(value) is not int or not self.minimum <= value <= self.maximum:
+                raise ResourceJobDenied("value failed the protected integer validator")
+        elif self.kind == "boolean":
+            if type(value) is not bool:
+                raise ResourceJobDenied("value failed the protected boolean validator")
+        elif self.kind == "enum":
+            if not any(type(value) is type(item) and value == item for item in self.allowed_values):
+                raise ResourceJobDenied("value failed the protected enum validator")
+        elif self.kind == "bounded-json":
+            rendered = _canonical(value)
+            if len(rendered) > self.maximum_bytes:
+                raise ResourceJobDenied("value exceeds the protected JSON byte bound")
+            _validate_json_depth(value, max_depth=16)
+            # A digest pin alone is not schema validation. Until root assembly
+            # supplies the selected artifact's strict validator, do not accept
+            # structured caller/event data under this validator kind.
+            raise ResourceJobDenied("strict bounded JSON schema artifact validator is unavailable")
+        return _thaw_json(_freeze_json(value))
+
+
+def _validate_json_depth(value: Any, *, max_depth: int) -> None:
+    stack = [(value, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > max_depth:
+            raise ResourceJobDenied("JSON value exceeds the protected nesting depth")
+        if isinstance(current, Mapping):
+            stack.extend((item, depth + 1) for item in current.values())
+        elif isinstance(current, (tuple, list)):
+            stack.extend((item, depth + 1) for item in current)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +231,7 @@ class ResourceBodyRecipe:
     source_artifact_id: str
     source_sha256: str
     output_fields: tuple[ResourceBodyRecipeField, ...]
-    scope_bindings: Mapping[str, str]
+    scope_bindings: tuple[ResourceBodyRecipeScope, ...]
     maximum_bytes: int
 
     def __post_init__(self) -> None:
@@ -109,20 +243,70 @@ class ResourceBodyRecipe:
                 or any(not isinstance(field, ResourceBodyRecipeField) for field in self.output_fields)
                 or len({field.name for field in self.output_fields}) != len(self.output_fields)):
             raise ResourceJobDenied("body recipe output fields are malformed")
-        if not isinstance(self.scope_bindings, Mapping) or len(self.scope_bindings) > 64:
+        raw_scopes = self.scope_bindings
+        if isinstance(raw_scopes, Mapping) and not raw_scopes:
+            raw_scopes = ()
+        if (not isinstance(raw_scopes, tuple) or len(raw_scopes) > 64
+                or any(not isinstance(item, ResourceBodyRecipeScope) for item in raw_scopes)
+                or len({item.name for item in raw_scopes}) != len(raw_scopes)
+                or {item.name for item in raw_scopes} & {item.name for item in self.output_fields}):
             raise ResourceJobDenied("body recipe scope bindings are malformed")
-        copied = {}
-        for name, binding_id in self.scope_bindings.items():
-            copied[_ident(name, "body recipe scope name")] = _ident(binding_id, "body recipe scope id")
-        object.__setattr__(self, "scope_bindings", MappingProxyType(copied))
+        object.__setattr__(self, "scope_bindings", tuple(raw_scopes))
         if type(self.maximum_bytes) is not int or not 1 <= self.maximum_bytes <= 256 * 1024:
             raise ResourceJobDenied("body recipe size bound is invalid")
 
     def render_literals(self) -> bytes:
         """Render only recipes that need no event/result or account-scope data."""
         if self.scope_bindings or any(field.source != "literal" for field in self.output_fields):
-            raise ResourceJobDenied("body recipe needs a protected root payload or scope resolver")
+            raise ResourceJobDenied("body recipe needs protected event, result, or scope values")
         rendered = _canonical({field.name: _thaw_json(field.value) for field in self.output_fields})
+        if len(rendered) > self.maximum_bytes:
+            raise ResourceJobDenied("rendered body recipe exceeds its protected byte bound")
+        return rendered
+
+    def template_payload(self) -> bytes:
+        """Stable DAG commitment; the actual request is rendered only at root."""
+        return _canonical({"body_recipe_id": self.recipe_id, "schema_id": self.schema_id})
+
+    def render(self, *, backend: "ResourceBackendEnrollment | None" = None,
+               scope_bindings: Mapping[str, ResourceScopeBinding] | None = None,
+               validators: Mapping[str, ResourceValidator],
+               event_fields: Mapping[str, Any] | None = None,
+               parent_results: Mapping[str, Mapping[str, Any]] | None = None) -> bytes:
+        scopes = dict(scope_bindings or {})
+        event = event_fields or {}
+        results = parent_results or {}
+        body: dict[str, Any] = {}
+        for scope in self.scope_bindings:
+            binding = scopes.get(scope.scope_binding_id)
+            validator = validators.get(scope.validator_id)
+            if (binding is None or validator is None or backend is None
+                    or binding.backend_enrollment_id != backend.backend_id
+                    or binding.scope_binding_id != backend.scope_binding_id
+                    or scope.field not in binding.fixed_fields):
+                raise ResourceJobDenied("body recipe scope binding or validator is unavailable")
+            body[scope.name] = validator.validate_scalar(
+                _thaw_json(binding.fixed_fields[scope.field]))
+        for output in self.output_fields:
+            validator = validators.get(output.validator_id)
+            if validator is None:
+                raise ResourceJobDenied("body recipe validator is unavailable")
+            if output.source == "literal":
+                value = _thaw_json(output.value)
+            elif output.source == "observed-event-field":
+                if output.value not in event:
+                    raise ResourceJobDenied("selected event field is absent")
+                value = event[output.value]
+            else:
+                selector = _thaw_json(output.value)
+                previous = results.get(selector["node_id"])
+                if not isinstance(previous, Mapping) or selector["field"] not in previous:
+                    raise ResourceJobDenied("selected predecessor result field is unavailable")
+                value = previous[selector["field"]]
+            if output.name in body:
+                raise ResourceJobDenied("body recipe cannot replace a scope-selected field")
+            body[output.name] = validator.validate_scalar(value)
+        rendered = _canonical(body)
         if len(rendered) > self.maximum_bytes:
             raise ResourceJobDenied("rendered body recipe exceeds its protected byte bound")
         return rendered
@@ -154,6 +338,8 @@ class ResourceBackendEnrollment:
     maximum_request_bytes: int
     maximum_response_bytes: int
     maximum_seconds: int
+    profile_generation: str = ""
+    execution_binding: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -164,6 +350,28 @@ class ResourceBackendEnrollment:
             "body_recipe_id", "scope_binding_id",
         ):
             _ident(getattr(self, name), name)
+        if self.profile_generation:
+            _ident(self.profile_generation, "backend profile generation")
+        if self.execution_binding is not None:
+            fields = {
+                "process_enrollment_id", "process_generation", "operation_id",
+                "native_package_id", "native_package_generation", "child_operation",
+                "child_target_id", "child_capability", "task_body_recipe_id",
+                "task_request_schema_id",
+            }
+            binding = self.execution_binding
+            if not isinstance(binding, Mapping) or set(binding) != fields:
+                raise ResourceJobDenied("backend process execution binding is malformed")
+            frozen_binding = {}
+            for key, value in binding.items():
+                _ident(value, f"backend execution {key}")
+                frozen_binding[key] = value
+            if (frozen_binding["operation_id"] != "hermes-resource-profile-task-v1"
+                    or frozen_binding["child_operation"] != "process.start"
+                    or frozen_binding["native_package_id"] != self.native_package_id
+                    or frozen_binding["native_package_generation"] != self.native_package_generation):
+                raise ResourceJobDenied("backend process execution binding does not join its selected row")
+            object.__setattr__(self, "execution_binding", MappingProxyType(frozen_binding))
         if not _DIGEST.fullmatch(self.handler_sha256):
             raise ResourceJobDenied("resource backend handler digest is invalid")
         if self.recipient is not None:
@@ -197,6 +405,9 @@ class ResourceJobNode:
     maximum_attempts: int = 1
     request_schema_id: str = ""
     body_recipe_id: str = ""
+    backend_enrollment_id: str = ""
+    result_schema_id: str = ""
+    scope_binding_id: str = ""
 
     def __post_init__(self) -> None:
         _ident(self.node_id, "node id")
@@ -221,8 +432,10 @@ class ResourceJobNode:
             raise ResourceJobDenied("child retry count is outside the protected bound")
         if self.request_schema_id:
             _ident(self.request_schema_id, "request schema id")
-        if self.body_recipe_id:
-            _ident(self.body_recipe_id, "body recipe id")
+        for name in ("body_recipe_id", "backend_enrollment_id", "result_schema_id", "scope_binding_id"):
+            value = getattr(self, name)
+            if value:
+                _ident(value, name)
 
     @property
     def payload_sha256(self) -> str:
@@ -258,6 +471,13 @@ class ResourceJobEnrollment:
     credential_reference_ids: frozenset[str] = frozenset()
     backend: ResourceBackendEnrollment | None = None
     body_recipes: Mapping[str, ResourceBodyRecipe] = field(default_factory=dict)
+    source_capture_schema_id: str = ""
+    source_action_ids: frozenset[str] = frozenset()
+    backends: Mapping[str, ResourceBackendEnrollment] = field(default_factory=dict)
+    profile_generation: str = ""
+    scope_bindings: Mapping[str, ResourceScopeBinding] = field(default_factory=dict)
+    validators: Mapping[str, ResourceValidator] = field(default_factory=dict)
+    source_parent_channels: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         for key in ("resource_id", "kind", "profile_id", "principal_id", "consent_revision", "schedule_or_route_id"):
@@ -266,6 +486,19 @@ class ResourceJobEnrollment:
             value = getattr(self, key)
             if value:
                 _ident(value, key)
+        if self.source_capture_schema_id:
+            _ident(self.source_capture_schema_id, "source capture schema id")
+        if self.profile_generation:
+            _ident(self.profile_generation, "service profile generation")
+        if not isinstance(self.source_action_ids, (set, frozenset)):
+            raise ResourceJobDenied("source action IDs must be a protected set")
+        object.__setattr__(self, "source_action_ids",
+                           frozenset(_ident(item, "source action ID") for item in self.source_action_ids))
+        if not isinstance(self.source_parent_channels, (set, frozenset)):
+            raise ResourceJobDenied("source parent channels must be a protected set")
+        object.__setattr__(self, "source_parent_channels",
+                           frozenset(_ident(item, "source parent channel")
+                                     for item in self.source_parent_channels))
         if not isinstance(self.credential_reference_ids, (set, frozenset)):
             raise ResourceJobDenied("credential references must be a protected set")
         object.__setattr__(self, "credential_reference_ids",
@@ -323,20 +556,99 @@ class ResourceJobEnrollment:
             # factory must reject this incomplete selection before exposing a
             # route.
             pass
+        if not isinstance(self.backends, Mapping):
+            raise ResourceJobDenied("per-node resource backend index is malformed")
+        backend_rows = dict(self.backends)
+        if any(key != item.backend_id or not isinstance(item, ResourceBackendEnrollment)
+               for key, item in backend_rows.items()):
+            raise ResourceJobDenied("per-node resource backend index is malformed")
+        if backend_rows:
+            if set(backend_rows) != {node.backend_enrollment_id for node in self.nodes}:
+                raise ResourceJobDenied("per-node backend rows do not exactly cover the approved DAG")
+            for node in self.nodes:
+                backend = backend_rows[node.backend_enrollment_id]
+                if (backend.resource_id != self.resource_id or backend.profile_id != self.profile_id
+                        or backend.principal_id != self.principal_id or backend.generation != self.generation
+                        or backend.consent_revision != self.consent_revision
+                        or backend.source_issuer_channel_id != self.source_issuer_channel_id
+                        or backend.observer_enrollment_id != self.observer_enrollment_id
+                        or backend.profile_generation != self.profile_generation
+                        or node.action_id not in backend.approved_action_ids
+                        or node.effect != backend.operation or node.target != backend.target_id
+                        or node.recipient != backend.recipient
+                        or node.request_schema_id != backend.request_schema_id
+                        or node.result_schema_id != backend.result_schema_id
+                        or node.body_recipe_id != backend.body_recipe_id
+                        or node.scope_binding_id != backend.scope_binding_id
+                        or node.backend_enrollment_id != backend.backend_id
+                        or len(node.payload) > backend.maximum_request_bytes
+                        or not backend.credential_reference_ids <= self.credential_reference_ids):
+                    raise ResourceJobDenied("node does not exactly join its per-node protected backend")
+        object.__setattr__(self, "backends", MappingProxyType(backend_rows))
         if not isinstance(self.body_recipes, Mapping):
             raise ResourceJobDenied("selected body recipe index is malformed")
         recipes = dict(self.body_recipes)
         if any(key != recipe.recipe_id or not isinstance(recipe, ResourceBodyRecipe)
                for key, recipe in recipes.items()):
             raise ResourceJobDenied("selected body recipe index is malformed")
-        if recipes and set(recipes) != {node.body_recipe_id for node in self.nodes}:
-            raise ResourceJobDenied("selected body recipes do not exactly cover the approved DAG")
+        required_recipe_ids = {node.body_recipe_id for node in self.nodes}
+        for backend in backend_rows.values():
+            if backend.execution_binding is not None:
+                required_recipe_ids.add(backend.execution_binding["task_body_recipe_id"])
+        if recipes and set(recipes) != required_recipe_ids:
+            raise ResourceJobDenied("selected body recipes do not exactly cover node and task recipes")
         for node in self.nodes:
             recipe = recipes.get(node.body_recipe_id)
             if recipe is not None and (recipe.schema_id != node.request_schema_id
-                                       or recipe.render_literals() != node.payload):
-                raise ResourceJobDenied("node payload differs from its selected literal body recipe")
+                                       or recipe.template_payload() != node.payload):
+                raise ResourceJobDenied("node payload differs from its protected body recipe template")
         object.__setattr__(self, "body_recipes", MappingProxyType(recipes))
+        if not isinstance(self.scope_bindings, Mapping) or not isinstance(self.validators, Mapping):
+            raise ResourceJobDenied("selected scope or validator catalog is malformed")
+        scopes = dict(self.scope_bindings)
+        validators = dict(self.validators)
+        if any(key != scope.scope_binding_id or not isinstance(scope, ResourceScopeBinding)
+               for key, scope in scopes.items()):
+            raise ResourceJobDenied("selected scope catalog is malformed")
+        if any(key != validator.validator_id or not isinstance(validator, ResourceValidator)
+               for key, validator in validators.items()):
+            raise ResourceJobDenied("selected validator catalog is malformed")
+        for backend in backend_rows.values():
+            scope = scopes.get(backend.scope_binding_id)
+            if (scope is None or scope.resource_id != backend.resource_id
+                    or scope.profile_id != backend.profile_id
+                    or scope.principal_id != backend.principal_id
+                    or scope.resource_generation != backend.generation
+                    or scope.profile_generation != backend.profile_generation
+                    or scope.backend_enrollment_id != backend.backend_id
+                    or scope.recipient != backend.recipient
+                    or scope.credential_reference_ids != backend.credential_reference_ids):
+                raise ResourceJobDenied("selected backend has no exactly joined protected scope binding")
+        for recipe in recipes.values():
+            for field in recipe.output_fields:
+                if field.validator_id not in validators:
+                    raise ResourceJobDenied("body recipe validator is absent from selected catalog")
+            for field in recipe.scope_bindings:
+                scope = scopes.get(field.scope_binding_id)
+                if (scope is None or field.validator_id not in validators
+                        or field.field not in scope.fixed_fields):
+                    raise ResourceJobDenied("body recipe scope or validator is absent from selected catalog")
+        for node in self.nodes:
+            recipe = recipes.get(node.body_recipe_id)
+            backend = backend_rows.get(node.backend_enrollment_id)
+            if recipe is not None and backend is not None and any(
+                    field.scope_binding_id != backend.scope_binding_id
+                    for field in recipe.scope_bindings):
+                raise ResourceJobDenied("body recipe scope does not exactly bind its node backend")
+            binding = backend.execution_binding if backend is not None else None
+            task_recipe = recipes.get(binding["task_body_recipe_id"]) if binding is not None else None
+            if binding is not None and (task_recipe is None
+                                        or task_recipe.schema_id != binding["task_request_schema_id"]
+                                        or any(field.scope_binding_id != backend.scope_binding_id
+                                               for field in task_recipe.scope_bindings)):
+                raise ResourceJobDenied("profile task recipe does not exactly join its backend execution binding")
+        object.__setattr__(self, "scope_bindings", MappingProxyType(scopes))
+        object.__setattr__(self, "validators", MappingProxyType(validators))
         if sum(len(node.payload) for node in self.nodes) > self.max_payload_bytes:
             raise ResourceJobDenied("aggregate approved DAG payload exceeds the enrolled bound")
         if len({node.node_id for node in self.nodes}) != len(self.nodes):
@@ -352,9 +664,11 @@ class ResourceJobEnrollment:
     @property
     def dag_sha256(self) -> str:
         body = [{"node_id": n.node_id, "resource_id": self.resource_id,
-                 "action_id": n.action_id, "operation": n.effect, "target_id": n.target,
-                 "recipient": n.recipient, "request_schema_id": n.request_schema_id,
+                "action_id": n.action_id, "operation": n.effect, "target_id": n.target,
+                "recipient": n.recipient, "request_schema_id": n.request_schema_id,
                  "body_recipe_id": n.body_recipe_id, "depends_on": list(n.depends_on),
+                 "backend_enrollment_id": n.backend_enrollment_id,
+                 "result_schema_id": n.result_schema_id, "scope_binding_id": n.scope_binding_id,
                  "maximum_attempts": n.maximum_attempts}
                 for n in sorted(self.nodes, key=lambda item: item.node_id)]
         return hashlib.sha256(_canonical(body)).hexdigest()
@@ -404,6 +718,69 @@ class ResourceJobAdmission:
         copied = {_ident(key, "node id"): _ident(value, "child admission id")
                   for key, value in self.child_admission_ids.items()}
         object.__setattr__(self, "child_admission_ids", MappingProxyType(copied))
+
+
+@dataclass(frozen=True, slots=True)
+class RootResourceJobAdmissionHandle:
+    """Root-only one-attempt handle used to launch a selected Hermes task.
+
+    Instances are minted by ResourceJobAuthority after a durable child claim
+    and passed only between root in-process services. This DTO has no wire
+    encoder and is not a worker bearer credential.
+    """
+
+    handle_id: str
+    job_id: str
+    node_id: str
+    child_admission_id: str
+    attempt_index: int
+    backend_enrollment_id: str
+    resource_generation: str
+    profile_id: str
+    profile_generation: str
+    native_package_id: str
+    native_package_generation: str
+    process_enrollment_id: str
+    process_generation: str
+    operation_id: str
+    child_target_id: str
+    child_capability: str
+    task_body_recipe_id: str
+    task_request_schema_id: str
+    task_payload: bytes = field(repr=False)
+    task_payload_sha256: str
+    parent_closure_digest: str
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        for name in (
+            "handle_id", "job_id", "node_id", "child_admission_id", "backend_enrollment_id",
+            "resource_generation", "profile_id", "profile_generation", "native_package_id",
+            "native_package_generation", "process_enrollment_id", "process_generation",
+            "operation_id", "child_target_id", "child_capability", "task_body_recipe_id",
+            "task_request_schema_id",
+        ):
+            _ident(getattr(self, name), f"root task handle {name}")
+        if (type(self.attempt_index) is not int or not 0 <= self.attempt_index <= 9
+                or self.operation_id != "hermes-resource-profile-task-v1"):
+            raise ResourceJobDenied("root task handle operation or attempt is invalid")
+        if (not isinstance(self.task_payload, bytes) or not 1 <= len(self.task_payload) <= 262_144
+                or hashlib.sha256(self.task_payload).hexdigest() != self.task_payload_sha256
+                or not _DIGEST.fullmatch(self.parent_closure_digest)):
+            raise ResourceJobDenied("root task handle payload or closure digest is invalid")
+        try:
+            value = json.loads(self.task_payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ResourceJobDenied("root task handle payload is malformed") from None
+        if (not isinstance(value, dict) or set(value) != {"prompt"}
+                or not isinstance(value["prompt"], str) or not value["prompt"]
+                or _canonical(value) != self.task_payload):
+            raise ResourceJobDenied("root task handle payload is not the fixed prompt schema")
+        if (isinstance(self.expires_monotonic, bool)
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not __import__("math").isfinite(self.expires_monotonic)
+                or self.expires_monotonic <= 0):
+            raise ResourceJobDenied("root task handle lease is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -928,6 +1305,22 @@ class ResourceJobLedger:
                              (child.job_id, child.admission_id)).fetchone()
             return bool(row and row[0] == current_generation and row[1] > self.monotonic()
                         and row[2] == "running" and row[3] == "running")
+        finally:
+            db.close()
+
+    def is_child_admitted(self, child: ResourceChildAdmission, *, current_generation: str) -> bool:
+        """Check a claimed child before its first effect has started."""
+        if current_generation != child.generation:
+            return False
+        db = self._connect()
+        try:
+            row = db.execute(
+                "SELECT j.generation,j.expires,j.status,c.status FROM jobs j "
+                "JOIN children c ON c.job_id=j.job_id WHERE j.job_id=? AND c.admission_id=?",
+                (child.job_id, child.admission_id),
+            ).fetchone()
+            return bool(row and row[0] == current_generation and row[1] > self.monotonic()
+                        and row[2] == "running" and row[3] == "admitted")
         finally:
             db.close()
 
