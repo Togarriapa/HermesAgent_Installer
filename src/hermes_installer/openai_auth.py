@@ -99,12 +99,14 @@ def _nonempty(value: object, key: str, limit: int = 8192) -> str:
 
 
 def _token_response(value: Mapping[str, object], *, inherited_scopes: frozenset[str] | None = None,
+                    inherited_id_token: str | None = None,
                     now: float | None = None) -> tuple[str, str, str, frozenset[str], float]:
     if not isinstance(value, Mapping):
         raise OAuthAttemptError("OpenAI token response is malformed")
     access = _nonempty(value.get("access_token"), "access token")
     refresh = _nonempty(value.get("refresh_token"), "refresh token")
-    identity = _nonempty(value.get("id_token"), "ID token")
+    raw_identity = value.get("id_token")
+    identity = inherited_id_token if raw_identity is None and inherited_id_token is not None else _nonempty(raw_identity, "ID token")
     if value.get("token_type") != "Bearer":
         raise OAuthAttemptError("OpenAI token response has an unsupported token type")
     raw_scope = value.get("scope")
@@ -416,7 +418,8 @@ class ChatGPTPlanAuth:
                     "refresh_token": account.refresh_token, "resource": RESOURCE,
                 }, timeout=15)
                 access, refresh, identity, scopes, expires = _token_response(
-                response, inherited_scopes=account.scopes, now=self.clock())
+                response, inherited_scopes=account.scopes, inherited_id_token=account.id_token,
+                now=self.clock())
                 if "id_token" in response:
                     claims = self.verify_id_token(identity, "", account.client_id)
                     subject = _nonempty(claims.get("sub"), "verified account subject", 512)
