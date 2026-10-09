@@ -385,7 +385,8 @@
       "digest_domain": "SHA256 exact dechunked uncompressed HTTP response entity bytes sent by gateway and captured by producer raw SDK transport, before parsing/Unicode normalization; for SSE accumulate entire exact entity stream through terminal completion. Root gateway disables response content compression; reject unsupported content encoding or incomplete stream. Metadata is not derived from parsed model extras.",
       "consumption": "At actual pinned chat_completion_helpers SDK response return/stream completion, installer-owned boundary captures header/raw body digest and lexical native_request_handle returned by preparation. Same-peer authenticated root RPC atomically consumes delivery once and validates exact original request correlation, both current enrolled identities/PIDFDs, response digest and lease. Only then attach immutable installer-owned ProviderResponseMetadata sidecar to response/lexical tool dispatch; never read metadata from model fields or arbitrary SDK attributes.",
       "bounds": "<=128 tool bindings, <=64KiB metadata, finite expiry<=60s after actual completion and bounded by current source/job/consent/role state. Stored ancestor facts are provenance only, never revive expired effects/grants. A new effect still revalidates current policy/consent/lineage. Pending/failed/incomplete response yields no delivery handle/tool metadata.",
-      "deny": "Forged/swapped header, cross-request even same peer, changed raw bytes, cross-profile/PIDFD/generation, duplicate consume, expired/revoked handle or early streaming tool dispatch denies before tools. Raw response retained only in bounded owned memory/receipt store with original privacy policy."
+      "deny": "Forged/swapped header, cross-request even same peer, changed raw bytes, cross-profile/PIDFD/generation, duplicate consume, expired/revoked handle or early streaming tool dispatch denies before tools. Raw response retained only in bounded owned memory/receipt store with original privacy policy.",
+      "gateway_boundary": "Cross-process gateway HTTP response carries ONLY delivery lookup ref. Existing BrokeredEffectResponse producer_context_handle/tool_call_bindings attributes are root-internal DTO only and never forwarded as model body/header claims; root private registry supplies exact peer metadata on native.response.take."
     }
   },
   "observer_derivation": {
@@ -412,7 +413,7 @@
       "target_id": "joined adapter target_id",
       "recipient": "joined adapter recipient",
       "allowed_parent_source_kinds": "exact fixed mapping of issuer allowed_parent_channels; unknown channel denies",
-      "max_event_bytes": "minimum1MiB and selected schema/service bound",
+      "max_event_bytes": "min(1048576, selected actual schema/service byte bound)",
       "lease_seconds": "minimum30s and current selected service/source policy deadline; never extends original job/consent"
     },
     "kind_mapping": {
@@ -428,5 +429,16 @@
     "loaded_proof_call": "resolve_loaded_package_closure(live_peer_identity,derived_observer) -> existing LoadedPackageClosureProof from current custody private registry; exact code role/action proof and actual immutable mount/entrypoint/resolver/peer PIDFD/generation required. Do not construct proof from source_issuers or package metadata.",
     "target_peer_call": "resolve_source_target_peer(derived_observer,root_parent_context) -> {pid,pidfd,uid,profile_id,generation,identity}; root live registry resolves same enrolled producer by default. A distinct counterpart is allowed ONLY from exact current HI11 native_bridges producer/gateway pair and root pending request/result registry. Never caller target PID/profile or generic role routing. Root duplicates owned PIDFD, independently resolves current kernel identity and closes FD on cancel/expiry.",
     "source_event": "RootSourceObservationRegistry receives these derived typed records and actual pending event/context; current exact full closure/action/bytes/peer proof verification remains mandatory. Multiple matches or no actual loaded/delivery peer proof denies."
+  },
+  "adapter_workflow_binding_schema": {
+    "fields": [
+      "external_tool_name",
+      "external_action_id",
+      "external_argument_schema_id",
+      "external_result_schema_id",
+      "workflow_artifact_id",
+      "workflow_sha256"
+    ],
+    "rules": "Strict bounded list<=61; exact IDs<=128chars and lowercaseSHA256, no duplicate external tool/action/schema association. Artifact reference resolves actual immutable RB08 workflow bytes, selected package/current profile generation and registered engine. Artifact path/size are source ledger information only, not serialized binding fields. Empty list means direct single effect."
   }
 }

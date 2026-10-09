@@ -399,7 +399,12 @@
       "steps",
       "maximum_runtime_seconds",
       "maximum_actions",
-      "maximum_attempts"
+      "maximum_attempts",
+      "result_step_id",
+      "argument_schema",
+      "result_schema_source",
+      "scope_rule",
+      "body_grammar"
     ],
     "step_fields": [
       "step_id",
@@ -408,7 +413,8 @@
       "body_recipe_id",
       "request_schema_id",
       "result_schema_id",
-      "cleanup_on_failure"
+      "cleanup_on_failure",
+      "body_fields"
     ],
     "recipe": "Exact actual source-pinned registered root workflow code/artifact; finite acyclic sequence<=16 actions, <=60s voice/original outer lease. Child arguments are root-derived from canonical actual outer call and validated owned prior step result capsules plus forced enrollment scope, using existing closed root body recipe/schema validators. No worker child graph/action/digest/result claims or arbitrary scripts.",
     "root_call": "invoke_selected_plugin_workflow(root_native_invocation_handle) -> selected typed outer result; root independently resolves current binding, original observed call bytes, exact workflow artifact, action schemas, current actual session consent/role/profile/generation and step state.",
@@ -434,6 +440,30 @@
     },
     "selection": "External tool name/action/schema/workflow variant fixed by selected compiled native package enrollment before invocation; worker/model cannot choose direct-vs-composite variant or session enrollment. These workflows use original voice primitives only, no new capabilities. Other original composite tools require source-reviewed finite artifact mapping under same exact pattern before enablement.",
     "cleanup": "Root owned voice/session/workflow watchdog closes owned sessions and wipes ephemeral raw audio on cancellation/failure/revoke/original expiry, independently of expired effect grant; never closes sibling session. No external effect from cleanup. Restart inflight ambiguous, no blind child replay.",
-    "evidence": "Actual native outer SDK/tool call triggers root finite workflow and real local voice backend; exact outer matching plus fresh child grants/permission/scope/step/digest/result/replay/expiry negatives. Fixture recording or worker-selected subcalls cannot establish native acceptance."
+    "evidence": "Actual native outer SDK/tool call triggers root finite workflow and real local voice backend; exact outer matching plus fresh child grants/permission/scope/step/digest/result/replay/expiry negatives. Fixture recording or worker-selected subcalls cannot establish native acceptance.",
+    "reviewed_voice_artifacts": [
+      {
+        "external_tool_name": "voice_transcribe",
+        "external_action_id": "voice_transcribe",
+        "external_argument_schema_id": "voice-transcribe-session-workflow-v1",
+        "external_result_schema_id": "voice-transcript-result-v1",
+        "workflow_artifact_id": "workflow-voice-transcribe-session-v1",
+        "workflow_sha256": "7aa0d70213e3b46065338f458ea0b23df7c459af234a0daee22cfe83c9c74baa",
+        "artifact_path": "plans/amendments/2026-10-09-voice-workflow-artifacts-v10/voice-transcribe-session-v1.json",
+        "size_bytes": 3082
+      },
+      {
+        "external_tool_name": "voice_speak",
+        "external_action_id": "voice_speak",
+        "external_argument_schema_id": "voice-speak-session-workflow-v1",
+        "external_result_schema_id": "voice-audio-artifact-result-v1",
+        "workflow_artifact_id": "workflow-voice-speak-session-v1",
+        "workflow_sha256": "97d8e586799e74046914744b267504302ae97e3e4e423060052ae8eda357278e",
+        "artifact_path": "plans/amendments/2026-10-09-voice-workflow-artifacts-v10/voice-speak-session-v1.json",
+        "size_bytes": 2532
+      }
+    ],
+    "root_outer_operation": "External voice_transcribe remains plugin.voice-pipeline.stt, voice_speak plugin.voice-pipeline.tts, same selected root target and existing plugin effect wire. Root selects workflow from native adapter workflow_bindings; worker request contains no workflow selector. Ordinary invoke fixed adapter/action/arguments canonical payload grants outer admission; root internal fresh grants use existing original primitive operations.",
+    "artifact_activation": "These actual immutable canonical recipe bytes are reviewed planner artifacts, not executable module hashes or proof. Root selected ArtifactCatalog installs exact recipe bytes/hash and separately verifies actual registered finite workflow engine and every primitive handler code/artifact/permission. No recording callback can substitute; missing implementation keeps original capability unavailable."
   }
 }

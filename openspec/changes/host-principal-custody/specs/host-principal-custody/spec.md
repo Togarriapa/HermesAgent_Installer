@@ -327,3 +327,10 @@ The installer SHALL resolve source observers from explicit selected adapter join
 #### Scenario: Composite tool requests an unselected child
 - **WHEN** worker code invokes a different action/digest or claims response metadata without exact root lookup
 - **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants
+
+### Requirement: Exact selected finite voice recipes
+The installer SHALL verify the actual immutable selected voice workflow recipe and registered primitive handlers while preserving session-specific permission and fresh child authority.
+
+#### Scenario: Recipe bytes available without handler
+- **WHEN** a selected recipe is verified but actual root engine, primitive handler or trusted session permission is missing
+- **THEN** capability remains incomplete and no recipe/fixture status claims native effect success
