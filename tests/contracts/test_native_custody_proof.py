@@ -12,6 +12,7 @@ from pathlib import Path
 
 from hermes_installer.authority.native_custody_proof import (
     LivePeerProcess,
+    _LaunchObservation,
     NativeLoaderSelection,
     RootNativeLoaderObservationStore,
     active_native_catalog_resolver,
@@ -214,6 +215,31 @@ class ProgressWireContracts(unittest.TestCase):
         self.assertEqual(record.phase, "entrypoint-imported")
         with self.assertRaises(AuthorityDenied):
             _parse_progress(b'{"schema":1,"schema":1}')
+
+    def test_revoked_launch_cleanup_closes_fd_and_unlinks_private_socket(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "launch"
+            directory.mkdir(mode=0o700)
+            socket_path = directory / "progress.sock"
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(str(socket_path))
+            listener.listen(1)
+            child_pidfd = os.open("/dev/null", os.O_RDONLY)
+            entry = _LaunchObservation(
+                handle="test-handle", owned_process_handle=None, selection=None,
+                listener_socket=listener, parent_socket=None,
+                socket_path=socket_path, socket_directory=directory,
+                child_pid=1, child_pidfd=child_pidfd, child_uid=1, child_gid=1,
+                child_start_ticks=1, child_cgroup="test", child_namespace="mnt:1;net:1",
+                launch_nonce="N" * 43, deadline=1.0,
+            )
+
+            RootNativeLoaderObservationStore._close_entry(entry)
+
+            self.assertFalse(socket_path.exists())
+            self.assertFalse(directory.exists())
+            with self.assertRaises(OSError):
+                os.fstat(child_pidfd)
         with self.assertRaises(AuthorityDenied):
             _parse_progress(self._frame(0, "entrypoint-imported")[:-1] + b" ")
 

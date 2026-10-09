@@ -148,7 +148,7 @@ class _Service:
             source_kind=observation.source_kind, principal_id=observation.principal_id,
             profile_id=observation.profile_id, namespace_id=observation.namespace_id,
             uid=observation.producer_uid,
-            origin_id=f"{observation.origin_id}:{observation.event_record_id}",
+            origin_id=observation.origin_id,
             process_generation=observation.generation,
             payload_digest=observation.payload_sha256, sensitivity=Sensitivity.PRIVATE,
             parent_lineage_hash=observation.parent_context.lineage_hash,

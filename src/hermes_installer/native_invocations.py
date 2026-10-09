@@ -27,6 +27,30 @@ _MAX_BINDINGS = 128
 _MAX_SEEN_RESPONSES = 256
 _MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 _RESPONSE_REF = re.compile(r"[A-Za-z0-9_-]{43}\Z", re.ASCII)
+_NATIVE_MCP_ADAPTER_ID = "hermes-installer.native-mcp-dispatch.v1"
+_MAX_NATIVE_MCP_ARGUMENT_BYTES = 1_048_576
+_MAX_NATIVE_MCP_RESULT_BYTES = 2 * 1024 * 1024
+
+
+def _thaw_native_mcp_schema(value: Any, *, depth: int = 0, budget: list[int] | None = None) -> Any:
+    """Convert immutable schema mappings into bounded plain JSON values."""
+    if budget is None:
+        budget = [16_384]
+    budget[0] -= 1
+    if budget[0] < 0 or depth > 16:
+        raise ValueError("native MCP schema exceeds its structural bound")
+    if isinstance(value, Mapping):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            if type(key) is not str or key in result:
+                raise ValueError("native MCP schema contains an invalid key")
+            result[key] = _thaw_native_mcp_schema(item, depth=depth + 1, budget=budget)
+        return result
+    if type(value) in (list, tuple):
+        return [_thaw_native_mcp_schema(item, depth=depth + 1, budget=budget) for item in value]
+    if value is None or type(value) in (str, bool, int, float):
+        return value
+    raise ValueError("native MCP schema contains a non-JSON value")
 
 
 class NativeInvocationUnavailable(PermissionError):
@@ -61,6 +85,82 @@ def canonical_tool_arguments(arguments: Mapping[str, Any]) -> bytes:
                           separators=(",", ":"), allow_nan=False).encode("utf-8")
     except (TypeError, ValueError, UnicodeError):
         raise NativeInvocationUnavailable("Hermes tool arguments are not canonical JSON") from None
+
+
+def dispatch_native_mcp_tool_call(authority: Any, registration: Any,
+                                  arguments: Mapping[str, Any]) -> str:
+    """Dispatch one protected in-process MCP tool under its lexical root binding.
+
+    ``registration`` must be a root-selected ``NativeMCPToolBinding`` presented
+    by the protected MCP registration index.  It is a local selector only: no
+    service, target, resource, or endpoint fields are sent over the RPC.  The
+    root resolves those fields again from the invocation handle and current
+    enrollment before performing the effect.
+    """
+    binding = current_native_invocation_binding()
+    if binding is None:
+        raise NativeInvocationUnavailable("native MCP call has no current root invocation")
+    try:
+        from hermes_installer.mcp.client import _validate_schema, _validate_value
+        frozen_schema = getattr(registration, "native_schema", None)
+        schema_digest = getattr(registration, "native_schema_sha256", None)
+        if (not isinstance(frozen_schema, Mapping) or not isinstance(schema_digest, str)
+                or not _SHA256.fullmatch(schema_digest)):
+            raise ValueError("protected MCP schema is unavailable")
+        schema = _thaw_native_mcp_schema(frozen_schema)
+        schema_bytes = json.dumps(schema, ensure_ascii=True, sort_keys=True,
+                                  separators=(",", ":"), allow_nan=False).encode("ascii")
+        if hashlib.sha256(schema_bytes).hexdigest() != schema_digest:
+            raise ValueError("protected MCP schema pin differs")
+        if type(arguments) is not dict:
+            raise ValueError("native MCP arguments must be a JSON object")
+        _validate_schema(schema)
+        _validate_value(arguments, schema)
+        arguments_bytes = canonical_tool_arguments(arguments)
+        if len(arguments_bytes) > _MAX_NATIVE_MCP_ARGUMENT_BYTES:
+            raise ValueError("native MCP arguments exceed their bound")
+        expected = {
+            "adapter_id": _NATIVE_MCP_ADAPTER_ID,
+            "action_id": getattr(registration, "id", None),
+            "package_id": getattr(registration, "native_package_id", None),
+            "generation": getattr(registration, "native_package_generation", None),
+            "profile_id": getattr(registration, "profile_id", None),
+        }
+        actual = {
+            "adapter_id": getattr(binding, "adapter_id", None),
+            "action_id": getattr(binding, "action_id", None),
+            "package_id": getattr(binding, "package_id", None),
+            "generation": getattr(binding, "generation", None),
+            "profile_id": getattr(binding, "profile_id", None),
+        }
+        native_tool_name = getattr(registration, "native_tool_name", None)
+        if (any(not isinstance(value, str) or not value for value in expected.values())
+                or not isinstance(native_tool_name, str) or not native_tool_name
+                or actual != expected):
+            raise ValueError("native MCP registration does not match the root invocation")
+        arguments_digest = hashlib.sha256(arguments_bytes).hexdigest()
+        if getattr(binding, "arguments_sha256", None) != arguments_digest:
+            raise ValueError("native MCP arguments differ from the root-observed invocation")
+    except NativeInvocationUnavailable:
+        raise
+    except Exception:
+        raise NativeInvocationUnavailable("native MCP registration or arguments were rejected") from None
+
+    dispatch = getattr(authority, "dispatch_native_mcp", None)
+    invocation_handle = getattr(binding, "invocation_handle", None)
+    if not callable(dispatch) or not isinstance(invocation_handle, str) or not _OPAQUE.fullmatch(invocation_handle):
+        raise NativeInvocationUnavailable("root native MCP dispatch is unavailable")
+    try:
+        response = dispatch(invocation_handle, arguments_bytes)
+        status = getattr(response, "status", None)
+        body = getattr(response, "body", None)
+        if (type(status) is not int or not 200 <= status < 300
+                or not isinstance(body, bytes) or not 1 <= len(body) <= _MAX_NATIVE_MCP_RESULT_BYTES):
+            raise ValueError("root returned a bounded MCP dispatch failure")
+        result = body.decode("utf-8", errors="strict")
+    except Exception:
+        raise NativeInvocationUnavailable("root native MCP dispatch was denied or unavailable") from None
+    return result
 
 
 def parse_observed_tool_calls(raw: object) -> tuple[ObservedToolCall, ...]:

@@ -395,5 +395,30 @@
         "validation": "SetupProbeExecutor validates exact strict response fields/echo/digests/limits against actual root child action registry and connector observation receipts; frame booleans/hashes alone cannot create origin readiness. Aggregate eight observation map root only. Cancellation/EOF/expiry closesownedstreams."
       }
     }
+  },
+  "selected_observation_catalog": {
+    "task_ids": [
+      "HI-T10",
+      "HI-T13",
+      "RT-F03"
+    ],
+    "active_key": "service_generations.remote_observation_enrollments",
+    "row_fields": [
+      "id",
+      "remote_enrollment_id",
+      "gateway_listener_port",
+      "native_window_enrollment_id",
+      "display_server_profile_id",
+      "display_server_generation",
+      "display_name",
+      "xauthority_receipt_handle"
+    ],
+    "types": "IDs/generations/display_name are bounded opaque strings; gateway_listener_port integer1..65535 selected private loopback listener. display_name is protected startup selection, never caller/environment inference. xauthority_receipt_handle root-private current display-server startup artifact receipt, not a supplied filesystem path.",
+    "static_join": "Exactly one row per remote enrollment; current remote_session_enrollments selects gateway/native profile generations, hostname, policy_config_digest and policy_revision. Display profile/generation joins selected protected service record. Complete row is in active service_generations canonical digest; no mutable sidecar fallback.",
+    "gateway_accessor": "selected_gateway_boundary(remote_enrollment_id) -> SelectedGatewayBoundary(remote_enrollment_id,gateway_profile_id,gateway_generation,gateway_identity_digest,hostname,listener_port,policy_config_digest,policy_revision)",
+    "gateway_facts": "Listener port is row.gateway_listener_port; observed_gateway_identity_digest is actual current gateway_role_binding role proof verified by custody/kernel PIDFD and exact gateway generation, not static catalog hash. Hostname/policy values come exact HI13 row. Root verifies actual selected listening socket/namespace; no port-open-only readiness.",
+    "window_accessor": "selected_native_window(remote_enrollment_id) -> SelectedNativeWindow(remote_enrollment_id,native_profile_id,native_generation,native_uid,native_cgroup_id,allowed_executable_sha256s,display_server_profile_id,display_server_generation,display_name,xauthority_path,xauthority_device,xauthority_inode,xauthority_uid)",
+    "window_facts": "native_uid from current selected native HostServiceProfile; cgroup from actual selected process custody receipt; executable set from exact selected HI10 renderer/main/child artifact pins. Xauthority path/device/inode/uid from root-private startup receipt resolved with nofollow/current inode+digest/owner checks, scoped only selected display service, never host-wide ambient DISPLAY/XAUTHORITY. Accessor returns root-private DTO; no worker-visible paths. Missing actual startup/role/cgroup proof leaves exact observation pending; static enrollment alone is not window evidence.",
+    "ownership": "Host enrollment parses active row and validates foreign keys; custody supplies current live observations. Runtime composition exposes typed root-private getters to remote observation adapter. No new public desktop/profile selection, all existing confinement and AC13..15 pending."
   }
 }

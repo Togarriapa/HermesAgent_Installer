@@ -276,7 +276,19 @@
         "catalog_selections": "Strict object containing existing EnrollmentPolicy catalog field names: protected_devices/protected_build_records/native_packages/memory_enrollments/operation_parameter_schemas/source_issuers/resource_jobs/remote_session_enrollments/resource_backend_enrollments/resource_body_recipes/resource_scope_bindings/resource_validators/root_journal_roots. Each selected row uses its existing exact inner schema; actual dynamic record facts derived by declared receipt binding, static declarations only from reviewed policy bytes. Empty list means capability unavailable, not omitted original scope or accepted.",
         "factory": "InstalledRootBootstrapPolicyResolver.resolve(plan)->VerifiedRootBootstrapPolicy after same release/catalog/artifact SHA/schema validation. RootSetupPolicyFactory.prepare(verified_policy,verified_setup_authorization,verified_artifact_receipts)->EnrollmentPolicy creates only selected dedicated identity/private roots/source receipt/prepared empty service records; no active exe/profile assumed. RootSetupPolicyFactory.activate(prepared_transaction,verified_policy,actual_runtime_and_health_receipts)->EnrollmentPolicy resolves exact receipt bindings, current strict templates/authoritybase and publishes fresh generation CAS. No default raw EnrollmentPolicy fields/callback record builder as authority.",
         "state": "This defines reviewed policy serialization/construction, not a claim that a deployed runnable policy artifact currently exists. Root deployment must materialize/review exact selected bytes and actual receipt joins before activation; absence fails with explicit artifact/receipt prerequisite. Prepared setup remains implementable without inventing active runtime records.",
-        "activation_order": "Clarifies v21 health dependency: RootSetupPolicyFactory.activate_runnable(prepared_transaction,verified_policy,actual_runtime_receipts)->EnrollmentPolicy publishes strict active authority records only after actual source/PM/executable/closure receipts, with lifecycle functional health still pending and ordinary product enablement withheld. This is a committed active enrollment receipt used by hermes-agent-health-v1, not accepted installation. RootSetupPolicyFactory.record_functional_health(active_enrollment_receipt,verified_health_receipt) journals exact current generation health outcome; only actual passed receipt permits normal functional enablement. No health receipt is required to create the custody profile needed to execute that same health fixture. Native-health receipt bindings may affect only final enablement/health state, never initial executable/profile pins. Any catalog generation change invalidates health and requires requalification."
+        "activation_order": "Clarifies v21 health dependency: RootSetupPolicyFactory.activate_runnable(prepared_transaction,verified_policy,actual_runtime_receipts)->EnrollmentPolicy publishes strict active authority records only after actual source/PM/executable/closure receipts, with lifecycle functional health still pending and ordinary product enablement withheld. This is a committed active enrollment receipt used by hermes-agent-health-v1, not accepted installation. RootSetupPolicyFactory.record_functional_health(active_enrollment_receipt,verified_health_receipt) journals exact current generation health outcome; only actual passed receipt permits normal functional enablement. No health receipt is required to create the custody profile needed to execute that same health fixture. Native-health receipt bindings may affect only final enablement/health state, never initial executable/profile pins. Any catalog generation change invalidates health and requires requalification.",
+        "receipt_binding_rules_schema": {
+          "row_fields": [
+            "receipt_role",
+            "allowed_artifact_ids",
+            "allowed_output_kinds",
+            "required_phase",
+            "field_bindings"
+          ],
+          "receipt_role": "official-agent-source|official-installer-script|official-pm-lock|official-pm-runtime|resources-source-bundle|native-compiled-closure|native-entrypoint-manifest|native-action-resolver|native-boundary-overlay|native-health",
+          "allowed_artifact_ids": "Finite exact selected verified catalog IDs or root compiled output artifact IDs from exact materialization registry role, never any allowed handle. official-agent-source exact Hermes commit/archive role, installer script034845 SHA, pm-lock49b792 SHA unchanged; Resources role exact separate resources_source artifact above. PM runtime bound exact actual pinned lock role/target/platform payload records, not Agent/Resources source. Native output role binds exact compiler output_kind/source receipts; native-health only actual health observer receipt.",
+          "required_phase": "prepared-source|runnable|functional-health; no functional-health binding prerequisite for same runnable profile. field_bindings uses exact v21 finite field_path/receipt_role/receipt_field grammar, each role equality validated, no semantic swaps."
+        }
       }
     },
     "first_setup_artifact_fetch": {
@@ -286,6 +298,61 @@
       "receipt": "After verified CAS object, actual catalog.resolve_store_id validates current held source custody; RootArtifactReceiptRegistry.mint binds existing store ID/receipt ID to same VerifiedRootSetupAuthorization and transaction/session/target/plan. Return existing opaque handle only. Importer resolves handle in same registry and reads verified store bytes; no fabricated bytes-to-receipt conversion.",
       "source": "Hermes full source archive exact80347460 bytes/SHA592ac0b09a7130cf2f8166f039098ba4ed40fb91535c601a6a7e5b1fcf889d01 and tree/normalization limits from protected-artifact-source-catalog.json; installer script034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86 and PM lock49b79259220160f147255078a19af541a5f328d3871c8041cc1eb909d19eb549 unchanged. Other PM payloads only actual pinned lock target rows, no arbitrary downloads.",
       "failure": "Wrong role/actor/session/catalog/receipt transaction, unverified release or source, oversized transfer/hash mismatch/cancel/CAS conflict denies; incomplete first setup stays prepared with exact resume. No active profile before actual runnable artifact receipts."
+    },
+    "installed_deployment_receipt": {
+      "owner_module": "hermes_installer.authority.installer_release",
+      "path": "/var/lib/hermes-installer/deployments/current.json",
+      "release_store_root": "/usr/lib/hermes-installer/releases",
+      "record_fields": [
+        "schema",
+        "receipt_id",
+        "candidate_git_sha",
+        "release_root",
+        "release_device",
+        "release_inode",
+        "closure_manifest_relative_path",
+        "closure_manifest_sha256",
+        "baseline_tree_sha256",
+        "published_monotonic"
+      ],
+      "manifest_fields": [
+        "schema",
+        "candidate_git_sha",
+        "files"
+      ],
+      "file_row_fields": [
+        "relative_path",
+        "sha256",
+        "size_bytes",
+        "mode",
+        "roles"
+      ],
+      "roles": [
+        "launcher",
+        "interpreter",
+        "module",
+        "template",
+        "plan",
+        "artifact-catalog",
+        "bootstrap-policy",
+        "baseline",
+        "amendment"
+      ],
+      "bounds": "schema1; candidateGit40hex; digests64lowerhex; files<=50000 sorted unique portable relative paths, no absolute/dot/dotdot/symlink/hardlink/special files, roles finite enum subset. Launcher/interpreter/module require exact installed executable/module bytes and intended owner modes. Plan/template/catalog/amendment artifacts are data, never executed by role association. Bootstrap-policy role may be absent before first compiler publication; templates/plan remain mandatory.",
+      "release_selection": "release_root exact /usr/lib/hermes-installer/releases/<candidate_git_sha>; parent and release root UID0 not group/other writable; hold nofollow directory FD, verify device/inode and every manifest file before/after actor resolution. Deployment writer is root installed-stage publication; active pointer atomic fsync/CAS only after actual complete release verification. Initial verifier does not need active worker authority. Receipt is root-owned mode0600 nofollow single-link regular file; manifest immutable root-owned mode0444. No user-provided release root or receipt path.",
+      "baseline_digest": "baseline_tree_sha256 is SHA256 of canonical UTF8 JSON sorted compact map of EVERY regular file beneath plans/2026-10-09-v1, keyed by relative path and actual SHA256, including hashes.json and baseline metadata. No newline; json.dumps(map,sort_keys=True,separators=(comma,colon),ensure_ascii=False).encode(UTF8). No self-reference exists because this digest is in deployment receipt outside frozen tree. Frozen hashes.json.files is a separate 160-file snapshot coverage map with repository-relative paths; verify those entries against corresponding baseline snapshot bytes, not against the complete map including metadata. Full map must also match actual complete frozen-tag baseline tree; never substitute Git SHA1 or assume the 160-file manifest covers its own metadata.",
+      "constructor": "verify_installed_release() -> VerifiedInstallerReleaseReceipt; receipt carries held root FD/root identity/candidate/verified closure manifest records and selected baseline digest. RootInstalledSetupPlanResolver consumes this same object; actor observation verifies actual executable/interpreter/imported module origins against exact role rows, sanitized sys.path/no user-site/no ambient cwd imports. No catalog existence/UID0 alone proves actor.",
+      "fixed_role_mapping": {
+        "launcher": "artifact_id installer-root-setup-launcher-v1; relative_path bin/hermes-installer-root-setup; roles exactly [launcher] executable regular root-owned",
+        "interpreter": "artifact_id installer-root-setup-interpreter-v1; relative_path runtime/bin/python; roles exactly [interpreter]; isolated installed interpreter exact actual bytes/closure",
+        "module": "artifact ID installer-module:<dotted module_name>; relative_path lib/python/<module_name dots replaced by slash>.py, packages lib/python/<name>/__init__.py; module_name strict dotted Python identifiers, no path/extension syntax. Selection module_closure explicitly maps each actual imported module to artifact/path/SHA. roles exactly [module]; no suffix-based inference.",
+        "plan": "artifact_id installer-root-setup-plan-v1; relative_path plans/root-setup-plan-v1.json; roles exactly [plan]; actual reviewed selected plan bytes link frozen tag/tree and amendments, no filename suffix guessing.",
+        "template": "artifact_id installer-bootstrap-compiler-template-v1; relative_path templates/bootstrap-compiler-template-v1.json; roles exactly [template], actual v30 source bytes staged verbatim and hash verified",
+        "artifact-catalog": "artifact_id installer-protected-artifact-catalog-v1; relative_path catalog/artifacts.json; roles exactly [artifact-catalog]",
+        "baseline": "all paths under plans/2026-10-09-v1 roles exactly [baseline], actual frozen full tree",
+        "amendment": "all selected reviewed files under plans/amendments roles exactly [amendment], actual receipt plan amendment manifest",
+        "bootstrap-policy": "generated artifact installer-bootstrap-policy-v1 relative plans/bootstrap-policy-v1.json belongs immutable policy generation below; NOT required base deployment closure role before compiler and NOT a source module/plan role"
+      }
     }
   },
   "native_health_receipt": {
@@ -321,5 +388,157 @@
     "nullable": "provider_result_event_id nullable only when the reviewed fixture explicitly requires no provider. Required loader/request/tool/result/terminal fields never nullable for functional health success. status enum passed|failed|incomplete; failed/incomplete do not activate functional health.",
     "consume": "consume_selected_health_receipt(handle,committed_enrollment_receipt_id)->typed RootNativeHealthReceipt root registry lookup/current generation/event closure validation. Lifecycle may display typed presentation, but cannot construct/pass status as authority. Receipt is local functional health evidence, not all18AC or actual external account acceptance.",
     "failure": "Changed profile/catalog/peer/mount/fixture, stale events, unrelated tool response, replay/cancel/expiry or semantic mismatch deny passed. Rollback preserves previous owned generation/data."
+  },
+  "first_stage_policy_compiler": {
+    "tasks": "BD-F01/BD-F03/LC-F03/HI-T01 original usable installer first setup, no new human approval gate.",
+    "owner_module": "authority/setup_policy_factory.py (factory owner) + installed root-setup CLI/lifecycle; closed reviewed source templates in installed immutable release, never worker-supplied authority rows.",
+    "constructor": "RootFirstStagePolicyCompiler.from_installed_release(verified_installer_release_receipt,root_actor_observation)->RootFirstStagePolicyCompiler. Concrete release verifier holds actual root-owned nofollow installed launcher/interpreter/module/template artifact byte closure at selected candidate commit and current kernel root actor PIDFD/starttime; isolated sanitized import paths. This is stage0 root deployment trust, does not depend on already-generated root-setup-selection.json or active worker.",
+    "choices_fields": [
+      "mode",
+      "target_account_name",
+      "selected_principal_binding_receipt_handle",
+      "selected_component_ids",
+      "owned_adoption_receipt_handles"
+    ],
+    "choices": "Trusted installed root UI collects explicit original choices/secure reference flows; names/IDs validated against actual NSS and closed original component inventory. selected_principal receipt may be null for prepared stage but actual authoritative identity binding required before ordinary subject effects. No raw policy/rule/UID/path/argv/digest/role input. Root dedicated service account/group allocator observes actual UID/GID/exclusivity; existing unrelated identities/roots preserved.",
+    "compile_call": "compile_initial_policy(choices:RootSetupChoices)->CompiledRootSetupPublication, root-private. Root selects closed installer source templates, actual selected release/source catalog/plan/amendment hashes, creates/validates owned journal/store/private service roots, binds actual NSS/heldrootfacts and root-issued transaction/epoch, computes canonical policy and selection file bytes plus hashes. Prepared rows empty until dynamic runnable artifact receipts; full original selected services/tasks remain pending rather than omitted.",
+    "publication_fields": [
+      "schema=1",
+      "publication_handle",
+      "transaction_handle",
+      "plan_artifact_id",
+      "plan_sha256",
+      "bootstrap_policy_artifact_id",
+      "bootstrap_policy_sha256",
+      "selection_catalog_sha256",
+      "release_commit",
+      "root_journal_root_id",
+      "observed_root_receipt_handle"
+    ],
+    "publish_call": "publish_initial_policy(publication_handle)->RootSetupPublicationReceipt; root registry only, no caller bytes. Atomically writes exact compiled plans/bootstrap-policy-v1.json and catalog/artifacts.json in a new root-owned immutable policy generation beneath installed root deployment; reference actual release/template artifacts, then root-setup-selection.json last CAS. Root policy artifact bytes/schema include exact v21 selected policy fields; artifact hashes from actual bytes, never fake placeholders. Existing selected generation/adoption conflict is journaled/preserved. from_installed resolver is invoked only AFTER this actual publication.",
+    "closed_template": "Templates compiled from reviewed immutable installer source at current release commit, actual pinned Hermes source and live schema definitions. Every service role/operation/limit/root/recipient comes only closed fixed template record, no arbitrary callback/default EnrollmentPolicy. Static recipe IDs hermes-agent-stage-v1/hermes-agent-health-v1 plus existing component recipes; actual exe/PM/native closure pins filled only receipt rules at activate_runnable. Compiler must validate its entire rendered file using current strict loader/schema before publication, preserve four artifacts/baseline scope.",
+    "hermes_home": "Supersedes v26 data_root/hermes choice per reviewed native/factory assembly: HERMES_HOME = service_parent_root/home, EXACT selected service_home_root_id/home_root. HOME resolves same selected service home; service_data_root_id=data child remains distinct for service data/catalog storage, work separate. Do not append /.hermes or /hermes by guess. Explicit receipt/root ID binds this exact same HERMES_HOME for script/native materializer/runtime across phases.",
+    "materialization_registry": "RootMaterializationReceiptRegistry.from_root_setup(session_store,root_journal_selection,verified_artifact_store)->root instance; source/import journal/output receipts only minted from actual verified source CAS/GenerationStore/held owned roots/root backend output. bind_materialization(transaction,source_receipt_handle,compiled_generation_receipt_handle,hermes_home_root_id)->opaque one-use materialization_handle; no caller source path/output dict truth. Root source/importer and native overlay resolver share this exact registry/store selection. Actual byte/tree/compiled digests distinct.",
+    "resume": "Interrupted publication journals actual exact file digests/ownedinodes and rolls forward/returns safe pending CAS; fresh root actor revalidation before resume. Shipping installer must invoke compiler/publisher and concrete fixed fetch before factory, not permanently fail because files absent. No root setup execution on development Mac.",
+    "prepared_materialization_order": "Root source CAS/import/native materialization occurs under current verified PREPARED setup receipt before active custody records: output artifacts are prerequisites of those records. session.resolve_materialization_receipt(native_receipt_handle)->tuple[RootRuntimeArtifactReceipt,...] authenticates actual root session/transaction/plan/owned roots/current prepared generation and compiler/source/output receipts. Active publication then consumes exact validated compiled outputs plus PM receipts. No active-worker prerequisite or arbitrary caller output paths.",
+    "runtime_artifact_receipt": {
+      "owner": "authority/bootstrap_enrollment.py neutral immutable DTO bootstrap owner; materialization registry constructs only actual CAS output observations.",
+      "fields": [
+        "schema=1",
+        "artifact_id",
+        "artifact_role",
+        "sha256",
+        "size_bytes",
+        "store_id",
+        "receipt_id",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_digest",
+        "prepared_generation_id",
+        "compiler_artifact_id",
+        "compiler_sha256",
+        "source_receipt_handles",
+        "output_kind",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "roles": "resources-source-bundle|native-compiled-closure|native-entrypoint-manifest|native-action-resolver|native-boundary-overlay; each exact fixed role admits one output per transaction, duplicate/crossrole conflict denied. source_receipt_handles includes distinct actual Hermes and Resources proofs as applicable. output_kind source-archive|compiled-closure|entrypoint-json|resolver-json|boundary-overlay, compatible exact role only.",
+      "catalog": "Root registry resolve actual held immutable CAS object via current session verified artifact catalog/materialized-output catalog with actual compiled bytes/SHA/size/tree/owner/mode. Newly compiled artifact records published only by pinned reviewed root compiler and exact finite output manifest, no worker arbitrary artifact enrollment or sourceSHA as compiledSHA. Caller native receipt handle is lookup-only one-use session binding."
+    },
+    "resources_source": {
+      "artifact_id": "resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83",
+      "artifact_role": "resources-source-bundle",
+      "path": "src/hermes_installer/registry/bundle_data/hermes-agent-resources-2.3.1.tar.gz",
+      "sha256": "b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1",
+      "size_bytes": 295368,
+      "source_commit": "113f42d33be9e0c8f0f47f5ca998e687323dec83",
+      "source_git_tree": "c0c994b5e0b96b90cfd2fc564ea8632dff124308",
+      "source_files": 739,
+      "declarations": 692,
+      "provenance": "Independent checked-in Resources bundle+pin fullsource proof, not Hermes archive receipt; no Resources network fetch or imported governance. Sol independently hashed archive bytes."
+    },
+    "closed_template_artifact": {
+      "artifact_id": "installer-bootstrap-compiler-template-v1",
+      "path": "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json",
+      "sha256": "27854f8f8c67ce42832f020dbfd96512607e39576b27e484598ff397cb9432e5",
+      "size_bytes": 4281,
+      "state": "reviewed planning/source template, not installed runnable artifact or fake executable attestation"
+    },
+    "closed_template_bindings": "Every leaf exact {root_binding:<enum>} resolved only from actual root-held trusted facts: principal.principal_id from selected verified authoritative principal binding; transaction.process_generation/namespace_identity root-issued currenttransaction; nss.service_uid/gid actualdedicatedexclusiveaccount; roots.home/work/data heldnofollow createdownedprivatechildren; pm.catalog_executable_path/executable_sha256/runtime_artifact_ids/package_runtime_records actual selected officialPM receipt+ArtifactCatalog currentresolvedimmutable runtime; native.child_artifact_refs actualpreparednative output receipt closure. No arbitrary binding expression/path/field interpolation, caller values or ambient defaults. Missingbinding leaves preparedemptyrecords. Namespace identity is observed issued namespace enrollment, not caller-generated token.",
+    "stage_executor": "RootPreparedHermesStageExecutor.run_selected_stage(setup_session_handle,prepared_receipt_handle)->tuple[RootRuntimeArtifactReceipt,...] root-private fixedstage operation/hermes-agent-stage:start independent activeworker; exact source/script/PM lock and current ownedstaging roots selected from closedtemplate+rootreceipts, uses official stage adapter checkpoint bounded600s, no callerargv/path/flags. Produces actual officialPM/native runtime artifacts and receipt verification before runnable activation. Health/task recipes are separate committed runnable profile operations; stage not forced into that later profile process.start target.",
+    "policy_rows": "Compiler renders existing exact bootstrap_policy_artifact document from these closed literal identity/root/profile/recipe shapes, full selected reviewed installed authoritybase schema plus actualprincipal binding and actual artifact/action selections. No invented static Authentik claims, secrets or permissive principal/allowance maps. Ordinaryeffects require actual selected authoritative principal proof; preparedsetup still proceeds from rootsession. Additional original components/profiles derive their existing reviewed finite templates and actual source/consent/account/runtime receipts, never omit original scope because one primaryprofile template exists.",
+    "principal_selection": "Template root_binding nodes are source-only. Null selected_principal_binding_receipt_handle permits source verification/private-root preparation but returns pending-principal-selection and does not publish a compiled bootstrap policy whose identity_policy requires a concrete principal_id. Compilation requires actual root-verified selected PrincipalBinding; no disabled synthetic principal, empty authority alias or worker claim. This is original setup input, not additional confirmation.",
+    "principal_selection_receipt": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "class": "RootSetupPrincipalSelectionRegistry",
+      "constructor": "from_root_setup(setup_session_store, verified_authentik_identity_resolver, reviewed_capability_selection, root_journal)",
+      "select_call": "select_principal(setup_session_handle, authenticated_identity_receipt_handle) -> selected_principal_binding_receipt_handle",
+      "resolve_call": "resolve_selected_principal(receipt_handle, setup_session_handle, transaction_handle, plan_digest) -> VerifiedRootSetupPrincipalSelection",
+      "dto_fields": [
+        "schema",
+        "receipt_id",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_digest",
+        "principal_id",
+        "username",
+        "email",
+        "authentik_subject_id",
+        "actor_credential_ref",
+        "service_profile_id",
+        "namespace_id",
+        "capabilities",
+        "identity_receipt_handle",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "semantics": "Root private registry stores actual authenticated Authentik identity receipt/current System authority selection plus reviewed capability selection. All identifiers are bounded opaque strings, capabilities finite reviewed tuple, schema1, deadlines monotonic and no longer than setup session. principal_id is root-issued stable selected subject identity ID bound Authentik subject, never input user labels. Credential reference is existing secure root store reference; no token/secret in receipt. No worker RPC accepts identity/profile/capability assertions. Resolve verifies exact session/transaction/plan/issuer registry instance/current identity lease/revocation before compilation. DTO is root-local immutable, opaque lookup handles cannot be used as standalone proof.",
+      "binding_join": "Existing authority.service.PrincipalBinding requires uid>0, principal_id,profile_id,namespace_id,capabilities. Compiler uses verified selection principal/profile/namespace/capabilities and actual dedicated NSS UID allocated under same prepared transaction. Full authority principals row additionally uses verified username/email/authentik_subject_id/actor_credential_ref. Do not require preexisting active worker binding before first provisioning; do not confuse root operator UID0 with selected service UID.",
+      "unavailable": "Without actual authenticated identity resolver/receipt, return pending-principal-selection with supported identity setup/resume; never fabricate identity or enable private/public effects. Existing original Authentik/System policy scope remains mandatory.",
+      "initial_identity_observer": {
+        "implementation_module": "hermes_installer.authority.setup_principal",
+        "policy_record_fields": [
+          "id",
+          "https_origin",
+          "system_group_id",
+          "recipient_group_id",
+          "policy_revision",
+          "actor_credential_ref"
+        ],
+        "policy_source": "Root setup session authenticates explicit original identity-service selection and secure credential reference; root local selection record is transaction/plan bound, canonical digest protected journal. Origin strict HTTPS validated TLS, no redirect/caller request URL. Group IDs fixed selected authoritative System/recipient records, no name matching. No active worker HostContext prerequisite.",
+        "call": "observe_selected_authentik_identity(setup_session_handle,authentik_policy_selection_handle)->authenticated_identity_receipt_handle",
+        "fixed_reads": "GET /api/v3/core/users/me/ and GET /api/v3/core/groups/<quoted root-observed group ID>/ only, existing Authentik current-user uniqueness/active/subject/username/email validation plus complete bounded cycle-safe hierarchy. No writes/recipient search/effect admission in this identity observer.",
+        "identity_receipt_fields": [
+          "schema",
+          "receipt_id",
+          "setup_session_id",
+          "transaction_handle",
+          "plan_digest",
+          "policy_selection_digest",
+          "username",
+          "email",
+          "authentik_subject_id",
+          "actor_credential_ref",
+          "direct_group_ids",
+          "effective_group_ids",
+          "system_member",
+          "policy_revision",
+          "checked_at_monotonic",
+          "expires_monotonic"
+        ],
+        "receipt": "Root private immutable registry object and random opaque256bit handle, current session/transaction/actual request+response receipt closure retained root only. No token bytes exported. Strict exact fields, bounded IDs/groups from existing Authentik limits, lease min setup/identity max30s. Root selected principal resolver consumes/revalidates exact handle, not caller dict/signature alone. System false is authenticated identity only and grants no protected write; actual complete System/recipient lookup remains mandatory at every applicable effect.",
+        "public_api": "bootstrap_runtime_factory.RootSetupPrincipalSelectionRegistry re-exports setup_principal implementation; sole bootstrap enrollment owner. Actual root HTTPS/vault adapters mandatory; fixture identity is not production proof."
+      }
+    },
+    "atomic_publisher": {
+      "owner_module": "hermes_installer.authority.setup_policy_publication",
+      "class": "RootSetupPolicyGenerationPublisher",
+      "constructor": "from_root_setup(verified_installer_release_receipt,session_store,root_journal,compiler_publication_registry)",
+      "call": "publish(publication_handle,expected_selection_catalog_sha256)->RootSetupPublicationReceipt",
+      "generation_root": "/var/lib/hermes-installer/policy-generations/<publication_sha256>; rootUID/GID0 parent0700, generation0555 and regular immutable files0444, no links. publication_sha256 canonical sorted compact UTF8 descriptor of exact compiled policy/artifact catalog/selection file bytes and input release/template/session/transaction/plan/source receipt digests; descriptor excludes its own digest.",
+      "records": "Root setup selection adds policy_generation strict {id,publication_sha256,root_path,device,inode,publication_receipt_handle}; all included selection catalog digest. root_path fixed derivation above, never caller parameter. bootstrap_policies relative paths and compiled artifact_catalog resolve through that verified policy generation, while launcher/interpreter/module/plan/template remain under verified base release root. No immutable base release file rewritten.",
+      "transaction": "Resolve root-owned one-use compiler publication handle; validate current session/plan/source receipts/actual template/compiled strict schemas and predecessor catalog digest. Create private staged directory, write fsync exact policy/catalog/descriptor/selection, validate actual bytes and held inode again, seal/rename generation; atomically CAS root-setup-selection.json last with parent fsync. RootSetupPublicationReceipt binds generation ID/digest/current file hashes/rootinode/input receipt handles and predecessor. Concurrent mismatch preserves prior selection and leaves staged owned generation journaled for safe resume.",
+      "phases": "Prepared and active each new publication digest/ID; stable setup transaction persists. Prepared service records may empty, active values require actual runtime/closure pins, health final enablement separate. Compiler/factory consume typed publication receipt and selected generation only; no raw worker authority row publication."
+    }
   }
 }

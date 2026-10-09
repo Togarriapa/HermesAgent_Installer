@@ -197,6 +197,37 @@ class ManagedNamespaceLease:
 
 
 @dataclass(slots=True)
+class ManagedProcessIdentityLease:
+    """Root-only duplicated PIDFD plus freshly revalidated process identity."""
+
+    process_id: str
+    profile_id: str
+    generation: str
+    uid: int
+    gid: int
+    pid: int
+    start_ticks: int
+    executable_device: int
+    executable_inode: int
+    executable_sha256: str
+    cgroup_identity: str
+    mount_namespace_inode: int
+    network_namespace_inode: int
+    expires_monotonic: float
+    pidfd: int
+    _closed: bool = False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            os.close(self.pidfd)
+        except OSError:
+            pass
+
+
+@dataclass(slots=True)
 class _Handle:
     process_id: str
     profile: ManagedProfileCustody
@@ -282,6 +313,9 @@ class RootTaskTerminalReceipt:
     stderr_size_bytes: int
     parent_closure_digest: str
     native_loader_ready_event_id: str | None
+    # Native execution observations are issued by the companion registry and
+    # remain separate from this immutable custody terminal receipt.
+    native_execution_receipt_handle: str | None = None
 
     @property
     def task_handle_id(self) -> str:
@@ -2990,6 +3024,241 @@ class ManagedProcessEffectHandler:
         finally:
             if pidfd is not None:
                 os.close(pidfd)
+
+    def resolve_active_process_handle(
+        self, profile_id: str, generation: str,
+    ) -> ManagedProcessIdentityLease | None:
+        """Return a duplicated PIDFD lease for the unique active enrolled process.
+
+        Selection is exclusively through the manager's current registry. The
+        identity is re-read from procfs and compared with the retained PIDFD,
+        cgroup, executable pin, and namespace identity immediately before the
+        lease is returned. Callers own and must close the returned PIDFD.
+        """
+        proof = self.inspect_enrolled_process(profile_id, generation)
+        if proof is None:
+            return None
+        with self._lock:
+            handle = self._handles.get(proof.process_id)
+            registered = self.profiles.get(profile_id)
+            if (handle is None or handle.stopped or registered is None
+                    or registered.generation != generation
+                    or handle.registered_profile is not registered
+                    or handle.profile.profile_id != profile_id
+                    or handle.profile.generation != generation
+                    or handle.expires <= self.monotonic()):
+                return None
+            try:
+                lease_fd = os.dup(handle.child_pidfd)
+            except OSError:
+                return None
+        transferred = False
+        try:
+            pid = self._pidfd_target(lease_fd)
+            if pid != proof.pid or pid != handle.pid or _pidfd_exited(lease_fd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            if (ticks != proof.pid_starttime_ticks or ticks != handle.start_ticks
+                    or cgroup != proof.cgroup_id or cgroup != handle.cgroup
+                    or (device, inode) != (proof.executable_device, proof.executable_inode)
+                    or (device, inode) != (executable.st_dev, executable.st_ino)
+                    or mount_ns != proof.mount_namespace_inode
+                    or network_ns != proof.network_namespace_inode
+                    or f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or pid not in self._pids(handle.cgroup)
+                    or _pidfd_exited(handle.child_pidfd)
+                    or self._pidfd_target(handle.child_pidfd) != pid):
+                return None
+            with self._lock:
+                if (self._handles.get(proof.process_id) is not handle or handle.stopped
+                        or self.profiles.get(profile_id) is not registered
+                        or handle.registered_profile is not registered
+                        or handle.expires <= self.monotonic()):
+                    return None
+            lease = ManagedProcessIdentityLease(
+                process_id=proof.process_id, profile_id=profile_id,
+                generation=generation, uid=proof.uid, gid=proof.gid,
+                pid=pid, start_ticks=ticks, executable_device=device,
+                executable_inode=inode, executable_sha256=proof.executable_sha256,
+                cgroup_identity=cgroup, mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns,
+                expires_monotonic=min(proof.expires_monotonic, handle.expires),
+                pidfd=lease_fd,
+            )
+            transferred = True
+            return lease
+        except (OSError, ValueError):
+            return None
+        finally:
+            if not transferred:
+                try:
+                    os.close(lease_fd)
+                except OSError:
+                    pass
+
+    def resolve_managed_task_process_handle(
+        self, task_handle: ManagedTaskHandle,
+    ) -> ManagedProcessIdentityLease | None:
+        """Resolve one exact active root task to a duplicated PIDFD lease."""
+        if not isinstance(task_handle, ManagedTaskHandle):
+            return None
+        try:
+            state = self._resolve_task_handle(task_handle)
+        except AuthorityDenied:
+            return None
+        handle = state.handle
+        with self._lock:
+            if (self._task_handles.get(task_handle.handle_id) is not state
+                    or self._handles.get(task_handle.process_id) is not handle
+                    or handle.process_id != task_handle.process_id
+                    or handle.profile.generation != task_handle.generation
+                    or handle.stopped or state.consumed
+                    or state.deadline <= self.monotonic()):
+                return None
+            try:
+                lease_fd = os.dup(handle.child_pidfd)
+            except OSError:
+                return None
+        transferred = False
+        try:
+            pid = self._pidfd_target(lease_fd)
+            if pid != handle.pid or _pidfd_exited(lease_fd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or (device, inode) != (executable.st_dev, executable.st_ino)
+                    or pid not in self._pids(handle.cgroup)
+                    or f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or _pidfd_exited(handle.child_pidfd)
+                    or self._pidfd_target(handle.child_pidfd) != pid):
+                return None
+            digest = hashlib.sha256()
+            exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            try:
+                observed = os.fstat(exe_fd)
+                if (observed.st_dev, observed.st_ino) != (device, inode):
+                    return None
+                while True:
+                    chunk = os.read(exe_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            finally:
+                os.close(exe_fd)
+            exe_sha256 = digest.hexdigest()
+            if exe_sha256 != handle.profile.artifact_sha256:
+                return None
+            with self._lock:
+                if (self._task_handles.get(task_handle.handle_id) is not state
+                        or self._handles.get(task_handle.process_id) is not handle
+                        or handle.stopped or state.consumed
+                        or state.deadline <= self.monotonic()):
+                    return None
+            lease = ManagedProcessIdentityLease(
+                process_id=handle.process_id, profile_id=handle.profile.profile_id,
+                generation=handle.profile.generation, uid=handle.profile.owner_uid,
+                gid=handle.profile.owner_gid, pid=pid, start_ticks=ticks,
+                executable_device=device, executable_inode=inode,
+                executable_sha256=exe_sha256, cgroup_identity=cgroup,
+                mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns,
+                expires_monotonic=min(handle.expires, state.deadline), pidfd=lease_fd)
+            transferred = True
+            return lease
+        except (OSError, ValueError, AuthorityDenied):
+            return None
+        finally:
+            if not transferred:
+                try:
+                    os.close(lease_fd)
+                except OSError:
+                    pass
+
+    def resolve_owned_process_handle(
+        self, handle: _Handle,
+    ) -> ManagedProcessIdentityLease | None:
+        """Resolve a root-held active manager handle without profile selection.
+
+        This is for root registries that already selected and retained the
+        exact manager handle. It deliberately rejects structurally similar or
+        stale handles by object identity against this manager's live registry.
+        """
+        if not isinstance(handle, _Handle):
+            return None
+        with self._lock:
+            registered = self.profiles.get(handle.profile.profile_id)
+            if (self._handles.get(handle.process_id) is not handle or handle.stopped
+                    or registered is None or handle.registered_profile is not registered
+                    or handle.profile.generation != handle.registered_profile.generation
+                    or handle.expires <= self.monotonic()):
+                return None
+            try:
+                lease_fd = os.dup(handle.child_pidfd)
+            except OSError:
+                return None
+        transferred = False
+        try:
+            pid = self._pidfd_target(lease_fd)
+            if pid != handle.pid or _pidfd_exited(lease_fd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or (device, inode) != (executable.st_dev, executable.st_ino)
+                    or pid not in self._pids(handle.cgroup)
+                    or f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or _pidfd_exited(handle.child_pidfd)
+                    or self._pidfd_target(handle.child_pidfd) != pid):
+                return None
+            digest = hashlib.sha256()
+            exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            try:
+                observed = os.fstat(exe_fd)
+                if (observed.st_dev, observed.st_ino) != (device, inode):
+                    return None
+                while True:
+                    chunk = os.read(exe_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            finally:
+                os.close(exe_fd)
+            exe_sha256 = digest.hexdigest()
+            if exe_sha256 != handle.profile.artifact_sha256:
+                return None
+            with self._lock:
+                registered = self.profiles.get(handle.profile.profile_id)
+                if (self._handles.get(handle.process_id) is not handle or handle.stopped
+                        or registered is None or handle.registered_profile is not registered
+                        or handle.expires <= self.monotonic()):
+                    return None
+            lease = ManagedProcessIdentityLease(
+                process_id=handle.process_id, profile_id=handle.profile.profile_id,
+                generation=handle.profile.generation, uid=handle.profile.owner_uid,
+                gid=handle.profile.owner_gid, pid=pid, start_ticks=ticks,
+                executable_device=device, executable_inode=inode,
+                executable_sha256=exe_sha256, cgroup_identity=cgroup,
+                mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns,
+                expires_monotonic=handle.expires, pidfd=lease_fd)
+            transferred = True
+            return lease
+        except (OSError, ValueError, AuthorityDenied):
+            return None
+        finally:
+            if not transferred:
+                try:
+                    os.close(lease_fd)
+                except OSError:
+                    pass
 
     def resolve_process_operation(self, process_id: str, generation: str, operation: str, *,
                                   peer_uid: int, peer_pid: int,

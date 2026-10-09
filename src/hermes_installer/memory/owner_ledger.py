@@ -7,20 +7,43 @@ import uuid
 from pathlib import Path
 
 from hermes_installer.state import OwnedRoot, process_lock
+from hermes_installer.memory.root_state import MemoryAuthorityStateDirectory, memory_state_lock
 
 
 class OwnerTransitionError(RuntimeError):
     pass
 
 
+def _secure_sqlite_files(path: Path) -> None:
+    for suffix in ("", "-wal", "-shm"):
+        candidate = Path(str(path) + suffix)
+        try:
+            fd = os.open(candidate, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_CLOEXEC", 0))
+        except FileNotFoundError:
+            continue
+        except OSError:
+            raise OwnerTransitionError("memory owner SQLite file cannot be opened safely") from None
+        try:
+            info = os.fstat(fd)
+            if not __import__("stat").S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+                raise OwnerTransitionError("memory owner SQLite file has the wrong type or owner")
+            os.fchmod(fd, 0o600)
+            if __import__("stat").S_IMODE(os.fstat(fd).st_mode) != 0o600:
+                raise OwnerTransitionError("memory owner SQLite file is not mode 0600")
+        finally:
+            os.close(fd)
+
+
 class SQLiteOwnerLedger:
     """Small protected journal; unresolved transitions block all ownership reads."""
 
-    def __init__(self, root: Path):
-        self.owned = OwnedRoot(root)
+    def __init__(self, root: Path | MemoryAuthorityStateDirectory):
+        self.owned = root if isinstance(root, MemoryAuthorityStateDirectory) else OwnedRoot(root)
+        self.profile_scope = self.owned.profile_id if isinstance(self.owned, MemoryAuthorityStateDirectory) else None
         self.owned.ensure()
         self.path = self.owned.path("owner-ledger.sqlite3")
-        with process_lock(self.owned.path("owner-ledger.lock")):
+        with memory_state_lock(self.owned, self.owned.path("owner-ledger.lock")):
             db = self._connect()
             try:
                 db.executescript("""
@@ -43,7 +66,8 @@ class SQLiteOwnerLedger:
         db = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
         os.chmod(self.path, 0o600)
         db.execute("PRAGMA busy_timeout=5000")
-        db.execute("PRAGMA journal_mode=DELETE")
+        db.execute("PRAGMA journal_mode=WAL")
+        _secure_sqlite_files(self.path)
         return db
 
     @staticmethod
@@ -53,9 +77,14 @@ class SQLiteOwnerLedger:
         if provider is not None and (not provider or len(provider) > 64 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in provider)):
             raise ValueError("invalid provider identifier")
 
+    def _check_profile(self, profile: str) -> None:
+        if self.profile_scope is not None and profile != self.profile_scope:
+            raise OwnerTransitionError("memory owner ledger is bound to another profile")
+
     def get_owner(self, profile: str) -> str | None:
         self._valid(profile)
-        with process_lock(self.owned.path("owner-ledger.lock")):
+        self._check_profile(profile)
+        with memory_state_lock(self.owned, self.owned.path("owner-ledger.lock")):
             db = self._connect()
             try:
                 pending = db.execute("SELECT 1 FROM transitions WHERE profile=? AND state='prepared'", (profile,)).fetchone()
@@ -69,7 +98,8 @@ class SQLiteOwnerLedger:
     def get_owner_state(self, profile: str) -> tuple[str | None, int]:
         """Return durable owner plus generation used to invalidate queued events."""
         self._valid(profile)
-        with process_lock(self.owned.path("owner-ledger.lock")):
+        self._check_profile(profile)
+        with memory_state_lock(self.owned, self.owned.path("owner-ledger.lock")):
             db = self._connect()
             try:
                 if db.execute("SELECT 1 FROM transitions WHERE profile=? AND state='prepared'", (profile,)).fetchone():
@@ -81,7 +111,8 @@ class SQLiteOwnerLedger:
 
     def set_owner(self, profile: str, name: str | None) -> None:
         self._valid(profile, name)
-        with process_lock(self.owned.path("owner-ledger.lock")):
+        self._check_profile(profile)
+        with memory_state_lock(self.owned, self.owned.path("owner-ledger.lock")):
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -100,8 +131,9 @@ class SQLiteOwnerLedger:
     def begin_transition(self, profile: str, old: str | None, new: str | None) -> str:
         self._valid(profile, old)
         self._valid(profile, new)
+        self._check_profile(profile)
         transition_id = str(uuid.uuid4())
-        with process_lock(self.owned.path("owner-ledger.lock")):
+        with memory_state_lock(self.owned, self.owned.path("owner-ledger.lock")):
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -121,7 +153,8 @@ class SQLiteOwnerLedger:
 
     def commit_transition(self, profile: str, transition_id: str, name: str | None) -> None:
         self._valid(profile, name)
-        with process_lock(self.owned.path("owner-ledger.lock")):
+        self._check_profile(profile)
+        with memory_state_lock(self.owned, self.owned.path("owner-ledger.lock")):
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -143,7 +176,9 @@ class SQLiteOwnerLedger:
                 db.close()
 
     def abort_transition(self, profile: str, transition_id: str, *, recovered: bool = True) -> None:
-        with process_lock(self.owned.path("owner-ledger.lock")):
+        self._valid(profile)
+        self._check_profile(profile)
+        with memory_state_lock(self.owned, self.owned.path("owner-ledger.lock")):
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
