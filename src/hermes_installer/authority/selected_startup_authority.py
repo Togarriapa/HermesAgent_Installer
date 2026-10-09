@@ -62,6 +62,7 @@ class RootControllerProcessIdentityLease:
     cgroup_identity: str
     mount_namespace_inode: int
     network_namespace_inode: int
+    proof_sha256: str
     expires_monotonic: float
     _current_check: Callable[[], bool] = field(repr=False, compare=False)
     _monotonic: Callable[[], float] = field(default=time.monotonic, repr=False, compare=False)
@@ -77,6 +78,7 @@ class RootControllerProcessIdentityLease:
                 or not isinstance(self.cgroup_identity, str) or not self.cgroup_identity.startswith("/")
                 or type(self.mount_namespace_inode) is not int or self.mount_namespace_inode <= 0
                 or type(self.network_namespace_inode) is not int or self.network_namespace_inode <= 0
+                or not _DIGEST.fullmatch(self.proof_sha256)
                 or isinstance(self.expires_monotonic, bool)
                 or type(self.expires_monotonic) not in (int, float)
                 or self.expires_monotonic <= 0 or not callable(self._current_check)):
@@ -130,6 +132,8 @@ class RootSelectedStartupRoleBinding:
     process_operation: Any = field(repr=False, compare=False)
     source_closure: Any = field(repr=False, compare=False)
     process_id: str | None = field(default=None, repr=False)
+    stop_reason: str | None = field(default=None, repr=False)
+    stop_grace_seconds: int = field(default=5, repr=False)
 
     def __post_init__(self) -> None:
         expected_capability = ("hermes-profile-invoke" if self.action == "start"
@@ -149,6 +153,11 @@ class RootSelectedStartupRoleBinding:
                 or not isinstance(self.source_receipt_handles, tuple)
                 or (self.action != "start" and (not isinstance(self.process_id, str)
                                                  or not self.process_id))
+                or (self.action == "stop" and self.stop_reason not in {
+                    "cancel", "shutdown", "rollback"})
+                or (self.action != "stop" and self.stop_reason is not None)
+                or type(self.stop_grace_seconds) is not int
+                or not 0 <= self.stop_grace_seconds <= 10
                 or self.service_profile is None or self.process_operation is None
                 or self.source_closure is None):
             raise SelectedStartupDenied("selected startup role binding is malformed")
@@ -269,9 +278,13 @@ def startup_selection_payload(binding: RootSelectedStartupRoleBinding) -> bytes:
     process_id = getattr(binding, "process_id", None)
     if not isinstance(process_id, str) or not process_id:
         raise SelectedStartupDenied("selected process control requires a retained root process handle")
-    return canonical_bytes({
-        "schema": 1, "process_id": process_id, "generation": binding.generation,
-    })
+    payload = {"schema": 1, "process_id": process_id, "generation": binding.generation}
+    if binding.action == "stop":
+        # Root derives the normal shutdown verb; cancellation and partial-start
+        # rollback use distinct root-only call paths and cannot be requested by
+        # an RPC caller.
+        payload.update(reason=binding.stop_reason, grace_seconds=binding.stop_grace_seconds)
+    return canonical_bytes(payload)
 
 
 class RootSelectedDisplayLaunchAuthority:
@@ -363,6 +376,14 @@ class RootSelectedDisplayLaunchAuthority:
                 raise SelectedStartupDenied("selected startup admission deadline is expired")
             proof_handle = secrets.token_urlsafe(32)
             startup_handle = secrets.token_urlsafe(32)
+            controller_digest = hashlib.sha256(canonical_bytes({
+                "pid": identity["pid"], "uid": identity["uid"],
+                "start_ticks": identity["start_ticks"],
+                "cgroup_identity": identity["cgroup_identity"],
+                "mount_namespace_inode": identity["mount_namespace_inode"],
+                "network_namespace_inode": identity["network_namespace_inode"],
+                "setup_operation_intent": operation_intent,
+            })).hexdigest()
             proof = RootControllerProcessIdentityLease(
                 proof_handle=proof_handle,
                 startup_authorization_handle=startup_handle,
@@ -371,6 +392,7 @@ class RootSelectedDisplayLaunchAuthority:
                 cgroup_identity=identity["cgroup_identity"],
                 mount_namespace_inode=identity["mount_namespace_inode"],
                 network_namespace_inode=identity["network_namespace_inode"],
+                proof_sha256=controller_digest,
                 expires_monotonic=expires,
                 _current_check=lambda: self._setup_controller_current(
                     setup_session_handle, operation_intent, identity,
@@ -398,13 +420,6 @@ class RootSelectedDisplayLaunchAuthority:
             closure_digest = hashlib.sha256(canonical_bytes([
                 binding.source_closure_sha256 for binding in role_bindings.values()
             ])).hexdigest()
-            controller_digest = hashlib.sha256(canonical_bytes({
-                "pid": proof.pid, "uid": proof.uid, "start_ticks": proof.start_ticks,
-                "cgroup_identity": proof.cgroup_identity,
-                "mount_namespace_inode": proof.mount_namespace_inode,
-                "network_namespace_inode": proof.network_namespace_inode,
-                "setup_operation_intent": operation_intent,
-            })).hexdigest()
             admission_handle = secrets.token_urlsafe(32)
             admission = RootVerifiedStartupAdmission(
                 admission_handle=admission_handle,
@@ -470,6 +485,7 @@ class RootSelectedDisplayLaunchAuthority:
                 pidfd=os.dup(retained), cgroup_identity=proof.cgroup_identity,
                 mount_namespace_inode=proof.mount_namespace_inode,
                 network_namespace_inode=proof.network_namespace_inode,
+                proof_sha256=proof.proof_sha256,
                 expires_monotonic=proof.expires_monotonic,
                 _current_check=proof._current_check, _monotonic=self.monotonic,
             )
@@ -520,6 +536,7 @@ class RootSelectedDisplayLaunchAuthority:
             process_id=process_id, service_profile=start_binding.service_profile,
             process_operation=process_operation,
             source_closure=start_binding.source_closure,
+            stop_reason="shutdown" if action == "stop" else None,
         )
 
     def is_current(self, admission: RootVerifiedStartupAdmission) -> bool:
