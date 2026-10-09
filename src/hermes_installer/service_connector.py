@@ -44,6 +44,7 @@ ROUTES: Mapping[tuple[str, str], Route] = {
 }
 _ID = re.compile(r"[A-Za-z0-9_.:@/-]{1,256}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+_REMOTE_SESSION_SEAL = object()
 
 
 class NamespaceLease(Protocol):
@@ -381,7 +382,8 @@ class FixedServiceConnector:
             raise AuthorityDenied("connector.binding", "connector grant is not bound to this peer and payload")
 
     def open(self, *, context: HostContext, authorization: EffectAuthorization, payload: bytes,
-             timeout: float, peer_pid: int, peer_pidfd: int | None, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+             timeout: float, peer_pid: int, peer_pidfd: int | None, cancelled: Callable[[], bool],
+             _remote_session_seal: object | None = None) -> Mapping[str, Any]:
         self._auth(context, authorization, "connector.open", payload, peer_pid)
         body = _decode(payload, {"schema", "enrollment_id", "generation", "target_id", "action", "approved_route_id", "session_id", "deadline"})
         if type(body["schema"]) is not int or body["schema"] != 1 or body["action"] != "open":
@@ -398,7 +400,8 @@ class FixedServiceConnector:
                 or body["enrollment_id"] != context.enrollment_id or generation != context.generation
                 or context.operation != "connector.open" or context.intent_id != session_id):
             raise AuthorityDenied("connector.binding", "connector target does not match enrolled context")
-        if target_id == "xpra-native" and not self._test_allow_current_namespace:
+        if (target_id == "xpra-native" and not self._test_allow_current_namespace
+                and _remote_session_seal is not _REMOTE_SESSION_SEAL):
             if self.remote_session_validator is None or self.remote_session_validator(context, authorization, body) is not True:
                 raise AuthorityDenied("connector.remote-session", "root-verified HI13 remote session is required")
         if target_id == "colibri-main" and not self._test_allow_current_namespace:
@@ -560,7 +563,16 @@ class FixedServiceConnector:
                 or body.get("target_id") != stream.route.target_id
                 or body.get("route_id") != stream.route.route_id):
             raise AuthorityDenied("connector.peer", "connector handle is bound to another peer or session")
-        if self.monotonic() >= stream.expires or stream.lease.generation != authorization.generation:
+        frame_deadline = body.get("deadline")
+        now = self.monotonic()
+        if (body.get("generation") != stream.lease.generation
+                or stream.lease.generation != authorization.generation
+                or isinstance(frame_deadline, bool) or not isinstance(frame_deadline, (int, float))
+                or not math.isfinite(frame_deadline)
+                or not now < frame_deadline <= min(now + 5.0, stream.expires)):
+            self._dispose(stream)
+            raise AuthorityDenied("connector.deadline", "connector frame generation or deadline is invalid")
+        if now >= stream.expires:
             self._dispose(stream)
             raise AuthorityDenied("connector.expired", "connector handle expired or generation changed")
         return stream
@@ -568,7 +580,7 @@ class FixedServiceConnector:
     def read(self, *, context: HostContext, authorization: EffectAuthorization, payload: bytes,
              timeout: float, peer_pid: int, peer_pidfd: int | None, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         self._auth(context, authorization, "connector.read", payload, peer_pid)
-        body = _decode(payload, {"schema", "connector_id", "target_id", "route_id", "session_id", "sequence", "max_bytes"})
+        body = _decode(payload, {"schema", "connector_id", "target_id", "route_id", "session_id", "generation", "deadline", "sequence", "max_bytes"})
         stream = self._stream(body, context, authorization, "connector.read", payload, peer_pid)
         amount = body["max_bytes"]
         if (type(body["schema"]) is not int or body["schema"] != 1
@@ -598,7 +610,7 @@ class FixedServiceConnector:
     def write(self, *, context: HostContext, authorization: EffectAuthorization, payload: bytes,
               timeout: float, peer_pid: int, peer_pidfd: int | None, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         self._auth(context, authorization, "connector.write", payload, peer_pid)
-        body = _decode(payload, {"schema", "connector_id", "target_id", "route_id", "session_id", "sequence", "data_b64"})
+        body = _decode(payload, {"schema", "connector_id", "target_id", "route_id", "session_id", "generation", "deadline", "sequence", "data_b64"})
         stream = self._stream(body, context, authorization, "connector.write", payload, peer_pid)
         import base64
         try:
@@ -638,7 +650,7 @@ class FixedServiceConnector:
     def close(self, *, context: HostContext, authorization: EffectAuthorization, payload: bytes,
               timeout: float, peer_pid: int, peer_pidfd: int | None, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         self._auth(context, authorization, "connector.close", payload, peer_pid)
-        body = _decode(payload, {"schema", "connector_id", "target_id", "route_id", "session_id", "sequence"})
+        body = _decode(payload, {"schema", "connector_id", "target_id", "route_id", "session_id", "generation", "deadline", "sequence"})
         stream = self._stream(body, context, authorization, "connector.close", payload, peer_pid)
         with _exclusive(stream):
             if (type(body["schema"]) is not int or body["schema"] != 1
@@ -720,6 +732,276 @@ def build_enrolled_service_connector_handlers(*, catalog: Any, process_manager: 
     return build_service_connector_handlers(resolve_service_namespace=resolve, limits=limits,
                                             remote_session_validator=remote_session_validator,
                                             colibri_session_validator=colibri_session_validator)
+
+
+class RemoteServiceConnectorBackend:
+    """HI13 root backend adapter over the HI07 fixed socket effects.
+
+    The root remote-session authority supplies its verified binding, fresh
+    operation authorization, and kernel-observed gateway peer identity. No
+    gateway data is trusted to choose a target, route, generation, or deadline.
+    """
+
+    def __init__(self, connector: FixedServiceConnector, *,
+                 validate_binding: Callable[[Any, str, int], bool],
+                 cancelled: Callable[[Any], bool] | None = None):
+        if not callable(validate_binding):
+            raise ValueError("root remote-session binding validator is required")
+        self.connector = connector
+        self.validate_binding = validate_binding
+        self.cancelled = cancelled or (lambda binding: bool(binding.cancelled()))
+        self._handles: dict[str, tuple[str, str]] = {}
+        self._lock = threading.RLock()
+
+    def _authorized_call(self, binding: Any, authorization: Any, operation: str,
+                         payload: bytes, peer_uid: int, peer_pid: int,
+                         peer_pidfd: int | None, timeout: float,
+                         cancelled: Callable[[], bool], *,
+                         remote_session_seal: object | None = None,
+                         expected_deadline: float,
+                         expected_sequence: int | None = None,
+                         expected_maximum_bytes: int | None = None) -> Mapping[str, Any]:
+        context = getattr(authorization, "host_context", None)
+        grant = getattr(authorization, "effect_authorization", None)
+        if (getattr(authorization, "operation", None) != operation
+                or getattr(authorization, "target_id", None) != binding.target_id
+                or getattr(authorization, "route_id", None) != binding.route_id
+                or getattr(authorization, "session_id", None) != binding.session_id
+                or getattr(authorization, "generation", None) != binding.native_generation
+                or getattr(authorization, "deadline", None) != expected_deadline
+                or (expected_sequence is not None
+                    and getattr(authorization, "sequence", None) != expected_sequence)
+                or (expected_maximum_bytes is not None
+                    and getattr(authorization, "maximum_bytes", None) != expected_maximum_bytes)
+                or getattr(authorization, "request_digest", None) != canonical_digest(payload)
+                or not isinstance(context, HostContext) or not isinstance(grant, EffectAuthorization)
+                or context.uid != peer_uid or context.profile_id != binding.native_profile_id
+                or context.generation != binding.native_generation
+                or context.enrollment_id != binding.enrollment_id
+                or context.intent_id != binding.session_id):
+            raise AuthorityDenied("connector.remote-binding", "HI13 operation is not root-bound to the admitted service")
+        result = getattr(self.connector, operation.rsplit(".", 1)[1])(
+            context=context, authorization=grant, payload=payload, timeout=timeout,
+            peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
+            **({"_remote_session_seal": remote_session_seal} if remote_session_seal is not None else {}))
+        try:
+            value = json.loads(result["body"])
+        except (KeyError, ValueError, UnicodeDecodeError, TypeError) as exc:
+            raise AuthorityDenied("connector.response", "root fixed connector returned a malformed effect result") from exc
+        if result.get("status") != 200 or not isinstance(value, dict) or value.get("schema") != 1:
+            raise AuthorityDenied("connector.response", "root fixed connector rejected a HI13 operation")
+        return value
+
+    @staticmethod
+    def _peer(binding: Any, peer_uid: int, peer_pid: int, peer_pidfd: int | None) -> None:
+        identity = binding.gateway_identity
+        if (type(peer_uid) is not int or type(peer_pid) is not int or peer_pid <= 0
+                or peer_pidfd is None or peer_pidfd < 0
+                or identity.uid != peer_uid or identity.pid != peer_pid
+                or identity.profile_id != binding.gateway_profile_id
+                or identity.generation != binding.gateway_generation):
+            raise AuthorityDenied("connector.peer", "current authority peer differs from root gateway identity")
+
+    @staticmethod
+    def _frame_timeout(binding: Any) -> float:
+        remaining = binding.frame_deadline_monotonic - time.monotonic()
+        if remaining <= 0:
+            raise AuthorityDenied("connector.deadline", "root remote connector frame deadline expired")
+        return min(5.0, remaining)
+
+    def _refresh_root_lease(self, binding: Any, connector_handle: str) -> None:
+        """Observe only the current root lease after binding revalidation."""
+        stream = self.connector._streams.get(connector_handle)
+        deadline = binding.lease_expires_monotonic
+        now = time.monotonic()
+        if (stream is None or isinstance(deadline, bool) or not isinstance(deadline, (int, float))
+                or not math.isfinite(deadline) or not now < deadline <= now + 60.0):
+            raise AuthorityDenied("connector.expired", "root remote lease cannot extend this connector")
+        if deadline > stream.expires:
+            stream.expires = float(deadline)
+
+    def open(self, binding: Any, *, authorization: Any, peer_uid: int, peer_pid: int,
+             peer_pidfd: int | None) -> str:
+        self._peer(binding, peer_uid, peer_pid, peer_pidfd)
+        if self.validate_binding(binding, "connector.open", 0) is not True:
+            raise AuthorityDenied("connector.remote-session", "root remote session is not current for connector open")
+        if binding.target_id != "xpra-native" or binding.route_id not in {"xpra-http", "xpra-websocket"}:
+            raise AuthorityDenied("connector.route", "HI13 Xpra connector route is not fixed and enrolled")
+        if binding.action not in {"asset-read", "websocket-attach"}:
+            raise AuthorityDenied("connector.action", "HI13 action is not an Xpra asset or binary WebSocket")
+        route = ROUTES.get((binding.target_id, binding.route_id))
+        if route is None or (binding.action == "asset-read") != (route.protocol == "xpra-http"):
+            raise AuthorityDenied("connector.route", "HI13 action and fixed Xpra route disagree")
+        deadline = binding.lease_expires_monotonic
+        payload = open_request_bytes(enrollment_id=binding.enrollment_id,
+                                     generation=binding.native_generation,
+                                     target_id=binding.target_id, route_id=binding.route_id,
+                                     session_id=binding.session_id, deadline=deadline)
+        value = self._authorized_call(binding, authorization, "connector.open", payload,
+                                      peer_uid, peer_pid, peer_pidfd,
+                                      self._frame_timeout(binding),
+                                      lambda: self.cancelled(binding), remote_session_seal=_REMOTE_SESSION_SEAL,
+                                      expected_deadline=deadline, expected_sequence=0,
+                                      expected_maximum_bytes=0)
+        connector_id = _valid_id(value.get("connector_id"), "connector_id")
+        if value.get("generation") != binding.native_generation:
+            stream = self.connector._streams.get(connector_id)
+            if stream is not None:
+                self.connector._dispose(stream)
+            raise AuthorityDenied("connector.generation", "root connector opened another service generation")
+        with self._lock:
+            if connector_id in self._handles:
+                stream = self.connector._streams.get(connector_id)
+                if stream is not None:
+                    self.connector._dispose(stream)
+                raise AuthorityDenied("connector.handle", "root connector returned a duplicate handle")
+            self._handles[connector_id] = (binding.session_id, binding.route_id)
+        return connector_id
+
+    def read(self, binding: Any, connector_handle: str, sequence: int, maximum_bytes: int,
+             *, authorization: Any, peer_uid: int, peer_pid: int, peer_pidfd: int | None,
+             cancelled: Callable[[], bool]) -> tuple[bytes, bool]:
+        return self._frame(binding, connector_handle, sequence, "read", authorization,
+                           peer_uid, peer_pid, peer_pidfd, cancelled, max_bytes=maximum_bytes)
+
+    def write(self, binding: Any, connector_handle: str, sequence: int, data_bytes: bytes,
+              *, authorization: Any, peer_uid: int, peer_pid: int, peer_pidfd: int | None,
+              cancelled: Callable[[], bool]) -> int:
+        result = self._frame(binding, connector_handle, sequence, "write", authorization,
+                             peer_uid, peer_pid, peer_pidfd, cancelled, data_bytes=data_bytes)
+        return result
+
+    def _frame(self, binding: Any, connector_handle: str, sequence: int, verb: str,
+               authorization: Any, peer_uid: int, peer_pid: int, peer_pidfd: int | None,
+               cancelled: Callable[[], bool], *, max_bytes: int | None = None,
+               data_bytes: bytes | None = None) -> Any:
+        self._peer(binding, peer_uid, peer_pid, peer_pidfd)
+        route_id = binding.route_id
+        if (type(sequence) is not int or sequence < 0
+                or type(connector_handle) is not str or not _ID.fullmatch(connector_handle)):
+            raise AuthorityDenied("connector.frame", "root connector frame handle or sequence is invalid")
+        with self._lock:
+            owner = self._handles.get(connector_handle)
+        if owner != (binding.session_id, route_id):
+            raise AuthorityDenied("connector.handle", "root connector handle belongs to another HI13 session")
+        if self.validate_binding(binding, "connector." + verb, sequence) is not True:
+            raise AuthorityDenied("connector.remote-session", "root remote session is not current for this frame")
+        self._refresh_root_lease(binding, connector_handle)
+        body: dict[str, Any] = {"schema": 1, "target_id": binding.target_id,
+                                "route_id": route_id, "connector_id": connector_handle,
+                                "session_id": binding.session_id,
+                                "generation": binding.native_generation,
+                                "deadline": binding.frame_deadline_monotonic,
+                                "sequence": sequence}
+        if verb == "read":
+            if type(max_bytes) is not int or not 1 <= max_bytes <= 1_048_576:
+                raise AuthorityDenied("connector.frame", "read frame is outside its fixed bound")
+            body["max_bytes"] = max_bytes
+        else:
+            if not isinstance(data_bytes, bytes) or not 1 <= len(data_bytes) <= 1_048_576:
+                raise AuthorityDenied("connector.frame", "write frame is outside its fixed bound")
+            body["data_b64"] = base64.b64encode(data_bytes).decode("ascii")
+        payload = canonical_bytes(body)
+        value = self._authorized_call(binding, authorization, "connector." + verb, payload,
+                                      peer_uid, peer_pid, peer_pidfd,
+                                      self._frame_timeout(binding),
+                                      lambda: cancelled() or self.cancelled(binding),
+                                      expected_deadline=binding.frame_deadline_monotonic,
+                                      expected_sequence=sequence,
+                                      expected_maximum_bytes=(max_bytes if verb == "read" else len(data_bytes)))
+        if value.get("sequence") != sequence:
+            raise AuthorityDenied("connector.replay", "root connector frame receipt sequence is invalid")
+        if verb == "read":
+            try:
+                data = base64.b64decode(value["data_b64"], validate=True)
+            except (KeyError, ValueError, TypeError) as exc:
+                raise AuthorityDenied("connector.response", "root connector read result is malformed") from exc
+            if len(data) > max_bytes:
+                raise AuthorityDenied("connector.response", "root connector read exceeds its authorized bound")
+            if not data:
+                self._forget(connector_handle)
+            return data, not data
+        if value.get("written") != len(data_bytes):
+            raise AuthorityDenied("connector.response", "root connector write receipt is invalid")
+        return len(data_bytes)
+
+    def close(self, binding: Any, connector_handle: str, *, authorization: Any | None,
+              cleanup: bool = False) -> None:
+        with self._lock:
+            owner = self._handles.get(connector_handle)
+        if owner != (binding.session_id, binding.route_id):
+            return
+        if cleanup and authorization is None:
+            stream = self.connector._streams.get(connector_handle)
+            if stream is not None:
+                self.connector._dispose(stream)
+            self._forget(connector_handle)
+            return
+        # Cleanup is root-triggered and remains allowed after lease expiry.
+        # The coordinator validates the one-use close grant before dispatch;
+        # teardown itself sends no data and must still work after expiry.
+        sequence = getattr(authorization, "sequence", -1)
+        deadline = getattr(authorization, "deadline", binding.frame_deadline_monotonic)
+        payload = canonical_bytes({"schema": 1, "target_id": binding.target_id,
+                                   "route_id": binding.route_id, "connector_id": connector_handle,
+                                   "session_id": binding.session_id,
+                                   "generation": binding.native_generation,
+                                   "deadline": deadline, "sequence": sequence})
+        if (getattr(authorization, "operation", None) != "connector.close"
+                or getattr(authorization, "target_id", None) != binding.target_id
+                or getattr(authorization, "session_id", None) != binding.session_id
+                or getattr(authorization, "route_id", None) != binding.route_id
+                or getattr(authorization, "generation", None) != binding.native_generation
+                or getattr(authorization, "deadline", None) != deadline
+                or getattr(authorization, "request_digest", None) != canonical_digest(payload)
+                or type(sequence) is not int or sequence < 0
+                or (not cleanup and self.validate_binding(binding, "connector.close", sequence) is not True)):
+            raise AuthorityDenied("connector.close", "root close authorization is missing")
+        stream = self.connector._streams.get(connector_handle)
+        if stream is not None:
+            self.connector._dispose(stream)
+        self._forget(connector_handle)
+
+    def _forget(self, connector_handle: str) -> None:
+        with self._lock:
+            self._handles.pop(connector_handle, None)
+
+
+def build_remote_service_connector_backend(*, catalog: Any, process_manager: Any,
+                                           validate_binding: Callable[[Any, str, int], bool],
+                                           limits: ConnectorLimits = ConnectorLimits(),
+                                           cancelled: Callable[[Any], bool] | None = None
+                                           ) -> RemoteServiceConnectorBackend:
+    """Build the root-only HI13 adapter from the strict catalog and live custodian.
+
+    Unlike the ordinary HI07 effect-handler builder, this factory exposes no
+    caller-context handler map. The RemoteSessionAuthority must validate its
+    opaque session and current gateway identity before each backend call.
+    """
+    if not callable(validate_binding):
+        raise ValueError("root remote-session binding validator is required")
+
+    def resolve(enrollment_id: str, profile_id: str, generation: str,
+                target_id: str, route_id: str) -> NamespaceLease:
+        try:
+            binding = catalog.resolve_connector_route(enrollment_id, generation, target_id, route_id)
+        except Exception as exc:
+            if isinstance(exc, AuthorityDenied):
+                raise
+            raise AuthorityDenied("connector.route", "protected route resolution failed") from exc
+        if binding.profile_id != profile_id or binding.generation != generation:
+            raise AuthorityDenied("connector.binding", "protected route differs from signed service scope")
+        lease = process_manager.resolve_namespace_lease(binding)
+        if lease is None:
+            raise AuthorityDenied("connector.identity", "no current supervised service namespace lease exists")
+        if (lease.generation != generation or lease.namespace_identity != binding.namespace_identity):
+            lease.close()
+            raise AuthorityDenied("connector.identity", "current process namespace differs from protected enrollment")
+        return lease
+
+    connector = FixedServiceConnector(resolve_service_namespace=resolve, limits=limits)
+    return RemoteServiceConnectorBackend(connector, validate_binding=validate_binding,
+                                         cancelled=cancelled)
 
 
 def open_request_bytes(*, enrollment_id: str, generation: str, target_id: str,
@@ -836,7 +1118,9 @@ class _CallerContextServiceConnectorClient:
                 raise AuthorityDenied("connector.frame", "read size exceeds its bound")
             body = {"schema": 1, "target_id": stream.target_id, "route_id": stream.approved_route_id,
                     "connector_id": stream.connector_id,
-                    "session_id": stream.session_id, "sequence": stream.sequence, "max_bytes": max_bytes}
+                    "session_id": stream.session_id, "generation": stream.generation,
+                    "deadline": min(stream.expires_monotonic, self.monotonic() + 5.0),
+                    "sequence": stream.sequence, "max_bytes": max_bytes}
             value = self._request("connector.read", stream.target_id, stream.session_id, body)
             import base64
             try:
@@ -858,7 +1142,9 @@ class _CallerContextServiceConnectorClient:
             import base64
             body = {"schema": 1, "target_id": stream.target_id, "route_id": stream.approved_route_id,
                     "connector_id": stream.connector_id,
-                    "session_id": stream.session_id, "sequence": stream.sequence,
+                    "session_id": stream.session_id, "generation": stream.generation,
+                    "deadline": min(stream.expires_monotonic, self.monotonic() + 5.0),
+                    "sequence": stream.sequence,
                     "data_b64": base64.b64encode(data).decode("ascii")}
             value = self._request("connector.write", stream.target_id, stream.session_id, body)
             if value.get("written") != len(data):
@@ -875,7 +1161,9 @@ class _CallerContextServiceConnectorClient:
             self._ensure_live(stream)
             body = {"schema": 1, "target_id": stream.target_id, "route_id": stream.approved_route_id,
                     "connector_id": stream.connector_id,
-                    "session_id": stream.session_id, "sequence": stream.sequence}
+                    "session_id": stream.session_id, "generation": stream.generation,
+                    "deadline": min(stream.expires_monotonic, self.monotonic() + 5.0),
+                    "sequence": stream.sequence}
             value = self._request("connector.close", stream.target_id, stream.session_id, body)
             if value != {"schema": 1, "closed": True}:
                 raise AuthorityDenied("connector.response", "connector close receipt is invalid")
@@ -931,9 +1219,20 @@ class ServiceConnectorClient:
         if not callable(callback):
             raise AuthorityDenied("connector.remote-session", "root HI13 connector API is unavailable")
         result = callback(self._handle, *args)
+        if not isinstance(result, Mapping) and callable(getattr(result, "to_wire", None)):
+            result = result.to_wire()
         if not isinstance(result, Mapping):
             raise AuthorityDenied("connector.response", "root remote connector response is malformed")
         return result
+
+    def _accept_root_expiry(self, stream: ConnectorStream, reported: Any) -> None:
+        if (isinstance(reported, bool) or not isinstance(reported, (int, float))
+                or not math.isfinite(reported) or reported < stream.expires_monotonic
+                or reported > self.monotonic() + 60.0):
+            raise AuthorityDenied("connector.response", "root remote connector lease receipt is invalid")
+        # This is only an observation of a lease the root renewed independently
+        # after fresh JWT and policy checks; frames themselves never renew it.
+        stream.expires_monotonic = float(reported)
 
     def open(self) -> ConnectorStream:
         value = self._call("open_remote_connector")
@@ -948,7 +1247,7 @@ class ServiceConnectorClient:
                 or isinstance(value.get("expires_monotonic"), bool)
                 or not isinstance(value.get("expires_monotonic"), (int, float))
                 or not math.isfinite(value["expires_monotonic"])
-                or value["expires_monotonic"] <= self.monotonic()):
+                or not self.monotonic() < value["expires_monotonic"] <= self.monotonic() + 60.0):
             raise AuthorityDenied("connector.response", "root remote connector lease is invalid")
         return ConnectorStream(self, value["session_id"], value["connector_handle"],
                                value["generation"], value["route_id"],
@@ -966,17 +1265,24 @@ class ServiceConnectorClient:
                 raise AuthorityDenied("connector.frame", "remote read exceeds its fixed bound")
             value = self._call("read_remote_connector", stream.connector_handle,
                                stream.sequence, maximum_bytes)
+            data_bytes = value.get("data_bytes")
+            if isinstance(data_bytes, str):
+                try:
+                    data_bytes = base64.b64decode(data_bytes, validate=True)
+                except (ValueError, TypeError) as exc:
+                    raise AuthorityDenied("connector.response", "root remote read frame encoding is invalid") from exc
             if (set(value) != {"schema", "session_id", "sequence", "data_bytes", "eof", "expires_monotonic"}
                     or value.get("schema") != 1 or value.get("session_id") != stream.session_id
                     or type(value.get("sequence")) is not int or value["sequence"] != stream.sequence
-                    or not isinstance(value.get("data_bytes"), bytes)
-                    or len(value["data_bytes"]) > maximum_bytes or type(value.get("eof")) is not bool
-                    or value.get("expires_monotonic") != stream.expires_monotonic):
+                    or not isinstance(data_bytes, bytes)
+                    or len(data_bytes) > maximum_bytes or type(value.get("eof")) is not bool
+                    or value.get("expires_monotonic") is None):
                 raise AuthorityDenied("connector.response", "root remote read receipt is invalid")
+            self._accept_root_expiry(stream, value["expires_monotonic"])
             stream.sequence += 1
             if value["eof"]:
                 stream.closed = True
-            return value["data_bytes"]
+            return data_bytes
 
     def write(self, stream: ConnectorStream, data_bytes: bytes) -> int:
         with stream.lock:
@@ -989,8 +1295,9 @@ class ServiceConnectorClient:
                     or value.get("schema") != 1 or value.get("session_id") != stream.session_id
                     or type(value.get("sequence")) is not int or value["sequence"] != stream.sequence
                     or type(value.get("accepted_bytes")) is not int or value["accepted_bytes"] != len(data_bytes)
-                    or value.get("expires_monotonic") != stream.expires_monotonic):
+                    or value.get("expires_monotonic") is None):
                 raise AuthorityDenied("connector.response", "root remote write receipt is invalid")
+            self._accept_root_expiry(stream, value["expires_monotonic"])
             stream.sequence += 1
             return len(data_bytes)
 

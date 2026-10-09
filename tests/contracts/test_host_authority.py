@@ -6,8 +6,10 @@ import tempfile
 import threading
 import time
 import unittest
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from hermes_installer.authority.client import (
     AuthorityClient, canonical_profile_target, profile_launch_envelope,
@@ -19,7 +21,8 @@ from hermes_installer.authority.service import (
     AuthorityService, ChildDelegationRule, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
-    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle, Sensitivity, canonical_digest,
+    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle, Sensitivity,
+    canonical_bytes, canonical_digest,
 )
 
 
@@ -129,6 +132,142 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
         self.assertEqual(context.sensitivity, Sensitivity.UNKNOWN)
         self.assertEqual(effects, [("profile:a", payload)])
         self.assertEqual(result["status"], 200)
+
+    def test_root_observed_source_is_private_one_use_and_not_a_worker_operation(self):
+        from hermes_installer.authority.source_observers import (
+            VerifiedSourceObservation, _OBSERVATION_ISSUER, SourceReceiptHandle,
+        )
+
+        uid = 1234
+        binding = PrincipalBinding(
+            uid, "principal:source", "profile:source", "namespace:source",
+            frozenset({"provider-inference"}),
+        )
+        rule = EffectRule("provider-inference", "provider.dispatch", "provider.fixed", "public-provider")
+
+        @dataclass(frozen=True)
+        class Identity:
+            profile_id: str = "profile:source"
+            generation: str = "generation:source"
+            kernel_uid: int = uid
+            start_ticks: int = 77
+            executable_sha256: str = "a" * 64
+            cgroup_identity: str = "cgroup:fixture"
+            namespace_identity: str = "namespace:fixture"
+
+        identity = Identity()
+
+        class Manager:
+            @staticmethod
+            def resolve_live_peer(peer_pid, peer_pidfd, *, profile_id, generation):
+                if (peer_pid == 4321 and peer_pidfd == 7 and profile_id == identity.profile_id
+                        and generation == identity.generation):
+                    return identity
+                return None
+
+        service = AuthorityService(
+            signing_key=b"s" * 32, key_id="observed-source-fixture",
+            bindings_by_uid={uid: binding}, profile_generations={binding.profile_id: identity.generation},
+            rules={(rule.capability, rule.operation, rule.target): rule}, handlers={}, policy=FixturePolicy(),
+            process_effect_handler=Manager(),
+        )
+        payload = b'{"messages":[]}'
+        with patch.object(AuthorityService, "_native_process_identity", return_value="native:fixture"):
+            context = HostContext.from_wire(service._issue_context(uid, {
+                "purpose": "native-event", "intent": "capture observed request", "trace_id": "trace-root",
+                "lease_seconds": 20, "source_contexts": [], "operation": "native.event.prepare",
+                "final_payload_digest": canonical_digest(payload),
+            }, peer_pid=4321))
+            now = service.monotonic()
+            proof = VerifiedSourceObservation(
+                observer_enrollment_id="observer:fixture", event_record_id="e" * 40,
+                source_kind="native-input", origin_id="hermes.input", payload_bytes=payload,
+                payload_sha256=canonical_digest(payload), parent_context=context,
+                parent_receipts=(), parent_receipt_handles=(), profile_id=binding.profile_id,
+                principal_id=binding.principal_id, namespace_id=binding.namespace_id,
+                enrollment_id=context.enrollment_id, generation=identity.generation,
+                producer_uid=uid, producer_pid=4321, producer_pidfd=7, producer_identity=identity,
+                package_id="package:fixture", package_sha256="b" * 64,
+                source_revision="source:fixture", source_tree_sha256="c" * 64,
+                compiled_closure_artifact_id="closure:fixture", entrypoint_artifact_id="entry:fixture",
+                entrypoint_sha256="d" * 64, resolver_artifact_id="resolver:fixture",
+                resolver_sha256="e" * 64, service_package_root_id="root:fixture",
+                service_mount_id="mount:fixture", role_id="role:fixture", role_sha256="a" * 64,
+                action_id="chat.complete", argument_schema_id="args:fixture",
+                result_schema_id="result:fixture", effect_enrollment_id="provider:fixture",
+                operation=rule.operation, capability=rule.capability, invocation_id=context.grant_id,
+                channel_id="channel:fixture", target_id=rule.target, recipient=rule.recipient,
+                authority_epoch=service.authority_epoch, issued_monotonic=now,
+                expires_monotonic=min(context.monotonic_expires_at, now + 10),
+                _issuer=_OBSERVATION_ISSUER,
+            )
+            handle = service.issue_observed_source(proof)
+            self.assertIsInstance(handle, SourceReceiptHandle)
+            receipt = service._source_receipt_handles[str(handle)]
+            self.assertEqual(receipt.sensitivity, Sensitivity.PRIVATE)
+            self.assertEqual(receipt.payload_digest, canonical_digest(payload))
+            self.assertEqual(receipt.origin_id, f"hermes.input:{proof.event_record_id}")
+            with self.assertRaises(AuthorityDenied):
+                service.issue_observed_source(proof)
+            with self.assertRaises(AuthorityDenied) as raised:
+                service._dispatch(uid, 4321, 7, "issue_observed_source", {}, cancelled=lambda: False)
+            self.assertEqual(raised.exception.code, "protocol.operation")
+
+    def test_process_start_target_is_resolved_from_protected_enrollment(self):
+        binding = PrincipalBinding(1234, "principal:a", "profile:a", "namespace:a",
+                                   frozenset({"hermes-profile-invoke"}))
+        selected_target = "coral-cpython-build:start"
+        rule = EffectRule("hermes-profile-invoke", "process.start", selected_target)
+        selected = SimpleNamespace(
+            operation="process.start", profile_id="profile:a", principal_id="principal:a",
+            service_uid=1234, enrollment_id="enroll:coral", generation="generation:1",
+            operation_id="coral-cpython39-source-build-v1", target=selected_target,
+        )
+        service = AuthorityService(
+            signing_key=b"q" * 32, key_id="selected-process-fixture",
+            bindings_by_uid={1234: binding},
+            rules={(rule.capability, rule.operation, rule.target): rule},
+            handlers={(rule.operation, rule.target): lambda **_kwargs: {}},
+            policy=FixturePolicy(),
+            selected_operation_resolver=lambda enrollment, generation, operation, operation_id: (
+                selected if (enrollment, generation, operation) ==
+                ("enroll:coral", "generation:1", "process.start")
+                and operation_id == "coral-cpython39-source-build-v1" else None),
+        )
+        request = {"schema": 1, "enrollment_id": "enroll:coral",
+                   "generation": "generation:1", "operation_id": "coral-cpython39-source-build-v1",
+                   "parameters": {}}
+        digest = canonical_digest(canonical_bytes(request))
+        context = service._issue_context(1234, {
+            "purpose": "selected-process-operation", "intent": "build-cpython",
+            "trace_id": "trace-selected-process", "lease_seconds": 10,
+            "source_contexts": [], "final_payload_digest": digest,
+            "operation": "process.start",
+        })
+        grant = service._authorize_process_start(1234, None, {
+            "context": context, "enrollment_id": "enroll:coral",
+            "generation": "generation:1", "operation_id": request["operation_id"],
+            "request_digest": digest, "retry_index": 0,
+        })
+        parsed = EffectAuthorization.from_wire(grant)
+        self.assertEqual(parsed.target, selected_target)
+        self.assertEqual(parsed.capability, "hermes-profile-invoke")
+        self.assertEqual(parsed.request_digest, digest)
+
+    def test_process_start_target_cannot_be_selected_without_enrollment_resolver(self):
+        binding = PrincipalBinding(1234, "principal:a", "profile:a", "namespace:a",
+                                   frozenset({"hermes-profile-invoke"}))
+        service = AuthorityService(
+            signing_key=b"r" * 32, key_id="selected-process-unavailable",
+            bindings_by_uid={1234: binding}, rules={}, handlers={}, policy=FixturePolicy(),
+        )
+        with self.assertRaises(AuthorityDenied) as denied:
+            service._authorize_process_start(1234, None, {
+                "context": {}, "enrollment_id": "enroll:coral", "generation": "generation:1",
+                "operation_id": "coral-cpython39-source-build-v1", "request_digest": "a" * 64,
+                "retry_index": 0,
+            })
+        self.assertEqual(denied.exception.code, "effect.unavailable")
 
     def test_homelab_write_denies_when_authentik_system_membership_is_missing(self):
         policy = AuthentikSystemPolicy(

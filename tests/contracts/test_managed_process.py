@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -318,6 +319,50 @@ class ManagedProcessKernelEvidenceTests(unittest.TestCase):
                     started, started + 30,
                 )
                 handle._check_live = AsyncMock()
+                # This test is specifically about the handle's bounded partial
+                # progress logic.  Simulate the root broker at the method
+                # boundary while retaining real kernel pipes and a real child;
+                # authority RPC and systemd admission have separate tests.
+                cursors = {"stdout": 0, "stdin": 0}
+                loop = asyncio.get_running_loop()
+
+                async def wait_fd(fd: int, *, writable: bool) -> None:
+                    ready = loop.create_future()
+                    register = loop.add_writer if writable else loop.add_reader
+                    unregister = loop.remove_writer if writable else loop.remove_reader
+                    register(fd, lambda: not ready.done() and ready.set_result(None))
+                    try:
+                        await asyncio.wait_for(ready, timeout=2)
+                    finally:
+                        unregister(fd)
+
+                async def broker_control(operation, fields, timeout=5.0):
+                    if operation == "process.write":
+                        chunk = base64.b64decode(fields["data"], validate=True)
+                        while True:
+                            try:
+                                count = os.write(child.stdin.fileno(), chunk[:4096])
+                                break
+                            except BlockingIOError:
+                                await wait_fd(child.stdin.fileno(), writable=True)
+                        cursors["stdin"] += count
+                        return {"schema": 1, "stdin_cursor": cursors["stdin"],
+                                "bytes_written": count}
+                    if operation == "process.read":
+                        try:
+                            data = os.read(child.stdout.fileno(), min(fields["max_bytes"], 4096))
+                        except BlockingIOError:
+                            await wait_fd(child.stdout.fileno(), writable=False)
+                            data = os.read(child.stdout.fileno(), min(fields["max_bytes"], 4096))
+                        cursors["stdout"] += len(data)
+                        return {"schema": 1, "cursor": cursors["stdout"],
+                                "data": base64.b64encode(data).decode("ascii"),
+                                "eof": not data}
+                    raise AssertionError(f"unexpected broker operation: {operation}")
+
+                os.set_blocking(child.stdin.fileno(), False)
+                os.set_blocking(child.stdout.fileno(), False)
+                handle._control = broker_control
                 self.assertEqual(await handle.write(payload[:65536], timeout=2), 65536)
                 self.assertEqual(await handle.write(payload[65536:], timeout=2), 65536)
                 result = bytearray()

@@ -200,6 +200,15 @@ class AuthorityClient:
         """
         raise AuthorityDenied("source.issuer", "generic worker source capture is not an enrolled issuer")
 
+    def remote_sessions(self) -> Any:
+        """Return typed HI13 calls over this client's authenticated Unix RPC.
+
+        The root service still denies every remote operation unless it was
+        constructed with a complete protected RemoteSessionAuthority.
+        """
+        from .remote_sessions import RemoteAuthorityClient
+        return RemoteAuthorityClient(lambda operation, payload: self._rpc(operation, payload))
+
     def prepare_native_event(self, payload: bytes, *, parent_receipt_handles: Sequence[str] = (),
                              purpose: str, intent_id: str, trace_id: str,
                              retry_index: int = 0, timeout: float = 5.0,
@@ -501,6 +510,56 @@ class AuthorityClient:
             raise AuthorityDenied("effect.binding", "process selection does not match its host grant")
         return self.perform_effect(authorization, operation="process.start", payload=payload,
                                    timeout=min(timeout, 30.0), cancelled=cancelled)
+
+    def start_enrolled_process_operation(
+        self, *, enrollment_id: str, generation: str, operation_id: str,
+        parameters: Mapping[str, Any], purpose: str = "selected-process-operation",
+        intent: str | None = None, timeout: float = 30.0,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> BrokeredEffectResponse:
+        """Start one root-selected process recipe without exposing its target.
+
+        The authority resolves the target from protected enrollment while
+        issuing the exact grant. Callers provide only the opaque selection and
+        values checked against the enrolled parameter schema.
+        """
+        if (not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", enrollment_id)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", generation)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", operation_id)
+                or not isinstance(parameters, Mapping) or len(parameters) > 64
+                or any(not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", key)
+                       or not isinstance(value, (str, int, bool)) or isinstance(value, float)
+                       for key, value in parameters.items())
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not 0.1 <= timeout <= 30.0):
+            raise AuthorityDenied("effect.launch", "protected process operation selection is malformed")
+        body = {"schema": 1, "enrollment_id": enrollment_id,
+                "generation": generation, "operation_id": operation_id,
+                "parameters": dict(parameters)}
+        payload = canonical_bytes(body)
+        digest = canonical_digest(payload)
+        context = self.context(
+            purpose=purpose,
+            intent=intent or f"process-start:{enrollment_id}:{generation}:{operation_id}",
+            operation="process.start", final_payload_digest=digest,
+            lease_seconds=min(float(timeout), 30.0), cancelled=cancelled,
+        )
+        result = self._rpc("authorize_process_start", {
+            "context": context.to_wire(), "enrollment_id": enrollment_id,
+            "generation": generation, "operation_id": operation_id,
+            "request_digest": digest, "retry_index": 0,
+        }, timeout=min(self.timeout, float(timeout)), cancelled=cancelled)
+        authorization = EffectAuthorization.from_wire(result)
+        if (authorization.operation != "process.start"
+                or authorization.capability != "hermes-profile-invoke"
+                or authorization.request_digest != digest
+                or not authorization.target):
+            raise AuthorityDenied("effect.binding", "authority returned a mismatched selected process grant")
+        return self.process_start_operation(
+            authorization, enrollment_id=enrollment_id, generation=generation,
+            operation_id=operation_id, parameters=parameters,
+            timeout=min(float(timeout), 30.0), cancelled=cancelled,
+        )
 
     def process_control(self, authorization: EffectAuthorization, *, operation: str,
                         target: str, payload: bytes, timeout: float = 5.0,

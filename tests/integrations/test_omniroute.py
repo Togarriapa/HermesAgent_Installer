@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ from hermes_installer.components.omniroute import (
 )
 from hermes_installer.components.source_bundle import VerifiedComponentSource
 from hermes_installer.policy import PROVIDER_RECIPIENT, canonical_provider_target
-from hermes_installer.provider_effect_handlers import OPENROUTER_MODEL, ProviderEnrollment
+from hermes_installer.provider_effect_handlers import OPENROUTER_MODEL, ProviderEnrollment, canonical_provider_request
 from hermes_installer.state import OwnedRoot
 
 
@@ -60,6 +61,18 @@ def _policy(**overrides):
                   recipient=PROVIDER_RECIPIENT, model=OPENROUTER_MODEL)
     values.update(overrides)
     return OmniRoutePolicy(**values)
+
+
+def _normalization_policy():
+    module = Path(inspect.getsourcefile(canonical_provider_request))
+    record = {"id": "provider-output-reject-4096-v1", "revision": 1,
+              "route_schema_id": "provider-chat-compatible-v1",
+              "output_limit_mode": "reject-over-ceiling", "output_limit_ceiling": 4096,
+              "canonicalizer_artifact_id": "provider-canonicalizer-v1",
+              "canonicalizer_sha256": hashlib.sha256(module.read_bytes()).hexdigest()}
+    record["normalization_policy_sha256"] = hashlib.sha256(
+        json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return record
 
 
 class RecordingBridge:
@@ -180,6 +193,7 @@ class OmniRouteManagedBuildTests(unittest.IsolatedAsyncioTestCase):
         bridge = RecordingBridge()
         adapter = OmniRouteGatewayAdapter(
             policy=_policy(), root_selected_enrollments=lambda: eligible,
+            normalization_policy=_normalization_policy(),
             authority=bridge)
         payload = json.dumps({
             "model": "hermes-free",
@@ -216,6 +230,7 @@ class OmniRouteManagedBuildTests(unittest.IsolatedAsyncioTestCase):
         )
         adapter = OmniRouteGatewayAdapter(
             policy=_policy(), root_selected_enrollments=lambda: {(target, PROVIDER_RECIPIENT): enrollment},
+            normalization_policy=_normalization_policy(),
             authority=bridge)
         for override in ('"fallbacks":["paid"],', '"compression":true,',
                          '"model":"other/model",'):

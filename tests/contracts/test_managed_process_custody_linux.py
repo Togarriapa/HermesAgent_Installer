@@ -23,6 +23,7 @@ import time
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 from hermes_installer.authority.client import canonical_bytes, canonical_digest
 from hermes_installer.authority.daemon import DEFAULT_SOCKET_DIR
@@ -444,6 +445,32 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
     def test_authority_rpc_enforces_kernel_boundaries_and_stubborn_descendant_cleanup(self) -> None:
         client, started = self._start_client(mode="run")
         try:
+            process_handle = self.handler._handles[started["process_id"]]
+            live_peer = self.handler.resolve_live_peer(
+                started["pid"], process_handle.child_pidfd,
+                profile_id=self.profile_id, generation=self.profile.generation,
+            )
+            self.assertIsNotNone(live_peer, "registered live process did not resolve through its pidfd")
+            self.assertEqual(live_peer.kernel_uid, self.uid)
+            self.assertEqual(live_peer.cgroup_identity, started["cgroup"])
+            self.assertEqual(live_peer.executable_sha256, self.digest)
+            self.assertIsNone(self.handler.resolve_live_peer(
+                started["pid"], process_handle.child_pidfd,
+                profile_id=self.profile_id, generation="stale-generation",
+            ))
+            lease = self.handler.resolve_namespace_lease(SimpleNamespace(
+                profile_id=self.profile_id, generation=self.profile.generation,
+                namespace_identity=process_handle.kernel_namespace_id,
+            ))
+            self.assertIsNotNone(lease, "registered process namespace did not resolve to a protected lease")
+            try:
+                self.assertEqual(os.fstat(lease.namespace_fd).st_ino,
+                                 started["network_namespace_inode"])
+                self.assertEqual(self.handler._pidfd_target(lease.pidfd), started["pid"])
+                self.assertEqual(lease.cgroup_identity, started["cgroup"])
+            finally:
+                lease.close()
+
             assert client.stdout is not None
             ready, _, _ = __import__("select").select([client.stdout], [], [], 20)
             self.assertTrue(ready, "client did not return its cleanup receipt")

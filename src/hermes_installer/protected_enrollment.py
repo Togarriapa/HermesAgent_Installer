@@ -13,7 +13,7 @@ import pwd
 import re
 import stat
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
@@ -465,8 +465,9 @@ class ProtectedEnrollmentCatalog:
         return profile
 
     def resolve_package_runtime(self, enrollment_id: str, generation: str,
-                                package_set_id: str, build_catalog: "ProtectedBuildCatalog"):
-        """Resolve a Coral runtime binding from protected enrollment and attested outputs."""
+                                package_set_id: str, build_catalog: "ProtectedBuildCatalog",
+                                *, build_store: Any):
+        """Resolve a Coral runtime only from a completed, signed root build receipt."""
         profile = self.resolve(enrollment_id, generation)
         package_id = _id(package_set_id, "package set ID")
         if package_id != "coral-cp39-runtime-v1":
@@ -483,23 +484,29 @@ class ProtectedEnrollmentCatalog:
         if record.build_generation != profile.generation:
             raise EnrollmentDenied("package runtime build generation is stale")
         build = build_catalog.resolve(record.build_target, record.build_generation)
-        output_digests = build.attest_outputs()
-        if (record.runtime_build_output not in output_digests
-                or output_digests[record.runtime_build_output] != record.runtime_executable_sha256):
-            raise EnrollmentDenied("installed runtime executable is not an attested build output")
-        attestation = hashlib.sha256(_canonical({
-            "target_id": build.target_id, "generation": build.generation,
-            "source_artifact_id": build.source_artifact_id, "source_sha256": build.source_sha256,
-            "toolchain_artifact_id": build.toolchain_artifact_id, "toolchain_sha256": build.toolchain_sha256,
-            "builder_artifact_id": build.builder_artifact_id, "builder_sha256": build.builder_sha256,
-            "outputs": output_digests,
-        })).hexdigest()
-        if attestation != record.runtime_build_attestation_digest:
+        if build_store is None:
+            raise EnrollmentDenied("completed root build attestation is unavailable")
+        try:
+            receipt = build_store.resolve(build)
+            executable = build_store.resolve_output(build, record.runtime_artifact_id)
+        except Exception:
+            raise EnrollmentDenied("completed root build attestation is unavailable or invalid") from None
+        if (receipt.target_id != record.build_target
+                or receipt.enrollment_id != profile.enrollment_id
+                or receipt.generation != profile.generation
+                or receipt.operation_id != "coral-cpython39-source-build-v1"
+                or receipt.attestation_sha256 != record.runtime_build_attestation_digest):
             raise EnrollmentDenied("runtime build attestation does not match root enrollment")
+        output = next((item for item in receipt.outputs
+                       if item.artifact_id == record.runtime_artifact_id), None)
+        if (output is None or output.name != record.runtime_build_output
+                or output.sha256 != record.runtime_executable_sha256
+                or executable != record.runtime_executable):
+            raise EnrollmentDenied("installed runtime executable is not the selected attested build output")
         glibc = _system_glibc_version()
         if not _version_at_least(glibc, record.target_glibc_min):
             raise EnrollmentDenied("target glibc is below the enrolled Coral runtime minimum")
-        executable = _owned_path(record.runtime_executable, uid=0, directory=False)
+        executable = _owned_path(executable, uid=0, directory=False)
         if hashlib.sha256(executable.read_bytes()).hexdigest() != record.runtime_executable_sha256:
             raise EnrollmentDenied("root-enrolled runtime executable digest changed")
         venv = record.venv_root
@@ -520,7 +527,7 @@ class ProtectedEnrollmentCatalog:
         return PackageSetRuntimeBinding(
             enrollment_id=profile.enrollment_id, generation=profile.generation,
             runtime_artifact_id=record.runtime_artifact_id,
-            runtime_build_attestation_digest=attestation,
+            runtime_build_attestation_digest=receipt.attestation_sha256,
             runtime_executable_sha256=record.runtime_executable_sha256,
             abi=record.abi, glibc_version=glibc,
             service_uid=profile.service_uid, service_gid=profile.service_gid,
@@ -1131,6 +1138,25 @@ class ProtectedDeviceCatalog:
 
 
 @dataclass(frozen=True, slots=True)
+class FixedBuildOutputSpec:
+    relative_path: str
+    kind: str
+    maximum_bytes: int
+    executable_role: str
+    target_facts: Mapping[str, Any]
+
+
+def _freeze_build_facts(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_build_facts(child) for key, child in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_build_facts(child) for child in value)
+    if type(value) in {str, int, bool} or value is None:
+        return value
+    raise EnrollmentDenied("fixed build target fact value is not canonical JSON")
+
+
+@dataclass(frozen=True, slots=True)
 class FixedBuildProfile:
     target_id: str
     generation: str
@@ -1146,91 +1172,92 @@ class FixedBuildProfile:
     output_root_id: str
     output_root: Path
     output_owner_uid: int
-    required_outputs: Mapping[str, str]
+    output_specs: Mapping[str, FixedBuildOutputSpec]
+    service_generation_digest: str = ""
 
     @classmethod
     def from_protected_record(cls, item: Mapping[str, Any]) -> "FixedBuildProfile":
         required = {"target_id", "generation", "source_artifact_id", "source_sha256", "toolchain_artifact_id",
                     "toolchain_sha256", "builder_artifact_id", "builder_sha256", "argv_recipe", "environment",
-                    "max_lifetime_seconds", "output_root_id", "output_root", "output_owner_uid", "required_outputs"}
+                    "max_lifetime_seconds", "output_root_id", "output_root", "output_owner_uid", "output_specs"}
         if set(item) != required or item.get("target_id") not in {"coral-cpython-build:start", "colibri-source-build:start"}:
             raise EnrollmentDenied("fixed native build profile is unknown or malformed")
         for name in ("source_sha256", "toolchain_sha256", "builder_sha256"):
             if not isinstance(item[name], str) or not re.fullmatch(r"[0-9a-f]{64}", item[name]):
                 raise EnrollmentDenied("fixed build source/toolchain/builder digest is invalid")
-        recipe = item["argv_recipe"]
-        env = item["environment"]
-        outputs = item["required_outputs"]
+        recipe, env, outputs = item["argv_recipe"], item["environment"], item["output_specs"]
         if (not isinstance(recipe, list) or not recipe or any(not isinstance(arg, str) or "\x00" in arg for arg in recipe)
                 or not isinstance(env, dict) or any(not isinstance(k, str) or not isinstance(v, str) or "\x00" in v for k, v in env.items())
-                or not isinstance(outputs, dict) or not outputs or any(not isinstance(k, str) or not re.fullmatch(r"[0-9a-f]{64}", str(v)) for k, v in outputs.items())):
+                or not isinstance(outputs, list) or not outputs or len(outputs) > 64):
             raise EnrollmentDenied("fixed native build recipe or outputs are malformed")
         if (set(env) - _BUILD_ENV
                 or any(re.search(r"token|secret|credential|password|api[_-]?key", key, re.I) for key in env)
                 or any("\n" in value or "\r" in value or "$" in value or "`" in value for value in env.values())):
             raise EnrollmentDenied("fixed native build environment is not sanitized")
-        for output in outputs:
-            path = Path(output)
-            if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
-                raise EnrollmentDenied("fixed build output path is unsafe")
+        output_specs: dict[str, FixedBuildOutputSpec] = {}
+        for row in outputs:
+            fields = {"relative_path", "kind", "maximum_bytes", "executable_role", "target_facts"}
+            if not isinstance(row, Mapping) or set(row) != fields:
+                raise EnrollmentDenied("fixed build output constraint fields are invalid")
+            relative, kind = row["relative_path"], row["kind"]
+            maximum, role, facts = row["maximum_bytes"], row["executable_role"], row["target_facts"]
+            path = Path(relative) if isinstance(relative, str) else Path("/")
+            if (not isinstance(relative, str) or "\\" in relative or "\x00" in relative or path.is_absolute()
+                    or any(part in {"", ".", ".."} for part in path.parts)
+                    or path.as_posix() != relative or relative in output_specs
+                    or not isinstance(kind, str) or kind not in {"file", "tree"} or type(maximum) is not int
+                    or not 1 <= maximum <= 2 * 1024**3
+                    or not isinstance(role, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", role)
+                    or not isinstance(facts, Mapping) or not facts):
+                raise EnrollmentDenied("fixed build output constraints are malformed")
+            output_specs[relative] = FixedBuildOutputSpec(
+                relative, kind, maximum, role, _freeze_build_facts(facts))
+        if item["target_id"] == "colibri-source-build:start":
+            expected_specs = {
+                "c/colibri": {"kind": "file", "maximum_bytes": 67108864,
+                    "executable_role": "colibri-engine", "target_facts": {
+                        "elf_class": 64, "elf_machine": "EM_AARCH64", "os": "linux",
+                        "required_runtime_dependencies": ["libgomp.so.1", "libm", "libc"],
+                        "instruction_policy": "actual target compatible ARM64 flags; no x86 default or unmeasured CPUflags",
+                    }},
+            }
+        else:
+            expected_specs = {
+                "runtime/bin/python3.9": {"kind": "file", "maximum_bytes": 67108864,
+                    "executable_role": "coral-cpython39", "target_facts": {
+                        "elf_class": 64, "elf_machine": "EM_AARCH64", "python_version": "3.9.25",
+                        "soabi": "cpython-39-aarch64-linux-gnu", "debug": False,
+                        "glibc_minimum": "2.34 for selected TFLite wheel",
+                    }},
+                "runtime/lib/python3.9": {"kind": "tree", "maximum_bytes": 268435456,
+                    "executable_role": "cpython-stdlib-and-extension-closure", "target_facts": {
+                        "python_version": "3.9.25", "target": "linux-aarch64",
+                        "all_native_extensions": "ELF64EM_AARCH64, actual dependency closure verified",
+                    }},
+            }
+        if set(output_specs) != set(expected_specs) or any(
+                output_specs[name].kind != expected["kind"]
+                or output_specs[name].maximum_bytes != expected["maximum_bytes"]
+                or output_specs[name].executable_role != expected["executable_role"]
+                or output_specs[name].target_facts != _freeze_build_facts(expected["target_facts"])
+                for name, expected in expected_specs.items()):
+            raise EnrollmentDenied("fixed build output constraints differ from the reviewed target profile")
         if (not Path(recipe[0]).is_absolute()
                 or Path(recipe[0]).name.casefold() in {"sh", "bash", "dash", "zsh"}
                 or any(token in {"-c", "-e", "--command"} for token in recipe[1:])
                 or any("{caller" in token or "${" in token for token in recipe)):
             raise EnrollmentDenied("fixed native build recipe cannot select shell or caller code")
-        lifetime = item["max_lifetime_seconds"]
-        owner_uid = item["output_owner_uid"]
+        lifetime, owner_uid = item["max_lifetime_seconds"], item["output_owner_uid"]
         if type(lifetime) is not int or not 1 <= lifetime <= 600 or type(owner_uid) is not int or owner_uid <= 0:
             raise EnrollmentDenied("fixed native build deadline is invalid")
         return cls(_id(item["target_id"], "build target"), _id(item["generation"], "generation"),
                    _id(item["source_artifact_id"], "source artifact ID"), item["source_sha256"],
                    _id(item["toolchain_artifact_id"], "toolchain artifact ID"), item["toolchain_sha256"],
                    _id(item["builder_artifact_id"], "builder artifact ID"), item["builder_sha256"],
-                   tuple(recipe), MappingProxyType(dict(env)),
-                   lifetime, _id(item["output_root_id"], "output root ID"),
-                   _absolute(item["output_root"], "build output root"), owner_uid, MappingProxyType(dict(outputs)))
-
-    def attest_outputs(self, output_root: Path | None = None) -> Mapping[str, str]:
-        root = self.output_root if output_root is None else output_root
-        if root != self.output_root:
-            raise EnrollmentDenied("caller-selected build output path is forbidden")
-        if root != self.output_root or not root.is_absolute():
-            raise EnrollmentDenied("caller-selected build output path is forbidden")
-        for parent in (root.parent, *root.parent.parents):
-            info = parent.lstat()
-            if stat.S_ISLNK(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
-                raise EnrollmentDenied("build output ancestor is not root protected")
-        root_info = root.lstat()
-        if (stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode)
-                or root_info.st_uid != self.output_owner_uid or stat.S_IMODE(root_info.st_mode) != 0o700):
-            raise EnrollmentDenied("build output staging root custody is invalid")
-        observed = {}
-        for relative, expected in self.required_outputs.items():
-            pure = Path(relative)
-            if pure.is_absolute() or any(part in {"", ".", ".."} for part in pure.parts):
-                raise EnrollmentDenied("protected build output path is unsafe")
-            candidate = root / relative
-            try:
-                cursor = root
-                for part in pure.parts[:-1]:
-                    cursor = cursor / part
-                    directory = cursor.lstat()
-                    if (stat.S_ISLNK(directory.st_mode) or not stat.S_ISDIR(directory.st_mode)
-                            or directory.st_uid != self.output_owner_uid):
-                        raise EnrollmentDenied("native build output directory custody is invalid")
-                info = candidate.lstat()
-                if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)
-                        or info.st_uid != self.output_owner_uid):
-                    raise EnrollmentDenied("native build output custody is invalid")
-                digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
-            except EnrollmentDenied:
-                raise
-            except OSError:
-                raise EnrollmentDenied("required native build output is missing") from None
-            if digest != expected:
-                raise EnrollmentDenied("native build output digest does not match protected attestation")
-            observed[relative] = digest
-        return observed
+                   tuple(recipe), MappingProxyType(dict(env)), lifetime,
+                   _id(item["output_root_id"], "output root ID"),
+                   _absolute(item["output_root"], "build output root"), owner_uid,
+                   MappingProxyType(output_specs))
 
 
 class ProtectedBuildCatalog:
@@ -1238,13 +1265,19 @@ class ProtectedBuildCatalog:
 
     REQUIRED_TARGETS = frozenset({"coral-cpython-build:start", "colibri-source-build:start"})
 
-    def __init__(self, profiles: Mapping[tuple[str, str], FixedBuildProfile]):
-        self._profiles = MappingProxyType(dict(profiles))
+    def __init__(self, profiles: Mapping[tuple[str, str], FixedBuildProfile], *,
+                 service_generation_digest: str = ""):
+        if service_generation_digest and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest):
+            raise EnrollmentDenied("service generation digest is malformed")
+        self.service_generation_digest = service_generation_digest
+        self._profiles = MappingProxyType({key: replace(profile,
+            service_generation_digest=service_generation_digest) for key, profile in profiles.items()})
         if any(target not in self.REQUIRED_TARGETS for target, _ in self._profiles):
             raise EnrollmentDenied("unknown hardware build target is not allowed")
 
     @classmethod
-    def from_protected_records(cls, records: list[Mapping[str, Any]]) -> "ProtectedBuildCatalog":
+    def from_protected_records(cls, records: list[Mapping[str, Any]], *,
+                               service_generation_digest: str = "") -> "ProtectedBuildCatalog":
         profiles = {}
         for item in records:
             profile = FixedBuildProfile.from_protected_record(item)
@@ -1252,7 +1285,7 @@ class ProtectedBuildCatalog:
             if key in profiles:
                 raise EnrollmentDenied("fixed build target generation is duplicated")
             profiles[key] = profile
-        return cls(profiles)
+        return cls(profiles, service_generation_digest=service_generation_digest)
 
     def resolve(self, target_id: str, generation: str) -> FixedBuildProfile:
         target = _id(target_id, "build target")

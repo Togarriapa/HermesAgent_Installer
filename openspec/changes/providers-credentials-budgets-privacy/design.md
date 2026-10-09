@@ -56,3 +56,5 @@ Use a separately staged component-owned protected instance of that exact selecte
 planning/omniroute-runtime-contract.json records exact source/range/pin and evidence separation. Original OmniRoute source/privacy/tool/recipient/zero-budget and loop/fallback constraints still apply; engine match cannot authorize direct provider egress or paid fallback. PR-T02 supplements existing PR-F03/PR-R0130; actual native build and provider operation remain open.
 
 Protected native composition clarification: plans/amendments/2026-10-09-native-package-binding-v1.md, planning/native-package-binding-contract.json and native-cross-process-bridge-contract.json define root-selected immutable package/resolver, observed source channels and shared route normalization. Existing HI-T08/09/11, RB-T09 and PR-F03/PR-T01 remain open; no caller provenance or late payload mutation.
+
+Native protected config v3: plans/amendments/2026-10-09-native-protected-config-v3.md specifies strict native-packages.json package/issuer joins and separate canonical normalization-policy/module hashes. Existing HI08/09/11/RB08/provider tasks remain open; config presence is not actual observer/native evidence.

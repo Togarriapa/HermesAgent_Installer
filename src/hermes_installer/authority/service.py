@@ -13,6 +13,7 @@ import hmac
 import json
 import math
 import os
+import re
 import secrets
 import select
 import socket
@@ -181,7 +182,9 @@ class AuthorityService:
                  background_consent_active: Callable[[str], bool] | None = None,
                  delegations: Mapping[str, ChildDelegationRule] | None = None,
                  process_effect_handler: Any | None = None,
-                 native_bridge_broker: Any | None = None):
+                 native_bridge_broker: Any | None = None,
+                 selected_operation_resolver: Callable[[str, str, str, str], Any] | None = None,
+                 remote_session_authority: Any | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
@@ -211,6 +214,8 @@ class AuthorityService:
         self.delegations = dict(delegations or {})
         self.process_effect_handler = process_effect_handler
         self.native_bridge_broker = native_bridge_broker
+        self.selected_operation_resolver = selected_operation_resolver
+        self.remote_session_authority = remote_session_authority
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -222,6 +227,7 @@ class AuthorityService:
         # Consumption is atomic with the one-use effect nonce below.
         self._source_receipts_consumed: dict[str, float] = {}
         self._source_receipt_handles: dict[str, SourceReceipt] = {}
+        self._observed_event_ids: set[str] = set()
         self._lock = threading.RLock()
         self._client_nonces: dict[str, float] = {}
 
@@ -390,6 +396,117 @@ class AuthorityService:
             nonce=secrets.token_urlsafe(24),
         )
         return replace(receipt, signature=self._sign(receipt.claims()))
+
+    def issue_observed_source(self, observation: Any) -> Any:
+        """Sign and retain one receipt from the root-only observer registry.
+
+        This accepts the proof DTO produced after an enrolled source observer
+        captured bytes and revalidated the producer PIDFD, package role, and
+        parent closure. It is deliberately not exposed as an RPC operation.
+        """
+        from .source_observers import (
+            MAX_PARENT_RECEIPTS, MAX_OBSERVED_SOURCE_BYTES,
+            SourceReceiptHandle, VerifiedSourceObservation,
+        )
+        if not isinstance(observation, VerifiedSourceObservation):
+            raise AuthorityDenied("source.observation", "only a root observer proof can issue source evidence")
+        context = observation.parent_context
+        now = self.monotonic()
+        if (observation.authority_epoch != self.authority_epoch
+                or not isinstance(observation.event_record_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", observation.event_record_id)
+                or not isinstance(observation.origin_id, str)
+                or not 1 <= len(observation.origin_id) <= 256
+                or type(observation.producer_pid) is not int or observation.producer_pid <= 0
+                or type(observation.producer_pidfd) is not int or observation.producer_pidfd < 0
+                or not math.isfinite(observation.issued_monotonic)
+                or not math.isfinite(observation.expires_monotonic)
+                or observation.issued_monotonic > now
+                or observation.expires_monotonic <= now
+                or observation.expires_monotonic - observation.issued_monotonic > 600
+                or len(observation.payload_bytes) > MAX_OBSERVED_SOURCE_BYTES
+                or len(observation.parent_receipts) > MAX_PARENT_RECEIPTS
+                or context.monotonic_expires_at <= now
+                or observation.producer_uid != context.uid
+                or observation.profile_id != context.profile_id
+                or observation.principal_id != context.principal_id
+                or observation.namespace_id != context.namespace_id
+                or observation.enrollment_id != context.enrollment_id
+                or observation.generation != context.generation):
+            raise AuthorityDenied("source.observation", "root observation is stale or mismatched")
+        rule = self.rules.get((observation.capability, observation.operation, observation.target_id))
+        if (rule is None or rule.operation != observation.operation
+                or rule.recipient != observation.recipient):
+            raise AuthorityDenied("source.observation", "source action is not an enrolled fixed authority route")
+        manager = self.process_effect_handler
+        resolve_live_peer = getattr(manager, "resolve_live_peer", None)
+        if not callable(resolve_live_peer):
+            raise AuthorityDenied("source.observation", "live process custody is unavailable")
+        try:
+            current_identity = resolve_live_peer(
+                observation.producer_pid, observation.producer_pidfd,
+                profile_id=observation.profile_id, generation=observation.generation,
+            )
+        except Exception:
+            current_identity = None
+        if (current_identity is None or current_identity != observation.producer_identity
+                or context.native_process_identity != self._native_process_identity(
+                    observation.producer_pid, observation.producer_uid)):
+            raise AuthorityDenied("source.peer", "root observer producer identity is no longer current")
+        binding = self._binding(context.uid)
+        self._verify_context_signature(context)
+        self._assert_current_context(context, binding, context.uid)
+        parent_ids: set[str] = set()
+        for receipt in observation.parent_receipts:
+            self._verify_source_receipt(receipt, binding)
+            if receipt.profile_id != observation.profile_id:
+                raise AuthorityDenied("source.lineage", "parent source receipt is from another profile")
+            if receipt.process_generation != observation.generation:
+                raise AuthorityDenied("source.lineage", "parent source receipt is from another generation")
+            parent_ids.add(receipt.receipt_id)
+        if len(parent_ids) != len(observation.parent_receipts):
+            raise AuthorityDenied("source.lineage", "root observer parent closure contains duplicates")
+        if (len(set(observation.parent_receipt_handles)) != len(observation.parent_receipt_handles)
+                or any(not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", item)
+                       for item in observation.parent_receipt_handles)):
+            raise AuthorityDenied("source.lineage", "root observer parent handles are malformed")
+        with self._lock:
+            now = self.monotonic()
+            self._source_receipt_handles = {
+                key: value for key, value in self._source_receipt_handles.items()
+                if value.monotonic_expires_at > now
+            }
+            supplied_parent_ids = set()
+            for handle in observation.parent_receipt_handles:
+                parent = self._source_receipt_handles.get(handle)
+                if parent is None:
+                    raise AuthorityDenied("source.lineage", "root observer parent receipt handle is unavailable")
+                supplied_parent_ids.add(parent.receipt_id)
+            if not supplied_parent_ids.issubset(parent_ids):
+                raise AuthorityDenied("source.lineage", "root observer parent handle is outside its verified closure")
+            if observation.event_record_id in self._observed_event_ids:
+                raise AuthorityDenied("source.replay", "root observer event was already issued")
+            if len(self._observed_event_ids) >= 100_000 or len(self._source_receipt_handles) >= 100_000:
+                raise AuthorityDenied("source.capacity", "root source receipt table is at capacity")
+            self._observed_event_ids.add(observation.event_record_id)
+        ttl = min(600, int(observation.expires_monotonic - now))
+        if ttl < 1:
+            raise AuthorityDenied("source.expired", "root observation lease is too short")
+        receipt = self.issue_source_receipt(
+            context, source_kind=observation.source_kind,
+            origin_id=f"{observation.origin_id}:{observation.event_record_id}",
+            payload=observation.payload_bytes, ttl_seconds=ttl,
+        )
+        receipt = replace(
+            receipt, parent_receipt_ids=tuple(sorted(parent_ids)), signature="pending",
+        )
+        receipt = replace(receipt, signature=self._sign(receipt.claims()))
+        handle = SourceReceiptHandle(secrets.token_urlsafe(32))
+        with self._lock:
+            if handle in self._source_receipt_handles:
+                raise AuthorityDenied("source.capacity", "opaque source receipt handle collision")
+            self._source_receipt_handles[str(handle)] = receipt
+        return handle
 
     def revalidate_effect(self, context: HostContext, authorization: EffectAuthorization, *,
                           operation: str, request_digest: str,
@@ -570,6 +687,8 @@ class AuthorityService:
             return self._issue_context(uid, payload, peer_pid=peer_pid)
         if operation == "authorize_effect":
             return self._authorize_effect(uid, payload, peer_pid=peer_pid)
+        if operation == "authorize_process_start":
+            return self._authorize_process_start(uid, peer_pid, payload)
         if operation == "verify_effect":
             return self._verify_effect(uid, payload, peer_pid=peer_pid)
         if operation == "perform_effect":
@@ -587,7 +706,140 @@ class AuthorityService:
                 raise AuthorityDenied("native.unavailable", "native provider gateway is not enrolled")
             return broker.dispatch(uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                                    payload=payload, cancelled=cancelled)
+        if operation in {
+            "admit_remote_session", "challenge_remote_session", "renew_remote_session",
+            "close_remote_session", "open_remote_connector", "read_remote_connector",
+            "write_remote_connector", "close_remote_connector",
+        }:
+            return self._dispatch_remote_session(
+                operation, uid, peer_pid, peer_pidfd, payload,
+            )
         raise AuthorityDenied("protocol.operation", "authority operation is unavailable")
+
+    def _dispatch_remote_session(self, operation: str, peer_uid: int, peer_pid: int,
+                                 peer_pidfd: int | None, payload: Any) -> Mapping[str, Any]:
+        """Dispatch typed HI13 operations using only socket-derived peer identity."""
+        authority = self.remote_session_authority
+        if authority is None or peer_pidfd is None:
+            raise AuthorityDenied("remote.unavailable", "root remote session authority is not enrolled")
+        if not isinstance(payload, dict):
+            raise AuthorityDenied("remote.request", "remote authority request is malformed")
+        import base64
+
+        def text_field(name: str) -> str:
+            value = payload.get(name)
+            if not isinstance(value, str) or not value:
+                raise AuthorityDenied("remote.request", "remote authority request is malformed")
+            return value
+
+        def token_field(name: str, maximum: int) -> bytes:
+            value = text_field(name)
+            try:
+                decoded = base64.b64decode(value, validate=True)
+            except Exception:
+                raise AuthorityDenied("remote.request", "remote authority byte field is malformed") from None
+            if not 1 <= len(decoded) <= maximum:
+                raise AuthorityDenied("remote.request", "remote authority byte field exceeds its bound")
+            return decoded
+
+        peer = {"peer_uid": peer_uid, "peer_pid": peer_pid, "peer_pidfd": peer_pidfd}
+        if operation == "admit_remote_session":
+            if set(payload) != {"access_jwt_b64", "request"}:
+                raise AuthorityDenied("remote.request", "remote admission fields are invalid")
+            from .remote_sessions import MAX_JWT_BYTES, RemoteAdmissionRequest
+            request = RemoteAdmissionRequest.from_wire(payload["request"])
+            return authority.admit_remote_session(
+                token_field("access_jwt_b64", MAX_JWT_BYTES), request, **peer,
+            ).to_wire()
+        if operation == "renew_remote_session":
+            if set(payload) != {"remote_session_handle", "access_jwt_b64", "renewal_nonce"}:
+                raise AuthorityDenied("remote.request", "remote renewal fields are invalid")
+            from .remote_sessions import MAX_JWT_BYTES
+            return authority.renew_remote_session(
+                text_field("remote_session_handle"), token_field("access_jwt_b64", MAX_JWT_BYTES),
+                text_field("renewal_nonce"), **peer,
+            ).to_wire()
+        handle = text_field("remote_session_handle")
+        if operation in {"challenge_remote_session", "close_remote_session", "open_remote_connector"}:
+            if set(payload) != {"remote_session_handle"}:
+                raise AuthorityDenied("remote.request", "remote session fields are invalid")
+            method = {
+                "challenge_remote_session": authority.challenge_remote_session,
+                "close_remote_session": authority.close_remote_session,
+                "open_remote_connector": authority.open_remote_connector,
+            }[operation]
+            return method(handle, **peer).to_wire()
+        if operation == "read_remote_connector":
+            if set(payload) != {"remote_session_handle", "connector_handle", "sequence", "maximum_bytes"}:
+                raise AuthorityDenied("remote.request", "remote read fields are invalid")
+            sequence, maximum = payload["sequence"], payload["maximum_bytes"]
+            if type(sequence) is not int or type(maximum) is not int:
+                raise AuthorityDenied("remote.request", "remote read bounds are invalid")
+            return authority.read_remote_connector(
+                handle, text_field("connector_handle"), sequence, maximum, **peer,
+            ).to_wire()
+        if operation == "write_remote_connector":
+            if set(payload) != {"remote_session_handle", "connector_handle", "sequence", "data_bytes_b64"}:
+                raise AuthorityDenied("remote.request", "remote write fields are invalid")
+            sequence = payload["sequence"]
+            if type(sequence) is not int:
+                raise AuthorityDenied("remote.request", "remote write sequence is invalid")
+            from .remote_sessions import MAX_FRAME_BYTES
+            data = token_field("data_bytes_b64", MAX_FRAME_BYTES)
+            return authority.write_remote_connector(
+                handle, text_field("connector_handle"), sequence, data, **peer,
+            ).to_wire()
+        if operation == "close_remote_connector":
+            if set(payload) != {"remote_session_handle", "connector_handle"}:
+                raise AuthorityDenied("remote.request", "remote connector close fields are invalid")
+            return authority.close_remote_connector(
+                handle, text_field("connector_handle"), **peer,
+            ).to_wire()
+        raise AuthorityDenied("protocol.operation", "remote authority operation is unavailable")
+
+    def _authorize_process_start(self, uid: int, peer_pid: int | None, payload: Any) -> dict[str, Any]:
+        """Resolve process.start target from root enrollment, never caller input."""
+        required = {"context", "enrollment_id", "generation", "operation_id",
+                    "request_digest", "retry_index"}
+        if not isinstance(payload, dict) or set(payload) != required:
+            raise AuthorityDenied("effect.request", "selected process authorization fields are invalid")
+        if (self.selected_operation_resolver is None
+                or any(not isinstance(payload.get(field), str) or not payload[field]
+                       for field in ("enrollment_id", "generation", "operation_id"))
+                or not isinstance(payload["request_digest"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", payload["request_digest"])
+                or type(payload["retry_index"]) is not int
+                or not 0 <= payload["retry_index"] <= 100):
+            raise AuthorityDenied("effect.unavailable", "protected selected process operation is unavailable")
+        binding = self._binding(uid)
+        context = HostContext.from_wire(payload["context"])
+        self._verify_context_signature(context)
+        self._assert_current_context(context, binding, uid)
+        if (context.operation != "process.start"
+                or context.final_payload_digest != payload["request_digest"]):
+            raise AuthorityDenied("effect.binding", "selected process context does not bind the exact request")
+        try:
+            selected = self.selected_operation_resolver(
+                payload["enrollment_id"], payload["generation"], "process.start",
+                payload["operation_id"])
+        except Exception:
+            raise AuthorityDenied("effect.target", "selected process enrollment is unavailable") from None
+        if (getattr(selected, "operation", None) != "process.start"
+                or getattr(selected, "operation_id", None) != payload["operation_id"]
+                or getattr(selected, "profile_id", None) != binding.profile_id
+                or getattr(selected, "principal_id", None) != binding.principal_id
+                or getattr(selected, "service_uid", None) != uid
+                or getattr(selected, "enrollment_id", None) != payload["enrollment_id"]
+                or getattr(selected, "generation", None) != payload["generation"]
+                or not isinstance(getattr(selected, "target", None), str)
+                or "hermes-profile-invoke" not in binding.capabilities):
+            raise AuthorityDenied("effect.target", "selected process operation is not bound to this host principal")
+        return self._authorize_effect(uid, {
+            "context": context.to_wire(), "capability": "hermes-profile-invoke",
+            "target": selected.target, "recipient": None,
+            "request_digest": payload["request_digest"],
+            "retry_index": payload["retry_index"],
+        }, peer_pid=peer_pid)
 
     def _binding(self, uid: int) -> PrincipalBinding:
         binding = self.bindings_by_uid.get(uid)

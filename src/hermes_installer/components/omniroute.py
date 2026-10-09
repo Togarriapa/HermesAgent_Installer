@@ -340,6 +340,7 @@ class OmniRouteGatewayAdapter:
 
     def __init__(self, *, policy: OmniRoutePolicy,
                  root_selected_enrollments: Callable[[], Mapping[tuple[str, str], object]],
+                 normalization_policy: Mapping[str, object],
                  authority: NativeProviderBridge):
         policy.validate()
         if not callable(root_selected_enrollments) or not callable(
@@ -348,6 +349,7 @@ class OmniRouteGatewayAdapter:
             raise OmniRouteError("OmniRoute requires the host native-event broker adapter")
         self.policy = policy
         self._root_routes = root_selected_enrollments
+        self._normalization_policy = normalization_policy
         self._authority = authority
 
     def dispatch(self, *, native_event_handle: object, payload: bytes,
@@ -379,7 +381,8 @@ class OmniRouteGatewayAdapter:
                                            ensure_ascii=False, allow_nan=False).encode("utf-8")
             root_routes = self._root_routes()
             body, target, recipient, _capability, model = canonical_provider_request(
-                root_routes, normalized_input
+                root_routes, normalized_input,
+                normalization_policy=self._normalization_policy,
             )
         except (TypeError, ValueError, UnicodeEncodeError, RecursionError) as exc:
             raise OmniRouteError("OmniRoute request could not be normalized safely") from exc
