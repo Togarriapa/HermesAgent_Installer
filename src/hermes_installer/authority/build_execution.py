@@ -1364,7 +1364,7 @@ class RootBuildExecutionService:
     """Handler for fixed `process.start` selections; does not expose caller paths."""
     def __init__(self, *, build_catalog: FixedBuildCatalog, artifact_catalog: Any,
                  artifact_staging_root: Path, launcher: FixedBuildJobLauncher,
-                 fact_inspector: BuildOutputFactInspector, authority_key: bytes,
+                 fact_inspector: BuildOutputFactInspector, authority_key: bytes | None = None,
                  service_catalog: Any,
                  allowed_operation_ids: frozenset[str] | None = None,
                  store: ContentAddressedBuildStore | None = None, expected_uid: int = 0,
@@ -1389,7 +1389,13 @@ class RootBuildExecutionService:
                 or "coral-cpython39-source-build-v1" in selected_operations and not has_cpython_probe):
             raise AuthorityDenied("build.operation", "build operation registration exceeds verified inspector support")
         self.allowed_operation_ids = frozenset(selected_operations)
-        self.store = store or ContentAddressedBuildStore.root_store(authority_key=authority_key)
+        if store is None:
+            if not isinstance(authority_key, bytes) or len(authority_key) != 32:
+                raise AuthorityDenied("build.store", "root build signing key is unavailable")
+            store = ContentAddressedBuildStore.root_store(authority_key=authority_key)
+        elif not isinstance(store, ContentAddressedBuildStore):
+            raise AuthorityDenied("build.store", "root content-addressed build store is invalid")
+        self.store = store
         if self.store.owner_uid != expected_uid:
             raise AuthorityDenied("build.store_custody", "build store owner differs from the root executor identity")
         self.expected_uid = expected_uid

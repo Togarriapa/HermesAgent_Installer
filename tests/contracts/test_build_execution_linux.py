@@ -182,7 +182,7 @@ class RootBuildExecutionLinuxTests(unittest.TestCase):
                 build_catalog=BuildCatalog(), service_catalog=services,
                 artifact_catalog=ArtifactCatalog(), artifact_staging_root=fixture.stage,
                 launcher=fixture.runner, fact_inspector=FixtureFactInspector(),
-                authority_key=b"b" * 32, store=store, expected_uid=0,
+                store=store, expected_uid=0,
             )
             self.assertEqual(set(service.handlers()), {("process.start", fixture.target)})
             peer_pidfd = os.pidfd_open(os.getpid(), 0)
