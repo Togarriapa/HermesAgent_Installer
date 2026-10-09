@@ -90,13 +90,21 @@ def _profile_files(item: ResolvedResource, source_path: str, source_document: Ma
     if not _PROFILE_NAME.fullmatch(name):
         raise RegistryError(f"profile name cannot be represented as a Hermes profile: {name}")
     spec = item.effective_spec or item.resource.body
-    instructions = spec.get("instructions", ())
-    if isinstance(instructions, str):
-        instruction_text = instructions.strip()
-    elif isinstance(instructions, (list, tuple)) and all(isinstance(x, str) for x in instructions):
-        instruction_text = "\n".join(f"- {line.strip()}" for line in instructions if line.strip())
-    else:
-        raise RegistryError(f"profile instructions have no native text representation: {name}")
+    content_sections = []
+    for field, value in spec.items():
+        if field in {"extends", "requires"}:
+            continue
+        heading = "Role instructions" if field == "instructions" else str(field).replace("_", " ").replace("-", " ").title()
+        if isinstance(value, str):
+            rendered = value.strip()
+        elif isinstance(value, (list, tuple)) and all(isinstance(part, str) for part in value):
+            rendered = "\n".join(f"- {part.strip()}" for part in value if part.strip())
+        else:
+            rendered = "```yaml\n" + yaml.safe_dump(value, sort_keys=False, allow_unicode=True).rstrip() + "\n```"
+        if rendered:
+            content_sections.append(f"## {heading}\n\n{rendered}")
+    if not content_sections:
+        content_sections.append("## Complete registry profile declaration\n\n```yaml\n" + yaml.safe_dump(dict(spec), sort_keys=False, allow_unicode=True).rstrip() + "\n```")
     metadata = source_document.get("metadata", {})
     description = metadata.get("description", "") if isinstance(metadata, Mapping) else ""
     if not isinstance(description, str):
@@ -104,9 +112,8 @@ def _profile_files(item: ResolvedResource, source_path: str, source_document: Ma
     soul = (
         f"# {name.replace('-', ' ').replace('_', ' ').title()}\n\n"
         + (f"{description.strip()}\n\n" if description.strip() else "")
-        + "## Role instructions\n\n"
-        + (instruction_text + "\n" if instruction_text else "No behavioral instructions were declared.\n")
-        + "\n## Complete registry profile declaration\n\n"
+        + "\n\n".join(content_sections)
+        + "\n\n## Complete registry profile declaration\n\n"
         + "```yaml\n"
         + yaml.safe_dump(dict(spec), sort_keys=False, allow_unicode=True)
         + "```\n"
