@@ -34,3 +34,36 @@ Fresh Access membership checks use a second least-privilege credential scoped to
 An exact current-policy decision requires repeated bounded reads of the same application, complete bounded policy set and selected OTP provider. Resolver, API, cancellation or time-bound failure denies. The runtime lock contains only the dedicated component environment. The separate CI fixture lock targets x86-64 Python 3.13 and is test-only; it does not replace the hash-pinned ARM64 Python 3.14 runtime lock or prove Pi readiness.
 
 Host startup and shutdown still require the installer-owned systemd/cgroup supervisor and native service acceptance. A fixture UID exchange proves the Linux peer-credential boundary only; it is not proof of systemd custody, Pi identity, Access-policy propagation, Desktop sandbox, or Xpra process/window confinement.
+# Root tunnel credential and origin readiness
+
+The active root enrollment selects the Cloudflare tunnel, account, secret
+reference, runtime UID and protected token sink. The root authority resolves
+only the dedicated tunnel credential and writes it beneath a root-owned `0700`
+directory to a `0400` file. The unprivileged cloudflared systemd unit receives
+that file through systemd `LoadCredential=`; the service reads only its private
+credential copy, and the gateway receives no token. Cloudflare management
+credentials remain in setup storage. The writer uses a durable intent before
+publishing, descriptor-anchored atomic create-only publication, and an
+ownership journal containing only the credential digest and file identity. A
+pre-existing or changed sink stops setup without replacement. Installer and
+gateway receipts contain only selected IDs and protected inode metadata, never
+token bytes, token digest, or filesystem path.
+The root validates Cloudflare's encoded tunnel-token envelope against the
+selected account and tunnel UUID using the pinned [`cloudflared` 2026.10.0 token fields](https://github.com/cloudflare/cloudflared/blob/2026.10.0/connection/connection.go).
+
+Cloudflare route activation requires a signed, short-lived
+`RootOriginReadinessReceipt` from the root authority. It binds the active
+gateway and Desktop generations, connector target, policy digest/revision and
+service generation. The receipt is issued only after the process manager
+checks the live PIDFD, start time, pinned executable, cgroup, namespaces, mount,
+configuration and fixed route, followed by bounded loopback checks for
+authorized native app assets and WebSocket pixels and denials for unauthorized,
+shell, arbitrary route and whole-host desktop requests. Missing native or
+kernel evidence leaves the route pending; process metadata or a live PID alone
+does not satisfy readiness. Receipts expire after 30 seconds and must pass root
+signature, selection, digest and expiry checks at the activation boundary.
+
+Fixture evidence exercises private file effects, collision refusal, signed
+receipt validation and real isolated loopback socket exchanges. It does not
+enroll or prove a live Cloudflare account, Pi, browser identity, or native
+Hermes Desktop target.
