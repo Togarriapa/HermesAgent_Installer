@@ -55,7 +55,10 @@ class NativeTaskInputCoordinatorContracts(unittest.TestCase):
             resolve_live_peer=lambda pid, _fd, **_kw: identity if pid == 733 else None,
         )
         delivery = SimpleNamespace(resolve_delivered_source_receipt=lambda handle, **_kw: handle)
-        task_native = SimpleNamespace(bind_running_task=lambda *_a: None, bind_task_input=lambda **_k: None)
+        task_native = SimpleNamespace(
+            bind_running_task=lambda *_a: None, bind_task_input=lambda **_k: None,
+            cancel_running_task=lambda *_a: None, cancel_task_input=lambda **_k: None,
+        )
         coordinator = RootTaskInputCoordinator(
             task_native_observation_registry=task_native,
             selected_native_execution_registry=selection_registry,

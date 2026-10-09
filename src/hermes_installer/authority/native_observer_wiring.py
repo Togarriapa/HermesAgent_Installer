@@ -53,6 +53,8 @@ class RootTaskInputCoordinator:
                  monotonic: Callable[[], float] = time.monotonic):
         if (not callable(getattr(task_native_observation_registry, "bind_running_task", None))
                 or not callable(getattr(task_native_observation_registry, "bind_task_input", None))
+                or not callable(getattr(task_native_observation_registry, "cancel_running_task", None))
+                or not callable(getattr(task_native_observation_registry, "cancel_task_input", None))
                 or not callable(getattr(selected_native_execution_registry, "select_resource_task", None))
                 or not callable(getattr(selected_native_execution_registry, "resolve_current_execution", None))
                 or not callable(getattr(selected_native_execution_registry, "resolve_selected_native_input_target", None))
@@ -121,19 +123,31 @@ class RootTaskInputCoordinator:
 
         # The caller passes the already-resolved source snapshot.  This first
         # bind is its one-use/currentness check; never resolve it again here.
-        self.task_native_observations.bind_running_task(
-            admission_handle, node_id, source, managed_task_handle)
-        self._check_cancelled(cancelled)
-        selected = self.selected_executions.select_resource_task(
-            admission_handle, node_id, managed_task_handle)
-        current = self.selected_executions.resolve_current_execution(selected)
-        if (current is not selected
-                or getattr(selected, "execution_handle", None) is not admission_handle
-                or getattr(selected, "process_handle", None) is not managed_task_handle
-                or getattr(selected, "kind", None) != "resource-task"
-                or getattr(selected, "observer_enrollment_id", None) is None):
-            self._release_selection(selected)
-            raise AuthorityDenied("native.input.selection", "selected native execution differs from the live task")
+        task_binding_attempted = True
+        selected = None
+        try:
+            self.task_native_observations.bind_running_task(
+                admission_handle, node_id, source, managed_task_handle)
+            self._check_cancelled(cancelled)
+            selected = self.selected_executions.select_resource_task(
+                admission_handle, node_id, managed_task_handle)
+            current = self.selected_executions.resolve_current_execution(selected)
+            if (current is not selected
+                    or getattr(selected, "execution_handle", None) is not admission_handle
+                    or getattr(selected, "process_handle", None) is not managed_task_handle
+                    or getattr(selected, "kind", None) != "resource-task"
+                    or getattr(selected, "observer_enrollment_id", None) is None):
+                raise AuthorityDenied("native.input.selection", "selected native execution differs from the live task")
+        except BaseException:
+            if selected is not None:
+                self._release_selection(selected)
+            cancel_running = getattr(self.task_native_observations, "cancel_running_task", None)
+            if callable(cancel_running):
+                try:
+                    cancel_running(managed_task_handle)
+                except Exception:
+                    pass
+            raise
 
         target = None
         source_handle = None
@@ -231,6 +245,13 @@ class RootTaskInputCoordinator:
                     source_receipt_handle=str(source_handle),
                     receipt_handle=receipt_handle,
                 )
+            if task_binding_attempted and initial_receipt is None:
+                cancel_running = getattr(self.task_native_observations, "cancel_running_task", None)
+                if callable(cancel_running):
+                    try:
+                        cancel_running(managed_task_handle)
+                    except Exception:
+                        pass
             if target is not None:
                 self._close_target(target)
             self._release_selection(selected)
