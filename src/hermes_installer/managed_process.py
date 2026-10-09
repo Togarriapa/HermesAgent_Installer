@@ -41,6 +41,7 @@ class ManagedProcessSpec:
     journal_operation: str
     journal: Journal
     service_identity: str
+    service_user: str
     startup_deadline_monotonic: float
     max_lifetime_seconds: float
     child_artifact_hashes: Mapping[str, str] | None = None
@@ -138,20 +139,9 @@ def _proc_cgroup(pid: int) -> str:
 
 
 def _bus_environment() -> dict[str, str]:
-    if not hasattr(os, "geteuid") or not sys_platform_linux():
-        raise ManagedProcessError("managed services require Linux user systemd")
-    uid = os.getuid()
-    runtime = Path(f"/run/user/{uid}")
-    try:
-        info = runtime.lstat()
-        bus = runtime / "bus"
-        bus_info = bus.lstat()
-    except OSError:
-        raise ManagedProcessError("owned user systemd bus is unavailable") from None
-    if info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700 or not stat.S_ISDIR(info.st_mode):
-        raise ManagedProcessError("user runtime directory is not private and UID-owned")
-    if bus_info.st_uid != uid or not stat.S_ISSOCK(bus_info.st_mode):
-        raise ManagedProcessError("user systemd bus is not an owned socket")
+    """Minimal sudo client environment; never forwards desktop or credential state."""
+    if not sys_platform_linux():
+        raise ManagedProcessError("managed services require Linux systemd")
     return {"PATH": "/usr/bin:/bin", "LANG": "C"}
 
 
@@ -161,12 +151,13 @@ def sys_platform_linux() -> bool:
 
 async def _systemctl_async(*args: str, timeout: float = 2.0) -> str:
     path = shutil.which("systemctl", path="/usr/bin:/bin")
-    if path is None:
-        raise ManagedProcessError("systemctl is unavailable")
+    sudo = shutil.which("sudo", path="/usr/bin:/bin")
+    if path is None or sudo is None:
+        raise ManagedProcessError("system service control is unavailable")
     process = None
     try:
         process = await asyncio.create_subprocess_exec(
-            path, "-n", "systemctl", "--system", *args, stdin=asyncio.subprocess.DEVNULL,
+            sudo, "-n", path, "--system", *args, stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             env=_bus_environment(), close_fds=True,
         )
@@ -211,6 +202,25 @@ def _manager_environment_keys(raw: str) -> tuple[str, ...]:
     return tuple(sorted(keys))
 
 
+def _parse_systemd_timespan_us(value: str) -> int:
+    """Parse the finite human timespan returned for RuntimeMaxUSec."""
+    if not value or value.lower() in {"infinity", "infinite", "max"}:
+        raise ManagedProcessError("manager returned a non-finite lifetime")
+    if value.isdigit():
+        return int(value)
+    scales = {"us": 1, "usec": 1, "µs": 1, "ms": 1_000, "msec": 1_000,
+              "s": 1_000_000, "sec": 1_000_000, "min": 60_000_000,
+              "h": 3_600_000_000, "d": 86_400_000_000, "w": 604_800_000_000}
+    matches = re.findall(r"([0-9]+(?:\\.[0-9]+)?)\\s*(usec|msec|µs|us|ms|min|sec|s|h|d|w)", value)
+    residue = re.sub(r"[0-9]+(?:\\.[0-9]+)?\\s*(?:usec|msec|µs|us|ms|min|sec|s|h|d|w)\\s*", "", value)
+    if not matches or residue:
+        raise ManagedProcessError("manager returned an unsupported lifetime format")
+    total = sum(float(number) * scales[unit] for number, unit in matches)
+    if not total.is_integer() or total <= 0:
+        raise ManagedProcessError("manager returned an invalid lifetime")
+    return int(total)
+
+
 def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Path, Path]:
     if not isinstance(spec.owned_root, OwnedRoot) or not isinstance(spec.journal, Journal):
         raise ManagedProcessError("managed processes require an OwnedRoot and durable Journal")
@@ -242,6 +252,8 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
         raise ManagedProcessError("journal operation id is invalid")
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,96}", spec.service_identity):
         raise ManagedProcessError("service identity is invalid")
+    if not re.fullmatch(r"hermes-[a-z0-9-]{1,40}", spec.service_user):
+        raise ManagedProcessError("service user must be a dedicated installer identity")
     now = time.monotonic()
     if not now < spec.startup_deadline_monotonic <= now + 600:
         raise ManagedProcessError("startup deadline must be an absolute bounded monotonic time")
@@ -501,8 +513,15 @@ class ManagedProcessSupervisor:
         if not hasattr(os, "pidfd_open"):
             raise ManagedProcessError("kernel pidfd support is required")
         systemd_run = shutil.which("systemd-run", path="/usr/bin:/bin")
-        if not systemd_run or not Path("/sys/fs/cgroup/cgroup.controllers").exists():
-            raise ManagedProcessError("systemd user services and cgroup v2 are required")
+        sudo = shutil.which("sudo", path="/usr/bin:/bin")
+        if not systemd_run or not sudo or not Path("/sys/fs/cgroup/cgroup.controllers").exists():
+            raise ManagedProcessError("root-owned system services and cgroup v2 are required")
+        try:
+            service_account = pwd.getpwnam(spec.service_user)
+        except KeyError:
+            raise ManagedProcessError("dedicated service identity is not provisioned") from None
+        if service_account.pw_uid in {0, os.getuid()}:
+            raise ManagedProcessError("managed service identity must be distinct and non-root")
 
         manager_env = await _systemctl_async("show-environment", timeout=3.0)
         unset_names = tuple(name for name in _manager_environment_keys(manager_env)
@@ -542,7 +561,7 @@ class ManagedProcessSupervisor:
             raise ManagedProcessError("environment allowlist exceeds its bound")
         env_args = ["--setenv=" + key + "=" + value
                     for key, value in sorted(spec.env_allowlist.items())]
-        argv = [shutil.which("sudo", path="/usr/bin:/bin") or "/usr/bin/sudo", "-n", systemd_run, "--system", "--unit=" + unit, "--service-type=exec",
+        argv = [sudo, "-n", systemd_run, "--system", "--unit=" + unit, "--service-type=exec",
                 "--wait", "--collect", "--pipe", "--quiet",
                 "--working-directory=" + target_cwd, *properties, *env_args,
                 str(exe), *spec.argv[1:]]
@@ -605,7 +624,10 @@ class ManagedProcessSupervisor:
                                    ("PrivateTmp", "yes"),
                                    ("PrivateDevices", "yes"),
                                    ("NoNewPrivileges", "yes"),
-                                   ("IPAddressDeny", "any")):
+                                   ("IPAddressDeny", "any"), ("PrivateNetwork", "yes"),
+                                   ("RestrictAddressFamilies", "AF_UNIX"),
+                                   ("ProtectHome", "tmpfs"), ("ProtectProc", "invisible"),
+                                   ("ProcSubset", "pid"), ("User", spec.service_user)):
                 if await _show_async(unit, prop) != expected:
                     os.close(pidfd)
                     raise ManagedProcessError("required systemd isolation property was not applied")
@@ -613,13 +635,36 @@ class ManagedProcessSupervisor:
                 os.close(pidfd)
                 raise ManagedProcessError("manager operation identity does not match the journal binding")
             maximum = await _show_async(unit, "RuntimeMaxUSec")
-            if not maximum.isdigit() or int(maximum) < int(spec.max_lifetime_seconds * 1_000_000):
+            if _parse_systemd_timespan_us(maximum) < int(spec.max_lifetime_seconds * 1_000_000):
                 os.close(pidfd)
                 raise ManagedProcessError("manager-enforced process lifetime is missing or too short")
             actual_env = self._read_process_environment(pid)
             if actual_env != dict(spec.env_allowlist):
                 os.close(pidfd)
                 raise ManagedProcessError("actual process environment differs from the sanitized allowlist")
+            if os.stat(f"/proc/{pid}/ns/net").st_ino == os.stat("/proc/self/ns/net").st_ino:
+                os.close(pidfd)
+                raise ManagedProcessError("private network namespace was not applied")
+            if os.stat(f"/proc/{pid}/ns/mnt").st_ino == os.stat("/proc/self/ns/mnt").st_ino:
+                os.close(pidfd)
+                raise ManagedProcessError("private mount namespace was not applied")
+            status = Path(f"/proc/{pid}/status").read_text()
+            uid_line = next((line for line in status.splitlines() if line.startswith("Uid:")), "")
+            groups_line = next((line for line in status.splitlines() if line.startswith("Groups:")), "")
+            observed_uids = tuple(int(x) for x in uid_line.split()[1:])
+            observed_groups = tuple(int(x) for x in groups_line.split()[1:])
+            if len(observed_uids) != 4 or any(uid != service_account.pw_uid for uid in observed_uids):
+                os.close(pidfd)
+                raise ManagedProcessError("service UID isolation was not applied")
+            if observed_groups != (service_account.pw_gid,):
+                os.close(pidfd)
+                raise ManagedProcessError("supplementary service groups were not cleared")
+            try:
+                if tuple(Path(f"/proc/{pid}/root/home").iterdir()):
+                    os.close(pidfd)
+                    raise ManagedProcessError("host home directories remain visible inside service")
+            except FileNotFoundError:
+                pass
             identity = ProcessIdentity(unit, cgroup, pid, ticks, digest, pidfd)
             await _systemctl_async("show", "--property=Description", "--value", unit, timeout=1.0)
             spec.journal.record_owned("managed-systemd-service", unit, "active")
