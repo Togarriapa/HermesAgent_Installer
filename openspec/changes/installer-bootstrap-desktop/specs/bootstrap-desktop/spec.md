@@ -284,3 +284,11 @@ The implementation SHALL resolve the protected setup catalog/store and validate 
 #### Scenario: Untrusted injected catalog or response
 - **WHEN** selected artifact custody or probe envelope/observation binding differs
 - **THEN** provisioning/readiness cannot be marked complete.
+
+### Requirement: Selected installed bootstrap policy
+
+The root factory SHALL resolve the exact installed reviewed bootstrap policy and actual transaction-bound receipt fields before publishing active records.
+
+#### Scenario: Missing executable receipt
+- **WHEN** an active template binding lacks an actual verified runnable artifact receipt
+- **THEN** no active service record is synthesized from defaults or source archive identity.

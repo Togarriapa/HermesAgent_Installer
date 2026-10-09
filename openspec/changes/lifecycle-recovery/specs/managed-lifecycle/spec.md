@@ -245,3 +245,11 @@ The implementation SHALL enforce the applicable native health receipt and typed 
 #### Scenario: Status without native result
 - **WHEN** only source/status/exit evidence is available
 - **THEN** functional health and task result acceptance remain incomplete.
+
+### Requirement: Selected installed bootstrap policy
+
+The root factory SHALL resolve the exact installed reviewed bootstrap policy and actual transaction-bound receipt fields before publishing active records.
+
+#### Scenario: Missing executable receipt
+- **WHEN** an active template binding lacks an actual verified runnable artifact receipt
+- **THEN** no active service record is synthesized from defaults or source archive identity.

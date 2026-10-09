@@ -48,3 +48,7 @@ BD-F01/BD-F03/LC-F03/HI-T01 use root_local_setup_session installed_selection_cat
 ### v15 native health and typed admission
 
 Use planning/protected-lifecycle-control-contract.json native_health_receipt for actual native health and planning/protected-resource-job-contract.json typed_admission/service_methods/recipe_domain for RB-T08. Original tasks/acceptance remain pending.
+
+### v21 installed bootstrap policy source
+
+Use installed_selection_catalog.bootstrap_policy_artifact explicit selected policy/template/receipt joins. Prepared records empty until actual runtime/health receipts; existing BD/LC/HI tasks remain pending.
