@@ -49,6 +49,16 @@ class NativeMaterializationSelection:
     data_root_id: str
     source_artifact_id: str
     source_receipt_handle: str
+    pm_runtime_handle: str
+
+
+class NativePMRuntimeResolver(Protocol):
+    """Root-private resolver for the committed official Hermes PM runtime."""
+
+    def resolve_python(
+        self, *, pm_runtime_handle: str, enrollment_id: str,
+        service_generation: str, source_artifact_id: str,
+    ) -> Path: ...
 
 
 class RootSelectedInstallationBinding(Protocol):
@@ -97,11 +107,13 @@ class RootNativeMaterialization:
 
     def __init__(self, binding: RootSelectedInstallationBinding, *,
                  registry: NativeRegistry, home_root: Path, data_root: Path,
-                 journal_root: Path, hermes_source: Path, hermes_python: Path,
+                 journal_root: Path, hermes_source: Path,
+                 pm_runtime_resolver: NativePMRuntimeResolver,
                  authority_uid: int = 0,
                  monotonic=time.monotonic):
         if (not isinstance(registry, NativeRegistry)
                 or not callable(getattr(binding, "authorize_native_materialization", None))
+                or not callable(getattr(pm_runtime_resolver, "resolve_python", None))
                 or authority_uid != 0):
             raise NativeMaterializationDenied("root native materializer inputs are not factory-selected")
         if (registry.source.repository != "https://github.com/Togarriapa/HermesAgent_Resources"
@@ -113,7 +125,7 @@ class RootNativeMaterialization:
         self._data_root = _absolute_root(data_root)
         self._journal_root = _absolute_root(journal_root)
         self._hermes_source = _absolute_root(hermes_source)
-        self._hermes_python = _absolute_root(hermes_python, allow_file=True)
+        self._pm_runtime_resolver = pm_runtime_resolver
         if len({self._home_root, self._data_root, self._journal_root}) != 3:
             raise NativeMaterializationDenied("selected home, data, and journal roots must be distinct")
         self._authority_uid = authority_uid
@@ -172,9 +184,10 @@ class RootNativeMaterialization:
         if {(item.kind, item.resource_id) for item in items} != required:
             raise NativeMaterializationDenied("native profile or skill closure was not fully materialized")
         try:
+            hermes_python = self._resolve_hermes_python(selection)
             discovery = discover_and_load_selected(
                 hermes_source=self._hermes_source,
-                python=self._hermes_python,
+                python=hermes_python,
                 hermes_root=self._home_root,
                 profile_id=resource_profile_id,
                 skill_ids=tuple(sorted(_skill_ids(mapping))),
@@ -239,7 +252,8 @@ class RootNativeMaterialization:
                 or type(selection.service_uid) is not int or selection.service_uid <= 0
                 or type(selection.service_gid) is not int or selection.service_gid <= 0
                 or not selection.home_root_id or not selection.data_root_id
-                or not selection.source_artifact_id or not selection.source_receipt_handle):
+                or not selection.source_artifact_id or not _opaque_handle(selection.source_receipt_handle)
+                or not _opaque_handle(selection.pm_runtime_handle)):
             raise NativeMaterializationDenied("root setup binding did not authorize this selected generation")
         return selection
 
@@ -412,6 +426,27 @@ class RootNativeMaterialization:
             tuple(NativeMaterializedItem(**item) for item in record["items"]),
             state, record["expires"],
         )
+
+    def _resolve_hermes_python(self, selection: NativeMaterializationSelection) -> Path:
+        try:
+            candidate = self._pm_runtime_resolver.resolve_python(
+                pm_runtime_handle=selection.pm_runtime_handle,
+                enrollment_id=selection.enrollment_id,
+                service_generation=selection.service_generation,
+                source_artifact_id=selection.source_artifact_id,
+            )
+        except NativeInstallError:
+            raise
+        except Exception:
+            raise NativeMaterializationDenied(
+                "official Hermes PM runtime receipt could not be resolved"
+            ) from None
+        if (not isinstance(candidate, Path) or not candidate.is_absolute()
+                or not candidate.is_file() or not os.access(candidate, os.X_OK)):
+            raise NativeMaterializationDenied(
+                "verified Hermes PM runtime did not resolve an executable"
+            )
+        return candidate
 
 
 def _selected_files(compiled: Mapping[str, bytes], profile_id: str) -> dict[str, bytes]:
@@ -634,3 +669,8 @@ def _path_digest(values: list[tuple[str, str]]) -> str:
         digest.update(raw)
         digest.update(bytes.fromhex(item_digest))
     return digest.hexdigest()
+
+
+def _opaque_handle(value: Any) -> bool:
+    return (isinstance(value, str) and 16 <= len(value) <= 256
+            and all(ch.isascii() and (ch.isalnum() or ch in "_-.") for ch in value))
