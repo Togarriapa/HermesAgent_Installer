@@ -316,7 +316,7 @@ def _read_id(value: Any, label: str) -> str:
 class ProtectedEnrollment:
     key_id: str
     bindings_by_uid: Mapping[int, PrincipalBinding]
-    rules: Mapping[tuple[str, str], EffectRule]
+    rules: Mapping[tuple[str, str, str], EffectRule]
     policy: AuthorityPolicy
     process_profiles: Mapping[str, Any]
     provider_enrollments: Mapping[str, Any]
@@ -384,14 +384,14 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         uid_by_principal[principal_id] = uid
     if not isinstance(root["rules"], list) or not root["rules"] or len(root["rules"]) > 4096:
         raise AuthorityDenied("enrollment.schema", "protected effect rule catalog is invalid")
-    rules: dict[tuple[str, str], EffectRule] = {}
+    rules: dict[tuple[str, str, str], EffectRule] = {}
     for raw in root["rules"]:
         item = _exact(raw, {"capability", "operation", "target", "recipient"}, "effect rule")
         capability = _read_id(item["capability"], "capability")
         target = _read_id(item["target"], "effect target")
         rule = EffectRule(capability, _read_id(item["operation"], "operation"), target,
                           None if item["recipient"] is None else _read_id(item["recipient"], "recipient"))
-        key = (capability, target)
+        key = (capability, rule.operation, target)
         if key in rules:
             raise AuthorityDenied("enrollment.rule", "protected effect rule is duplicated")
         rules[key] = rule
@@ -450,7 +450,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         )
     except (TypeError, ValueError):
         raise AuthorityDenied("enrollment.authentik", "protected Authentik transport enrollment is invalid") from None
-    for (cap, _target), rule in rules.items():
+    for (cap, _operation, _target), rule in rules.items():
         if (cap, rule.target) not in enrollment.allowed_effects:
             raise AuthorityDenied("enrollment.rule", "effect rule is outside Authentik protected allowlist")
     if not isinstance(root["delegations"], list) or len(root["delegations"]) > 512:
@@ -476,8 +476,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         )
         parent_binding = profiles_by_id.get(rule.parent_profile_id)
         child_binding = profiles_by_id.get(rule.child_profile_id)
-        parent_rule = rules.get((rule.parent_capability, rule.parent_target))
-        child_rule = rules.get((rule.child_capability, rule.child_target))
+        parent_rule = rules.get((rule.parent_capability, rule.parent_operation, rule.parent_target))
+        child_rule = rules.get((rule.child_capability, rule.child_operation, rule.child_target))
         if (rule.delegation_id in delegations or parent_binding is None or child_binding is None
                 or rule.parent_capability not in parent_binding.capabilities
                 or rule.child_capability not in child_binding.capabilities
@@ -525,11 +525,12 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
     for profile in process_profiles.values():
         required_process_rules = [
             ("hermes-profile-invoke", "process.start", process_start_target(profile)),
+            ("hermes-process-control", "process.inspect", f"{profile.profile_id}:inspect"),
             *(("hermes-process-control", operation, process_control_target(profile, operation))
               for operation in ("process.status", "process.read", "process.write", "process.stop")),
         ]
         for capability, operation, target in required_process_rules:
-            rule = rules.get((capability, target))
+            rule = rules.get((capability, operation, target))
             if (rule is None or rule.operation != operation or rule.recipient is not None
                     or any(capability not in binding.capabilities
                            for binding in bindings.values() if binding.profile_id == profile.profile_id)):

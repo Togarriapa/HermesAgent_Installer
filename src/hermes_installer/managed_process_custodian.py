@@ -496,7 +496,11 @@ class ManagedProcessEffectHandler:
             "--property=ProtectControlGroups=yes", "--property=RestrictSUIDSGID=yes",
             "--property=RestrictNamespaces=user", "--property=RestrictAddressFamilies=AF_UNIX",
             "--property=PrivateNetwork=yes", "--property=IPAddressDeny=any",
-            "--property=InaccessiblePaths=/etc/hermes-installer /var/lib/hermes-installer /etc/ssh /etc/ssl/private",
+            # The product data root is created by the root installer. On a
+            # clean host (and the isolated CI manager namespace) it may not
+            # exist yet; systemd's `-` prefix skips only that absent path.
+            # Once enrolled/installed, the same path is still masked.
+            "--property=InaccessiblePaths=/etc/hermes-installer -/var/lib/hermes-installer /etc/ssh /etc/ssl/private",
             f"--property=BindPaths={root}:{mount}",
         ]
         authority_socket = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
@@ -688,7 +692,11 @@ class ManagedProcessEffectHandler:
                 "ProtectProc": "invisible", "ProcSubset": "pid", "User": profile.service_user,
             }
             for key, value in expected_props.items():
-                if self._show(unit, key) != value:
+                actual_value = self._show(unit, key)
+                if actual_value != value:
+                    if self._diagnostic_sink is not None:
+                        self._diagnostic_sink(
+                            f"readback-mismatch:{key}:actual={actual_value[:160]!r}:expected={value!r}".encode("ascii", "backslashreplace"))
                     raise AuthorityDenied("process.sandbox", "manager isolation readback failed")
             if self._show(unit, "Description") != f"HermesInstaller {profile.profile_id} {profile.generation}":
                 raise AuthorityDenied("process.unit", "manager unit is not bound to the profile generation")

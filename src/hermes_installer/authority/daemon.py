@@ -24,7 +24,7 @@ DEFAULT_SOCKET_DIR = Path("/run/hermes-installer/authority")
 
 def build_authority_service(*, signing_key_path: Path, key_id: str,
                             bindings_by_uid: Mapping[int, PrincipalBinding],
-                            rules: Mapping[tuple[str, str], EffectRule],
+                            rules: Mapping[tuple[str, str, str], EffectRule],
                             handlers: Mapping[tuple[str, str], EffectHandler],
                             policy: AuthorityPolicy,
                             process_profiles: Mapping[str, Any] | None = None,

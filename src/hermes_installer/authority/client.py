@@ -32,7 +32,8 @@ _OPERATIONS = frozenset({
     "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
     "resource.orchestrator.recruit",
-    "source.capture",
+    "source.capture", "process.inspect", "connector.open", "connector.read",
+    "connector.write", "connector.close", "native.event.prepare", "native.request.dispatch",
 })
 
 MAX_REQUEST = 6 * 1024 * 1024 + 16_384
@@ -409,14 +410,39 @@ class AuthorityClient:
     def process_control(self, authorization: EffectAuthorization, *, operation: str,
                         target: str, payload: bytes, timeout: float = 5.0,
                         cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
-        if operation not in {"process.status", "process.read", "process.write", "process.stop"}:
+        if operation not in {"process.status", "process.read", "process.write", "process.stop", "process.inspect"}:
             raise AuthorityDenied("effect.operation", "process control verb is not fixed")
-        if authorization.target != target or not target.startswith("hermes-profile-control:"):
+        target_valid = (target.startswith("hermes-profile-control:")
+                        if operation != "process.inspect" else bool(re.fullmatch(r"[A-Za-z0-9_.:@/-]{1,256}:inspect", target)))
+        if authorization.target != target or not target_valid:
             raise AuthorityDenied("effect.binding", "process control target does not match its host grant")
         if canonical_digest(payload) != authorization.request_digest:
             raise AuthorityDenied("effect.binding", "process control payload digest does not match grant")
         return self.perform_effect(authorization, operation=operation, payload=payload,
                                    timeout=timeout, cancelled=cancelled)
+
+    def inspect_profile_process(self, process_id: str, generation: str, *,
+                                timeout: float = 5.0,
+                                cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
+        """Inspect only a registered host process handle; callers never name a PID or path."""
+        if (not isinstance(process_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", process_id)
+                or not isinstance(generation, str)
+                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", generation)):
+            raise AuthorityDenied("process.inspect", "opaque process handle or generation is invalid")
+        payload = canonical_bytes({"schema": 1, "process_id": process_id, "generation": generation})
+        digest = canonical_digest(payload)
+        context = self.context(
+            purpose="remote-process-inspection", intent=f"inspect:{process_id}:{generation}",
+            operation="process.inspect", final_payload_digest=digest,
+            lease_seconds=min(30.0, timeout), cancelled=cancelled)
+        target = f"{context.profile_id}:inspect"
+        authorization = self.authorize_effect(
+            context, capability="hermes-process-control", target=target,
+            recipient=None, request_digest=digest, retry_index=0)
+        response = self.process_control(authorization, operation="process.inspect", target=target,
+                                        payload=payload, timeout=timeout, cancelled=cancelled)
+        return response
 
     def fetch_artifact(self, authorization: EffectAuthorization, *, target: str,
                        artifact_id: str, sha256: str, max_bytes: int,
