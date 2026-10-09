@@ -6,7 +6,9 @@ import unittest
 from hermes_installer.mcp.broker import ProtectedMCPService
 from hermes_installer.mcp.enrolled_transport import (
     MCPHTTPBindingError, ProtectedMCPHTTPBinding, build_enrolled_mcp_handlers,
+    _ENDPOINT_SOURCES,
 )
+from hermes_installer.mcp.adapters import SERVICES
 
 
 class _CredentialHandle:
@@ -27,6 +29,21 @@ class EnrolledMCPTransportTests(unittest.TestCase):
             "https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/",
             self.revision, _CredentialHandle(),
         )
+
+    def test_google_endpoints_match_official_workspace_routes(self):
+        expected = {
+            "google-gmail": "https://gmailmcp.googleapis.com/mcp/v1",
+            "google-drive": "https://drivemcp.googleapis.com/mcp/v1",
+            "google-docs": "https://docsmcp.googleapis.com/mcp/v1",
+            "google-sheets": "https://sheetsmcp.googleapis.com/mcp/v1",
+            "google-calendar": "https://calendarmcp.googleapis.com/mcp/v1",
+            "google-contacts": "https://people.googleapis.com/mcp/v1",
+        }
+        for service_id, endpoint in expected.items():
+            with self.subTest(service=service_id):
+                self.assertEqual(SERVICES[service_id].endpoint, endpoint)
+                self.assertEqual(_ENDPOINT_SOURCES[service_id][0], endpoint)
+                self.assertTrue(_ENDPOINT_SOURCES[service_id][1].startswith("https://developers.google.com/"))
 
     def test_builds_only_exact_root_enrolled_http_target(self):
         handlers = build_enrolled_mcp_handlers(
