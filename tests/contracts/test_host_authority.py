@@ -19,7 +19,7 @@ from hermes_installer.authority.service import (
     AuthorityService, ChildDelegationRule, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
-    AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
+    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle, Sensitivity, canonical_digest,
 )
 
 
@@ -420,6 +420,35 @@ class HostAuthorityIPCContracts(unittest.TestCase):
                 cancelled=lambda: False)
         self.assertEqual(raised.exception.code, "protocol.operation")
         self.assertEqual(self.effects, [])
+
+
+class NativeEventClientContracts(unittest.TestCase):
+    def test_preparation_and_gateway_dispatch_are_distinct_fixed_rpcs(self):
+        client = AuthorityClient(Path("/unused"), server_uid=0, timeout=2)
+        client.monotonic = lambda: 50.0
+        requests = []
+
+        def rpc(operation, payload, *, timeout=None, cancelled=None):
+            requests.append((operation, payload, timeout))
+            if operation == "prepare_native_event":
+                return {"native_event_handle": "h" * 40, "expires_monotonic": 70.0}
+            return {"status": 200, "body": "b2s=", "headers": {}, "receipt_id": "root-receipt"}
+
+        client._rpc = rpc
+        event = client.prepare_native_event(
+            b'{"messages":[]}', purpose="native-chat", intent_id="intent-1",
+            trace_id="trace-1", retry_index=0)
+        self.assertIsInstance(event, NativeEventHandle)
+        self.assertEqual(requests[0][0], "prepare_native_event")
+        self.assertEqual(set(requests[0][1]), {
+            "schema", "payload", "parent_receipt_handles", "purpose", "intent_id",
+            "trace_id", "retry_index"})
+        response = client.dispatch_native_request(event.native_event_handle, b'{"model":"fixed"}')
+        self.assertEqual(response.body, b"ok")
+        self.assertEqual(requests[1][0], "dispatch_native_request")
+        self.assertEqual(set(requests[1][1]), {
+            "schema", "native_event_handle", "normalized_payload", "retry_index"})
+        self.assertEqual(requests[1][1]["native_event_handle"], event.native_event_handle)
 
 
 if __name__ == "__main__":
