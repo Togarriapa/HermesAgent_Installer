@@ -13,6 +13,7 @@ from hermes_installer.protected_enrollment import (
     FixedBuildProfile,
     ProtectedBuildCatalog,
     ProtectedDeviceCatalog,
+    ProtectedEnrollmentCatalog,
     _canonical,
     _parse_profile,
 )
@@ -118,7 +119,7 @@ def test_catalog_rejects_duplicate_physical_devices():
         ProtectedDeviceCatalog.from_protected_records([row, twin])
 
 
-def test_profile_rejects_caller_selected_roots_and_malformed_recipe():
+def test_profile_rejects_caller_selected_roots_and_malformed_recipe(monkeypatch):
     # Profile parsing accepts only the complete root-owned schema; it does not
     # accept filesystem authorities through a call payload.
     item = {
@@ -136,6 +137,12 @@ def test_profile_rejects_caller_selected_roots_and_malformed_recipe():
     }
     parsed = _parse_profile(item)
     assert parsed.roots.home != parsed.roots.work != parsed.roots.data
+    catalog = ProtectedEnrollmentCatalog({("install-1", "gen-1"): parsed}, digest="0" * 64)
+    monkeypatch.setattr(catalog, "resolve", lambda *_args: parsed)
+    binding = catalog.resolve_operation("install-1", "gen-1", "process.start")
+    assert (binding.target_id, binding.service_uid, binding.service_gid) == ("start-target", 1001, 1001)
+    with pytest.raises(EnrollmentDenied):
+        catalog.resolve_operation("install-1", "gen-1", "arbitrary-shell")
     with pytest.raises(EnrollmentDenied):
         _parse_profile({**item, "roots": {**item["roots"], "data": "/tmp/caller-root"}, "argv": ["bad"]})
 
