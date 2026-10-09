@@ -560,6 +560,9 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 raise ValueError("memory timeout is out of bounds")
             body = parse_request(payload)
             _scope(context, target, body)
+            if action not in {"enqueue", "result", "extract", "embed"} and ipc is not None:
+                raise BrokerUnavailable(
+                    "raw HTTP memory transport is incompatible with fixed compound protocol")
             if cancelled():
                 return _reply({"error":"cancelled"}, 499)
             enrolled_scope = (target.enrollment.fixed_project_account_user_scope
