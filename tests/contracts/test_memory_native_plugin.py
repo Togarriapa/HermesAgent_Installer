@@ -28,7 +28,7 @@ class AuthorityFixture:
     def memory_enqueue(self, grant, *, target, request_digest, payload, timeout, cancelled=None):
         self.assert_payload(grant, target, request_digest, payload, timeout, "enqueue")
         self.enqueued.append((grant, payload))
-        return SimpleNamespace(status=202, body=b'{"accepted":true}', receipt_id="receipt-1")
+        return SimpleNamespace(status=202, body=b'{"queued":true,"receipt_id":"job-receipt-1"}', receipt_id="transport-receipt-1")
 
     def memory_request(self, grant, *, target, request_digest, payload, timeout, cancelled=None):
         self.assert_payload(grant, target, request_digest, payload, timeout, "search")
@@ -69,6 +69,7 @@ class NativeMemoryPluginTests(unittest.TestCase):
             provider.sync_turn("synthetic user fact", "short reply", session_id="session-1")
         self.assertEqual(len(authority.enqueued), 1)
         self.assertEqual(authority.requests, [])
+        self.assertEqual(provider._last_hook_status, "queued:job-receipt-1")
         grant, payload = authority.enqueued[0]
         self.assertEqual(grant["capability"], "memory-capture")
         event = json.loads(payload)
