@@ -43,6 +43,7 @@ class MCPBrokerTests(unittest.TestCase):
     def setUp(self):
         self.service = ProtectedMCPService(
             "fixture", "http", frozenset({"get_state"}), "root-binding-fixture",
+            selection_arguments={"get_state": ("entity_id",)},
         )
         self.transport = FakeBrokerTransport()
         self.handler = build_mcp_handlers(
