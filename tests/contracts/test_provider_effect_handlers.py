@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import inspect
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from hermes_installer.codex_responses import CODEX_RECIPIENT, CODEX_TARGET
@@ -15,6 +18,22 @@ from hermes_installer.provider_effect_handlers import (
     OpenRouterLiveAdmission, ProviderEnrollment, ProviderHandlerDenied,
     build_provider_handlers, canonical_provider_request,
 )
+
+
+def _normalization_policy(provider: str):
+    module = Path(inspect.getsourcefile(canonical_provider_request))
+    preimage = ({"id": "provider-output-reject-4096-v1", "revision": 1,
+                 "route_schema_id": "provider-chat-compatible-v1",
+                 "output_limit_mode": "reject-over-ceiling", "output_limit_ceiling": 4096}
+                if provider == "openrouter" else
+                {"id": "siwc-output-unsupported-v1", "revision": 1,
+                 "route_schema_id": "siwc-responses-preview-v1",
+                 "output_limit_mode": "unsupported-field-reject", "output_limit_ceiling": None})
+    preimage.update({"canonicalizer_artifact_id": "provider-canonicalizer-v1",
+                     "canonicalizer_sha256": hashlib.sha256(module.read_bytes()).hexdigest()})
+    digest = hashlib.sha256(json.dumps(preimage, sort_keys=True, separators=(",", ":"),
+                                       ensure_ascii=False).encode()).hexdigest()
+    return {**preimage, "normalization_policy_sha256": digest}
 
 
 class Admission:
@@ -94,8 +113,11 @@ class ProviderEffectHandlerTests(unittest.TestCase):
         self.admission = Admission()
         self.vault = Vault()
         self.enrollment = _openrouter_enrollment()
+        self.normalization_policies = {(self.enrollment.target, self.enrollment.recipient):
+                                       _normalization_policy("openrouter")}
         self.handlers = build_provider_handlers(
             enrollments={(self.enrollment.target, self.enrollment.recipient): self.enrollment},
+            normalization_policies=self.normalization_policies,
             admission=self.admission, vault=self.vault, network_factory=Network,
         )
         self.handler = self.handlers[("provider.dispatch", self.enrollment.target)]
@@ -173,34 +195,59 @@ class ProviderEffectHandlerTests(unittest.TestCase):
                           "messages": [{"role": "user", "content": "hello"}]},
                          separators=(",", ":")).encode()
         result = canonical_provider_request(
-            {(self.enrollment.target, self.enrollment.recipient): self.enrollment}, raw)
+            {(self.enrollment.target, self.enrollment.recipient): self.enrollment}, raw,
+            normalization_policy=_normalization_policy("openrouter"))
         expected = normalize_chat_request(raw, OPENROUTER_MODEL, 128)
         self.assertEqual(result, (expected, self.enrollment.target,
                                   self.enrollment.recipient, "provider-inference",
                                   OPENROUTER_MODEL))
+        defaulted = canonical_provider_request(
+            {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
+            json.dumps({"model": OPENROUTER_MODEL,
+                        "messages": [{"role": "user", "content": "x"}]}).encode(),
+            normalization_policy=_normalization_policy("openrouter"),
+        )
+        self.assertEqual(json.loads(defaulted[0])["max_tokens"], 4096)
+
+    def test_host_canonicalizer_requires_the_exact_digest_bound_route_policy(self):
+        enrollment = {(self.enrollment.target, self.enrollment.recipient): self.enrollment}
+        payload = json.dumps({"model": OPENROUTER_MODEL, "max_tokens": 4096,
+                              "messages": []}).encode()
+        record = _normalization_policy("openrouter")
+        changed = {**record, "output_limit_ceiling": 8192}
+        for invalid in (None, {**record, "normalization_policy_sha256": "0" * 64}, changed,
+                        {**record, "revision": 2}):
+            with self.subTest(policy=invalid), self.assertRaises(ProviderHandlerDenied):
+                canonical_provider_request(enrollment, payload, normalization_policy=invalid)
+        above = json.dumps({"model": OPENROUTER_MODEL, "max_tokens": 4097,
+                            "messages": []}).encode()
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request(enrollment, above, normalization_policy=record)
 
     def test_host_canonicalizer_denies_missing_malformed_and_ambiguous_enrollment(self):
         raw = json.dumps({"model": OPENROUTER_MODEL,
                           "messages": [{"role": "user", "content": "hello"}]}).encode()
         with self.assertRaises(ProviderHandlerDenied):
-            canonical_provider_request({}, raw)
+            canonical_provider_request({}, raw, normalization_policy=_normalization_policy("openrouter"))
         malformed_map = {("https://attacker.invalid", self.enrollment.recipient): self.enrollment}
         with self.assertRaises(ProviderHandlerDenied):
-            canonical_provider_request(malformed_map, raw)
+            canonical_provider_request(malformed_map, raw, normalization_policy=_normalization_policy("openrouter"))
         with self.assertRaises(ProviderHandlerDenied):
             canonical_provider_request({
                 (self.enrollment.target, self.enrollment.recipient): self.enrollment,
                 (self.enrollment.target + "#duplicate", self.enrollment.recipient): self.enrollment,
-            }, raw)
+            }, raw, normalization_policy=_normalization_policy("openrouter"))
         with self.assertRaises(ProviderHandlerDenied):
             canonical_provider_request(
                 {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
-                b'{"model":"nvidia/nemotron-3-ultra-550b-a55b","messages":[]}')
+                b'{"model":"nvidia/nemotron-3-ultra-550b-a55b","messages":[]}',
+                normalization_policy=_normalization_policy("openrouter"))
         with self.assertRaises(ProviderHandlerDenied):
             canonical_provider_request(
                 {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
                 b'{"model":"nvidia/nemotron-3-ultra-550b-a55b:free",'
-                b'"model":"nvidia/nemotron-3-ultra-550b-a55b:free","messages":[]}')
+                b'"model":"nvidia/nemotron-3-ultra-550b-a55b:free","messages":[]}',
+                normalization_policy=_normalization_policy("openrouter"))
         for invalid in (
             {"model": OPENROUTER_MODEL, "max_tokens": 4097, "messages": []},
             {"model": OPENROUTER_MODEL, "max_tokens": 100, "max_output_tokens": 50, "messages": []},
@@ -208,15 +255,16 @@ class ProviderEffectHandlerTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ProviderHandlerDenied):
                 canonical_provider_request(
                     {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
-                    json.dumps(invalid).encode())
+                    json.dumps(invalid).encode(),
+                    normalization_policy=_normalization_policy("openrouter"))
 
     def test_no_handlers_without_root_admission_or_vault(self):
         self.assertEqual(build_provider_handlers(
             enrollments={(self.enrollment.target, self.enrollment.recipient): self.enrollment},
-            admission=None, vault=self.vault), {})
+            normalization_policies=None, admission=None, vault=self.vault), {})
         self.assertEqual(build_provider_handlers(
             enrollments={(self.enrollment.target, self.enrollment.recipient): self.enrollment},
-            admission=self.admission, vault=None), {})
+            normalization_policies=None, admission=self.admission, vault=None), {})
 
     def test_enrollment_rejects_private_openrouter_and_codex_url_override(self):
         with self.assertRaises(ValueError):
@@ -240,6 +288,7 @@ class ProviderEffectHandlerTests(unittest.TestCase):
         )
         handlers = build_provider_handlers(
             enrollments={(CODEX_TARGET, CODEX_RECIPIENT): enrollment},
+            normalization_policies={(CODEX_TARGET, CODEX_RECIPIENT): _normalization_policy("codex")},
             admission=self.admission, vault=self.vault, network_factory=Network,
         )
         handler = handlers[("provider.dispatch", CODEX_TARGET)]
@@ -257,6 +306,12 @@ class ProviderEffectHandlerTests(unittest.TestCase):
         self.assertEqual(Network.calls[0][0], CODEX_ENDPOINT)
         self.assertEqual(self.admission.calls[-1]["provider"], "codex")
         self.assertEqual(self.vault.calls[-1][2], "openai:codex:responses")
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request(
+                {(CODEX_TARGET, CODEX_RECIPIENT): enrollment},
+                b'{"input":"hello","model":"gpt-test","max_output_tokens":128}',
+                normalization_policy=_normalization_policy("codex"),
+            )
 
     def test_codex_route_is_fixed_and_additional_metered_fee_is_zero(self):
         enrollment = ProviderEnrollment(
@@ -269,6 +324,7 @@ class ProviderEffectHandlerTests(unittest.TestCase):
         )
         handlers = build_provider_handlers(
             enrollments={(CODEX_TARGET, CODEX_RECIPIENT): enrollment},
+            normalization_policies={(CODEX_TARGET, CODEX_RECIPIENT): _normalization_policy("codex")},
             admission=self.admission, vault=self.vault, network_factory=Network,
         )
         self.assertIn(("provider.dispatch", CODEX_TARGET), handlers)
@@ -315,6 +371,7 @@ class OpenRouterLiveAdmissionTests(unittest.TestCase):
             "recipient": PROVIDER_RECIPIENT, "endpoint": OPENROUTER_ENDPOINT,
             "model": OPENROUTER_MODEL,
             "request_digest": __import__("hashlib").sha256(payload).hexdigest(),
+            "output_limit_ceiling": 4096,
             "retry_index": 0, "additional_metered_fee_usd": 0.0,
             "credential_ref": "vault://openrouter/account",
             "credential": "opaque-test-token", "payload": payload, "timeout": 5.0,

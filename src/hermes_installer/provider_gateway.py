@@ -14,7 +14,7 @@ import stat
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from .policy import (
     Dispatcher, PolicyDenied, ProviderResponse, Sensitivity,
@@ -319,6 +319,7 @@ class LocalProviderGateway:
                  max_connections: int = 16,
                  context_factory: Callable[..., object] | None = None,
                  native_bridge: NativeProviderBridge | None = None,
+                 normalization_policy: Mapping[str, object] | None = None,
                  fixture_only_allow_synthetic_context: bool = False):
         if host != "127.0.0.1":
             raise GatewayError("Provider gateway must bind IPv4 loopback only")
@@ -339,8 +340,16 @@ class LocalProviderGateway:
             raise GatewayError("Synthetic provider contexts are available only to explicit fixtures")
         if native_bridge is not None and not callable(getattr(native_bridge, "dispatch_native_request", None)):
             raise GatewayError("Native provider bridge does not expose the HI11 atomic dispatch")
-        if native_bridge is not None and max_output_tokens != PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING:
-            raise GatewayError("HI11 public provider route uses its fixed 4096-token output ceiling")
+        self.normalization_policy = None
+        if native_bridge is not None:
+            from .provider_effect_handlers import NormalizationPolicy, ProviderHandlerDenied
+            try:
+                selected_policy = NormalizationPolicy.from_record(normalization_policy, provider="openrouter")
+            except ProviderHandlerDenied as exc:
+                raise GatewayError("HI11 route requires its root-selected output normalization policy") from exc
+            if max_output_tokens != selected_policy.output_limit_ceiling:
+                raise GatewayError("Gateway output ceiling differs from the root-selected normalization policy")
+            self.normalization_policy = selected_policy
         if context_factory is not None and native_bridge is not None:
             raise GatewayError("Provider gateway cannot mix fixture contexts and the native host bridge")
         self.dispatcher = dispatcher
@@ -496,12 +505,12 @@ class LocalProviderGateway:
                             if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1:
                                 raise PolicyDenied("request.bounds", "Output token cap is invalid")
                             if (gateway.native_bridge is not None
-                                    and cap > PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING):
-                                raise PolicyDenied("request.bounds", "Output token cap exceeds the fixed native route ceiling")
+                                    and cap > gateway.normalization_policy.output_limit_ceiling):
+                                raise PolicyDenied("request.bounds", "Output token cap exceeds the enrolled normalization policy")
                             requested_caps.append(cap)
                     if gateway.native_bridge is not None:
                         output_cap = (requested_caps[0] if requested_caps
-                                      else PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING)
+                                      else gateway.normalization_policy.output_limit_ceiling)
                     else:
                         output_cap = min([gateway.max_output_tokens, *requested_caps])
                     # Bind host context to the exact canonical bytes that the
