@@ -6,13 +6,19 @@ import unittest
 from pathlib import Path
 
 from hermes_installer.network import HTTPResult
-from hermes_installer.policy import (BudgetLedger, DispatchContext, DispatchPolicy, Dispatcher,
+from hermes_installer.policy import (BudgetLedger, DispatchAuthorization, DispatchContext, DispatchPolicy, Dispatcher,
     PolicyDenied, Route, Sensitivity, default_public_route)
 from hermes_installer.provider_transport import OPENROUTER_ENDPOINT, OpenRouterTransport
 from hermes_installer.eligibility import AccountEligibilityGate, EligibilityEvidence
 from hermes_installer.state import OwnedRoot
 
 MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
+
+
+def synthetic_authorizer(context, capability, now):
+    return DispatchAuthorization("fixture-principal", context.profile_id, context.profile_id,
+        context.trace_id, frozenset({"inference", "tool-call"}),
+        context.effective_sensitivity, "fixture-revision", "fixture-grant", now + 60)
 
 
 class RecordingNetwork:
@@ -210,7 +216,7 @@ class ProviderTransportTests(unittest.TestCase):
             root.ensure()
             dispatcher = Dispatcher(
                 DispatchPolicy({"public": default_public_route()}, "public"),
-                BudgetLedger(root), transport,
+                BudgetLedger(root), transport, context_authorizer=synthetic_authorizer,
             )
             response = dispatcher.dispatch(
                 DispatchContext("hermes", "chat", Sensitivity.PUBLIC),
