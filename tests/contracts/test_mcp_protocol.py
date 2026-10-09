@@ -70,10 +70,7 @@ class FixtureTransport:
             cursor = payload["params"].get("cursor")
             if cursor:
                 return {"jsonrpc": "2.0", "id": rid, "result": {
-                    "tools": [{"name": "get_state", "inputSchema": {
-                        "type": "object", "properties": {"entity_id": {"type": "string"}},
-                        "required": ["entity_id"], "additionalProperties": False},
-                        "annotations": {"readOnlyHint": True}}],
+                    "tools": [],
                 }}
             return {"jsonrpc": "2.0", "id": rid, "result": {
                 "tools": [{"name": "get_state", "inputSchema": {
