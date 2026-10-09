@@ -1,0 +1,1269 @@
+"""Pinned source contracts for non-MCP component adapters.
+
+The selected repository is resolved from each contract's selected_source_url.
+Alternative repositories remain separate pinned offers and never become aliases
+or handlers for the selected source.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True, slots=True)
+class AlternateSourcePin:
+    identity: str | None
+    url: str | None
+    revision: str | None
+    default_branch: str | None
+    license: str | None
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentAdapterContract:
+    component_id: str
+    requirement_ids: tuple[str, ...]
+    requested_name: str
+    aliases: tuple[str, ...]
+    source_urls: tuple[str, ...]
+    selected_source_url: str
+    source_selection: str
+    source_identity: str | None
+    revision: str | None
+    source_default_branch: str | None
+    license: str | None
+    source_status: str
+    expected_architecture: str
+    component_type: str
+    runtime_dependencies: str
+    functional_verification: str
+    blockers: tuple[str, ...]
+    identity_confidence: str
+    selected_for_runtime_activation: bool
+    source_resolved: bool
+    alternate_sources: tuple[AlternateSourcePin, ...]
+
+    def unresolved_reason(self) -> str | None:
+        if not self.source_resolved or self.source_identity is None or self.revision is None:
+            return "pinned source identity or revision is unresolved"
+        return None
+
+    @property
+    def redistribution_license_review_required(self) -> bool:
+        """Private source import may proceed; redistribution review stays explicit."""
+        return self.license is None or self.license.casefold() in {"unknown", "noassertion", "none"}
+
+    @property
+    def source_kind(self) -> str:
+        text = self.component_type.casefold()
+        if "reference catalog" in text or "selected reference catalog" in text:
+            return "reference"
+        if "skill" in text or "procedure" in text or "instruction-only" in text:
+            return "skill"
+        return "application"
+
+    def as_component_spec(self):
+        """Build an importer spec for a source-tree item."""
+        if self.unresolved_reason():
+            raise ValueError(self.unresolved_reason())
+        if self.source_kind == "application":
+            raise ValueError(f"{self.component_id} requires its application-specific adapter")
+        from hermes_installer.components.catalog import ComponentSpec
+
+        return ComponentSpec(
+            id=self.component_id,
+            source_url=self.selected_source_url,
+            revision=self.revision,
+            aliases=self.aliases,
+            kind=self.source_kind,
+            license=self.license,
+            mode="on_demand",
+        )
+
+
+_ROWS = json.loads(r"""
+[
+  {
+    "component_id": "ecc",
+    "requirement_ids": [
+      "R0063"
+    ],
+    "requested_name": "affaan-m/ECC; ecc",
+    "aliases": [
+      "affaan-m/ECC",
+      "ecc"
+    ],
+    "source_urls": [
+      "https://github.com/affaan-m/ECC"
+    ],
+    "selected_source_url": "https://github.com/affaan-m/ECC",
+    "source_selection": "explicit-seed",
+    "source_identity": "affaan-m/ECC",
+    "revision": "ef648e01899ba3e8dc6371642deaaf64b4477775",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "portable-skills + reviewed hook adapter",
+    "runtime_dependencies": "Hermes scoped skills; optional host hook events",
+    "functional_verification": "Invoke selected hook against temporary coding fixture and assert callback effect; hooks unavailable until adapter verified",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "jakeschincariol-replica-skill",
+    "requirement_ids": [
+      "R0064"
+    ],
+    "requested_name": "jakeschincariol/replica-skill",
+    "aliases": [
+      "jakeschincariol/replica-skill"
+    ],
+    "source_urls": [
+      "https://github.com/Jakeschincariol/replica-skill"
+    ],
+    "selected_source_url": "https://github.com/Jakeschincariol/replica-skill",
+    "source_selection": "explicit-seed",
+    "source_identity": "Jakeschincariol/replica-skill",
+    "revision": "77c9436fb3d18c3d58169efb8caf4fe906b0dc51",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "skill-helper adapter",
+    "runtime_dependencies": "isolated helpers and native skill discovery",
+    "functional_verification": "Discover skill, resolve all helper references and run documented harmless synthetic replication fixture in temp workspace",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "graphify",
+    "requirement_ids": [
+      "R0065"
+    ],
+    "requested_name": "safishamsi/graphify",
+    "aliases": [
+      "safishamsi/graphify",
+      "Graphify-Labs/graphify",
+      "graphifyy"
+    ],
+    "source_urls": [
+      "https://github.com/Graphify-Labs/graphify"
+    ],
+    "selected_source_url": "https://github.com/Graphify-Labs/graphify",
+    "source_selection": "explicit-seed",
+    "source_identity": "Graphify-Labs/graphify",
+    "revision": "5b74d7d74911cf435c8f1636b6f96ea202cc6246",
+    "source_default_branch": "v8",
+    "license": "Apache-2.0",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "CLI/skill + optional MCP adapter",
+    "runtime_dependencies": "feature-scoped Python graph stack; Hermes installer references reviewed",
+    "functional_verification": "Build a graph from tiny local code/text fixture, query expected node/edge; optional MCP initialize/query separately",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "public-apis-public-apis",
+    "requirement_ids": [
+      "R0066"
+    ],
+    "requested_name": "public-apis/public-apis",
+    "aliases": [
+      "public-apis/public-apis"
+    ],
+    "source_urls": [
+      "https://github.com/public-apis/public-apis"
+    ],
+    "selected_source_url": "https://github.com/public-apis/public-apis",
+    "source_selection": "explicit-seed",
+    "source_identity": "public-apis/public-apis",
+    "revision": "874e5879d20843f7c2a5822cef4c0752127b3775",
+    "source_default_branch": "master",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "reference catalog index",
+    "runtime_dependencies": "on-demand local index/search",
+    "functional_verification": "Query fixture category/API name with source provenance; assert no listed API account/server automatically provisioned",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "adewaskar-jarvis",
+    "requirement_ids": [
+      "R0067"
+    ],
+    "requested_name": "adewaskar/jarvis",
+    "aliases": [
+      "adewaskar/jarvis"
+    ],
+    "source_urls": [
+      "https://github.com/adewaskar/jarvis"
+    ],
+    "selected_source_url": "https://github.com/adewaskar/jarvis",
+    "source_selection": "explicit-seed",
+    "source_identity": "adewaskar/jarvis",
+    "revision": "1c4016afdf86f7043efc6882ceffef84ad0d8783",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "optional independent voice application",
+    "runtime_dependencies": "supported voice/audio dependencies + eligible configured client/account",
+    "functional_verification": "Synthetic audio/text fixture through isolated supported route; account-ineligible state prevents voice/provider service activation",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "omniroute",
+    "requirement_ids": [
+      "R0068"
+    ],
+    "requested_name": "OmniRoute; omniroute",
+    "aliases": [
+      "OmniRoute",
+      "omniroute"
+    ],
+    "source_urls": [
+      "https://github.com/diegosouzapw/OmniRoute"
+    ],
+    "selected_source_url": "https://github.com/diegosouzapw/OmniRoute",
+    "source_selection": "explicit-seed",
+    "source_identity": "diegosouzapw/OmniRoute",
+    "revision": "4ea24a2f8e1faf8a606c8b8dce45e5b1ab6c9bb0",
+    "source_default_branch": "release/v3.8.52",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "routing service adapter",
+    "runtime_dependencies": "loopback/auth service + allowlisted configured providers",
+    "functional_verification": "Send synthetic tool-call route through service and recording endpoints; paid/private fallback/loop/compression/retry denial asserted",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "ponytail",
+    "requirement_ids": [
+      "R0069"
+    ],
+    "requested_name": "PonyTail",
+    "aliases": [
+      "PonyTail"
+    ],
+    "source_urls": [
+      "https://github.com/DietrichGebert/ponytail"
+    ],
+    "selected_source_url": "https://github.com/DietrichGebert/ponytail",
+    "source_selection": "explicit-seed",
+    "source_identity": "DietrichGebert/ponytail",
+    "revision": "9cc65d03aa2da1db7121b912d03596409ee340b8",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "coding/review skill adapter",
+    "runtime_dependencies": "scoped native skills and isolated review workspace",
+    "functional_verification": "Harmless repository review fixture produces expected structured review; assert original Orchestrator remains coordinator",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "addy-osmani-s-agent-skills",
+    "requirement_ids": [
+      "R0070"
+    ],
+    "requested_name": "Addy Osmani's Agent Skills",
+    "aliases": [
+      "Addy Osmani's Agent Skills"
+    ],
+    "source_urls": [
+      "https://github.com/addyosmani/agent-skills"
+    ],
+    "selected_source_url": "https://github.com/addyosmani/agent-skills",
+    "source_selection": "explicit-seed",
+    "source_identity": "addyosmani/agent-skills",
+    "revision": "1401c8b8030e023baeebb31781a6653fe8e93026",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "skill tree importer",
+    "runtime_dependencies": "native discovery and supported helpers",
+    "functional_verification": "Resolve all relative/shared references from discovered selected skill; fixture asserts task-scoped load, no root instructions global concatenation",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "claude-mem",
+    "requirement_ids": [
+      "R0071"
+    ],
+    "requested_name": "claude-mem",
+    "aliases": [
+      "claude-mem"
+    ],
+    "source_urls": [
+      "https://github.com/thedotmack/claude-mem"
+    ],
+    "selected_source_url": "https://github.com/thedotmack/claude-mem",
+    "source_selection": "explicit-seed",
+    "source_identity": "thedotmack/claude-mem",
+    "revision": "fa8ab09f06aa05f958c5225cf3756ce52a3ebb96",
+    "source_default_branch": "main",
+    "license": "Apache-2.0",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "memory service/provider adapter",
+    "runtime_dependencies": "isolated worker/database; compatible extraction provider",
+    "functional_verification": "Store synthetic fact, complete extraction, restart worker/profile and retrieve new session; namespace/capture-owner/backup denial tests",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "browser-use",
+    "requirement_ids": [
+      "R0072"
+    ],
+    "requested_name": "Browser Use",
+    "aliases": [
+      "Browser Use"
+    ],
+    "source_urls": [
+      "https://github.com/browser-use/browser-use"
+    ],
+    "selected_source_url": "https://github.com/browser-use/browser-use",
+    "source_selection": "explicit-seed",
+    "source_identity": "browser-use/browser-use",
+    "revision": "c75e8476e26d18b7617643bc2ae082fae8eae431",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "local browser library/CLI/skill adapter",
+    "runtime_dependencies": "native ARM64 supported browser sandbox and isolated Python deps",
+    "functional_verification": "Navigate local fixture, assert selected interaction/screenshot, cancel bounded worker; cloud access remains disabled without budget/account",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "agent-memory",
+    "requirement_ids": [
+      "R0073"
+    ],
+    "requested_name": "Agent Memory",
+    "aliases": [
+      "Agent Memory"
+    ],
+    "source_urls": [
+      "https://github.com/rohitg00/agentmemory"
+    ],
+    "selected_source_url": "https://github.com/rohitg00/agentmemory",
+    "source_selection": "selected-by-user-star-policy",
+    "source_identity": "rohitg00/agentmemory",
+    "revision": "df3d4a83b966d8d415cb9180d5a4724b07f729dc",
+    "source_default_branch": "main",
+    "license": "Apache-2.0",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "selected selectable memory adapter",
+    "runtime_dependencies": "selected source dependency and capture/search interface review",
+    "functional_verification": "Source-override policy regression plus selected-source integration: synthetic fact extraction/restart/new-session retrieval and namespace/one-owner tests; selected identity rohitg00/agentmemory follows user star policy, not automatic functional success",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "user-authorized most-starred matching repository selection; dated primary API/search evidence retained",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "scientific-agent-skills",
+    "requirement_ids": [
+      "R0074"
+    ],
+    "requested_name": "Scientific Agent Skills",
+    "aliases": [
+      "Scientific Agent Skills"
+    ],
+    "source_urls": [
+      "https://github.com/K-Dense-AI/scientific-agent-skills"
+    ],
+    "selected_source_url": "https://github.com/K-Dense-AI/scientific-agent-skills",
+    "source_selection": "explicit-seed",
+    "source_identity": "K-Dense-AI/scientific-agent-skills",
+    "revision": "92ace75ac21efe19a620434e0ca4e356081fe807",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "feature-scoped scientific skills",
+    "runtime_dependencies": "separate scientific environments, no giant global install",
+    "functional_verification": "Discover selected skill and execute small deterministic calculation/data fixture with pinned feature deps; other heavy features remain readiness-specific",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "diagram-design",
+    "requirement_ids": [
+      "R0075"
+    ],
+    "requested_name": "Diagram Design",
+    "aliases": [
+      "Diagram Design"
+    ],
+    "source_urls": [
+      "https://github.com/cathrynlavery/diagram-design"
+    ],
+    "selected_source_url": "https://github.com/cathrynlavery/diagram-design",
+    "source_selection": "explicit-seed",
+    "source_identity": "cathrynlavery/diagram-design",
+    "revision": "f4547ee95f88e5b28a52517feff6b6c11cc657f9",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "diagram/export skill adapter",
+    "runtime_dependencies": "reviewed renderer/native libs in on-demand environment",
+    "functional_verification": "Render harmless diagram fixture and validate exported file format/content/asset resolution",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "antropic-cybersecurity-skills",
+    "requirement_ids": [
+      "R0076"
+    ],
+    "requested_name": "Antropic Cybersecurity Skills",
+    "aliases": [
+      "Antropic Cybersecurity Skills",
+      "Anthropic-Cybersecurity-Skills",
+      "mukul975/Anthropic-Cybersecurity-Skills"
+    ],
+    "source_urls": [
+      "https://github.com/mukul975/Anthropic-Cybersecurity-Skills"
+    ],
+    "selected_source_url": "https://github.com/mukul975/Anthropic-Cybersecurity-Skills",
+    "source_selection": "explicit-seed",
+    "source_identity": "mukul975/Anthropic-Cybersecurity-Skills",
+    "revision": "54a798831d2266a3ca61ce68a7acb80b81160d57",
+    "source_default_branch": "main",
+    "license": "Apache-2.0",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "third-party procedure skills",
+    "runtime_dependencies": "native skills only by default; authorized exercise tools separately gated",
+    "functional_verification": "Discover procedures/references and assert no security exercise/scan is executed during install; invocation in inert fixture only",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "awesome-harness-engineering",
+    "requirement_ids": [
+      "R0077"
+    ],
+    "requested_name": "Awesome Harness Engineering",
+    "aliases": [
+      "Awesome Harness Engineering"
+    ],
+    "source_urls": [
+      "https://github.com/ai-boost/awesome-harness-engineering",
+      "https://github.com/walkinglabs/awesome-harness-engineering"
+    ],
+    "selected_source_url": "https://github.com/ai-boost/awesome-harness-engineering",
+    "source_selection": "selected-by-user-star-policy",
+    "source_identity": "ai-boost/awesome-harness-engineering",
+    "revision": "6826dfaaaa6a996507336e4539f4b88d2fff709e",
+    "source_default_branch": "main",
+    "license": "NOASSERTION",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "selected reference catalog",
+    "runtime_dependencies": "local catalog/index after user selection",
+    "functional_verification": "Source-override policy regression plus selected-source integration: catalog search returns provenance and no always-running orchestration service; selected identity ai-boost/awesome-harness-engineering follows user star policy, not automatic functional success",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "user-authorized most-starred matching repository selection; dated primary API/search evidence retained",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": [
+      {
+        "identity": "walkinglabs/awesome-harness-engineering",
+        "url": "https://github.com/walkinglabs/awesome-harness-engineering",
+        "revision": "cff9b006ef64c624a62cbb1ee36b0c4b2b3a67ad",
+        "default_branch": "main",
+        "license": "NOASSERTION",
+        "status": "identity-and-revision-verified; ARM64/functionality not verified"
+      }
+    ]
+  },
+  {
+    "component_id": "open-viking",
+    "requirement_ids": [
+      "R0078"
+    ],
+    "requested_name": "Open Viking",
+    "aliases": [
+      "Open Viking",
+      "OpenViking"
+    ],
+    "source_urls": [
+      "https://github.com/volcengine/OpenViking"
+    ],
+    "selected_source_url": "https://github.com/volcengine/OpenViking",
+    "source_selection": "explicit-seed",
+    "source_identity": "volcengine/OpenViking",
+    "revision": "e7b2e974b1fb97cd8c6087ff013181ddfec94f77",
+    "source_default_branch": "main",
+    "license": "AGPL-3.0",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "native catalog memory plugin + isolated server",
+    "runtime_dependencies": "server/environment/native ARM64 extensions; separately eligible extraction+embedding endpoints",
+    "functional_verification": "Server doctor then synthetic extraction/restart/retrieval; assert environment lacks unrelated tokens, one owner, namespace and no recursive ingestion",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "panniantong-agent-reach",
+    "requirement_ids": [
+      "R0079"
+    ],
+    "requested_name": "Panniantong/agent-reach",
+    "aliases": [
+      "Panniantong/agent-reach"
+    ],
+    "source_urls": [
+      "https://github.com/Panniantong/Agent-Reach"
+    ],
+    "selected_source_url": "https://github.com/Panniantong/Agent-Reach",
+    "source_selection": "explicit-seed",
+    "source_identity": "Panniantong/Agent-Reach",
+    "revision": "94f06c1969dfc1834001269d79d3ad0972d9dee6",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "CLI/skill/per-channel adapter",
+    "runtime_dependencies": "feature-isolated channel deps/account scopes",
+    "functional_verification": "Run CLI diagnostic against local mocked channel; each selected real channel requires harmless scoped functional read and separate credential status",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "superpowers",
+    "requirement_ids": [
+      "R0080"
+    ],
+    "requested_name": "superpowers",
+    "aliases": [
+      "superpowers"
+    ],
+    "source_urls": [
+      "https://github.com/obra/superpowers"
+    ],
+    "selected_source_url": "https://github.com/obra/superpowers",
+    "source_selection": "explicit-seed",
+    "source_identity": "obra/superpowers",
+    "revision": "8ca22dba9a94f28898bbce59f2537ff4d87c747d",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "Hermes skill/bootstrap/hooks adapter",
+    "runtime_dependencies": "native skills and actual supported host bootstrap/hook API",
+    "functional_verification": "Trigger installed bootstrap/hook on temp fixture and assert observable invocation; markdown presence alone fails hook proof",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "gstack",
+    "requirement_ids": [
+      "R0081"
+    ],
+    "requested_name": "gstack",
+    "aliases": [
+      "gstack"
+    ],
+    "source_urls": [
+      "https://github.com/garrytan/gstack"
+    ],
+    "selected_source_url": "https://github.com/garrytan/gstack",
+    "source_selection": "explicit-seed",
+    "source_identity": "garrytan/gstack",
+    "revision": "20eb6202fa8ea83a882e7c0463b722cd8a31af1e",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "instruction-only unless newly proven adapter",
+    "runtime_dependencies": "portable instructions; native host tools only where documented/tested",
+    "functional_verification": "Native discovery/reference integrity plus explicit instruction-only status; any executable hook requires separate actual invocation evidence",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "ruflo",
+    "requirement_ids": [
+      "R0082"
+    ],
+    "requested_name": "ruflo",
+    "aliases": [
+      "ruflo"
+    ],
+    "source_urls": [
+      "https://github.com/ruvnet/ruflo"
+    ],
+    "selected_source_url": "https://github.com/ruvnet/ruflo",
+    "source_selection": "explicit-seed",
+    "source_identity": "ruvnet/ruflo",
+    "revision": "58e0ae7e14e68aab45a4127d6f42f567bbcfb328",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "optional supported adapter/MCP/isolated runtime",
+    "runtime_dependencies": "on-demand service/MCP with per-tool scope",
+    "functional_verification": "Run harmless isolated orchestration/query fixture and MCP handshake if selected; assert never replaces registry coordinator",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "open-executive",
+    "requirement_ids": [
+      "R0083"
+    ],
+    "requested_name": "Open Executive",
+    "aliases": [
+      "Open Executive"
+    ],
+    "source_urls": [
+      "https://github.com/SenteLabsAI/OpenExecutive"
+    ],
+    "selected_source_url": "https://github.com/SenteLabsAI/OpenExecutive",
+    "source_selection": "explicit-seed",
+    "source_identity": "SenteLabsAI/OpenExecutive",
+    "revision": "303d45eaa0b2323f2e9646d19bf35dbcc98c6d71",
+    "source_default_branch": "main",
+    "license": "Apache-2.0",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "independent optional application",
+    "runtime_dependencies": "on-demand isolated service and eligible allowlisted providers",
+    "functional_verification": "Synthetic application workflow returns expected artifact through supported bridge, denies unconfigured/paid route, preserves Hermes user-facing identity",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "ui-ux-pro-max",
+    "requirement_ids": [
+      "R0084"
+    ],
+    "requested_name": "ui-ux-pro-max",
+    "aliases": [
+      "ui-ux-pro-max"
+    ],
+    "source_urls": [
+      "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill"
+    ],
+    "selected_source_url": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+    "source_selection": "explicit-seed",
+    "source_identity": "nextlevelbuilder/ui-ux-pro-max-skill",
+    "revision": "50d8a7de0900119855614541f15a1a616691eb33",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "searchable design skill adapter",
+    "runtime_dependencies": "isolated helper runtime and native skill discovery",
+    "functional_verification": "Selected design search fixture returns expected guidance/provenance and resolves helper data; optional host install flags reviewed",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "taste-skill",
+    "requirement_ids": [
+      "R0085"
+    ],
+    "requested_name": "taste-skill",
+    "aliases": [
+      "taste-skill"
+    ],
+    "source_urls": [
+      "https://github.com/Leonxlnx/taste-skill"
+    ],
+    "selected_source_url": "https://github.com/Leonxlnx/taste-skill",
+    "source_selection": "explicit-seed",
+    "source_identity": "Leonxlnx/taste-skill",
+    "revision": "18dfc928b135629e0eddfdd445a06400d04ed439",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "selectable design skill tree",
+    "runtime_dependencies": "task/profile scoped discovery",
+    "functional_verification": "Fixture selects one style and verifies other style rules are not concatenated globally; original references retained",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "awesome-design",
+    "requirement_ids": [
+      "R0086"
+    ],
+    "requested_name": "awesome-design",
+    "aliases": [
+      "awesome-design"
+    ],
+    "source_urls": [
+      "https://github.com/bergside/awesome-design-skills"
+    ],
+    "selected_source_url": "https://github.com/bergside/awesome-design-skills",
+    "source_selection": "selected-by-user-star-policy",
+    "source_identity": "bergside/awesome-design-skills",
+    "revision": "f631a09b4fcc0166f2e2c1a8c81906ef680c57e8",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "selected design reference skills",
+    "runtime_dependencies": "selected native skill/search helpers after review",
+    "functional_verification": "Source-override policy regression plus selected-source integration: complete-tree discoverability/reference test plus actual helper operation when provided; selected identity bergside/awesome-design-skills follows user star policy, not automatic functional success",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "user-authorized most-starred matching repository selection; dated primary API/search evidence retained",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "emil-kowalski-impeccable",
+    "requirement_ids": [
+      "R0087"
+    ],
+    "requested_name": "emil kowalski/impeccable",
+    "aliases": [
+      "emil kowalski/impeccable",
+      "Impeccable",
+      "pbakaus/impeccable"
+    ],
+    "source_urls": [
+      "https://github.com/pbakaus/impeccable",
+      "https://github.com/emilkowalski/skills"
+    ],
+    "selected_source_url": "https://github.com/pbakaus/impeccable",
+    "source_selection": "explicit-seed",
+    "source_identity": "pbakaus/impeccable",
+    "revision": "d631a8827f99414d2b6daba4ef08b7f8701751d7",
+    "source_default_branch": "main",
+    "license": "Apache-2.0",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "Impeccable skill/command routing adapter",
+    "runtime_dependencies": "native Hermes documented routes and verified ARM64 engine assets",
+    "functional_verification": "Invoke documented skill/command route on fixture and assert output; explicitly unavailable native design hook unless actual adapter test establishes it",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "Impeccable is pbakaus; Emil Kowalski skills preserved as a distinct optional pack",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": [
+      {
+        "identity": "emilkowalski/skills",
+        "url": "https://github.com/emilkowalski/skills",
+        "revision": "e8a175de22ae1e49370fc144c1f3bb9aeedf988d",
+        "default_branch": "main",
+        "license": "MIT",
+        "status": "identity-and-revision-verified; ARM64/functionality not verified"
+      }
+    ]
+  },
+  {
+    "component_id": "hyperframes",
+    "requirement_ids": [
+      "R0088"
+    ],
+    "requested_name": "hyperframes",
+    "aliases": [
+      "hyperframes"
+    ],
+    "source_urls": [
+      "https://github.com/heygen-com/hyperframes"
+    ],
+    "selected_source_url": "https://github.com/heygen-com/hyperframes",
+    "source_selection": "explicit-seed",
+    "source_identity": "heygen-com/hyperframes",
+    "revision": "46f6cb356785bed79e1ce7b79d7e7accc697786a",
+    "source_default_branch": "main",
+    "license": "Apache-2.0",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "skill + on-demand video renderer",
+    "runtime_dependencies": "compatible pinned Node/FFmpeg/native ARM64 browser sandbox",
+    "functional_verification": "Render tiny local scene to video, validate frame/duration/output metadata and bounded cleanup; no paid media providers enabled",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "humanizer",
+    "requirement_ids": [
+      "R0089"
+    ],
+    "requested_name": "humanizer",
+    "aliases": [
+      "humanizer"
+    ],
+    "source_urls": [
+      "https://github.com/blader/humanizer"
+    ],
+    "selected_source_url": "https://github.com/blader/humanizer",
+    "source_selection": "explicit-seed",
+    "source_identity": "blader/humanizer",
+    "revision": "225a6f39ac85f76ee48dbad772ea4abe4ed6c9d8",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "portable writing skill",
+    "runtime_dependencies": "native scoped discovery",
+    "functional_verification": "Harmless synthetic writing fixture verifies discovery and declared procedure access; no extra service",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "obsidian-skills",
+    "requirement_ids": [
+      "R0090"
+    ],
+    "requested_name": "obsidian-skills",
+    "aliases": [
+      "obsidian-skills"
+    ],
+    "source_urls": [
+      "https://github.com/kepano/obsidian-skills"
+    ],
+    "selected_source_url": "https://github.com/kepano/obsidian-skills",
+    "source_selection": "explicit-seed",
+    "source_identity": "kepano/obsidian-skills",
+    "revision": "3ccff5338ea700537839b21900aa5358a0402c98",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "file-format skill + optional tools",
+    "runtime_dependencies": "native skills; optional supported ARM64 CLI/desktop",
+    "functional_verification": "Synthetic markdown/canvas fixture with approved temp vault; deny writes outside vault and classify unavailable optional desktop tools honestly",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "banana-claude",
+    "requirement_ids": [
+      "R0091"
+    ],
+    "requested_name": "banana-claude",
+    "aliases": [
+      "banana-claude"
+    ],
+    "source_urls": [
+      "https://github.com/AgriciDaniel/banana-claude"
+    ],
+    "selected_source_url": "https://github.com/AgriciDaniel/banana-claude",
+    "source_selection": "explicit-seed",
+    "source_identity": "AgriciDaniel/banana-claude",
+    "revision": "6a2b1b51fdcc35932184f06e513646a6f6f4f7d8",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "Claude-oriented image plugin adapter",
+    "runtime_dependencies": "eligible compatible client + deliberately configured Gemini budget/auth",
+    "functional_verification": "Mock image endpoint asserts capability/budget/private-routing and plugin invocation; live generation remains pending account/budget, never paid install test",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "screenshot-to-code",
+    "requirement_ids": [
+      "R0092"
+    ],
+    "requested_name": "screenshot to code",
+    "aliases": [
+      "screenshot to code"
+    ],
+    "source_urls": [
+      "https://github.com/abi/screenshot-to-code"
+    ],
+    "selected_source_url": "https://github.com/abi/screenshot-to-code",
+    "source_selection": "explicit-seed",
+    "source_identity": "abi/screenshot-to-code",
+    "revision": "d026163f586dfa8c5c10d28c36edd59a9d3b0e88",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "independent vision web application",
+    "runtime_dependencies": "isolated frontend/backend + eligible vision endpoint",
+    "functional_verification": "Synthetic screenshot fixture against mock compatible vision provider yields generated code; text-only route rejected, separate live vision proof",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "scrapegraph-ai",
+    "requirement_ids": [
+      "R0093"
+    ],
+    "requested_name": "scrapegraph-ai",
+    "aliases": [
+      "scrapegraph-ai"
+    ],
+    "source_urls": [
+      "https://github.com/ScrapeGraphAI/Scrapegraph-ai"
+    ],
+    "selected_source_url": "https://github.com/ScrapeGraphAI/Scrapegraph-ai",
+    "source_selection": "explicit-seed",
+    "source_identity": "ScrapeGraphAI/Scrapegraph-ai",
+    "revision": "194055e203afce41ed4e70365dbc416bad756115",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "local library/tool adapter",
+    "runtime_dependencies": "isolated Python>=3.12,<4 plus reviewed native deps/model route",
+    "functional_verification": "Scrape local HTML fixture into expected structured result with allowlisted model; cloud/MCP products and billing remain distinct optional items",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "book-to-skill",
+    "requirement_ids": [
+      "R0094"
+    ],
+    "requested_name": "book-to-skill",
+    "aliases": [
+      "book-to-skill"
+    ],
+    "source_urls": [
+      "https://github.com/virgiliojr94/book-to-skill",
+      "https://github.com/apple-ouyang/book-to-skill"
+    ],
+    "selected_source_url": "https://github.com/virgiliojr94/book-to-skill",
+    "source_selection": "selected-by-user-star-policy",
+    "source_identity": "virgiliojr94/book-to-skill",
+    "revision": "e180fc46365e8c1aab0120778cc8a40b9515324b",
+    "source_default_branch": "master",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "selected extraction/skill-generation adapter",
+    "runtime_dependencies": "selected extraction/generation deps and eligible provider",
+    "functional_verification": "Source-override policy regression plus selected-source integration: tiny rights-authorized text fixture produces valid full Hermes skill directory and discovery test; selected identity virgiliojr94/book-to-skill follows user star policy, not automatic functional success",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "user-authorized most-starred matching repository selection; dated primary API/search evidence retained",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": [
+      {
+        "identity": "apple-ouyang/book-to-skill",
+        "url": "https://github.com/apple-ouyang/book-to-skill",
+        "revision": "a24960ac89a3baa96a87cdf5ebaecf16c5d2eab1",
+        "default_branch": "main",
+        "license": "MIT",
+        "status": "identity-and-revision-verified; ARM64/functionality not verified"
+      }
+    ]
+  },
+  {
+    "component_id": "apple-design",
+    "requirement_ids": [
+      "R0095"
+    ],
+    "requested_name": "apple-design",
+    "aliases": [
+      "apple-design"
+    ],
+    "source_urls": [
+      "https://github.com/dickwu/apple-design-skill"
+    ],
+    "selected_source_url": "https://github.com/dickwu/apple-design-skill",
+    "source_selection": "selected-by-user-star-policy",
+    "source_identity": "dickwu/apple-design-skill",
+    "revision": "904b0eedc7cc778152f545506075d5bb5219ce77",
+    "source_default_branch": "main",
+    "license": null,
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "selected design-reference skill",
+    "runtime_dependencies": "source/license selection then native scoped skill refs",
+    "functional_verification": "Source-license/override regression plus selected reference discovery with accurate attribution, no Xcode/Mac-only toolchain installed on Pi; selected identity dickwu/apple-design-skill follows user star policy, not automatic functional success",
+    "blockers": [
+      "B-TARGET",
+      "B-LICENSE"
+    ],
+    "identity_confidence": "user-authorized most-starred matching repository selection; dated primary API/search evidence retained",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  },
+  {
+    "component_id": "latent-spaces-brag",
+    "requirement_ids": [
+      "R0096"
+    ],
+    "requested_name": "latent-spaces/brag",
+    "aliases": [
+      "latent-spaces/brag"
+    ],
+    "source_urls": [
+      "https://github.com/latent-spaces/brag"
+    ],
+    "selected_source_url": "https://github.com/latent-spaces/brag",
+    "source_selection": "explicit-seed",
+    "source_identity": "latent-spaces/brag",
+    "revision": "7079945d391573edebe48fdc0a23b39c4b4e8726",
+    "source_default_branch": "main",
+    "license": "MIT",
+    "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
+    "expected_architecture": "linux/aarch64; unverified",
+    "component_type": "launch-video skill/renderer adapter",
+    "runtime_dependencies": "on-demand render stack; optional narration endpoint separately gated",
+    "functional_verification": "Tiny synthetic launch-video fixture validates frame/duration/assets; narration disabled without eligible account/budget and no renderer duplicates",
+    "blockers": [
+      "B-TARGET"
+    ],
+    "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
+    "selected_for_runtime_activation": false,
+    "source_resolved": true,
+    "alternate_sources": []
+  }
+]
+""")
+
+COMPONENT_ADAPTERS = tuple(
+    ComponentAdapterContract(
+        **{
+            **row,
+            "requirement_ids": tuple(row["requirement_ids"]),
+            "aliases": tuple(row["aliases"]),
+            "source_urls": tuple(row["source_urls"]),
+            "blockers": tuple(row["blockers"]),
+            "alternate_sources": tuple(AlternateSourcePin(**pin) for pin in row["alternate_sources"]),
+        }
+    )
+    for row in _ROWS
+)
+
+_BY_NAME: dict[str, ComponentAdapterContract] = {}
+for _adapter in COMPONENT_ADAPTERS:
+    for _name in (_adapter.component_id, *_adapter.aliases):
+        _key = _name.casefold()
+        _existing = _BY_NAME.get(_key)
+        if _existing and _existing.component_id != _adapter.component_id:
+            raise ValueError(f"component alias collision: {_name}")
+        _BY_NAME[_key] = _adapter
+
+# MCP handlers are owned by hermes_installer.mcp; these IDs and links remain
+# in planning/component-contracts.json to prevent duplicated protocol handlers.
+MCP_COMPONENT_IDS = frozenset(
+    {"figma-mcp", "playwright-mcp", "revenuecat-mcp", "google", "home-assistant"}
+)
+
+_OPTIONAL_SOURCE_ROW = json.loads(r"""
+{
+  "component_id": "emil-kowalski-skills",
+  "requirement_id": "R0087",
+  "aliases": [
+    "emilkowalski/skills"
+  ],
+  "parent_component": "emil-kowalski-impeccable",
+  "aliases": [
+    "emilkowalski/skills"
+  ],
+  "source_identity": "emilkowalski/skills",
+  "source_url": "https://github.com/emilkowalski/skills",
+  "revision": "e8a175de22ae1e49370fc144c1f3bb9aeedf988d",
+  "default_branch": "main",
+  "license": "MIT",
+  "status": "optional distinct source pack; not selected for automatic import"
+}
+""")
+OPTIONAL_SOURCE_OFFERS = (AlternateSourcePin(
+    identity=_OPTIONAL_SOURCE_ROW["source_identity"],
+    url=_OPTIONAL_SOURCE_ROW["source_url"],
+    revision=_OPTIONAL_SOURCE_ROW["revision"],
+    default_branch=_OPTIONAL_SOURCE_ROW["default_branch"],
+    license=_OPTIONAL_SOURCE_ROW["license"],
+    status=_OPTIONAL_SOURCE_ROW["status"],
+),)
+OPTIONAL_SOURCE_ALIASES = {
+    alias.casefold(): "emil-kowalski-skills"
+    for alias in _OPTIONAL_SOURCE_ROW["aliases"]
+}
+
+
+def resolve_component_adapter(name: str) -> ComponentAdapterContract:
+    try:
+        return _BY_NAME[name.casefold()]
+    except KeyError as exc:
+        raise KeyError(f"unknown component {name!r}; use an explicit source selection") from exc
+
+
+def resolve_optional_source_offer(name: str) -> AlternateSourcePin:
+    try:
+        return OPTIONAL_SOURCE_OFFERS[
+            tuple(OPTIONAL_SOURCE_ALIASES).index(name.casefold())
+        ]
+    except (KeyError, ValueError) as exc:
+        raise KeyError(f"unknown optional source offer {name!r}") from exc
+
+
+def source_copy_specs():
+    """Return only pinned private-import specs that are portable source trees."""
+    return tuple(
+        adapter.as_component_spec()
+        for adapter in COMPONENT_ADAPTERS
+        if adapter.source_kind in {"skill", "reference"}
+    )

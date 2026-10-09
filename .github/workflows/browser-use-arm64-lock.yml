@@ -1,0 +1,149 @@
+name: Browser Use ARM64 lock review
+on:
+  push:
+    branches:
+      - codex/luna-component-adapters
+    paths:
+      - .github/workflows/browser-use-arm64-lock.yml
+permissions:
+  contents: read
+jobs:
+  resolve-lock:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    env:
+      SOURCE_REVISION: c75e8476e26d18b7617643bc2ae082fae8eae431
+      TARGET_PLATFORM: aarch64-unknown-linux-gnu
+      TARGET_PYTHON: "3.14"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned installer checkout action
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # setup-uv v10.1.0
+        with:
+          version: 0.12.23
+          enable-cache: false
+      - name: Resolve source-pinned lock for ARM64 Linux and Python 3.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="${RUNNER_TEMP}/browser-use-source"
+          output_dir="${RUNNER_TEMP}/browser-use-lock-evidence"
+          git init "$source_dir"
+          git -C "$source_dir" remote add origin https://github.com/browser-use/browser-use.git
+          git -C "$source_dir" fetch --depth=1 origin "$SOURCE_REVISION"
+          git -C "$source_dir" checkout --detach FETCH_HEAD
+          test "$(git -C "$source_dir" rev-parse HEAD)" = "$SOURCE_REVISION"
+          cd "$source_dir"
+          uv --version
+          upstream_pyproject_sha256="$(git -C "$source_dir" show "$SOURCE_REVISION:pyproject.toml" | sha256sum | cut -d' ' -f1)"
+          export UPSTREAM_PYPROJECT_SHA256="$upstream_pyproject_sha256"
+          printf 'UPSTREAM_PYPROJECT_SHA256=%s\n' "$upstream_pyproject_sha256" >> "$GITHUB_ENV"
+          cp pyproject.toml "$RUNNER_TEMP/browser-use-upstream-pyproject.toml"
+          python "$GITHUB_WORKSPACE/scripts/apply_browser_use_uv_overlay.py" pyproject.toml
+          overlay_pyproject_sha256="$(sha256sum pyproject.toml | cut -d' ' -f1)"
+          export OVERLAY_PYPROJECT_SHA256="$overlay_pyproject_sha256"
+          printf 'OVERLAY_PYPROJECT_SHA256=%s\n' "$overlay_pyproject_sha256" >> "$GITHUB_ENV"
+          uv lock --python "$TARGET_PYTHON"
+          uv lock --locked --python "$TARGET_PYTHON"
+          BROWSER_USE_DISABLE_EXTENSIONS=1 uv run --locked --python "$TARGET_PYTHON" --no-dev browser-use install
+          # Preserve Chromium's sandbox in hosted CI. Prefer its unprivileged
+          # user namespace; use only the matching pinned browser's SUID helper
+          # when this runner blocks unprivileged namespaces.
+          if unshare --user --map-root-user true 2>/dev/null; then
+            printf 'CHROMIUM_SANDBOX_MODE=user-namespace\n'
+          else
+            sandbox_helper="$(find "$HOME/.cache/ms-playwright" -type f \( -name chrome_sandbox -o -name chrome-sandbox \) -print -quit)"
+            if [[ -n "$sandbox_helper" ]]; then
+              sandbox_path="/usr/local/sbin/hermes-browser-use-chrome-sandbox"
+              sudo install -o root -g root -m 4755 "$sandbox_helper" "$sandbox_path"
+              export CHROME_DEVEL_SANDBOX="$sandbox_path"
+              printf 'CHROMIUM_SANDBOX_MODE=setuid-helper\n'
+            elif [[ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)" == "1" ]]; then
+              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+              unshare --user --map-root-user true
+              printf 'CHROMIUM_SANDBOX_MODE=apparmor-user-namespace\n'
+            else
+              echo 'No supported sandbox path: user namespaces unavailable and no pinned Chromium SUID helper was shipped.' >&2
+              exit 1
+            fi
+          fi
+          BROWSER_USE_DISABLE_EXTENSIONS=1 uv run --locked --python "$TARGET_PYTHON" --no-dev --no-sync python - <<'PY'
+          import asyncio
+          import platform
+          import sys
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          from threading import Thread
+
+          from browser_use import Browser, BrowserProfile
+
+          class Fixture(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  page = b"<!doctype html><title>Browser Use ARM64</title><h1 id='proof'>fixture-ready</h1><button id='action' onclick=\"document.querySelector('#proof').textContent='interaction-ok'\">run</button>"
+                  self.send_response(200)
+                  self.send_header("Content-Type", "text/html")
+                  self.send_header("Content-Length", str(len(page)))
+                  self.end_headers()
+                  self.wfile.write(page)
+              def log_message(self, *_args):
+                  pass
+
+          async def main():
+              assert sys.version_info[:2] == (3, 14), sys.version
+              assert platform.machine().lower() in {"aarch64", "arm64"}, platform.machine()
+              server = ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
+              thread = Thread(target=server.serve_forever, daemon=True)
+              thread.start()
+              browser = Browser(browser_profile=BrowserProfile(
+                  headless=True,
+                  enable_default_extensions=False,
+                  chromium_sandbox=True,
+              ))
+              try:
+                  await browser.start()
+                  page = await browser.new_page(f"http://127.0.0.1:{server.server_port}/")
+                  heading = await page.get_elements_by_css_selector("#proof")
+                  assert len(heading) == 1
+                  button = await page.get_elements_by_css_selector("#action")
+                  assert len(button) == 1
+                  await button[0].click()
+                  assert await heading[0].evaluate("() => this.textContent") == "interaction-ok"
+                  image = await page.screenshot(format="png")
+                  assert image and len(image) > 64
+              finally:
+                  await browser.kill()
+                  server.shutdown()
+                  server.server_close()
+                  thread.join(timeout=2)
+
+          asyncio.run(asyncio.wait_for(main(), timeout=150))
+          PY
+          mkdir -m 0700 -p "$output_dir"
+          cp pyproject.toml uv.lock "$output_dir/"
+          cp "$RUNNER_TEMP/browser-use-upstream-pyproject.toml" "$output_dir/upstream-pyproject.toml"
+          python - <<'PY'
+          import hashlib, json, os, pathlib, platform, subprocess
+          directory = pathlib.Path(os.environ["RUNNER_TEMP"]) / "browser-use-lock-evidence"
+          source = pathlib.Path(os.environ["RUNNER_TEMP"]) / "browser-use-source"
+          record = {
+              "source_revision": os.environ["SOURCE_REVISION"],
+              "source_url": "https://github.com/browser-use/browser-use",
+              "python": os.environ["TARGET_PYTHON"],
+              "platform": os.environ["TARGET_PLATFORM"],
+              "uv_version": subprocess.check_output(["uv", "--version"], text=True).strip(),
+              "pyproject_sha256": os.environ["UPSTREAM_PYPROJECT_SHA256"],
+              "overlay_pyproject_sha256": os.environ["OVERLAY_PYPROJECT_SHA256"],
+              "uv_lock_sha256": hashlib.sha256((source / "uv.lock").read_bytes()).hexdigest(),
+              "generated_in_ci": True,
+              "installed_dependencies": True,
+              "functional_browser_fixture": True,
+              "runner_architecture": platform.machine(),
+          }
+          (directory / "provenance.json").write_text(json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          PY
+          cat "$output_dir/provenance.json"
+          cat "$output_dir/provenance.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # upload-artifact v4
+        with:
+          name: browser-use-aarch64-python314-lock
+          path: ${{ runner.temp }}/browser-use-lock-evidence/
+          if-no-files-found: error
+          retention-days: 7

@@ -23,6 +23,11 @@ jobs:
         env:
           PYTHONPATH: src
         run: python -m pytest -q tests/contracts
+      - name: Run authorized-target acceptance workflow fixtures
+        if: always()
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests/acceptance -v
 
   planning:
     runs-on: ubuntu-24.04
