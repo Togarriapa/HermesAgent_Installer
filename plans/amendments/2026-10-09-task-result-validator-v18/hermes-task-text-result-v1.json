@@ -1,0 +1,1 @@
+{"additional_fields":false,"fields":[{"max_utf8_bytes":1048000,"min_utf8_bytes":1,"name":"text","required":true,"type":"string"},{"name":"stdout_sha256","required":true,"type":"sha256"},{"maximum":1048000,"minimum":1,"name":"stdout_size_bytes","required":true,"type":"integer"}],"id":"hermes-task-text-result-v1","max_bytes":1048576,"schema":1,"type":"object"}

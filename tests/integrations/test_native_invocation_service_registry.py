@@ -163,8 +163,10 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             observers={source_enrollment.observer_enrollment_id: source_enrollment},
             process_resolver=process_resolver,
             package_resolver=lambda _package_id, _generation: package,
+            # The observer resolver transfers an owned descriptor which
+            # record_observed_event closes after pinning its own duplicate.
             target_peer_resolver=lambda _observer, _context: _TargetPeer(
-                producer_pid, producer_fd, producer_uid,
+                producer_pid, os.dup(producer_fd), producer_uid,
                 producer_profile, generation, producer_identity,
             ),
             loaded_package_proof_resolver=loaded_proof,
