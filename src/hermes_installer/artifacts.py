@@ -755,7 +755,11 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
     except OSError as exc:
         if exc.errno == errno.ENOSPC:
             raise AuthorityDenied("package.storage", "isolated package-set staging ran out of space; retry after freeing owned storage") from None
-        raise AuthorityDenied("package.storage", "isolated package-set staging failed safely") from None
+        # errno is a bounded platform code, not a path or runtime detail. Keep
+        # it in the denial so the root-owned service journal can distinguish
+        # storage/custody failures without exposing protected filesystem paths.
+        code = exc.errno if type(exc.errno) is int else 0
+        raise AuthorityDenied("package.storage", f"isolated package-set staging failed safely (errno {code})") from None
     finally:
         _remove_private_tree(work)
 
