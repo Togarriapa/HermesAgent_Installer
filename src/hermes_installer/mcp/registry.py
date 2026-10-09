@@ -11,7 +11,7 @@ from typing import Mapping
 from ..policy import ContextAuthorizer, DispatchContext
 from .adapters import MCPService, ReadOnlyAdapter, SERVICES
 from .client import MCPClient
-from .transports import StdioTransport, StreamableHTTPTransport
+from .transports import StdioTransport, StreamableHTTPTransport, is_supervised_stdio_handle
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,11 +65,12 @@ class MCPConnectionRegistry:
             if not isinstance(transport, StreamableHTTPTransport):
                 raise PermissionError("Home Assistant must use its documented remote HTTP endpoint")
         elif service_id == "playwright":
-            if not isinstance(transport, StdioTransport) or not getattr(transport, "binding_id", None):
-                raise PermissionError("Playwright requires a pinned host-managed local process")
+            if not isinstance(transport, StdioTransport) or not is_supervised_stdio_handle(transport._handle, service_id):
+                raise PermissionError("Playwright requires a live supervisor-issued pinned process")
         elif service_id == "google-community":
             record = self.sources.get(service_id)
-            if (not isinstance(transport, StdioTransport) or not getattr(transport, "binding_id", None)
+            if (not isinstance(transport, StdioTransport)
+                    or not is_supervised_stdio_handle(transport._handle, service_id)
                     or not isinstance(record, SourceRecord) or record.service_id != service_id
                     or record.uri != service.source_uri):
                 raise PermissionError("Community source revision, digest and supervised command must be owned and pinned")

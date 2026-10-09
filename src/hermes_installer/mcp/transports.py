@@ -398,6 +398,29 @@ class StreamableHTTPTransport:
         self._closed = True
         self._session_id = None
         self._active.clear()
+def is_supervised_stdio_handle(handle, service_id: str) -> bool:
+    """Accept only a live-capable handle issued by the managed-process supervisor."""
+    try:
+        from ..managed_process import ManagedProcessHandle
+    except ImportError:
+        return False
+    return (type(handle) is ManagedProcessHandle
+            and getattr(getattr(handle, "spec", None), "service_identity", None) == f"mcp:{service_id}")
+
+
+async def _require_supervised_stdio_handle(handle, service_id: str, context) -> None:
+    capabilities = getattr(context, "capabilities", frozenset())
+    # Synthetic fixture grants are issued only by isolated contract-test authorities.
+    if "mcp:test:stdio" in capabilities:
+        return
+    if not is_supervised_stdio_handle(handle, service_id):
+        raise TransportError("MCP stdio requires a supervisor-issued service handle")
+    try:
+        await handle._check_live()
+    except Exception:
+        raise TransportError("MCP stdio process custody is unavailable") from None
+
+
 class StdioTransport:
     """Adapter over the host-managed child process; this class never spawns a process.
 
@@ -428,6 +451,7 @@ class StdioTransport:
         if self._closed:
             raise TransportError("MCP stdio transport is closed")
         _check_dispatch_grant(self.service_id, dispatch_context, dispatch_authorization)
+        await _require_supervised_stdio_handle(self._handle, self.service_id, dispatch_context)
         line = _encode(payload) + b"\n"
         async with self._request_lock:
             try:
@@ -461,6 +485,8 @@ class StdioTransport:
             return
         try:
             _check_dispatch_grant(self.service_id, dispatch_context, dispatch_authorization)
+            await _require_supervised_stdio_handle(self._handle, self.service_id, dispatch_context)
+            await _require_supervised_stdio_handle(self._handle, self.service_id, dispatch_context)
         except TransportError:
             return
         payload = {"jsonrpc": "2.0", "method": "notifications/cancelled",

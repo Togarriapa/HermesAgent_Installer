@@ -25,10 +25,12 @@ class FixtureAuthority:
         )
 
 
-def fixture_context(*, loopback=False):
+def fixture_context(*, loopback=False, stdio=False):
     caps = {"mcp:fixture:connect", "mcp:fixture:read"}
     if loopback:
         caps.add("mcp:test:loopback")
+    if stdio:
+        caps.add("mcp:test:stdio")
     return DispatchContext(
         profile_id="fixture-profile", purpose="mcp-transport-fixture",
         sensitivity=Sensitivity.PUBLIC, principal_id="fixture-principal",
@@ -69,7 +71,7 @@ class FakeManagedHandle:
 
 class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_stdio_uses_only_supervised_handle_and_requires_host_grant(self):
-        context, handle = fixture_context(), FakeManagedHandle()
+        context, handle = fixture_context(stdio=True), FakeManagedHandle()
         transport = StdioTransport(handle, service_id="fixture")
         with self.assertRaises(TransportError):
             await transport.request({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
@@ -83,6 +85,16 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["result"]["serverInfo"]["name"], "stdio fixture")
         await transport.close()
         self.assertTrue(handle.stopped)
+
+    async def test_forged_stdio_handle_is_denied_before_any_child_io(self):
+        context, handle = fixture_context(), FakeManagedHandle()
+        transport = StdioTransport(handle, service_id="fixture")
+        grant = FixtureAuthority()(context, "mcp:fixture:connect", "fixture-connect",
+                                  time.monotonic(), 3, lambda: False)
+        with self.assertRaises(TransportError):
+            await transport.request({"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                                    dispatch_context=context, dispatch_authorization=grant)
+        self.assertEqual(handle.writes, [])
 
     async def test_http_streamable_transport_pins_loopback_fixture_and_negotiates(self):
         requests = []
