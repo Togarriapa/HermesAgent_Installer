@@ -54,8 +54,9 @@ class NativeBridgeBrokerContracts(unittest.TestCase):
                                        kernel_uid=uid, executable_sha256=sha,
                                        cgroup_identity=f"cgroup:{profile_id}", namespace_identity="mnt:1;net:1")
 
-        def canonicalizer(root_enrollments, payload):
+        def canonicalizer(root_enrollments, payload, *, normalization_policy):
             self.assertEqual(set(root_enrollments), {("fixed-provider-target", "fixed-recipient")})
+            self.assertEqual(normalization_policy["id"], "provider-output-reject-4096-v1")
             return payload, "fixed-provider-target", "fixed-recipient", "provider-inference", "model:fixed"
 
         source_digest = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
@@ -66,6 +67,10 @@ class NativeBridgeBrokerContracts(unittest.TestCase):
             gateway_uid=gateway.uid, gateway_generation="gateway-v1",
             gateway_executable_sha256="b" * 64, canonicalizer_artifact_id="provider-canonicalizer-v1",
             canonicalizer_sha256=source_digest, approved_operation="provider.dispatch",
+            normalization_policy_id="provider-output-reject-4096-v1",
+            normalization_policy_sha256="c" * 64, normalization_policy_revision=1,
+            route_schema_id="provider-chat-compatible-v1", output_limit_mode="reject-over-ceiling",
+            output_limit_ceiling=4096,
             target="fixed-provider-target", recipient="fixed-recipient",
         )
         broker = NativeBridgeBroker(
