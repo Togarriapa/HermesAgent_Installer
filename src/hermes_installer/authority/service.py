@@ -268,6 +268,22 @@ class AuthorityService:
         if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
             self.source_receipt_delivery = registry
 
+    def revoke_source_handle(self, handle: Any) -> bool:
+        """Revoke and scrub one root-retained source handle in-process only.
+
+        This is used by root input/task coordinators when delivery or startup
+        fails. It is deliberately not part of the worker RPC surface.
+        """
+        from .source_observers import SourceObserverRegistry, SourceReceiptHandle
+
+        registry = self.source_observer_registry
+        revoke = getattr(registry, "revoke_source_handle", None)
+        if (type(handle) is not SourceReceiptHandle
+                or type(registry) is not SourceObserverRegistry
+                or not callable(revoke)):
+            raise AuthorityDenied("source.capsule", "root source handle revocation is unavailable")
+        return revoke(handle)
+
     def attach_native_runtime_observer(self, observer: Any) -> None:
         """Attach the root-only post-effect observer exactly once after loading.
 
