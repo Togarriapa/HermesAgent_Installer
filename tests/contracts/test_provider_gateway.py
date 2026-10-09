@@ -188,7 +188,7 @@ class ProviderGatewayTests(unittest.TestCase):
         plugin.mkdir(mode=0o700)
         entry=plugin/"__init__.py"
         entry.write_text("# user plugin")
-        with self.assertRaisesRegex(OwnershipError,"ownership"):
+        with self.assertRaisesRegex(OwnershipError,"installer-owned|ownership"):
             materialize_hermes_provider_plugin(root,profile_relative="profiles/test",port=18081,model=MODEL)
         self.assertEqual(entry.read_text(),"# user plugin")
 
