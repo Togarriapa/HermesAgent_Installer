@@ -10,6 +10,7 @@ import asyncio
 import concurrent.futures
 import threading
 import time
+import re
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
@@ -66,7 +67,7 @@ class ProtectedMCPHTTPBinding:
         if self.service_id == "home-assistant":
             # Home Assistant is a per-instance HTTPS service. Its endpoint stays
             # only in root enrollment; bind it to the documented route and source.
-            valid_path = bool(__import__("re").fullmatch(r"/api/mcp(?:/[A-Za-z0-9][A-Za-z0-9_-]{0,63})?", parsed.path))
+            valid_path = bool(re.fullmatch(r"/api/mcp(?:/[A-Za-z0-9][A-Za-z0-9_-]{0,63})?", parsed.path))
             if (self.endpoint_source_id != "https://www.home-assistant.io/integrations/mcp_server/"
                     or not valid_path):
                 raise MCPHTTPBindingError("Home Assistant endpoint does not match its official MCP route")
