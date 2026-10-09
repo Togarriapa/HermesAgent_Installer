@@ -14,7 +14,9 @@ from hermes_installer.authority.remote_connector_authority import (
 from hermes_installer.authority.remote_sessions import (
     RemoteConnectorBinding, RemoteGatewayIdentity, RemoteRuntimeState,
 )
-from hermes_installer.authority.types import AuthorityDenied, canonical_bytes
+from hermes_installer.authority.service import AuthorityService, EffectRule, PrincipalBinding
+from hermes_installer.authority.remote_connector_authority import AuthorityServiceHI12Adapter
+from hermes_installer.authority.types import AuthorityDenied, Sensitivity, canonical_bytes
 
 
 class _HI12:
@@ -32,6 +34,16 @@ class _HI12:
             return False
         self.consumed.append(grant)
         return True
+
+
+class _HI12Policy:
+    revision = "service-policy-v1"
+
+    def classify(self, *, purpose, intent, source_contexts, binding):
+        return Sensitivity.PRIVATE, "1" * 64
+
+    def allow_effect(self, *, context, rule, request_digest, retry_index):
+        return context.sensitivity is Sensitivity.PRIVATE and retry_index == 0
 
 
 class RemoteConnectorEffectAuthorityContracts(unittest.TestCase):
@@ -180,3 +192,54 @@ class RemoteConnectorEffectAuthorityContracts(unittest.TestCase):
                 cancelled, "connector.open", self._open_payload(cancelled), 0,
                 peer_uid=1002, peer_pid=200, peer_pidfd=8)
         self.assertEqual(self.hi12.issued, [])
+
+    def test_concrete_authority_service_adapter_mints_and_spends_exact_hi12_grant(self):
+        profile_uid = 2001
+        binding = PrincipalBinding(
+            profile_uid, "native-principal", "native-desktop", "native-namespace",
+            frozenset({"hermes-service-connect"}))
+        rule = EffectRule("hermes-service-connect", "connector.open", "xpra-native")
+        handler = lambda **_: {"status": 200, "body": b"", "headers": {}, "receipt_id": "fixture"}
+        generation_digest = ["f" * 64]
+        service = AuthorityService(
+            signing_key=b"k" * 32, key_id="native-service-authority",
+            bindings_by_uid={profile_uid: binding},
+            rules={(rule.capability, rule.operation, rule.target): rule},
+            handlers={(rule.operation, rule.target): handler}, policy=_HI12Policy(),
+            profile_generations={"native-desktop": "desktop-generation-1"})
+        hi12 = AuthorityServiceHI12Adapter(
+            service, boot_epoch=lambda: "boot-epoch-1",
+            service_generation_digest=lambda: generation_digest[0], monotonic=lambda: self.now)
+        authority = self._authority_for_hi12(hi12)
+        auth = authority.issue_remote_connector_effect(
+            self.binding, "connector.open", self._open_payload(), 0,
+            peer_uid=1002, peer_pid=200, peer_pidfd=8)
+        self.assertTrue(authority.consume_remote_connector_effect(
+            auth, self.binding, "connector.open", self._open_payload(), 0,
+            peer_uid=1002, peer_pid=200, peer_pidfd=8))
+        self.assertEqual(len(service._nonces), 1)
+        with self.assertRaises(AuthorityDenied):
+            authority.consume_remote_connector_effect(
+                auth, self.binding, "connector.open", self._open_payload(), 0,
+                peer_uid=1002, peer_pid=200, peer_pidfd=8)
+
+        fresh = authority.issue_remote_connector_effect(
+            self.binding, "connector.open", self._open_payload(), 0,
+            peer_uid=1002, peer_pid=200, peer_pidfd=8)
+        generation_digest[0] = "0" * 64
+        with self.assertRaises(AuthorityDenied):
+            authority.consume_remote_connector_effect(
+                fresh, self.binding, "connector.open", self._open_payload(), 0,
+                peer_uid=1002, peer_pid=200, peer_pidfd=8)
+        self.assertEqual(len(service._nonces), 1)
+
+    def _authority_for_hi12(self, hi12):
+        return RemoteConnectorEffectAuthority(
+            runtime_state=lambda: self.state, enrollment=self.enrollment,
+            boot_epoch=lambda: "boot-epoch-1",
+            gateway=lambda uid, pid, pidfd: self.gateway_identity,
+            role_proof=lambda identity: self.proof,
+            session_current=lambda binding, operation, sequence: binding == self.current_binding,
+            hi12=hi12, monotonic=lambda: self.now,
+            gateway_entrypoint_artifact_id=self.entrypoint_id,
+            gateway_entrypoint_sha256=self.entrypoint_digest)

@@ -24,7 +24,7 @@ from .remote_sessions import (
     RemoteGatewayIdentity,
     RemoteRuntimeState,
 )
-from .types import AuthorityDenied
+from .types import AuthorityDenied, EffectAuthorization, HostContext, canonical_digest
 
 
 _OPS = {"connector.open", "connector.read", "connector.write", "connector.close"}
@@ -63,6 +63,142 @@ class HI12RemoteEffectAuthority(Protocol):
     def consume_remote_connector_effect(self, grant: Any, *, binding: RemoteConnectorBinding,
                                         operation: str, canonical_payload: bytes,
                                         sequence: int, boot_epoch: str) -> bool: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _HI12Grant:
+    """Unexported HI12 records retained between issue and atomic consume."""
+
+    context: HostContext = field(repr=False)
+    authorization: EffectAuthorization = field(repr=False)
+    service_epoch: str = field(repr=False)
+    boot_epoch: str = field(repr=False)
+    profile_uid: int
+
+
+class AuthorityServiceHI12Adapter:
+    """Mint and atomically spend HI12 connector grants through root service APIs.
+
+    This adapter intentionally uses AuthorityService's private context, rule,
+    signature and replay methods. It selects the single root-bound native
+    service UID by profile/generation and delegates policy/rule verification to
+    the installed AuthorityService; it does not construct a caller HostContext.
+    """
+
+    def __init__(self, service: Any, *, boot_epoch: Callable[[], str],
+                 service_generation_digest: Callable[[], str],
+                 capability: str = "hermes-service-connect",
+                 monotonic: Callable[[], float] = time.monotonic):
+        if (not callable(boot_epoch) or not callable(service_generation_digest)
+                or not callable(getattr(service, "_issue_context", None))
+                or not callable(getattr(service, "_authorize_effect", None))
+                or not callable(getattr(service, "_consume", None))):
+            raise ValueError("root AuthorityService HI12 APIs and active registry readers are required")
+        if not isinstance(capability, str) or not capability:
+            raise ValueError("fixed HI12 connector capability is required")
+        self._service = service
+        self._boot_epoch = boot_epoch
+        self._generation_digest = service_generation_digest
+        self._capability = capability
+        self._monotonic = monotonic
+
+    def issue_remote_connector_effect(self, *, binding: RemoteConnectorBinding,
+                                      operation: str, canonical_payload: bytes,
+                                      sequence: int, deadline: float,
+                                      boot_epoch: str) -> _HI12Grant:
+        uid = self._profile_uid(binding.native_profile_id, binding.native_generation)
+        service = self._service
+        now = self._monotonic()
+        if (boot_epoch != self._boot_epoch()
+                or binding.service_generation_digest != self._generation_digest()
+                or not math.isfinite(deadline) or deadline <= now):
+            raise _deny("remote.connector-hi12-stale", "root service generation or boot epoch changed")
+        rule = self._rule(operation, binding.target_id)
+        payload_digest = canonical_digest(canonical_payload)
+        context_wire = service._issue_context(uid, {
+            "purpose": "remote-desktop-connector",
+            "intent": f"{binding.session_id}:{operation}:{sequence}",
+            "trace_id": binding.session_id,
+            "lease_seconds": min(deadline - now, 5.0),
+            "source_contexts": [], "final_payload_digest": payload_digest,
+            "operation": operation,
+        })
+        context = HostContext.from_wire(context_wire)
+        grant_wire = service._authorize_effect(uid, {
+            "context": context.to_wire(), "capability": rule.capability,
+            "target": rule.target, "recipient": rule.recipient,
+            "request_digest": payload_digest, "retry_index": 0,
+        })
+        grant = EffectAuthorization.from_wire(grant_wire)
+        if (grant.operation != operation or grant.target != binding.target_id
+                or grant.request_digest != payload_digest
+                or grant.final_payload_digest != payload_digest
+                or grant.profile_id != binding.native_profile_id
+                or grant.generation != binding.native_generation
+                or grant.monotonic_expires_at > deadline):
+            raise _deny("remote.connector-hi12", "AuthorityService issued a differently bound connector grant")
+        return _HI12Grant(context, grant, service.authority_epoch, boot_epoch, uid)
+
+    def consume_remote_connector_effect(self, grant: _HI12Grant, *,
+                                        binding: RemoteConnectorBinding,
+                                        operation: str, canonical_payload: bytes,
+                                        sequence: int, boot_epoch: str) -> bool:
+        if not isinstance(grant, _HI12Grant):
+            raise _deny("remote.connector-hi12", "HI12 grant is not root-issued")
+        service = self._service
+        context, authorization = grant.context, grant.authorization
+        payload_digest = canonical_digest(canonical_payload)
+        if (grant.service_epoch != service.authority_epoch
+                or grant.boot_epoch != boot_epoch or boot_epoch != self._boot_epoch()
+                or binding.service_generation_digest != self._generation_digest()
+                or authorization.operation != operation
+                or authorization.target != binding.target_id
+                or authorization.request_digest != payload_digest
+                or authorization.final_payload_digest != payload_digest
+                or authorization.monotonic_expires_at <= self._monotonic()
+                or authorization.monotonic_expires_at > min(
+                    binding.lease_expires_monotonic,
+                    binding.frame_deadline_monotonic if operation != "connector.open"
+                    else binding.lease_expires_monotonic)):
+            raise _deny("remote.connector-hi12", "HI12 grant is stale or bound to another connector effect")
+        uid = self._profile_uid(binding.native_profile_id, binding.native_generation)
+        if uid != grant.profile_uid:
+            raise _deny("remote.connector-hi12", "native service UID changed after connector issuance")
+        identity_binding = service._binding(uid)
+        service._verify_context_signature(context)
+        service._assert_current_context(context, identity_binding, uid)
+        service._verify_grant_signature(authorization)
+        service._assert_grant_current(authorization, identity_binding, uid)
+        rule = self._rule(operation, binding.target_id)
+        if (authorization.capability != rule.capability
+                or authorization.recipient != rule.recipient
+                or not service.policy.allow_effect(
+                    context=context, rule=rule, request_digest=payload_digest,
+                    retry_index=authorization.retry_index)):
+            raise _deny("remote.connector-hi12", "current HI12 policy denied the connector effect")
+        # Atomic one-use spend in the root replay table. FixedServiceConnector
+        # invokes this callback at its before_io boundary, directly before the
+        # actual namespace socket syscall.
+        service._consume(authorization)
+        return True
+
+    def _profile_uid(self, profile_id: str, generation: str) -> int:
+        service = self._service
+        matches = [uid for uid, binding in service.bindings_by_uid.items()
+                   if binding.profile_id == profile_id
+                   and service.profile_generations.get(profile_id, "unversioned") == generation]
+        if len(matches) != 1:
+            raise _deny("remote.connector-profile", "selected native service profile is not uniquely enrolled")
+        return matches[0]
+
+    def _rule(self, operation: str, target: str) -> Any:
+        service = self._service
+        rules = [rule for rule in service.rules.values()
+                 if rule.capability == self._capability
+                 and rule.operation == operation and rule.target == target]
+        if (len(rules) != 1 or (operation, target) not in service.handlers):
+            raise _deny("remote.connector-rule", "exact HI12 connector rule or effect handler is not enrolled")
+        return rules[0]
 
 
 @dataclass(frozen=True, slots=True)
