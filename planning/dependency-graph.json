@@ -32,9 +32,26 @@
       "skills-memory-applications",
       "mcp-connections",
       "lifecycle-recovery",
-      "remote-desktop-tunnel"
+      "remote-desktop-tunnel",
+      "resources-bundle-native-enrichment",
+      "remote-policy-read-authority",
+      "host-principal-custody"
     ],
     "remote-desktop-tunnel": [
+      "installer-bootstrap-desktop",
+      "resource-registry-import",
+      "providers-credentials-budgets-privacy",
+      "lifecycle-recovery"
+    ],
+    "resources-bundle-native-enrichment": [
+      "resource-registry-import",
+      "skills-memory-applications",
+      "providers-credentials-budgets-privacy"
+    ],
+    "remote-policy-read-authority": [
+      "remote-desktop-tunnel"
+    ],
+    "host-principal-custody": [
       "installer-bootstrap-desktop",
       "resource-registry-import",
       "providers-credentials-budgets-privacy",
@@ -87,7 +104,8 @@
     "HW-F03": [
       "HW-F01",
       "BD-F01",
-      "PR-F01"
+      "PR-F01",
+      "HW-T01"
     ],
     "SK-F01": [
       "BD-F01",
@@ -848,7 +866,8 @@
       "HW-F01"
     ],
     "HW-R0042": [
-      "HW-F01"
+      "HW-F01",
+      "HW-T01"
     ],
     "HW-R0043": [
       "HW-F01"
@@ -1094,13 +1113,16 @@
       "HW-F01"
     ],
     "PR-R0124": [
-      "PR-F01"
+      "PR-F01",
+      "PR-T01"
     ],
     "PR-R0125": [
-      "PR-F01"
+      "PR-F01",
+      "PR-T01"
     ],
     "PR-R0126": [
-      "PR-F01"
+      "PR-F01",
+      "PR-T01"
     ],
     "PR-R0127": [
       "PR-F01"
@@ -2132,6 +2154,143 @@
     ],
     "RT-R0211": [
       "RT-F02"
+    ],
+    "RB-T01": [
+      "RG-F01"
+    ],
+    "RB-T02": [
+      "RB-T01",
+      "RG-F02",
+      "RG-F03"
+    ],
+    "RB-T03": [
+      "RB-T02"
+    ],
+    "RB-T04": [
+      "RB-T02",
+      "RB-T03",
+      "RG-F04"
+    ],
+    "RB-T05": [
+      "RB-T01",
+      "RB-T02",
+      "RB-T03",
+      "RB-T04"
+    ],
+    "RB-T06": [
+      "RB-T05",
+      "RB-T07",
+      "RB-T08"
+    ],
+    "RP-T01": [
+      "RT-F01"
+    ],
+    "RP-T02": [
+      "RP-T01"
+    ],
+    "RP-T03": [
+      "RP-T02"
+    ],
+    "RP-T04": [
+      "RP-T02",
+      "RP-T03"
+    ],
+    "RP-T05": [
+      "RP-T01",
+      "RP-T02",
+      "RP-T04"
+    ],
+    "RP-T06": [
+      "RP-T01",
+      "RP-T02",
+      "RP-T03",
+      "RP-T04",
+      "RP-T05",
+      "RT-F02",
+      "RT-F03"
+    ],
+    "HI-T01": [
+      "BD-F01",
+      "LC-F01",
+      "PR-F01"
+    ],
+    "HI-T02": [
+      "HI-T01",
+      "RG-F02"
+    ],
+    "HI-T03": [
+      "HI-T01",
+      "RG-F02"
+    ],
+    "HI-T04": [
+      "HI-T02",
+      "HI-T03",
+      "PR-F03",
+      "HI-T07",
+      "HI-T08",
+      "HI-T09"
+    ],
+    "HI-T05": [
+      "HI-T01",
+      "HI-T02",
+      "LC-F04",
+      "HI-T07",
+      "HI-T08",
+      "HI-T09"
+    ],
+    "HI-T06": [
+      "HI-T02",
+      "HI-T03",
+      "HI-T04",
+      "HI-T05",
+      "HI-T07",
+      "HI-T08",
+      "HI-T09",
+      "HI-T10"
+    ],
+    "HI-T07": [
+      "HI-T01",
+      "HI-T02",
+      "HI-T03",
+      "HI-T09"
+    ],
+    "HI-T08": [
+      "HI-T01",
+      "HI-T03",
+      "HI-T09"
+    ],
+    "HI-T09": [
+      "HI-T01",
+      "HI-T02"
+    ],
+    "RB-T07": [
+      "RB-T02",
+      "RB-T03",
+      "HI-T03",
+      "HI-T08",
+      "HI-T09"
+    ],
+    "HI-T10": [
+      "HI-T01",
+      "HI-T02",
+      "HI-T09"
+    ],
+    "RB-T08": [
+      "RB-T02",
+      "RB-T03",
+      "HI-T03",
+      "HI-T08",
+      "HI-T09"
+    ],
+    "HW-T01": [
+      "HI-T01",
+      "HI-T09",
+      "BD-F01"
+    ],
+    "PR-T01": [
+      "PR-F01",
+      "HI-T08",
+      "HI-T09"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."

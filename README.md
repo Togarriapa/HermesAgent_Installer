@@ -1,10 +1,10 @@
 # HermesAgent Installer
 
-This repository contains the validated specification and immutable implementation plan for a complete Raspberry Pi5 Hermes installer. The installer runtime is assigned to GPT-6 Luna; this baseline does not claim installed or target-tested integrations.
+This repository is implementing the validated plan for a complete Raspberry Pi 5 Hermes installer. The pinned bootstrap/runtime path has been exercised on an enrolled Pi; the complete installer is **not finished** and account-dependent/public services remain disabled.
 
-Read [the plan](planning/PLAN.md), [complete source-to-task/evidence map](planning/traceability.json), [component contracts](planning/component-contracts.json), [source evidence](SOURCES.md), [compatibility limits](COMPATIBILITY.md) and [engineering instructions](AGENTS.md).
+Read [the plan](planning/PLAN.md), [complete source-to-task/evidence map](planning/traceability.json), [component contracts](planning/component-contracts.json), [source evidence](SOURCES.md), [compatibility limits](COMPATIBILITY.md) and [engineering instructions](AGENTS.md). Redacted Pi runtime evidence is in [the native provider probe report](docs/evidence/2026-10-09-pi-native-provider-probe.md).
 
-## Planning checks
+## Planning and development checks
 
 ```bash
 npm ci
@@ -13,23 +13,16 @@ npm run validate:plan
 npm run test:planning
 ```
 
-Use Node24.6.0 (OpenSpec engine>=20.19.0). OpenSpec1.14.1 is pinned in the lock and generated Codex skills. The frozen baseline is plans/2026-10-09-v1 at annotated tag hermes-installer-plan-2026-10-09-v1. Live OpenSpec changes are proposals; only implemented planning governance is canonical. Refinements append Sol-reviewed amendments separately.
+Use Node24.6.0 (OpenSpec engine>=20.19.0). OpenSpec1.14.1 is pinned in the lock and generated Codex skills. The frozen baseline is plans/2026-10-09-v1 at annotated tag hermes-installer-plan-2026-10-09-v1. Live OpenSpec changes remain active; only verified implemented behavior belongs in canonical specs.
 
-## Development handoff
+## Current runtime status
 
-GPT-6.1 Sol owns specification/task creation/refinement; GPT-6 Luna implements the unblocked DAG. Inspect change status and apply instructions, implement real component handlers with meaningful failure tests/docs, keep the evidence ledger truthful, and archive only genuinely verified scope. All 216 nonempty original lines,211 requirements,240 tasks,62 inventory records and 12 original plus 3 added acceptance criteria are mapped. Test paths identify semantic contracts and may be consolidated into real test functions in the mutable ledger without weakening assertions.
+`./install.sh plan`, `doctor`, `status`, `install`, and `resume` are wired. Install/resume run the pinned official Hermes bootstrap and selected Desktop build; the CLI reports Agent artifact verification separately from provider configuration, user-session service readiness, and other pending steps. The local Hermes provider plugin and loopback dispatcher are implemented and fixture-tested, but are not yet wired into the installer lifecycle. OpenRouter inference defaults to denied until a fresh authoritative zero-charge account-policy proof exists; the provider metadata APIs inspected so far do not prove account-level paid processing is disabled.
 
-## Planned installer use
+The Pi test in the evidence report exercised the pinned PM environment and a synthetic recording upstream. It did not contact OpenRouter, create an external account, or activate a user/public service. The enrolled target is available, but no Cloudflare management token/account selection, provider credentials, external resource credentials, or GLM weights have been supplied.
 
-These commands are design contracts and are **not available yet**:
+`verify`, provider/MCP configuration and connection commands, memory/source selection, component operations, update/data lifecycle, registry activation, all per-item adapters, remote Desktop/Cloudflare automation, and GLM/Coral acceptance remain in implementation. Their presence in the CLI parser or plan is not evidence of a working adapter.
 
-```bash
-./install.sh --config installer.yaml --dry-run
-hermes-installer install --config installer.yaml
-hermes-installer resume --config installer.yaml
-hermes-installer verify --target authorized-target.json --output evidence-dir
-```
+Zero additional metered spending is the default. No huge model download, paid inference, Pi reimage, or unrelated service replacement is authorized. Missing account inputs defer live account acceptance, not the corresponding code, fixtures, docs, or target verifier.
 
-No privileged install may run on the development Mac. A physical target, credentials and selected external resources must be identified/authorized before live operations. Zero new metered spending is the default. Missing source identities/accounts/hardware do not block implementation of the independent code, fixtures and executable target workflow. Current source selection and live blockers are recorded explicitly.
-
-The later direct Cloudflare requirement is captured separately in planning/user-additions/2026-10-09-remote-desktop.md and the remote-desktop-tunnel change. Blank hostname, secure scoped token, automatic owned tunnel/DNS/Access email-code setup, real native-app-only transport and bounded JWT/WebSocket expiry/revocation are required. No prefilled hostname, local-password substitute, repeated routine setup approvals or public host-desktop/shell/backend route. Live Cloudflare/Pi actions await secure target setup; full code/fixtures/docs/executable AC13..15 remain unblocked.
+The later direct Cloudflare requirement is captured in planning/user-additions/2026-10-09-remote-desktop.md and the remote-desktop-tunnel change. The hostname prompt starts blank; setup securely collects a scoped token and allowed email addresses, automatically configures only owned resources, and exposes only the official native Desktop app through constrained transport. No prefilled hostname, local-password substitute, repeated routine approvals, public host desktop, shell, dashboard, or backend-management route is acceptable.

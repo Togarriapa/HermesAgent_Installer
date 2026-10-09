@@ -549,5 +549,99 @@
     "archived": false,
     "commit": "bf4f5020be590fb9924c8982ac479a32f05de269",
     "status": "identity-and-revision-verified; ARM64/functionality not verified"
+  },
+  {
+    "seed": "google-coral/test_data",
+    "url": "https://github.com/google-coral/test_data",
+    "checked_on": "2026-10-09",
+    "identity": "google-coral/test_data",
+    "license": "Apache-2.0; repository LICENSE inspected at pinned commit",
+    "commit": "104342d2d3480b3e66203073dac24f4e2dbb4c41",
+    "artifact": "mobilenet_v2_1.0_224_quant_edgetpu.tflite",
+    "artifact_url": "https://raw.githubusercontent.com/google-coral/test_data/104342d2d3480b3e66203073dac24f4e2dbb4c41/mobilenet_v2_1.0_224_quant_edgetpu.tflite",
+    "artifact_sha256": "4315ee115507aab28c78809c0f384e5296527dd6a5dd53a1751b3eb9c91db6aa",
+    "artifact_bytes": 4283046,
+    "status": "identity/revision/artifact digest verified; native device/inference/delegate behavior not verified",
+    "change": "colibri-coral",
+    "requirement_ids": [
+      "R0041",
+      "R0042",
+      "R0178"
+    ],
+    "task_ids": [
+      "HW-F03",
+      "HW-R0042",
+      "VD-R0178"
+    ],
+    "evidence_ids": [
+      "EV-R0042",
+      "EV-R0178"
+    ]
+  },
+  {
+    "identity": "python/cpython",
+    "version": "3.9.25",
+    "url": "https://www.python.org/ftp/python/3.9.25/Python-3.9.25.tar.xz",
+    "artifact_bytes": 20183236,
+    "artifact_sha256": "00e07d7c0f2f0cc002432d1ee84d2a40dae404a99303e3f97701c10966c91834",
+    "license": "PSF license; official source",
+    "maintenance": "EOL2025-10-31; source-only final Python3.9 release",
+    "checked_on": "2026-10-09",
+    "change": "colibri-coral",
+    "requirement_ids": [
+      "R0042"
+    ],
+    "task_ids": [
+      "HW-F03",
+      "HW-R0042"
+    ],
+    "evidence_ids": [
+      "EV-R0042"
+    ],
+    "status": "source bytes/hash verified only; no build/install/inference/native qualification performed"
+  },
+  {
+    "identity": "tensorflow/tflite-runtime",
+    "version": "2.14.0",
+    "url": "https://files.pythonhosted.org/packages/34/f0/15d5f892028f406d875b4b867b4797736c9806baf737fd59d7d5ac59ef02/tflite_runtime-2.14.0-cp39-cp39-manylinux_2_34_aarch64.whl",
+    "artifact_bytes": 2325666,
+    "artifact_sha256": "be198b7dc4401204be54a15884d9e336389790eb707439524540f5a9329fdd02",
+    "license": "Apache2.0; PyPI project metadata",
+    "abi": "CPython3.9 Linuxaarch64 manylinux2_34; glibc>=2.34",
+    "checked_on": "2026-10-09",
+    "change": "colibri-coral",
+    "requirement_ids": [
+      "R0042"
+    ],
+    "task_ids": [
+      "HW-F03",
+      "HW-R0042"
+    ],
+    "evidence_ids": [
+      "EV-R0042"
+    ],
+    "status": "source bytes/hash verified only; no build/install/inference/native qualification performed"
+  },
+  {
+    "identity": "numpy/numpy",
+    "version": "1.26.4",
+    "url": "https://files.pythonhosted.org/packages/6d/64/c3bcdf822269421d85fe0d64ba972003f9bb4aa9a419da64b86856c9961f/numpy-1.26.4-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+    "artifact_bytes": 14226281,
+    "artifact_sha256": "d5241e0a80d808d70546c697135da2c613f30e28251ff8307eb72ba696945764",
+    "license": "BSD3-Clause; PyPI distribution bundles additional dependency licenses retained in wheel",
+    "abi": "CPython3.9 Linuxaarch64 manylinux2_17",
+    "checked_on": "2026-10-09",
+    "change": "colibri-coral",
+    "requirement_ids": [
+      "R0042"
+    ],
+    "task_ids": [
+      "HW-F03",
+      "HW-R0042"
+    ],
+    "evidence_ids": [
+      "EV-R0042"
+    ],
+    "status": "source bytes/hash verified only; no install/inference/native qualification performed"
   }
 ]

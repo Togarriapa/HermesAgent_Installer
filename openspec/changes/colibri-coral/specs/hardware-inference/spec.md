@@ -28,7 +28,7 @@ The installer SHALL satisfy this obligation: Install the appropriate runtime and
 #### Scenario: R0042 fulfilled constraint
 - **WHEN** the hardware adapter evaluates recorded native ARM64 architecture, storage/model digests and detected USB or PCIe TPU facts before its selected verification workflow
 - **THEN** Install the appropriate runtime and permissions in an isolated dependency environment. Do not downgrade Hermes or the host Python to satisfy older PyCoral packages. Test actual TPU inference with a small official compiled sample model and record that the TPU delegate was used; device enumeration alone is insufficient. Keep Coral inference separate from LLM model routing.
-- **AND** evidence SHALL demonstrate the observable outcome using Denial fixture at actual dispatch/process/filesystem boundary: attempts beyond authorized scope fail before target side effect, including schedule/webhook/delegated identities and fresh lookup failure
+- **AND** evidence SHALL demonstrate the observable outcome using Run the official compiled quantized sample through the selected USB/PCIe TPU delegate in an isolated compatible environment; record delegate-used output and runtime/device/model digests. Reject CPU fallback and enumeration-only success, preserve Hermes/host Python, and keep missing-device native acceptance pending.
 
 #### Scenario: R0042 unavailable or failed prerequisite
 - **WHEN** engine or model identity mismatches, required storage/device access is unavailable or measured target behavior misses configured thresholds
@@ -213,3 +213,12 @@ The installer SHALL satisfy this obligation: Build this support even if the targ
 #### Scenario: R0123 unavailable or failed prerequisite
 - **WHEN** engine or model identity mismatches, required storage/device access is unavailable or measured target behavior misses configured thresholds
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Protected fixed Coral package set (HW01)
+
+Coral dependencies SHALL install only from a protected fixed package-set manifest binding the isolated attested CPython runtime and exact pinned NumPy/TFLite wheels. Caller-selected paths, URLs, resolver inputs or extra packages SHALL deny. Offline bounded installation SHALL preserve source bytes/licenses and prior component generation without changing host or Hermes runtimes.
+
+#### Scenario: Exact offline package set
+
+- **WHEN** Coral installation selects the protected package set for its attested isolated runtime
+- **THEN** root installs only both exact fixed wheels offline or rejects incompatible/stale/tampered inputs before effects while preserving host, Hermes and prior component generation
