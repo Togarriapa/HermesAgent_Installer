@@ -1160,19 +1160,37 @@ def _xres_client_pids(x11: Any, xres: Any, display: int) -> tuple[tuple[int, int
         spec = _XResClientIdSpec(0, 1 << 1)  # None, LocalClientPid
         value_count = ctypes.c_long()
         values = ctypes.POINTER(_XResClientIdValue)()
-        if not xres.XResQueryClientIds(display, 1, ctypes.byref(spec),
-                                       ctypes.byref(value_count), ctypes.byref(values)):
+        # Unlike the older Bool-returning XResQueryClients, the 1.2 API is a
+        # Status function: Xlib Success is 0, and the implementation returns
+        # !Success on failure. Treating this as a boolean rejects every valid
+        # reply (and accepts a failed reply).
+        if xres.XResQueryClientIds(display, 1, ctypes.byref(spec),
+                                   ctypes.byref(value_count), ctypes.byref(values)) != 0:
             raise RemoteObservationUnavailable("XRes local-client PID query failed")
         try:
+            rejected_mask = rejected_length = rejected_value = rejected_client = 0
             for value_index in range(value_count.value):
                 value = values[value_index]
-                if (value.spec.mask != (1 << 1) or value.length != 1
-                        or not value.value):
+                if value.spec.mask != (1 << 1):
+                    rejected_mask += 1
+                    continue
+                # XResClientIdValue.length is a byte count in libXRes 1.2.1;
+                # LocalClientPid is one CARD32 (four bytes). The protocol
+                # prose calls it a CARD32 count, but the library's public
+                # accessor accepts length >= 4 and the reader allocates/reads
+                # exactly `length` bytes.
+                if value.length != ctypes.sizeof(ctypes.c_uint32):
+                    rejected_length += 1
+                    continue
+                if not value.value:
+                    rejected_value += 1
                     continue
                 client_range = resource_ranges.get(int(value.spec.client))
                 if client_range is not None:
                     pid_values = ctypes.cast(value.value, ctypes.POINTER(ctypes.c_uint32))
                     result.append((*client_range, int(pid_values[0])))
+                else:
+                    rejected_client += 1
         finally:
             if values:
                 x11.XFree(values)
@@ -1180,7 +1198,10 @@ def _xres_client_pids(x11: Any, xres: Any, display: int) -> tuple[tuple[int, int
         if clients:
             x11.XFree(clients)
     if not result:
-        raise RemoteObservationUnavailable("XRes provides no server-derived local client PIDs")
+        raise RemoteObservationUnavailable(
+            "XRes returned no joinable server-derived local client PIDs "
+            f"(ids={value_count.value}, mask={rejected_mask}, length={rejected_length}, "
+            f"value={rejected_value}, client={rejected_client})")
     return tuple(result)
 
 

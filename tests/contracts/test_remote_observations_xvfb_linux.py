@@ -188,17 +188,27 @@ class RemoteObservationXvfbKernelProof(unittest.TestCase):
                 tile_digest = _hash_bounded_window_sample(x11, display, selected_xid)
                 self.assertRegex(tile_digest, r"^[0-9a-f]{64}$")
 
-                stale_pid, stale_xid = clients[1].pid, foreign_xid
+                stale_pid, stale_start, stale_xid = (
+                    clients[1].pid, _proc_starttime(clients[1].pid), foreign_xid)
                 clients[1].terminate()
                 clients[1].wait(timeout=3)
-                stale_pidfd = os.pidfd_open(stale_pid, 0)
+                self.assertIn(stale_xid, windows)
                 try:
-                    poller = select.poll()
-                    poller.register(stale_pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
-                    self.assertTrue(poller.poll(0), "exited XRes client PIDFD must report stale")
-                    self.assertIn(stale_xid, windows)
-                finally:
-                    os.close(stale_pidfd)
+                    stale_pidfd = os.pidfd_open(stale_pid, 0)
+                except ProcessLookupError:
+                    # Linux may refuse to create a pidfd after reaping, which
+                    # is equally strong evidence that the captured PID no
+                    # longer resolves to a live process.
+                    pass
+                else:
+                    try:
+                        poller = select.poll()
+                        poller.register(stale_pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
+                        if not poller.poll(0):
+                            self.assertNotEqual(_proc_starttime(stale_pid), stale_start,
+                                "reused PID must not be confused with the exited XRes client")
+                    finally:
+                        os.close(stale_pidfd)
             finally:
                 if display is not None:
                     x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
@@ -211,6 +221,10 @@ class RemoteObservationXvfbKernelProof(unittest.TestCase):
                         client.wait(timeout=2)
                     except subprocess.TimeoutExpired:
                         client.kill(); client.wait(timeout=2)
+                    if client.stdout is not None:
+                        client.stdout.close()
+                    if client.stderr is not None:
+                        client.stderr.close()
                 if server is not None:
                     server.terminate()
                     try:
