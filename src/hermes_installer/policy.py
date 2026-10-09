@@ -516,7 +516,7 @@ class Dispatcher:
                 raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
             requires_tools = request_requires_tools(payload)
             if not host_bound and (not isinstance(tool_request, bool) or tool_request != requires_tools):
-                raise PolicyDenied("authorization.request_mismatch", "Synthetic tool capability flag does not match the request body")
+                raise PolicyDenied("authorization.request_mismatch", "Tool capability flag does not match the request body (synthetic context)")
             capability = ("provider-tool-call" if requires_tools else "provider-inference") if host_bound else (
                 "tool-call" if requires_tools else "inference")
             payload_sha256 = __import__("hashlib").sha256(payload).hexdigest()
