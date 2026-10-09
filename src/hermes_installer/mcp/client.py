@@ -309,6 +309,7 @@ class MCPClient:
         if authority is None:
             raise MCPError("protected MCP authority is unavailable")
         from ..authority import AuthorityDenied, BrokeredEffectResponse, canonical_bytes, canonical_digest
+        from .broker import mcp_intent
         from .transports import StdioTransport, StreamableHTTPTransport
         if type(self.transport) is StreamableHTTPTransport:
             channel = "http"
@@ -319,13 +320,23 @@ class MCPClient:
         if getattr(self.transport, "service_id", None) != self.service_id:
             raise MCPError("MCP broker transport service binding is invalid")
         target = f"mcp:{self.service_id}:{channel}"
-        payload = canonical_bytes(dict(request))
-        intent_id = _intent(
-            self.service_id, operation, self.selection, tool,
-            {"method": request.get("method"), "params": request.get("params", {}),
-             "selected_arguments": args}, channel,
-        )
+        method = request.get("method")
+        params = request.get("params", {})
+        request_id = request.get("id")
+        if not isinstance(method, str) or not isinstance(params, Mapping):
+            raise MCPError("MCP broker request fields are invalid")
+        envelope = {
+            "schema": 1, "service_id": self.service_id, "request_id": request_id,
+            "method": method, "selection": self.selection, "params": dict(params),
+        }
+        try:
+            intent = mcp_intent(self.service_id, channel, request_id, method,
+                                self.selection, params)
+            payload = canonical_bytes(envelope)
+        except Exception:
+            raise MCPError("MCP request could not be bound to its selected resource") from None
         purpose = "mcp-selected-resource-read" if operation == "call" else "mcp-connection-lifecycle"
+        expected_intent_id = canonical_digest({"purpose": purpose, "intent": intent})
         cancellation = __import__("threading").Event()
         async with self._semaphore:
             remaining = min(self.timeout, deadline - self.monotonic())
@@ -333,10 +344,10 @@ class MCPClient:
                 raise MCPError("MCP request deadline expired")
             try:
                 context = await asyncio.wait_for(asyncio.to_thread(
-                    authority.context, purpose=purpose, intent=intent_id,
-                    lease_seconds=min(30.0, remaining), cancelled=cancellation.is_set
+                    authority.context, purpose=purpose, intent=intent,
+                    lease_seconds=min(30.0, remaining), cancelled=cancellation.is_set,
                 ), remaining)
-                if context.intent_id != intent_id or context.monotonic_expires_at <= self.monotonic():
+                if context.intent_id != expected_intent_id or context.monotonic_expires_at <= self.monotonic():
                     raise MCPError("host issued a stale or mismatched MCP context")
                 remaining = min(remaining, context.monotonic_expires_at - self.monotonic())
                 capability = f"mcp:{self.service_id}:{'read' if operation == 'call' else 'connect'}"
@@ -347,7 +358,7 @@ class MCPClient:
                     cancelled=cancellation.is_set,
                 ), remaining)
                 if (grant.target != target or grant.capability != capability
-                        or grant.request_digest != digest or grant.intent_id != intent_id
+                        or grant.request_digest != digest or grant.intent_id != expected_intent_id
                         or grant.context_digest == ""):
                     raise MCPError("host MCP grant is stale or mismatched")
                 remaining = min(remaining, grant.monotonic_expires_at - self.monotonic())
@@ -359,7 +370,7 @@ class MCPClient:
                 ), remaining)
             except asyncio.TimeoutError:
                 cancellation.set()
-                raise MCPError(f"{request.get('method', 'MCP request')} exceeded its aggregate deadline") from None
+                raise MCPError(f"{method} exceeded its aggregate deadline") from None
             except asyncio.CancelledError:
                 cancellation.set()
                 raise
@@ -378,7 +389,7 @@ class MCPClient:
             raise MCPError("MCP authentication denied or revoked")
         if effect.status not in {200, 202, 204}:
             raise MCPError("protected MCP broker returned an unsuccessful response")
-        if not request.get("id"):
+        if request_id is None:
             return {}
         if not effect.body or len(effect.body) > MAX_RESULT_BYTES * 4:
             raise MCPError("protected MCP broker returned an empty or oversized response")
