@@ -216,3 +216,11 @@ The implementation SHALL use explicit protected observer delivery role joins and
 #### Scenario: Unenrolled cross-peer selection
 - **WHEN** no exact current observer delivery mapping exists
 - **THEN** cross-peer delivery is denied without target-string inference.
+
+### Requirement: Actual root resource controller enrollment
+
+Root event context issuance SHALL require the exact active daemon/module/observer/backend role record and current kernel identity before fresh child effects.
+
+#### Scenario: Unverified root dispatcher role
+- **WHEN** role/module/kernel/event/body bindings are absent or stale
+- **THEN** no context or child effect is fabricated.

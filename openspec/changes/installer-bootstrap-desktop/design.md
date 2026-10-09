@@ -64,3 +64,11 @@ Use the exact installed_selection_catalog.release_root, task_runner_protocol.sou
 ### v19 setup store and probe DTO
 
 Use installed_selection_catalog artifact_catalog/artifact_store joins, root task canonical payload bytes and gateway_probe_response exact envelope. Existing BD/HI/RB tasks remain pending.
+
+### v21 installed bootstrap policy source
+
+Use installed_selection_catalog.bootstrap_policy_artifact explicit selected policy/template/receipt joins. Prepared records empty until actual runtime/health receipts; existing BD/LC/HI tasks remain pending.
+
+### v22 runnable and health ordering
+
+Use bootstrap_policy_artifact.activation_order: verified runnable custody publication precedes health observation, functional enablement follows actual passed current-generation health only. Existing acceptance remains pending.

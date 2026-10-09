@@ -47,6 +47,7 @@
       "resource_scope_bindings",
       "resource_validators",
       "root_journal_roots",
+      "resource_controller_roles",
       "generation_digest"
     ],
     "types": "single selected generation record; each catalog is bounded list<=1024 strict existing inner source-backed records, duplicates/unknown fields rejected. generation_id opaque rootissued string. Empty lists valid only affected actions explicitly unavailable.",
@@ -82,7 +83,8 @@
       "resolution": "Root-owned installed setup selection supplies path before first snapshot; create/validate root0700 directory with held nofollow ancestor walk, then record actual fstat device/inode and root-issued journal generation. Entire strict row in active digest. Only root path resolver consumes absolute_path; workers receive root_id only. No service/caller data root aliases, symlink, group/worldwrite/ACL access or nonzero production UID. Custom root requires explicit reviewed root selection before creation, never worker request.",
       "calls": "resolve_root_journal(root_id,expected_active_generation_digest)->RootJournalSelection(root_id,path) after actual path owner/mode/dev/inode/generation checks. Memory authority_state_root_id exact row root_id; bootstrap receipt/session stores use child bootstrap-receipts/setup-sessions; neither hardcoded separate root nor mutable mapping fallback.",
       "state": "First root-local setup may use verified initial selection before authority file exists, then includes observed row in prepared snapshot. Initial constructor root trust is not an active worker rule. Later daemon uses active digest-bound row only."
-    }
+    },
+    "resource_controller_roles": "Exact root_controller_role_catalog rows from protected-resource-job-contract.json; entire active list generation_digest bound, current actual daemon kernel/module/source-observer/backend joins mandatory."
   },
   "device_kernel_enforcement": {
     "profile_fields": [
