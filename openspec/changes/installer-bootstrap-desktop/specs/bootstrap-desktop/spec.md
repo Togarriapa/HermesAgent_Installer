@@ -443,3 +443,10 @@ The implementation SHALL apply v53 exact source template/deployed plan and activ
 #### Scenario: Runtime outputs become available after preparation
 - **WHEN** publishing runnable active policy
 - **THEN** root active compiler verifies actual current runtime/materialization/identity receipts rather than using an initial-only claim or caller authority rows
+
+### Requirement: Live selected native health control
+The installer SHALL begin native health observation from a root-retained live selected process control before fixture input, retaining actual native events and a separate semantic health receipt.
+
+#### Scenario: Terminal-only health presentation
+- **WHEN** only stdout or exit status exists without the required live native event closure
+- **THEN** health remains incomplete and functional acceptance is not asserted
