@@ -23,6 +23,10 @@ from types import MappingProxyType
 HERMES_RESOURCE_PROFILE_TASK_OPERATION = "hermes-resource-profile-task-v1"
 RESOURCE_PROFILE_TASK_HANDLER_ARTIFACT_ID = "hermes-installer.resource-profile-task.v1"
 PINNED_HERMES_REVISION = "7085fbf7753266fc4943c55ac04926186bc90005"
+HERMES_TASK_TEXT_RESULT_SCHEMA_ID = "hermes-task-text-result-v1"
+HERMES_TASK_TEXT_RESULT_VALIDATOR_ID = "hermes-task-text-result-v1"
+HERMES_TASK_TEXT_RESULT_ARTIFACT_ID = "schema-hermes-task-text-result-v1"
+HERMES_TASK_TEXT_RESULT_SCHEMA_SHA256 = "c25ec49ca4546e96f8f2f2daed6d8ab4b4ba425d1fd9e77ba8d551f7e4749bcb"
 _TASK_ARGV_SUFFIX = (
     "-m", "hermes_cli.main", "chat", "--query-file", "-", "--oneshot", "--quiet",
 )
@@ -36,6 +40,112 @@ _EXECUTION_BINDING_FIELDS = frozenset({
 
 class ResourceProfileTaskUnavailable(RuntimeError):
     """The protected backend does not resolve to the reviewed Hermes task recipe."""
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedResultValidator:
+    """Fixed text-result validator joined to one protected backend and schema."""
+
+    backend_enrollment_id: str
+    result_schema_id: str
+    schema_artifact_id: str
+    schema_sha256: str
+    maximum_bytes: int
+
+    def validate_stdout(self, stdout: bytes) -> Mapping[str, Any]:
+        if not isinstance(stdout, bytes) or not 1 <= len(stdout) <= self.maximum_bytes:
+            raise ResourceProfileTaskUnavailable("Hermes task stdout exceeds the selected result bound")
+        try:
+            text = stdout.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            raise ResourceProfileTaskUnavailable("Hermes task stdout is not valid UTF-8") from None
+        if any((ord(char) < 0x20 and char not in "\t\n") or 0x7F <= ord(char) <= 0x9F for char in text):
+            raise ResourceProfileTaskUnavailable("Hermes task stdout contains forbidden control characters")
+        if not text.strip() or len(stdout) > 1_048_000:
+            raise ResourceProfileTaskUnavailable("Hermes task stdout is empty")
+        return MappingProxyType({
+            "text": text,
+            "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
+            "stdout_size_bytes": len(stdout),
+        })
+
+
+class RootArtifactValidator:
+    """Resolve result validators only from the active protected catalogs.
+
+    The only static implementation currently approved is the bounded text
+    result schema. Other JSON schemas remain unavailable until a finite,
+    reviewed validator is registered in code.
+    """
+
+    def __init__(self, *, backend_enrollments: Mapping[str, Any],
+                 validators: Mapping[str, Any], artifact_catalog: Any,
+                 staging_root: str | Path, expected_uid: int = 0):
+        self._backends = MappingProxyType(dict(backend_enrollments))
+        self._validators = MappingProxyType(dict(validators))
+        self._artifact_catalog = artifact_catalog
+        self._staging_root = Path(staging_root)
+        self._expected_uid = expected_uid
+
+    def resolve_selected_result(self, backend_enrollment_id: str, result_schema_id: str,
+                                expected_active_generation_digest: str) -> RootSelectedResultValidator:
+        from hermes_installer.registry.resource_jobs import ResourceBackendEnrollment, ResourceValidator
+
+        backend = self._backends.get(backend_enrollment_id)
+        if (not isinstance(backend, ResourceBackendEnrollment)
+                or backend.generation != expected_active_generation_digest
+                or backend.result_schema_id != result_schema_id):
+            raise ResourceProfileTaskUnavailable("result schema does not join the active selected backend generation")
+        validator = self._validators.get(HERMES_TASK_TEXT_RESULT_VALIDATOR_ID)
+        if (result_schema_id != HERMES_TASK_TEXT_RESULT_SCHEMA_ID
+                or not isinstance(validator, ResourceValidator)
+                or validator.kind != "bounded-json"
+                or validator.schema_artifact_id != HERMES_TASK_TEXT_RESULT_ARTIFACT_ID
+                or validator.schema_sha256 != HERMES_TASK_TEXT_RESULT_SCHEMA_SHA256
+                or type(validator.maximum_bytes) is not int
+                or not 1 <= validator.maximum_bytes <= 262_144
+                or backend.maximum_response_bytes < 1_048_576):
+            raise ResourceProfileTaskUnavailable("selected result has no reviewed finite static validator")
+        try:
+            artifact_spec = self._artifact_catalog.artifacts.get(HERMES_TASK_TEXT_RESULT_ARTIFACT_ID)
+            if (artifact_spec is None or artifact_spec.sha256 != HERMES_TASK_TEXT_RESULT_SCHEMA_SHA256):
+                raise ValueError
+            resolved = self._artifact_catalog.resolve(
+                HERMES_TASK_TEXT_RESULT_ARTIFACT_ID, HERMES_TASK_TEXT_RESULT_SCHEMA_SHA256,
+                self._staging_root, expected_uid=self._expected_uid,
+            )
+            if (resolved.sha256 != HERMES_TASK_TEXT_RESULT_SCHEMA_SHA256
+                    or resolved.size_bytes < 1 or resolved.size_bytes > 64 * 1024):
+                raise ValueError
+            fd = os.open(resolved.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                          | getattr(os, "O_CLOEXEC", 0))
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != self._expected_uid
+                        or info.st_mode & 0o222 or info.st_size != resolved.size_bytes):
+                    raise ValueError
+                digest = hashlib.sha256()
+                size = 0
+                while True:
+                    chunk = os.read(fd, 16_384)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > 64 * 1024:
+                        raise ValueError
+                    digest.update(chunk)
+                if size != resolved.size_bytes or digest.hexdigest() != HERMES_TASK_TEXT_RESULT_SCHEMA_SHA256:
+                    raise ValueError
+            finally:
+                os.close(fd)
+        except Exception:
+            raise ResourceProfileTaskUnavailable("selected result schema artifact is not present in protected custody") from None
+        return RootSelectedResultValidator(
+            backend_enrollment_id=backend_enrollment_id, result_schema_id=result_schema_id,
+            schema_artifact_id=HERMES_TASK_TEXT_RESULT_ARTIFACT_ID,
+            schema_sha256=HERMES_TASK_TEXT_RESULT_SCHEMA_SHA256,
+            maximum_bytes=min(1_048_000, backend.maximum_response_bytes, validator.maximum_bytes),
+        )
 
 
 class ProtectedResourceRuntimeBindings(Protocol):
