@@ -99,3 +99,12 @@ Native process inspection SHALL resolve only opaque registered process/generatio
 
 - **WHEN** native renderer relaunch changes process identity or caller supplies a sibling PID
 - **THEN** host denies or reports incomplete before remote exposure; only current registered descendants are attested
+
+### Requirement: One-use native producer gateway bridge (HI11)
+
+Cross-process native source handoff SHALL use root-issued one-use bridge state bound to both attested producer and selected gateway identities/generations, complete source closure, exact final normalized payload, operation/retry and bounded lease. Gateway dispatch SHALL authenticate its peer and atomically consume admission before effects; opaque references or caller headers SHALL not grant portable authority.
+
+#### Scenario: Cross-process stale or replayed reference
+
+- **WHEN** separate gateway resolves a native source reference with different PID/generation/payload or replays an attempt
+- **THEN** root denies before bytes; valid paired identities use exact final digest/full source closure and consume each attempt once

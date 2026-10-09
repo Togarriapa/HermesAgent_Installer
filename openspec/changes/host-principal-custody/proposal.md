@@ -33,3 +33,7 @@ HI08/HI09 add concrete native per-request provenance and distinct caller/service
 ## Fixed process inspection refinement
 
 HI10/HI-T10/EV-HI10 concretizes existing remote native process/sandbox proof; HI07 wire names are fixed in planning/native-host-service-contract.json. See append-only fixed-process-inspection-v1.
+
+## Cross-process native handoff refinement
+
+HI11/HI-T11/EV-HI11 operationalizes existing HI08/PR source lineage for actual producer and gateway peer separation, without transferring bearer authority.
