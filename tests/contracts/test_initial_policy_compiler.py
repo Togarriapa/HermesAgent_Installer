@@ -11,6 +11,7 @@ from hermes_installer.authority.initial_policy_compiler import (
     InitialPolicyCompilationError,
     _RootBindings,
     _render_closed_template,
+    _parse_receipt_bindings_template,
     _render_prepared_authority_base,
 )
 
@@ -18,6 +19,7 @@ from hermes_installer.authority.initial_policy_compiler import (
 REPO = Path(__file__).resolve().parents[2]
 TEMPLATE = REPO / "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json"
 PREPARED_BASE = REPO / "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/prepared-authority-base-template-v1.json"
+RECEIPT_BINDINGS = REPO / "plans/amendments/2026-10-10-literal-bootstrap-receipt-bindings-v72/bootstrap-receipt-bindings-template-v1.json"
 
 
 def _binding_names(value):
@@ -150,3 +152,25 @@ def test_prepared_authority_rejects_template_drift_and_nonempty_policy_rows():
         _render_prepared_authority_base(raw, key_id="authority-key-" + "a" * 32,
                                         root_journal_root={**journal, "owner_uid": 1000},
                                         generation_id="prepared-test")
+
+
+def test_v72_literal_receipt_bindings_source_is_closed_and_typed():
+    doc = _parse_receipt_bindings_template(RECEIPT_BINDINGS.read_bytes())
+    assert doc["id"] == "installer-bootstrap-receipt-bindings-template-v1"
+    assert len(doc["service_record_templates"]) == 1
+    assert [row["receipt_role"] for row in doc["receipt_binding_rules"]] == [
+        "official-agent-source", "official-installer-script", "official-pm-lock",
+        "official-pm-runtime", "resources-source-bundle", "native-compiled-closure",
+        "native-entrypoint-manifest", "native-action-resolver", "native-boundary-overlay",
+        "native-candidate-index", "native-health",
+    ]
+    assert doc["typed_receipt_fields"]["official-pm-runtime"] == [
+        "catalog_executable_path", "executable_sha256", "runtime_artifact_ids",
+        "package_runtime_records", "executable_artifact_id",
+    ]
+
+
+def test_v72_literal_receipt_bindings_reject_source_drift():
+    raw = RECEIPT_BINDINGS.read_bytes()
+    with pytest.raises(InitialPolicyCompilationError, match="wrong size"):
+        _parse_receipt_bindings_template(raw + b" ")

@@ -27,6 +27,9 @@ TEMPLATE_SIZE_BYTES = 4281
 PREPARED_BASE_TEMPLATE_ARTIFACT_ID = "installer-prepared-authority-base-template-v1"
 PREPARED_BASE_TEMPLATE_SHA256 = "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953"
 PREPARED_BASE_TEMPLATE_SIZE_BYTES = 369
+RECEIPT_BINDINGS_TEMPLATE_ARTIFACT_ID = "installer-bootstrap-receipt-bindings-template-v1"
+RECEIPT_BINDINGS_TEMPLATE_SHA256 = "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609"
+RECEIPT_BINDINGS_TEMPLATE_SIZE_BYTES = 10195
 _TEMPLATE_KEYS = frozenset({
     "schema", "id", "source_artifact_id", "authority_base_source",
     "empty_parameter_schema", "identity", "initial_catalog_mode", "roots",
@@ -191,6 +194,29 @@ def _parse_prepared_base_template(raw: bytes) -> dict[str, Any]:
                 "native_bridges", "normalization_policies", "delegations", "service_generations"}
     if not isinstance(doc, dict) or set(doc) != required or doc.get("schema") != 1:
         raise InitialPolicyCompilationError("prepared authority-base template has an unexpected schema")
+    return doc
+
+
+def _parse_receipt_bindings_template(raw: bytes) -> dict[str, Any]:
+    """Verify the v72 literal policy/rule source before any root binding."""
+    if not isinstance(raw, bytes) or len(raw) != RECEIPT_BINDINGS_TEMPLATE_SIZE_BYTES:
+        raise InitialPolicyCompilationError("bootstrap receipt-binding template has the wrong size")
+    if hashlib.sha256(raw).hexdigest() != RECEIPT_BINDINGS_TEMPLATE_SHA256:
+        raise InitialPolicyCompilationError("bootstrap receipt-binding template differs from v72")
+    try:
+        doc = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                         parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise InitialPolicyCompilationError("bootstrap receipt-binding template is not strict JSON") from exc
+    expected = {"id", "schema", "service_record_templates", "receipt_binding_rules",
+                "root_bindings", "root_binding_resolver", "typed_receipt_fields"}
+    if (not isinstance(doc, dict) or set(doc) != expected or type(doc.get("schema")) is not int
+            or doc["schema"] != 1 or doc.get("id") != RECEIPT_BINDINGS_TEMPLATE_ARTIFACT_ID
+            or not isinstance(doc.get("service_record_templates"), list)
+            or len(doc["service_record_templates"]) != 1
+            or not isinstance(doc.get("receipt_binding_rules"), list)
+            or not isinstance(doc.get("typed_receipt_fields"), dict)):
+        raise InitialPolicyCompilationError("bootstrap receipt-binding template has an unexpected schema")
     return doc
 
 
