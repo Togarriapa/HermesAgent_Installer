@@ -139,7 +139,7 @@ class ProviderPolicyTests(unittest.TestCase):
             dispatcher.policy = replace(dispatcher.policy, fallbacks={"private": ("public",)})
             ctx = DispatchContext("hermes-private", "tool-result", Sensitivity.PRIVATE)
             with self.assertRaisesRegex(PolicyDenied, "No eligible provider route"):
-                dispatcher.dispatch(ctx, MODEL, b'{"messages":[{"role":"user","content":"private result"}]}', input_tokens=20, output_token_limit=32, tool_request=True)
+                dispatcher.dispatch(ctx, MODEL, b'{"messages":[{"role":"user","content":"private result"}],"tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object"}}}]}', input_tokens=20, output_token_limit=32, tool_request=True)
             self.assertTrue(provider.calls)
             self.assertTrue(all(call[0] == "private" for call in provider.calls))
 
