@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .types import AuthorityDenied, HostContext, Sensitivity, SourceReceipt, canonical_digest
+from .types import (AuthorityDenied, EffectAuthorization, HostContext, Sensitivity,
+                    SourceReceipt, canonical_digest)
 
 MAX_EVENT_BYTES = 1_048_576
 MAX_NORMALIZED_BYTES = 4 * 1024 * 1024
@@ -44,7 +45,8 @@ class NativeBridgeBroker:
     def __init__(self, *, service: Any, bridges: Mapping[str, Any],
                  process_resolver: Callable[..., Any], canonicalizer: Callable[..., Any],
                  root_selected_enrollments: Mapping[str, Mapping[tuple[str, str], Any]],
-                 canonicalizer_sha256: str):
+                 canonicalizer_sha256: str,
+                 provider_response_registry: Any | None = None):
         if (not bridges or not callable(process_resolver) or not callable(canonicalizer)
                 or not root_selected_enrollments
                 or set(root_selected_enrollments) != set(bridges)
@@ -64,6 +66,7 @@ class NativeBridgeBroker:
         self.root_selected_enrollments = {key: dict(value)
                                           for key, value in root_selected_enrollments.items()}
         self.canonicalizer_sha256 = canonicalizer_sha256
+        self.provider_response_registry = provider_response_registry
         self._pending: dict[str, _PendingEvent] = {}
         self._lock = threading.RLock()
 
@@ -124,6 +127,59 @@ class NativeBridgeBroker:
                 }, cancelled=cancelled, peer_pidfd=peer_pidfd,
                 enforce_peer_identity=False,
                 source_receipt_ids_to_consume=frozenset({pending.event_receipt_id}))
+            if 200 <= result["status"] < 300:
+                registry = self.provider_response_registry
+                if registry is None:
+                    raise AuthorityDenied(
+                        "provider.observer_unavailable",
+                        "successful provider result has no enrolled root response observer",
+                    )
+                enrollment = self.root_selected_enrollments[pending.bridge_id].get(
+                    (bridge.target, bridge.recipient))
+                if (enrollment is None or getattr(enrollment, "provider", None) not in {"openrouter", "codex"}
+                        or getattr(enrollment, "target", None) != bridge.target
+                        or getattr(enrollment, "recipient", None) != bridge.recipient):
+                    raise AuthorityDenied("provider.enrollment", "provider response route is no longer enrolled")
+                response_bytes = self._decode_b64(result["body"], 4 * 1024 * 1024)
+                authorization = EffectAuthorization.from_wire(grant_wire)
+                metadata = registry.register_provider_response(
+                    bridge=bridge,
+                    producer_identity=pending.producer_identity,
+                    producer_pid=pending.producer_pid,
+                    producer_pidfd=pending.producer_pidfd,
+                    gateway_identity=gateway_identity,
+                    gateway_pid=peer_pid,
+                    gateway_pidfd=peer_pidfd,
+                    request_context=pending.context,
+                    request_source_receipts=pending.context.source_receipts,
+                    authorization=authorization,
+                    target=bridge.target,
+                    recipient=bridge.recipient,
+                    request_digest=canonical_digest(normalized),
+                    response_status=result["status"],
+                    response_headers=result["headers"],
+                    response_bytes=response_bytes,
+                    response_digest=canonical_digest(response_bytes),
+                    expires_monotonic=min(pending.expires, authorization.monotonic_expires_at),
+                    cancelled=cancelled,
+                )
+                producer_handle = getattr(metadata, "producer_context_handle", None)
+                tool_bindings = getattr(metadata, "tool_call_bindings", None)
+                if (not isinstance(producer_handle, str)
+                        or not 32 <= len(producer_handle) <= 128
+                        or not isinstance(tool_bindings, tuple)
+                        or len(tool_bindings) > 128):
+                    raise AuthorityDenied("provider.observer_metadata", "root response observer returned malformed metadata")
+                result["producer_context_handle"] = producer_handle
+                result["tool_call_bindings"] = [
+                    {
+                        "observed_call_handle": item.observed_call_handle,
+                        "provider_tool_call_id": item.provider_tool_call_id,
+                        "tool_name": item.tool_name,
+                        "arguments_sha256": item.arguments_sha256,
+                    }
+                    for item in tool_bindings
+                ]
             return result
         finally:
             __import__("os").close(pending.producer_pidfd)
