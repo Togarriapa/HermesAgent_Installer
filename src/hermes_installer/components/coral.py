@@ -237,6 +237,20 @@ def _private_component_root(path: Path) -> Path:
     return resolved
 
 
+def _private_child(root: Path, *parts: str) -> Path:
+    current = root
+    for part in parts:
+        current = current / part
+        if current.is_symlink():
+            raise CoralError("Coral runtime paths cannot traverse symlinked component directories")
+        if not current.exists():
+            current.mkdir(mode=0o700)
+        info = current.stat()
+        if not current.is_dir() or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise CoralError("Coral runtime subdirectories must be private and owned by the component identity")
+    return current
+
+
 def _run_managed_command(run_command: Callable[..., object], argv: Sequence[str], *, cwd: Path,
                          timeout: float, env: Mapping[str, str]) -> str:
     """All build/install subprocesses must be delegated to the host's bounded manager."""
@@ -270,17 +284,41 @@ def provision_coral_python(component_root: Path, *, selected: bool,
         raise CoralError("pinned TFLite wheel requires Linux ARM64 glibc 2.34 or newer")
     component_root = _private_component_root(component_root)
     artifacts = load_coral_runtime_artifacts(metadata_path)
-    cache = component_root / "cache" / "coral-runtime"
-    cache.mkdir(mode=0o700, parents=True, exist_ok=True)
+    cache = _private_child(component_root, "cache", "coral-runtime")
     downloaded = {key: download_file(value, cache / value.name, opener=opener) for key, value in artifacts.items()}
-    source_root = component_root / "build" / "cpython-3.9.25"
-    source_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _private_child(component_root, "build")
+    source_root = _private_child(component_root, "build", "cpython-3.9.25")
     extracted = source_root / "Python-3.9.25"
+    source_marker = source_root / ".source-artifact.json"
+    source_progress = source_root / ".source-extracting.json"
+    source_digest = artifacts["python/cpython"].digest
+    if extracted.exists() or extracted.is_symlink():
+        valid_source = False
+        if source_marker.is_file() and not source_marker.is_symlink():
+            try:
+                valid_source = json.loads(source_marker.read_text(encoding="utf-8")).get("sha256") == source_digest
+            except (OSError, json.JSONDecodeError):
+                valid_source = False
+        if not valid_source:
+            in_progress = False
+            if source_progress.is_file() and not source_progress.is_symlink():
+                try:
+                    in_progress = json.loads(source_progress.read_text(encoding="utf-8")).get("sha256") == source_digest
+                except (OSError, json.JSONDecodeError):
+                    in_progress = False
+            if not in_progress or extracted.is_symlink():
+                raise CoralError("unowned or changed CPython source extraction exists")
+            shutil.rmtree(extracted)
+            source_marker.unlink(missing_ok=True)
+        else:
+            source_progress.unlink(missing_ok=True)
     if not extracted.exists():
+        source_progress.write_text(json.dumps({"sha256": source_digest, "state": "extracting"}) + "\n", encoding="utf-8")
+        source_progress.chmod(0o600)
         with tarfile.open(downloaded["python/cpython"], "r:xz") as archive:
-            root = extracted.resolve()
+            root = source_root.resolve()
             for member in archive.getmembers():
-                target = (extracted / member.name).resolve()
+                target = (source_root / member.name).resolve()
                 if root not in target.parents and target != root:
                     raise CoralError("CPython source archive contains a path traversal")
                 if member.isdir():
@@ -295,6 +333,9 @@ def provision_coral_python(component_root: Path, *, selected: bool,
                     target.chmod(member.mode & 0o755)
                 else:
                     raise CoralError("CPython source archive contains a link or special file")
+        source_marker.write_text(json.dumps({"sha256": source_digest, "state": "complete"}) + "\n", encoding="utf-8")
+        source_marker.chmod(0o400)
+        source_progress.unlink(missing_ok=True)
     prefix = component_root / "runtimes" / "cpython-3.9.25"
     venv = component_root / "venvs" / "coral-edge-tpu-3.9.25"
     marker = prefix / ".hermes-coral-runtime.json"
@@ -320,8 +361,8 @@ def provision_coral_python(component_root: Path, *, selected: bool,
             raise CoralError("existing Coral runtime path is not the reviewed managed generation")
     elif prefix.exists() or prefix.is_symlink() or venv.exists() or venv.is_symlink():
         raise CoralError("unowned or incomplete Coral runtime path exists; inspect and remove only through recovery")
-    prefix.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    venv.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _private_child(component_root, "runtimes")
+    _private_child(component_root, "venvs")
     prefix.mkdir(mode=0o700)
     marker.write_text(json.dumps({"schema": 1, "pins": expected_marker,
                                   "python_version": "3.9.25", "state": "provisioning"}, sort_keys=True) + "\n",
@@ -329,7 +370,7 @@ def provision_coral_python(component_root: Path, *, selected: bool,
     marker.chmod(0o600)
     build_env = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "HOME": str(component_root / "tmp"),
                  "PYTHONNOUSERSITE": "1", "PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
-    (component_root / "tmp").mkdir(mode=0o700, exist_ok=True)
+    _private_child(component_root, "tmp")
     try:
         _run_managed_command(run_command, ("./configure", "--prefix=" + str(prefix), "--with-ensurepip=install"),
                              cwd=extracted, timeout=300, env=build_env)
