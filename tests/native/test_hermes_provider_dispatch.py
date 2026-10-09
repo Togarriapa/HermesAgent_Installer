@@ -243,13 +243,25 @@ plugins:
                 request_summaries = []
                 for route_name, _model, raw_payload in transport.calls:
                     payload_summary = json.loads(raw_payload)
+                    messages = payload_summary.get("messages", [])
                     request_summaries.append({
                         "route": route_name,
                         "tool_names": [item.get("function", {}).get("name")
                                        for item in payload_summary.get("tools", [])
                                        if isinstance(item, dict)],
-                        "tool_result_count": sum(1 for item in payload_summary.get("messages", [])
-                                                 if isinstance(item, dict) and item.get("role") == "tool"),
+                        "assistant_tool_calls": [
+                            {"name": call.get("function", {}).get("name"),
+                             "arguments": call.get("function", {}).get("arguments")}
+                            for message in messages if isinstance(message, dict)
+                            and message.get("role") == "assistant"
+                            for call in message.get("tool_calls", []) if isinstance(call, dict)
+                        ],
+                        "tool_results": [
+                            {"name": item.get("name"),
+                             "content": str(item.get("content", ""))[:240]}
+                            for item in messages if isinstance(item, dict)
+                            and item.get("role") == "tool"
+                        ],
                     })
                 self.assertEqual(result.returncode, 0,
                     result.stdout[-2500:] + result.stderr[-4000:]
