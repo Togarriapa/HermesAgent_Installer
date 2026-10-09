@@ -1,17 +1,30 @@
 """Pinned official Hermes installer stages, isolated in an installer-owned generation."""
 from __future__ import annotations
-import hashlib, json, os, signal, stat, subprocess, time, uuid
+import hashlib, json, os, stat, time, uuid, re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 import threading
-from .network import BoundedNetwork, NetworkError
 from .state import Journal, OwnedRoot, OwnershipError
+from .bootstrap_custody import BootstrapCustody
 
 HERMES_REPOSITORY = "https://github.com/NousResearch/hermes-agent.git"
 HERMES_COMMIT = "7085fbf7753266fc4943c55ac04926186bc90005"
 INSTALL_SCRIPT_BLOB = "055c725f114db694db751f34fd312e70f5ed90d8"
+INSTALL_SCRIPT_SHA256 = "034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86"
+INSTALL_SCRIPT_ARTIFACT_ID = "hermes-install-script-7085fbf77532"
 INSTALL_SCRIPT_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/7085fbf7753266fc4943c55ac04926186bc90005/scripts/install.sh"
+_DIAGNOSTIC_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*"),
+    re.compile(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)\s*[:=]\s*)[^\s,;]+"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"(?i)([?&](?:token|key|secret|password)=)[^&\s]+"),
+)
+
+def redact_diagnostic(text: str) -> str:
+    for pattern in _DIAGNOSTIC_PATTERNS:
+        text = pattern.sub(lambda match: (match.group(1) if match.lastindex else "") + "[REDACTED]", text)
+    return text
 EXPECTED_STAGES = ("prerequisites", "repository", "venv", "python-deps", "config", "products", "setup", "gateway", "complete")
 
 class BootstrapError(RuntimeError):
@@ -22,6 +35,7 @@ class StageStatus:
     name: str
     state: str
     exit_code: int | None = None
+    diagnostic_path: str | None = None
 
 @dataclass(frozen=True)
 class BootstrapReport:
@@ -61,72 +75,15 @@ def _write_private(path: Path, data: bytes, mode: int = 0o700) -> None:
         except FileNotFoundError:
             pass
 
-def _child_state(proc: subprocess.Popen) -> str:
-    """Inspect a direct child without reaping it, preserving its session ID as a safe group handle."""
-    if proc.returncode is not None:
-        return "reaped"
-    if not all(hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")):
-        return "unknown"
-    try:
-        result = os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-    except ChildProcessError:
-        return "lost"
-    except OSError:
-        return "unknown"
-    return "exited" if result is not None and result.si_pid == proc.pid else "running"
-
-
-def _owned_process_group(proc: subprocess.Popen) -> bool:
-    """Only signal the new session created for a still-unreaped Popen child."""
-    try:
-        return os.getpgid(proc.pid) == proc.pid and os.getsid(proc.pid) == proc.pid
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
-
-
-def _stop_group(proc: subprocess.Popen) -> bool:
-    """Terminate only a process group whose unreaped leader proves our custody."""
-    lock = getattr(proc, "_hermes_cleanup_lock", None)
-    if lock is None:
-        lock = threading.Lock()
-        setattr(proc, "_hermes_cleanup_lock", lock)
-    with lock:
-        state = _child_state(proc)
-        if state in {"lost", "unknown", "reaped"} or not _owned_process_group(proc):
-            return False
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return False
-        deadline = time.monotonic() + 1.0
-        while time.monotonic() < deadline:
-            state = _child_state(proc)
-            if state in {"lost", "unknown", "reaped"}:
-                return False
-            if state == "exited":
-                break
-            time.sleep(0.025)
-        # WNOWAIT leaves the session leader unreaped here. Its PID/PGID cannot
-        # be recycled while SIGKILL reaches any remaining descendants.
-        if _child_state(proc) == "lost" or not _owned_process_group(proc):
-            return False
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            return False
-        return True
-
 class HermesBootstrap:
     """Runs exact upstream script content and stage names; callers cannot inject commands."""
-    def __init__(self, data_root: OwnedRoot, state: Journal, *, network: BoundedNetwork | None = None,
-                 runner: Callable | None = None, desktop_builder: Callable | None = None, agent_probe: Callable | None = None, expected_script_blob: str = INSTALL_SCRIPT_BLOB):
+    def __init__(self, data_root: OwnedRoot, state: Journal, *, network: object | None = None,
+                 runner: Callable | None = None, desktop_builder: Callable | None = None,
+                 agent_probe: Callable | None = None, expected_script_blob: str = INSTALL_SCRIPT_BLOB,
+                 authority_client: object | None = None):
         self.data_root = data_root
         self.state = state
-        self.network = network or BoundedNetwork(deadline_seconds=20, socket_timeout=8, max_response_bytes=128 * 1024)
+        self.network = network
         self.runner = runner or self._run_process
         self.desktop_builder = desktop_builder or self._run_desktop_source_build
         self.agent_probe = agent_probe or self._verify_agent_runtime
@@ -136,17 +93,36 @@ class HermesBootstrap:
         self.private_home = data_root.path("runtime/bootstrap-home")
         self.script_path = data_root.path("cache/hermes-install-" + HERMES_COMMIT[:12] + ".sh")
         self.operation = "hermes-agent:" + HERMES_COMMIT
+        self.custody = BootstrapCustody(authority_client, journal=state,
+                                        journal_operation=self.operation)
+        self._active_diagnostic: str | None = None
+        self._upstream_log_offset: int | None = None
+        self._last_artifact_receipt_id: str | None = None
 
     def _script_bytes(self) -> bytes:
         try:
-            response = self.network.request(INSTALL_SCRIPT_URL, method="GET", headers={"Accept": "text/plain"})
-        except NetworkError:
-            raise BootstrapError("Pinned official Hermes installer download failed or exceeded its deadline") from None
-        if response.status != 200 or git_blob_sha1(response.body) != self.expected_script_blob:
+            if self.network is not None:
+                # Test-only artifact fixture adapter; production uses the fixed
+                # artifact.fetch verb and never accepts a caller-provided URL.
+                response = self.network.fetch_artifact(artifact_id=INSTALL_SCRIPT_ARTIFACT_ID,
+                    sha256=INSTALL_SCRIPT_SHA256, max_bytes=128 * 1024)
+                body = response.body
+                if response.status != 200:
+                    raise BootstrapError("Pinned official Hermes installer artifact was not available")
+                self._last_artifact_receipt_id = str(getattr(response, "receipt_id", "fixture"))
+            else:
+                body, self._last_artifact_receipt_id = self.custody.fetch_artifact(
+                    artifact_id=INSTALL_SCRIPT_ARTIFACT_ID, sha256=INSTALL_SCRIPT_SHA256,
+                    max_bytes=128 * 1024)
+        except BootstrapError:
+            raise
+        except Exception:
+            raise BootstrapError("Pinned host download broker is unavailable or denied the official installer artifact") from None
+        if git_blob_sha1(body) != self.expected_script_blob:
             raise BootstrapError("Pinned official Hermes installer content did not match its Git object identity")
-        if not response.body.startswith(b"#!/usr/bin/env bash\n") or len(response.body) > 128 * 1024:
+        if not body.startswith(b"#!/usr/bin/env bash\n") or len(body) > 128 * 1024:
             raise BootstrapError("Pinned official Hermes installer format or size is invalid")
-        return response.body
+        return body
 
     def prepare(self) -> None:
         self.data_root.ensure()
@@ -155,6 +131,11 @@ class HermesBootstrap:
             self.data_root.path(relative).mkdir(parents=True, exist_ok=True, mode=0o700)
         content = self._script_bytes()
         _write_private(self.script_path, content)
+        self.state.event(self.operation, "download-broker", "artifact_staged", {
+            "artifact_id": INSTALL_SCRIPT_ARTIFACT_ID,
+            "sha256": INSTALL_SCRIPT_SHA256,
+            "receipt_id": self._last_artifact_receipt_id,
+        })
         self.hermes_home.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.hermes_home.is_symlink() or self.private_home.is_symlink():
             raise OwnershipError("Hermes profile or private bootstrap home cannot be a symlink")
@@ -177,92 +158,108 @@ class HermesBootstrap:
     def _base_args(self) -> list[str]:
         return ["--commit", HERMES_COMMIT, "--dir", str(self.install_dir), "--hermes-home", str(self.hermes_home)]
 
-    def _run_process(self, args: list[str], *, timeout: float, capture: bool = False) -> tuple[int, bytes]:
+    def _run_process(self, args: list[str], *, timeout: float, capture: bool = False, diagnostic_path: str | None = None) -> tuple[int, bytes]:
         bash = Path("/bin/bash").resolve(strict=True)
-        if bash != Path("/usr/bin/bash").resolve(strict=False) and not bash.is_file():
-            raise BootstrapError("Reviewed system Bash was not found")
-        cmd = [str(bash), str(self.script_path), *args]
-        proc = subprocess.Popen(cmd, cwd=self.data_root.root, env=self._environment(), stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, shell=False, close_fds=True, start_new_session=True, bufsize=0)
-        proc._hermes_cleanup_lock = threading.Lock()
-        if not capture:
-            try:
-                return proc.wait(timeout=timeout), b""
-            except subprocess.TimeoutExpired:
-                if not _stop_group(proc):
-                    raise BootstrapError("Installer timeout could not safely confirm process-group ownership") from None
-                return 124, b""
-            except BaseException:
-                _stop_group(proc)
-                raise
-
-        assert proc.stdout is not None
-        output = bytearray()
-        overflow = threading.Event()
-        eof = threading.Event()
-
-        def drain() -> None:
-            while True:
-                block = proc.stdout.read(8192)
-                if not block:
-                    eof.set()
-                    return
-                if len(output) + len(block) > 64 * 1024:
-                    overflow.set()
-                elif not overflow.is_set():
-                    output.extend(block)
-
-        reader = threading.Thread(target=drain, name="hermes-manifest-reader", daemon=True)
-        reader.start()
-        deadline = time.monotonic() + timeout
+        if not bash.is_file() or not self.script_path.is_file() or self.script_path.is_symlink():
+            raise BootstrapError("Pinned Hermes installer inputs are unavailable for the managed process")
+        script_digest = hashlib.sha256(self.script_path.read_bytes()).hexdigest()
+        upstream_log = self.hermes_home / "logs" / "install.log"
+        self._upstream_log_offset = 0
         try:
-            while True:
-                if overflow.is_set():
-                    if not _stop_group(proc):
-                        raise BootstrapError("Manifest output exceeded its bound and child ownership was unavailable") from None
-                    reader.join(timeout=1)
-                    raise BootstrapError("Official installer manifest exceeded its output bound")
-                state = _child_state(proc)
-                if state == "lost":
-                    raise BootstrapError("Installer child custody was lost; refusing to signal a process group")
-                if state == "unknown":
-                    raise BootstrapError("Installer child state could not be verified safely")
-                if state == "reaped":
-                    raise BootstrapError("Installer child was reaped outside the bounded runner")
-                if state == "exited":
-                    reader.join(timeout=1)
-                    if reader.is_alive() or not eof.is_set():
-                        if not _stop_group(proc):
-                            raise BootstrapError("Manifest child left an unowned output descendant") from None
-                        reader.join(timeout=1)
-                        raise BootstrapError("Manifest child left an output descendant")
-                    # A child may exit before the reader has drained the final
-                    # pipe bytes. eof is set only after recording the last block,
-                    # but make the output-bound decision adjacent to success too.
-                    if overflow.is_set() or len(output) > 64 * 1024:
-                        raise BootstrapError("Official installer manifest exceeded its output bound")
-                    code = proc.wait()
-                    if overflow.is_set():
-                        raise BootstrapError("Official installer manifest exceeded its output bound")
-                    return code, bytes(output)
-                if time.monotonic() >= deadline:
-                    if not _stop_group(proc):
-                        raise BootstrapError("Installer timeout could not safely confirm process-group ownership") from None
-                    reader.join(timeout=1)
-                    return 124, b""
-                time.sleep(0.025)
-        except BaseException:
-            if proc.returncode is None:
-                _stop_group(proc)
-            reader.join(timeout=0.5)
-            raise
-        finally:
-            # A raw unbuffered pipe read may outlive lost child custody if an
-            # unrelated writer inherited stdout. Never block interpreter shutdown
-            # waiting for a BufferedReader lock held by that daemon reader.
-            if not reader.is_alive():
-                proc.stdout.close()
+            if upstream_log.is_symlink() or not upstream_log.is_file():
+                raise OSError
+            self._upstream_log_offset = upstream_log.stat().st_size
+        except OSError:
+            pass
+        step = args[args.index("--stage") + 1] if "--stage" in args else "manifest"
+        try:
+            result = self.custody.run_process(executable=bash,
+                artifact_root=self.data_root.root, cwd=self.data_root.root,
+                data_root=self.data_root.root, argv=[str(bash), str(self.script_path), *args],
+                env_allowlist=self._environment(), timeout=timeout,
+                child_artifact_hashes={str(self.script_path.resolve(strict=True)): script_digest})
+        except Exception as exc:
+            self.state.event(self.operation, step, "custody_denied", {
+                "error_type": type(exc).__name__, "diagnostic": diagnostic_path or self._active_diagnostic,
+                "resume": "hermes-installer resume",
+            })
+            raise BootstrapError(
+                "Host-authorized Hermes process start or cleanup was unavailable; no unsafe fallback was used. "
+                "Resume after the protected process handler and script pin are enrolled."
+            ) from None
+        diagnostic = bytearray(result.diagnostic)
+        lock = threading.Lock()
+        truncated = threading.Event()
+        self._append_upstream_install_log(diagnostic, 96 * 1024, lock, truncated,
+                                          expected_uid=result.uid)
+        self._persist_diagnostic(diagnostic_path or self._active_diagnostic, diagnostic, truncated.is_set())
+        self.state.event(self.operation, step, "managed_process_finished", {
+            "receipt_id": result.receipt_id, "process_id": result.process_id,
+            "exit_code": result.exit_code, "timed_out": result.timed_out,
+            "cleanup_verified": result.cleanup_verified,
+            "diagnostic": diagnostic_path or self._active_diagnostic,
+        })
+        return result.exit_code, result.stdout if capture else b""
+
+    def _append_captured(self, line: str, diagnostic: bytearray, limit: int,
+                         lock: threading.Lock, truncated: threading.Event) -> None:
+        encoded = line.encode("utf-8", errors="replace")
+        with lock:
+            if len(encoded) > limit:
+                encoded = encoded[-limit:]
+                truncated.set()
+            if len(diagnostic) + len(encoded) > limit:
+                del diagnostic[:len(diagnostic) + len(encoded) - limit]
+                truncated.set()
+            diagnostic.extend(encoded)
+
+    def _persist_diagnostic(self, relative: str | None, content: bytearray, truncated: bool) -> None:
+        if not relative:
+            return
+        path = self.data_root.path(relative)
+        safe_content = redact_diagnostic(bytes(content).decode("utf-8", errors="replace")).encode("utf-8")
+        suffix = b"\n[diagnostic capture truncated at 96 KiB]\n" if truncated else b""
+        _write_private(path, safe_content + suffix, 0o600)
+
+    def _append_upstream_install_log(self, diagnostic: bytearray, limit: int, lock: threading.Lock,
+                                     truncated: threading.Event, *, expected_uid: int | None = None) -> None:
+        """Collect only this stage's bounded tail from the upstream JSON log sink."""
+        if self._upstream_log_offset is None:
+            return
+        path = self.hermes_home / "logs" / "install.log"
+        try:
+            if path.is_symlink():
+                return
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+            try:
+                info = os.fstat(fd)
+                allowed_uids = {os.getuid()}
+                if expected_uid is not None:
+                    allowed_uids.add(expected_uid)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or info.st_uid not in allowed_uids):
+                    return
+                start = min(self._upstream_log_offset, info.st_size)
+                length = info.st_size - start
+                if length > limit:
+                    start = info.st_size - limit
+                    truncated.set()
+                os.lseek(fd, start, os.SEEK_SET)
+                raw = os.read(fd, limit + 1)
+            finally:
+                os.close(fd)
+        except OSError:
+            return
+        text = redact_diagnostic(raw.decode("utf-8", errors="replace"))
+        rendered = ("[upstream-install-log]\n" + text.rstrip() + "\n").encode("utf-8")
+        with lock:
+            if len(rendered) > limit:
+                rendered = rendered[-limit:]
+                truncated.set()
+            if len(diagnostic) + len(rendered) > limit:
+                del diagnostic[:len(diagnostic) + len(rendered) - limit]
+                truncated.set()
+            diagnostic.extend(rendered)
 
     def _manifest(self) -> None:
         code, raw = self.runner(["--manifest", "--json", *self._base_args()], timeout=30, capture=True)
@@ -369,21 +366,16 @@ class HermesBootstrap:
 
     def _run_desktop_source_build(self, *, timeout: float) -> tuple[int, bytes]:
         hermes = self.install_dir / ".hermes" / "bin" / "hermes"
-        if not hermes.is_file() or hermes.is_symlink():
+        if hermes.is_symlink() or not hermes.is_file() or not os.access(hermes, os.X_OK):
             raise BootstrapError("Pinned Hermes CLI entrypoint is unavailable for the source Desktop build")
-        desktop_env = self._environment()
-        desktop_env["HERMES_DESKTOP_HERMES_ROOT"] = str(self.install_dir)
-        desktop_env["HERMES_DESKTOP_USER_DATA_DIR"] = str(self.data_root.path("runtime/desktop-user-data"))
-        desktop_env["HERMES_DESKTOP_APP_NAME"] = "Hermes Installer Candidate"
-        Path(desktop_env["HERMES_DESKTOP_USER_DATA_DIR"]).mkdir(parents=True,exist_ok=True,mode=0o700)
-        proc = subprocess.Popen([str(hermes), "desktop", "--build-only", "--source"], cwd=self.install_dir,
-            env=desktop_env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, shell=False, close_fds=True, start_new_session=True)
-        try:
-            return proc.wait(timeout=timeout), b""
-        except subprocess.TimeoutExpired:
-            _stop_group(proc)
-            return 124, b""
+        env = self._environment()
+        env["HERMES_DESKTOP_HERMES_ROOT"] = str(self.install_dir)
+        env["HERMES_DESKTOP_USER_DATA_DIR"] = str(self.data_root.path("runtime/desktop-user-data"))
+        env["HERMES_DESKTOP_APP_NAME"] = "Hermes Installer Candidate"
+        Path(env["HERMES_DESKTOP_USER_DATA_DIR"]).mkdir(parents=True, exist_ok=True, mode=0o700)
+        return self._run_managed_binary(hermes,
+            [str(hermes), "desktop", "--build-only", "--source"], timeout=timeout,
+            env=env, diagnostic_path=f"runtime/logs/hermes-agent-{HERMES_COMMIT[:12]}/desktop-product-build.log")
 
     def _verify_agent_runtime(self) -> bool:
         hermes = self.install_dir / ".hermes" / "bin" / "hermes"
@@ -391,63 +383,56 @@ class HermesBootstrap:
             return False
         if self._source_head() != HERMES_COMMIT:
             return False
-        proc = subprocess.Popen([str(hermes), "--version"], cwd=self.install_dir, env=self._environment(),
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, shell=False,
-            close_fds=True, start_new_session=True)
-        proc._hermes_cleanup_lock = threading.Lock()
-        chunks: list[bytes] = []
-        seen = 0
-        overflow = threading.Event()
-        eof = threading.Event()
-
-        def drain() -> None:
-            nonlocal seen
-            assert proc.stdout is not None
-            while True:
-                block = proc.stdout.read(1024)
-                if not block:
-                    eof.set()
-                    return
-                seen += len(block)
-                if seen <= 8192 and not overflow.is_set():
-                    chunks.append(block)
-                else:
-                    overflow.set()
-
-        reader = threading.Thread(target=drain, name="hermes-version-reader", daemon=True)
-        reader.start()
-        deadline = time.monotonic() + 20
         try:
-            while True:
-                if overflow.is_set():
-                    _stop_group(proc)
-                    reader.join(timeout=1)
-                    return False
-                state = _child_state(proc)
-                if state in {"lost", "unknown", "reaped"}:
-                    return False
-                if state == "exited":
-                    reader.join(timeout=1)
-                    if reader.is_alive() or not eof.is_set():
-                        _stop_group(proc)
-                        reader.join(timeout=1)
-                        return False
-                    code = proc.wait()
-                    output = b"".join(chunks).strip()
-                    return code == 0 and not overflow.is_set() and bool(output)
-                if time.monotonic() >= deadline:
-                    _stop_group(proc)
-                    reader.join(timeout=1)
-                    return False
-                time.sleep(0.025)
-        finally:
-            if proc.stdout is not None:
-                proc.stdout.close()
+            code, output = self._run_managed_binary(hermes, [str(hermes), "--version"],
+                timeout=20, env=self._environment(), diagnostic_path=None)
+        except BootstrapError:
+            self.state.event(self.operation, "runtime-probe", "unavailable", {
+                "reason": "managed host process authority is not ready"})
+            return False
+        return code == 0 and bool(output.strip())
 
-    def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 7200) -> BootstrapReport:
-        if not 60 <= timeout_per_stage <= 14_400:
-            raise ValueError("Stage timeout is outside the supported bound")
-        self.prepare()
+    def _run_managed_binary(self, executable: Path, argv: list[str], *, timeout: float,
+                            env: dict[str, str], diagnostic_path: str | None) -> tuple[int, bytes]:
+        try:
+            result = self.custody.run_process(executable=executable,
+                artifact_root=self.install_dir, cwd=self.install_dir,
+                data_root=self.data_root.root, argv=argv, env_allowlist=env,
+                timeout=timeout)
+        except Exception:
+            self.state.event(self.operation, "managed-process", "custody_denied", {
+                "executable": executable.name,
+                "diagnostic": diagnostic_path,
+                "resume": "hermes-installer resume",
+            })
+            raise BootstrapError(
+                "Host-authorized Hermes process start or cleanup was unavailable; no unsafe fallback was used. "
+                "Resume after the protected process handler is enrolled."
+            ) from None
+        if diagnostic_path:
+            self._persist_diagnostic(diagnostic_path, bytearray(result.diagnostic), False)
+        self.state.event(self.operation, "managed-process", "completed", {
+            "receipt_id": result.receipt_id, "process_id": result.process_id,
+            "exit_code": result.exit_code, "timed_out": result.timed_out,
+            "cleanup_verified": result.cleanup_verified,
+            "diagnostic": diagnostic_path,
+        })
+        return result.exit_code, result.stdout
+
+    def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 600) -> BootstrapReport:
+        if not 30 <= timeout_per_stage <= 600:
+            raise ValueError("Stage timeout must be between 30 and 600 seconds")
+        try:
+            self.prepare()
+        except BaseException as exc:
+            self.state.checkpoint(self.operation, "failed:download-broker", {
+                "commit": HERMES_COMMIT, "stage": "download-broker",
+                "error_type": type(exc).__name__, "resume": "hermes-installer resume",
+            })
+            self.state.event(self.operation, "download-broker", "failed", {
+                "error_type": type(exc).__name__, "resume": "hermes-installer resume",
+            })
+            raise
         self._manifest()
         previous = self.state.operation(self.operation)
         if not self._existing_source_is_resumable(previous):
@@ -465,41 +450,116 @@ class HermesBootstrap:
                     statuses.append(StageStatus(stage, done[stage]))
                     continue
             extra: list[str] = []
+            relative_diagnostic = f"runtime/logs/hermes-agent-{HERMES_COMMIT[:12]}/{stage}.log"
+            self.data_root.path(relative_diagnostic).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            before_effects = self._effect_snapshot()
             self.state.checkpoint(self.operation, "running:" + stage, {
                 "commit": HERMES_COMMIT, "stage": stage, "generation": str(self.install_dir),
                 "hermes_home": str(self.hermes_home), "desktop_requested": bool(include_desktop),
             })
+            self.state.event(self.operation, stage, "started", {"generation": str(self.install_dir),
+                "diagnostic": relative_diagnostic, "timeout_seconds": timeout_per_stage,
+                "effects_before": before_effects})
             args = ["--stage", stage, "--json", "--non-interactive", *self._base_args(), *extra]
             # Skip optional integrations during base installation; their adapters
             # configure them only after explicit component selection.
             args += ["--skip-browser", "--skip-computer-use"]
-            code, _ = self.runner(args, timeout=timeout_per_stage, capture=False)
+            self._active_diagnostic = relative_diagnostic
+            try:
+                code, _ = self.runner(args, timeout=timeout_per_stage, capture=True)
+            except BaseException as exc:
+                self.state.checkpoint(self.operation, "cancelled:" + stage if isinstance(exc, KeyboardInterrupt) else "failed:" + stage, {
+                    "commit": HERMES_COMMIT, "stage": stage, "generation": str(self.install_dir),
+                    "diagnostic": relative_diagnostic, "error": type(exc).__name__,
+                    "resume": "hermes-installer resume",
+                })
+                self.state.event(self.operation, stage, "cancelled" if isinstance(exc, KeyboardInterrupt) else "runner_error", {
+                    "error_type": type(exc).__name__, "diagnostic": relative_diagnostic,
+                    "cleanup_verified": getattr(exc, "cleanup_verified", None),
+                    "effects_after": self._effect_snapshot()})
+                raise
+            finally:
+                self._active_diagnostic = None
             if code != 0:
                 self.state.checkpoint(self.operation, "failed:" + stage, {
                     "commit": HERMES_COMMIT, "stage": stage, "exit_code": code,
-                    "generation": str(self.install_dir), "resume": "hermes-installer resume",
+                    "generation": str(self.install_dir), "diagnostic": relative_diagnostic,
+                    "error_summary": self._diagnostic_summary(relative_diagnostic),
+                    "resume": "hermes-installer resume",
                 })
-                raise BootstrapError(f"Hermes stage {stage} did not complete (exit {code}); use hermes-installer resume")
+                self.state.event(self.operation, stage, "failed", {"exit_code": code,
+                    "diagnostic": relative_diagnostic, "error_summary": self._diagnostic_summary(relative_diagnostic),
+                    "effects_before": before_effects, "effects_after": self._effect_snapshot(),
+                    "resume": "hermes-installer resume"})
+                raise BootstrapError(f"Hermes stage {stage} did not complete (exit {code}); diagnostics: {relative_diagnostic}; use hermes-installer resume")
             state = "skipped" if stage in skipped else "complete"
             self.state.record_owned("hermes-stage", HERMES_COMMIT + ":" + stage, state)
             self.state.checkpoint(self.operation, "stage:" + stage, {
                 "commit": HERMES_COMMIT, "stage": stage, "state": state,
                 "generation": str(self.install_dir), "hermes_home": str(self.hermes_home),
             })
-            statuses.append(StageStatus(stage, state, code))
+            self.state.event(self.operation, stage, "completed", {"exit_code": code,
+                "diagnostic": relative_diagnostic, "effects_before": before_effects,
+                "effects_after": self._effect_snapshot()})
+            statuses.append(StageStatus(stage, state, code, relative_diagnostic))
         completion = self.install_dir / ".hermes-bootstrap-complete"
         try:
             complete = json.loads(completion.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             complete = {}
-        if complete.get("pinnedCommit") != HERMES_COMMIT or not self.agent_probe():
-            raise BootstrapError("Pinned Hermes source or executable runtime verification failed")
+        if complete.get("pinnedCommit") != HERMES_COMMIT:
+            raise BootstrapError("Pinned Hermes source completion marker failed verification")
+        if not self.agent_probe():
+            self.state.checkpoint(self.operation, "failed:runtime-probe", {
+                "commit": HERMES_COMMIT, "stage": "runtime-probe",
+                "generation": str(self.install_dir), "resume": "hermes-installer resume",
+            })
+            self.state.event(self.operation, "runtime-probe", "failed", {
+                "reason": "managed Hermes executable could not be verified",
+                "resume": "hermes-installer resume",
+            })
+            raise BootstrapError("Managed Hermes executable runtime verification failed; use hermes-installer resume")
         desktop_dir = self.install_dir / "apps" / "desktop"
         desktop_built = False
         if include_desktop:
-            code, _ = self.desktop_builder(timeout=timeout_per_stage)
-            dist_index = desktop_dir / "dist" / "index.html"
-            desktop_built = code == 0 and dist_index.is_file() and not dist_index.is_symlink() and dist_index.stat().st_size > 100
+            desktop_diag = f"runtime/logs/hermes-agent-{HERMES_COMMIT[:12]}/desktop-product-build.log"
+            self.state.checkpoint(self.operation, "running:desktop-product-build", {
+                "commit": HERMES_COMMIT, "stage": "desktop-product-build", "generation": str(self.install_dir),
+            })
+            self.state.event(self.operation, "desktop-product-build", "started", {"diagnostic": desktop_diag})
+            try:
+                code, _ = self.desktop_builder(timeout=timeout_per_stage)
+            except BaseException as exc:
+                cancelled = isinstance(exc, KeyboardInterrupt)
+                status = "cancelled:desktop-product-build" if cancelled else "failed:desktop-product-build"
+                self.state.checkpoint(self.operation, status, {
+                    "commit": HERMES_COMMIT, "stage": "desktop-product-build",
+                    "generation": str(self.install_dir), "diagnostic": desktop_diag,
+                    "error_type": type(exc).__name__, "resume": "hermes-installer resume",
+                })
+                self.state.event(self.operation, "desktop-product-build", "cancelled" if cancelled else "runner_error", {
+                    "error_type": type(exc).__name__, "diagnostic": desktop_diag,
+                    "cleanup_verified": getattr(exc, "cleanup_verified", None),
+                    "effects_after": self._effect_snapshot(), "resume": "hermes-installer resume",
+                })
+                raise BootstrapError(
+                    f"Hermes Desktop build could not start safely; diagnostics: {desktop_diag}; "
+                    "use hermes-installer resume"
+                ) from None
+            if _:
+                self._persist_diagnostic(desktop_diag, bytearray(_), False)
+            desktop_built = code == 0 and self._desktop_package_present(desktop_dir)
+            if not desktop_built:
+                self.state.checkpoint(self.operation, "failed:desktop-product-build", {
+                    "commit": HERMES_COMMIT, "stage": "desktop-product-build", "exit_code": code,
+                    "generation": str(self.install_dir), "diagnostic": desktop_diag,
+                    "error_summary": self._diagnostic_summary(desktop_diag), "resume": "hermes-installer resume",
+                })
+                self.state.event(self.operation, "desktop-product-build", "failed", {
+                    "exit_code": code, "diagnostic": desktop_diag,
+                    "effects_after": self._effect_snapshot(), "resume": "hermes-installer resume"})
+                raise BootstrapError(f"Hermes Desktop package was not produced (exit {code}); partial dist files do not establish a build; diagnostics: {desktop_diag}; use hermes-installer resume")
+            self.state.event(self.operation, "desktop-product-build", "completed", {"exit_code": code, "package": "present"})
         self.state.checkpoint(self.operation, "complete", {
             "commit": HERMES_COMMIT, "generation": str(self.install_dir), "desktop_built": desktop_built,
             "configuration_state": "pending: provider and gateway setup were safely skipped",
@@ -509,7 +569,51 @@ class HermesBootstrap:
             "hermes-installer resume")
 
     def status(self) -> dict[str, object]:
+        current = self.state.operation(self.operation)
         return {"commit": HERMES_COMMIT, "generation": str(self.install_dir),
                 "hermes_home": str(self.hermes_home), "stages": self._completed_stages(),
                 "source_present": self.install_dir.is_dir(),
-                "complete": (self.install_dir / ".hermes-bootstrap-complete").is_file()}
+                "complete": (self.install_dir / ".hermes-bootstrap-complete").is_file(),
+                "operation": current, "events": self.state.events(self.operation)}
+
+    def _diagnostic_summary(self, relative: str) -> list[str]:
+        try:
+            lines = self.data_root.path(relative).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ["diagnostic file could not be read"]
+        matches = [line[:500] for line in lines if re.search(r"(?i)error|failed|failure|exception|fatal|timed out", line)]
+        return matches[-8:] or [line[:500] for line in lines[-4:]]
+
+    def _effect_snapshot(self) -> dict[str, object]:
+        result: dict[str, object] = {"generation_exists": self.install_dir.exists(),
+            "source_head": self._source_head(), "desktop_dist_exists": False, "top_level": []}
+        try:
+            if self.install_dir.is_dir() and not self.install_dir.is_symlink():
+                result["top_level"] = sorted(p.name for p in self.install_dir.iterdir())[:200]
+                index = self.install_dir / "apps/desktop/dist/index.html"
+                result["desktop_dist_exists"] = index.is_file() and not index.is_symlink()
+                if result["desktop_dist_exists"]:
+                    result["desktop_index_bytes"] = min(index.stat().st_size, 10**9)
+        except OSError:
+            result["snapshot_error"] = "generation changed or is unreadable"
+        return result
+
+    @staticmethod
+    def _desktop_package_present(desktop_dir: Path) -> bool:
+        """A renderer `dist/index.html` is only one input, not a native product."""
+        index = desktop_dir / "dist" / "index.html"
+        if index.is_symlink() or not index.is_file() or index.stat().st_size <= 100:
+            return False
+        release = desktop_dir / "release"
+        if release.is_symlink() or not release.is_dir():
+            return False
+        candidates = [release / name for name in ("linux-arm64-unpacked", "linux-unpacked")]
+        for package in candidates:
+            if package.is_symlink() or not package.is_dir():
+                continue
+            app = package / "resources" / "app.asar"
+            sandbox = package / "chrome-sandbox"
+            executables = [item for item in package.iterdir() if item.is_file() and not item.is_symlink() and os.access(item, os.X_OK)]
+            if app.is_file() and not app.is_symlink() and app.stat().st_size > 1024 and executables and sandbox.is_file() and not sandbox.is_symlink():
+                return True
+        return False

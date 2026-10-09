@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import subprocess
 import threading
 import re
@@ -101,24 +103,21 @@ def _capture_bounded(stream, chunks: list[bytes], maximum: int) -> None:
 
 
 def _terminate_group(process: subprocess.Popen) -> None:
-    """Bound cleanup for this short-lived allowlisted probe only.
-
-    Persistent commands must use ManagedProcessSupervisor so the user system
-    manager retains descendant cleanup custody if the leader exits.
-    """
-    if process.poll() is not None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
         return
-    process.terminate()
     try:
         process.wait(timeout=0.5)
-        return
     except subprocess.TimeoutExpired:
         pass
-    process.kill()
     try:
-        process.wait(timeout=0.5)
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("probe process did not exit after kill") from None
+        # Kill surviving descendants even if the process-group leader exited on TERM.
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if process.poll() is None:
+        process.wait()
 
 
 def _decode(value: str | bytes | None) -> str:

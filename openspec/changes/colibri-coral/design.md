@@ -38,3 +38,7 @@ Live target/account values and pending source selections are tracked in planning
 ## Reproducible Coral sample refinement
 
 Read plans/amendments/2026-10-09-coral-sample-v1.md and planning/coral-sample-artifact-metadata.json. Use the pinned official compiled MobileNetV2 sample after byte/digest verification, requiring real selected-delegate execution and delegated-operation evidence. Quantized zero input is a synthetic execution fixture, not a classification-accuracy benchmark. The source pin establishes no native runtime/device result and keeps all existing target tests open.
+
+## Isolated Coral compatibility runtime
+
+Follow plans/amendments/2026-10-09-coral-component-runtime-v1.md and planning/coral-component-runtime-metadata.json for component-owned CPython3.9.25 and direct TFLite2.14.0 aarch64 delegate worker. Record Python3.9 EOL explicitly; require complete transitive hash lock, nativeglibc>=2.34, no-network kernel confinement and actual delegated inference before activation. This selects no PyCoral dependency and never changes host/Hermes Python.

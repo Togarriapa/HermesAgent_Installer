@@ -305,7 +305,7 @@ class LocalProviderGateway:
                  sensitivity: Sensitivity, model: str, max_output_tokens: int = 4096,
                  host: str = "127.0.0.1", port: int = 0, read_timeout_seconds: float = 10.0,
                  max_connections: int = 16,
-                 context_factory: Callable[..., DispatchContext] | None = None):
+                 context_factory: Callable[..., object] | None = None):
         if host != "127.0.0.1":
             raise GatewayError("Provider gateway must bind IPv4 loopback only")
         if not isinstance(port, int) or isinstance(port, bool) or (port != 0 and not 1024 <= port <= 65535):
@@ -474,13 +474,13 @@ class LocalProviderGateway:
                         self._reply(503, _error_body("gateway.closing", "Gateway is shutting down"))
                         return
                     try:
+                        trace_id = str(uuid.uuid4())
                         context = (gateway.context_factory(
-                            profile_id=gateway.profile_id,
                             purpose="native-hermes-chat",
-                            sensitivity=gateway.sensitivity,
-                            trace_id=str(uuid.uuid4()),
-                            cancelled=lambda: cancellation.is_set() or gateway._closing.is_set(),
-                            tool_request=tool_request,
+                            intent=trace_id,
+                            source_contexts=(),
+                            trace_id=trace_id,
+                            lease_seconds=30,
                         ) if gateway.context_factory is not None else DispatchContext(
                             profile_id=gateway.profile_id,
                             purpose="native-hermes-chat",
@@ -490,6 +490,7 @@ class LocalProviderGateway:
                         result = gateway.dispatcher.dispatch(
                             context, gateway.model, raw, input_tokens=input_tokens,
                             output_token_limit=output_cap, tool_request=tool_request,
+                            cancelled=lambda: cancellation.is_set() or gateway._closing.is_set(),
                         )
                     finally:
                         self._end_request(cancellation)
