@@ -38,12 +38,21 @@ class _ControlledCustodyPolicy:
     revision = "ci-controlled-custody-v1"
 
     def classify(self, *, purpose, intent, source_contexts, binding):
-        if purpose != "custody-kernel-ci" or source_contexts:
-            return Sensitivity.UNKNOWN, canonical_digest({"rejected-fixture-context": intent})
-        return Sensitivity.UNKNOWN, canonical_digest({"fixture": intent, "uid": binding.uid})
+        if purpose == "custody-kernel-ci" and not source_contexts:
+            return Sensitivity.UNKNOWN, canonical_digest({"fixture": intent, "uid": binding.uid})
+        if (purpose == "managed-process-control" and len(source_contexts) == 1
+                and source_contexts[0].purpose == "custody-kernel-ci"
+                and source_contexts[0].profile_id == binding.profile_id
+                and source_contexts[0].uid == binding.uid
+                and source_contexts[0].namespace_id == binding.namespace_id):
+            return Sensitivity.UNKNOWN, canonical_digest({
+                "fixture-control": intent,
+                "source_lineage_hash": source_contexts[0].lineage_hash,
+            })
+        return Sensitivity.UNKNOWN, canonical_digest({"rejected-fixture-context": intent})
 
     def allow_effect(self, *, context, rule, request_digest, retry_index):
-        return (context.purpose == "custody-kernel-ci"
+        return (context.purpose in {"custody-kernel-ci", "managed-process-control"}
                 and context.profile_id.startswith("ci-custody-")
                 and rule.capability in {"hermes-profile-invoke", "hermes-process-control"}
                 and rule.operation in {"process.start", "process.status", "process.read", "process.write",
