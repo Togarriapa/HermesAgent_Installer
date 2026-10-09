@@ -474,7 +474,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
     def _native_package_fixture(self) -> ManagedNativePackageMount:
         from types import SimpleNamespace
 
-        root = self.stage / "native-fixture"
+        root = self.stage / f"native-fixture-{uuid.uuid4().hex}"
         closure = root / "closure"
         closure.mkdir(parents=True, mode=0o755)
         module = closure / "adapter.py"
