@@ -114,23 +114,22 @@ def _selection_bound(service_id: str, tool: str, arguments: Mapping[str, Any], s
     if not keys or not isinstance(arguments, Mapping):
         return False
     expected = selection if isinstance(selection, Mapping) else None
-    matched = []
-    for key in keys:
-        if key not in arguments:
-            continue
+    present = [key for key in keys if key in arguments]
+    if not present:
+        return False
+    for key in present:
         actual = arguments[key]
         wanted = expected.get(key) if expected is not None else selection
         if wanted is None:
-            continue
-        if isinstance(wanted, (tuple, list, set, frozenset)):
-            valid = (isinstance(actual, (tuple, list, set, frozenset))
-                     and all(isinstance(x, str) for x in actual)
-                     and set(actual) == set(wanted))
-        else:
-            valid = actual == wanted
-        if valid:
-            matched.append(key)
-    return len(matched) == 1
+            return False
+        if isinstance(wanted, (tuple, list)):
+            if (not isinstance(actual, list)
+                    or any(not isinstance(item, str) for item in actual)
+                    or actual != list(wanted)):
+                return False
+        elif actual != wanted or type(actual) is not type(wanted):
+            return False
+    return True
 
 def _intent(service_id: str, operation: str, selection: Any, tool: str | None = None, args: Any = None, binding: str = "") -> str:
     payload = json.dumps(
