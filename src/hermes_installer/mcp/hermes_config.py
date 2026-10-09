@@ -167,11 +167,11 @@ def write_selected_profile_mcp_config(
     owned_fingerprints: Mapping[str, str] | None,
     expected_owner_uid: int,
 ) -> tuple[dict[str, str], str]:
-    """Atomically merge MCP config into one already-owned profile HERMES_HOME.
+    """Atomically merge MCP config into the selected native profile config.
 
-    The caller derives this home from the selected, materialized Hermes profile.
-    The function verifies its private ownership boundary, preserves unowned
-    Hermes config entries, and returns fingerprints for installer state.
+    hermes_home is the isolated Hermes instance root; config_path must be
+    profiles/<selected-profile-id>/config.yaml beneath it. The function verifies
+    every ownership boundary and preserves unrelated config and MCP entries.
     """
     home = Path(hermes_home)
     target = Path(config_path)
@@ -181,16 +181,28 @@ def write_selected_profile_mcp_config(
         raise HermesMCPConfigError("profile config may only be written by its owning installer user")
     try:
         resolved_home = home.resolve(strict=True)
-        if not home.is_absolute() or resolved_home != home or target != home / "config.yaml":
+        if not home.is_absolute() or resolved_home != home or not target.is_absolute():
             raise HermesMCPConfigError("MCP config path is outside the selected Hermes profile")
+        relative = target.relative_to(home)
+        if (len(relative.parts) != 3 or relative.parts[0] != "profiles"
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", relative.parts[1])
+                or relative.parts[2] != "config.yaml"):
+            raise HermesMCPConfigError("MCP config path must name a selected native profile")
         home_stat = home.lstat()
-    except OSError:
+        profiles = home / "profiles"
+        profiles_stat = profiles.lstat()
+        profile_dir = target.parent
+        profile_stat = profile_dir.lstat()
+        if profiles.resolve(strict=True) != profiles or profile_dir.resolve(strict=True) != profile_dir:
+            raise HermesMCPConfigError("selected Hermes profile path contains a symlink")
+    except (OSError, ValueError):
         raise HermesMCPConfigError("selected Hermes profile home is unavailable") from None
-    if (stat.S_ISLNK(home_stat.st_mode) or not stat.S_ISDIR(home_stat.st_mode)
-            or home_stat.st_uid != expected_owner_uid or home_stat.st_mode & 0o077):
-        raise HermesMCPConfigError("selected Hermes profile home is not private and owner-controlled")
+    for directory_stat in (home_stat, profiles_stat, profile_stat):
+        if (stat.S_ISLNK(directory_stat.st_mode) or not stat.S_ISDIR(directory_stat.st_mode)
+                or directory_stat.st_uid != expected_owner_uid or directory_stat.st_mode & 0o077):
+            raise HermesMCPConfigError("selected Hermes profile path is not private and owner-controlled")
 
-    lock_path = home / ".mcp-config.lock"
+    lock_path = profile_dir / ".mcp-config.lock"
     try:
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
     except OSError:
@@ -212,7 +224,7 @@ def write_selected_profile_mcp_config(
             current_text, proposed, owned_fingerprints=owned_fingerprints
         )
         payload = rendered.encode("utf-8")
-        temporary = home / f".config.yaml.mcp-{uuid.uuid4().hex}.tmp"
+        temporary = profile_dir / f".config.yaml.mcp-{uuid.uuid4().hex}.tmp"
         try:
             write_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                                | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -228,7 +240,7 @@ def write_selected_profile_mcp_config(
             raise HermesMCPConfigError("Hermes config changed during the MCP merge; retry from a fresh read")
         os.replace(temporary, target)
         temporary = None
-        directory_fd = os.open(home, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(profile_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                                | getattr(os, "O_NOFOLLOW", 0))
         try:
             os.fsync(directory_fd)
