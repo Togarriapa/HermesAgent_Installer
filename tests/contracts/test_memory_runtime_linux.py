@@ -21,6 +21,7 @@ import socket
 import sqlite3
 import stat
 import struct
+import sys
 import tempfile
 import time
 import unittest
@@ -36,7 +37,9 @@ from hermes_installer.memory.broker import build_memory_handlers, build_memory_r
 from hermes_installer.memory.compound import MemoryRouteRecipe
 from hermes_installer.memory.enrollment import MemoryServiceEnrollment
 from hermes_installer.memory.owner_ledger import _secure_sqlite_files
-from hermes_installer.protected_enrollment import ProtectedEnrollmentCatalog, ProtectedRootJournalCatalog
+from hermes_installer.protected_enrollment import (
+    OwnedRoots, ProtectedEnrollmentCatalog, ProtectedRootJournalCatalog,
+)
 
 
 class PrivateFixturePolicy:
@@ -176,13 +179,38 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
                     # ProtectedEnrollmentCatalog intentionally rejects empty
                     # service enrollment. Supply the exact selected profile
                     # identity used by its production memory route join.
+                    service_roots = journal_parent / "service-roots"
+                    service_roots.mkdir(mode=0o700)
+                    root_paths = []
+                    for name in ("home", "work", "data"):
+                        path = service_roots / name
+                        path.mkdir(mode=0o700)
+                        os.chown(path, service_account.pw_uid, service_account.pw_gid)
+                        os.chmod(path, 0o700)
+                        root_paths.append(path)
+                    roots = OwnedRoots("home-root", "work-root", enrollment.data_root_id,
+                        *root_paths, service_account.pw_uid, service_account.pw_gid)
+                    executable = journal_parent / "service-runtime"
+                    shutil.copyfile(sys.executable, executable)
+                    os.chown(executable, 0, 0)
+                    os.chmod(executable, 0o755)
                     selected_profile = SimpleNamespace(
                         enrollment_id=enrollment.service_enrollment_id,
                         generation=enrollment.service_generation,
                         profile_id=enrollment.profile_id,
                         principal_id=enrollment.principal_id,
+                        service_uid=service_account.pw_uid,
+                        service_gid=service_account.pw_gid,
+                        service_user="nobody",
+                        executable=executable,
+                        executable_sha256=hashlib.sha256(executable.read_bytes()).hexdigest(),
+                        roots=roots,
                         namespace_identity=enrollment.namespace_identity,
-                        roots=SimpleNamespace(data_id=enrollment.data_root_id),
+                        runtime_artifact_ids=("memory-fixture-runtime",),
+                        package_runtime_records={},
+                        authority_endpoint_id="memory-fixture-authority",
+                        socket_policy_id="memory-fixture-sockets",
+                        target_route_ids=(), operation_targets={}, operation_recipes={},
                     )
                     super().__init__({
                         (enrollment.service_enrollment_id, enrollment.service_generation): selected_profile,
