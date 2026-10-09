@@ -650,6 +650,29 @@ class ManagedProcessEffectHandler:
                             except (OSError, ValueError):
                                 output = b""
                             parts.append(name + b"=" + output[:1024])
+                        # `systemd-run --quiet --wait --collect` intentionally
+                        # keeps manager details off the worker channel. On a
+                        # rejected unit the transient unit may already be
+                        # collected, so capture only fixed, non-command
+                        # properties and the bounded journal reason for the
+                        # root-owned CI diagnostic sink. Never return this to
+                        # the caller or include ExecStart/Environment fields.
+                        for label, command_args in (
+                            (b"unit-properties", [str(self.systemctl), "--system", "show", unit,
+                                "-p", "Result", "-p", "ExecMainCode", "-p", "ExecMainStatus",
+                                "-p", "StatusText", "-p", "ControlGroup", "-p", "PrivateNetwork",
+                                "-p", "RestrictAddressFamilies"]),
+                            (b"unit-journal", ["/usr/bin/journalctl", "--system", "--no-pager",
+                                "-n", "8", "-o", "cat", "--unit", unit]),
+                        ):
+                            try:
+                                diagnostic = subprocess.run(command_args, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+                                    close_fds=True, timeout=1.0, check=False)
+                                parts.append(label + b"=" + diagnostic.stdout[:1024])
+                            except (OSError, subprocess.TimeoutExpired):
+                                parts.append(label + b"=<unavailable>")
                         sink(b"\n".join(parts)[:2048])
                     raise AuthorityDenied("process.launcher_early_exit", "service exited before admission")
                 time.sleep(.025)
