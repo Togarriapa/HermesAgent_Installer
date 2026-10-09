@@ -115,9 +115,11 @@ def _parse_envelope(payload: bytes) -> dict[str, Any]:
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise MCPBrokerError("mcp.protocol", "MCP broker envelope is malformed") from None
     required = {"schema", "service_id", "request_id", "method", "selection", "params"}
-    if (canonical_bytes(value) != payload):
+    if not isinstance(value, dict):
+        raise MCPBrokerError("mcp.protocol", "MCP broker envelope fields are invalid")
+    if canonical_bytes(value) != payload:
         raise MCPBrokerError("mcp.protocol", "MCP broker envelope is not canonical JSON")
-    if (not isinstance(value, dict) or set(value) != required or value.get("schema") != 1
+    if (set(value) != required or value.get("schema") != 1
             or not isinstance(value.get("service_id"), str)
             or not isinstance(value.get("method"), str) or value["method"] not in _METHODS
             or not isinstance(value.get("params"), dict)):
