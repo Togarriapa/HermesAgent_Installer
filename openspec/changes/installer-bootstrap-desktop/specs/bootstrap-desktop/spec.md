@@ -387,3 +387,31 @@ The implementation SHALL create and verify the exact v42 internal stage0 compila
 #### Scenario: No bootstrap policy exists yet
 - **WHEN** the actual installed root actor compiles initial selected policy
 - **THEN** root internal stage0 custody authorizes fixed compilation and one-use publication handoff before normal setup session creation
+
+### Requirement: Exact first selection and live input target
+The implementation SHALL enforce v43 exact first-publication predecessor and admitted-source plus actual-process target join.
+
+#### Scenario: Admission exists before process launch
+- **WHEN** no actual managed producer and loader proof exists
+- **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge
+
+### Requirement: Root initial input before single task stdin effect
+The implementation SHALL follow v46 concrete internal coordinator sequence during the single selected launch effect.
+
+#### Scenario: Initial source delivery fails
+- **WHEN** actual loader/input custody cannot produce a verified receipt before original deadline
+- **THEN** custody closes the owned unit before stdin and never infers source after EOF
+
+### Requirement: Root secure initial identity intake
+The implementation SHALL bind the exact v47 masked intake and policy selection to the actual root stage0 transaction.
+
+#### Scenario: User journal contains a credential reference
+- **WHEN** it has no verified root vault custody/scope receipt
+- **THEN** it cannot authorize identity observation or policy publication and exact secure intake remains pending
+
+### Requirement: Verified initial identity template revision
+The implementation SHALL resolve the exact v49 immutable identity template through the actual root installed deployment closure.
+
+#### Scenario: Only a session digest exists
+- **WHEN** identity policy revision is needed
+- **THEN** root resolves actual verified template bytes rather than inventing a module constant or trusting a caller revision

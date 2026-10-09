@@ -296,3 +296,38 @@ The implementation SHALL obtain native server/toolset ownership and presentation
 #### Scenario: Tool name resembles a different server
 - **WHEN** registering a protected native candidate
 - **THEN** ownership follows the explicit root-selected server field and parameters-only schema digest, without parsing its name
+
+### Requirement: Exact first selection and live input target
+The implementation SHALL enforce v43 exact first-publication predecessor and admitted-source plus actual-process target join.
+
+#### Scenario: Admission exists before process launch
+- **WHEN** no actual managed producer and loader proof exists
+- **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge
+
+### Requirement: Exact native registration and retained source joins
+The implementation SHALL apply the v44 source snapshot and native registration distinctions without repeated one-use resolution.
+
+#### Scenario: Root source was already consumed for launch
+- **WHEN** binding the actual running task to native observation registry
+- **THEN** the same verified source snapshot is passed internally and revalidated, without resolving or reusing parent authorization again
+
+### Requirement: Authenticated original WhatsApp channel enrollment
+The implementation SHALL use v45 exact authenticated selected trigger schema and signed account-scoped webhook provenance for original WhatsApp channel activation.
+
+#### Scenario: Manifest semantic alias has no verified provider slug
+- **WHEN** authenticated selected trigger schema is absent
+- **THEN** channel reports exact setup/schema prerequisite and retains required scope without inventing a slug or unsigned production provenance
+
+### Requirement: Root initial input before single task stdin effect
+The implementation SHALL follow v46 concrete internal coordinator sequence during the single selected launch effect.
+
+#### Scenario: Initial source delivery fails
+- **WHEN** actual loader/input custody cannot produce a verified receipt before original deadline
+- **THEN** custody closes the owned unit before stdin and never infers source after EOF
+
+### Requirement: Peer authenticated root observed channel delivery
+The implementation SHALL use v48 actual selected root transport capture and fixed producer-bound delivery before native channel processing.
+
+#### Scenario: Worker presents an SDK message object
+- **WHEN** no actual retained root transport/account/event proof exists
+- **THEN** no source context is minted and channel effects remain unavailable with exact trusted setup prerequisite
