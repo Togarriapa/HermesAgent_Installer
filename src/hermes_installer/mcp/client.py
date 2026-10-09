@@ -232,7 +232,7 @@ class MCPClient:
                 response = await asyncio.wait_for(pending, remaining)
             except asyncio.TimeoutError:
                 self._last_error = f"{method}: deadline"
-                await self._cancel(rid, grant)
+                await self._cancel(rid, grant, deadline)
                 raise MCPError(f"{method} exceeded its bounded deadline") from None
             except asyncio.CancelledError:
                 await self._cancel(rid, grant)

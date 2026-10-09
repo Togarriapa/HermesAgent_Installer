@@ -135,7 +135,7 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(bad_version.ready)
 
         transport = FixtureTransport()
-        client = self.make_client(transport)
+        client = self.make_client(transport, scrubber=lambda result: result)
         await client.initialize()
         await client.discover()
         client._tools["get_state"]["annotations"]["readOnlyHint"] = False
@@ -148,15 +148,42 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
     async def test_timeout_cancels_remote_request_and_revoked_authority_denies(self):
         transport = FixtureTransport(slow_call=True)
         authority = FixtureAuthority()
-        client = self.make_client(transport, authority, timeout=0.05)
+        client = self.make_client(transport, authority, timeout=0.05, scrubber=lambda result: result)
         await client.initialize()
         await client.discover()
+        started = time.monotonic()
         with self.assertRaises(MCPError):
             await client.call_read("get_state", {"entity_id": "sensor.office"})
+        elapsed = time.monotonic() - started
+        self.assertLessEqual(elapsed, 0.07)
         self.assertEqual(len(transport.cancelled), 1)
         authority.denied = True
         with self.assertRaises(MCPError):
             await client.call_read("get_state", {"entity_id": "sensor.office"})
+        await client.close()
+
+    async def test_missing_scrubber_fails_before_selected_resource_effect(self):
+        transport = FixtureTransport()
+        client = self.make_client(transport)
+        await client.initialize()
+        await client.discover()
+        before = len(transport.calls)
+        with self.assertRaises(MCPError):
+            await client.call_read("get_state", {"entity_id": "sensor.office"})
+        self.assertEqual(len(transport.calls), before)
+        await client.close()
+
+    async def test_incidental_nested_selection_and_broad_list_do_not_authorize(self):
+        transport = FixtureTransport()
+        client = self.make_client(transport, scrubber=lambda result: result)
+        await client.initialize()
+        await client.discover()
+        with self.assertRaises(PermissionError):
+            await client.call_read("get_state", {"entity_id": "sensor.kitchen",
+                                                 "note": {"text": "sensor.office"}})
+        with self.assertRaises(PermissionError):
+            await client.call_read("get_state", {"filter": ["sensor.office"]})
+        self.assertFalse(any(item["method"] == "tools/call" for item in transport.calls))
         await client.close()
 
 
