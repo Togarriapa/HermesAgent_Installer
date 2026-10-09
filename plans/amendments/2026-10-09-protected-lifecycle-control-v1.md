@@ -1,0 +1,3 @@
+# Protected lifecycle provision/control v1
+
+Sol additive existing BD-F03/LC-F02/03/04/HI08/09/10 fixed contracts. planning/protected-lifecycle-control-contract.json defines enrollment.provision exactcap/target/payload/rootissuedintent, firstsnapshot rootlocaltrustedsetup pathdistinct ordinaryworker authorization, strictactualidentity/roots/receipts/CASjournal/recovery. process.control facade finiteverbs derivesexactverbtarget/context/grant fromactualregisteredownedhandle, boundedfields/no workerbearer/PID/path. Loadedclosureproof qualifies only actualrootlaunch/readonlyclosure/actionbinding andactualsourceboundary, neverworkerready/globaltoken/functionalAC. All originalscope/frozenbaseline/tag/nativeaccountacceptance preserved.

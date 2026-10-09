@@ -40,3 +40,5 @@ Live target/account values and pending source selections are tracked in planning
 Read plans/amendments/2026-10-09-protected-artifact-catalog-pins-v1.md and planning/protected-artifact-source-catalog.json. Baseline official script/PM lock are verified source bytes; candidates are not automatic activation. Acquire canonical managed artifacts only through protected exact catalog, including bootstrap acquisition. Unknown sourcearchive/package artifacts remain unavailable.
 
 Hermes/resource selection v3: plans/amendments/2026-10-09-hermes-bootstrap-resource-job-selection-v3.md defines fixed stage/health recipes and activegeneration resourcejob/DAG/source/backend joins; BD-F03/LC-F03/LC-F04/HI-T09/RB-T08 tasks and nativeevidence remainopen.
+
+Protected lifecycle control v1: plans/amendments/2026-10-09-protected-lifecycle-control-v1.md defines exactrootprovision/currentintent/firstsnapshot/CASrecovery, finiteprocess.control facade andactualloadedclosureprooflimits. ExistingBD/LC/HI tasksremainopen.
