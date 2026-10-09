@@ -101,12 +101,13 @@ def root_invocation_source_receipt_handles(
                 for handle in handles)
     )
     expires = getattr(lineage, "expires_monotonic", None)
-    schema = getattr(lineage, "schema", None)
+    missing_schema = object()
+    schema = getattr(lineage, "schema", missing_schema)
     # AuthorityClient's typed NativeInvocationContexts validates schema=1
     # while parsing the RPC response and intentionally omits the wire-only
     # schema field from the immutable DTO. Structural test doubles may include
     # it, in which case it must still be the exact integer 1.
-    if ((schema is not None and (type(schema) is not int or schema != 1))
+    if ((schema is not missing_schema and (type(schema) is not int or schema != 1))
             or not isinstance(getattr(lineage, "invocation_handle", None), str)
             or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", lineage.invocation_handle)
             or not _HEX.fullmatch(getattr(lineage, "parent_closure_digest", ""))
