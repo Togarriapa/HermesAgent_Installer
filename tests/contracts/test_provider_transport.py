@@ -232,7 +232,7 @@ class ProviderTransportTests(unittest.TestCase):
                 BudgetLedger(root), transport, context_authorizer=synthetic_authorizer,
             )
             response = dispatcher.dispatch(
-                DispatchContext("hermes", "chat", Sensitivity.PUBLIC),
+                fixture_context("hermes", "chat", Sensitivity.PUBLIC),
                 MODEL,
                 b'{"messages":[{"role":"user","content":"hello"}]}',
                 input_tokens=8,
