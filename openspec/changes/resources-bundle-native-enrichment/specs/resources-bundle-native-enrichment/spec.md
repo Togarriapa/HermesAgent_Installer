@@ -208,3 +208,11 @@ The implementation SHALL resolve the protected setup catalog/store and validate 
 #### Scenario: Untrusted injected catalog or response
 - **WHEN** selected artifact custody or probe envelope/observation binding differs
 - **THEN** provisioning/readiness cannot be marked complete.
+
+### Requirement: Exact root peer delivery and controller roles
+
+The implementation SHALL use explicit protected observer delivery role joins and actual kernel controller DTOs with exact PIDFD ownership.
+
+#### Scenario: Unenrolled cross-peer selection
+- **WHEN** no exact current observer delivery mapping exists
+- **THEN** cross-peer delivery is denied without target-string inference.

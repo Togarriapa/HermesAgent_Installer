@@ -161,7 +161,8 @@
         "plans",
         "catalog_sha256",
         "artifact_catalog",
-        "artifact_store"
+        "artifact_store",
+        "bootstrap_policies"
       ],
       "selection_id": "installer-root-setup-selection-v1",
       "launcher_fields": [
@@ -190,7 +191,8 @@
         "baseline_commit",
         "baseline_tree_sha256",
         "amendment_manifest_sha256",
-        "allowed_artifact_ids"
+        "allowed_artifact_ids",
+        "bootstrap_policy_artifact_id"
       ],
       "plan_artifact_id": "installer-root-setup-plan-v1",
       "root": "Paths resolve only beneath the installed immutable release root selected by the root deployment manifest. relative_path normalized no absolute/escaping/symlink/hardlink. Owner0 files not writable by service/users; all ancestors root-owned non-group/world-write. Actual launcher/interpreter/module bytes verified by held nofollow FD SHA and inode before/after use. No source archive hash substituted for executable/module hash.",
@@ -228,7 +230,54 @@
         "owner_gid": 0,
         "mode": 448
       },
-      "artifact_store_resolution": "Resolve selected initial/active root_journal_roots row through existing nofollow held directory owner/mode/device/inode checks; create/validate fixed child bootstrap-artifacts0700 root0. ArtifactCatalog CAS object layout remains objects/<artifact_id>/<sha>/<filename>, verifiedimmutable objects rootowned notwritable after atomic publication. Constructor facade and RootArtifactReceiptRegistry must share the identical verified catalog/store selection; after prepared snapshot active root journal row binds its actual observed identity. No worker store path or new hardcoded external state root."
+      "artifact_store_resolution": "Resolve selected initial/active root_journal_roots row through existing nofollow held directory owner/mode/device/inode checks; create/validate fixed child bootstrap-artifacts0700 root0. ArtifactCatalog CAS object layout remains objects/<artifact_id>/<sha>/<filename>, verifiedimmutable objects rootowned notwritable after atomic publication. Constructor facade and RootArtifactReceiptRegistry must share the identical verified catalog/store selection; after prepared snapshot active root journal row binds its actual observed identity. No worker store path or new hardcoded external state root.",
+      "bootstrap_policy_artifact": {
+        "id": "installer-bootstrap-policy-v1",
+        "catalog_row_fields": [
+          "artifact_id",
+          "relative_path",
+          "sha256"
+        ],
+        "relative_path": "plans/bootstrap-policy-v1.json under same verified installed release_root; actual deployed exact canonical byte SHA, not a fabricated fixed SHA. Each selected plan row explicitly joins bootstrap_policy_artifact_id, covered catalog digest.",
+        "document_fields": [
+          "schema=1",
+          "id",
+          "source_artifact_id",
+          "identity_policy",
+          "root_policy",
+          "authority_base_template",
+          "service_record_templates",
+          "catalog_selections",
+          "receipt_binding_rules"
+        ],
+        "identity_policy_fields": [
+          "service_profile_id",
+          "principal_id",
+          "service_account_name",
+          "exclusive_group_name",
+          "uid_allocation"
+        ],
+        "identity": "IDs/names are explicit selected reviewed policy artifact literals, no default inferred from source/runtime filenames. uid_allocation=root-dedicated-account; root NSS allocates/validates actual nonzero exclusive serviceUID/GID distinct caller/siblings, observes actual passwd facts. Persist transaction selection across prepared->active. Generation IDs root transaction-issued not artifact literals.",
+        "root_policy_fields": [
+          "journal_root_id",
+          "service_home_root_id",
+          "service_work_root_id",
+          "service_data_root_id",
+          "service_parent_root"
+        ],
+        "roots": "service_parent_root explicit root-owned policy directory, distinct from caller journal/operation root. Root materializes home/work/data fixed private children for selected dedicated service account; records actual owner/mode/dev/inode and joins rootIDs, no source YAML/caller paths. Existing HI09 root separation/storage invariants retained.",
+        "template_envelope": "service_record_templates list<=64 strict {id,record,receipt_bindings}; record uses EXACT existing HostServiceProfile serialized schema from protected service_generations contract/loader, including operation_targets/operation_recipes/limits/rootIDs/namespace/socket selections. Every unresolved actual executable/runtime/child pin must appear in receipt_bindings; no loose extra keys or unknown template substitutes. Authority base template uses EXACT existing ProtectedEnrollment authority top-level principal/profile/rule/binding schema, resolved actual selected identity/generation rather than copied worker claims.",
+        "receipt_binding_fields": [
+          "field_path",
+          "receipt_role",
+          "receipt_field"
+        ],
+        "binding_grammar": "field_path list of exact schema field names/finite list indexes in this protected template, no wildcard/JSON pointer/shell. receipt_role enum official-pm-runtime|native-launcher|installed-agent-closure|native-health; receipt_field only existing actual signed/root registry receipt identity fields artifact_id/sha256/generation/receipt_handle. Root resolver validates whole receipt/current transaction/target/plan/actual custody before inserting; cannot insert caller string or archiveSHA as executableSHA. Unresolved binding means no active record.",
+        "catalog_selections": "Strict object containing existing EnrollmentPolicy catalog field names: protected_devices/protected_build_records/native_packages/memory_enrollments/operation_parameter_schemas/source_issuers/resource_jobs/remote_session_enrollments/resource_backend_enrollments/resource_body_recipes/resource_scope_bindings/resource_validators/root_journal_roots. Each selected row uses its existing exact inner schema; actual dynamic record facts derived by declared receipt binding, static declarations only from reviewed policy bytes. Empty list means capability unavailable, not omitted original scope or accepted.",
+        "factory": "InstalledRootBootstrapPolicyResolver.resolve(plan)->VerifiedRootBootstrapPolicy after same release/catalog/artifact SHA/schema validation. RootSetupPolicyFactory.prepare(verified_policy,verified_setup_authorization,verified_artifact_receipts)->EnrollmentPolicy creates only selected dedicated identity/private roots/source receipt/prepared empty service records; no active exe/profile assumed. RootSetupPolicyFactory.activate(prepared_transaction,verified_policy,actual_runtime_and_health_receipts)->EnrollmentPolicy resolves exact receipt bindings, current strict templates/authoritybase and publishes fresh generation CAS. No default raw EnrollmentPolicy fields/callback record builder as authority.",
+        "state": "This defines reviewed policy serialization/construction, not a claim that a deployed runnable policy artifact currently exists. Root deployment must materialize/review exact selected bytes and actual receipt joins before activation; absence fails with explicit artifact/receipt prerequisite. Prepared setup remains implementable without inventing active runtime records.",
+        "activation_order": "Clarifies v21 health dependency: RootSetupPolicyFactory.activate_runnable(prepared_transaction,verified_policy,actual_runtime_receipts)->EnrollmentPolicy publishes strict active authority records only after actual source/PM/executable/closure receipts, with lifecycle functional health still pending and ordinary product enablement withheld. This is a committed active enrollment receipt used by hermes-agent-health-v1, not accepted installation. RootSetupPolicyFactory.record_functional_health(active_enrollment_receipt,verified_health_receipt) journals exact current generation health outcome; only actual passed receipt permits normal functional enablement. No health receipt is required to create the custody profile needed to execute that same health fixture. Native-health receipt bindings may affect only final enablement/health state, never initial executable/profile pins. Any catalog generation change invalidates health and requires requalification."
+      }
     },
     "first_setup_artifact_fetch": {
       "constructor": "RootSetupArtifactFetcher(session_store,receipt_registry,protected_artifact_catalog,owned_store_root) constructed by installed root CLI after actual selected actor verification. Catalog rows are root-owned installed source catalog; exact allowed_artifact_ids from selected verified plan. Concrete implementation reuses ArtifactCatalog and reviewed artifact broker bounded downloader/materializer, not worker BootstrapCustody.fetch_artifact or fabricated HostContext.",

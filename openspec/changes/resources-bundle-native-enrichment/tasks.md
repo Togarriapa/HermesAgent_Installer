@@ -65,3 +65,7 @@ RB-T08 uses protected-resource-job-contract.json task_result_validator and immut
 ### v19 setup store and probe DTO
 
 Use installed_selection_catalog artifact_catalog/artifact_store joins, root task canonical payload bytes and gateway_probe_response exact envelope. Existing BD/HI/RB tasks remain pending.
+
+### v20 exact root peer/controller DTOs
+
+Use pending_pair_DTO and task_runner_protocol.RootTaskController exact records/role mapping/PIDFD ownership. Existing HI/RB tasks remain pending.
