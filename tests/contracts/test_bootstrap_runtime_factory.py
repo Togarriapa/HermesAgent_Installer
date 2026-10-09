@@ -5,10 +5,11 @@ import os
 from pathlib import Path
 
 from hermes_installer.authority.bootstrap_enrollment import (
-    BootstrapEnrollmentPending, ServiceIdentity, VerifiedRootSetupAuthorization,
+    BootstrapEnrollmentPending, EnrollmentPolicy, ServiceIdentity, VerifiedRootSetupAuthorization, _generation,
 )
 from hermes_installer.authority.bootstrap_runtime_factory import (
     InstalledBootstrapPolicyResolver,
+    RootComposioSetupSelectionAuthority,
     RootBootstrapRuntimeFactory,
     RootSetupPolicyFactory,
     RootRuntimeArtifactReceipt,
@@ -17,6 +18,51 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
 
 
 class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
+    def test_prepared_authority_base_accepts_only_exact_empty_root_snapshot(self):
+        root = {"root_id": "installer-authority-journal-v1",
+                "absolute_path": "/var/lib/hermes-installer/authority-journal",
+                "owner_uid": 0, "owner_gid": 0, "mode": 0o700, "device": 1,
+                "inode": 2, "generation": "journal-fixture", "purpose": "authority-journal"}
+        generation = _generation(EnrollmentPolicy(
+            service_profile_id="profile", principal_id="principal", generation_id="prepared-fixture",
+            source_artifact_id="source", records=(), resource_controller_roles=(),
+            native_mcp_tool_bindings=(), remote_observation_enrollments=(),
+            root_journal_roots=(root,), activation_state="prepared"))
+        base = {"schema": 1, "key_id": "authority-key-fixture", "principals": {}, "rules": {},
+                "authentik": {}, "process_profiles": {}, "provider_enrollments": {},
+                "mcp_services": {}, "mcp_http_bindings": {}, "memory_providers": {},
+                "native_bridges": {}, "normalization_policies": {}, "delegations": {},
+                "service_generations": generation}
+        InstalledBootstrapPolicyResolver._validate_authority_base_template(base)
+        empty_template = dict(base)
+        empty_template["key_id"] = {"root_binding": "authority_key.key_id"}
+        empty_template["service_generations"] = {
+            "root_binding": "prepared_service_generation.exact_empty_snapshot"}
+        InstalledBootstrapPolicyResolver._validate_authority_base_template(empty_template)
+        for mutate in (
+                lambda value: value.update(service_generations={}),
+                lambda value: value["service_generations"].update(service_records=[{"enabled": True}]),
+                lambda value: value["service_generations"].update(root_journal_roots=[]),
+                lambda value: value.update(authentik={"token": "must-not-exist"})):
+            invalid = {**base, "service_generations": dict(generation), "authentik": {}}
+            mutate(invalid)
+            with self.subTest(invalid=invalid), self.assertRaises(BootstrapEnrollmentPending):
+                InstalledBootstrapPolicyResolver._validate_authority_base_template(invalid)
+
+    def test_composio_catalog_projection_is_pinned_version_and_strictly_bounded(self):
+        authority = object.__new__(RootComposioSetupSelectionAuthority)
+        authority._SLUG = RootComposioSetupSelectionAuthority._SLUG
+        row = {"slug": "WHATSAPP_MESSAGE", "name": "Send message", "description": "Send",
+               "type": "trigger", "toolkit": {"slug": "whatsapp", "name": "WhatsApp"},
+               "version": "20260721_00", "config": {}, "payload": {}}
+        projected = authority._trigger_projection(row, "20260721_00")
+        self.assertEqual(projected["toolkit"], {"slug": "whatsapp", "version": "20260721_00"})
+        self.assertNotIn("instructions", projected)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            authority._trigger_projection({**row, "version": "other"}, "20260721_00")
+        with self.assertRaises(BootstrapEnrollmentPending):
+            authority._trigger_projection({**row, "unreviewed": "field"}, "20260721_00")
+
     def test_installed_factory_has_no_caller_selected_trust_paths(self):
         with self.assertRaises(TypeError):
             RootBootstrapRuntimeFactory(selection_path="/tmp/caller-selection.json")
@@ -49,7 +95,8 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
                 "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
                 "operation_parameter_schemas", "source_issuers", "resource_jobs", "remote_session_enrollments",
                 "resource_backend_enrollments", "resource_body_recipes", "resource_scope_bindings",
-                "resource_validators", "root_journal_roots")},
+                "resource_validators", "root_journal_roots", "resource_controller_roles",
+                "native_mcp_tool_bindings", "remote_observation_enrollments")},
             receipt_binding_rules=(),
         )
 
@@ -100,7 +147,8 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
                 "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
                 "operation_parameter_schemas", "source_issuers", "resource_jobs", "remote_session_enrollments",
                 "resource_backend_enrollments", "resource_body_recipes", "resource_scope_bindings",
-                "resource_validators", "root_journal_roots")},
+                "resource_validators", "root_journal_roots", "resource_controller_roles",
+                "native_mcp_tool_bindings", "remote_observation_enrollments")},
             receipt_binding_rules=({"receipt_role": "official-pm-runtime",
                                     "allowed_artifact_ids": ["pm-runtime-fixture"],
                                     "allowed_output_kinds": ["source-archive"],
