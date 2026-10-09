@@ -763,7 +763,7 @@ class ManagedProcessEffectHandler:
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
         self._task_terminal_receipts: dict[str, tuple[str, RootTaskTerminalReceipt, float]] = {}
-        self._task_stdin_write_receipts: dict[str, tuple[str, Any, float]] = {}
+        self._task_stdin_write_receipts: dict[str, tuple[ManagedTaskHandle, Any, float, str]] = {}
         self._lock = threading.RLock()
         self._member_key = os.urandom(32)
         # Root-only test harness may capture bounded manager diagnostics. This
@@ -1915,13 +1915,14 @@ class ManagedProcessEffectHandler:
                     or len(exact_bytes) != receipt.stdin_size_bytes):
                 raise AuthorityDenied("resource.task_stdin", "stdin write or EOF proof is incomplete")
             with self._lock:
-                for receipt_id, (_task_id, _receipt, expires) in tuple(self._task_stdin_write_receipts.items()):
+                for receipt_id, (_task_handle, _receipt, expires, _profile_id) in tuple(
+                        self._task_stdin_write_receipts.items()):
                     if expires <= issued:
                         self._task_stdin_write_receipts.pop(receipt_id, None)
                 if len(self._task_stdin_write_receipts) >= 4096:
                     raise AuthorityDenied("resource.task_receipts", "stdin write receipt registry is full")
                 self._task_stdin_write_receipts[receipt.receipt_handle] = (
-                    task_handle, receipt, receipt.expires_monotonic)
+                    task_handle, receipt, receipt.expires_monotonic, handle.profile.profile_id)
             state.stdin_write_receipt = receipt
             task_handle._stdin_write_receipt[0] = receipt.receipt_handle
             return offset
@@ -2068,8 +2069,10 @@ class ManagedProcessEffectHandler:
             entry = self._task_stdin_write_receipts.get(receipt_handle)
             if entry is None:
                 raise AuthorityDenied("resource.task_stdin_receipt", "stdin write receipt is unavailable")
-            retained_task_handle, receipt, expires = entry
+            retained_task_handle, receipt, expires, profile_id = entry
+            profile = self.profiles.get(profile_id)
             if (retained_task_handle is not task_handle or expires <= self.monotonic()
+                    or profile is None or profile.generation != task_handle.generation
                     or type(receipt) is not RootTaskStdinWriteReceipt
                     or receipt.task_handle != task_handle.handle_id
                     or receipt.process_id != task_handle.process_id
