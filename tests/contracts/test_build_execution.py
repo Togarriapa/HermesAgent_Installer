@@ -12,9 +12,11 @@ import pytest
 
 from hermes_installer.authority.build_execution import (
     BuildOutputSpec, ContentAddressedBuildStore, LinuxBuildOutputFactInspector,
-    ManagedBuildResult, managed_process_identity_digest,
+    ManagedBuildResult, RootBuildExecutionService, managed_process_identity_digest,
 )
-from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.authority.types import (
+    AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
+)
 
 
 def constraints():
@@ -101,8 +103,91 @@ def make_store(path: Path):
     return ContentAddressedBuildStore(path, signing_key=b"k" * 32, owner_uid=os.getuid())
 
 
+def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_returns_receipt():
+    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+        base = Path(temp)
+        output_root = base / "outputs"
+        output_root.mkdir(mode=0o700)
+        source = base / "source"
+        toolchain = base / "toolchain"
+        builder = base / "builder"
+        source.mkdir(mode=0o700)
+        toolchain.mkdir(mode=0o700)
+        builder.write_bytes(b"root-pinned builder")
+        builder.chmod(0o700)
+        profile = Profile(output_root)
+        specs = {
+            "colibri-source": SimpleNamespace(sha256=profile.source_sha256, tree_files=False),
+            "aarch64-sysroot": SimpleNamespace(sha256=profile.toolchain_sha256, tree_files=False),
+            "fixed-builder": SimpleNamespace(sha256=profile.builder_sha256, tree_files=False),
+        }
+        artifact_paths = {"colibri-source": source, "aarch64-sysroot": toolchain,
+                          "fixed-builder": builder}
+
+        class Artifacts:
+            artifacts = specs
+
+            def resolve(self, artifact_id, _digest, _staging, *, expected_uid):
+                assert expected_uid == os.getuid()
+                path = artifact_paths[artifact_id]
+                return SimpleNamespace(artifact_id=artifact_id, sha256=specs[artifact_id].sha256,
+                                       path=path)
+
+        class Catalog:
+            def resolve(self, target_id, generation):
+                assert target_id == profile.target_id and generation == profile.generation
+                return profile
+
+        class Launcher:
+            seen = False
+
+            def run(self, inputs, *, timeout, cancelled):
+                self.seen = True
+                assert inputs.source_root == source and inputs.toolchain_root == toolchain
+                assert inputs.builder_executable == builder and timeout > 0
+                assert not cancelled()
+                filled_output(inputs.output_root)
+                return completed()
+
+        payload = json.dumps({"schema": 1, "enrollment_id": "enrollment-1",
+                              "generation": profile.generation,
+                              "operation_id": "colibri-source-build-v1", "parameters": {}},
+                             sort_keys=True, separators=(",", ":")).encode("ascii")
+        now = time.monotonic()
+        context = HostContext(
+            principal_id="principal-1", profile_id="profile-1", namespace_id="namespace-1",
+            uid=os.getuid(), purpose="build", intent_id="intent-1", trace_id="trace-1",
+            sensitivity=Sensitivity.PRIVATE, lineage_hash="a" * 64, policy_revision="policy-1",
+            capabilities=frozenset({"build"}), issued_at_monotonic=now,
+            monotonic_expires_at=now + 300, nonce="nonce-1", grant_id="grant-1", signature="sig",
+            enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
+        authorization = EffectAuthorization(
+            principal_id="principal-1", profile_id="profile-1", namespace_id="namespace-1",
+            uid=os.getuid(), purpose="build", sensitivity=Sensitivity.PRIVATE, trace_id="trace-1",
+            policy_revision="policy-1", lineage_hash="a" * 64, capability="build",
+            intent_id="intent-1", target=profile.target_id, recipient=None,
+            request_digest=canonical_digest(payload), retry_index=0,
+            issued_at_monotonic=now, monotonic_expires_at=now + 300, grant_id="grant-1",
+            nonce="nonce-1", context_digest="b" * 64, signature="sig",
+            enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
+        launcher = Launcher()
+        service = RootBuildExecutionService(
+            build_catalog=Catalog(), artifact_catalog=Artifacts(), artifact_staging_root=base,
+            launcher=launcher, fact_inspector=FixtureInspector(), authority_key=b"k" * 32,
+            store=make_store(base / "cas"), expected_uid=os.getuid())
+        response = service(context=context, authorization=authorization, payload=payload,
+                           timeout=60, peer_pid=42, peer_pidfd=7, cancelled=lambda: False)
+
+        assert launcher.seen is True
+        assert response["status"] == 200 and response["receipt_id"]
+        receipt = json.loads(response["body"])
+        assert receipt["operation_id"] == "colibri-source-build-v1"
+        assert receipt["service_generation_digest"] == profile.service_generation_digest
+        assert {output["relative_path"] for output in receipt["output_records"]} == set(profile.output_specs)
+
+
 def filled_output(root):
-    root.mkdir(mode=0o700)
+    root.mkdir(mode=0o700, exist_ok=True)
     write_file(root, "bin/colibri", b"fixture ARM64 executable", executable=True)
     write_file(root, "runtime/lib/python3.9/os.py", b"stdlib fixture")
     write_file(root, "runtime/lib/python3.9/lib-dynload/_test.so", b"extension fixture")
@@ -112,6 +197,7 @@ def test_dynamic_output_manifest_is_root_hashed_and_atomically_resolved():
     with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
         base = Path(temp)
         output_root = base / "outputs"
+        output_root.mkdir(mode=0o700)
         filled_output(output_root)
         profile = Profile(output_root)
         store = make_store(base / "cas")
