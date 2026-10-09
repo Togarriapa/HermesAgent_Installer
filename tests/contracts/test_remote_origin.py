@@ -1,20 +1,33 @@
 from __future__ import annotations
 
 import hashlib
+import base64
+import json
 import os
 import socket
 import stat
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 from hermes_installer.authority.remote_origin import (
     HMACReceiptSigner, KernelOriginEvidence, RemoteOriginDenied,
     RootOriginReadinessReceipt, SelectedRemoteOrigin, SelectedTunnel,
+    CustodyRemoteOriginProcessManager,
     verify_origin_receipt, verify_selected_remote_origin, verify_token_receipt,
-    write_selected_tunnel_token,
+    write_provisioned_tunnel_token, write_selected_tunnel_token,
 )
+
+ACCOUNT = "699d98642c564d2e855e9661899b7252"
+TUNNEL = "c1744f8b-faa1-48a4-9e5c-02ac921467fa"
+
+
+def tunnel_token(account=ACCOUNT, tunnel=TUNNEL):
+    raw = json.dumps({"a": account, "t": tunnel,
+                      "s": base64.b64encode(b"s" * 32).decode()}).encode()
+    return base64.b64encode(raw)
 
 
 class _Catalog:
@@ -118,16 +131,26 @@ class _Manager:
         return self.evidence
 
 
+class _CustodyFixture:
+    def inspect_enrolled_process(self, profile_id, generation):
+        return SimpleNamespace(process_id="1" * 32, enrollment_id=profile_id + "-enrollment",
+            profile_id=profile_id, profile_generation=generation, uid=1001, gid=1001,
+            pid=42, pid_starttime_ticks=55, executable_device=1, executable_inode=2,
+            executable_sha256="c" * 64, cgroup_id="cgroup-1", mount_namespace_inode=3,
+            network_namespace_inode=4, pidfd_registry_handle="pidfd-handle",
+            expires_monotonic=9999999999.0)
+
+
 class RemoteOriginTests(unittest.TestCase):
     def test_token_writer_publishes_private_selected_token_and_signed_receipt(self):
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp) / "tunnels"
-            tunnel_dir = root / "tunnel_123"
+            root = Path(temp).resolve() / "tunnels"
+            tunnel_dir = root / TUNNEL
             tunnel_dir.mkdir(parents=True, mode=0o700)
             os.chmod(root, 0o700)
             os.chmod(tunnel_dir, 0o700)
-            token = b"dedicated-tunnel-token-fixture"
-            selected = SelectedTunnel("te_1", "tunnel_123", "acct_9", "gen_2",
+            token = tunnel_token()
+            selected = SelectedTunnel("te_1", TUNNEL, ACCOUNT, "gen_2",
                                       "sink_1", "vault_ref_5", os.getuid(), True)
             catalog, vault, journal = _Catalog(tunnel=selected), _Vault(token), _Journal()
             signer = HMACReceiptSigner(b"s" * 32)
@@ -146,23 +169,50 @@ class RemoteOriginTests(unittest.TestCase):
 
     def test_token_writer_refuses_preexisting_symlink_and_changed_file(self):
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp) / "tunnels"
-            directory = root / "tunnel_123"
+            root = Path(temp).resolve() / "tunnels"
+            directory = root / TUNNEL
             directory.mkdir(parents=True, mode=0o700)
             os.chmod(root, 0o700)
             os.chmod(directory, 0o700)
             (directory / "tunnel.token").symlink_to(Path(temp) / "foreign")
-            selected = SelectedTunnel("te_1", "tunnel_123", "acct_9", "gen_2",
+            selected = SelectedTunnel("te_1", TUNNEL, ACCOUNT, "gen_2",
                                       "sink_1", "vault_ref_5", os.getuid(), True)
             with self.assertRaises(RemoteOriginDenied):
                 write_selected_tunnel_token("te_1", catalog=_Catalog(tunnel=selected),
-                    vault=_Vault(), token_root=root, journal=_Journal(),
+                    vault=_Vault(tunnel_token()), token_root=root, journal=_Journal(),
                     signer=HMACReceiptSigner(b"s" * 32))
+
+    def test_provisioned_response_must_match_active_account_tunnel_generation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve() / "tunnels"
+            directory = root / TUNNEL
+            directory.mkdir(parents=True, mode=0o700)
+            os.chmod(root, 0o700)
+            os.chmod(directory, 0o700)
+            selected = SelectedTunnel("te_1", TUNNEL, ACCOUNT, "gen_2",
+                                      "sink_1", "vault_ref_5", os.getuid(), True)
+            with self.assertRaises(RemoteOriginDenied):
+                write_provisioned_tunnel_token("te_1", tunnel_token(), account_id="00000000000000000000000000000000",
+                    tunnel_id=TUNNEL, generation="gen_2", catalog=_Catalog(tunnel=selected),
+                    token_root=root, journal=_Journal(), signer=HMACReceiptSigner(b"s" * 32))
+            with self.assertRaises(RemoteOriginDenied):
+                write_provisioned_tunnel_token("te_1", tunnel_token(tunnel="d1744f8b-faa1-48a4-9e5c-02ac921467fa"),
+                    account_id=ACCOUNT, tunnel_id=TUNNEL, generation="gen_2",
+                    catalog=_Catalog(tunnel=selected), token_root=root, journal=_Journal(),
+                    signer=HMACReceiptSigner(b"s" * 32))
+            token = tunnel_token()
+            receipt = write_provisioned_tunnel_token("te_1", token,
+                account_id=ACCOUNT, tunnel_id=TUNNEL, generation="gen_2",
+                catalog=_Catalog(tunnel=selected), token_root=root, journal=_Journal(),
+                signer=HMACReceiptSigner(b"s" * 32))
+            self.assertEqual(receipt.tunnel_id, TUNNEL)
+            self.assertNotIn(token.decode(), repr(receipt))
 
     def test_origin_requires_live_kernel_proof_and_real_loopback_app_exchange(self):
         selected = SelectedRemoteOrigin("remote_1", "gw_gen", "desktop_gen", "target_1",
             "a" * 64, "policy_rev", "b" * 64, "desktop.example.test",
-            "https://desktop.example.test", True)
+            "https://desktop.example.test", True, "gateway", "gateway-enrollment",
+            "c" * 64, "native", "native-enrollment")
         evidence = KernelOriginEvidence("c" * 64, "gw_gen", "desktop_gen", "target_1",
             "a" * 64, "policy_rev", "b" * 64, True, True, True, True, True, True,
             True, True, True, True, ("pidfd-live", "cgroup-pinned", "route-probed"))
@@ -180,6 +230,11 @@ class RemoteOriginTests(unittest.TestCase):
             with self.assertRaises(RemoteOriginDenied):
                 verify_selected_remote_origin("remote_1", catalog=_Catalog(origin=selected),
                     process_manager=_Manager(denied), gateway_probe=probe, signer=signer)
+            production_adapter = CustodyRemoteOriginProcessManager(_CustodyFixture())
+            evidence = production_adapter.inspect_selected_origin(selected)
+            self.assertEqual(evidence.gateway_generation, "gw_gen")
+            self.assertEqual(evidence.desktop_generation, "desktop_gen")
+            self.assertTrue(evidence.gateway_identity_digest)
         finally:
             probe.close()
 

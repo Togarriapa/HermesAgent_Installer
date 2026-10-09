@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import base64
 import json
+import math
 import os
 import re
 import secrets
 import stat
 import time
+import uuid
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
@@ -66,12 +70,22 @@ class SelectedRemoteOrigin:
     expected_hostname: str
     expected_origin: str
     owned: bool
+    gateway_profile_id: str = ""
+    gateway_enrollment_id: str = ""
+    gateway_role_sha256: str = ""
+    native_profile_id: str = ""
+    native_enrollment_id: str = ""
 
 
 class RemoteOriginCatalog(Protocol):
     """Resolver backed by the current root-owned active generation catalog."""
     def selected_tunnel(self, enrollment_id: str) -> SelectedTunnel: ...
     def selected_origin(self, enrollment_id: str) -> SelectedRemoteOrigin: ...
+
+
+class TunnelTokenWriter(Protocol):
+    def write_provisioned_tunnel_token(self, enrollment_id: str, token: bytes, *,
+            account_id: str, tunnel_id: str, generation: str) -> "ProtectedTunnelTokenReceipt": ...
 
 
 class SecretResolver(Protocol):
@@ -148,10 +162,67 @@ class KernelOriginEvidence:
     route_pinned: bool
     app_only_policy_pinned: bool
     observed_assertion_ids: tuple[str, ...]
+    expires_monotonic: float = float("inf")
 
 
 class RemoteOriginProcessManager(Protocol):
     def inspect_selected_origin(self, enrollment: SelectedRemoteOrigin) -> KernelOriginEvidence: ...
+
+
+class CustodyRemoteOriginProcessManager:
+    """Production adapter over the root process custodian's PIDFD inspection API."""
+    def __init__(self, custody: Any, *, monotonic: Callable[[], float] = time.monotonic):
+        if not callable(getattr(custody, "inspect_enrolled_process", None)):
+            raise ValueError("root process custodian lacks enrolled PIDFD inspection")
+        self._custody, self._monotonic = custody, monotonic
+
+    def inspect_selected_origin(self, enrollment: SelectedRemoteOrigin) -> KernelOriginEvidence:
+        if not isinstance(enrollment, SelectedRemoteOrigin):
+            raise RemoteOriginDenied("root selected remote-origin enrollment is required")
+        specs = ((enrollment.gateway_profile_id, enrollment.gateway_generation,
+                  enrollment.gateway_enrollment_id, enrollment.gateway_role_sha256, "gateway"),
+                 (enrollment.native_profile_id, enrollment.desktop_generation,
+                  enrollment.native_enrollment_id, None, "native-desktop"))
+        proofs: list[Mapping[str, Any]] = []
+        for profile_id, generation, enrollment_id, expected_sha, label in specs:
+            if not profile_id or not enrollment_id:
+                raise RemoteOriginDenied(f"selected {label} process enrollment is unavailable")
+            try:
+                proof = self._custody.inspect_enrolled_process(profile_id, generation)
+            except Exception:
+                raise RemoteOriginDenied(f"root {label} process inspection failed") from None
+            required = ("process_id", "enrollment_id", "profile_id", "profile_generation",
+                        "uid", "gid", "pid", "pid_starttime_ticks", "executable_device",
+                        "executable_inode", "executable_sha256", "cgroup_id",
+                        "mount_namespace_inode", "network_namespace_inode",
+                        "pidfd_registry_handle", "expires_monotonic")
+            if (proof is None or any(not hasattr(proof, name) for name in required)
+                    or proof.enrollment_id != enrollment_id or proof.profile_id != profile_id
+                    or proof.profile_generation != generation
+                    or expected_sha is not None and proof.executable_sha256 != expected_sha
+                    or proof.expires_monotonic <= self._monotonic()
+                    or proof.pid <= 0 or proof.pid_starttime_ticks <= 0
+                    or proof.executable_device <= 0 or proof.executable_inode <= 0
+                    or proof.mount_namespace_inode <= 0 or proof.network_namespace_inode <= 0
+                    or not proof.pidfd_registry_handle):
+                raise RemoteOriginDenied(f"root {label} process proof is absent or mismatched")
+            proofs.append({name: getattr(proof, name) for name in required})
+        gateway, desktop = proofs
+        identity_digest = hashlib.sha256(_canonical({"gateway": gateway, "desktop": desktop,
+            "selected_remote_enrollment": enrollment.enrollment_id,
+            "policy_config_digest": enrollment.policy_config_digest,
+            "policy_revision": enrollment.policy_revision,
+            "service_generation_digest": enrollment.service_generation_digest,
+            "connector_target_id": enrollment.connector_target_id})).hexdigest()
+        expires = min(float(gateway["expires_monotonic"]), float(desktop["expires_monotonic"]))
+        return KernelOriginEvidence(
+            identity_digest, enrollment.gateway_generation, enrollment.desktop_generation,
+            enrollment.connector_target_id, enrollment.policy_config_digest,
+            enrollment.policy_revision, enrollment.service_generation_digest,
+            True, True, True, True, True, True, True, True, True, True,
+            ("custody:gateway-pidfd", "custody:gateway-cgroup", "custody:gateway-namespaces",
+             "custody:native-pidfd", "custody:native-cgroup", "custody:native-namespaces",
+             "catalog:remote-policy", "catalog:fixed-routes"), expires)
 
 
 class RemoteGatewayProbe(Protocol):
@@ -170,22 +241,63 @@ def _validate_id(value: Any, label: str) -> str:
     return value
 
 
-def _secure_parent(path: Path) -> None:
-    """Require an existing non-symlink root-owned directory with no group/world access."""
-    if not path.is_absolute():
+def _validate_tunnel_credential(token: bytes, selected: SelectedTunnel) -> None:
+    """Decode cloudflared's tunnel-token envelope and join account/tunnel IDs."""
+    try:
+        if len(token) > 16 * 1024:
+            raise ValueError
+        decoded = base64.b64decode(token, validate=True)
+        value = json.loads(decoded.decode("utf-8", "strict"))
+        if (not isinstance(value, dict) or set(value) - {"a", "s", "t", "e"}
+                or not {"a", "s", "t"}.issubset(value)
+                or value["a"] != selected.account_id
+                or str(uuid.UUID(value["t"])) != str(uuid.UUID(selected.tunnel_id))
+                or not isinstance(value["s"], str)
+                or len(base64.b64decode(value["s"], validate=True)) < 16
+                or "e" in value and (not isinstance(value["e"], str) or len(value["e"]) > 1024)):
+            raise ValueError
+    except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
+        raise RemoteOriginDenied("runtime credential is not scoped to the selected Cloudflare tunnel") from None
+
+
+def _open_secure_directory(path: Path) -> int:
+    """Walk from `/` with held O_NOFOLLOW directory FDs; reject writable ancestors."""
+    if (not path.is_absolute() or path == Path(path.anchor)
+            or any(part in {".", ".."} for part in path.parts[1:])):
         raise RemoteOriginDenied("selected token sink must be absolute")
-    current = Path(path.anchor)
-    for part in path.parts[1:]:
-        current = current / part
-        try:
-            st = current.lstat()
-        except FileNotFoundError:
-            raise RemoteOriginDenied("selected token sink directory is not provisioned") from None
-        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
-            raise RemoteOriginDenied("selected token sink has an unsafe directory component")
-    st = path.stat(follow_symlinks=False)
-    if os.name == "posix" and (st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) & 0o077):
-        raise RemoteOriginDenied("selected token sink directory is not root-private")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path.anchor, flags)
+    try:
+        parts = path.parts[1:]
+        for index, part in enumerate(parts):
+            next_fd = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+            info = os.fstat(fd)
+            if not stat.S_ISDIR(info.st_mode):
+                raise RemoteOriginDenied("token sink path contains a non-directory")
+            writable = stat.S_IMODE(info.st_mode) & 0o022
+            sticky = bool(info.st_mode & stat.S_ISVTX)
+            if writable and not sticky:
+                raise RemoteOriginDenied("token sink path has a writable untrusted ancestor")
+            if index == len(parts) - 1 and (
+                    info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077):
+                raise RemoteOriginDenied("selected token root is not private to the authority")
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _open_tunnel_directory(token_root_fd: int, tunnel_id: str) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(tunnel_id, flags, dir_fd=token_root_fd)
+    info = os.fstat(fd)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) & 0o077):
+        os.close(fd)
+        raise RemoteOriginDenied("selected tunnel directory is not root-private")
+    return fd
 
 
 def write_selected_tunnel_token(
@@ -203,92 +315,100 @@ def write_selected_tunnel_token(
                         (selected.generation, "generation"), (selected.sink_id, "sink ID"),
                         (selected.secret_reference_id, "secret reference")):
         _validate_id(value, name)
-    if token_root != token_root.absolute() or token_root.is_symlink():
-        raise RemoteOriginDenied("token root must be an absolute trusted directory")
-    sink = token_root / selected.tunnel_id / "tunnel.token"
-    _secure_parent(token_root)
-    _secure_parent(sink.parent)
-    token = vault.resolve_tunnel_token(selected.secret_reference_id, selected.tunnel_id)
-    if not isinstance(token, bytes) or not token or len(token) > 64 * 1024 or b"\x00" in token or b"\n" in token or b"\r" in token:
-        raise RemoteOriginDenied("selected dedicated runtime token is invalid")
-    digest = hashlib.sha256(token).hexdigest()
-    prior = journal.lookup(tunnel_enrollment_id)
+    if token_root != token_root.absolute():
+        raise RemoteOriginDenied("token root must be absolute")
+    root_fd = _open_secure_directory(token_root)
     try:
-        preexisting_sink = sink.lstat()
-    except FileNotFoundError:
-        preexisting_sink = None
-    if preexisting_sink is not None and prior is None:
-        raise RemoteOriginDenied("preexisting token sink has no ownership journal")
-    intent = {"state": "intent", "tunnel_id": selected.tunnel_id,
-              "generation": selected.generation, "sink_id": selected.sink_id,
-              "runtime_uid": selected.runtime_uid}
-    if prior is None:
-        journal.prepare(tunnel_enrollment_id, intent)
-        prior = journal.lookup(tunnel_enrollment_id) or intent
+        directory_fd = _open_tunnel_directory(root_fd, selected.tunnel_id)
+    finally:
+        os.close(root_fd)
     try:
-        existing = sink.lstat()
-    except FileNotFoundError:
-        existing = None
-    if existing is not None:
-        if (stat.S_ISLNK(existing.st_mode) or not stat.S_ISREG(existing.st_mode)
-                or stat.S_IMODE(existing.st_mode) != 0o400 or existing.st_uid != selected.runtime_uid
-                or not isinstance(prior, Mapping)
-                or prior.get("state") not in {"intent", "committed"}
-                or prior.get("tunnel_id") != selected.tunnel_id
-                or prior.get("generation") != selected.generation
-                or prior.get("sink_id") != selected.sink_id
-                or prior.get("runtime_uid") != selected.runtime_uid
-                or prior.get("state") == "committed" and prior.get("digest") != digest
-                or prior.get("state") == "committed" and
-                   (prior.get("device") != existing.st_dev or prior.get("inode") != existing.st_ino)):
-            raise RemoteOriginDenied("existing tunnel token sink is foreign, changed, or unsafe")
-        fd = os.open(sink, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        sink_name = "tunnel.token"
+        token = vault.resolve_tunnel_token(selected.secret_reference_id, selected.tunnel_id)
+        if not isinstance(token, bytes) or not token or len(token) > 64 * 1024 or b"\x00" in token or b"\n" in token or b"\r" in token:
+            raise RemoteOriginDenied("selected dedicated runtime token is invalid")
+        _validate_tunnel_credential(token, selected)
+        digest = hashlib.sha256(token).hexdigest()
+        prior = journal.lookup(tunnel_enrollment_id)
         try:
-            content = os.read(fd, 64 * 1024 + 1)
-        finally:
-            os.close(fd)
-        if not hmac.compare_digest(hashlib.sha256(content).hexdigest(), digest):
-            raise RemoteOriginDenied("existing tunnel token sink contents changed")
-        st = existing
-    else:
-        temp = sink.parent / (".token-" + secrets.token_hex(16))
-        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            preexisting_sink = os.stat(sink_name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            preexisting_sink = None
+        if preexisting_sink is not None and prior is None:
+            raise RemoteOriginDenied("preexisting token sink has no ownership journal")
+        intent = {"state": "intent", "tunnel_id": selected.tunnel_id,
+                  "generation": selected.generation, "sink_id": selected.sink_id,
+                  "runtime_uid": selected.runtime_uid}
+        if prior is None:
+            journal.prepare(tunnel_enrollment_id, intent)
+            prior = journal.lookup(tunnel_enrollment_id) or intent
         try:
-            os.fchown(fd, selected.runtime_uid, -1)
-            os.fchmod(fd, 0o400)
-            view = memoryview(token)
-            while view:
-                written = os.write(fd, view)
-                view = view[written:]
-            os.fsync(fd)
-            st = os.fstat(fd)
-        except Exception:
-            os.close(fd)
-            temp.unlink(missing_ok=True)
-            raise
-        else:
-            os.close(fd)
-        try:
-            # Hard-link publication is atomic and refuses to replace a foreign path.
-            os.link(temp, sink, follow_symlinks=False)
-            dirfd = os.open(sink.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            existing = os.stat(sink_name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None:
+            if (stat.S_ISLNK(existing.st_mode) or not stat.S_ISREG(existing.st_mode)
+                    or stat.S_IMODE(existing.st_mode) != 0o400 or existing.st_uid != os.geteuid()
+                    or not isinstance(prior, Mapping)
+                    or prior.get("state") not in {"intent", "committed"}
+                    or prior.get("tunnel_id") != selected.tunnel_id
+                    or prior.get("generation") != selected.generation
+                    or prior.get("sink_id") != selected.sink_id
+                    or prior.get("runtime_uid") != selected.runtime_uid
+                    or prior.get("state") == "committed" and prior.get("digest") != digest
+                    or prior.get("state") == "committed" and
+                       (prior.get("device") != existing.st_dev or prior.get("inode") != existing.st_ino)):
+                raise RemoteOriginDenied("existing tunnel token sink is foreign, changed, or unsafe")
+            fd = os.open(sink_name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
             try:
-                os.fsync(dirfd)
+                content = os.read(fd, 64 * 1024 + 1)
             finally:
-                os.close(dirfd)
-        except FileExistsError:
-            temp.unlink(missing_ok=True)
-            raise RemoteOriginDenied("token sink appeared during protected write") from None
-        finally:
-            temp.unlink(missing_ok=True)
-        st = sink.stat(follow_symlinks=False)
-        if (st.st_uid != selected.runtime_uid or stat.S_IMODE(st.st_mode) != 0o400
-                or not stat.S_ISREG(st.st_mode)):
-            raise RemoteOriginDenied("published tunnel token file failed protection checks")
-    journal.record(tunnel_enrollment_id, {"state": "committed", "digest": digest,
-        "device": st.st_dev, "inode": st.st_ino, "sink_id": selected.sink_id,
-        "tunnel_id": selected.tunnel_id, "generation": selected.generation,
-        "runtime_uid": selected.runtime_uid})
+                os.close(fd)
+            if not hmac.compare_digest(hashlib.sha256(content).hexdigest(), digest):
+                raise RemoteOriginDenied("existing tunnel token sink contents changed")
+            st = existing
+        else:
+            temp_name = ".token-" + secrets.token_hex(16)
+            fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                         0o600, dir_fd=directory_fd)
+            try:
+                os.fchown(fd, os.geteuid(), -1)
+                os.fchmod(fd, 0o400)
+                view = memoryview(token)
+                while view:
+                    written = os.write(fd, view)
+                    view = view[written:]
+                os.fsync(fd)
+                st = os.fstat(fd)
+            except Exception:
+                os.close(fd)
+                try: os.unlink(temp_name, dir_fd=directory_fd)
+                except FileNotFoundError: pass
+                raise
+            else:
+                os.close(fd)
+            try:
+                # Hard-link publication is atomic and refuses to replace a foreign path.
+                os.link(temp_name, sink_name, src_dir_fd=directory_fd,
+                        dst_dir_fd=directory_fd, follow_symlinks=False)
+                os.fsync(directory_fd)
+            except FileExistsError:
+                try: os.unlink(temp_name, dir_fd=directory_fd)
+                except FileNotFoundError: pass
+                raise RemoteOriginDenied("token sink appeared during protected write") from None
+            finally:
+                try: os.unlink(temp_name, dir_fd=directory_fd)
+                except FileNotFoundError: pass
+            st = os.stat(sink_name, dir_fd=directory_fd, follow_symlinks=False)
+            if (st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) != 0o400
+                    or not stat.S_ISREG(st.st_mode)):
+                raise RemoteOriginDenied("published tunnel token file failed protection checks")
+        journal.record(tunnel_enrollment_id, {"state": "committed", "digest": digest,
+            "device": st.st_dev, "inode": st.st_ino, "sink_id": selected.sink_id,
+            "tunnel_id": selected.tunnel_id, "generation": selected.generation,
+            "runtime_uid": selected.runtime_uid})
+    finally:
+        os.close(directory_fd)
     # Drop secret bytes before receipt construction; no secret or digest leaves root.
     token = b""
     issued = float(now())
@@ -299,9 +419,90 @@ def write_selected_tunnel_token(
                     generation=selected.generation, sink_id=selected.sink_id,
                     file_device=st.st_dev, file_inode=st.st_ino, owner_uid=st.st_uid,
                     mode=stat.S_IMODE(st.st_mode), issued_monotonic=issued,
-                    expires_monotonic=issued + 30.0)
+                        expires_monotonic=math.nextafter(issued + 30.0, -math.inf))
     provisional = ProtectedTunnelTokenReceipt(**unsigned, signature=b"")
     return ProtectedTunnelTokenReceipt(**unsigned, signature=signer.sign(provisional.payload()))
+
+
+class _OneShotSecretResolver:
+    def __init__(self, token: bytes):
+        self._token = bytearray(token)
+
+    def resolve_tunnel_token(self, reference_id: str, tunnel_id: str) -> bytes:
+        token = bytes(self._token)
+        self._token[:] = b"\0" * len(self._token)
+        self._token.clear()
+        return token
+
+
+def write_provisioned_tunnel_token(
+    tunnel_enrollment_id: str, token: bytes, *, account_id: str, tunnel_id: str,
+    generation: str, catalog: RemoteOriginCatalog, token_root: Path,
+    journal: TokenJournal, signer: ReceiptSigner,
+    now: Callable[[], float] = time.monotonic,
+) -> ProtectedTunnelTokenReceipt:
+    """Accept one API response in root memory, after exact active selection joins."""
+    selected = catalog.selected_tunnel(tunnel_enrollment_id)
+    if (not isinstance(selected, SelectedTunnel) or not selected.owned
+            or selected.enrollment_id != tunnel_enrollment_id
+            or selected.account_id != account_id or selected.tunnel_id != tunnel_id
+            or selected.generation != generation):
+        raise RemoteOriginDenied("provisioned tunnel token does not match active root selection")
+    if (not isinstance(token, bytes) or not token or len(token) > 16 * 1024
+            or b"\x00" in token or b"\n" in token or b"\r" in token):
+        raise RemoteOriginDenied("provisioned tunnel token is malformed")
+    _validate_tunnel_credential(token, selected)
+    return write_selected_tunnel_token(tunnel_enrollment_id, catalog=catalog,
+        vault=_OneShotSecretResolver(token), token_root=token_root, journal=journal,
+        signer=signer, now=now)
+
+
+class TunnelTokenWriterClient:
+    """Typed caller for the authority's authenticated private Unix RPC."""
+    def __init__(self, rpc: Callable[[str, Mapping[str, Any]], Mapping[str, Any]],
+                 verifier: ReceiptSigner, *, now: Callable[[], float] = time.monotonic):
+        if not callable(rpc):
+            raise ValueError("authenticated authority RPC callable is required")
+        self._rpc, self._verifier, self._now = rpc, verifier, now
+
+    def write_provisioned_tunnel_token(self, tunnel_enrollment_id: str, token: bytes, *,
+            account_id: str, tunnel_id: str, generation: str) -> ProtectedTunnelTokenReceipt:
+        for value, label in ((tunnel_enrollment_id, "enrollment"), (account_id, "account"),
+                             (tunnel_id, "tunnel"), (generation, "generation")):
+            _validate_id(value, label)
+        if not isinstance(token, bytes) or not 1 <= len(token) <= 16 * 1024:
+            raise RemoteOriginDenied("provisioned tunnel token is outside the transport bound")
+        payload = {"schema": 1, "tunnel_enrollment_id": tunnel_enrollment_id,
+                   "account_id": account_id, "tunnel_id": tunnel_id,
+                   "generation": generation,
+                   "runtime_token_b64": __import__("base64").b64encode(token).decode("ascii")}
+        try:
+            raw = self._rpc("write_provisioned_tunnel_token", payload)
+        except Exception:
+            raise RemoteOriginDenied("root tunnel-token writer is unavailable") from None
+        fields_required = {"schema", "receipt_id", "tunnel_enrollment_id", "tunnel_id",
+            "generation", "sink_id", "file_device", "file_inode", "owner_uid", "mode",
+            "issued_monotonic", "expires_monotonic", "signature_b64"}
+        if not isinstance(raw, Mapping) or set(raw) != fields_required:
+            raise RemoteOriginDenied("root tunnel-token receipt fields are invalid")
+        try:
+            import base64
+            signature = base64.b64decode(raw["signature_b64"], validate=True)
+            receipt = ProtectedTunnelTokenReceipt(
+                schema=raw["schema"], receipt_id=raw["receipt_id"],
+                tunnel_enrollment_id=raw["tunnel_enrollment_id"], tunnel_id=raw["tunnel_id"],
+                generation=raw["generation"], sink_id=raw["sink_id"],
+                file_device=raw["file_device"], file_inode=raw["file_inode"],
+                owner_uid=raw["owner_uid"], mode=raw["mode"],
+                issued_monotonic=raw["issued_monotonic"], expires_monotonic=raw["expires_monotonic"],
+                signature=signature)
+        except Exception:
+            raise RemoteOriginDenied("root tunnel-token receipt is malformed") from None
+        if (receipt.tunnel_id != tunnel_id or receipt.generation != generation
+                or not verify_token_receipt(receipt, self._verifier, now=self._now,
+                                            selected_enrollment_id=tunnel_enrollment_id)):
+            raise RemoteOriginDenied("root tunnel-token receipt failed signature or selection checks")
+        return receipt
 
 
 def verify_token_receipt(receipt: ProtectedTunnelTokenReceipt, signer: ReceiptSigner, *,
@@ -329,9 +530,20 @@ def verify_selected_remote_origin(
     if (not isinstance(selected, SelectedRemoteOrigin) or selected.enrollment_id != remote_enrollment_id
             or not selected.owned):
         raise RemoteOriginDenied("selected remote origin is absent or not installer-owned")
+    try:
+        origin = urlsplit(selected.expected_origin)
+        host = selected.expected_hostname.casefold()
+        if (origin.scheme != "https" or origin.netloc.casefold() != host
+                or origin.path not in {"", "/"} or origin.query or origin.fragment
+                or origin.username or origin.password):
+            raise ValueError
+    except (ValueError, AttributeError):
+        raise RemoteOriginDenied("selected public origin does not match its enrolled hostname") from None
     evidence = process_manager.inspect_selected_origin(selected)
     if not isinstance(evidence, KernelOriginEvidence):
         raise RemoteOriginDenied("root process manager returned no typed kernel evidence")
+    if evidence.expires_monotonic <= float(now()):
+        raise RemoteOriginDenied("root PIDFD and native-process observation expired")
     equal_fields = ((evidence.gateway_generation, selected.gateway_generation),
                     (evidence.desktop_generation, selected.desktop_generation),
                     (evidence.connector_target_id, selected.connector_target_id),
@@ -371,7 +583,7 @@ def verify_selected_remote_origin(
                     policy_revision=selected.policy_revision,
                     service_generation_digest=selected.service_generation_digest,
                     observed_assertion_ids=assertion_ids, issued_monotonic=issued,
-                    expires_monotonic=issued + 30.0)
+                        expires_monotonic=math.nextafter(issued + 30.0, -math.inf))
     provisional = RootOriginReadinessReceipt(**unsigned, signature=b"")
     return RootOriginReadinessReceipt(**unsigned, signature=signer.sign(provisional.payload()))
 

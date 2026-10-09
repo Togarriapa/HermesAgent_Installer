@@ -38,13 +38,18 @@ Host startup and shutdown still require the installer-owned systemd/cgroup super
 
 The active root enrollment selects the Cloudflare tunnel, account, secret
 reference, runtime UID and protected token sink. The root authority resolves
-only the dedicated tunnel credential and writes it to the selected sink with
-mode `0400`; Cloudflare management credentials remain in setup storage. The
-writer uses a durable intent before publishing, atomic create-only publication,
-and an ownership journal containing only the credential digest and file
-identity. A pre-existing or changed sink stops setup without replacement.
-Installer and gateway receipts contain only selected IDs and protected inode
-metadata, never token bytes, token digest, or filesystem path.
+only the dedicated tunnel credential and writes it beneath a root-owned `0700`
+directory to a `0400` file. The unprivileged cloudflared systemd unit receives
+that file through systemd `LoadCredential=`; the service reads only its private
+credential copy, and the gateway receives no token. Cloudflare management
+credentials remain in setup storage. The writer uses a durable intent before
+publishing, descriptor-anchored atomic create-only publication, and an
+ownership journal containing only the credential digest and file identity. A
+pre-existing or changed sink stops setup without replacement. Installer and
+gateway receipts contain only selected IDs and protected inode metadata, never
+token bytes, token digest, or filesystem path.
+The root validates Cloudflare's encoded tunnel-token envelope against the
+selected account and tunnel UUID using the pinned [`cloudflared` 2026.10.0 token fields](https://github.com/cloudflare/cloudflared/blob/2026.10.0/connection/connection.go).
 
 Cloudflare route activation requires a signed, short-lived
 `RootOriginReadinessReceipt` from the root authority. It binds the active
