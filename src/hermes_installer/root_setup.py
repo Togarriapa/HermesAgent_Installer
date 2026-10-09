@@ -164,6 +164,9 @@ class RootBootstrapCandidateSelectionSnapshot:
     tty_rdevice: int
     issued_monotonic: float
     expires_monotonic: float
+    _pidfd: int
+    _tty_fd: int
+    _closed: bool
     _seal: object
 
     def __init__(self, *, _seal: object, **fields: object):
@@ -171,7 +174,23 @@ class RootBootstrapCandidateSelectionSnapshot:
             raise TypeError("root candidate snapshots can only be minted by the selection registry")
         for name, value in fields.items():
             object.__setattr__(self, name, value)
+        object.__setattr__(self, "_closed", False)
         object.__setattr__(self, "_seal", _seal)
+
+    def duplicate_controller_fds(self) -> tuple[int, int]:
+        if self._seal is not _CHOICE_SEAL or self._closed:
+            raise RuntimeError("candidate selection snapshot has no live controller descriptors")
+        return os.dup(self._pidfd), os.dup(self._tty_fd)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        for fd in (self._pidfd, self._tty_fd):
+            if fd >= 0:
+                os.close(fd)
+        object.__setattr__(self, "_pidfd", -1)
+        object.__setattr__(self, "_tty_fd", -1)
+        object.__setattr__(self, "_closed", True)
 
 
 @dataclass(slots=True)
@@ -249,23 +268,31 @@ class RootBootstrapCandidateSelectionRegistry:
         proof = proof_row[1]
         try:
             _verify_root_tty_proof(proof)
-            return RootBootstrapCandidateSelectionSnapshot(
-                _seal=_CHOICE_SEAL,
-                candidate_git_sha=selection.candidate_git_sha,
-                input_origin=selection.input_origin,
-                choice_sha256=selection.choice_sha256,
-                controller_pid=proof.controller_pid,
-                controller_start_ticks=proof.controller_start_ticks,
-                controller_uid=proof.controller_uid,
-                controller_gid=proof.controller_gid,
-                session_id=proof.session_id,
-                process_group_id=proof.process_group_id,
-                tty_device=proof.tty_device,
-                tty_inode=proof.tty_inode,
-                tty_rdevice=proof.tty_rdevice,
-                issued_monotonic=proof.issued_monotonic,
-                expires_monotonic=proof.expires_monotonic,
-            )
+            pidfd, tty_fd = os.dup(proof.pidfd), os.dup(proof.stdin_fd)
+            try:
+                return RootBootstrapCandidateSelectionSnapshot(
+                    _seal=_CHOICE_SEAL,
+                    candidate_git_sha=selection.candidate_git_sha,
+                    input_origin=selection.input_origin,
+                    choice_sha256=selection.choice_sha256,
+                    controller_pid=proof.controller_pid,
+                    controller_start_ticks=proof.controller_start_ticks,
+                    controller_uid=proof.controller_uid,
+                    controller_gid=proof.controller_gid,
+                    session_id=proof.session_id,
+                    process_group_id=proof.process_group_id,
+                    tty_device=proof.tty_device,
+                    tty_inode=proof.tty_inode,
+                    tty_rdevice=proof.tty_rdevice,
+                    issued_monotonic=proof.issued_monotonic,
+                    expires_monotonic=proof.expires_monotonic,
+                    _pidfd=pidfd,
+                    _tty_fd=tty_fd,
+                )
+            except BaseException:
+                os.close(pidfd)
+                os.close(tty_fd)
+                raise
         finally:
             proof.close()
 

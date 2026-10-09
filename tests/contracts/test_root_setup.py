@@ -52,6 +52,12 @@ class RootSetupBoundaryTests(unittest.TestCase):
             snapshot = registry.consume_verified_selection(receipt)
         self.assertEqual(snapshot.controller_pid, os.getpid())
         self.assertEqual(snapshot.controller_start_ticks, 1)
+        controller_pidfd, controller_tty = snapshot.duplicate_controller_fds()
+        self.assertGreaterEqual(os.fstat(controller_pidfd).st_ino, 0)
+        self.assertGreaterEqual(os.fstat(controller_tty).st_ino, 0)
+        os.close(controller_pidfd)
+        os.close(controller_tty)
+        snapshot.close()
         with self.assertRaises(RuntimeError):
             registry.consume_verified_selection(receipt)
 
