@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -301,6 +302,38 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
         assert controller.subject_principal_id == enrollment.principal_id
         assert controller.service_generation_digest == service.service_generation_digest
         os.close(controller.pidfd)
+        with pytest.raises(AuthorityDenied, match="forged, stale, or consumed"):
+            authority.resolve_admitted_task_parent_context(handle, node_id, "caller-selected-context")
+        parent = authority.resolve_admitted_task_parent_context(
+            handle, node_id, observed_sources[-1].source_context_handle,
+        )
+        assert parent is parent_context
+        with pytest.raises(AuthorityDenied, match="forged, stale, or consumed"):
+            authority.resolve_admitted_task_parent_context(
+                handle, node_id, observed_sources[-1].source_context_handle,
+            )
+        task = observed_tasks[-1]
+        selection = {
+            "schema": 1, "enrollment_id": task.process_enrollment_id,
+            "generation": task.process_generation, "operation_id": task.operation_id,
+            "parameters": {}, "admission_handle": handle.handle_id,
+            "node_id": task.node_id, "task_payload_sha256": task.task_payload_sha256,
+            "stdin_sha256": task.stdin_sha256, "stdin_size_bytes": task.stdin_size_bytes,
+        }
+        selection_bytes = json.dumps(selection, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=True).encode("ascii")
+        assert authority.is_admitted_task_current(task, selection_bytes)
+        assert authority.is_task_admission_current(task)
+        assert not authority.is_admitted_task_current(replace(task), selection_bytes)
+        assert not authority.is_task_admission_current(replace(task))
+        stale_selection = dict(selection, admission_handle="forged-handle")
+        stale_bytes = json.dumps(stale_selection, sort_keys=True, separators=(",", ":"),
+                                 ensure_ascii=True).encode("ascii")
+        assert not authority.is_admitted_task_current(task, stale_bytes)
+        original_clock = service.monotonic
+        service.monotonic = lambda: handle.expires_monotonic + 1
+        assert not authority.is_admitted_task_current(task, selection_bytes)
+        service.monotonic = original_clock
         authority.start_task_handle(handle, node_id)
         return RootResourceProcessReceipt(
             job_id=handle.job_id, node_id=handle.node_id,
@@ -385,6 +418,20 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
         nonce="context-nonce", grant_id="context-grant", signature="context-signature",
         source_receipts=(source_receipt,), generation="service-generation",
         operation="resource.job.admit",
+    )
+    service.authority_epoch = "test-epoch"
+    service._verify_context_signature = lambda _context: None
+    service._verify_source_receipt = lambda _receipt, _binding: None
+    service._binding = lambda uid: SimpleNamespace(
+        uid=uid, profile_id=enrollment.profile_id, principal_id=enrollment.principal_id,
+        namespace_id="namespace-1",
+    )
+    service._assert_current_context = lambda _context, _binding, _uid: None
+    service.selected_operation_resolver = lambda enrollment_id, generation, operation, operation_id: SimpleNamespace(
+        operation=operation, operation_id=operation_id,
+        target=binding["child_target_id"], enrollment_id=enrollment_id,
+        generation=generation, profile_id=enrollment.profile_id,
+        principal_id=enrollment.principal_id,
     )
     source_capsule_lineage = {
         "receipt_id": "source-receipt-1", "observer_enrollment_id": "observer-1",
