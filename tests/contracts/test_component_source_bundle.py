@@ -62,15 +62,15 @@ class ComponentSourceBundleTests(unittest.TestCase):
             ("README.md", b"shared root data\n", 0o644, "file"),
         ])
 
-    def make_fetcher(self, archive):
+    def make_fetcher(self, archive, tree_sha=None):
         files = {
-            "LICENSE": b"MIT license fixture\\n",
-            "skills/demo/SKILL.md": b"[helper](scripts/check.py)\\n[shared](../../README.md)\\n",
-            "skills/demo/scripts/check.py": b"print('ok')\\n",
-            "README.md": b"shared root data\\n",
+            "LICENSE": b"MIT license fixture\n",
+            "skills/demo/SKILL.md": b"[helper](scripts/check.py)\n[shared](../../README.md)\n",
+            "skills/demo/scripts/check.py": b"print('ok')\n",
+            "README.md": b"shared root data\n",
         }
         modes = {name: (0o755 if name.endswith(".py") and name != "skills/demo/SKILL.md" else 0o644) for name in files}
-        tree_sha, _ = _git_tree(files, modes)
+        tree_sha = tree_sha or _git_tree(files, modes)[0]
         commit_url = f"https://api.github.com/repos/{self.IDENTITY}/commits/{self.REVISION}"
         commit_body = json.dumps({
             "sha": self.REVISION,
@@ -145,7 +145,7 @@ class ComponentSourceBundleTests(unittest.TestCase):
     def test_rejects_archive_content_that_differs_from_pinned_git_tree(self):
         contract = resolve_component_adapter("affaan-m/ECC")
         changed = archive_bytes(self.IDENTITY, self.REVISION, [
-            ("README.md", b"unexpected content\\n", 0o644, "file"),
+            ("README.md", b"unexpected content\n", 0o644, "file"),
         ])
         with self.assertRaisesRegex(ComponentSourceError, "differ from the pinned Git tree"):
             self.make_fetcher(changed)[0].fetch(contract)
@@ -163,8 +163,12 @@ class ComponentSourceBundleTests(unittest.TestCase):
         broken = archive_bytes(self.IDENTITY, self.REVISION, [
             ("skills/demo/SKILL.md", b"[missing](scripts/missing.py)\n", 0o644, "file"),
         ])
+        broken_files = {"skills/demo/SKILL.md": b"[missing](scripts/missing.py)\n"}
+        broken_tree_sha = _git_tree(
+            broken_files, {"skills/demo/SKILL.md": 0o644}
+        )[0]
         with self.assertRaisesRegex(ComponentSourceError, "referenced file or directory is missing"):
-            self.make_fetcher(broken)[0].fetch(contract)
+            self.make_fetcher(broken, broken_tree_sha)[0].fetch(contract)
 
 
 if __name__ == "__main__":
