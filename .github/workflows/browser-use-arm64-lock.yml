@@ -1,0 +1,63 @@
+name: Browser Use ARM64 lock review
+on:
+  push:
+    branches:
+      - codex/luna-component-adapters
+    paths:
+      - .github/workflows/browser-use-arm64-lock.yml
+permissions:
+  contents: read
+jobs:
+  resolve-lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SOURCE_REVISION: c75e8476e26d18b7617643bc2ae082fae8eae431
+      TARGET_PLATFORM: aarch64-unknown-linux-gnu
+      TARGET_PYTHON: "3.14"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned installer checkout action
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # setup-uv v10.1.0
+        with:
+          version: 0.12.23
+          enable-cache: false
+      - name: Resolve source-pinned lock for ARM64 Linux and Python 3.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="\${RUNNER_TEMP}/browser-use-source"
+          output_dir="\${RUNNER_TEMP}/browser-use-lock-evidence"
+          git init "$source_dir"
+          git -C "$source_dir" remote add origin https://github.com/browser-use/browser-use.git
+          git -C "$source_dir" fetch --depth=1 origin "$SOURCE_REVISION"
+          git -C "$source_dir" checkout --detach FETCH_HEAD
+          test "$(git -C "$source_dir" rev-parse HEAD)" = "$SOURCE_REVISION"
+          cd "$source_dir"
+          uv --version
+          uv lock --python "$TARGET_PYTHON" --python-platform "$TARGET_PLATFORM"
+          uv lock --locked --python "$TARGET_PYTHON" --python-platform "$TARGET_PLATFORM"
+          mkdir -m 0700 -p "$output_dir"
+          cp pyproject.toml uv.lock "$output_dir/"
+          python - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          directory = pathlib.Path(os.environ["RUNNER_TEMP"]) / "browser-use-lock-evidence"
+          source = pathlib.Path(os.environ["RUNNER_TEMP"]) / "browser-use-source"
+          record = {
+              "source_revision": os.environ["SOURCE_REVISION"],
+              "source_url": "https://github.com/browser-use/browser-use",
+              "python": os.environ["TARGET_PYTHON"],
+              "platform": os.environ["TARGET_PLATFORM"],
+              "uv_version": subprocess.check_output(["uv", "--version"], text=True).strip(),
+              "pyproject_sha256": hashlib.sha256((source / "pyproject.toml").read_bytes()).hexdigest(),
+              "uv_lock_sha256": hashlib.sha256((source / "uv.lock").read_bytes()).hexdigest(),
+              "generated_in_ci": True,
+              "installed_dependencies": False,
+          }
+          (directory / "provenance.json").write_text(json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # upload-artifact v4
+        with:
+          name: browser-use-aarch64-python314-lock
+          path: \${{ runner.temp }}/browser-use-lock-evidence/
+          if-no-files-found: error
+          retention-days: 7
