@@ -20,22 +20,32 @@ A dedicated least-privilege verifier SHALL hold the read credential in protected
 
 ### Requirement: Fresh exact Access membership authority (RP03)
 
-Before initial authorization, socket opening and each separate protected-HTTP renewal, the verifier SHALL freshly read the exact owned app, complete bounded app-policy set and selected identity-provider resource, match sole intended OTP IdP, exact hostname and explicit email policy with no broadened/unsupported rules, and deny errors, conflicts, missing pages, unsupported policy semantics or stale observations. Valid JWT signatures and a fresh HTTP request alone SHALL not establish current policy membership.
+The verifier SHALL freshly enforce exact current application, complete policy set, OTP provider and principal membership before session issue, socket opening and every protected-HTTP renewal, denying unavailable, changed or unsupported authority.
 
 #### Scenario: RP03 enforced effect
 
 - **WHEN** a still-valid JWT is presented after allowed-email removal, extra policy addition, IdP replacement or read failure
 - **THEN** no new grant or lease extension occurs; the previous bounded lease expires without fallback; malformed/order-only policy responses are interpreted with explicit safe semantics
 
+
+#### Scenario: RP03 complete observation and denial
+
+- **WHEN** current authorization is requested from the read verifier
+- **THEN** Before initial authorization, socket opening and each separate protected-HTTP renewal, the verifier SHALL freshly read the exact owned app, complete bounded app-policy set and selected identity-provider resource, match sole intended OTP IdP, exact hostname and explicit email policy with no broadened/unsupported rules, and deny errors, conflicts, missing pages, unsupported policy semantics or stale observations. Valid JWT signatures and a fresh HTTP request alone SHALL not establish current policy membership.
 ### Requirement: Bounded freshness and cancellable read decisions (RP04)
 
-Each verifier request SHALL have a hard total deadline at most9 seconds including bounded TLS reads/pages/retries, bounded workers/queue and cancellation that cannot leave accumulating secret-bearing tasks. Decisions SHALL be single-use, bound to authenticated peer/principal/app/config/nonce and monotonic observation interval. Lease deadline SHALL be no later than read-start+60 seconds or JWT expiry; watchdog SHALL stop input/output within5 seconds of the deadline. Late results SHALL never renew expired/cancelled sessions.
+Verifier decisions SHALL be fresh, single-use and principal/session/config bound, with cancellable bounded workers and a total read deadline at most9 seconds. Lease end SHALL not exceed read-start+60 seconds or JWT expiry; input/output watchdog SHALL run within5 seconds.
 
 #### Scenario: RP04 enforced effect
 
 - **WHEN** a renewal read hangs or completes9 seconds after a policy removal concurrent with the read
 - **THEN** existing lease is not extended while waiting; pending operation is bounded and discarded on timeout/cancel; read latency does not add to60-second authorization age; no accumulating threads or replayed allow
 
+
+#### Scenario: RP04 cancelled stale and replayed authority
+
+- **WHEN** an authorization operation queues, completes, times out or is cancelled
+- **THEN** Each verifier request SHALL have a hard total deadline at most9 seconds including bounded TLS reads/pages/retries, bounded workers/queue and cancellation that cannot leave accumulating secret-bearing tasks. Decisions SHALL be single-use, bound to authenticated peer/principal/app/config/nonce and monotonic observation interval. Lease deadline SHALL be no later than read-start+60 seconds or JWT expiry; watchdog SHALL stop input/output within5 seconds of the deadline. Late results SHALL never renew expired/cancelled sessions.
 ### Requirement: Read-role lifecycle and secret preservation (RP05)
 
 Setup SHALL retain management credential only in secure setup custody and SHALL never mint API tokens using assumed administrator grants. Read credential rotation/expiry/revocation, disable, restart, update, backup/restore and uninstall SHALL preserve ownership, securely reference credentials, invalidate old decisions and fail closed until current authority is verified. Uninstall SHALL remove only owned local credential artifacts, never revoke or delete unowned account tokens/resources.
