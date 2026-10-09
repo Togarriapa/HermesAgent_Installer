@@ -209,3 +209,10 @@ Installer-owned MCP calls SHALL retain exact protected server/tool/schema and sa
 #### Scenario: Configured direct transport bypass
 - **WHEN** an installer-owned entry attempts direct worker effects instead of the selected broker
 - **THEN** no MCP bytes or credentials are forwarded.
+
+### Requirement: Installed closure and native construction joins
+The implementation SHALL use the applicable exact root release and native assembly joins in the v33 amendment before activating selected runtime behavior.
+
+#### Scenario: First input precedes provider pending pair
+- **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
+- **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors

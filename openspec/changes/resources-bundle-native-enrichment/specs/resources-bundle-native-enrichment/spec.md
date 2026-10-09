@@ -247,3 +247,10 @@ The implementation SHALL apply the exact root registry, principal-selection and 
 #### Scenario: Static selection lacks actual runtime proof
 - **WHEN** an actual current role, display, source event or terminal execution receipt is absent
 - **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence
+
+### Requirement: Installed closure and native construction joins
+The implementation SHALL use the applicable exact root release and native assembly joins in the v33 amendment before activating selected runtime behavior.
+
+#### Scenario: First input precedes provider pending pair
+- **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
+- **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors
