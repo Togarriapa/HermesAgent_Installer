@@ -9,10 +9,13 @@ enrollment. Every child is dispatched through the service's exact protected
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import math
 import os
 import secrets
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -21,11 +24,14 @@ from hermes_installer.registry.resource_jobs import (
     ResourceBackendEnrollment,
     ResourceBodyRecipe,
     ResourceBodyRecipeField,
+    ResourceBodyRecipeScope,
     ResourceJobAdmission,
     ResourceJobDenied,
     ResourceJobEnrollment,
     ResourceJobLedger,
     ResourceJobNode,
+    ResourceScopeBinding,
+    ResourceValidator,
 )
 from .service import AuthorityService, EffectAuthorization
 from .types import AuthorityDenied, HostContext, Sensitivity, canonical_digest
@@ -50,10 +56,20 @@ _BACKEND_FIELDS = {
     "approved_action_ids", "operation", "target_id", "recipient",
     "credential_reference_ids", "request_schema_id", "result_schema_id", "body_recipe_id",
     "scope_binding_id", "maximum_request_bytes", "maximum_response_bytes", "maximum_seconds",
+    "profile_generation", "execution_binding",
 }
 _BODY_RECIPE_FIELDS = {
     "id", "schema_id", "source_artifact_id", "source_sha256", "output_fields",
     "scope_bindings", "maximum_bytes",
+}
+_SCOPE_BINDING_FIELDS = {
+    "id", "resource_id", "profile_id", "principal_id", "resource_generation",
+    "profile_generation", "backend_enrollment_id", "fixed_fields",
+    "credential_reference_ids", "recipient",
+}
+_RESOURCE_VALIDATOR_FIELDS = {
+    "id", "kind", "maximum_bytes", "minimum", "maximum", "allowed_values",
+    "schema_artifact_id", "schema_sha256",
 }
 
 
@@ -92,6 +108,8 @@ def parse_resource_backend_records(records: Any) -> Mapping[str, ResourceBackend
                 maximum_request_bytes=raw["maximum_request_bytes"],
                 maximum_response_bytes=raw["maximum_response_bytes"],
                 maximum_seconds=raw["maximum_seconds"],
+                profile_generation=raw["profile_generation"],
+                execution_binding=raw["execution_binding"],
             )
         except (TypeError, ValueError, ResourceJobDenied):
             raise AuthorityDenied("resource.backend", "protected backend row is invalid") from None
@@ -111,10 +129,13 @@ def parse_resource_body_recipes(records: Any) -> Mapping[str, ResourceBodyRecipe
             raise AuthorityDenied("resource.recipe", "protected body recipe fields are invalid")
         outputs = raw["output_fields"]
         scopes = raw["scope_bindings"]
-        if (not isinstance(outputs, list) or not isinstance(scopes, Mapping)
+        if (not isinstance(outputs, list) or not isinstance(scopes, list)
                 or any(not isinstance(item, Mapping)
                        or set(item) != {"name", "source", "value", "validator_id"}
-                       for item in outputs)):
+                       for item in outputs)
+                or any(not isinstance(item, Mapping)
+                       or set(item) != {"name", "scope_binding_id", "field", "validator_id"}
+                       for item in scopes)):
             raise AuthorityDenied("resource.recipe", "protected body recipe contents are malformed")
         try:
             recipe = ResourceBodyRecipe(
@@ -123,7 +144,9 @@ def parse_resource_body_recipes(records: Any) -> Mapping[str, ResourceBodyRecipe
                 output_fields=tuple(ResourceBodyRecipeField(
                     item["name"], item["source"], item["value"], item["validator_id"]
                 ) for item in outputs),
-                scope_bindings=dict(scopes), maximum_bytes=raw["maximum_bytes"],
+                scope_bindings=tuple(ResourceBodyRecipeScope(
+                    item["name"], item["scope_binding_id"], item["field"], item["validator_id"]
+                ) for item in scopes), maximum_bytes=raw["maximum_bytes"],
             )
         except (TypeError, ValueError, ResourceJobDenied):
             raise AuthorityDenied("resource.recipe", "protected body recipe is invalid") from None
@@ -133,9 +156,70 @@ def parse_resource_body_recipes(records: Any) -> Mapping[str, ResourceBodyRecipe
     return MappingProxyType(result)
 
 
+def parse_resource_scope_binding_records(records: Any) -> Mapping[str, ResourceScopeBinding]:
+    """Parse exact active scope rows; never resolve credentials from their IDs."""
+    if not isinstance(records, (list, tuple)) or len(records) > 4096:
+        raise AuthorityDenied("resource.scope", "protected scope catalog is malformed")
+    result: dict[str, ResourceScopeBinding] = {}
+    for raw in records:
+        if not isinstance(raw, Mapping) or set(raw) != _SCOPE_BINDING_FIELDS:
+            raise AuthorityDenied("resource.scope", "protected scope row fields are invalid")
+        try:
+            if (not isinstance(raw["fixed_fields"], Mapping)
+                    or not isinstance(raw["credential_reference_ids"], list)
+                    or any(not isinstance(item, str) for item in raw["credential_reference_ids"])):
+                raise ValueError
+            scope = ResourceScopeBinding(
+                scope_binding_id=raw["id"], resource_id=raw["resource_id"],
+                profile_id=raw["profile_id"], principal_id=raw["principal_id"],
+                resource_generation=raw["resource_generation"],
+                profile_generation=raw["profile_generation"],
+                backend_enrollment_id=raw["backend_enrollment_id"],
+                fixed_fields=raw["fixed_fields"],
+                credential_reference_ids=frozenset(raw["credential_reference_ids"]),
+                recipient=raw["recipient"],
+            )
+        except (TypeError, ValueError, ResourceJobDenied):
+            raise AuthorityDenied("resource.scope", "protected scope row is invalid") from None
+        if scope.scope_binding_id in result:
+            raise AuthorityDenied("resource.scope", "protected scope ID is duplicated")
+        result[scope.scope_binding_id] = scope
+    return MappingProxyType(result)
+
+
+def parse_resource_validator_records(records: Any) -> Mapping[str, ResourceValidator]:
+    """Parse the closed validator catalog; strict JSON schema artifacts remain a root join."""
+    if not isinstance(records, (list, tuple)) or len(records) > 4096:
+        raise AuthorityDenied("resource.validator", "protected validator catalog is malformed")
+    result: dict[str, ResourceValidator] = {}
+    for raw in records:
+        if not isinstance(raw, Mapping) or set(raw) != _RESOURCE_VALIDATOR_FIELDS:
+            raise AuthorityDenied("resource.validator", "protected validator row fields are invalid")
+        try:
+            allowed = raw["allowed_values"]
+            if allowed is not None and not isinstance(allowed, list):
+                raise ValueError
+            validator = ResourceValidator(
+                validator_id=raw["id"], kind=raw["kind"],
+                maximum_bytes=raw["maximum_bytes"], minimum=raw["minimum"],
+                maximum=raw["maximum"],
+                allowed_values=tuple(allowed) if allowed is not None else None,
+                schema_artifact_id=raw["schema_artifact_id"],
+                schema_sha256=raw["schema_sha256"],
+            )
+        except (TypeError, ValueError, ResourceJobDenied):
+            raise AuthorityDenied("resource.validator", "protected validator row is invalid") from None
+        if validator.validator_id in result:
+            raise AuthorityDenied("resource.validator", "protected validator ID is duplicated")
+        result[validator.validator_id] = validator
+    return MappingProxyType(result)
+
+
 def resource_job_enrollment_from_record(
         record: Mapping[str, Any], *, backend_enrollments: Mapping[str, ResourceBackendEnrollment],
-        body_recipes: Mapping[str, ResourceBodyRecipe]) -> ResourceJobEnrollment:
+        body_recipes: Mapping[str, ResourceBodyRecipe],
+        scope_bindings: Mapping[str, ResourceScopeBinding],
+        validators: Mapping[str, ResourceValidator]) -> ResourceJobEnrollment:
     """Parse one exact root-protected RB07 selected-job record."""
     fields = {
         "resource_id", "kind", "selected_enabled", "profile_id", "principal_id",
@@ -143,7 +227,7 @@ def resource_job_enrollment_from_record(
         "credential_reference_ids", "recipient_scope", "source_policy",
         "schedule_or_route_id", "max_children", "max_concurrency",
         "max_runtime_seconds", "max_payload_bytes", "max_replay_entries", "enrollment_id",
-        "source_issuer_channel_id", "observer_enrollment_id", "backend_enrollment_id",
+        "source_issuer_channel_id", "observer_enrollment_id",
         "approved_dag",
     }
     if not isinstance(record, Mapping) or set(record) != fields:
@@ -160,6 +244,7 @@ def resource_job_enrollment_from_record(
         if not isinstance(raw, Mapping) or set(raw) != {
             "node_id", "resource_id", "action_id", "operation", "target_id", "recipient",
             "request_schema_id", "body_recipe_id", "depends_on", "maximum_attempts",
+            "backend_enrollment_id", "result_schema_id", "scope_binding_id",
         }:
             raise AuthorityDenied("resource.enrollment", "protected resource job node fields are invalid")
         try:
@@ -169,7 +254,7 @@ def resource_job_enrollment_from_record(
             recipe_record = body_recipes.get(recipe)
             if not isinstance(recipe_record, ResourceBodyRecipe):
                 raise ValueError
-            payload = recipe_record.render_literals()
+            payload = recipe_record.template_payload()
             dependencies = raw["depends_on"]
             if not isinstance(dependencies, list):
                 raise ValueError
@@ -178,9 +263,25 @@ def resource_job_enrollment_from_record(
                 target=raw["target_id"], recipient=raw["recipient"], payload=payload,
                 depends_on=tuple(dependencies), maximum_attempts=raw["maximum_attempts"],
                 request_schema_id=raw["request_schema_id"], body_recipe_id=recipe,
+                backend_enrollment_id=raw["backend_enrollment_id"],
+                result_schema_id=raw["result_schema_id"],
+                scope_binding_id=raw["scope_binding_id"],
             ))
         except (TypeError, ValueError, ResourceJobDenied):
             raise AuthorityDenied("resource.enrollment", "protected resource job node is invalid") from None
+    backend_ids = {node.backend_enrollment_id for node in nodes}
+    if not backend_ids <= set(backend_enrollments):
+        raise AuthorityDenied("resource.enrollment", "selected DAG node backend is absent")
+    profile_generations = {backend_enrollments[item].profile_generation for item in backend_ids}
+    if len(profile_generations) != 1:
+        raise AuthorityDenied("resource.enrollment", "selected DAG spans service profile generations")
+    required_recipe_ids = {node.body_recipe_id for node in nodes}
+    for backend_id in backend_ids:
+        binding = backend_enrollments[backend_id].execution_binding
+        if binding is not None:
+            required_recipe_ids.add(binding["task_body_recipe_id"])
+    if not required_recipe_ids <= set(body_recipes):
+        raise AuthorityDenied("resource.enrollment", "selected node or task body recipe is absent")
     try:
         for name in ("approved_action_ids", "fixed_target_ids", "credential_reference_ids",
                      "recipient_scope", "source_policy"):
@@ -205,11 +306,20 @@ def resource_job_enrollment_from_record(
             enrollment_id=record["enrollment_id"],
             source_issuer_channel_id=record["source_issuer_channel_id"],
             observer_enrollment_id=record["observer_enrollment_id"],
-            backend_enrollment_id=record["backend_enrollment_id"],
+            backend_enrollment_id="",
             credential_reference_ids=frozenset(record["credential_reference_ids"]),
-            backend=backend_enrollments.get(record["backend_enrollment_id"]),
-            body_recipes={node.body_recipe_id: body_recipes[node.body_recipe_id]
-                          for node in nodes},
+            backend=None,
+            body_recipes={recipe_id: body_recipes[recipe_id] for recipe_id in required_recipe_ids},
+            backends={node.backend_enrollment_id: backend_enrollments[node.backend_enrollment_id]
+                      for node in nodes},
+            profile_generation=next(iter(profile_generations)),
+            scope_bindings={backend.scope_binding_id: scope_bindings[backend.scope_binding_id]
+                            for backend in (backend_enrollments[item] for item in backend_ids)},
+                validators={validator_id: validators[validator_id] for recipe in
+                        (body_recipes[recipe_id] for recipe_id in required_recipe_ids)
+                        for validator_id in ({field.validator_id for field in recipe.output_fields}
+                                             | {field.validator_id for field in recipe.scope_bindings})
+                        if validator_id in validators},
         )
     except (TypeError, ValueError, ResourceJobDenied):
         raise AuthorityDenied("resource.enrollment", "protected resource job enrollment is invalid") from None
@@ -225,8 +335,10 @@ def resource_job_enrollment_from_record(
 
 def index_resource_job_records(
         records: Any, *, backend_enrollments: Mapping[str, ResourceBackendEnrollment],
-        body_recipes: Mapping[str, ResourceBodyRecipe], source_issuers: Mapping[str, Any],
-        source_observers: Mapping[str, Any]) -> Mapping[tuple[str, str], ResourceJobEnrollment]:
+        body_recipes: Mapping[str, ResourceBodyRecipe],
+        scope_bindings: Mapping[str, ResourceScopeBinding],
+        validators: Mapping[str, ResourceValidator], source_issuers: Any,
+        source_observers: Any) -> Mapping[tuple[str, str], ResourceJobEnrollment]:
     """Build an immutable index from strictly joined root digest-verified records.
 
     Rows without an exact active backend, source issuer, and root observer join
@@ -234,27 +346,40 @@ def index_resource_job_records(
     """
     if not isinstance(records, (list, tuple)) or len(records) > 692:
         raise AuthorityDenied("resource.enrollment", "protected resource job catalog is malformed")
+    source_issuers = _index_catalog(source_issuers, "issuer_channel_id", "source issuer")
+    source_observers = _index_catalog(source_observers, "observer_enrollment_id", "source observer")
     result: dict[tuple[str, str], ResourceJobEnrollment] = {}
     for raw in records:
         try:
             enrollment = resource_job_enrollment_from_record(
-                raw, backend_enrollments=backend_enrollments, body_recipes=body_recipes)
+                raw, backend_enrollments=backend_enrollments, body_recipes=body_recipes,
+                scope_bindings=scope_bindings, validators=validators)
             issuer = source_issuers.get(enrollment.source_issuer_channel_id)
             observer = source_observers.get(enrollment.observer_enrollment_id)
-            backend = enrollment.backend
-            if (issuer is None or observer is None or backend is None
+            backends = tuple(enrollment.backends.values())
+            if (issuer is None or observer is None or not backends
                     or getattr(issuer, "issuer_channel_id", None) != enrollment.source_issuer_channel_id
                     or getattr(issuer, "observer_enrollment_id", None) != enrollment.observer_enrollment_id
-                    or getattr(issuer, "generation", None) != enrollment.generation
+                    or getattr(issuer, "generation", None) != enrollment.profile_generation
                     or getattr(issuer, "producer_profile_id", None) != enrollment.profile_id
                     or getattr(observer, "observer_enrollment_id", None) != enrollment.observer_enrollment_id
                     or getattr(observer, "channel_id", None) != enrollment.source_issuer_channel_id
                     or getattr(observer, "profile_id", None) != enrollment.profile_id
                     or getattr(observer, "principal_id", None) != enrollment.principal_id
-                    or getattr(observer, "generation", None) != enrollment.generation
+                    or getattr(observer, "generation", None) != enrollment.profile_generation
+                    or getattr(observer, "origin_id", None) != enrollment.schedule_or_route_id
+                    or getattr(observer, "capture_schema_id", None) != getattr(issuer, "capture_schema_id", None)
+                    or getattr(observer, "source_action_id", None) not in getattr(issuer, "source_action_ids", ())
                     or getattr(observer, "source_kind", None) not in enrollment.source_policy
-                    or backend.backend_id != enrollment.backend_enrollment_id):
+                    or any(backend.profile_generation != enrollment.profile_generation
+                           for backend in backends)):
                 continue
+            enrollment = replace(
+                enrollment,
+                source_capture_schema_id=getattr(issuer, "capture_schema_id", ""),
+                source_action_ids=frozenset(getattr(issuer, "source_action_ids", ())),
+                source_parent_channels=frozenset(getattr(issuer, "allowed_parent_channels", ())),
+            )
         except (AuthorityDenied, KeyError, TypeError, ValueError):
             # A single malformed/unjoined resource is unavailable without
             # invalidating unrelated digest-verified enrollments.
@@ -266,6 +391,21 @@ def index_resource_job_records(
     return MappingProxyType(result)
 
 
+def _index_catalog(records: Any, key_field: str, name: str) -> Mapping[str, Any]:
+    """Accept the loader's immutable row tuple or an already keyed root catalog."""
+    if isinstance(records, Mapping):
+        return records
+    if not isinstance(records, (tuple, list)) or len(records) > 4096:
+        raise AuthorityDenied("resource.enrollment", f"protected {name} catalog is malformed")
+    indexed: dict[str, Any] = {}
+    for record in records:
+        key = getattr(record, key_field, None)
+        if not isinstance(key, str) or not key or key in indexed:
+            raise AuthorityDenied("resource.enrollment", f"protected {name} catalog has invalid identities")
+        indexed[key] = record
+    return MappingProxyType(indexed)
+
+
 @dataclass(frozen=True, slots=True)
 class _JobEvent:
     enrollment: ResourceJobEnrollment
@@ -273,6 +413,71 @@ class _JobEvent:
     source_receipt_ids: tuple[str, ...]
     sensitivity: Sensitivity
     lineage_hash: str
+    event_fields: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class RootResourceProcessReceipt:
+    """Validated wire receipt from the root-only profile task launcher.
+
+    This DTO does not prove a task completed. The terminal and result-capsule
+    handles must still be resolved by the root-owned process/result services.
+    """
+
+    job_id: str
+    node_id: str
+    backend_enrollment_id: str
+    process_id: str
+    process_generation: str
+    native_package_generation: str
+    task_payload_sha256: str
+    parent_closure_digest: str
+    terminal_receipt_handle: str
+    result_capsule_handle: str
+    expires_monotonic: float
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "RootResourceProcessReceipt":
+        fields = {
+            "schema", "job_id", "node_id", "backend_enrollment_id", "process_id",
+            "process_generation", "native_package_generation", "task_payload_sha256",
+            "parent_closure_digest", "terminal_receipt_handle", "result_capsule_handle",
+            "expires_monotonic",
+        }
+        if (not isinstance(value, Mapping) or set(value) != fields
+                or type(value["schema"]) is not int or value["schema"] != 1):
+            raise AuthorityDenied("resource.process_receipt", "root process receipt fields are invalid")
+        try:
+            receipt = cls(**{key: value[key] for key in fields - {"schema"}})
+        except (TypeError, ValueError):
+            raise AuthorityDenied("resource.process_receipt", "root process receipt is malformed") from None
+        for name in ("job_id", "node_id", "backend_enrollment_id", "process_id",
+                     "process_generation", "native_package_generation",
+                     "terminal_receipt_handle", "result_capsule_handle"):
+            if not isinstance(getattr(receipt, name), str) or not getattr(receipt, name):
+                raise AuthorityDenied("resource.process_receipt", "root process receipt identity is invalid")
+        for name in ("task_payload_sha256", "parent_closure_digest"):
+            digest = getattr(receipt, name)
+            if not isinstance(digest, str) or len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+                raise AuthorityDenied("resource.process_receipt", "root process receipt digest is invalid")
+        if (isinstance(receipt.expires_monotonic, bool)
+                or not isinstance(receipt.expires_monotonic, (int, float))
+                or not math.isfinite(receipt.expires_monotonic)):
+            raise AuthorityDenied("resource.process_receipt", "root process receipt expiry is invalid")
+        return receipt
+
+    def assert_bound(self, *, job_id: str, node_id: str, backend: ResourceBackendEnrollment,
+                     payload: bytes, parent_closure_digest: str, now: float,
+                     job_expires_monotonic: float) -> None:
+        if (self.job_id != job_id or self.node_id != node_id
+                or self.backend_enrollment_id != backend.backend_id
+                or backend.execution_binding is None
+                or self.process_generation != backend.execution_binding["process_generation"]
+                or self.native_package_generation != backend.native_package_generation
+                or self.task_payload_sha256 != hashlib.sha256(payload).hexdigest()
+                or self.parent_closure_digest != parent_closure_digest
+                or not now < self.expires_monotonic <= job_expires_monotonic):
+            raise AuthorityDenied("resource.process_receipt", "root process receipt does not bind this selected task")
 
 
 class ResourceJobAuthority:
@@ -305,14 +510,21 @@ class ResourceJobAuthority:
         self.enrollments = MappingProxyType(dict(enrollments))
         self.ledger = ledger
         self.selected_generation = selected_generation
+        self._event_lock = threading.RLock()
+        self._event_fields_by_job: dict[str, tuple[bytearray, float]] = {}
+        self._event_field_reservations: dict[str, bytearray] = {}
+        self._event_field_bytes = 0
 
     def handlers(self) -> Mapping[tuple[str, str], Callable[..., Mapping[str, Any]]]:
         """Return exact protected handler registrations; absent joins stay absent."""
         handlers: dict[tuple[str, str], Callable[..., Mapping[str, Any]]] = {}
         for enrollment in self.enrollments.values():
-            if (not isinstance(enrollment.backend, ResourceBackendEnrollment)
-                    or enrollment.backend.backend_id != enrollment.backend_enrollment_id
-                    or set(enrollment.body_recipes) != {node.body_recipe_id for node in enrollment.nodes}):
+            expected_recipes = {node.body_recipe_id for node in enrollment.nodes}
+            for backend in enrollment.backends.values():
+                if backend.execution_binding is not None:
+                    expected_recipes.add(backend.execution_binding["task_body_recipe_id"])
+            if (set(enrollment.backends) != {node.backend_enrollment_id for node in enrollment.nodes}
+                    or set(enrollment.body_recipes) != expected_recipes):
                 # Metadata-only jobs are never routable. The root assembly
                 # must supply a fully joined backend and all fixed recipes.
                 continue
@@ -323,7 +535,7 @@ class ResourceJobAuthority:
                 child_target = self._child_target(enrollment, node)
                 self._require_rule("resource.job.child.admit", child_target, node.recipient,
                                    require_handler=False)
-                backend = enrollment.backend
+                backend = enrollment.backends[node.backend_enrollment_id]
                 if (node.effect != backend.operation or node.target != backend.target_id
                         or node.recipient != backend.recipient
                         or node.action_id not in backend.approved_action_ids
@@ -376,30 +588,26 @@ class ResourceJobAuthority:
                     or tuple(sorted(item.receipt_id for item in receipts))
                     != tuple(sorted(request["source_receipt_ids"]))):
                 raise AuthorityDenied("resource.source", "job source closure differs from the consumed signed receipt set")
-            required_kind = _SOURCE_KIND_BY_KIND.get(enrollment.kind)
-            if any((required_kind is not None and item.source_kind != required_kind)
-                   or item.profile_id != enrollment.profile_id
-                   or item.principal_id != enrollment.principal_id
-                   or item.uid != authorization.uid
-                   or item.issuer_id != enrollment.source_issuer_channel_id
-                   or item.source_kind not in enrollment.source_policy
-                   or not item.origin_id.startswith(enrollment.schedule_or_route_id + ":")
-                   or any(node.recipient is not None and node.recipient not in item.recipient_ceiling
-                          for node in enrollment.nodes)
-                   for item in receipts):
-                raise AuthorityDenied("resource.source", "signed source receipt is outside the selected source policy")
-            event_ids = {item.origin_id.rsplit(":", 1)[-1] for item in receipts}
-            if len(event_ids) != 1 or request["event_id"] not in event_ids:
-                raise AuthorityDenied("resource.source", "event identity does not match root-observed source evidence")
-            current_generation = self._resource_generation(enrollment)
-            admission = self.ledger.admit_job(
-                enrollment, event_id=request["event_id"],
-                verified_source_receipt_ids=tuple(item.receipt_id for item in receipts),
-                current_generation=current_generation,
-                ttl_seconds=min(enrollment.max_runtime_seconds, max(1, int(timeout))),
-                parent_lineage_hash=authorization.lineage_hash,
-                parent_sensitivity=authorization.sensitivity.value,
+            selected_fields, _capsule = self._consume_selected_event_capsule(
+                enrollment, context=context, authorization=authorization,
+                peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                receipts=receipts, requested_event_id=request["event_id"],
             )
+            reservation = self._reserve_event_fields(selected_fields)
+            try:
+                current_generation = self._resource_generation(enrollment)
+                admission = self.ledger.admit_job(
+                    enrollment, event_id=request["event_id"],
+                    verified_source_receipt_ids=tuple(item.receipt_id for item in receipts),
+                    current_generation=current_generation,
+                    ttl_seconds=min(enrollment.max_runtime_seconds, max(1, int(timeout))),
+                    parent_lineage_hash=authorization.lineage_hash,
+                    parent_sensitivity=authorization.sensitivity.value,
+                )
+            except Exception:
+                self._discard_event_field_reservation(reservation)
+                raise
+            self._promote_event_fields(reservation, admission.job_id, admission.expires_monotonic)
             body = _canonical({
                 "schema": 1, "job_id": admission.job_id, "resource_id": enrollment.resource_id,
                 "generation": enrollment.generation, "approved_dag_sha256": admission.approved_dag_sha256,
@@ -457,6 +665,9 @@ class ResourceJobAuthority:
             self.ledger.finish_child(child, result_receipt_ids=(response["receipt_id"],),
                                      success=successful,
                                      current_generation=self._resource_generation(enrollment))
+            if not self.ledger.is_job_active(
+                    child.job_id, current_generation=self._resource_generation(enrollment)):
+                self._discard_job_event_fields(child.job_id)
             if not successful:
                 response = {**response, "headers": {**response["headers"],
                                                      "x-resource-child-admission-id": child.admission_id}}
@@ -472,8 +683,8 @@ class ResourceJobAuthority:
         backend, action, recipient, target, or request body.
         """
         enrollment = event.enrollment
-        backend = enrollment.backend
         node = enrollment.node_map.get(child.node_id)
+        backend = enrollment.backends.get(node.backend_enrollment_id) if node else None
         recipe = enrollment.body_recipes.get(node.body_recipe_id) if node else None
         if (not isinstance(backend, ResourceBackendEnrollment)
                 or node is None or recipe is None
@@ -484,7 +695,10 @@ class ResourceJobAuthority:
                 or node.body_recipe_id != backend.body_recipe_id):
             raise AuthorityDenied("resource.backend", "child does not resolve to its protected backend")
         try:
-            request_body = recipe.render_literals()
+            request_body = recipe.render(
+                backend=backend, scope_bindings=enrollment.scope_bindings,
+                validators=enrollment.validators, event_fields=event.event_fields, parent_results={},
+            )
         except ResourceJobDenied:
             raise AuthorityDenied("resource.backend", "dynamic body recipe resolver is unavailable") from None
         if len(request_body) > backend.maximum_request_bytes:
@@ -558,6 +772,152 @@ class ResourceJobAuthority:
         return {"status": response["status"], "body": response_body,
                 "headers": response["headers"], "receipt_id": response["receipt_id"]}
 
+    def _consume_selected_event_capsule(
+            self, enrollment: ResourceJobEnrollment, *, context: HostContext,
+            authorization: EffectAuthorization, peer_pid: int, peer_pidfd: int | None,
+            receipts: Sequence[Any], requested_event_id: str) -> tuple[Mapping[str, Any], Any]:
+        """Consume one selected root capsule and retain only validated recipe fields."""
+        registry = getattr(self.service, "source_observer_registry", None)
+        observers = getattr(registry, "observers", None)
+        observer = observers.get(enrollment.observer_enrollment_id) if isinstance(observers, Mapping) else None
+        if (observer is None or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0):
+            raise AuthorityDenied("resource.source", "root observer capsule registry or live peer is unavailable")
+        expected_kind = _SOURCE_KIND_BY_KIND.get(enrollment.kind)
+        primary = [receipt for receipt in receipts
+                   if receipt.profile_id == enrollment.profile_id
+                   and receipt.principal_id == enrollment.principal_id
+                   and receipt.uid == authorization.uid
+                   and (expected_kind is None or receipt.source_kind == expected_kind)
+                   and receipt.source_kind in enrollment.source_policy
+                   and receipt.origin_id == f"{observer.origin_id}:{requested_event_id}"]
+        if len(primary) != 1:
+            raise AuthorityDenied("resource.source", "one exact signed root-observed source receipt is required")
+        source_receipt = primary[0]
+        if any(node.recipient is not None and node.recipient not in source_receipt.recipient_ceiling
+               for node in enrollment.nodes):
+            raise AuthorityDenied("resource.source", "observed source recipient ceiling is too narrow")
+        receipt_ids = {item.receipt_id for item in receipts}
+        if len(receipt_ids) != len(receipts):
+            raise AuthorityDenied("resource.source", "signed source closure repeats a receipt")
+        if any(item.source_kind not in observer.allowed_parent_source_kinds
+               for item in receipts if item.receipt_id != source_receipt.receipt_id):
+            raise AuthorityDenied("resource.source", "source parent kind is outside the selected observer closure")
+        try:
+            handle = registry.lookup_source_handle(
+                source_receipt.receipt_id, signed_context=context, peer_uid=authorization.uid,
+                peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            )
+            capsule = registry.consume_source_payload_capsule(
+                handle, signed_context=context, peer_uid=authorization.uid,
+                peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            )
+        except Exception:
+            raise AuthorityDenied("resource.source", "root source payload capsule is unavailable or already consumed") from None
+        if (capsule.receipt_id != source_receipt.receipt_id
+                or capsule.observer_enrollment_id != enrollment.observer_enrollment_id
+                or capsule.event_record_id != requested_event_id
+                or capsule.source_kind not in enrollment.source_policy
+                or expected_kind is not None and capsule.source_kind != expected_kind
+                or capsule.channel_id != enrollment.source_issuer_channel_id
+                or capsule.capture_schema_id != enrollment.source_capture_schema_id
+                or capsule.source_action_id not in enrollment.source_action_ids
+                or capsule.profile_id != enrollment.profile_id
+                or capsule.principal_id != enrollment.principal_id
+                or capsule.generation != enrollment.profile_generation
+                or observer.source_action_id != capsule.source_action_id
+                or observer.capture_schema_id != capsule.capture_schema_id
+                or set(capsule.parent_receipt_ids) != receipt_ids - {source_receipt.receipt_id}
+                or capsule.parent_closure_digest != canonical_digest(capsule.parent_receipt_ids)
+                or hashlib.sha256(capsule.payload_bytes).hexdigest() != capsule.payload_sha256
+                or len(capsule.payload_bytes) > enrollment.max_payload_bytes):
+            raise AuthorityDenied("resource.source", "captured source capsule does not join the selected generation")
+        try:
+            content = json.loads(capsule.payload_bytes.decode("utf-8"))
+            if not isinstance(content, dict) or _canonical(content) != capsule.payload_bytes:
+                raise ValueError
+            selected: dict[str, Any] = {}
+            for recipe in enrollment.body_recipes.values():
+                for field in recipe.output_fields:
+                    if field.source != "observed-event-field":
+                        continue
+                    name = field.value
+                    if name not in content:
+                        raise ResourceJobDenied("selected event field is missing from its captured schema")
+                    validator = enrollment.validators[field.validator_id]
+                    value = validator.validate_scalar(content[name])
+                    if name in selected and selected[name] != value:
+                        raise ResourceJobDenied("event field has incompatible selected validators")
+                    selected[name] = value
+            selected_payload = _canonical(selected)
+            if len(selected_payload) > enrollment.max_payload_bytes:
+                raise ResourceJobDenied("selected event fields exceed the job payload bound")
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, ResourceJobDenied):
+            raise AuthorityDenied("resource.source", "captured event bytes fail selected field validation") from None
+        return MappingProxyType(selected), capsule
+
+    def _reserve_event_fields(self, values: Mapping[str, Any]) -> str:
+        payload = bytearray(_canonical(dict(values)))
+        now = self.service.monotonic()
+        with self._event_lock:
+            self._prune_event_fields_locked(now)
+            if (len(self._event_fields_by_job) + len(self._event_field_reservations) >= 1024
+                    or self._event_field_bytes + len(payload) > 8 * 1024 * 1024):
+                payload[:] = b"\x00" * len(payload)
+                raise AuthorityDenied("resource.capacity", "root selected event-field store is full")
+            token = secrets.token_urlsafe(32)
+            self._event_field_reservations[token] = payload
+            self._event_field_bytes += len(payload)
+            return token
+
+    def _promote_event_fields(self, token: str, job_id: str, expires: float) -> None:
+        with self._event_lock:
+            payload = self._event_field_reservations.pop(token, None)
+            if payload is None or job_id in self._event_fields_by_job:
+                if payload is not None:
+                    self._event_field_bytes -= len(payload)
+                    payload[:] = b"\x00" * len(payload)
+                raise AuthorityDenied("resource.capacity", "root event-field admission reservation is stale")
+            self._event_fields_by_job[job_id] = (payload, expires)
+
+    def _discard_event_field_reservation(self, token: str) -> None:
+        with self._event_lock:
+            payload = self._event_field_reservations.pop(token, None)
+            if payload is not None:
+                self._event_field_bytes -= len(payload)
+                payload[:] = b"\x00" * len(payload)
+
+    def _discard_job_event_fields(self, job_id: str) -> None:
+        with self._event_lock:
+            row = self._event_fields_by_job.pop(job_id, None)
+            if row is not None:
+                self._event_field_bytes -= len(row[0])
+                row[0][:] = b"\x00" * len(row[0])
+
+    def _prune_event_fields_locked(self, now: float) -> None:
+        for job_id, (payload, expires) in tuple(self._event_fields_by_job.items()):
+            if expires <= now:
+                self._event_fields_by_job.pop(job_id, None)
+                self._event_field_bytes -= len(payload)
+                payload[:] = b"\x00" * len(payload)
+
+    def _load_event_fields(self, job_id: str) -> Mapping[str, Any]:
+        now = self.service.monotonic()
+        with self._event_lock:
+            self._prune_event_fields_locked(now)
+            row = self._event_fields_by_job.get(job_id)
+            if row is None:
+                raise AuthorityDenied("resource.source", "root event fields expired or are unavailable")
+            try:
+                value = json.loads(bytes(row[0]).decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self._discard_job_event_fields(job_id)
+                raise AuthorityDenied("resource.source", "root event-field capsule is corrupt") from None
+            if not isinstance(value, dict):
+                self._discard_job_event_fields(job_id)
+                raise AuthorityDenied("resource.source", "root event-field capsule has invalid shape")
+            return MappingProxyType(value)
+
     def _assert_selected_context(self, context: HostContext, authorization: EffectAuthorization,
                                  enrollment: ResourceJobEnrollment, operation: str) -> None:
         if (context.profile_id != enrollment.profile_id or context.principal_id != enrollment.principal_id
@@ -587,10 +947,12 @@ class ResourceJobAuthority:
         try:
             admission = self.ledger.load_admission(job_id, enrollment=enrollment)
             receipts, lineage, sensitivity = self.ledger.job_provenance(job_id, enrollment=enrollment)
-            event = _JobEvent(enrollment, admission, receipts, Sensitivity(sensitivity), lineage)
+            event = _JobEvent(enrollment, admission, receipts, Sensitivity(sensitivity), lineage,
+                              self._load_event_fields(job_id))
         except (ResourceJobDenied, ValueError):
             raise AuthorityDenied("resource.job", "job is outside the selected resource generation") from None
         if not self.ledger.is_job_active(job_id, current_generation=self._resource_generation(enrollment)):
+            self._discard_job_event_fields(job_id)
             raise AuthorityDenied("resource.job", "resource job is cancelled or expired")
         return event
 
