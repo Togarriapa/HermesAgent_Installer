@@ -247,3 +247,10 @@ The installer SHALL use finite source-bound request/recipe/validator IDs with ro
 #### Scenario: Caller supplies scope or model launch parameters
 - **WHEN** caller attempts to replace root scope, URI, device or fixed build/inference parameters
 - **THEN** reject before backend/launch bytes and preserve exact incomplete native evidence.
+
+### Requirement: Protected runtime assembly identities
+The installer SHALL load strict root-owned active generation catalogs, verify immutable native closure/device kernel isolation, attest actual successful build output dynamically and sign the exact full connector effect payload digest.
+
+#### Scenario: Preclaimed build hash or partial effect digest
+- **WHEN** output was not actually attested after terminal success, closure/import/device identity differs or grant signs only partial payload
+- **THEN** deny activation/effect without permissive fallback and preserve truthful failure/native evidence.

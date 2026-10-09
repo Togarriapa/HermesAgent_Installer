@@ -195,3 +195,10 @@ The installer SHALL expose distinct one-shot asset and leased WebSocket admissio
 #### Scenario: Asset handle reused for WebSocket or caller chooses connector
 - **WHEN** caller reuses consumed asset admission, selects target/path or sends frame after root lease expiry
 - **THEN** reject before bytes and close owned relay without localcontext or raw FD bypass.
+
+### Requirement: Protected runtime assembly identities
+The installer SHALL load strict root-owned active generation catalogs, verify immutable native closure/device kernel isolation, attest actual successful build output dynamically and sign the exact full connector effect payload digest.
+
+#### Scenario: Preclaimed build hash or partial effect digest
+- **WHEN** output was not actually attested after terminal success, closure/import/device identity differs or grant signs only partial payload
+- **THEN** deny activation/effect without permissive fallback and preserve truthful failure/native evidence.
