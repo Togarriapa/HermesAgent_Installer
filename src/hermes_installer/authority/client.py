@@ -32,6 +32,7 @@ _OPERATIONS = frozenset({
     "memory.search", "memory.export", "memory.delete", "memory.extract",
     "memory.embed", "memory.enqueue", "memory.result", "host.write", "alert.deliver",
     "process.start", "process.status", "process.read", "process.write", "process.stop",
+    "artifact.fetch", "package.install",
 })
 
 
@@ -298,6 +299,40 @@ class AuthorityClient:
             raise AuthorityDenied("effect.binding", "process control payload digest does not match grant")
         return self.perform_effect(authorization, operation=operation, payload=payload,
                                    timeout=timeout, cancelled=cancelled)
+
+    def fetch_artifact(self, authorization: EffectAuthorization, *, target: str,
+                       artifact_id: str, sha256: str, max_bytes: int,
+                       timeout: float = 30.0,
+                       cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
+        """Fetch a root-enrolled immutable artifact; callers cannot supply URLs or paths."""
+        if (target != f"artifact:{artifact_id}:{sha256}"
+                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", artifact_id)
+                or not re.fullmatch(r"[0-9a-f]{64}", sha256)
+                or type(max_bytes) is not int or not 1 <= max_bytes <= 8 * 1024 * 1024 * 1024):
+            raise AuthorityDenied("artifact.binding", "artifact identity or size bound is invalid")
+        payload = canonical_bytes({"schema": 1, "artifact_id": artifact_id,
+                                   "sha256": sha256, "max_bytes": max_bytes})
+        if authorization.target != target or canonical_digest(payload) != authorization.request_digest:
+            raise AuthorityDenied("artifact.binding", "artifact request does not match its host grant")
+        return self.perform_effect(authorization, operation="artifact.fetch", payload=payload,
+                                   timeout=min(timeout, MAX_TIMEOUT), cancelled=cancelled)
+
+    def install_package(self, authorization: EffectAuthorization, *, target: str,
+                        package_id: str, version: str, artifact_sha256: str,
+                        timeout: float = 30.0,
+                        cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
+        """Install only a root-enrolled pinned package through the host installer identity."""
+        if (target != f"package:{package_id}:{version}:{artifact_sha256}"
+                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", package_id)
+                or not re.fullmatch(r"[A-Za-z0-9+_.-]{1,128}", version)
+                or not re.fullmatch(r"[0-9a-f]{64}", artifact_sha256)):
+            raise AuthorityDenied("package.binding", "package identity or pinned artifact is invalid")
+        payload = canonical_bytes({"schema": 1, "package_id": package_id,
+                                   "version": version, "artifact_sha256": artifact_sha256})
+        if authorization.target != target or canonical_digest(payload) != authorization.request_digest:
+            raise AuthorityDenied("package.binding", "package request does not match its host grant")
+        return self.perform_effect(authorization, operation="package.install", payload=payload,
+                                   timeout=min(timeout, MAX_TIMEOUT), cancelled=cancelled)
 
     @staticmethod
     def _check_binding(grant: EffectAuthorization, target: str, recipient: str | None, digest: str) -> None:

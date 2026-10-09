@@ -6,12 +6,12 @@ from .client import (
 )
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
-    Sensitivity, VerifiedEffectAuthorization, canonical_digest,
+    Sensitivity, VerifiedEffectAuthorization, canonical_bytes, canonical_digest,
 )
 
 __all__ = [
     "AuthorityClient", "AuthorityDenied", "BrokeredEffectResponse",
     "EffectAuthorization", "HostContext", "Sensitivity",
-    "VerifiedEffectAuthorization", "canonical_digest", "canonical_profile_target",
+    "VerifiedEffectAuthorization", "canonical_bytes", "canonical_digest", "canonical_profile_target",
     "profile_launch_envelope", "DEFAULT_SOCKET_PATH",
 ]
