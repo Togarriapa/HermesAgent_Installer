@@ -35,7 +35,17 @@ class GatewayRuntime:
         if self.profile_id!="hermes-desktop":raise ValueError("only the pinned Hermes Desktop profile may be exposed")
     def principal(self,request,method,path):
         return authorize_request(token=request.headers.get("Cf-Access-Jwt-Assertion"),policy=self.policy,method=method,path=path,host=request.headers.get("Host",""),origin=request.headers.get("Origin"),now=self.clock)
+    def assert_current_access(self, principal):
+        authority = self.policy_current
+        try:
+            if authority is None or authority(principal.email) is not True:
+                raise GatewayDenied("fresh Access policy authority denied")
+        except GatewayDenied:
+            raise
+        except Exception:
+            raise GatewayDenied("fresh Access policy authority unavailable") from None
     def create_lease(self,principal):
+        self.assert_current_access(principal)
         key=secrets.token_urlsafe(24)
         for old_key,old in tuple(self.leases.items()):
             try:old.authorize_frame(now=self.monotonic())
@@ -121,6 +131,7 @@ def create_app(runtime:GatewayRuntime):
         if set(request.query)!={"lease","profile","nonce"} or request.query["profile"]!=runtime.profile_id:raise GatewayDenied("socket profile/lease binding required")
         key=request.query["lease"];lease=runtime.leases.get(key)
         if lease is None or (lease.principal.subject,lease.principal.email)!=(p.subject,p.email):raise GatewayDenied("socket/principal mismatch")
+        runtime.assert_current_access(p)
         lease.claim_socket(request.query["nonce"],now=runtime.monotonic())
         from yarl import URL
         up=urlsplit(runtime.upstream);wsurl=URL.build(scheme="ws",host=up.hostname,port=up.port or 80,path="/")

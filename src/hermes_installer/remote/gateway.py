@@ -83,7 +83,11 @@ class SocketLease:
   if self._closed or now>=self.expires_at or now>=self.max_jwt_expiry:self._closed=True;raise GatewayDenied("WebSocket authorization lease expired")
  def renew(self,fresh:Principal,*,challenge:str,now:float,wall_now:float,policy_current:Callable[[str],bool]|None,requested_seconds:int=60):
   self.authorize_frame(now=now)
-  if (not secrets.compare_digest(challenge,self._renew_nonce) or fresh.subject!=self.principal.subject or fresh.email.casefold()!=self.principal.email.casefold() or policy_current is None or not policy_current(fresh.email)):
+  try:
+   member=policy_current is not None and policy_current(fresh.email) is True
+  except Exception:
+   member=False
+  if (not secrets.compare_digest(challenge,self._renew_nonce) or fresh.subject!=self.principal.subject or fresh.email.casefold()!=self.principal.email.casefold() or not member):
    self._closed=True;raise GatewayDenied("fresh protected HTTP membership renewal was denied")
   remaining=fresh.expires_at-wall_now
   if remaining<=0:self._closed=True;raise GatewayDenied("renewal token expired")

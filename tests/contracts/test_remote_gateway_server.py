@@ -78,7 +78,7 @@ class RemoteGatewayAuthorizedFlowTests(unittest.IsolatedAsyncioTestCase):
    return socket
   upstream_app.router.add_get("/index.html",index);upstream_app.router.add_get("/css/client.css",css);upstream_app.router.add_get("/",echo)
   self.upstream=TestServer(upstream_app);await self.upstream.start_server()
-  runtime=GatewayRuntime(self.policy,upstream=str(self.upstream.make_url("/")),monotonic=lambda:self.monotonic[0],policy_current=lambda email:email=="owner@example.net",max_lease_seconds=1,watchdog_seconds=1)
+  self.membership=[True]\n  runtime=GatewayRuntime(self.policy,upstream=str(self.upstream.make_url("/")),monotonic=lambda:self.monotonic[0],policy_current=lambda email:self.membership[0] and email=="owner@example.net",max_lease_seconds=1,watchdog_seconds=1)
   self.gateway=TestClient(TestServer(create_app(runtime)));await self.gateway.start_server()
   self.headers={"Host":self.policy.hostname,"Origin":"https://"+self.policy.hostname,"Cf-Access-Jwt-Assertion":self.token}
  async def asyncTearDown(self):
@@ -98,6 +98,14 @@ class RemoteGatewayAuthorizedFlowTests(unittest.IsolatedAsyncioTestCase):
   self.assertEqual(renewed.status,200);fresh=(await renewed.json())["renewal_challenge"]
   replay=await self.gateway.post("/renew",headers=self.headers,json={"lease_id":session["lease_id"],"challenge":session["renewal_challenge"]})
   self.assertEqual(replay.status,403);self.assertNotEqual(fresh,session["renewal_challenge"])
+ async def test_fresh_policy_removal_denies_initial_issue_and_same_jwt_renewal(self):
+  created=await self.gateway.post("/session",headers=self.headers)
+  self.assertEqual(created.status,200);session=await created.json()
+  self.membership[0]=False
+  denied=await self.gateway.post("/renew",headers=self.headers,json={"lease_id":session["lease_id"],"challenge":session["renewal_challenge"]})
+  self.assertEqual(denied.status,403)
+  new_session=await self.gateway.post("/session",headers=self.headers)
+  self.assertEqual(new_session.status,403)
  async def test_binary_websocket_is_closed_by_monotonic_lease_watchdog(self):
   from aiohttp import WSMsgType
   created=await self.gateway.post("/session",headers=self.headers);self.assertEqual(created.status,200);session=await created.json()
