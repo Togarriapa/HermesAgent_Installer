@@ -63,7 +63,7 @@ class RemoteGatewayPacketTests(unittest.IsolatedAsyncioTestCase):
  async def test_unauthorized_asset_session_renew_and_websocket_are_rejected_before_upstream(self):
   host={"Host":"desk.example.net","Origin":"https://desk.example.net"}
   for method,path in (("GET","/client/index.html"),("POST","/session"),("POST","/renew")):
-   async with self.subTest(method=method,path=path):
+   with self.subTest(method=method,path=path):
     response=await self.client.request(method,path,headers=host)
     self.assertEqual(response.status,403);self.assertEqual(await response.text(),"Forbidden")
   from aiohttp.client_exceptions import WSServerHandshakeError
@@ -77,7 +77,7 @@ class FixtureVerifier:
  async def authorize(self,*,action,session_id,access_jwt,expected):
   self.actions.append((action,session_id))
   if not self.membership[0]:raise GatewayDenied("fixture policy removed")
-  start=self.monotonic[0];jwt_deadline=start+max(0,expected.expires_at-self.wall)
+  start=self.monotonic();jwt_deadline=start+max(0,expected.expires_at-self.wall)
   from hermes_installer.remote.verifier_ipc import PolicyGrant
   return PolicyGrant(action,session_id,expected,start,start,jwt_deadline,min(start+60,jwt_deadline),"a"*64,"b"*40)
 
