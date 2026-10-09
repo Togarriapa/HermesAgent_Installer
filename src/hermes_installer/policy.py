@@ -119,6 +119,28 @@ class DispatchPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class DispatchAuthorization:
+    """Short-lived host-issued authority for one provider dispatch.
+
+    A verifier must derive principal, namespace and effective sensitivity from
+    its trusted host/broker state. Values supplied by a DispatchContext are only
+    correlation claims and never grant access by themselves.
+    """
+    principal_id: str
+    profile_id: str
+    namespace: str
+    trace_id: str
+    capabilities: frozenset[str]
+    effective_sensitivity: Sensitivity
+    policy_revision: str
+    grant_id: str
+    expires_at_monotonic: float
+
+
+ContextAuthorizer = Callable[[DispatchContext, str, float], DispatchAuthorization | None]
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderResponse:
     status: int
     body: bytes
@@ -290,11 +312,39 @@ class Dispatcher:
     """Bounded shared gate for primary inference, tools, memory extraction and retries."""
 
     def __init__(self, policy: DispatchPolicy, ledger: BudgetLedger, transport: Transport, *,
+                 context_authorizer: ContextAuthorizer | None = None,
                  clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep):
         self.policy, self.ledger, self.transport = policy, ledger, transport
+        # Missing host authorization intentionally makes this dispatcher unusable.
+        # Test fixtures must inject an explicit synthetic authorizer.
+        self.context_authorizer = context_authorizer
         self.clock, self.sleep = clock, sleep
         self._lock = threading.Lock()
         self._active: set[str] = set()
+
+    def _authorize(self, context: DispatchContext, capability: str) -> DispatchAuthorization:
+        authorizer = self.context_authorizer
+        now = self.clock()
+        if authorizer is None:
+            raise PolicyDenied("authorization.unavailable", "Trusted host provider authorization is unavailable")
+        if context.cancelled():
+            raise PolicyDenied("dispatch.cancelled", "Request was cancelled before provider authorization")
+        try:
+            grant = authorizer(context, capability, now)
+        except Exception:
+            raise PolicyDenied("authorization.failed", "Trusted host provider authorization failed") from None
+        if not isinstance(grant, DispatchAuthorization):
+            raise PolicyDenied("authorization.denied", "Trusted host denied this provider capability")
+        if (not grant.principal_id or not grant.profile_id or not grant.namespace
+                or not grant.trace_id or not grant.policy_revision or not grant.grant_id
+                or grant.profile_id != context.profile_id or grant.trace_id != context.trace_id
+                or capability not in grant.capabilities
+                or not isinstance(grant.effective_sensitivity, Sensitivity)
+                or not math.isfinite(grant.expires_at_monotonic)
+                or grant.expires_at_monotonic <= now
+                or grant.expires_at_monotonic - now > 3600):
+            raise PolicyDenied("authorization.stale", "Host provider authorization is stale, mismatched, or insufficient")
+        return grant
 
     def _wait(self, context: DispatchContext, delay: float, deadline: float) -> None:
         remaining = min(max(0.0, delay), max(0.0, deadline - self.clock()))
@@ -328,7 +378,9 @@ class Dispatcher:
                 raise PolicyDenied("dispatch.cancelled", "Request was cancelled")
             if started >= deadline:
                 raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
-            sensitivity = context.effective_sensitivity
+            capability = "tool-call" if tool_request else "inference"
+            initial_authorization = self._authorize(context, capability)
+            sensitivity = initial_authorization.effective_sensitivity
             if sensitivity == Sensitivity.PUBLIC:
                 first = self.policy.public_route
             else:
@@ -371,6 +423,13 @@ class Dispatcher:
                     remaining = deadline - self.clock()
                     if remaining <= 0:
                         raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
+                    current_authorization = self._authorize(context, capability)
+                    if (current_authorization.grant_id != initial_authorization.grant_id
+                            or current_authorization.policy_revision != initial_authorization.policy_revision
+                            or current_authorization.effective_sensitivity != sensitivity):
+                        raise PolicyDenied("authorization.changed", "Host authorization changed during provider routing")
+                    if current_authorization.expires_at_monotonic <= self.clock():
+                        raise PolicyDenied("authorization.expired", "Host authorization expired before provider dispatch")
                     reservation = self.ledger.reserve(estimate, self.policy.metered_budget_usd)
                     timeout = min(self.policy.max_retry_after_seconds or remaining, remaining)
                     if timeout <= 0:
