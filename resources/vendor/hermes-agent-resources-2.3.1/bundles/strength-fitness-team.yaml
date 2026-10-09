@@ -1,0 +1,21 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: strength-fitness-team
+  version: 1.0.0
+  description: Internal fitness team covering general coaching, bodybuilding, calisthenics, powerlifting, strength and conditioning, mobility, and endurance.
+  tags: [bundle, fitness, strength, conditioning]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.3.0
+      - fitness-coach@^1.0.0
+      - bodybuilding-coach@^1.0.0
+      - calisthenics-coach@^1.0.0
+      - powerlifting-coach@^1.0.0
+      - strength-conditioning-coach@^1.0.0
+      - mobility-flexibility-coach@^1.0.0
+      - endurance-conditioning-coach@^1.0.0
+  policy:
+    diagnosis: deny
+    unsafeEnhancementDrugAdvice: deny

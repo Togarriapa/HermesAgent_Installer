@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: change-adoption
+  version: 1.0.1
+  description: "Plan and measure adoption of organizational or product change through stakeholder evidence, behavior, capability, support, and outcome signals."
+  tags: [management, change, adoption, organization]
+spec:
+  purpose: "Increase sustained adoption without treating communication activity or mandate compliance as proof of successful change."
+  procedure:
+    - "Define the change, affected groups, target behaviors or outcomes, timing, dependencies, and consequences of failed or partial adoption."
+    - "Map stakeholder incentives, capability gaps, workflow friction, communication needs, support channels, and likely resistance using evidence rather than stereotypes."
+    - "Plan staged communication, training, enablement, feedback, reinforcement, and accountable ownership with reversible checkpoints where feasible."
+    - "Measure actual use and outcome indicators, investigate variance across groups, and adapt support or design instead of escalating pressure by default."
+  verification:
+    - target-behaviors-and-outcomes-are-measurable
+    - adoption-evidence-is-distinct-from-communication-activity
+    - resistance-and-support-needs-are-investigated
+  sideEffects: none

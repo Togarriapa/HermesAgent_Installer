@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: legal-issue-spotting
+  version: 1.0.1
+  description: "Identify potentially material legal issues from facts while separating observed facts, assumptions, jurisdiction, authority, and questions requiring qualified counsel."
+  tags: [law, issue-spotting, analysis, research]
+spec:
+  purpose: "Turn a factual scenario into a prioritized legal research map without pretending that issue identification is a definitive legal conclusion."
+  procedure:
+    - "Establish jurisdiction, relevant dates, parties, relationships, events, assets, procedural status, and which facts are known versus assumed."
+    - "Map plausible substantive, procedural, regulatory, contractual, liability, rights, remedy, limitations, jurisdictional, and evidentiary issues that materially fit the facts."
+    - "Prioritize issues by consequence, time sensitivity, factual support, and authority needed, while recording missing facts that could change the analysis."
+    - "Convert the issue map into specific research questions and escalation points, distinguishing general information from questions requiring licensed local advice."
+  verification:
+    - issues-are-grounded-in-stated-facts-and-jurisdiction
+    - missing-facts-and-time-sensitive-questions-are-visible
+    - issue-spotting-is-not-presented-as-final-legal-advice
+  sideEffects: none

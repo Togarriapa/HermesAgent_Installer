@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: interface-visual-design
+  version: 1.0.0
+  description: Create coherent interface hierarchy, typography, spacing, layout, responsive composition, and visual affordances.
+  tags: [ui, visual-design, interface]
+spec:
+  procedure:
+    - Establish information hierarchy and interaction priority before decorative treatment.
+    - Use consistent typography, spacing, alignment, density, iconography, and component states.
+    - Design across relevant viewport sizes and input modes.
+    - Check contrast, legibility, focus, and visual cues as part of the design rather than after it.

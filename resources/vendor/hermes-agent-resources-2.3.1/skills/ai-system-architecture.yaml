@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: ai-system-architecture
+  version: 1.0.1
+  description: Design AI systems across models, retrieval, tools, agents, data, security, observability, reliability, cost, and deployment boundaries.
+  tags: [ai, architecture, systems, reliability]
+spec:
+  purpose: Turn product and operational requirements into a bounded, testable AI architecture with explicit trust and failure boundaries.
+  procedure:
+    - Elicit functional goals, latency and cost budgets, privacy constraints, availability targets, data classifications, tool authority, regulatory needs, and expected workload characteristics.
+    - Decompose the system into model, retrieval, memory, tool, agent, queue, storage, API, identity, policy, and observability components and define contracts between them.
+    - Draw trust boundaries and data flows, identify where untrusted content enters, where credentials or side effects exist, and where authorization must be checked independently of model output.
+    - Compare architecture options using reliability, scalability, operability, security, vendor lock-in, total cost, rollback, and degradation behavior rather than model quality alone.
+    - Produce deployment, migration, verification, monitoring, capacity, incident-response, and rollback plans and validate critical paths with representative end-to-end tests.
+  verification:
+    - Every external side effect and sensitive data flow must have an explicit authorization and trust boundary.
+    - Architecture decisions must trace to requirements and include failure, recovery, and observability behavior.

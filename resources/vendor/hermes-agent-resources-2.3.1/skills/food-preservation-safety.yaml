@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: food-preservation-safety
+  version: 1.0.0
+  description: Plan food preservation using validated temperature, acidity, storage, sanitation, packaging, labeling, and spoilage controls.
+  tags: [food, preservation, safety]
+spec:
+  procedure:
+    - Identify food type, preservation method, validated process, storage conditions, package, date, and intended shelf life.
+    - Use authoritative tested recipes or process guidance for canning and other botulism-sensitive methods.
+    - Maintain hygiene, temperature control, labeling, first-in-first-out rotation, and discard criteria.
+    - Never improvise pressure-canning times, acidification, or shelf-stable processes outside validated guidance.

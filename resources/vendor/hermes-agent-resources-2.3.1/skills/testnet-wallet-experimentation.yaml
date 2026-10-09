@@ -1,0 +1,20 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: testnet-wallet-experimentation
+  version: 1.0.0
+  description: Safely experiment with blockchain transactions, contracts, and wallet workflows using resettable agent-controlled testnet wallets and non-production assets only.
+  tags: [crypto, testnet, wallet, experimentation]
+spec:
+  procedure:
+    - Assert the selected network is on the approved testnet allowlist before constructing or signing any transaction.
+    - Use only the dedicated agent sandbox wallet; never import or reuse user private keys, seed phrases, Ledger secret material, or production-wallet signing sessions.
+    - Obtain test assets only from reviewed testnet faucets or locally deployed test tokens.
+    - Simulate transactions and estimate fees before signing, then inspect receipts, events, state changes, and failure reasons.
+    - Keep experiments reproducible by recording network, contract addresses, transaction hashes, inputs, assumptions, and expected outcomes without recording secret material.
+    - Reset or rotate the sandbox wallet when experiments create unwanted permissions or state.
+    - Treat any mainnet endpoint, real-value asset, fiat on-ramp, production exchange deposit, or cross-chain route to mainnet as an immediate stop condition.
+  policy:
+    mainnet: deny
+    realFunds: deny
+    userWalletSecrets: deny

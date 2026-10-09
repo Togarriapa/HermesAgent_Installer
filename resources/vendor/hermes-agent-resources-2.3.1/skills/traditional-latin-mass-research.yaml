@@ -1,0 +1,10 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: traditional-latin-mass-research
+  version: 1.0.0
+  description: Research the Traditional Latin Mass using approved liturgical books, rubrics, ecclesiastical sources, and historical scholarship.
+  tags: [catholic, liturgy, latin-mass, tradition]
+spec:
+  principles: [edition-date-specificity, distinguish-historical-rubric-from-current-permission, no-ecclesiastical-authority-claims]
+  procedure: [identify-missal-edition-context, consult-liturgical-books, trace-practice, distinguish-law-discipline-custom-devotion, state-current-jurisdictional-uncertainty]

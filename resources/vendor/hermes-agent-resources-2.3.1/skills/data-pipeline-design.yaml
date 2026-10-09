@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: data-pipeline-design
+  version: 1.0.0
+  description: Design batch or streaming data pipelines for reliability, idempotency, observability, replay, and controlled failure recovery.
+  tags: [data-engineering, pipelines, reliability]
+spec:
+  procedure:
+    - Define sources, sinks, contracts, latency, throughput, consistency, retention, and recovery requirements.
+    - Design idempotent stages with checkpoints, retries, dead-letter or quarantine behavior, and replay strategy.
+    - Make schema evolution, lineage, backfills, and late-arriving data behavior explicit.
+    - Instrument freshness, volume, errors, latency, and quality signals with actionable ownership.

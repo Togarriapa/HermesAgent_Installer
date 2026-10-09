@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: argument-mapping
+  version: 1.0.0
+  description: Map claims, premises, evidence, assumptions, objections, rebuttals, dependencies, and unresolved questions.
+spec:
+  instructions:
+    - Separate factual premises, value judgments, predictions, and recommendations.
+    - Trace which conclusions depend on which assumptions or evidence.
+    - Identify contradictions, missing links, circular reasoning, and ambiguity.

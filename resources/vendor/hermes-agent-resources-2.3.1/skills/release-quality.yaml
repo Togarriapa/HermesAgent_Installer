@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: release-quality
+  version: 1.0.0
+  description: Summarize release-quality evidence, residual risk, failed or missing validation, known defects, and go/no-go considerations.
+  tags: [qa, release, quality]
+spec:
+  procedure:
+    - Collect relevant automated, exploratory, performance, security, compatibility, and operational evidence.
+    - Identify failed, skipped, flaky, unavailable, or out-of-scope validation explicitly.
+    - Summarize known defects by impact and exposure rather than raw count.
+    - Present residual risk and evidence clearly while leaving final release authority with the designated owner.

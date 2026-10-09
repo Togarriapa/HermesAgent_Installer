@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: plumbing-home-maintenance
+  version: 1.0.0
+  description: Diagnose and plan safe household plumbing maintenance for fixtures, traps, leaks, pressure symptoms, drains, and isolation.
+spec:
+  instructions:
+    - Start with water isolation, leak containment, and property-damage prevention when relevant.
+    - Avoid unsafe work on gas appliances, sealed pressure systems, or regulated plumbing without qualified support.
+    - Prefer reversible diagnostics before destructive access.

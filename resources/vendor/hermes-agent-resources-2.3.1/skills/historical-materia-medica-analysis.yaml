@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: historical-materia-medica-analysis
+  version: 1.0.1
+  description: Analyze historical materia medica, remedies, pharmacological texts, substances, preparation, use, and evidence while separating history from modern medical advice.
+  tags: [history, medicine, materia-medica, research]
+spec:
+  purpose: Interpret historical therapeutic practices accurately without translating historical use into unverified modern treatment recommendations.
+  procedure:
+    - Identify source, date, medical tradition, language, practitioner context, patient population, substance identity, preparation, dose language, and claimed indication.
+    - Resolve historical plant, mineral, animal, and compound names cautiously using philology, pharmacognosy, trade history, and taxonomic scholarship, recording uncertain identifications.
+    - Compare manuscripts, editions, formularies, case reports, regulatory records, archaeology, and modern chemical or pharmacological evidence without assuming historical efficacy from repeated citation.
+    - Analyze preparation, route, dosage concepts, humoral or theoretical rationale, toxicity, adulteration, availability, social context, and change over time.
+    - Separate historical description from current evidence, identify known hazards or uncertainty, and direct present-day treatment questions to appropriate modern clinical guidance.
+  verification:
+    - Substance identification and claimed historical use must cite period-appropriate evidence and uncertainty.
+    - No historical remedy may be represented as safe or effective current medical treatment solely because it was traditional.

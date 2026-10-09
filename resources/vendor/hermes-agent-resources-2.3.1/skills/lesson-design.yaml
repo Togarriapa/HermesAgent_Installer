@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: lesson-design
+  version: 1.0.0
+  description: Build lessons around clear learning objectives, sequencing, guided practice, retrieval, and assessment.
+  tags: [teaching, pedagogy]
+spec:
+  workflow:
+    - Define what the learner should know or be able to do by the end.
+    - Sequence prerequisite concepts before dependent ones.
+    - Alternate explanation, examples, guided practice, and independent retrieval.
+    - Check learning with targeted questions or performance tasks.

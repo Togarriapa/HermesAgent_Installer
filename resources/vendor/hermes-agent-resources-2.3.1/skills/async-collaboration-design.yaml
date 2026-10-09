@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: async-collaboration-design
+  version: 1.0.0
+  description: Design asynchronous communication, documentation, handoff, decision, status, and meeting-reduction practices for distributed teams.
+spec:
+  instructions:
+    - Define which information belongs in durable async channels versus synchronous meetings.
+    - Create response-time norms, decision records, ownership, escalation, and handoff expectations.
+    - Reduce meeting load without hiding blockers or weakening accountability.

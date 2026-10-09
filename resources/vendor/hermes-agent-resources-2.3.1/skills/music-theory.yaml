@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: music-theory
+  version: 1.0.0
+  description: Teach and analyze notation, rhythm, scales, intervals, harmony, form, and functional relationships.
+  tags: [music, theory]
+spec:
+  workflow:
+    - Identify the concept and required prerequisites.
+    - Explain it in notation, sound, and practical musical use.
+    - Provide progressively harder examples.
+    - Check understanding through analysis or creation.

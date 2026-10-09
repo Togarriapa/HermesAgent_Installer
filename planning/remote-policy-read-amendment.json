@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "change": "remote-policy-read-authority",
+  "amendment": "plans/amendments/2026-10-09-remote-policy-read-v1.md",
+  "base_commit": "222c442dd3fb0171b3e7924d1994920ddd41ec77",
+  "baseline": "653ac5fbc7a02613c9951859a7d794599603459b",
+  "model_owner": "GPT-6.1 Sol",
+  "implementation_owner": "GPT-6 Luna",
+  "preserved": {
+    "baseline_requirements": 211,
+    "acceptance": "AC01..AC16 including prior Resources amendment"
+  },
+  "refines": [
+    "R0197",
+    "R0200",
+    "R0201",
+    "R0206",
+    "R0207",
+    "R0208",
+    "R0209",
+    "R0210",
+    "R0211"
+  ],
+  "classification": "Additive credential/custody and deployment obligations required to fulfill existing bounded fresh revocation contract; no weakening of setup-only management role or nonsecret gateway contract.",
+  "implementation_inspected": {
+    "commit": "7a90f5e09651fa7d84382fb5eed11411c9bca023",
+    "paths": [
+      "src/hermes_installer/remote/policy.py",
+      "src/hermes_installer/remote/credentials.py",
+      "src/hermes_installer/remote/server.py",
+      "docs/remote-desktop-access.md"
+    ],
+    "status": "FreshAccessPolicyAuthority app/policy checks observed; separate production custodian, OTP resource read, cancellation/freshness/lease anchoring require implementation; no acceptance claim."
+  },
+  "permissions": {
+    "read_only": [
+      "Access: Apps and Policies Read",
+      "Access: Organizations, Identity Providers, and Groups Read"
+    ],
+    "scope": "selected account only; exact app/policy/IdP GET allowlist enforced by verifier; API token permissions can be account-wide, do not claim per-app provider scope or prove no excess rights from GET success",
+    "minting": "Not required or authorized by this contract; collect existing securely supplied minimum-read token/reference, no management token reuse or unrequested token-admin permissions"
+  },
+  "requirements": [
+    {
+      "id": "RP01",
+      "name": "Separate read credential enrollment",
+      "text": "The installer SHALL securely collect or resolve a distinct account-scoped minimum-read Access credential for an isolated policy verifier, independently of the setup-management token and tunnel credential. It SHALL keep blank hostname and automatic owned setup, request only genuinely missing fields, and report configure-later/incomplete when the read authority is unavailable.",
+      "when": "only setup-management token is supplied",
+      "then": "owned setup can checkpoint, but remote activation and session issue remain incomplete with exact read-reference resume field; no management-token runtime fallback"
+    },
+    {
+      "id": "RP02",
+      "name": "Isolated verifier credential custody",
+      "text": "A dedicated least-privilege verifier SHALL hold the read credential in protected host custody. Desktop, cloudflared and the browser-facing gateway SHALL receive no setup/read secret or resolver; gateway receives only authenticated, narrowly scoped decision messages. The verifier SHALL perform fixed GET requests for journal-selected account/app/policy/OTP identity and SHALL expose no generic API proxy or mutation operation.",
+      "when": "a compromised gateway requests another account, arbitrary URL, write method or secret dump",
+      "then": "verifier rejects before network effects; OS identity/socket/filesystem/process controls prevent credential reading; secret canaries absent from argv/environment/logs/repr/profile/evidence"
+    },
+    {
+      "id": "RP03",
+      "name": "Fresh exact Access membership authority",
+      "text": "Before initial authorization, socket opening and each separate protected-HTTP renewal, the verifier SHALL freshly read the exact owned app, complete bounded app-policy set and selected identity-provider resource, match sole intended OTP IdP, exact hostname and explicit email policy with no broadened/unsupported rules, and deny errors, conflicts, missing pages, unsupported policy semantics or stale observations. Valid JWT signatures and a fresh HTTP request alone SHALL not establish current policy membership.",
+      "when": "a still-valid JWT is presented after allowed-email removal, extra policy addition, IdP replacement or read failure",
+      "then": "no new grant or lease extension occurs; the previous bounded lease expires without fallback; malformed/order-only policy responses are interpreted with explicit safe semantics"
+    },
+    {
+      "id": "RP04",
+      "name": "Bounded freshness and cancellable read decisions",
+      "text": "Each verifier request SHALL have a hard total deadline at most9 seconds including bounded TLS reads/pages/retries, bounded workers/queue and cancellation that cannot leave accumulating secret-bearing tasks. Decisions SHALL be single-use, bound to authenticated peer/principal/app/config/nonce and monotonic observation interval. Lease deadline SHALL be no later than read-start+60 seconds or JWT expiry; watchdog SHALL stop input/output within5 seconds of the deadline. Late results SHALL never renew expired/cancelled sessions.",
+      "when": "a renewal read hangs or completes9 seconds after a policy removal concurrent with the read",
+      "then": "existing lease is not extended while waiting; pending operation is bounded and discarded on timeout/cancel; read latency does not add to60-second authorization age; no accumulating threads or replayed allow"
+    },
+    {
+      "id": "RP05",
+      "name": "Read-role lifecycle and secret preservation",
+      "text": "Setup SHALL retain management credential only in secure setup custody and SHALL never mint API tokens using assumed administrator grants. Read credential rotation/expiry/revocation, disable, restart, update, backup/restore and uninstall SHALL preserve ownership, securely reference credentials, invalidate old decisions and fail closed until current authority is verified. Uninstall SHALL remove only owned local credential artifacts, never revoke or delete unowned account tokens/resources.",
+      "when": "restored configuration names a missing/expired read reference or verifier service stops",
+      "then": "remote remains incomplete, all leases stop at their existing deadlines or earlier, no setup-secret promotion or plaintext backup leak; resumable secure rotation and fresh validation required"
+    },
+    {
+      "id": "RP06",
+      "name": "Distinct revocation evidence and readiness",
+      "text": "Verification SHALL distinguish policy/email removal, local logout, Cloudflare application/user token revocation, JWT expiry, read-token revocation and verifier/network outage. A policy read SHALL not be claimed to prove JWT/token revocation. Remote readiness SHALL require actual production verifier custody and transport plus signed-JWT/HTTP/WS tests and exact-target/account evidence for AC15; no usable-by-default60-second shortcut.",
+      "when": "policy-removal fixture passes but Cloudflare token-revoke behavior has not been observed",
+      "then": "policy enforcement evidence is recorded separately; token/logout revocation acceptance stays pending rather than inferred or waived; live bounds identify event timing and provider visibility"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "RP-T01",
+      "requirement": "RP01",
+      "depends_on": [
+        "RT-F01"
+      ],
+      "evidence": "EV-RP01",
+      "state": "implementation-and-verification-pending",
+      "method": "owned setup can checkpoint, but remote activation and session issue remain incomplete with exact read-reference resume field; no management-token runtime fallback"
+    },
+    {
+      "id": "RP-T02",
+      "requirement": "RP02",
+      "depends_on": [
+        "RP-T01"
+      ],
+      "evidence": "EV-RP02",
+      "state": "implementation-and-verification-pending",
+      "method": "verifier rejects before network effects; OS identity/socket/filesystem/process controls prevent credential reading; secret canaries absent from argv/environment/logs/repr/profile/evidence"
+    },
+    {
+      "id": "RP-T03",
+      "requirement": "RP03",
+      "depends_on": [
+        "RP-T02"
+      ],
+      "evidence": "EV-RP03",
+      "state": "implementation-and-verification-pending",
+      "method": "no new grant or lease extension occurs; the previous bounded lease expires without fallback; malformed/order-only policy responses are interpreted with explicit safe semantics"
+    },
+    {
+      "id": "RP-T04",
+      "requirement": "RP04",
+      "depends_on": [
+        "RP-T02",
+        "RP-T03"
+      ],
+      "evidence": "EV-RP04",
+      "state": "implementation-and-verification-pending",
+      "method": "existing lease is not extended while waiting; pending operation is bounded and discarded on timeout/cancel; read latency does not add to60-second authorization age; no accumulating threads or replayed allow"
+    },
+    {
+      "id": "RP-T05",
+      "requirement": "RP05",
+      "depends_on": [
+        "RP-T01",
+        "RP-T02",
+        "RP-T04"
+      ],
+      "evidence": "EV-RP05",
+      "state": "implementation-and-verification-pending",
+      "method": "remote remains incomplete, all leases stop at their existing deadlines or earlier, no setup-secret promotion or plaintext backup leak; resumable secure rotation and fresh validation required"
+    },
+    {
+      "id": "RP-T06",
+      "requirement": "RP06",
+      "depends_on": [
+        "RP-T01",
+        "RP-T02",
+        "RP-T03",
+        "RP-T04",
+        "RP-T05",
+        "RT-F02",
+        "RT-F03"
+      ],
+      "evidence": "EV-RP06",
+      "state": "implementation-and-verification-pending",
+      "method": "policy enforcement evidence is recorded separately; token/logout revocation acceptance stays pending rather than inferred or waived; live bounds identify event timing and provider visibility"
+    }
+  ],
+  "acceptance": {
+    "id": "AC17",
+    "extends": "AC15 and AC13, does not replace AC13..16",
+    "method": "Prove credential isolation via actual OS/process/socket negative probes, exact fresh API-read effects and cancellation/concurrency; maintain a valid JWT while removing live allowed email or policy, timestamp edit acknowledgement/API visibility/read start/deadline/last pixel or input; enforce no later than read-start+60s and watchdog<=5s, report provider propagation separately. Probe local logout, Cloudflare app/user revoke and read-token revoke independently with replayed JWT/renewal; no max65s from administrative click claim absent measured total effect. Missing account or unsupported revocation source leaves corresponding acceptance incomplete.",
+    "state": "not-run"
+  },
+  "source_urls": [
+    "https://developers.cloudflare.com/api/resources/zero_trust/subresources/access/subresources/applications/methods/get/",
+    "https://developers.cloudflare.com/api/resources/zero_trust/subresources/access/subresources/applications/subresources/policies/methods/list/",
+    "https://developers.cloudflare.com/api/resources/zero_trust/subresources/identity_providers/methods/get/",
+    "https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/"
+  ],
+  "checked_on": "2026-10-09",
+  "planned_evidence": [
+    "tests/contracts/test_remote_policy.py",
+    "tests/contracts/test_remote_credentials.py",
+    "tests/contracts/test_remote_gateway_server.py",
+    "tests/contracts/test_remote_lifecycle.py",
+    "tests/contracts/test_remote_verify.py",
+    "docs/remote-desktop-access.md"
+  ],
+  "resources_preservation": "Prior Resources RB01..RB05/AC16 remains in force; full tracked snapshot in installer/release, deleted Resources upstream must not break repair/owned source update path. No Resources runtime changes in this amendment."
+}

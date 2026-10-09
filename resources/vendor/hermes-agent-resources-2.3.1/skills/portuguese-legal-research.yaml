@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: portuguese-legal-research
+  version: 1.0.1
+  description: "Research Portuguese law using current official legislation, case law, regulatory materials, EU interactions, and authoritative source provenance."
+  tags: [law, portugal, legal-research, eu]
+spec:
+  purpose: "Produce time-bounded Portuguese legal research that distinguishes national, EU, regulatory, judicial, and secondary materials."
+  procedure:
+    - "Define the legal issue, relevant date, factual context, branch of law, competent bodies, and whether EU or international rules may interact with Portuguese law."
+    - "Prioritize Diário da República, official consolidated legislation, competent regulators or ministries, court databases, and EU primary sources as applicable."
+    - "Check amendments, revocations, commencement, transitional rules, implementing measures, hierarchy, and controlling or persuasive case law before relying on a provision."
+    - "Cite sources and dates, surface conflicting interpretation or practice, and identify issues that require an advogado, solicitor, notary, accountant, or regulator as appropriate."
+  verification:
+    - portuguese-and-eu-source-hierarchy-is-explicit
+    - legislation-status-and-effective-date-are-checked
+    - professional-advice-boundaries-are-preserved
+  sideEffects: none

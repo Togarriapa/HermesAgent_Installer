@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: llmops-model-operations
+  version: 1.0.1
+  description: Operate LLM systems through versioning, deployment, evaluation, routing, observability, cost control, incident response, rollback, and lifecycle governance.
+  tags: [llmops, ai, operations, reliability]
+spec:
+  purpose: Make model and prompt changes observable, reversible, benchmarked, and safe to operate in production.
+  procedure:
+    - Inventory model, provider, prompt, tool schema, retrieval, policy, and runtime versions together with traffic, latency, cost, privacy, and reliability requirements.
+    - Define offline evaluations and production service-level indicators for correctness, safety, refusal behavior, tool success, latency, throughput, token cost, and error classes before changing a model path.
+    - Deploy through bounded canary or staged routing with versioned configuration, immutable artifacts, controlled concurrency, quota and timeout limits, and an explicit rollback target.
+    - Monitor quality regressions, provider errors, context growth, token spend, saturation, safety events, and downstream tool failures and correlate them with exact model or configuration changes.
+    - Roll back or isolate regressions, preserve incident evidence, update evaluation cases from real failures, and retire old versions only after dependency and recovery checks complete.
+  verification:
+    - Every production model change must be attributable to a versioned configuration and have a tested rollback path.
+    - Release gates must compare the candidate against a baseline on both quality and operational metrics.

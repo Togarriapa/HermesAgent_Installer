@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: systems-design
+  version: 1.0.0
+  description: Design systems from requirements through components, interfaces, data flows, failure modes, and operational ownership.
+  tags: [architecture, systems]
+spec:
+  workflow:
+    - Capture functional and non-functional requirements plus constraints.
+    - Define components, interfaces, data ownership, trust boundaries, and dependencies.
+    - Model expected load, failure modes, recovery, and observability.
+    - Validate the design against requirements and operational reality.

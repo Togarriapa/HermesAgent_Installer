@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: strategic-deliberation-team
+  version: 1.0.0
+  description: Generic internal challenge-and-synthesis team for difficult decisions; domain specialists are recruited dynamically for the actual subject matter.
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.3.0
+      - debate-analyst@^1.0.0
+      - philosophy-specialist@^1.0.0
+      - researcher@^1.0.0
+      - culture-expert@^1.0.0
+  policy:
+    internalOnly: true
+    dynamicRecruitment: true
+    majorityVoteDecisionRule: deny
+    preserveMaterialDissent: true

@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: legal-citation
+  version: 1.0.1
+  description: "Create and verify legal citations with source type, jurisdiction, court or issuing body, date, pinpoint, status, and citation convention preserved."
+  tags: [law, citation, research, sources]
+spec:
+  purpose: "Make legal authorities independently traceable and prevent citation form from obscuring source weight or uncertainty."
+  procedure:
+    - "Identify the source type, jurisdiction, court or issuing body, date, official publication or identifier, and required citation convention."
+    - "Verify each citation against the underlying authoritative source and capture stable identifiers, pinpoint references, and subsequent history when material."
+    - "Use a citation only for propositions the source actually supports and distinguish primary authority, secondary commentary, and nonbinding material."
+    - "Run a final source-to-claim audit for invented authorities, incorrect names or dates, broken identifiers, bad pinpoints, and stale or superseded sources."
+  verification:
+    - source-identifiers-and-pinpoints-are-verified
+    - citation-supports-the-associated-proposition
+    - source-weight-and-current-status-are-explicit
+  sideEffects: none

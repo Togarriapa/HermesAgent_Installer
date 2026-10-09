@@ -1,0 +1,14 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: statistical-modeling
+  version: 1.0.0
+  description: Build and evaluate statistical models with explicit assumptions, diagnostics, uncertainty, and validation.
+  tags: [statistics, modeling, inference]
+spec:
+  procedure:
+    - Define estimand or predictive target and identify plausible model families.
+    - Check assumptions, identifiability, dependence structure, confounding, and data leakage risks.
+    - Fit interpretable baselines before increasing complexity.
+    - Use appropriate diagnostics, validation, uncertainty intervals, and sensitivity analysis.
+    - Report what the model supports and what it does not establish.

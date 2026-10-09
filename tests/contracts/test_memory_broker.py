@@ -134,8 +134,7 @@ class MemoryBrokerTests(unittest.TestCase):
             self.assertEqual(consent_calls[0]["owner_generation"], 7)
 
     def test_pinned_provider_routes_and_payloads_match_upstream_contracts(self):
-        # These fixed routes were checked against each provider's exact enrolled
-        # source revision. The transport remains injected and root-owned.
+        # Fixed routes were checked against each provider's exact enrolled source.
         self.assertEqual(ROUTES["agentmemory"]["doctor"], "GET /agentmemory/livez")
         self.assertEqual(ROUTES["agentmemory"]["delete"], "POST /agentmemory/forget")
         self.assertEqual(ROUTES["claude-mem"]["capture"], "POST /v1/memories")

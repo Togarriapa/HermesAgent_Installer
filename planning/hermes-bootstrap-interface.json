@@ -1,0 +1,16 @@
+{
+  "source": "https://github.com/NousResearch/hermes-agent/blob/7085fbf7753266fc4943c55ac04926186bc90005/scripts/install.sh",
+  "commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+  "sha256": "034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86",
+  "supported_flags": [
+    "--branch",
+    "--commit",
+    "--dir",
+    "--hermes-home",
+    "--non-interactive",
+    "--skip-browser",
+    "--skip-computer-use"
+  ],
+  "adoption_constraint": "Can stash/reset checkout; use owned staged checkout, never blindly rerun against preexisting user source tree",
+  "executed": false
+}

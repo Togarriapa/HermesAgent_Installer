@@ -1,0 +1,27 @@
+apiVersion: hermes.togarriapa/v1
+kind: Channel
+metadata:
+  name: voice
+  version: 1.0.0
+  description: Local-first spoken assistant channel that transcribes audio to Hermes and speaks Hermes responses through the voice pipeline.
+  tags: [channel, voice, stt, tts, hermes]
+spec:
+  requires:
+    plugins:
+      - voice-pipeline@^1.0.0
+  adapter: local-audio-assist
+  routing:
+    inboundProfile: hermes
+    outboundProfile: hermes
+    allowDirectProfileSelection: false
+    allowedUserFacingProfiles: [hermes]
+  pipeline:
+    inbound: audio-to-stt-to-hermes
+    outbound: hermes-to-tts-to-audio
+    homeAssistantRequests: route-via-hermes-and-orchestrator
+  policy:
+    requireHermesGateway: true
+    rejectNonHermesProfileTarget: true
+    rawAudioRetention: false
+    localFirst: true
+    cloudFallback: deny

@@ -1,0 +1,37 @@
+[
+  {
+    "id": "B-IMPLEMENTATION",
+    "reason": "This commit is the Sol specification baseline; runtime implementation is assigned to GPT-6 Luna.",
+    "unblocks": "Complete tasks and actual tests, not artifact status."
+  },
+  {
+    "id": "B-TARGET",
+    "reason": "Physical Pi identity/access and graphical session not supplied/authorized; no installer may mutate this development Mac.",
+    "unblocks": "User identifies Pi and authorizes bounded access; run target verifier with enrollment record."
+  },
+  {
+    "id": "B-ACCOUNTS",
+    "reason": "External OAuth/keys/entitlement/project/file/entity selections not provided.",
+    "unblocks": "Configure with secure host references and harmless selected-resource tests."
+  },
+  {
+    "id": "B-GLM-ARTIFACT",
+    "reason": "Exact GLM-5.2 Colibri artifact identity/revision and file digests are resolved in planning/glm52-artifact-metadata.json. Model card/config license review, deliberate large-download selection and actual Pi measurements remain pending.",
+    "unblocks": "Implement the entire artifact/source-build/download/storage/API/measurement path now; review pinned card/config, preview space and require deliberate download selection only at target use; no Pi absence blocks code/fixture work."
+  },
+  {
+    "id": "B-LICENSE",
+    "reason": "Resource registry has no identified root redistribution license in research; per-source unknown licenses require review.",
+    "unblocks": "Fetch user-owned registry at runtime with provenance; obtain license confirmation before redistributing source content."
+  },
+  {
+    "id": "B-OPENSPEC-AUDIT",
+    "reason": "Pinned OpenSpec 1.14.1 npm audit reports braces <=3.0.3 stack-exhaustion advisory GHSA-vfj7-8cjw-p6xm (4 dependent high findings). Latest braces currently 3.0.3; npm proposes OpenSpec downgrade 0.17.2, incompatible with required workflow.",
+    "unblocks": "Monitor upstream fixed dependency; bounded trusted local patterns only; no runtime Pi installation of OpenSpec; amend toolchain through Sol when compatible fix exists."
+  },
+  {
+    "id": "B-CLOUDFLARE-LIVE",
+    "reason": "No enrolled Pi or scoped Cloudflare token/validated hostname/account-zone/allowed-email selection is supplied in this development session. Domain starts blank; user authorized automatic setup after secure installer input.",
+    "unblocks": "Implement full API/JWT/app-only/session/lifecycle adapters and recording fixtures/docs/target workflow now. At target setup securely supply token reference and hostname/emails; execute owned automatic setup and AC13..15, no routine repeated approvals."
+  }
+]

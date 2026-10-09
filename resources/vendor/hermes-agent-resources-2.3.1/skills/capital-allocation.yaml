@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: capital-allocation
+  version: 1.0.1
+  description: "Compare competing uses of capital using objectives, constraints, expected value, downside, opportunity cost, optionality, concentration, and governance."
+  tags: [finance, capital, allocation, strategy]
+spec:
+  purpose: "Produce a decision framework for capital allocation while keeping real-value commitments separately authorized."
+  procedure:
+    - "Define objectives, constraints, required returns, liquidity, risk tolerance, time horizon, governance rules, and the competing uses of capital."
+    - "Estimate expected value, downside, optionality, strategic fit, financing effects, implementation cost, and opportunity cost for each candidate using explicit assumptions."
+    - "Compare allocations under multiple economic or operational scenarios and concentration limits rather than relying on a single forecast or ranking metric."
+    - "Check arithmetic, sensitivities, conflicts, dependencies, and decision rights; present ranges and triggers while leaving real-value execution to an explicitly authorized execution path."
+  verification:
+    - assumptions-and-candidate-comparisons-are-traceable
+    - downside-concentration-and-opportunity-cost-are-explicit
+    - no-real-value-execution-authority-is-created
+  sideEffects: none

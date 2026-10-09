@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: case-law-research
+  version: 1.0.1
+  description: "Find and analyze judicial decisions with jurisdiction, hierarchy, procedural posture, holding, subsequent treatment, and authority weight kept explicit."
+  tags: [law, cases, research, precedent]
+spec:
+  purpose: "Produce traceable case-law analysis without inventing precedent or treating factually distinct decisions as interchangeable."
+  procedure:
+    - "Define the legal issue, jurisdiction, relevant date, court hierarchy, and factual pattern that controls relevance."
+    - "Locate authoritative decisions and verify citation, court, date, procedural posture, subsequent treatment, and whether the opinion is precedential."
+    - "Separate material facts, issue, holding, reasoning, dicta, dissents, and disposition; compare factual similarities and distinctions across authorities."
+    - "Synthesize the current weight of authority, surface contrary precedent and uncertainty, and never invent or silently repair a case citation."
+  verification:
+    - every-material-case-is-verified-from-a-reliable-source
+    - holding-dicta-posture-and-authority-weight-are-distinguished
+    - contrary-and-negative-treatment-is-surfaced
+  sideEffects: none

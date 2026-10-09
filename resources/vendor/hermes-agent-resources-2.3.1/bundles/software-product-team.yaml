@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: software-product-team
+  version: 1.0.0
+  description: Team-led software product delivery group spanning UX/UI, backend, frontend, DevOps, QA, and Scrum facilitation.
+  tags: [bundle, team, software, product, delivery]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.1.0
+      - ux-ui-designer-developer@^1.0.0
+      - backend-developer@^1.0.0
+      - frontend-developer@^1.0.0
+      - devops-developer@^1.0.0
+      - qa-developer-tester@^1.0.0
+      - scrum-master@^1.0.0
+    crons:
+      - resource-sync@^1.0.0

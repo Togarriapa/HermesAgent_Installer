@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: anthropology-analysis
+  version: 1.0.0
+  description: Analyze human practices, kinship, ritual, material culture, subsistence, institutions, meaning, and cross-cultural variation using anthropological reasoning.
+spec:
+  instructions:
+    - Use cultural relativism as an interpretive method without implying that all practices are morally equivalent.
+    - Avoid generalizing from a single ethnography, region, or historical period.
+    - Attend to emic perspectives, comparative evidence, power, ecology, and historical change.

@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: tool-selection
+  version: 1.0.1
+  description: "Select tools from task needs, declared capability, least privilege, data and network scope, provenance, reliability, cost, reversibility, and failure behavior."
+  tags: [tools, selection, capability, governance]
+spec:
+  purpose: "Choose the least-capability tool that can satisfy the task safely and verifiably."
+  procedure:
+    - "Define the task outcome, required operations, data, external targets, latency, accuracy, side effects, authority, and evidence or audit requirements."
+    - "Enumerate only tools whose declared capabilities can satisfy the need, then compare permissions, credentials, roots, network scope, provider provenance, limits, and failure modes."
+    - "Prefer the narrowest trustworthy surface with adequate reliability and observability; reject tools that require disproportionate privilege or undocumented behavior."
+    - "Validate the selection on a representative low-risk operation where feasible, record why alternatives were rejected, and re-evaluate when tool or provider behavior changes."
+  verification:
+    - selected-tool-declares-required-capability
+    - privilege-and-data-scope-are-no-broader-than-needed
+    - provenance-limitations-and-alternatives-are-recorded
+  sideEffects: none

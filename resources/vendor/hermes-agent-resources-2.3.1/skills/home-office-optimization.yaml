@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: home-office-optimization
+  version: 1.0.0
+  description: Improve a home office's ergonomics, lighting, acoustics, network reliability, equipment, workflow, and distraction control.
+spec:
+  instructions:
+    - Fit recommendations to available space, budget, work duration, privacy, connectivity, and household use.
+    - Recruit ergonomics/health, network, electrical, smart-home, or home-improvement specialists when needed.
+    - Prefer measurable improvements and reversible layout/equipment changes before renovation.

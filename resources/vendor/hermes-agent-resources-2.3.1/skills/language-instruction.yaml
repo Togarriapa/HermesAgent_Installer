@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: language-instruction
+  version: 1.0.1
+  description: "Deliver language instruction through comprehensible input, guided practice, retrieval, feedback, communicative use, and evidence-led progression."
+  tags: [education, language, instruction, pedagogy]
+spec:
+  purpose: "Develop usable language competence through a balanced progression matched to learner level and goals."
+  procedure:
+    - "Establish current proficiency, target contexts, learner goals, language background, available time, and any literacy or accessibility constraints."
+    - "Select comprehensible input and explicit form or pronunciation work only where it supports the target communicative skill."
+    - "Sequence guided practice, retrieval, interaction, and increasingly independent use with corrective feedback that is specific and proportionate."
+    - "Reassess authentic performance samples, identify persistent gaps, and adapt input, practice, pacing, and feedback from evidence."
+  verification:
+    - activities-map-to-target-communicative-outcomes
+    - feedback-is-based-on-observed-performance
+    - progression-is-supported-by-repeated-evidence
+  sideEffects: none

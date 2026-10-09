@@ -1,0 +1,19 @@
+
+> hermes-agent-installer@0.0.0 test:planning
+> python3 -m unittest discover -s tests/planning -v
+
+test_changed_or_extra_baseline_file_rejected (test_plan_checks.PlanningChecks.test_changed_or_extra_baseline_file_rejected) ... ok
+test_dropped_direct_user_addition_rejected (test_plan_checks.PlanningChecks.test_dropped_direct_user_addition_rejected) ... ok
+test_dropped_source_line_rejected (test_plan_checks.PlanningChecks.test_dropped_source_line_rejected) ... ok
+test_extra_baseline_file_rejected (test_plan_checks.PlanningChecks.test_extra_baseline_file_rejected) ... ok
+test_missing_acceptance_links_rejected (test_plan_checks.PlanningChecks.test_missing_acceptance_links_rejected) ... ok
+test_missing_remote_acceptance_rejected (test_plan_checks.PlanningChecks.test_missing_remote_acceptance_rejected) ... ok
+test_removed_baseline_file_rejected (test_plan_checks.PlanningChecks.test_removed_baseline_file_rejected) ... ok
+test_rewriting_hashes_and_contents_does_not_bypass_tag (test_plan_checks.PlanningChecks.test_rewriting_hashes_and_contents_does_not_bypass_tag) ... ok
+test_task_dependency_cycle_rejected (test_plan_checks.PlanningChecks.test_task_dependency_cycle_rejected) ... ok
+test_valid_frozen_scope (test_plan_checks.PlanningChecks.test_valid_frozen_scope) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 4.812s
+
+OK

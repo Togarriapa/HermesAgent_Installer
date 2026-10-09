@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: continuous-improvement
+  version: 1.0.0
+  description: Run small measurable improvement experiments against observed process, quality, flow, or collaboration constraints.
+  tags: [improvement, agile, lean]
+spec:
+  procedure:
+    - Identify a specific constraint or failure pattern using evidence.
+    - Propose the smallest plausible change and define expected effect and measurement.
+    - Assign an owner and review date and avoid changing many variables simultaneously.
+    - Keep, revise, or revert the change based on observed results.

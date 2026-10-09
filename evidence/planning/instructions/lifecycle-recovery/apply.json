@@ -1,0 +1,167 @@
+{
+  "changeName": "lifecycle-recovery",
+  "changeDir": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery",
+  "schemaName": "spec-driven",
+  "contextFiles": {
+    "proposal": [
+      "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/proposal.md"
+    ],
+    "specs": [
+      "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/specs/managed-lifecycle/spec.md"
+    ],
+    "design": [
+      "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/design.md"
+    ],
+    "tasks": [
+      "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md"
+    ]
+  },
+  "progress": {
+    "total": 19,
+    "complete": 0,
+    "remaining": 19
+  },
+  "tasks": [
+    {
+      "id": "1",
+      "description": "1.1 `LC-F01` Implement validated config/schema, wizard and full CLI verbs with readable/JSON results and configure-later checkpointing; verify exit codes and resumed prompts; document command reference. Evidence: `tests/contracts/test_cli.py`.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 7
+    },
+    {
+      "id": "2",
+      "description": "1.2 `LC-F02` Implement owned-path/no-symlink filesystem layer, process lock, journal and idempotent service/config generation; verify prepopulated roots, crash recovery, duplicate prevention and cancellation; document state locations. Evidence: `tests/contracts/test_state.py`.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 8
+    },
+    {
+      "id": "3",
+      "description": "1.3 `LC-F03` Implement staged updates/health/atomic rollback, consistent versioned DB backups/restore and data-preserving uninstall; verify failed update and real synthetic DB restoration; document recovery. Evidence: `tests/contracts/test_recovery.py`.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 9
+    },
+    {
+      "id": "4",
+      "description": "1.4 `LC-F04` Implement unprivileged supervision, bounded startup/restart/log rotation and graceful stop; verify occupied ports, missing user session, secret redaction and descendant cleanup; document supervision. Evidence: `tests/contracts/test_supervision.py`.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 10
+    },
+    {
+      "id": "5",
+      "description": "2.1 `LC-R0141` Implement `R0141` in `src/hermes_installer/lifecycle.py`: Provide a simple entry point, such as `./install.sh`, backed by maintainable modular code. A thin shell bootstrap plus typed Python orchestration is a reasonable default; use another stack only if it materially improves reliability. Avoid a single giant shell script. Verify with `tests/contracts/test_lifecycle.py` (EV-R0141): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 14
+    },
+    {
+      "id": "6",
+      "description": "2.2 `LC-R0142` Implement `R0142` in `src/hermes_installer/lifecycle.py`: The wizard must handle fresh install, existing-install adoption, component selection, storage/model paths, account setup, diagnostics, and recovery. Reuse Hermes Desktop settings where practical. A second full management application is not required; a clear terminal wizard and lifecycle CLI are sufficient. Verify with `tests/contracts/test_lifecycle.py` (EV-R0142): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 15
+    },
+    {
+      "id": "7",
+      "description": "2.3 `LC-R0143` Implement `R0143` in `src/hermes_installer/lifecycle.py`: For every required setting, show what it is, why it is needed, the official setup link, concrete steps to obtain it, and a connection test. Collect secrets through secure input and supported credential storage. Allow “configure later” and resume without repeating successful setup. Explain account/billing prerequisites before asking for a key. Verify with `tests/contracts/test_lifecycle.py` (EV-R0143): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 16
+    },
+    {
+      "id": "8",
+      "description": "2.4 `LC-R0144` Implement `R0144` in `src/hermes_installer/lifecycle.py`: Provide interactive and documented non-interactive operation with a validated config file, secret references, useful exit codes, and readable/JSON output. Implement these lifecycle capabilities through clear commands: Verify with `tests/contracts/test_lifecycle.py` (EV-R0144): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 17
+    },
+    {
+      "id": "9",
+      "description": "2.5 `LC-R0145` Implement `R0145` in `src/hermes_installer/lifecycle.py`: Plan/dry-run; install; resume; status; doctor; verify. Verify with `tests/contracts/test_lifecycle.py` (EV-R0145): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 18
+    },
+    {
+      "id": "10",
+      "description": "2.6 `LC-R0146` Implement `R0146` in `src/hermes_installer/lifecycle.py`: Configure/test a provider or MCP; select a memory provider; resolve a source URL. Verify with `tests/contracts/test_lifecycle.py` (EV-R0146): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 19
+    },
+    {
+      "id": "11",
+      "description": "2.7 `LC-R0147` Implement `R0147` in `src/hermes_installer/lifecycle.py`: Enable/disable/start/stop a component; inspect redacted logs. Verify with `tests/contracts/test_lifecycle.py` (EV-R0147): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 20
+    },
+    {
+      "id": "12",
+      "description": "2.8 `LC-R0148` Implement `R0148` in `src/hermes_installer/lifecycle.py`: Check/apply updates; rollback; backup/restore; uninstall. Verify with `tests/contracts/test_lifecycle.py` (EV-R0148): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 21
+    },
+    {
+      "id": "13",
+      "description": "2.9 `LC-R0149` Implement `R0149` in `src/hermes_installer/lifecycle.py`: Preflight must detect OS/distribution/version, ARM64 architecture, available RAM, graphical session, user/sudo context, package-manager locks, network/DNS/TLS, disk capacity, existing installs, services, ports, and device access. Select supported dependency versions; do not globally replace the system Python or Node to satisfy one component. Verify with `tests/contracts/test_lifecycle.py` (EV-R0149): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 22
+    },
+    {
+      "id": "14",
+      "description": "2.10 `LC-R0150` Implement `R0150` in `src/hermes_installer/lifecycle.py`: Use isolated environments for incompatible Python/Node/native dependencies. Prefer native ARM64 packages; use containers only where their compatible images and isolation justify them. Check native extensions, browser binaries, shared libraries, and transitive dependencies. Do not silently use x86 emulation as the Pi solution. Verify with `tests/contracts/test_lifecycle.py` (EV-R0150): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 23
+    },
+    {
+      "id": "15",
+      "description": "2.11 `LC-R0151` Implement `R0151` in `src/hermes_installer/lifecycle.py`: Keep application data, model files, component environments, source snapshots, logs, backups, and private overlays in documented locations. Use a single configuration source of truth and generated service definitions. Avoid writing through symlinks outside managed roots or overwriting existing user settings. Verify with `tests/contracts/test_lifecycle.py` (EV-R0151): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 24
+    },
+    {
+      "id": "16",
+      "description": "2.12 `LC-R0152` Implement `R0152` in `src/hermes_installer/lifecycle.py`: Use appropriate systemd/user-session supervision with startup ordering, restart limits, health probes, timeouts, log rotation, and clean shutdown. Detect already-managed services to prevent duplicate listeners, model processes, jobs, and memory workers. Start with conservative, configurable concurrency—for example, one browser worker and a small cloud-agent pool—and tune from measurements. Verify with `tests/contracts/test_lifecycle.py` (EV-R0152): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 25
+    },
+    {
+      "id": "17",
+      "description": "2.13 `LC-R0153` Implement `R0153` in `src/hermes_installer/lifecycle.py`: Installations must be idempotent and resumable, with process locks and per-step checkpoints. Stage downloads, validate artifacts, and atomically switch compatible generations. Upgrades must preview relevant config/schema/permission changes and preserve user modifications. Take consistent database backups and support version-compatible restoration. Verify with `tests/contracts/test_lifecycle.py` (EV-R0153): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 26
+    },
+    {
+      "id": "18",
+      "description": "2.14 `LC-R0154` Implement `R0154` in `src/hermes_installer/lifecycle.py`: Uninstall removes installer-owned software while retaining user data by default. Verify with `tests/contracts/test_lifecycle.py` (EV-R0154): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 27
+    },
+    {
+      "id": "19",
+      "description": "2.15 `LC-R0155` Implement `R0155` in `src/hermes_installer/lifecycle.py`: Bind management interfaces to loopback by default. Remote access must have authentication and appropriate encrypted transport. Keep services unprivileged where possible, limit filesystem/network/tool scopes, and keep secrets out of source, command lines, screenshots, logs, and diagnostic bundles. Preserve OAuth callback validation and credential ownership. Verify with `tests/contracts/test_lifecycle.py` (EV-R0155): Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior. Update `docs/managed-lifecycle.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/lifecycle-recovery/tasks.md",
+      "line": 28
+    }
+  ],
+  "taskTrackingConfigured": true,
+  "state": "ready",
+  "instruction": "Read context files, work through pending tasks, mark complete as you go.\nPause if you hit blockers or need clarification.",
+  "context": "This is the authorized greenfield Togarriapa/HermesAgent_Installer repository.\nGPT-6.1 Sol owns specifications/task creation/refinement; GPT-6 Luna owns development.\nFrozen baseline plans/2026-10-09-v1 plus immutable annotated tag must never change.\nAppend-only Sol amendments and live planning/OpenSpec artifacts evolve separately.\nTarget: Raspberry Pi5, nominal16GB RAM,1TB SSD, Coral USB or PCIe/M.2; detect actual facts.\nSupported64-bit Linux ARM64, graphical user session for native official Hermes Desktop.\nThin shell bootstrap and typed modular Python; isolated dependencies, official Hermes PM Python3.14.\nUpstream Hermes7085fbf7753266fc4943c55ac04926186bc90005; registry113f42d33be9e0c8f0f47f5ca998e687323dec83.\nRead SOURCES.md and COMPATIBILITY.md for dated primary evidence; revalidate at configuration/update.\nPreserve data/settings/credentials/private learning/unrelated services. No reimage/format/service takeover.\nRuntime enforcement and Hermes-only correlated topology, no prompt-only authorization/sandbox claims.\nZero additional metered spending; privacy/budget/capability policy wraps all dispatch/background/retries.\nOne automatic long-term memory owner; preserve native session memory and provenance.\nNative ARM64 Colibri GLM-5.2, experimental until measured; Coral separate delegate-used inference.\nOfficial MCPs with harmless selected-resource reads and bounded init/discovery/reconnect/cancel.\nUser-facing installer/docs English, new schedules/display times Europe/Lisbon; preserve host timezone.\nNo physical target/accounts enrolled and no privileged installation on development Mac.\nDoD: real adapters/handlers, meaningful fixture failures, source-to-spec/task/test/component/AC coverage,\nstrict OpenSpec validation, truthful distinct functional/account/hardware evidence and executable target workflow.\nCloudflare direct addition: blank hostname, secure scoped token, automatic owned tunnel/DNS/Access emailOTP setup.\nBrowser remote only official native Desktop app; loopback JWT gateway/WS expiry-revocation leases, no host desktop/shell/backend exposure.\nManagement token setup-only; active zone/owned conflicts/transaction resume, zero paid certificate purchase.\nPreserve original12 acceptance criteria plus addedAC13..15; target/account mutation pending secure enrollment.\nPlanned commands/tests are not available/verified until implementation evidence exists.\n",
+  "root": {
+    "path": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller",
+    "source": "nearest"
+  }
+}

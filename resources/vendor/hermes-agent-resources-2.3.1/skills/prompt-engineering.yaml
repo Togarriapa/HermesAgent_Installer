@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: prompt-engineering
+  version: 1.0.1
+  description: Design, evaluate, and version prompts, context, examples, output contracts, and tool instructions for reliable model behavior.
+  tags: [ai, prompt, llm, evaluation]
+spec:
+  purpose: Treat prompts as testable program inputs with measurable success criteria rather than relying on stylistic intuition.
+  procedure:
+    - Define the task, user intent, allowed authority, input variability, success criteria, unacceptable failures, output contract, and evaluation dataset before writing the prompt.
+    - Design instruction hierarchy, context boundaries, examples, counterexamples, tool-use rules, uncertainty behavior, and structured output requirements while removing conflicting or redundant directions.
+    - Test the prompt against representative, edge, adversarial, ambiguous, long-context, missing-data, and tool-failure cases and capture exact inputs, outputs, model version, and scoring rubric.
+    - Diagnose errors by category such as instruction conflict, missing context, overconstraint, underspecification, format failure, tool misuse, hallucination, or model capability limit and change one causal variable at a time.
+    - Version the prompt and eval set, compare candidate against baseline quantitatively and qualitatively, and release only when improvements do not introduce unacceptable regressions.
+  verification:
+    - Prompt changes must be evaluated on a fixed regression set plus new failure cases rather than anecdotal examples alone.
+    - Output and tool-use requirements must be machine-checkable where practical and must not grant authority beyond the host runtime.

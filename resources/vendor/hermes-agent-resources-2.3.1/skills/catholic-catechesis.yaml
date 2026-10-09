@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: catholic-catechesis
+  version: 1.0.0
+  description: Explain Catholic doctrine coherently using Scripture, Tradition, the Catechism, and appropriate doctrinal distinctions.
+  tags: [catholic, catechesis]
+spec:
+  workflow:
+    - Identify the doctrinal question and relevant theological terms.
+    - Anchor the answer in authoritative Catholic teaching.
+    - Distinguish dogma, doctrine, discipline, theological opinion, and prudential application.
+    - Explain common misunderstandings charitably and precisely.

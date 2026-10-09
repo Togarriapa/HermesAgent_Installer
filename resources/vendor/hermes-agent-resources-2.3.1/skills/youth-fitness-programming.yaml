@@ -1,0 +1,10 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: youth-fitness-programming
+  version: 1.0.0
+  description: Program developmentally appropriate youth fitness emphasizing technique, general athleticism, enjoyment, supervision, recovery, and safeguarding.
+  tags: [fitness, youth, children, safeguarding]
+spec:
+  principles: [technique-and-enjoyment-first, development-over-ego-loading, qualified-supervision]
+  procedure: [identify-age-development-sport-load, assess-baseline-movement, design-scaled-strength-skill-conditioning, avoid-adult-maximal-loading-culture, monitor-growth-pain-fatigue, involve-guardians-and-professionals-as-needed]

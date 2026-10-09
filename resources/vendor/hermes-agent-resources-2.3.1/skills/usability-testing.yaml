@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: usability-testing
+  version: 1.0.0
+  description: Evaluate interface usability through task-based testing, observation, issue classification, and iterative validation.
+  tags: [ux, testing, usability]
+spec:
+  procedure:
+    - Define representative tasks, target participants, success criteria, and hypotheses.
+    - Observe behavior without coaching participants through the intended design.
+    - Separate usability failures from preference comments and classify severity and recurrence.
+    - Re-test material design changes against the original task goals.

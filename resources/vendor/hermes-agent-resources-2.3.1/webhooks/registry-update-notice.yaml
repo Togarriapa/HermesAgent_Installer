@@ -1,0 +1,27 @@
+apiVersion: hermes.togarriapa/v1
+kind: Webhook
+metadata:
+  name: registry-update-notice
+  version: 1.0.0
+  description: Authenticated notification that a validated main-branch registry revision is available for Resource Evolution Manager assessment.
+  tags: [webhook, registry, updates, github]
+spec:
+  path: /hooks/registry/update
+  method: POST
+  authentication:
+    type: hmac-sha256
+    signatureHeader: X-Hermes-Signature-256
+    secret: ${HERMES_REGISTRY_UPDATE_SECRET}
+  event:
+    header: X-Hermes-Event
+    allowed: [registry-update-available]
+  action:
+    type: registry-update-assessment
+    profile: resource-evolution-manager
+  policy:
+    rejectUnsigned: true
+    deduplicateByDeliveryId: true
+    deliveryIdHeader: X-Hermes-Delivery
+    authorityFromWebhookReceipt: deny
+    activateFromWebhookReceipt: deny
+    referencedCommitRequired: true

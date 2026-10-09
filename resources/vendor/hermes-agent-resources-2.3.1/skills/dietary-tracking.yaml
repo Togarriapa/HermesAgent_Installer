@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: dietary-tracking
+  version: 1.0.0
+  description: Track dietary patterns proportionately for learning and planning without requiring obsessive precision.
+  tags: [nutrition, tracking]
+spec:
+  workflow:
+    - Define what question the tracking is meant to answer.
+    - Use the least burdensome method that can answer it.
+    - Review patterns across days rather than judging single meals.
+    - Stop or simplify tracking if it becomes counterproductive or distressing.

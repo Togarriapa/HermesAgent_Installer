@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: irrigation-water-management
+  version: 1.0.0
+  description: Plan irrigation from crop demand, soil water-holding capacity, weather, system uniformity, water quality, and runoff or leaching risk.
+  tags: [agriculture, irrigation, water]
+spec:
+  procedure:
+    - Establish crop stage, root depth, soil texture, effective rainfall, evapotranspiration context, irrigation capacity, and water quality.
+    - Estimate irrigation timing and depth using measured soil moisture or defensible water-balance assumptions where possible.
+    - Account for application efficiency, distribution uniformity, slope, runoff, drainage, salinity, and disease risk.
+    - Verify performance in the field and adjust schedules rather than relying on fixed timer duration alone.

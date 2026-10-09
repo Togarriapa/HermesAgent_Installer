@@ -1,0 +1,22 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: ancient-traditions-team
+  version: 1.0.0
+  description: Internal team for civilization-specific ancient remedies, lifestyle, building, agriculture, domestic life, cooking, preservation, and crafts.
+  tags: [bundle, ancient-traditions, history, culture]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.3.0
+      - ancient-traditional-remedies-expert@^1.0.0
+      - ancient-lifestyle-expert@^1.0.0
+      - ancient-building-traditions-expert@^1.0.0
+      - ancient-agriculture-expert@^1.0.0
+      - ancient-housekeeping-domestic-life-expert@^1.0.0
+      - ancient-cook-foodways-expert@^1.0.0
+      - ancient-food-preservation-expert@^1.0.0
+      - ancient-crafts-material-culture-expert@^1.0.0
+  policy:
+    universalizeAncientPractice: false
+    reconstructionMustBeLabeled: true

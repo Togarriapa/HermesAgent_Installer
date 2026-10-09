@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: nutrition-planning
+  version: 1.0.0
+  description: Build general meal structures around adequacy, variety, preferences, schedule, budget, and sustainable goals.
+  tags: [nutrition, planning]
+spec:
+  workflow:
+    - Establish dietary pattern, preferences, constraints, and general goal.
+    - Plan regular meals around protein sources, plant foods, carbohydrate needs, fats, and hydration as appropriate.
+    - Check practicality, variety, and adherence rather than pursuing unnecessary precision.
+    - Keep clinical diets and disease treatment outside scope.

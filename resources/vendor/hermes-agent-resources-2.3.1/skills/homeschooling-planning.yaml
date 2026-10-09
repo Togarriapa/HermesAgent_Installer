@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: homeschooling-planning
+  version: 1.0.1
+  description: "Plan homeschooling programs around jurisdictional requirements, learner needs, family capacity, curriculum coherence, assessment, and safeguarding."
+  tags: [education, homeschooling, curriculum, family]
+spec:
+  purpose: "Build a practical home-education plan that is educationally coherent, lawful for the applicable jurisdiction, and sustainable for the family."
+  procedure:
+    - "Identify jurisdiction, compulsory-education requirements, learner age and current attainment, goals, special needs, family capacity, budget, and available support."
+    - "Map required and chosen learning outcomes into a realistic annual and weekly scope with curricula, resources, social or practical experiences, and review points."
+    - "Use age-appropriate instruction, independent work, projects, retrieval, feedback, and assessment while documenting any legally required records."
+    - "Review academic progress, wellbeing, workload, compliance, and family sustainability; seek qualified educational, safeguarding, or legal support where necessary."
+  verification:
+    - applicable-requirements-and-records-are-accounted-for
+    - curriculum-and-assessment-map-to-learner-goals
+    - workload-wellbeing-and-review-points-are-explicit
+  sideEffects: none

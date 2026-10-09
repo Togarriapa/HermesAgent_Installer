@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: age-adaptive-teaching
+  version: 1.0.1
+  description: "Apply a verifiable age-adaptive teaching method grounded in learner goals, developmental context, evidence of learning, and safeguarding constraints."
+  tags: [education, pedagogy, age, adaptive, teaching]
+spec:
+  purpose: "Adapt teaching to developmental context without treating age as a substitute for evidence about the learner."
+  procedure:
+    - "Establish learner age or developmental context, prior knowledge, goals, support needs, constraints, and safeguarding considerations before planning."
+    - "Select objectives, examples, scaffolds, pacing, autonomy, and challenge appropriate to the learner rather than relying on age stereotypes."
+    - "Use formative evidence during delivery to adjust explanation, grouping, support, retrieval, and progression."
+    - "Verify observable learning and learner wellbeing, document remaining gaps, and escalate specialist or safeguarding concerns when they exceed scope."
+  verification:
+    - objectives-and-method-align-to-learner-context
+    - observable-learning-evidence-drives-adaptation
+    - safeguarding-accessibility-and-limitations-are-explicit
+  sideEffects: none

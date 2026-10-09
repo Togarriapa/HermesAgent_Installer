@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: epic-kanban-management
+  version: 1.0.1
+  description: Manage one ephemeral Kanban per Epic with dependency-aware work items, explicit states, blockers, decisions, review gates, and completion evidence.
+  tags: [kanban, orchestration, planning, delivery]
+spec:
+  purpose: Maintain an auditable operational representation of an Epic without allowing the board itself to grant execution authority.
+  procedure:
+    - Define the Epic outcome and acceptance criteria, then decompose it into user stories, tasks, defects, spikes, risks, and decisions with owners, dependencies, and verification criteria.
+    - Create work items only when they represent distinct actionable or decision-relevant work; connect prerequisite relationships and identify which items can execute safely in parallel.
+    - Move items through backlog, ready, in-progress, review, blocked, and done from observed work state, recording blocker causes, decisions, material dissent, and evidence rather than optimistic status.
+    - Require review or integration gates before marking changes complete, reopen items when acceptance evidence fails, and keep board state synchronized with actual branches, artifacts, tests, or external work.
+    - On accepted Epic completion, verify all acceptance criteria, archive a concise outcome and unresolved-risk summary, then delete the ephemeral board according to lifecycle policy.
+  verification:
+    - Every done item must point to acceptance evidence or an explicitly accepted decision outcome.
+    - Board operations and scheduled transitions must never be treated as authorization for external or destructive actions.

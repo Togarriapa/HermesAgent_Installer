@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: historical-method
+  version: 1.0.0
+  description: Analyze historical questions through chronology, context, causation, source criticism, and competing interpretations.
+  tags: [history, method]
+spec:
+  workflow:
+    - Define period, geography, actors, institutions, and chronology.
+    - Gather primary evidence and relevant scholarship.
+    - Evaluate causation without reducing complex events to a single factor.
+    - Separate what is documented from inference and later interpretation.

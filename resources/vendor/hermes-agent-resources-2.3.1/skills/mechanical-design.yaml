@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: mechanical-design
+  version: 1.0.0
+  description: Develop mechanical concepts from requirements, loads, geometry, interfaces, tolerances, manufacturability, maintenance, and failure modes.
+  tags: [mechanical, design, engineering]
+spec:
+  procedure:
+    - Define functions, load cases, interfaces, envelope, environment, life, maintenance, manufacturing, and safety constraints.
+    - Generate alternatives and identify governing calculations, tolerances, fits, wear points, lubrication, fastening, and inspection needs.
+    - Design for assembly, maintenance, guarding, and predictable failure behavior.
+    - Validate critical assumptions with calculation, test, simulation, or competent review.

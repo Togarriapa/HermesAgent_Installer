@@ -1,0 +1,44 @@
+{
+  "changeName": "skills-memory-applications",
+  "artifactId": "tasks",
+  "schemaName": "spec-driven",
+  "changeDir": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/skills-memory-applications",
+  "planningHome": {
+    "kind": "repo",
+    "root": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller",
+    "changesDir": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes",
+    "defaultSchema": "spec-driven"
+  },
+  "outputPath": "tasks.md",
+  "resolvedOutputPath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/skills-memory-applications/tasks.md",
+  "existingOutputPaths": [
+    "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/skills-memory-applications/tasks.md"
+  ],
+  "description": "Implementation checklist with trackable tasks",
+  "instruction": "Create the task list that breaks down the implementation work.\n\nBefore writing tasks, check design.md for Open Questions. If any of them\nwould change what gets built, resolve them with the user first - do not\nbake an unstated assumption into the task list.\n\n**IMPORTANT: Follow the template below for tracked tasks.** The apply phase parses\ncheckbox format to track progress. A box holding only `x` counts as done,\nupper or lower case and with any spacing, so `- [ x]` is done too. Every\nother marker, including `- [~]`, `- [-]` and an empty `- []`, reads as\nunfinished. A line with no checkbox is not tracked at all.\n\nGuidelines:\n- Group related tracked tasks under ## numbered headings\n- Each tracked task MUST be a checkbox: `- [ ] X.Y Task description`\n- Tasks should be small enough to complete in one session\n- Order tasks by dependency (what must be done first?)\n- Track implementation and verification work that can be completed before\n  archive. If the requested workflow includes archive or work that requires\n  this change to be archived, preserve those steps as plain bullets in an\n  optional `## Workflow follow-up` section at the end of tasks.md. These\n  bullets are reference information outside tracked task progress.\n- Each task MUST state how to verify completion (a test, command,\n  observable behavior, or delivered artifact). Put the verification in\n  that task's checkbox description. Use a separate verification task only\n  when it checks broader integration or system behavior that spans\n  multiple implementation tasks.\n- Each task group MUST land the tests and documentation its own work\n  calls for. Do NOT collect testing or documentation into a final group -\n  when a late group first exercises work from an early one, the failures\n  cascade back through every group in between and force rework. A group\n  whose work calls for neither, such as scaffolding or dependency setup,\n  carries neither. A final group is for integration checks only, not for\n  the tests and docs an earlier group owed.\n\nExample:\n```\n# Tasks\n\n## 1. Setup\n\n- [ ] 1.1 Create new module structure and verify expected files are present\n- [ ] 1.2 Add dependencies to package.json and verify package installation succeeds\n\n## 2. Core Implementation\n\n- [ ] 2.1 Implement data export function and verify the export test passes\n- [ ] 2.2 Add CSV formatting utilities and verify unit tests cover quoting and delimiters\n- [ ] 2.3 Document the export API in docs/export.md and verify the documented command runs as written\n```\n\nWhen applicable, append workflow follow-up as plain bullets, for example:\n```\n## Workflow follow-up\n\n- Archive the change after the project's review requirements are satisfied.\n- Verify the archived result.\n```\n\nReference specs for what needs to be built, design for how to build it.\n",
+  "context": "This is the authorized greenfield Togarriapa/HermesAgent_Installer repository.\nGPT-6.1 Sol owns specifications/task creation/refinement; GPT-6 Luna owns development.\nFrozen baseline plans/2026-10-09-v1 plus immutable annotated tag must never change.\nAppend-only Sol amendments and live planning/OpenSpec artifacts evolve separately.\nTarget: Raspberry Pi5, nominal16GB RAM,1TB SSD, Coral USB or PCIe/M.2; detect actual facts.\nSupported64-bit Linux ARM64, graphical user session for native official Hermes Desktop.\nThin shell bootstrap and typed modular Python; isolated dependencies, official Hermes PM Python3.14.\nUpstream Hermes7085fbf7753266fc4943c55ac04926186bc90005; registry113f42d33be9e0c8f0f47f5ca998e687323dec83.\nRead SOURCES.md and COMPATIBILITY.md for dated primary evidence; revalidate at configuration/update.\nPreserve data/settings/credentials/private learning/unrelated services. No reimage/format/service takeover.\nRuntime enforcement and Hermes-only correlated topology, no prompt-only authorization/sandbox claims.\nZero additional metered spending; privacy/budget/capability policy wraps all dispatch/background/retries.\nOne automatic long-term memory owner; preserve native session memory and provenance.\nNative ARM64 Colibri GLM-5.2, experimental until measured; Coral separate delegate-used inference.\nOfficial MCPs with harmless selected-resource reads and bounded init/discovery/reconnect/cancel.\nUser-facing installer/docs English, new schedules/display times Europe/Lisbon; preserve host timezone.\nNo physical target/accounts enrolled and no privileged installation on development Mac.\nDoD: real adapters/handlers, meaningful fixture failures, source-to-spec/task/test/component/AC coverage,\nstrict OpenSpec validation, truthful distinct functional/account/hardware evidence and executable target workflow.\nCloudflare direct addition: blank hostname, secure scoped token, automatic owned tunnel/DNS/Access emailOTP setup.\nBrowser remote only official native Desktop app; loopback JWT gateway/WS expiry-revocation leases, no host desktop/shell/backend exposure.\nManagement token setup-only; active zone/owned conflicts/transaction resume, zero paid certificate purchase.\nPreserve original12 acceptance criteria plus addedAC13..15; target/account mutation pending secure enrollment.\nPlanned commands/tests are not available/verified until implementation evidence exists.",
+  "rules": [
+    "Each task includes concrete verification and documentation; keep live target/account verification separately open.",
+    "Never mark a placeholder, clone, catalog listing or Markdown instruction as functional integration."
+  ],
+  "template": "# Tasks\n\n## 1. <!-- Task Group Name -->\n\n- [ ] 1.1 <!-- Task description -->\n- [ ] 1.2 <!-- Task description -->\n\n## 2. <!-- Task Group Name -->\n\n- [ ] 2.1 <!-- Task description -->\n- [ ] 2.2 <!-- Task description -->\n",
+  "dependencies": [
+    {
+      "id": "specs",
+      "done": true,
+      "path": "specs/**/*.md",
+      "description": "Detailed specifications for the change"
+    },
+    {
+      "id": "design",
+      "done": true,
+      "path": "design.md",
+      "description": "Technical design document with implementation details"
+    }
+  ],
+  "unlocks": [],
+  "root": {
+    "path": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller",
+    "source": "nearest"
+  }
+}

@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: sociology-analysis
+  version: 1.0.0
+  description: Analyze social structures, institutions, groups, norms, networks, inequality, organizations, collective behavior, and social change.
+spec:
+  instructions:
+    - Connect individual behavior to institutions and social context without erasing personal agency.
+    - Compare competing sociological explanations and their empirical support.
+    - Distinguish correlation, mechanism, historical account, and normative interpretation.

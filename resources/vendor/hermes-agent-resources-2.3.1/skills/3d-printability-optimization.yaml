@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: 3d-printability-optimization
+  version: 1.0.0
+  description: Optimize 3D models for manufacturability, strength, material use, print time, supports, tolerances, assembly, and repeatability.
+spec:
+  procedure:
+    - Identify unsupported geometry, weak layer orientation, tolerance conflicts, overhangs, trapped volumes, and unnecessary material.
+    - Compare redesign options against functional requirements and chosen process.
+    - Preserve source design intent and report trade-offs.

@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: infrastructure-governance
+  version: 1.0.1
+  description: "Govern infrastructure standards, ownership, environments, exceptions, lifecycle, privileged changes, recovery, and auditability without granting execution authority."
+  tags: [infrastructure, governance, operations, security]
+spec:
+  purpose: "Keep infrastructure changes controlled, recoverable, and attributable while allowing explicit justified exceptions."
+  procedure:
+    - "Define infrastructure scope, environments, owners, criticality, trust boundaries, approved management paths, recovery requirements, and applicable host policy."
+    - "Set minimum standards for configuration, identity, secrets, network exposure, patching, observability, backup, lifecycle, and change evidence proportional to risk."
+    - "Review proposed exceptions for necessity, compensating controls, duration, owner, rollback, and blast radius; governance approval does not substitute for runtime authorization."
+    - "Audit drift, expired exceptions, unsupported components, failed controls, and recurring incidents, then update standards from evidence while preserving least privilege."
+  verification:
+    - owners-environments-and-authority-boundaries-are-explicit
+    - exceptions-are-scoped-owned-and-time-bounded
+    - governance-never-substitutes-for-runtime-authorization
+  sideEffects: none

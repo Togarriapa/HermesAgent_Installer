@@ -1,0 +1,104 @@
+{
+  "changeName": "installer-bootstrap-desktop",
+  "schemaName": "spec-driven",
+  "planningHome": {
+    "kind": "repo",
+    "root": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller",
+    "changesDir": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes",
+    "defaultSchema": "spec-driven"
+  },
+  "changeRoot": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/installer-bootstrap-desktop",
+  "artifactPaths": {
+    "proposal": {
+      "outputPath": "proposal.md",
+      "resolvedOutputPath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/installer-bootstrap-desktop/proposal.md",
+      "existingOutputPaths": [
+        "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/installer-bootstrap-desktop/proposal.md"
+      ]
+    },
+    "specs": {
+      "outputPath": "specs/**/*.md",
+      "resolvedOutputPath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/installer-bootstrap-desktop/specs/**/*.md",
+      "existingOutputPaths": [
+        "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/installer-bootstrap-desktop/specs/bootstrap-desktop/spec.md"
+      ]
+    },
+    "design": {
+      "outputPath": "design.md",
+      "resolvedOutputPath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/installer-bootstrap-desktop/design.md",
+      "existingOutputPaths": [
+        "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/installer-bootstrap-desktop/design.md"
+      ]
+    },
+    "tasks": {
+      "outputPath": "tasks.md",
+      "resolvedOutputPath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/installer-bootstrap-desktop/tasks.md",
+      "existingOutputPaths": [
+        "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/installer-bootstrap-desktop/tasks.md"
+      ]
+    }
+  },
+  "isPlanningComplete": true,
+  "isComplete": true,
+  "applyRequires": [
+    "tasks"
+  ],
+  "nextSteps": [
+    "All planning artifacts are complete. Run openspec instructions apply --change \"installer-bootstrap-desktop\" --json to inspect implementation progress."
+  ],
+  "actionContext": {
+    "mode": "repo-local",
+    "sourceOfTruth": "repo",
+    "planningArtifacts": [
+      "proposal",
+      "specs",
+      "design",
+      "tasks"
+    ],
+    "linkedContext": [],
+    "allowedEditRoots": [
+      "/Users/ctw03020/Documents/ChatGPT/HermesInstaller"
+    ],
+    "requiresAffectedAreaSelection": false,
+    "constraints": [
+      "Repo-local change artifacts and implementation edits are scoped to this project."
+    ]
+  },
+  "artifacts": [
+    {
+      "id": "proposal",
+      "outputPath": "proposal.md",
+      "status": "done",
+      "requires": []
+    },
+    {
+      "id": "specs",
+      "outputPath": "specs/**/*.md",
+      "status": "done",
+      "requires": [
+        "proposal"
+      ]
+    },
+    {
+      "id": "design",
+      "outputPath": "design.md",
+      "status": "done",
+      "requires": [
+        "proposal"
+      ]
+    },
+    {
+      "id": "tasks",
+      "outputPath": "tasks.md",
+      "status": "done",
+      "requires": [
+        "specs",
+        "design"
+      ]
+    }
+  ],
+  "root": {
+    "path": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller",
+    "source": "nearest"
+  }
+}

@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: notebook-knowledge-synthesis
+  version: 1.0.1
+  description: Synthesize authorized notebook material into traceable themes, claims, contradictions, timelines, decisions, and reusable knowledge without inventing missing context.
+  tags: [notes, synthesis, knowledge, research]
+spec:
+  purpose: Turn heterogeneous notes into structured knowledge while preserving source provenance and uncertainty.
+  procedure:
+    - Define the synthesis question, authorized source set, date range, notebook boundaries, privacy constraints, and desired output before reading or extracting material.
+    - Normalize notes into source-addressable units with dates, titles, authorship where known, tags, links, quotations or paraphrases, and provenance back to the original notebook location.
+    - Cluster recurring concepts, entities, decisions, evidence, assumptions, action items, disagreements, and temporal changes while keeping contradictory notes visible rather than merging them prematurely.
+    - Build a synthesis that distinguishes direct source claims, cross-source inference, unresolved questions, superseded decisions, and confidence; avoid filling gaps from unrelated memory.
+    - Verify the final synthesis against representative source passages and produce citations or source pointers sufficient to recover the original context.
+  verification:
+    - Every material synthesized claim must be traceable to one or more authorized notebook sources.
+    - Contradictions, uncertain authorship, stale decisions, and missing context must be surfaced rather than silently reconciled.

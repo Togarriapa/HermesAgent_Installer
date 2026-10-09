@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: competitive-analysis
+  version: 1.0.1
+  description: "Analyze competitors and substitutes using current evidence on positioning, capabilities, pricing, distribution, customers, economics, and strategic constraints."
+  tags: [strategy, competition, market, analysis]
+spec:
+  purpose: "Support strategic decisions with evidence-based comparison rather than marketing claims or superficial feature tables."
+  procedure:
+    - "Define the market, customer segment, geography, decision horizon, relevant competitors or substitutes, and questions the comparison must answer."
+    - "Collect current primary and reliable secondary evidence on offers, pricing, distribution, capabilities, customers, partnerships, economics, regulation, and material changes."
+    - "Normalize definitions and dates, distinguish observed facts from estimates, and compare sources of advantage, constraints, switching costs, and likely responses."
+    - "Translate findings into explicit opportunities, threats, assumptions, and indicators to monitor while surfacing missing or contradictory evidence."
+  verification:
+    - comparisons-use-current-like-for-like-evidence
+    - facts-estimates-and-inferences-are-separated
+    - strategic-implications-link-back-to-evidence
+  sideEffects: none

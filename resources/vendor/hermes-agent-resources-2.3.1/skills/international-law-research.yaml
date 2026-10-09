@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: international-law-research
+  version: 1.0.1
+  description: "Research public international law using authoritative treaty, customary-law, institutional, judicial, and state-practice sources with source weight kept explicit."
+  tags: [law, international, research, treaties]
+spec:
+  purpose: "Establish what international-law sources support a proposition and how strongly, rather than treating commentary as binding law."
+  procedure:
+    - "Define the actors, subject matter, relevant dates, forum, territories, and precise international-law question."
+    - "Collect applicable treaties and status information, authoritative institutional materials, judicial decisions, and evidence relevant to state practice and opinio juris where customary law is asserted."
+    - "Analyze source hierarchy and weight, reservations or declarations, temporal and territorial application, conflicting authorities, and the distinction between binding and persuasive material."
+    - "Synthesize the best-supported conclusion with explicit uncertainty, source provenance, and any unresolved questions requiring specialized legal advice."
+  verification:
+    - treaty-status-and-primary-sources-are-current
+    - binding-and-persuasive-material-are-distinguished
+    - customary-law-claims-identify-supporting-evidence
+  sideEffects: none

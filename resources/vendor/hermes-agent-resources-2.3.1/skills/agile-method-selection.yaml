@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: agile-method-selection
+  version: 1.0.0
+  description: Select and adapt Agile, Scrum, Kanban, Lean, or hybrid practices according to work type, constraints, feedback loops, and organizational context.
+  tags: [agile, scrum, kanban, lean]
+spec:
+  procedure:
+    - Diagnose demand shape, work-item variability, dependencies, release model, risk, team topology, and feedback latency.
+    - Select practices because they address observed constraints rather than because a framework is fashionable.
+    - Keep framework-required rules distinguishable from local adaptations.
+    - Treat process changes as hypotheses with measurable expected effects.

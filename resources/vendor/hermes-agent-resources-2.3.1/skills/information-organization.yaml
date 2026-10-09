@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: information-organization
+  version: 1.0.0
+  description: Organize notes, decisions, references, files, contact context, and recurring information into retrievable structures with clear provenance.
+  tags: [assistant, organization, information]
+spec:
+  procedure:
+    - Identify the retrieval use case before choosing folders, labels, naming, or summaries.
+    - Preserve source, date, status, ownership, and version where they affect interpretation.
+    - Keep canonical information separate from temporary notes and duplicate copies.
+    - Use consistent naming and lightweight indexes so future retrieval does not depend on memory.

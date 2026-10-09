@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: robot-safety
+  version: 1.0.0
+  description: Design robotic behavior around safe states, human separation, force and speed limits, emergency stops, fault detection, and staged validation.
+  tags: [robotics, safety, mechatronics]
+spec:
+  procedure:
+    - Identify hazards from motion, stored energy, tools, payloads, batteries, heat, autonomy, loss of communications, and unexpected restart.
+    - Define safe states, physical stops, isolation, emergency-stop behavior, watchdogs, operating zones, and restart conditions.
+    - Validate safety independently of normal task success and test credible single faults where practical.
+    - Require applicable standards and competent review before operation around people in safety-critical environments.

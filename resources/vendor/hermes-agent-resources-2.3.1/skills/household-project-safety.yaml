@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: household-project-safety
+  version: 1.0.0
+  description: Screen household projects for electrical, structural, fall, fire, gas, pressure, hazardous-material, tool, ventilation, and permit risks.
+  tags: [home, safety, projects]
+spec:
+  procedure:
+    - Identify energy sources, heights, loads, confined spaces, dust, chemicals, combustion, utilities, structural elements, and occupants at risk.
+    - Define isolation, guarding, ventilation, PPE, access control, and stop-work conditions appropriate to the task.
+    - Escalate mains electrical, gas, structural, asbestos or lead disturbance, pressure systems, and other regulated work to qualified professionals.
+    - Prefer safe inspection and planning over procedural detail for work that should not be DIY.

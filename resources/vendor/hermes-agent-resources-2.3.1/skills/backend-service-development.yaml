@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: backend-service-development
+  version: 1.0.0
+  description: Implement maintainable backend services with clear domain boundaries, persistence, validation, failure handling, and observability.
+  tags: [backend, services, development]
+spec:
+  procedure:
+    - Separate domain rules, transport, persistence, and external integrations where doing so improves clarity and testability.
+    - Validate inputs at trust boundaries and preserve transactional invariants.
+    - Use explicit timeouts, retries, idempotency, and failure handling for external dependencies.
+    - Instrument material operations for logs, metrics, traces, or audit events appropriate to the system.

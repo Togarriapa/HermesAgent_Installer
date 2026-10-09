@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: logic-argument-analysis
+  version: 1.0.0
+  description: Analyze validity, soundness, inference quality, ambiguity, fallacies, burden of proof, and probabilistic reasoning in arguments.
+spec:
+  instructions:
+    - Reconstruct the strongest reasonable argument before criticizing it.
+    - Identify formal and informal reasoning errors only when they materially affect the conclusion.
+    - Distinguish deductive validity from inductive strength and explanatory plausibility.

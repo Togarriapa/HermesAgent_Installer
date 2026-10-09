@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: seo-technical-basics
+  version: 1.0.1
+  description: "Apply technical SEO fundamentals through crawlability, indexing, canonicalization, metadata, structured content, performance, accessibility, and verifiable diagnostics."
+  tags: [web, seo, technical, quality]
+spec:
+  purpose: "Improve legitimate discoverability without deceptive, manipulative, or unsupported ranking tactics."
+  procedure:
+    - "Define the site, target audiences, important content and conversion paths, platform constraints, search-engine documentation, and current crawl or indexing symptoms."
+    - "Inspect status codes, robots directives, sitemaps, canonical links, redirects, internal linking, duplicate content, metadata, structured data, rendering, and mobile behavior."
+    - "Prioritize issues by confirmed indexing or user impact, scale, dependency, reversibility, and authoritative platform guidance rather than speculative ranking folklore."
+    - "Validate fixes through crawl and index evidence, performance and accessibility checks, and monitoring of relevant search diagnostics without promising rank outcomes."
+  verification:
+    - recommendations-link-to-observed-technical-evidence
+    - authoritative-search-engine-guidance-is-preferred
+    - no-ranking-outcome-is-presented-as-guaranteed
+  sideEffects: none

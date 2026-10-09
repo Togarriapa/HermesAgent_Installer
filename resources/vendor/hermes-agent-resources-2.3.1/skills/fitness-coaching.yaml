@@ -1,0 +1,10 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: fitness-coaching
+  version: 1.0.0
+  description: Coach general fitness using goal-based programming, progressive overload, recovery, adherence, monitoring, and safe referral boundaries.
+  tags: [fitness, coaching, health]
+spec:
+  principles: [minimum-effective-dose, progressive-overload, recovery-and-adherence, symptoms-require-modification-or-referral]
+  procedure: [screen-goals-history-constraints, establish-baseline, build-balanced-program, prescribe-effort-and-progression, monitor-recovery-and-adherence, deload-modify-or-refer]

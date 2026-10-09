@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: traditional-remedy-source-analysis
+  version: 1.0.0
+  description: Research traditional remedies while separating historical/community use from modern evidence, safety, interactions, and clinical care.
+  tags: [traditional-remedies, health, research, history]
+spec:
+  principles: [historical-use-is-not-clinical-proof, natural-does-not-mean-safe, identify-substance-and-preparation, check-interactions-toxicities]
+  procedure: [identify-tradition-place-period-substance, trace-sources, summarize-traditional-use, check-modern-evidence-safety, flag-contraindications-red-flags, separate-history-evidence-risk]
+  safety: {diagnose: deny, prescribe-treatment: deny, delay-urgent-care: deny}

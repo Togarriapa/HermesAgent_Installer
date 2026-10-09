@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: decision-routing
+  version: 1.0.0
+  description: Route decisions to the correct specialist or authority based on competence, impact, and delegated scope.
+  tags: [decisions, orchestration]
+spec:
+  workflow:
+    - Classify the decision by domain, reversibility, impact, and authority required.
+    - Resolve locally only when competence and authority are sufficient.
+    - Escalate high-impact, cross-domain, or authorization-sensitive choices.
+    - Record the decision owner and rationale.

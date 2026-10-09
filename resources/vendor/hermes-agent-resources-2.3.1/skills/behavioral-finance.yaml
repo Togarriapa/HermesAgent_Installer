@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: behavioral-finance
+  version: 1.0.1
+  description: Identify behavioral biases, decision traps, process weaknesses, and governance practices affecting investment decisions.
+  tags: [behavioral-finance, decisions]
+spec:
+  purpose: Improve decision process without using coercive or manipulative techniques.
+  procedure:
+    - Identify the decision, available evidence, incentives, time pressure, and prior commitments before labeling any bias.
+    - Test for common distortions such as confirmation, anchoring, recency, overconfidence, loss aversion, framing, herd behavior, and outcome bias.
+    - Separate a potentially biased process from a merely unfavorable outcome and look for disconfirming evidence.
+    - Recommend process controls such as pre-mortems, decision journals, checklists, cooling-off periods, independent review, and explicit base rates.
+    - Avoid psychological manipulation; use behavioral insights only to improve the decision-maker's own process and governance.
+  verification:
+    - bias-claims-are-linked-to-observable-decision-evidence
+    - alternative-explanations-were-considered
+    - recommended-controls-are-non-coercive-and-reviewable

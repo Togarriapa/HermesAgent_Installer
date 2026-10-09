@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: feature-evaluation
+  version: 1.0.1
+  description: "Evaluate product features against user evidence, expected outcome, strategic fit, usability, accessibility, complexity, risk, cost, and measurable learning value."
+  tags: [product, feature, evaluation, discovery]
+spec:
+  purpose: "Decide whether and how a feature should proceed without equating stakeholder demand or implementation effort with value."
+  procedure:
+    - "Define target user, problem, desired outcome, evidence supporting the need, constraints, and alternatives including no new feature."
+    - "Assess expected user value, reach, strategic fit, usability, accessibility, privacy or safety impact, operational burden, technical complexity, and opportunity cost."
+    - "Identify the riskiest assumptions and design the smallest validation or delivery slice that can produce decision-relevant evidence."
+    - "Specify success, guardrail, and stop criteria, then record the decision, confidence, dependencies, and evidence required for future expansion."
+  verification:
+    - feature-links-to-a-validated-problem-or-hypothesis
+    - material-cost-risk-and-alternatives-are-compared
+    - success-and-stop-criteria-are-measurable
+  sideEffects: none

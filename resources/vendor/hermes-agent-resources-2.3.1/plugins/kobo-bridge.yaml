@@ -1,0 +1,49 @@
+apiVersion: hermes.togarriapa/v1
+kind: Plugin
+metadata:
+  name: kobo-bridge
+  version: 1.0.0
+  description: Controlled bridge for user-exported Kobo notebooks and explicit delivery of non-DRM ebooks through official Dropbox/Google Drive paths or USB fallback.
+  tags: [kobo, ebook, notebook, dropbox, google-drive, usb]
+spec:
+  provider: kobo-export-sideload-bridge
+  requires:
+    plugins:
+      - composio@^1.0.0
+  device:
+    modelRef: KOBO_DEVICE_MODEL
+    capabilityDetection: required
+    knownOfficialCloudSideloadModels: [kobo-forma, kobo-sage, kobo-elipsa, kobo-elipsa-2e, kobo-libra-colour]
+  adapters:
+    dropbox:
+      toolkit: DROPBOX
+      toolkitVersion: 20260721_00
+      oauth: user-authorized
+      koboFolder: /Apps/Rakuten Kobo
+      notebookRead: exported-files-only
+      ebookWrite: [epub, pdf]
+    googleDrive:
+      toolkit: GOOGLEDRIVE
+      toolkitVersion: 20260811_00
+      oauth: user-authorized
+      koboFolder: Rakuten Kobo
+      notebookRead: runtime-capability-check
+      ebookWrite: [epub, pdf]
+    usb:
+      mountRef: KOBO_USB_MOUNT
+      exportedAnnotationsPath: Exported Annotations
+      notebookRead: exported-files-only
+      ebookWrite: [epub, pdf]
+  policy:
+    koboAccountCredentialScraping: deny
+    koboWebScraping: deny
+    drmRemoval: deny
+    storePurchases: deny
+    accountChanges: deny
+    deleteDeviceContent: deny
+    writeNotebook: deny
+    outboundDelivery: explicit-user-order
+    overwriteExisting: confirm
+    credentials: runtime-only
+  provenance:
+    officialKoboHelpRequiredForCapabilityClaims: true

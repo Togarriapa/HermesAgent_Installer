@@ -1,0 +1,111 @@
+apiVersion: hermes.togarriapa/v1
+kind: Plugin
+metadata:
+  name: financial-data-hub
+  version: 1.0.1
+  description: Read-only financial data aggregation for bank, broker, exchange, and Ledger account information with normalized outputs and strict separation from transaction authority.
+  tags: [finance, banking, portfolio, read-only, aggregation]
+spec:
+  provider: hermes-financial-data-hub
+  mode: read-only
+  capabilities:
+    - connect-user-authorized-read-only-financial-data-sources
+    - retrieve-account-balance-position-history-dividend-transaction-and-fill-data-within-provider-read-scopes
+    - normalize-observations-across-providers-with-source-and-freshness-provenance
+    - expose-aggregated-read-models-to-authorized-analysis-profiles-without-exposing-source-credentials
+  permissions:
+    accountDataRead: allow-authorized-sources-only
+    paymentInitiation: deny
+    fundTransfer: deny
+    tradingOrderMutation: deny
+    custodyMutation: deny
+    walletSigning: deny
+    privateKeyOrSeedAccess: deny
+  sessions:
+    consent: per-user-per-provider
+    credentials: runtime-only
+    revocation: provider-or-user-controlled
+    crossUserCredentialReuse: deny
+  sources:
+    banking:
+      provider: gocardless-bank-account-data
+      regulatoryModel: authorized-aisp
+      targetInstitutions:
+        - revolut
+        - banco-bpi
+        - moey
+      coverageCheckRequiredAtConnection: true
+      consent:
+        mode: user-oauth-redirect
+        revocable: true
+        refreshBeforeExpiry: user-consent-required
+      credentialRef: FINANCIAL_BANK_DATA_CREDENTIALS
+      capabilities:
+        - accounts
+        - balances
+        - transactions
+      paymentInitiation: deny
+      fundTransfers: deny
+    trading212:
+      provider: trading212-public-api
+      baseUrl: https://live.trading212.com/api/v0
+      credentialRef: TRADING212_READONLY_CREDENTIALS
+      keyPolicy:
+        readOnlyPermissionsOnly: true
+        ipRestriction: required
+      capabilities:
+        - account-summary
+        - positions
+        - history
+        - dividends
+        - transactions
+      orderPlacement: deny
+      orderModification: deny
+      orderCancellation: deny
+    pionex:
+      provider: pionex-api
+      baseUrl: https://api.pionex.com
+      credentialRef: PIONEX_READONLY_API_CREDENTIALS
+      requiredPermission: Read
+      capabilities:
+        - balances
+        - open-orders
+        - order-history
+        - fills
+      tradePermission: deny
+      orderPlacement: deny
+      orderCancellation: deny
+    ledger:
+      provider: ledger-wallet-api
+      transport: user-approved-wallet-session
+      permissions:
+        - account.list
+      capabilities:
+        - account-list
+        - public-account-metadata
+      accountRequest: deny
+      addressVerification: deny
+      transactionSigning: deny
+      messageSigning: deny
+      transactionBroadcast: deny
+      privateKeyAccess: deny
+      seedPhraseAccess: deny
+  normalization:
+    preserveSourceAccountIds: internally-tokenized
+    commonFields:
+      - provider
+      - account-alias
+      - asset-or-currency
+      - quantity-or-balance
+      - valuation-currency
+      - observed-at
+      - source-freshness
+    rawCredentialsInOutputs: deny
+  policy:
+    defaultWrite: deny
+    trading: deny
+    transfers: deny
+    custodyChanges: deny
+    profileCredentialVisibility: deny
+    authorityFromConnection: deny
+    userVisibleDeliveryViaHermesOnly: true

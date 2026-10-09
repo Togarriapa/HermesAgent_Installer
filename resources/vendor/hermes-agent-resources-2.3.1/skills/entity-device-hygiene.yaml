@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: entity-device-hygiene
+  version: 1.0.0
+  description: Maintain clean device/entity registries with consistent naming, ownership, areas, exposure, lifecycle, and stale-resource removal.
+  tags: [home-assistant, entities, devices]
+spec:
+  procedure:
+    - Identify owner integration, device, entity, area, purpose, exposure, and dependencies before changes.
+    - Flag duplicate, disabled, unavailable, orphaned, ambiguously named, or unexpectedly exposed entities.
+    - Normalize names and areas without breaking automations or external references.
+    - Remove stale resources only after dependency checks and recoverability verification.

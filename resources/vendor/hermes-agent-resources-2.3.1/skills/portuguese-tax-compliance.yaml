@@ -1,0 +1,14 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: portuguese-tax-compliance
+  version: 1.0.0
+  description: Research and explain Portuguese business tax and VAT compliance obligations using current authoritative sources and effective dates.
+  tags: [accounting, portugal, tax, vat, compliance]
+spec:
+  procedure:
+    - Establish taxpayer/entity type, transaction, period, residency, jurisdiction, and filing context before analyzing obligations.
+    - Verify current rules, rates, thresholds, forms, deadlines, and transitional provisions against authoritative Portuguese sources.
+    - Prefer Autoridade Tributária e Aduaneira and Diário da República; use OCC or CNC material as appropriate secondary professional guidance.
+    - Distinguish general compliance information from individualized tax advice, binding interpretation, litigation, or regulated professional sign-off.
+    - Cite the rule and effective date when a conclusion depends on current law or administrative guidance.

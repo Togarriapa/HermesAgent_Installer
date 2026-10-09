@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: cloudflare-tunnel-ops
+  version: 1.0.0
+  description: Operate Cloudflare Tunnel-backed services without embedding credentials.
+  tags: [cloudflare, tunnel, dns, ingress]
+spec:
+  procedure:
+    - Identify the tunnel, hostname, origin service, and current ingress mapping.
+    - Verify the origin locally before debugging the public hostname.
+    - Check connector state and logs before rotating or recreating a tunnel.
+    - Keep DNS and tunnel lifecycle separate so one can be repaired without destroying the other.
+    - Validate HTTPS reachability and expected authentication after changes.
+  guardrails:
+    - Never commit tunnel credentials JSON, API tokens, or account secrets.
+    - Avoid deleting a tunnel or DNS record when an in-place reconciliation is possible.
+    - Preserve a known-good remote administration path while changing ingress.

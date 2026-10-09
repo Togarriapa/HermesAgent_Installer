@@ -1,0 +1,30 @@
+apiVersion: hermes.togarriapa/v1
+kind: Catalog
+metadata:
+  name: hermesagent-resources
+  version: 2.3.1
+  description: Discovery-driven catalog for the HermesAgent resource registry.
+spec:
+  discovery:
+    mode: manifest-roots
+    recursive: false
+    roots:
+      Profile: profiles
+      Skill: skills
+      Plugin: plugins
+      MCP: mcps
+      Cron: crons
+      Webhook: webhooks
+      Channel: channels
+      Bundle: bundles
+    manifestPattern: "*.yaml"
+    canonicalIdentity: metadata
+  qualityPolicyFiles:
+    - QUALITY_POLICY.yaml
+  policy:
+    duplicateKindNameVersion: deny
+    malformedManifest: fail-closed
+    missingDependency: fail-closed
+    incompatibleDependency: fail-closed
+    unrecognizedResourceKind: fail-closed
+    secretResolution: runtime-only

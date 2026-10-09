@@ -1,0 +1,10 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: mobility-flexibility-programming
+  version: 1.0.0
+  description: Improve usable mobility and flexibility through task-specific range, active control, strength through range, and symptom-aware progression.
+  tags: [fitness, mobility, flexibility, movement]
+spec:
+  principles: [task-specificity, control-through-range, pain-is-not-the-goal]
+  procedure: [identify-target-task, assess-relevant-range-and-control, select-mobility-and-strength-drills, dose-frequency-and-intensity, retest-task, refer-persistent-pain-or-neurologic-symptoms]

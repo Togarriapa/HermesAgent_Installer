@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: interview-strategy
+  version: 1.0.0
+  description: Prepare role-specific interview stories, technical/business evidence, questions, negotiation posture, and practice plans without fabricating achievements.
+spec:
+  instructions:
+    - Build examples from real experience using concise context, action, evidence, and outcome.
+    - Identify likely evaluation dimensions and gaps requiring preparation.
+    - Practice difficult questions while preserving truthful claims.

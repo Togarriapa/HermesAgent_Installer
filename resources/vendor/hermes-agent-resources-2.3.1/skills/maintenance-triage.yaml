@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: maintenance-triage
+  version: 1.0.1
+  description: "Triage maintenance findings by safety, service impact, deterioration rate, failure consequence, evidence, workaround, and required competence."
+  tags: [maintenance, triage, operations, safety]
+spec:
+  purpose: "Prioritize maintenance response without allowing urgency labels to bypass safety or authorization."
+  procedure:
+    - "Capture the symptom or finding, affected asset, current state, safety hazards, service impact, recent changes, condition evidence, and whether deterioration is ongoing."
+    - "Classify immediate make-safe needs, diagnostic work, planned repair, monitoring, deferred maintenance, or specialist escalation based on failure consequence and evidence."
+    - "Estimate urgency from safety, environmental, data, operational, cost, and secondary-damage risk while documenting acceptable temporary mitigations and stop conditions."
+    - "Assign next action and owner, verify any temporary control, and revisit priority when new measurements, repeated failure, or changed service impact invalidates the original triage."
+  verification:
+    - safety-critical-findings-are-separated-from-routine-work
+    - priority-links-to-evidence-and-failure-consequence
+    - temporary-controls-and-escalation-conditions-are-explicit
+  sideEffects: none
