@@ -85,3 +85,11 @@ Use planning/protected-lifecycle-control-contract.json native_health_receipt for
 ### v16 installed input closure joins
 
 Use the exact installed_selection_catalog.release_root, task_runner_protocol.source_resolver and native-package-binding-contract.json initial_native_input_observer joins. Existing BD/HI/RB tasks and acceptance remain pending.
+
+### v17 supported loader and task controller
+
+Use assembly native_custody_proof_protocol.systemd_transport/pending_pair_selector and resource task_runner_protocol.neutral_types/controller_source_split/root_event_context. Existing HI/RB tasks remain open; actual kernel effects required.
+
+### v18 root result schema validation
+
+RB-T08 uses protected-resource-job-contract.json task_result_validator and immutable schema-hermes-task-text-result-v1 artifact. Other JSON output requires exact registered strict protected schema; acceptance remains pending.
