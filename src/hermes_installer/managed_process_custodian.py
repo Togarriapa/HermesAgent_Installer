@@ -621,7 +621,8 @@ class ManagedProcessEffectHandler:
         manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
                              "WATCHDOG_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES",
                              "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME",
-                             "SHELL", "PWD"})
+                             "SHELL", "PWD", "SYSTEMD_EXEC_PID", "MEMORY_PRESSURE_WATCH",
+                             "MEMORY_PRESSURE_WRITE"})
         unset_keys = sorted(manager_keys - set(env))
         if sum(len(key) + 1 for key in unset_keys) > 60000:
             os.close(parent_fd)
