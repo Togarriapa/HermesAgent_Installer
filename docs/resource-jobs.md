@@ -16,15 +16,21 @@ not prune historical claims, so capacity exhaustion needs a reviewed
 root-owned retention policy before production ingress. Each
 `admit_child` call atomically consumes exactly one child slot after checking
 the active generation, job deadline, concurrency, graph prerequisites, and
-exact result receipt lineage. `start_child`, `finish_child`, and
-`revoke_generation` enforce the remaining state transitions; generation
+exact result receipt lineage. `start_child`, `finish_child`, `retry_child`, and
+`revoke_generation` enforce the remaining state transitions. Retry requests are
+root-internal decisions, get a new admission ID and incremented retry index,
+and are bounded by the enrollment's aggregate `max_children` quota. Each
+attempt must therefore obtain its own fresh child context and one-use grant.
+Generation
 revocation invalidates pending, admitted, and running work in the ledger. The
 effect runner must pass `is_active` as its cancellation predicate so the
 broker can stop or reap owned work at its next cancellation check. Failed
 nodes cancel transitive dependents while unrelated children and terminal
 result receipts remain recorded. If context or grant minting fails, the
-authority handler must call `fail_child_admission`. RB07 does not enroll a
-retry limit, so that child attempt cannot be reopened.
+authority handler must call `fail_child_admission`; it may create a new
+admission through `retry_child` only under the same root-selected retry policy.
+Once the bounded attempts are exhausted, it calls `fail_node` to cancel
+descendants.
 
 The child admission contains the exact selected operation, target, recipient,
 payload digest, source receipts, and completed-parent receipts. It is not an

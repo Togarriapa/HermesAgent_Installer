@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -136,6 +137,28 @@ def test_failed_child_mint_cancels_dependents_but_keeps_independent_receipts(tmp
     assert b.node_id == "b"
     with pytest.raises(ResourceJobDenied, match="prerequisites are not complete"):
         ledger.admit_child(job, enrollment, node_id="a-child", parent_result_receipt_ids=(),
+                           current_generation=enrollment.generation)
+
+
+def test_each_retry_gets_new_admission_and_is_limited_by_child_quota(tmp_path: Path) -> None:
+    root = _node("root")
+    enrollment = _enrollment(root)
+    enrollment = replace(enrollment, max_children=2)
+    ledger = _ledger(tmp_path)
+    job = _admit(ledger, enrollment)
+    first = ledger.admit_child(job, enrollment, node_id="root", parent_result_receipt_ids=(),
+                               current_generation=enrollment.generation)
+    ledger.start_child(first, current_generation=enrollment.generation)
+    ledger.finish_child(first, result_receipt_ids=(), success=False,
+                        current_generation=enrollment.generation)
+    retry = ledger.retry_child(job, first, enrollment, parent_result_receipt_ids=(),
+                               current_generation=enrollment.generation)
+    assert retry.admission_id != first.admission_id
+    assert retry.retry_index == 1
+    assert retry.canonical_payload_sha256 == first.canonical_payload_sha256
+    ledger.fail_child_admission(retry, current_generation=enrollment.generation)
+    with pytest.raises(ResourceJobDenied, match="attempt quota is exhausted"):
+        ledger.retry_child(job, retry, enrollment, parent_result_receipt_ids=(),
                            current_generation=enrollment.generation)
 
 

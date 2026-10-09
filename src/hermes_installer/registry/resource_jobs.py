@@ -210,6 +210,7 @@ class ResourceChildAdmission:
     resource_id: str
     generation: str
     node_id: str
+    retry_index: int
     action_id: str
     effect: str
     target: str
@@ -239,8 +240,8 @@ class ResourceJobLedger:
     CREATE UNIQUE INDEX IF NOT EXISTS jobs_event_once ON jobs(resource_id,generation,event_key);
     CREATE TABLE IF NOT EXISTS children (
       admission_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, node_id TEXT NOT NULL,
-      status TEXT NOT NULL, result_receipts TEXT NOT NULL,
-      UNIQUE(job_id,node_id), FOREIGN KEY(job_id) REFERENCES jobs(job_id)
+      attempt INTEGER NOT NULL, status TEXT NOT NULL, result_receipts TEXT NOT NULL,
+      UNIQUE(job_id,node_id,attempt), FOREIGN KEY(job_id) REFERENCES jobs(job_id)
     ) WITHOUT ROWID;
     """
 
@@ -339,7 +340,7 @@ class ResourceJobLedger:
                         _canonical(sorted(verified_source_receipt_ids)).decode(),
                         dag_json, enrollment.dag_sha256, now + ttl_seconds,
                         enrollment.max_concurrency, "running"))
-            db.executemany("INSERT INTO children VALUES (?,?,?,'pending','[]')",
+            db.executemany("INSERT INTO children VALUES (?,?,?,0,'pending','[]')",
                            ((ids[node.node_id], job_id, node.node_id) for node in enrollment.nodes))
             db.commit()
         except ResourceJobDenied:
@@ -384,9 +385,11 @@ class ResourceJobLedger:
                     or job[4] != enrollment.dag_sha256 or job[5] <= now or job[7] != "running"
                     or admission.expires_monotonic <= now):
                 raise ResourceJobDenied("job is expired, revoked, or no longer current")
-            rows = {row[0]: (row[1], json.loads(row[2])) for row in db.execute(
-                "SELECT node_id,status,result_receipts FROM children WHERE job_id=?", (admission.job_id,))}
-            if any(rows.get(dep, (None,))[0] != "complete" for dep in node.depends_on):
+            rows: dict[str, tuple[str, list[str]]] = {}
+            for row in db.execute("SELECT node_id,attempt,status,result_receipts FROM children WHERE job_id=? ORDER BY attempt",
+                                  (admission.job_id,)):
+                rows[row[0]] = (row[2], json.loads(row[3]))
+            if any(rows.get(dep, (None, []))[0] != "complete" for dep in node.depends_on):
                 raise ResourceJobDenied("child prerequisites are not complete")
             required_parents = tuple(sorted({receipt for dep in node.depends_on for receipt in rows[dep][1]}))
             if parents != required_parents:
@@ -395,6 +398,8 @@ class ResourceJobLedger:
                                 (admission.job_id,)).fetchone()[0]
             if active >= job[6]:
                 raise ResourceJobDenied("resource job concurrency limit is reached")
+            attempt_row = db.execute("SELECT attempt FROM children WHERE admission_id=? AND job_id=? AND node_id=? AND status='pending'",
+                                     (admission_id, admission.job_id, node_id)).fetchone()
             cur = db.execute("UPDATE children SET status='admitted' WHERE admission_id=? AND job_id=? AND node_id=? AND status='pending'",
                              (admission_id, admission.job_id, node_id))
             if cur.rowcount != 1:
@@ -409,7 +414,7 @@ class ResourceJobLedger:
         finally:
             db.close()
         return ResourceChildAdmission(admission_id, admission.job_id, enrollment.resource_id,
-                                      enrollment.generation, node.node_id, node.action_id,
+                                      enrollment.generation, node.node_id, attempt_row[0], node.action_id,
                                       node.effect, node.target, node.recipient, node.payload_sha256,
                                       node.payload, tuple(json.loads(job[2])), parents)
 
@@ -420,17 +425,11 @@ class ResourceJobLedger:
         self._transition(child, "admitted", "running", receipts=())
 
     def fail_child_admission(self, child: ResourceChildAdmission, *, current_generation: str) -> None:
-        """Terminally fail a slot if context/grant minting fails before dispatch.
-
-        RB07 has no retry enrollment field, so this attempt cannot be reopened;
-        any later retry needs a separately specified root-owned attempt bound.
-        """
+        """Fail a pre-effect attempt when context/grant minting is denied."""
         if current_generation != child.generation:
             self.revoke_generation(child.resource_id, child.generation)
             raise ResourceJobDenied("resource generation was revoked before child dispatch")
         self._transition(child, "admitted", "failed", receipts=())
-        self._cancel_descendants(child.job_id, child.node_id)
-        self._finish_job_if_terminal(child.job_id)
 
     def finish_child(self, child: ResourceChildAdmission, *, result_receipt_ids: Sequence[str],
                      success: bool, current_generation: str) -> None:
@@ -441,9 +440,83 @@ class ResourceJobLedger:
         if success and not receipts:
             raise ResourceJobDenied("successful child must preserve its root-issued result receipt")
         self._transition(child, "running", "complete" if success else "failed", receipts=receipts)
-        if not success:
-            self._cancel_descendants(child.job_id, child.node_id)
-        self._finish_job_if_terminal(child.job_id)
+        if success:
+            self._finish_job_if_terminal(child.job_id)
+
+    def retry_child(self, admission: ResourceJobAdmission, failed_attempt: ResourceChildAdmission,
+                    enrollment: ResourceJobEnrollment, *, parent_result_receipt_ids: Sequence[str],
+                    current_generation: str) -> ResourceChildAdmission:
+        """Admit a fresh bounded attempt with a new one-use grant opportunity.
+
+        The aggregate job child cap bounds retries; every retry gets a distinct
+        admission ID and incremented root-derived retry index. Caller/model
+        supplied retry indexes are not accepted.
+        """
+        if (failed_attempt.job_id != admission.job_id or failed_attempt.generation != enrollment.generation
+                or failed_attempt.resource_id != enrollment.resource_id
+                or admission.approved_dag_sha256 != enrollment.dag_sha256):
+            raise ResourceJobDenied("retry is outside the selected job and immutable DAG")
+        if current_generation != enrollment.generation:
+            self.revoke_generation(enrollment.resource_id, enrollment.generation)
+            raise ResourceJobDenied("resource generation was revoked")
+        node = enrollment.node_map.get(failed_attempt.node_id)
+        if node is None:
+            raise ResourceJobDenied("retry node is outside the approved DAG")
+        parents = tuple(sorted({_ident(item, "parent result receipt id") for item in parent_result_receipt_ids}))
+        if len(parents) != len(parent_result_receipt_ids) or len(parents) > 64:
+            raise ResourceJobDenied("parent result receipt lineage is malformed")
+        new_id = secrets.token_urlsafe(24)
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            job = db.execute("SELECT resource_id,generation,source_receipts,dag_json,dag_sha256,expires,max_concurrency,status FROM jobs WHERE job_id=?",
+                             (admission.job_id,)).fetchone()
+            now = self.monotonic()
+            if (job is None or job[0] != enrollment.resource_id or job[1] != current_generation
+                    or job[4] != enrollment.dag_sha256 or job[5] <= now or job[7] != "running"):
+                raise ResourceJobDenied("job is expired, revoked, or no longer current")
+            prior = db.execute("SELECT attempt,status FROM children WHERE admission_id=? AND job_id=? AND node_id=?",
+                               (failed_attempt.admission_id, admission.job_id, node.node_id)).fetchone()
+            if prior is None or prior[0] != failed_attempt.retry_index or prior[1] != "failed":
+                raise ResourceJobDenied("only a failed child attempt may be retried")
+            count = db.execute("SELECT count(*) FROM children WHERE job_id=?", (admission.job_id,)).fetchone()[0]
+            if count >= enrollment.max_children:
+                raise ResourceJobDenied("resource job child-attempt quota is exhausted")
+            rows: dict[str, tuple[str, list[str]]] = {}
+            for row in db.execute("SELECT node_id,attempt,status,result_receipts FROM children WHERE job_id=? ORDER BY attempt",
+                                  (admission.job_id,)):
+                rows[row[0]] = (row[2], json.loads(row[3]))
+            if any(rows.get(dep, (None, []))[0] != "complete" for dep in node.depends_on):
+                raise ResourceJobDenied("retry prerequisites are not complete")
+            expected = tuple(sorted({receipt for dep in node.depends_on for receipt in rows[dep][1]}))
+            if parents != expected:
+                raise ResourceJobDenied("retry lineage does not contain exact parent receipts")
+            active = db.execute("SELECT count(*) FROM children WHERE job_id=? AND status IN ('admitted','running')",
+                                (admission.job_id,)).fetchone()[0]
+            if active >= job[6]:
+                raise ResourceJobDenied("resource job concurrency limit is reached")
+            next_attempt = prior[0] + 1
+            db.execute("INSERT INTO children VALUES (?,?,?,?,'admitted','[]')",
+                       (new_id, admission.job_id, node.node_id, next_attempt))
+            db.commit()
+        except ResourceJobDenied:
+            db.rollback()
+            raise
+        except sqlite3.Error as exc:
+            db.rollback()
+            raise ResourceJobDenied("fresh child retry admission failed closed") from exc
+        finally:
+            db.close()
+        return ResourceChildAdmission(new_id, admission.job_id, enrollment.resource_id,
+                                      enrollment.generation, node.node_id, next_attempt,
+                                      node.action_id, node.effect, node.target, node.recipient,
+                                      node.payload_sha256, node.payload, tuple(json.loads(job[2])), parents)
+
+    def fail_node(self, job_id: str, node_id: str) -> None:
+        """Close a failed node after its bounded retry policy is exhausted."""
+        _ident(job_id, "job id")
+        self._cancel_descendants(job_id, _ident(node_id, "node id"))
+        self._finish_job_if_terminal(job_id)
 
     def _transition(self, child: ResourceChildAdmission, before: str, after: str,
                     *, receipts: Sequence[str]) -> None:
@@ -509,11 +582,13 @@ class ResourceJobLedger:
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
-            pending = db.execute("SELECT count(*) FROM children WHERE job_id=? AND status IN ('pending','admitted','running')",
-                                 (job_id,)).fetchone()[0]
+            states: dict[str, str] = {}
+            for node_id, attempt, status in db.execute(
+                    "SELECT node_id,attempt,status FROM children WHERE job_id=? ORDER BY attempt", (job_id,)):
+                states[node_id] = status
+            pending = sum(state in {"pending", "admitted", "running"} for state in states.values())
             if pending == 0:
-                failed = db.execute("SELECT count(*) FROM children WHERE job_id=? AND status IN ('failed','cancelled')",
-                                    (job_id,)).fetchone()[0]
+                failed = sum(state in {"failed", "cancelled"} for state in states.values())
                 db.execute("UPDATE jobs SET status=? WHERE job_id=? AND status='running'",
                            ("failed" if failed else "complete", job_id))
             db.commit()
