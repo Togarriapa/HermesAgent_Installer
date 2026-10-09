@@ -29,7 +29,7 @@ def test_exact_reviewed_glm_manifest_inventory() -> None:
 def test_sse_tool_call_fragments_are_joined_and_arguments_are_checked() -> None:
     class Lines:
         def __init__(self, events):
-            self.events = iter([b"data: " + json.dumps(e).encode() + b"\n", b"data: [DONE]\n"])
+            self.events = iter([b"data: " + json.dumps(event).encode() + b"\n" for event in events] + [b"data: [DONE]\n"])
         def readline(self):
             return next(self.events, b"")
 

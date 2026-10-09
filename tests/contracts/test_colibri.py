@@ -61,7 +61,7 @@ def test_colibri_build_requires_exact_source_revision(tmp_path: Path) -> None:
         return subprocess.CompletedProcess(argv, 0, "wrong revision\n")
     with pytest.raises(ColibriError, match="reviewed revision pin"):
         build_colibri_arm64(source, system="Linux", machine="aarch64", runner=fake_runner)
-    assert calls == [["git", "rev-parse", "HEAD"]]
+    assert calls == [("git", "rev-parse", "HEAD")]
     assert len(COLIBRI_REVISION) == 40
 
 
@@ -93,7 +93,7 @@ def test_service_plan_is_loopback_only_and_key_never_enters_argv(tmp_path: Path)
     executable, models = tmp_path / "colibri", tmp_path / "generation"
     executable.write_text("binary")
     models.mkdir()
-    bounds = ServiceBounds(12 * 1024**3, 75, 80 * 1024 * 1024)
+    bounds = ServiceBounds(12 * 1024**3, 75, 80)
     plan = ColibriServicePlan.create(executable, tmp_path, models, "vault://colibri/key", bounds, port=8421)
     assert plan.bind_host == "127.0.0.1"
     assert plan.model_revision == "6bbb01ed3e515a8730b694dfae73aadfd6774581"
@@ -110,7 +110,7 @@ def test_service_stays_unavailable_without_measured_bounds_and_loopback_bridge(t
     executable.write_text("binary")
     models.mkdir()
     plan = ColibriServicePlan.create(executable, tmp_path, models, "vault://colibri/key",
-        ServiceBounds(12 * 1024**3, 75, 80 * 1024 * 1024))
+        ServiceBounds(12 * 1024**3, 75, 80))
     handle = Handle(bounded=False)
     service = ColibriService(plan, Launcher(handle))
     with pytest.raises(ColibriError, match="manager-measured cgroup"):

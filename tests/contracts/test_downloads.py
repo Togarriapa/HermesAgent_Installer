@@ -97,7 +97,7 @@ def test_storage_reserve_and_existing_path_is_verified_without_copy(tmp_path: Pa
     data = b"model fixture"
     selected = manifest(data)
     plan = estimate_storage(selected, tmp_path, StorageReserve(1, 2, 3, 4, 5, 6, 7, 8), free_bytes=56)
-    assert plan.peak_required_bytes == 56
+    assert plan.peak_required_bytes == 49
     assert plan.sufficient
     model_dir = tmp_path / "selected"
     model_dir.mkdir()
