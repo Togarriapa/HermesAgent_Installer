@@ -1,6 +1,6 @@
 """Broker and orchestration effects use only stdlib unittest."""
 import asyncio, types, unittest
-from hermes_installer.topology import BrokerDenied, CapabilityLease, DispatchBroker, Orchestrator, RecruitmentDenied, SpecialistCall, WorkResult
+from hermes_installer.topology import BrokerCleanupFailed, BrokerDenied, CapabilityLease, DispatchBroker, Orchestrator, RecruitmentDenied, SpecialistCall, WorkResult
 
 def ctx(*, cancelled=lambda:False, sensitivity="PUBLIC", effective=None, capabilities=frozenset({"delegate"}), provenance=("trusted-server",)):
     return types.SimpleNamespace(profile_id="profile", purpose="native-hermes-chat", sensitivity=sensitivity,
@@ -66,6 +66,31 @@ class TopologyTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(BrokerDenied):
             await self.broker(authorize).call(ctx(sensitivity="PUBLIC",effective="PRIVATE"),call,effect)
         self.assertEqual(effects,[])
+
+    async def test_stubborn_coroutine_quarantines_broker_after_bounded_join(self):
+        started=asyncio.Event()
+        release=asyncio.Event()
+        async def authorize(context,call): return self.lease()
+        async def stubborn():
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await release.wait()
+        broker=DispatchBroker(authorize=authorize,now=lambda:10,cancel_join_timeout=0.05)
+        call=SpecialistCall("worker","r","c","delegate",frozenset({"delegate"}))
+        task=asyncio.create_task(broker.call(ctx(),call,stubborn))
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(BrokerCleanupFailed):
+            await task
+        self.assertTrue(broker.quarantined)
+        async def effect():
+            self.fail("quarantined broker must not dispatch another operation")
+        with self.assertRaises(BrokerCleanupFailed):
+            await broker.call(ctx(),call,effect)
+        release.set()
+        await asyncio.sleep(0)
 
     async def test_invalid_time_values_are_denied_before_side_effect(self):
         effects=[]

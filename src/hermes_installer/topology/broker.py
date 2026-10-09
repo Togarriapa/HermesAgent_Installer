@@ -9,6 +9,9 @@ from hermes_installer.policy import DispatchContext
 class BrokerDenied(PermissionError):
     """Trusted dispatch context or live host authorization is insufficient."""
 
+class BrokerCleanupFailed(RuntimeError):
+    """A cancelled specialist coroutine did not join; the broker is quarantined."""
+
 @dataclass(frozen=True, slots=True)
 class CapabilityLease:
     profile_id: str
@@ -32,9 +35,43 @@ Operation = Callable[[], Awaitable[object]]
 
 class DispatchBroker:
     """The roster declaration is not authority; every child gets a fresh lease."""
-    def __init__(self, *, authorize: Authorizer, now=time.time, timeout=120):
-        if not 0 < timeout <= 600: raise ValueError("broker timeout must be bounded")
+    def __init__(self, *, authorize: Authorizer, now=time.time, timeout=120, cancel_join_timeout=0.5):
+        if not 0 < timeout <= 600:
+            raise ValueError("broker timeout must be bounded")
+        if not 0 < cancel_join_timeout <= 5:
+            raise ValueError("cancellation join timeout must be bounded")
         self.authorize, self.now, self.timeout = authorize, now, timeout
+        self.cancel_join_timeout = cancel_join_timeout
+        self._poisoned = False
+        self._pending_cleanup: set[asyncio.Task] = set()
+
+    @property
+    def quarantined(self) -> bool:
+        return self._poisoned
+
+    def _observe_cleanup(self, task: asyncio.Task) -> None:
+        self._pending_cleanup.discard(task)
+        if not task.cancelled():
+            try:
+                task.exception()
+            except BaseException:
+                pass
+
+    async def _cancel_and_join(self, task: asyncio.Task) -> None:
+        if task.done():
+            await asyncio.gather(task, return_exceptions=True)
+            return
+        task.cancel()
+        done, _ = await asyncio.wait({task}, timeout=self.cancel_join_timeout)
+        if done:
+            await asyncio.gather(task, return_exceptions=True)
+            return
+        self._poisoned = True
+        self._pending_cleanup.add(task)
+        task.add_done_callback(self._observe_cleanup)
+        raise BrokerCleanupFailed(
+            "specialist cancellation was not acknowledged; broker quarantined and runtime supervisor required"
+        )
 
     @staticmethod
     def _finite_time(value, label: str) -> float:
@@ -43,6 +80,8 @@ class DispatchBroker:
         return float(value)
 
     async def call(self, context: DispatchContext, call: SpecialistCall, operation: Operation):
+        if self._poisoned:
+            raise BrokerCleanupFailed("broker is quarantined after an unjoined specialist")
         # Missing trusted fields fail closed; caller-declared sensitivity is never
         # a substitute for the gateway's effective (including derived) label.
         classification = getattr(context, "effective_sensitivity", "UNKNOWN")
@@ -117,21 +156,18 @@ class DispatchBroker:
         try:
             while not task.done():
                 if cancelled():
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
+                    await self._cancel_and_join(task)
                     raise asyncio.CancelledError
                 remaining = monotonic_deadline - loop.time()
                 current_time = self._finite_time(self.now(), "host clock")
                 if remaining <= 0 or current_time >= expires_at:
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
+                    await self._cancel_and_join(task)
                     if current_time >= expires_at:
                         raise BrokerDenied("host authorization expired during dispatch")
                     raise TimeoutError("specialist dispatch exceeded authorization deadline")
                 done, _ = await asyncio.wait({task}, timeout=min(0.05, remaining))
                 if not done and deadline is not None and current_time >= deadline:
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
+                    await self._cancel_and_join(task)
                     raise TimeoutError("specialist dispatch exceeded request deadline")
             # Recheck trust at the completion boundary before exposing the result.
             if cancelled():
@@ -143,7 +179,5 @@ class DispatchBroker:
                 raise TimeoutError("specialist dispatch exceeded request deadline")
             return task.result()
         except asyncio.CancelledError:
-            if not task.done():
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            await self._cancel_and_join(task)
             raise
