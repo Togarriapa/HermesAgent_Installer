@@ -505,7 +505,10 @@ class ManagedProcessEffectHandler:
         if not _argv_matches_recipe(profile, argv, registered_children):
             raise AuthorityDenied("process.argv", "argv differs from the protected profile recipe")
         artifact_args = [index for index, item in enumerate(argv) if item in registered_children]
-        if artifact_args:
+        if len(artifact_args) > 1:
+            raise AuthorityDenied("process.child", "a launch recipe may select only one child artifact")
+        selected_child_ref = argv[artifact_args[0]] if artifact_args else None
+        if selected_child_ref is not None:
             argv[artifact_args[0]] = "__ROOT_ARTIFACT_MOUNT__"
         secrets = ("--token", "--secret", "--password", "--api-key", "--credential")
         if any(any(flag in item.casefold() for flag in secrets) for item in argv[1:]):
@@ -544,7 +547,10 @@ class ManagedProcessEffectHandler:
         process_id = uuid.uuid4().hex
         artifact_mount_dir: Path | None = None
         artifact_target: Path | None = None
-        artifact_path: Path | None = next(iter(resolved_children.values()), None)
+        artifact_path: Path | None = resolved_children.get(selected_child_ref) if selected_child_ref else None
+        if selected_child_ref is not None and artifact_path is None:
+            os.close(parent_fd)
+            raise AuthorityDenied("process.child", "selected child artifact is not in the root catalog")
         unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
         mount = f"/hermes/profiles/{profile.profile_id}"
         rel = cwd.relative_to(root).as_posix()
