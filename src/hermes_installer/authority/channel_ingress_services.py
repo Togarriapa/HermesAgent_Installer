@@ -214,6 +214,9 @@ class RootSelectedJWTSessionAuthority:
             receipt = AuthenticatedSubjectReceipt(
                 str(source_handle), session_handle, subject_digest, lease_expiry,
                 selection.jwt_verifier_enrollment_id)
+            bind_session = getattr(self.receipt_issuer, "bind_subject_session", None)
+            if callable(bind_session):
+                bind_session(session_id, receipt)
             self._sessions[session_handle] = _RootJWTSession(
                 selection.id, session_id, subject_digest, fingerprint, receipt, source_handle)
             return receipt
