@@ -23,6 +23,9 @@ class FakeRunner:
             stage=args[args.index("--stage")+1]
             directory=Path(args[args.index("--dir")+1])
             if stage=="repository":
+                if directory.exists() and any(directory.iterdir()):
+                    return 77,b""
+                directory.mkdir(parents=True,exist_ok=True)
                 (directory/".git").mkdir(parents=True)
                 (directory/".git"/"HEAD").write_text(HERMES_COMMIT)
             if stage=="complete":

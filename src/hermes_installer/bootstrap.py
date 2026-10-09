@@ -177,7 +177,7 @@ class HermesBootstrap:
         return ("schema=1\ncommit=" + HERMES_COMMIT + "\n").encode("ascii")
 
     def _write_generation_marker(self) -> None:
-        marker = self.install_dir / ".hermes-installer-generation"
+        marker = self.install_dir.parent / ("." + self.install_dir.name + ".owned")
         if marker.exists() or marker.is_symlink():
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
             try:
@@ -232,18 +232,24 @@ class HermesBootstrap:
         return None
 
     def _existing_source_is_resumable(self, previous: dict[str, object] | None) -> bool:
-        if not self.install_dir.exists():
-            return True
-        if self.install_dir.is_symlink() or not self.install_dir.is_dir():
+        if self.install_dir.is_symlink():
             return False
         owned = any(row["resource_id"] == str(self.install_dir) and row["state"] == "active"
                     for row in self.state.owned("hermes-generation"))
-        if not owned:
+        marker = self.install_dir.parent / ("." + self.install_dir.name + ".owned")
+        if marker.exists() or marker.is_symlink():
+            try:
+                self._write_generation_marker()
+            except OwnershipError:
+                return False
+        elif self.install_dir.exists():
             return False
-        try:
-            self._write_generation_marker()
-        except OwnershipError:
+        if self.install_dir.exists() and not self.install_dir.is_dir():
             return False
+        if self.install_dir.exists() and not owned:
+            return False
+        if not self.install_dir.exists():
+            return not marker.exists()
         head = self._source_head()
         if head is None:
             return bool(previous and previous.get("status") == "running:repository")
@@ -258,7 +264,7 @@ class HermesBootstrap:
         if not self._existing_source_is_resumable(previous):
             raise OwnershipError("Pinned source generation already exists without a resumable installer checkpoint; it was preserved")
         done = self._completed_stages()
-        self.install_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.install_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.state.record_owned("hermes-generation", str(self.install_dir), "active")
         self._write_generation_marker()
         statuses: list[StageStatus] = []
