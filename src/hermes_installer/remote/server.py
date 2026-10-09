@@ -26,7 +26,7 @@ class GatewayRuntime:
     def __post_init__(self):
         u=urlsplit(self.upstream)
         if u.scheme!="http" or u.hostname not in {"127.0.0.1","::1"} or u.username or u.password:raise ValueError("fixed loopback upstream required")
-        if not 1<=self.max_lease_seconds<=60 or not 1<=self.watchdog_seconds<=5:raise ValueError("lease/watchdog exceeds hard bound")
+        if not 1<=self.max_lease_seconds<=60 or not 1<=self.watchdog_seconds<=5 or not 1<=self.max_active_sockets<=4:raise ValueError("lease/watchdog exceeds hard bound")
     def principal(self,request,method,path):
         return authorize_request(token=request.headers.get("Cf-Access-Jwt-Assertion"),policy=self.policy,method=method,path=path,host=request.headers.get("Host",""),origin=request.headers.get("Origin"),now=self.clock)
     def create_lease(self,principal):
@@ -105,8 +105,8 @@ def create_app(runtime:GatewayRuntime):
         lease.authorize_frame(now=runtime.monotonic())
         from yarl import URL
         up=urlsplit(runtime.upstream);wsurl=URL.build(scheme="ws",host=up.hostname,port=up.port or 80,path="/")
-        async with request.app["client"].ws_connect(wsurl,protocols=("binary",),max_msg_size=1048576,autoping=False,autoclose=False) as upstream:
-            downstream=web.WebSocketResponse(protocols=("binary",),max_msg_size=1048576,autoping=False,autoclose=False,compress=False)
+        async with request.app["client"].ws_connect(wsurl,protocols=("binary",),origin=runtime.upstream.rstrip("/"),timeout=3,receive_timeout=None,max_msg_size=16777216,autoping=False,autoclose=False) as upstream:
+            downstream=web.WebSocketResponse(protocols=("binary",),max_msg_size=16777216,autoping=False,autoclose=False,compress=False)
             await downstream.prepare(request)
             async def watchdog():
                 while not downstream.closed:

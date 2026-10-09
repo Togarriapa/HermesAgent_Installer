@@ -59,7 +59,7 @@ class RemoteCloudflareProvisioner:
             if len(tunnels)!=1 or not prior or prior.resource_id!=tunnels[0].get("id"): raise RemoteConflict("Same-named tunnel is not journal-owned")
             if not prior.created:
                 conf=self.client.request("GET",f"/accounts/{self.account}/cfd_tunnel/{prior.resource_id}/configurations")
-                expected={"ingress":[{"hostname":self.setup.hostname,"service":f"http://127.0.0.1:{self.gateway_port}"},{"service":"http_status:404"}]}
+                expected={"ingress":[{"hostname":self.setup.hostname,"service":f"http://127.0.0.1:{self.gateway_port}","originRequest":{"httpHostHeader":self.setup.hostname}},{"service":"http_status:404"}]}
                 if not isinstance(conf,dict) or conf.get("config")!=expected: raise RemoteConflict("Refusing to overwrite pre-existing journaled tunnel configuration")
     def _create(self,path,payload,predicate,label,step):
         self._intent(step)
@@ -132,7 +132,7 @@ class RemoteCloudflareProvisioner:
         if row is None: row=self._create(path,{"name":self.tunnel_name,"config_src":"cloudflare"},lambda x:x.get("name")==self.tunnel_name,"tunnel","tunnel")
         rid=self._id(row); self._save("tunnel","tunnel",rid,created or bool(prior and prior.created))
         conf=f"/accounts/{self.account}/cfd_tunnel/{rid}/configurations"
-        desired={"ingress":[{"hostname":self.setup.hostname,"service":f"http://127.0.0.1:{self.gateway_port}"},{"service":"http_status:404"}]}
+        desired={"ingress":[{"hostname":self.setup.hostname,"service":f"http://127.0.0.1:{self.gateway_port}","originRequest":{"httpHostHeader":self.setup.hostname}},{"service":"http_status:404"}]}
         existing=self.client.request("GET",conf) if prior and not prior.created else None
         if existing is not None:
             if not isinstance(existing,dict) or existing.get("config")!=desired: raise RemoteConflict("Refusing to overwrite non-matching tunnel configuration")
