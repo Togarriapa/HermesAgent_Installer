@@ -1,4 +1,307 @@
-YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíï®½N‹Z–‹­¦ëeŠw¬Ôˆˆ‰A¥¹¹•I4ØÐ½±¥‰É¤‰Õ¥±…¹•áÁ•É¥µ•¹Ñ…°14´Ô¸ÈÉÕ¹Ñ¥µ”Á±…¹¹¥¹œ¸ˆˆˆ)™É½´}}™ÕÑÕÉ•}|¥µÁ½ÉÐ…¹¹½Ñ…Ñ¥½¹Ì()¥µÁ½ÉÐ¡…Í¡±¥ˆ)¥µÁ½ÉÐ©Í½¸)¥µÁ½ÉÐ½Ì)¥µÁ½ÉÐÁ±…Ñ™½É´)¥µÁ½ÉÐÉ”)¥µÁ½ÉÐÍ¡ÕÑ¥°)¥µÁ½ÉÐÍÑ…Ð)¥µÁ½ÉÐÍÑÉÕÐ)¥µÁ½ÉÐÍÕ‰ÁÉ½•ÍÌ)¥µÁ½ÉÐÑ•µÁ™¥±”)™É½´‘…Ñ…±…ÍÍ•Ì¥µÁ½ÉÐ‘…Ñ…±…ÍÌ)™É½´Á…Ñ¡±¥ˆ¥µÁ½ÉÐA…Ñ )™É½´ÑåÁ¥¹œ¥µÁ½ÉÐ…±±…‰±”°5…ÁÁ¥¹œ°AÉ½Ñ½½°°M•ÅÕ•¹”()™É½´¡•Éµ•Í}¥¹ÍÑ…±±•È¹µ½‘•±Ì¹…ÉÑ¥™…ÑÌ¥µÁ½ÉÐÉÑ¥™…Ñ5…¹¥™•ÍÐ°5=1}%°5=1}IY%M%=8)™É½´¡•Éµ•Í}¥¹ÍÑ…±±•È¹µ½‘•±Ì¹‘½Ý¹±½…‘Ì¥µÁ½ÉÐ½Ý¹±½…‘…¹•±±•°MÑ½É…•A±…¸°MÑ½É…•I•Í•ÉÙ”°•ÍÑ¥µ…Ñ•}ÍÑ½É…”()=1%	I%}IY%M%=8€ô€‰‰˜ÈÐÐÈäÄÕÙ”Í‘Ñ‘™É•ˆåŒÉ„ÍÉ…„ÐÑ„ÈÔàÔÀˆ)=1%	I%}UI0€ô€‰¡ÑÑÁÌè¼½¥Ñ¡Õˆ¹½´½)ÕÍÑYÕœ½½±¥‰É¤¹¥Ðˆ)	U%1}A-L€ô€ ‰‰Õ¥±µ•ÍÍ•¹Ñ¥…°ˆ°€‰¥Ðˆ°€‰ÁåÑ¡½¸Ìˆ°€‰±¥‰½µÀÄˆ¤(()±…ÍÌ½±¥‰É¥ÉÉ½È¡IÕ¹Ñ¥µ•ÉÉ½È¤è(€€€Á…ÍÌ(()‘…Ñ…±…ÍÌ¡™É½é•¸õQÉÕ”°Í±½ÑÌõQÉÕ”¤)±…ÍÌ	Õ¥±‘Ù¥‘•¹”è(€€€Í½ÕÉ•}É•Ù¥Í¥½¸èÍÑÈ(€€€…É¡¥Ñ•ÑÕÉ”èÍÑÈ(€€€‰¥¹…Éå}Í¡„ÈÔØèÍÑÈ(€€€•±™}µ…¡¥¹”èÍÑÈ(€€€½Á•¹µÁ}Ù•É¥™¥•è‰½½°(€€€±¥‰½µÁ}ÉÕ¹Ñ¥µ”èÍÑÈ(€€€Í•±™}Ñ•ÍÑ}½ÕÑÁÕÐèÍÑÈð9½¹”(€€€Í•±™}Ñ•ÍÑ}ÍÑ…ÑÕÌèÍÑÈ(()‘…Ñ…±…ÍÌ¡™É½é•¸õQÉÕ”°Í±½ÑÌõQÉÕ”¤)±…ÍÌ!½ÍÑI•…‘¥¹•ÍÌè(€€€…É¡¥Ñ•ÑÕÉ”èÍÑÈ(€€€ÁÕ}™•…ÑÕÉ•ÌèÑÕÁ±•mÍÑÈ°€¸¸¹t(€€€µ•µ½Éå}Ñ½Ñ…±}‰åÑ•Ìè¥¹Ðð9½¹”(€€€µ•µ½Éå}…Ù…¥±…‰±•}‰åÑ•Ìè¥¹Ðð9½¹”(€€€Ñ•µÁ•É…ÑÕÉ•}µ¥±±¥‘•É••Ìè¥¹Ðð9½¹”(€€€Ñ¡É½ÑÑ±¥¹œèÍÑÈð9½¹”(€€€ÍÑ½É…•}™É••}‰åÑ•Ìè¥¹Ðð9½¹”(€€€ÍÑ½É…•}¡•…±Ñ èÍÑÈ(€€€‘•Ù¥•}…•ÍÌèÍÑÈ(€€€Ý…É¹¥¹ÌèÑÕÁ±•mÍÑÈ°€¸¸¹t(()‘•˜}ÉÕ¸¡…ÉØèM•ÅÕ•¹•mÍÑÉt°€¨°ÝèA…Ñ ð9½¹”€ô9½¹”°•¹Øè5…ÁÁ¥¹mÍÑÈ°ÍÑÉtð9½¹”€ô9½¹”°(€€€€€€€€Ñ¥µ•½ÕÐè™±½…Ð€ô€ØÀ°ÉÕ¹¹•Èè…±±…‰±•l¸¸¸°½‰©•Ñt€ôÍÕ‰ÁÉ½•ÍÌ¹ÉÕ¸¤€´øÍÕ‰ÁÉ½•ÍÌ¹½µÁ±•Ñ•‘AÉ½•ÍÍmÍÑÉtè(€€€É•ÍÕ±Ð€ôÉÕ¹¹•È¡±¥ÍÐ¡…ÉØ¤°ÝõÝ°•¹Øõ‘¥Ð¡•¹Ø¤¥˜•¹Ø¥Ì¹½Ð9½¹”•±Í”9½¹”°(€€€€€€€€€€€€€€€€€€€Ñ•áÐõQÉÕ”°ÍÑ‘½ÕÐõÍÕ‰ÁÉ½•ÍÌ¹A%A°ÍÑ‘•ÉÈõÍÕ‰ÁÉ½•ÍÌ¹MQ=UP°(€€€€€€€€€€€€€€€€€€€¡•¬õ…±Í”°Ñ¥µ•½ÕÐõÑ¥µ•½ÕÐ¤(€€€½‘”€ô•Ñ…ÑÑÈ¡É•ÍÕ±Ð°€‰É•ÑÕÉ¹½‘”ˆ°•Ñ…ÑÑÈ¡É•ÍÕ±Ð°€‰•á¥Ñ}½‘”ˆ°9½¹”¤¤(€€€½ÕÑÁÕÐ€ô•Ñ…ÑÑÈ¡É•ÍÕ±Ð°€‰ÍÑ‘½ÕÐˆ°€ˆˆ¤½È€ˆˆ(€€€¥˜¥Í¥¹ÍÑ…¹”¡½ÕÑÁÕÐ°‰åÑ•Ì¤è(€€€€€€€½ÕÑÁÕÐ€ô½ÕÑÁÕÐ¹‘•½‘” ‰ÕÑ˜´àˆ°•ÉÉ½ÉÌô‰É•Á±…”ˆ¤(€€€É•ÑÕÉ¸ÍÕ‰ÁÉ½•ÍÌ¹½µÁ±•Ñ•‘AÉ½•ÍÌ¡±¥ÍÐ¡…ÉØ¤°¥¹Ð¡½‘”¥˜½‘”¥Ì¹½Ð9½¹”•±Í”€ÈÔÔ¤°ÍÑÈ¡½ÕÑÁÕÐ¤¤(()‘•˜}…‘…ÁÑ}µ…¹…•‘}ÉÕ¹¹•È¡ÉÕ¹}½µµ…¹è…±±…‰±•l¸¸¸°½‰©•Ñt¤€´ø…±±…‰±•l¸¸¸°ÍÕ‰ÁÉ½•ÍÌ¹½µÁ±•Ñ•‘AÉ½•ÍÍmÍÑÉutè(€€€‘•˜¥¹Ù½­”¡…ÉØ°€¨°Ýõ9½¹”°•¹Øõ9½¹”°Ñ¥µ•½ÕÐôØÀ°€¨©}¥¹½É•¤è(€€€€€€€É•ÍÕ±Ð€ôÉÕ¹}½µµ…¹¡ÑÕÁ±”¡…ÉØ¤°ÝõÝ°•¹Øõ•¹Ø°Ñ¥µ•½ÕÐõÑ¥µ•½ÕÐ¤(€€€€€€€½‘”€ô•Ñ…ÑÑÈ¡É•ÍÕ±Ð°€‰É•ÑÕÉ¹½‘”ˆ°•Ñ…ÑÑÈ¡É•ÍÕ±Ð°€‰•á¥Ñ}½‘”ˆ°9½¹”¤¤(€€€€€€€½ÕÑÁÕÐ€ô•Ñ…ÑÑÈ¡É•ÍÕ±Ð°€‰ÍÑ‘½ÕÐˆ°€ˆˆ¤½È€ˆˆ(€€€€€€€¥˜¥Í¥¹ÍÑ…¹”¡½ÕÑÁÕÐ°‰åÑ•Ì¤è(€€€€€€€€€€€½ÕÑÁÕÐ€ô½ÕÑÁÕÐ¹‘•½‘” ‰ÕÑ˜´àˆ°•ÉÉ½ÉÌô‰É•Á±…”ˆ¤(€€€€€€€É•ÑÕÉ¸ÍÕ‰ÁÉ½•ÍÌ¹½µÁ±•Ñ•‘AÉ½•ÍÌ¡±¥ÍÐ¡…ÉØ¤°¥¹Ð¡½‘”¥˜½‘”¥Ì¹½Ð9½¹”•±Í”€ÈÔÔ¤°ÍÑÈ¡½ÕÑÁÕÐ¤¤(€€€É•ÑÕÉ¸¥¹Ù½­”(()‘•˜}•±™}µ…¡¥¹”¡Á…Ñ èA…Ñ ¤€´øÑÕÁ±•mÍÑÈ°ÍÑÉtè(€€€Ý¥Ñ Á…Ñ ¹½Á•¸ ‰Éˆˆ¤…ÌÍÑÉ•…´è(€€€€€€€¡•…‘•È€ôÍÑÉ•…´¹É•… ÈÀ¤(€€€¥˜±•¸¡¡•…‘•È¤€ð€ÈÀ½È¡•…‘•ÉlèÑt€„ôˆ‰qàÝ™1ˆ½È¡•…‘•ÉlÕt¹½Ð¥¸€ Ä°€È¤è(€€€€€€€É…¥Í”½±¥‰É¥ÉÉ½È ‰½±¥‰É¤‰Õ¥±½ÕÑÁÕÐ¥Ì¹½Ð„Ù…±¥1•á•ÕÑ…‰±”ˆ¤(€€€‰åÑ•½É‘•È€ô€‰±¥ÑÑ±”ˆ¥˜¡•…‘•ÉlÕt€ôô€Ä•±Í”€‰‰¥œˆ(€€€µ…¡¥¹”€ô¥¹Ð¹™É½µ}‰åÑ•Ì¡¡•…‘•ÉlÄàèÈÁt°‰åÑ•½É‘•È¤(€€€É•ÑÕÉ¸ìÄàÌè€‰……É ØÐˆ°€ØÈè€‰ààÙ|ØÐˆ°€ÐÀè€‰…É´‰ô¹•Ð¡µ…¡¥¹”°˜‰Õ¹­¹½Ý¸µíµ…¡¥¹•ôˆ¤°‰åÑ•½É‘•È(()‘•˜}Í¡„ÈÔØ¡Á…Ñ èA…Ñ ¤€´øÍÑÈè(€€€‘¥•ÍÐ€ô¡…Í¡±¥ˆ¹Í¡„ÈÔØ ¤(€€€Ý¥Ñ Á…Ñ ¹½Á•¸ ‰Éˆˆ¤…ÌÍÑÉ•…´è(€€€€€€€™½È‰±½¬¥¸¥Ñ•È¡±…µ‰‘„èÍÑÉ•…´¹É•… ÄÀÈÐ€¨€ÄÀÈÐ¤°ˆˆˆ¤è(€€€€€€€€€€€‘¥•ÍÐ¹ÕÁ‘…Ñ”¡‰±½¬¤(€€€É•ÑÕÉ¸‘¥•ÍÐ¹¡•á‘¥•ÍÐ ¤(()‘•˜™•Ñ¡}Á¥¹¹•‘}½±¥‰É¥}Í½ÕÉ”¡½µÁ½¹•¹Ñ}É½½ÐèA…Ñ °€¨°ÉÕ¹}½µµ…¹è…±±…‰±•l¸¸¸°½‰©•Ñt¤€´øA…Ñ è(€€€€ˆˆ‰•Ñ ½¹±äÑ¡”É•Ù¥•Ý•½±¥‰É¤½µµ¥ÐÑ¡É½Õ „…±±•ÈµÍÕÁÁ±¥•µ…¹…•ÉÕ¹¹•È¸ˆˆˆ(€€€‘•ÍÑ¥¹…Ñ¥½¸€ô½µÁ½¹•¹Ñ}É½½Ð€¼€‰Í½ÕÉ•Ìˆ€¼€ ‰½±¥‰É¤´ˆ€¬=1%	I%}IY%M%=8¤(€€€µ…¹…•‘}ÉÕ¹¹•È€ô}…‘…ÁÑ}µ…¹…•‘}ÉÕ¹¹•È¡ÉÕ¹}½µµ…¹¤(€€€¥˜‘•ÍÑ¥¹…Ñ¥½¸¹•á¥ÍÑÌ ¤½È‘•ÍÑ¥¹…Ñ¥½¸¹¥Í}Íåµ±¥¹¬ ¤è(€€€€€€€¥˜‘•ÍÑ¥¹…Ñ¥½¸¹¥Í}Íåµ±¥¹¬ ¤½È¹½Ð‘•ÍÑ¥¹…Ñ¥½¸¹¥Í}‘¥È ¤è(€€€€€€€€€€€É…¥Í”½±¥‰É¥ÉÉ½È ‰Á¥¹¹•½±¥‰É¤Í½ÕÉ”Á…Ñ ¥Ì¹½Ð„µ…¹…•É•…°‘¥É•Ñ½Éäˆ¤(€€€€€€€É•Ù¥Í¥½¸€ô}ÉÕ¸  ‰¥Ðˆ°€‰É•ØµÁ…ÉÍ”ˆ°€‰!ˆ¤°Ýõ‘•ÍÑ¥¹…Ñ¥½¸°Ñ¥µ•½ÕÐôÄÔ°(€€€€€€€€€€€€€€€€€€€€€€€ÉÕ¹¹•Èõµ…¹…•‘}ÉÕ¹¹•È¤(€€€€€€€É•µ½Ñ”€ô}ÉÕ¸  ‰¥Ðˆ°€‰É•µ½Ñ”ˆ°€‰•ÐµÕÉ°ˆ°€‰½É¥¥¸ˆ¤°Ýõ‘•ÍÑ¥¹…Ñ¥½¸°Ñ¥µ•½ÕÐôÄÔ°(€€€€€€€€€€€€€€€€€€€€€ÉÕ¹¹•Èõµ…¹…•‘}ÉÕ¹¹•È¤(€€€€€€€¥˜É•Ù¥Í¥½¸¹É•ÑÕÉ¹½‘”½ÈÉ•Ù¥Í¥½¸¹ÍÑ‘½ÕÐ¹ÍÑÉ¥À ¤€„ô=1%	I%}IY%M%=8½ÈÉ•µ½Ñ”¹ÍÑ‘½ÕÐ¹ÍÑÉ¥À ¤€„ô=1%	I%}UI0è(€€€€€€€€€€€É…¥Í”½±¥‰É¥ÉÉ½È ‰•á¥ÍÑ¥¹œ½±¥‰É¤Í½ÕÉ”‘½•Ì¹½Ðµ…Ñ Ñ¡”É•Ù¥•Ý•¥µµÕÑ…‰±”½µµ¥Ð…¹½É¥¥¸ˆ¤(€€€€€€€É•ÑÕÉ¸‘•ÍÑ¥¹…Ñ¥½¸(€€€‘•ÍÑ¥¹…Ñ¥½¸¹Á…É•¹Ð¹µ­‘¥È¡µ½‘”ôÁ¼ÜÀÀ°Á…É•¹ÑÌõQÉÕ”°•á¥ÍÑ}½¬õQÉÕ”¤(€€€Ñ•µÁ½É…Éä€ô‘•ÍÑ¥¹…Ñ¥½¸¹Ý¥Ñ¡}¹…µ” ˆ¹½±¥‰É¤µ™•Ñ ´ˆ€¬¡…Í¡±¥ˆ¹Í¡„ÈÔØ¡½Ì¹ÕÉ…¹‘½´ ÌÈ¤¤¹¡•á‘¥•ÍÐ ¥lèÄÉt¤(€€€Ñ•µÁ½É…Éä¹µ­‘¥È¡µ½‘”ôÁ¼ÜÀÀ¤(€€€•¹Ø€ôì‰AQ ˆè€ˆ½ÕÍÈ½‰¥¸è½‰¥¸ˆ°€‰1}10ˆè€‰ˆ°€‰%Q}=9%}9=MeMQ4ˆè€ˆÄˆ°(€€€€€€€€€€€‰%Q}QI5%91}AI=5APˆè€ˆÀˆ°€‰%Q}=9%}1=	0ˆè€ˆ½‘•Ø½¹Õ±°‰ô(€€€ÑÉäè(€€€€€€€¥¹¥Ñ¥…±¥é•€ô}ÉÕ¸  ‰¥Ðˆ°€‰¥¹¥Ðˆ°ÍÑÈ¡Ñ•µÁ½É…Éä¤¤°Ýõ½µÁ½¹•¹Ñ}É½½Ð°•¹Øõ•¹Ø°Ñ¥µ•½ÕÐôÌÀ°(€€€€€€€€€€€€ÉÕ¹¹•Èõµ…¹…•‘}ÉÕ¹¹•È¤(€€€€€€€¥˜¥¹¥Ñ¥…±¥é•¹É•ÑÕÉ¹½‘”è(€€€€€€€€€€€É…¥Í”½±¥‰É¥ÉÉ½È ‰µ…¹…•¥Ð¥¹¥Ð™…¥±•™½ÈÑ¡”¥Í½±…Ñ•½±¥‰É¤Í½ÕÉ”Á…Ñ ˆ¤(€€€€€€€…‘‘•€ô}ÉÕ¸  ‰¥Ðˆ°€ˆµˆ°ÍÑÈ¡Ñ•µÁ½É…Éä¤°€‰É•µ½Ñ”ˆ°€‰…‘ˆ°€‰½É¥¥¸ˆ°=1%	I%}UI0¤°(€€€€€€€€€€€€Ýõ½µÁ½¹•¹Ñ}É½½Ð°•¹Øõ•¹Ø°Ñ¥µ•½ÕÐôÌÀ°(€€€€€€€€€€€€ÉÕ¹¹•Èõµ…¹…•‘}ÉÕ¹¹•È¤(€€€€€€€¥˜…‘‘•¹É•ÑÕÉ¹½‘”è(€€€€€€€€€€€É…¥Í”½±¥‰É¥ÉÉ½È ‰µ…¹…•¥ÐÉ•µ½Ñ”Í•ÑÕÀ™…¥±•™½ÈÑ¡”Á¥¹¹•½±¥‰É¤Í½ÕÉ”ˆ¤(€€€€€€€™•Ñ¡•€ô}ÉÕ¸  ‰¥Ðˆ°€ˆµˆ°ÍÑÈ¡Ñ•µÁ½É…Éä¤°€‰™•Ñ ˆ°€ˆ´µ‘•ÁÑ ôÄˆ°€ˆ´µ¹¼µÑ…Ìˆ°€‰½É¥¥¸ˆ°=1%	I%}IY%M%=8¤°(€€€€€€€€€€€€Ýõ½µÁ½¹•¹Ñ}É½½Ð°•¹Øõ•¹Ø°Ñ¥µ•½ÕÐôÌÀÀ°(€€€€€€€€€€€€ÉÕ¹¹•Èõµ…¹…•‘}ÉÕ¹¹•È¤(€€€€€€€¥˜™•Ñ¡•¹É•ÑÕÉ¹½‘”è(€€€€€€€€€€€É…¥Í”½±¥‰É¥ÉÉ½È ‰µ…¹…•Í½ÕÉ”™•Ñ ½Õ±¹½ÐÉ•ÑÉ¥•Ù”Ñ¡”Á¥¹¹•½±¥‰É¤½µµ¥Ðˆ¤(€€€€€€€¡•­•€ô}ÉÕ¸  ‰¥Ðˆ°€ˆµˆ°ÍÑÈ¡Ñ•µÁ½É…Éä¤°€‰¡•­½ÕÐˆ°€ˆ´µ‘•Ñ… ˆ°€‰Q!}!ˆ¤°(€€€€€€€€€€€€Ýõ½µÁ½¹•¹Ñ}É½½Ð°•¹Øõ•¹Ø°Ñ¥µ•½ÕÐôØÀ°(€€€€€€€€€€€€ÉÕ¹¹•Èõµ…¹…•‘}ÉÕ¹¹•È¤(€€€€€€€¥˜¡•­•¹É•ÑÕÉ¹½‘”è(€€€€€€€€€€€É…¥Í”½±¥‰É¥ÉÉ½È ‰µ…¹…•Í½ÕÉ”¡•­½ÕÐ™…¥±•™½ÈÑ¡”Á¥¹¹•½±¥‰É¤½µµ¥Ðˆ¤(€€€€€€€É•Ù¥Í¥½¸€ô}ÉÕ¸  ‰¥Ðˆ°€ˆµˆ°ÍÑÈ¡Ñ•µÁ½É…Éä¤°€‰É•ØµÁ…ÉÍ”ˆ°€‰!ˆ¤°Ýõ½µÁ½¹•¹Ñ}É½½Ð°(€€€€€€€€€€€€•¹Øõ•¹Ø°Ñ¥µ•½ÕÐôÄÔ°ÉÕ¹¹•Èõµ…¹…•‘}ÉÕ¹¹•È¤(€€€€€€€¥˜É•Ù¥Í¥½¸¹É•ÑÕÉ¹½‘”½ÈÉ•Ù¥Í¥½¸¹ÍÑ‘½ÕÐ¹ÍÑÉ¥À ¤€„ô=1%	I%}IY%M%=8è(€€€€€€€€€€€É…¥Í”½±¥‰É¥ÉÉ½È ‰™•Ñ¡•½±¥‰É¤Í½ÕÉ”‘¥¹½Ðµ…Ñ Ñ¡”•á…ÐÉ•Ù¥•Ý•½µµ¥Ðˆ¤(€€€€€€€½Ì¹É•Á±…”¡Ñ•µÁ½É…Éä°‘•ÍÑ¥¹…Ñ¥½¸¤(€€€€€€€É•ÑÕÉ¸‘•ÍÑ¥¹…Ñ¥½¸(€€€•á•ÁÐ	…Í•á•ÁÑ¥½¸è(€€€€€€€Í¡ÕÑ¥°¹ÉµÑÉ•”¡Ñ•µÁ½É…Éä°¥¹½É•}•ÉÉ½ÉÌõQÉÕ”¤(€€€€€€€É…¥Í”(()‘•˜‰Õ¥±‘}½±¥‰É¥}…É´ØÐ¡Í½ÕÉ”èA…Ñ °€¨°•áÁ•Ñ•‘}É•Ù¥Í¥½¸èÍÑÈ€ô=1%	I%}IY%M%=8°(€€€€€€€€€€€€€€€€€€€€€€€ÍåÍÑ•´èÍÑÈð9½¹”€ô9½¹”°µ…¡¥¹”èÍÑÈð9½¹”€ô9½¹”°(€€€€€€€€€€€€€€€€€€€€€€€ÉÕ¹¹•Èè…±±…‰±•l¸¸¸°ÍÕ‰ÁÉ½•ÍÌ¹½µÁ±•Ñ•‘AÉ½•ÍÍmÍÑÉut°(€€€€€€€€€€€€€€€€€€€€€€€Ñ¥µ•½ÕÐè™±½…Ð€ô€ØÀÀ¤€´ø	Õ¥±‘Ù¥‘•¹”è(€€€€ˆˆ‰	Õ¥±½¹±äÑ¡”Á¥¹¹•ÕÁÍÑÉ•…´•¹¥¹”½¸…¸…ÑÕ…°1¥¹ÕàI4ØÐÑ…É•Ð¸ˆˆˆ(€€€ÍåÍÑ•´€ôÍåÍÑ•´½ÈÁ±…Ñ™½É´¹ÍåÍÑ•´ ¤(€€€µ…¡¥¹”€ôµ…¡¥¹”½ÈÁ±…Ñ™½É´¹µ…¡¥¹” ¤(€€€¥˜ÍåÍÑ•´€„ô€‰1¥¹Õàˆ½Èµ…¡¥¹”¹…Í•™½± ¤¹½Ð¥¸ì‰……É ØÐˆ°€‰…É´ØÐ‰ôè(€€€€€€€É…¥Í”½±¥‰É¥ÉÉ½È¡˜‰½±¥‰É¤•¹¥¹”µÕÍÐ‰”‰Õ¥±Ð½¸1¥¹ÕàI4ØÐì™½Õ¹íÍåÍÑ•µô½íµ…¡¥¹•ôˆ¤(€€€Í½ÕÉ”€ôÍ½ÕÉ”¹É•Í½±Ù”¡ÍÑÉ¥ÐõQÉÕ”¤(€€€ÉÕ¹¹•È€ô}…‘…ÁÑ}µ…¹…•‘}ÉÕ¹¹•È¡ÉÕ¹¹•È¤(€€€É•Ù¥Í¥½¸€ô}ÉÕ¸  ‰¥Ðˆ°€‰É•ØµÁ…ÉÍ”ˆ°€‰!ˆ¤°ÝõÍ½ÕÉ”°Ñ¥µ•½ÕÐôÄÔ°ÉÕ¹¹•ÈõÉÕ¹¹•È¤(ƒnºöÚ$z{-®éÜj×s_unavailable"
+"""Pinned ARM64 Colibri build and experimental GLM-5.2 runtime planning."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import stat
+import struct
+import subprocess
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Mapping, Protocol, Sequence
+
+from hermes_installer.models.artifacts import ArtifactManifest, MODEL_ID, MODEL_REVISION
+from hermes_installer.models.downloads import DownloadCancelled, StoragePlan, StorageReserve, estimate_storage
+
+COLIBRI_REVISION = "bf2442915d6e3dd4cdfd2eb9c2a3d2aa44a25850"
+COLIBRI_URL = "https://github.com/JustVugg/colibri.git"
+BUILD_PACKAGES = ("build-essential", "git", "python3", "libgomp1")
+
+
+class ColibriError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class BuildEvidence:
+    source_revision: str
+    architecture: str
+    binary_sha256: str
+    elf_machine: str
+    openmp_verified: bool
+    libgomp_runtime: str
+    self_test_output: str | None
+    self_test_status: str
+
+
+@dataclass(frozen=True, slots=True)
+class HostReadiness:
+    architecture: str
+    cpu_features: tuple[str, ...]
+    memory_total_bytes: int | None
+    memory_available_bytes: int | None
+    temperature_millidegrees: int | None
+    throttling: str | None
+    storage_free_bytes: int | None
+    storage_health: str
+    device_access: str
+    warnings: tuple[str, ...]
+
+
+def _run(argv: Sequence[str], *, cwd: Path | None = None, env: Mapping[str, str] | None = None,
+         timeout: float = 60, runner: Callable[..., object] = subprocess.run) -> subprocess.CompletedProcess[str]:
+    result = runner(list(argv), cwd=cwd, env=dict(env) if env is not None else None,
+                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    check=False, timeout=timeout)
+    code = getattr(result, "returncode", getattr(result, "exit_code", None))
+    output = getattr(result, "stdout", "") or ""
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
+    return subprocess.CompletedProcess(list(argv), int(code if code is not None else 255), str(output))
+
+
+def _adapt_managed_runner(run_command: Callable[..., object]) -> Callable[..., subprocess.CompletedProcess[str]]:
+    def invoke(argv, *, cwd=None, env=None, timeout=60, **_ignored):
+        result = run_command(tuple(argv), cwd=cwd, env=env, timeout=timeout)
+        code = getattr(result, "returncode", getattr(result, "exit_code", None))
+        output = getattr(result, "stdout", "") or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        return subprocess.CompletedProcess(list(argv), int(code if code is not None else 255), str(output))
+    return invoke
+
+
+def _elf_machine(path: Path) -> tuple[str, str]:
+    with path.open("rb") as stream:
+        header = stream.read(20)
+    if len(header) < 20 or header[:4] != b"\x7fELF" or header[5] not in (1, 2):
+        raise ColibriError("Colibri build output is not a valid ELF executable")
+    byteorder = "little" if header[5] == 1 else "big"
+    machine = int.from_bytes(header[18:20], byteorder)
+    return {183: "aarch64", 62: "x86_64", 40: "arm"}.get(machine, f"unknown-{machine}"), byteorder
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def fetch_pinned_colibri_source(component_root: Path, *, run_command: Callable[..., object]) -> Path:
+    """Fetch only the reviewed Colibri commit through a caller-supplied managed runner."""
+    destination = component_root / "sources" / ("colibri-" + COLIBRI_REVISION)
+    managed_runner = _adapt_managed_runner(run_command)
+    if destination.exists() or destination.is_symlink():
+        if destination.is_symlink() or not destination.is_dir():
+            raise ColibriError("pinned Colibri source path is not a managed real directory")
+        revision = _run(("git", "rev-parse", "HEAD"), cwd=destination, timeout=15,
+                        runner=managed_runner)
+        remote = _run(("git", "remote", "get-url", "origin"), cwd=destination, timeout=15,
+                      runner=managed_runner)
+        if revision.returncode or revision.stdout.strip() != COLIBRI_REVISION or remote.stdout.strip() != COLIBRI_URL:
+            raise ColibriError("existing Colibri source does not match the reviewed immutable commit and origin")
+        return destination
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = destination.with_name(".colibri-fetch-" + hashlib.sha256(os.urandom(32)).hexdigest()[:12])
+    temporary.mkdir(mode=0o700)
+    env = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_GLOBAL": "/dev/null"}
+    try:
+        initialized = _run(("git", "init", str(temporary)), cwd=component_root, env=env, timeout=30,
+             runner=managed_runner)
+        if initialized.returncode:
+            raise ColibriError("managed git init failed for the isolated Colibri source path")
+        added = _run(("git", "-C", str(temporary), "remote", "add", "origin", COLIBRI_URL),
+             cwd=component_root, env=env, timeout=30,
+             runner=managed_runner)
+        if added.returncode:
+            raise ColibriError("managed git remote setup failed for the pinned Colibri source")
+        fetched = _run(("git", "-C", str(temporary), "fetch", "--depth=1", "--no-tags", "origin", COLIBRI_REVISION),
+             cwd=component_root, env=env, timeout=300,
+             runner=managed_runner)
+        if fetched.returncode:
+            raise ColibriError("managed source fetch could not retrieve the pinned Colibri commit")
+        checked = _run(("git", "-C", str(temporary), "checkout", "--detach", "FETCH_HEAD"),
+             cwd=component_root, env=env, timeout=60,
+             runner=managed_runner)
+        if checked.returncode:
+            raise ColibriError("managed source checkout failed for the pinned Colibri commit")
+        revision = _run(("git", "-C", str(temporary), "rev-parse", "HEAD"), cwd=component_root,
+             env=env, timeout=15, runner=managed_runner)
+        if revision.returncode or revision.stdout.strip() != COLIBRI_REVISION:
+            raise ColibriError("fetched Colibri source did not match the exact reviewed commit")
+        os.replace(temporary, destination)
+        return destination
+    except BaseException:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+
+
+def build_colibri_arm64(source: Path, *, expected_revision: str = COLIBRI_REVISION,
+                        system: str | None = None, machine: str | None = None,
+                        runner: Callable[..., subprocess.CompletedProcess[str]],
+                        timeout: float = 600) -> BuildEvidence:
+    """Build only the pinned upstream C engine on an actual Linux ARM64 target."""
+    system = system or platform.system()
+    machine = machine or platform.machine()
+    if system != "Linux" or machine.casefold() not in {"aarch64", "arm64"}:
+        raise ColibriError(f"Colibri engine must be built on Linux ARM64; found {system}/{machine}")
+    source = source.resolve(strict=True)
+    runner = _adapt_managed_runner(runner)
+    revision = _run(("git", "rev-parse", "HEAD"), cwd=source, timeout=15, runner=runner)
+    if revision.returncode or revision.stdout.strip() != expected_revision:
+        raise ColibriError("Colibri source checkout does not match the reviewed revision pin")
+    setup = source / "c" / "setup.sh"
+    if setup.is_symlink() or not setup.is_file():
+        raise ColibriError("pinned Colibri source is missing its reviewed c/setup.sh build entry point")
+    for tool in ("gcc", "make", "python3"):
+        checked = _run((tool, "--version"), timeout=10, runner=runner)
+        if checked.returncode:
+            raise ColibriError(f"Colibri build dependency {tool} is unavailable; install {', '.join(BUILD_PACKAGES)} through the managed host")
+    # Match the upstream setup check and ensure it links and runs against ARM64 libgomp.
+    with tempfile.TemporaryDirectory(prefix="hermes-colibri-omp-") as td:
+        probe_c, probe_bin = Path(td) / "probe.c", Path(td) / "probe"
+        probe_c.write_text("#include <omp.h>\nint main(void){int n=0;\n#pragma omp parallel reduction(+:n)\n n += 1; return n < 1;}\n", encoding="ascii")
+        compile_result = _run(("gcc", "-fopenmp", str(probe_c), "-o", str(probe_bin)), timeout=60, runner=runner)
+        if compile_result.returncode:
+            raise ColibriError("OpenMP/libgomp compile probe failed; install the ARM64 libgomp runtime and compiler package")
+        execute_result = _run((str(probe_bin),), timeout=15, runner=runner)
+        if execute_result.returncode:
+            raise ColibriError("OpenMP/libgomp runtime probe failed on the target")
+    env = {"PATH": "/usr/bin:/bin", "ARCH": "native", "LC_ALL": "C", "HOME": "/tmp"}
+    if timeout <= 0 or timeout > 600:
+        raise ValueError("managed Colibri build command must be bounded to 600 seconds")
+    build_result = _run(("bash", str(setup)), cwd=source / "c", env=env, timeout=timeout, runner=runner)
+    if build_result.returncode:
+        tail = build_result.stdout[-2400:].strip()
+        raise ColibriError(f"pinned Colibri ARM64 build/self-test failed: {tail}")
+    binary = source / "c" / "colibri"
+    if binary.is_symlink() or not binary.is_file() or not os.access(binary, os.X_OK):
+        raise ColibriError("pinned build completed without an executable c/colibri binary")
+    elf, _ = _elf_machine(binary)
+    if elf != "aarch64":
+        raise ColibriError(f"Colibri binary is {elf}, expected aarch64")
+    linked = _run(("ldd", str(binary)), timeout=15, runner=runner)
+    if linked.returncode or "libgomp.so" not in linked.stdout:
+        raise ColibriError("Colibri binary is not linked to the required libgomp.so runtime")
+    self_test_line = next((line.strip() for line in build_result.stdout.splitlines()
+                           if "engine self-test:" in line), None)
+    tiny = source / "c" / "glm_tiny"
+    reference = source / "c" / "ref_glm.json"
+    tiny_available = (tiny.is_dir() and not tiny.is_symlink()
+                      and reference.is_file() and not reference.is_symlink())
+    if tiny_available and self_test_line is None:
+        raise ColibriError("pinned Colibri setup omitted its self-test despite the checked-in tiny oracle")
+    if self_test_line is not None:
+        match = re.search(r"(\d+)/(\d+) positions", self_test_line)
+        if match is None or not 30 <= int(match.group(1)) <= 32 or int(match.group(2)) != 32:
+            raise ColibriError("pinned Colibri tiny-oracle self-test did not meet the documented 30-32/32 result")
+        self_test_status = "passed"
+    else:
+        # The pinned Git tree does not contain the optional glm_tiny fixture. The
+        # upstream setup script deliberately skips its test in that case.
+        self_test_status = "not_run_fixture_absent"
+    return BuildEvidence(expected_revision, "aarch64", _sha256(binary), elf, True,
+                         next((line.strip() for line in linked.stdout.splitlines() if "libgomp.so" in line), "libgomp.so"),
+                         self_test_line, self_test_status)
+
+
+def _read_meminfo(path: Path) -> tuple[int | None, int | None]:
+    if path.is_symlink() or not path.is_file():
+        return None, None
+    values: dict[str, int] = {}
+    for line in path.read_text(encoding="ascii", errors="replace").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].rstrip(":") in {"MemTotal", "MemAvailable"}:
+            try:
+                values[parts[0].rstrip(":")] = int(parts[1]) * 1024
+            except ValueError:
+                pass
+    return values.get("MemTotal"), values.get("MemAvailable")
+
+
+def _cpu_features(path: Path) -> tuple[str, ...]:
+    if path.is_symlink() or not path.is_file():
+        return ()
+    for line in path.read_text(encoding="ascii", errors="replace").splitlines():
+        if line.lower().startswith(("features", "flags")) and ":" in line:
+            return tuple(sorted(set(line.split(":", 1)[1].lower().split())))
+    return ()
+
+
+def probe_host_readiness(model_path: Path, *, proc_root: Path = Path("/proc"), sys_root: Path = Path("/sys"),
+                         system: str | None = None, machine: str | None = None,
+                         block_device: Path | None = None,
+                         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run) -> HostReadiness:
+    """Collect measured target facts. Nominal RAM and TPU presence never imply readiness."""
+    system, machine = system or platform.system(), machine or platform.machine()
+    warnings: list[str] = []
+    total, available = _read_meminfo(proc_root / "meminfo")
+    if total is None or available is None:
+        warnings.append("physical-memory facts unavailable")
+    features = _cpu_features(proc_root / "cpuinfo")
+    if system != "Linux" or machine.casefold() not in {"aarch64", "arm64"}:
+        warnings.append("native GLM runtime requires Linux ARM64")
+    temp = None
+    for zone in sorted((sys_root / "class" / "thermal").glob("thermal_zone*/temp")):
+        if zone.is_symlink():
+            continue
+        try:
+            raw = int(zone.read_text(encoding="ascii").strip())
+            temp = raw * 1000 if abs(raw) < 1000 else raw
+            break
+        except (OSError, ValueError):
+            continue
+    throttling = None
+    vcgencmd = shutil.which("vcgencmd")
+    if vcgencmd:
+        result = _run((vcgencmd, "get_throttled"), timeout=3, runner=runner)
+        if result.returncode == 0:
+            throttling = result.stdout.strip()
+    try:
+        free = shutil.disk_usage(model_path).free
+    except OSError:
+        free = None
+        warnings.append("target model storage free space unavailable")
+    health = "not_checked"
+    smartctl = shutil.which("smartctl")
+    if block_device is None:
+        health = "requires_block_device_identity"
+    else:
+        try:
+            device_valid = not block_device.is_symlink() and stat.S_ISBLK(block_device.stat().st_mode)
+        except OSError:
+            device_valid = False
+        if not device_valid:
+            health = "invalid_block_device_identity"
+        elif smartctl is None:
+            health = "smartctl_unavailable"
+        else:
+            result = _run((smartctl, "-j", "-H", str(block_device)), timeout=10, runner=runner)
+            if result.returncode == 0:
+                try:
+                    smart = json.loads(result.stdout)
+                    health = "healthy" if smart.get("smart_status", {}).get("passed") is True else "failed_or_unknown"
+                except (ValueError, AttributeError):
+                    health = "unparseable_smart_status"
+            else:
+                health = "smartctl_failed"
+    device_access = "pending_device_probe"
+    try:
+        from .coral import probe_coral_devices
+        devices = probe_coral_devices(sys_root=sys_root)
+        accessible = [d for d in devices if d.access_status == "accessible"]
+        device_access = "coral_device_accessible" if accessible else (
+            "coral_present_permission_pending" if devices else "no_coral_device")
+    except OSError:
+        device_access = "device_bus_unavailable"
     return HostReadiness(machine, features, total, available, temp, throttling, free, health,
                          device_access, tuple(warnings))
 
