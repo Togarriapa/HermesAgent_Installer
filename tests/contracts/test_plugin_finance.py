@@ -139,33 +139,35 @@ class PluginFinanceTests(unittest.TestCase):
         hub = FinancialDataHub(broker,
             credential_refs={DataProvider.BANK_AISP: "BANK_READ_CREDENTIAL"},
             account_refs={DataProvider.BANK_AISP: "BANK_READ_ACCOUNT"},
+            account_aliases={DataProvider.BANK_AISP: "bank-main"},
             clock=lambda: datetime(2026, 10, 9, tzinfo=timezone.utc))
-        result = hub.read(DataProvider.BANK_AISP, DataOperation.BALANCES, account_alias="bank-main")
+        result = hub.read(DataProvider.BANK_AISP, DataOperation.BALANCES)
         self.assertEqual(len(broker.calls), 1)
         self.assertEqual(broker.calls[0]["timeout_seconds"], 8.0)
         self.assertEqual(result[0].data, {"balance": "12.5", "currency": "EUR"})
         self.assertEqual(result[0].account_alias, "bank-main")
         self.assertEqual(result[0].freshness, "timestamped")
         with self.assertRaises(FinanceDenied):
-            hub.read(DataProvider.BANK_AISP, DataOperation.BALANCES, account_alias="bank-main",
-                     filters={"url": "https://evil.invalid"})
+            hub.read(DataProvider.BANK_AISP, DataOperation.BALANCES, filters={"url": "https://evil.invalid"})
         with self.assertRaises(FinanceDenied):
-            hub.read(DataProvider.BANK_AISP, DataOperation.ACCOUNTS, account_alias="bank-main",
-                     filters={"limit": 1001})
+            hub.read(DataProvider.BANK_AISP, DataOperation.ACCOUNTS, filters={"limit": 1001})
+        with self.assertRaises(TypeError):
+            hub.read(DataProvider.BANK_AISP, DataOperation.BALANCES, account_alias="attacker-selected")
         with self.assertRaises(FinanceDenied):
-            hub.read(DataProvider.LEDGER_READ, DataOperation.PUBLIC_ACCOUNT_METADATA, account_alias="bank-main")
+            hub.read(DataProvider.LEDGER_READ, DataOperation.PUBLIC_ACCOUNT_METADATA)
         self.assertEqual(len(broker.calls), 1)
 
     def test_data_hub_rejects_execution_scope_and_cross_account_reference_mismatch(self):
         broker = ReadBroker()
         with self.assertRaises(FinanceUnavailable):
             FinancialDataHub(broker,
-                credential_refs={DataProvider.BANK_AISP: "BANK_READ_CREDENTIAL"}, account_refs={})
+                credential_refs={DataProvider.BANK_AISP: "BANK_READ_CREDENTIAL"}, account_refs={}, account_aliases={})
         hub = FinancialDataHub(broker,
             credential_refs={DataProvider.TRADING212_READ: "T212_READ_CREDENTIAL"},
-            account_refs={DataProvider.TRADING212_READ: "T212_READ_ACCOUNT"})
+            account_refs={DataProvider.TRADING212_READ: "T212_READ_ACCOUNT"},
+            account_aliases={DataProvider.TRADING212_READ: "broker-main"})
         with self.assertRaises(FinanceDenied):
-            hub.read(DataProvider.TRADING212_READ, DataOperation.BALANCES, account_alias="broker")
+            hub.read(DataProvider.TRADING212_READ, DataOperation.BALANCES)
         self.assertEqual(broker.calls, [])
 
     def _gateway(self, *, confirmation=None, broker=None, ledger=None):

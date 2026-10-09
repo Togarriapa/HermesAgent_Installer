@@ -88,14 +88,18 @@ class FinancialDataHub:
     def __init__(self, broker: FinancialReadBroker, *,
                  credential_refs: Mapping[DataProvider, str],
                  account_refs: Mapping[DataProvider, str],
+                 account_aliases: Mapping[DataProvider, str],
                  clock=lambda: datetime.now(timezone.utc)) -> None:
         if not callable(getattr(broker, "read", None)):
             raise FinanceUnavailable("root financial read broker is unavailable")
         self._broker = broker
         self._credential_refs = self._validate_refs(credential_refs, "credential")
         self._account_refs = self._validate_refs(account_refs, "account")
-        if set(self._credential_refs) != set(self._account_refs):
-            raise FinanceUnavailable("financial sources require independently enrolled account and credential scopes")
+        self._account_aliases = dict(account_aliases)
+        if (set(self._credential_refs) != set(self._account_refs)
+                or set(self._credential_refs) != set(self._account_aliases)
+                or any(not isinstance(alias, str) or not _ID.fullmatch(alias) for alias in self._account_aliases.values())):
+            raise FinanceUnavailable("financial sources require independently enrolled credentials, accounts, and fixed non-secret aliases")
         self._clock = clock
 
     @staticmethod
@@ -108,13 +112,11 @@ class FinancialDataHub:
         return result
 
     def read(self, provider: DataProvider, operation: DataOperation, *,
-             account_alias: str, filters: Mapping[str, object] | None = None) -> tuple[FinancialObservation, ...]:
+             filters: Mapping[str, object] | None = None) -> tuple[FinancialObservation, ...]:
         if provider not in self._credential_refs or provider not in _DATA_SCOPES:
             raise FinanceDenied("provider has no separately enrolled read-only source")
         if not isinstance(operation, DataOperation) or operation not in _DATA_SCOPES[provider]:
             raise FinanceDenied("operation is outside this provider's read-only scope")
-        if not isinstance(account_alias, str) or not _ID.fullmatch(account_alias):
-            raise FinanceDenied("account alias must be a bounded non-secret identifier")
         normalized_filters = _bounded_filter(filters or {})
         try:
             response = self._broker.read(
@@ -127,7 +129,7 @@ class FinancialDataHub:
             raise FinanceUnavailable("root financial read operation failed; credentials and provider response were withheld") from None
         rows = _bounded_rows(response)
         observed_at = _timestamp(self._clock())
-        return tuple(_normalize_observation(provider, operation, account_alias, row, observed_at) for row in rows)
+        return tuple(_normalize_observation(provider, operation, self._account_aliases[provider], row, observed_at) for row in rows)
 
 
 def _bounded_filter(filters: Mapping[str, object]) -> dict[str, object]:
@@ -685,17 +687,16 @@ class FinancialDataHubImplementation(_PluginImplementation):
     schema = {"type": "object", "properties": {
         "provider": {"type": "string", "enum": [p.value for p in DataProvider]},
         "operation": {"type": "string", "enum": [o.value for o in DataOperation]},
-        "account_alias": {"type": "string", "maxLength": 128},
         "filters": {"type": "object"}},
-        "required": ["provider", "operation", "account_alias"], "additionalProperties": False}
+        "required": ["provider", "operation"], "additionalProperties": False}
     description = "Read observations only from an independently consented financial source."
 
     def handler(self, service: object, runtime_context: object):
         def read(args: object):
-            if not isinstance(args, Mapping) or set(args) - {"provider", "operation", "account_alias", "filters"}:
+            if not isinstance(args, Mapping) or set(args) - {"provider", "operation", "filters"}:
                 raise FinanceDenied("financial read arguments contain unreviewed fields")
             observations = service.read(DataProvider(args["provider"]), DataOperation(args["operation"]),
-                account_alias=args["account_alias"], filters=args.get("filters", {}))
+                filters=args.get("filters", {}))
             return {"observations": [asdict(item) for item in observations]}
         return read
 
