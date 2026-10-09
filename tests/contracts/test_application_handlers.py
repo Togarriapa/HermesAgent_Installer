@@ -22,7 +22,7 @@ class ApplicationHandlerTests(unittest.TestCase):
             "uv.lock": lock.encode(),
         })
         self.assertEqual("source-locks-reviewed; functional-probe-pending", result.evidence_state)
-        self.assertEqual("ef648e01899ba3e8dc6371642deaaf64b4477775", result.source_revision)
+        self.assertEqual("5b74d7d74911cf435c8f1636b6f96ea202cc6246", result.source_revision)
         self.assertEqual(1, len(result.lock_digests))
         self.assertFalse(result.blockers)
 
@@ -56,6 +56,7 @@ class ApplicationHandlerTests(unittest.TestCase):
         self.assertEqual("/owned/envs/graphify/bin/graphify", extract.executable)
         self.assertIn("--code-only", extract.argv)
         self.assertEqual("deny", extract.network)
+        self.assertEqual("PRIVATE", extract.sensitivity)
         self.assertIn(("GRAPHIFY_QUERY_LOG_DISABLE", "1"), extract.environment)
         self.assertEqual(90, extract.timeout_seconds)
         self.assertIn("--graph", query.argv)

@@ -215,12 +215,12 @@ def build_graphify_code_fixture(
         ComponentInvocation(
             "graphify", executable, ("extract", "--code-only", fixture), work,
             common, (), ("component.graphify.read-fixture", "component.graphify.write-private-work"),
-            "PUBLIC", "deny", 90, 1024,
+            "PRIVATE", "deny", 90, 1024,
         ),
         ComponentInvocation(
             "graphify", executable,
             ("query", "what connects the fixture entrypoint to its helper?", "--graph", graph),
             work, common, (), ("component.graphify.read-private-work",),
-            "PUBLIC", "deny", 30, 512,
+            "PRIVATE", "deny", 30, 512,
         ),
     )
