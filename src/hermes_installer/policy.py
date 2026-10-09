@@ -376,9 +376,17 @@ class Dispatcher:
             raise PolicyDenied("authorization.unavailable", "Trusted host provider authorization is unavailable")
         if context.cancelled():
             raise PolicyDenied("dispatch.cancelled", "Request was cancelled before provider authorization")
+        required_claims = (context.principal_id, context.namespace, context.provenance,
+                           context.policy_revision, context.grant_id)
+        if (any(not value for value in required_claims) or capability not in context.capabilities
+                or context.lease_expires_at <= now):
+            raise PolicyDenied("authorization.context_unavailable", "Trusted principal, namespace, provenance, capability or lease is unavailable")
+        if not context.provenance.startswith("sha256:") or len(context.provenance) != 71:
+            raise PolicyDenied("authorization.context_unavailable", "Trusted host provenance is invalid")
+        deadline = min(deadline, context.lease_expires_at)
         remaining = deadline - now
         if remaining <= 0:
-            raise PolicyDenied("dispatch.deadline", "Request deadline elapsed before provider authorization")
+            raise PolicyDenied("dispatch.deadline", "Request or host lease deadline elapsed before provider authorization")
         def authorization_cancelled() -> bool:
             return context.cancelled() or self._now() >= deadline
         try:
@@ -401,7 +409,10 @@ class Dispatcher:
         if (not grant.principal_id or not grant.profile_id or not grant.namespace
                 or not grant.trace_id or not grant.policy_revision or not grant.purpose
                 or not grant.capability or not grant.intent_id or not grant.grant_id
-                or grant.profile_id != context.profile_id or grant.trace_id != context.trace_id
+                or grant.principal_id != context.principal_id or grant.profile_id != context.profile_id
+                or grant.namespace != context.namespace or grant.trace_id != context.trace_id
+                or grant.policy_revision != context.policy_revision
+                or grant.lineage_sha256 != context.provenance[7:]
                 or grant.purpose != context.purpose or grant.capability != capability
                 or grant.intent_id != intent_id or capability not in grant.capabilities
                 or not isinstance(grant.effective_sensitivity, Sensitivity)
@@ -410,6 +421,7 @@ class Dispatcher:
                 or not math.isfinite(grant.expires_at_monotonic)
                 or grant.expires_at_monotonic <= finished
                 or grant.expires_at_monotonic - finished > 3600
+                or grant.expires_at_monotonic > context.lease_expires_at
                 or not isinstance(grant.lineage_sha256, str)
                 or len(grant.lineage_sha256) != 64
                 or any(ch not in "0123456789abcdef" for ch in grant.lineage_sha256)):
