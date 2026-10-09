@@ -19,13 +19,14 @@ MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
 TOKEN="local-fixture-token-value-0123456789abcdef"
 
 
-def fixture_context(*, profile_id, purpose, sensitivity, trace_id, cancelled, tool_request):
+def fixture_context(*, purpose, intent, source_contexts, trace_id, lease_seconds,
+                    sensitivity=Sensitivity.PUBLIC):
     return DispatchContext(
-        profile_id=profile_id, purpose=purpose, sensitivity=sensitivity, trace_id=trace_id,
-        cancelled=cancelled, principal_id="fixture-principal", namespace=profile_id,
+        profile_id="fixture-profile", purpose=purpose, sensitivity=sensitivity, trace_id=trace_id,
+        principal_id="fixture-principal", namespace="fixture-namespace",
         provenance="sha256:" + "f" * 64, capabilities=frozenset({"inference", "tool-call"}),
         policy_revision="fixture-revision", grant_id="fixture-context-grant",
-        lease_expires_at=time.monotonic() + 60,
+        lease_expires_at=time.monotonic() + min(60, lease_seconds),
     )
 
 
@@ -149,6 +150,7 @@ class ProviderGatewayTests(unittest.TestCase):
 
     def test_http_cannot_downgrade_trusted_private_profile_or_choose_public_model(self):
         private=LocalProviderGateway(self.dispatcher,token=TOKEN,profile_id="private-session",sensitivity=Sensitivity.PRIVATE,model=MODEL,context_factory=fixture_context)
+        private.context_factory=lambda **claims: fixture_context(**claims, sensitivity=Sensitivity.PRIVATE)
         private_port=private.start()
         self.addCleanup(private.close)
         req=urllib.request.Request(f"http://127.0.0.1:{private_port}/v1/chat/completions",
