@@ -100,11 +100,16 @@ def _spawn_private_namespace_responder(service_uid: int, service_gid: int,
                 body = bytearray(request[header_end + 4:])
                 while len(body) < length:
                     body.extend(peer.recv(length - len(body)))
-                if (not headers.startswith(
-                        b"POST /agentmemory/smart-search HTTP/1.1\r\nHost: 127.0.0.1:3111\r\n")
-                        or b"Authorization: Bearer fake-memory-key-for-loopback-test\r\n" not in headers
-                        or b"Transfer-Encoding:" in headers):
-                    raise AssertionError("memory request escaped the fixed HTTP/auth framing")
+                framing_errors = []
+                if not headers.startswith(
+                        b"POST /agentmemory/smart-search HTTP/1.1\r\nHost: 127.0.0.1:3111\r\n"):
+                    framing_errors.append("method-path-host")
+                if b"Authorization: Bearer fake-memory-key-for-loopback-test\r\n" not in headers:
+                    framing_errors.append("authorization")
+                if b"Transfer-Encoding:" in headers:
+                    framing_errors.append("transfer-encoding")
+                if framing_errors:
+                    raise AssertionError("memory framing mismatch: " + ",".join(framing_errors))
                 decoded = json.loads(bytes(body).decode("utf-8"))
                 if decoded != {"agentId": "profile-one", "limit": 3,
                                "project": "project-one", "query": "synthetic restart fact"}:
