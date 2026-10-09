@@ -408,3 +408,10 @@ The installer SHALL validate root-derived capture envelopes and selected timer/w
 #### Scenario: Unknown protocol mapping
 - **WHEN** ingress cannot resolve its selected source schema or exact authenticated event identity
 - **THEN** it remains unavailable with its precise setup prerequisite rather than using another protocol schema
+
+### Requirement: Actual channel receipt and source selection
+The installer SHALL derive HTTP/audio input provenance from root-retained actual authenticated transport or consented device capture, and verify explicitly selected installer source before effects.
+
+#### Scenario: Caller input or status used as proof
+- **WHEN** worker input labels, microphone permission or read-only launcher status are presented as principal/effect authority
+- **THEN** admission denies the substitution
