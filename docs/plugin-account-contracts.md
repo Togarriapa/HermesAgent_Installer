@@ -21,12 +21,40 @@ at the pinned Resources revision recorded in `planning/source-revisions.json`:
   credential export/copy, arbitrary host access, and authority derived from a
   Codex session are denied.
 
-The current runtime context does not yet provide an enrolled GitHub account
-effect catalog, a Composio OAuth/connection broker, or a host-managed Codex
-runner tied to the pinned ARM64 CLI and assigned-workspace identity. Therefore
-these records prove policy validation only. They do not enable tools or claim
-authentication, network reachability, account entitlement, functional use, or
-Pi acceptance. Do not wire them through a generic provider or MCP operation;
-each needs a Sol-reviewed fixed operation/payload contract and matching
-root-owned handler. The fixture tests cover scope validation and fail-closed
-enrollment, not external effects.
+`src/hermes_installer/plugin_accounts_broker.py` now provides the fixed-effect
+backend layer for the Sol-reviewed wire envelope (`plugin.github.read/write/admin`,
+`plugin.composio.invoke`, and `plugin.codex.run`). The handler map is keyed by
+the exact operation and `plugin:<adapter>:<enrollment-target>:<generation>`.
+It validates the fresh host grant, profile/principal/lineage, exact payload
+digest, root-selected enrollment, fixed argument schema, bounded request and
+response, and a durable idempotency record for writes. No caller supplies a
+URL, arbitrary command, executable, or filesystem location.
+
+The GitHub backend currently supports the narrow action IDs `repo.get`,
+`issues.list`, `content.get`, `content.put`, and `issue.create`. It constructs
+requests only to `api.github.com`, checks the repository against the exact
+enrollment allowlist, resolves the token through the host vault, and verifies
+content writes by reading the exact path back. Issue creation uses an
+idempotency marker and verifies the returned issue by number before it can be
+committed. Admin actions and all other action IDs stay unavailable.
+
+The Composio backend calls only the fixed v3.1 tool-execution endpoint and
+requires an exact enrolled tool slug, connected-account ID, pinned tool version,
+and vault credential. It does not use the proxy/workbench routes. Generic
+Composio execution has no generic postcondition, so mutating calls remain
+ambiguous until an action-specific enrolled verifier is supplied. OAuth
+connection creation is not implemented by this executor.
+
+The Codex adapter accepts a bounded prompt and a workspace ID that resolves to
+a root-selected workspace binding. It does not accept argv or caller paths and
+requires a root process broker that advertises the pinned ARM64 toolchain lock.
+The broker must provide host-attested workspace-result verification before a
+write can be marked committed; a textual success field is not sufficient.
+
+These implementations are not yet enabled in `AuthorityService`: root-owned
+account/secret enrollments, per-action schemas and verifiers, Codex managed
+runner receipts, and the service registration path remain prerequisites. The
+fixture backend tests exercise exact destinations, allowlist denial, fixed
+Composio connection/version bindings, and Codex workspace/toolchain binding;
+they do not claim authentication, real account entitlement, live writes, or Pi
+acceptance.
