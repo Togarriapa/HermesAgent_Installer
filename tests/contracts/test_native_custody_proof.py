@@ -508,6 +508,8 @@ class RootLoaderObservationContracts(unittest.TestCase):
                 _self.start_ticks = self.identity.start_ticks
                 _self.cgroup_identity = self.identity.cgroup_identity
                 _self.executable_sha256 = self.identity.executable_sha256
+                _self.mount_namespace_inode = int(self.identity.namespace_identity.split(";")[0].split(":")[1])
+                _self.network_namespace_inode = int(self.identity.namespace_identity.split(";")[1].split(":")[1])
                 _self.expires_monotonic = time.monotonic() + 10
                 _self.closed = False
 
@@ -758,6 +760,8 @@ class NativeInputTargetResolverContracts(unittest.TestCase):
                 _self.start_ticks = identity.start_ticks
                 _self.cgroup_identity = identity.cgroup_identity
                 _self.executable_sha256 = identity.executable_sha256
+                _self.mount_namespace_inode = 42
+                _self.network_namespace_inode = 43
                 _self.expires_monotonic = time.monotonic() + 10
                 _self.closed = False
 
@@ -821,6 +825,26 @@ class NativeInputTargetResolverContracts(unittest.TestCase):
             self.assertTrue(leases[0].closed)
         finally:
             os.close(target.peer_pidfd)
+
+    def test_target_denies_stale_namespace_and_expired_loader_proof_and_closes_lease(self):
+        resolver, execution, proof, leases = self._fixture()
+        stale_identity = replace(proof.target_peer_identity, namespace_identity="mnt:99;net:99")
+        with mock.patch.object(resolver.custody_resolver, "resolve_live_peer", return_value=stale_identity), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_target", return_value=4242), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_exited", return_value=False):
+            with self.assertRaises(AuthorityDenied):
+                resolver.resolve_selected_native_input_target(execution)
+        self.assertTrue(leases[0].closed)
+
+        resolver, execution, proof, leases = self._fixture()
+        expired_proof = replace(proof, expires_monotonic=time.monotonic() - 1)
+        with mock.patch.object(resolver.loader_observations, "resolve_loaded_package_closure",
+                               return_value=expired_proof), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_target", return_value=4242), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_exited", return_value=False):
+            with self.assertRaises(AuthorityDenied):
+                resolver.resolve_selected_native_input_target(execution)
+        self.assertTrue(leases[0].closed)
 
     def test_root_selected_task_target_rejects_unregistered_selection_and_observer_mismatch(self):
         resolver, execution, _proof, leases = self._fixture()

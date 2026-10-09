@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import unittest
 import os
+from types import SimpleNamespace
 from dataclasses import dataclass, replace
 from unittest.mock import patch
 
@@ -317,9 +318,15 @@ class SourceObserverContracts(unittest.TestCase):
         delivered = self.registry.take_source_receipt(
             str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
         self.assertEqual(delivered, result)
+        current_handle = self.registry.resolve_delivered_source_receipt(
+            str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        self.assertEqual(current_handle, result)
         with self.assertRaises(AuthorityDenied):
             self.registry.take_source_receipt(
                 str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        with self.assertRaises(AuthorityDenied):
+            self.registry.resolve_delivered_source_receipt(
+                str(result), peer_uid=2003, peer_pid=844, peer_pidfd=1501)
 
     def test_atomic_root_ingress_capture_does_not_expose_generated_event_id(self):
         result = self.registry.capture_observed_ingress(
@@ -332,6 +339,47 @@ class SourceObserverContracts(unittest.TestCase):
         self.assertEqual(self.registry._pending, {})
         self.assertNotIn("event_record_id", str(result))
         self.assertEqual(self.registry._capsule_bytes, len(b"captured request"))
+
+    def test_selected_native_input_capture_uses_root_issued_task_target_without_hi11_pair(self):
+        self.registry.target_peer_resolver = None
+        selected = SimpleNamespace(
+            observer_enrollment_id=self.enrollment.observer_enrollment_id,
+            profile_id=self.enrollment.profile_id,
+            generation="process-gen-4",
+            native_package_id=self.enrollment.package_id,
+            native_package_generation=self.enrollment.generation,
+        )
+        target = SimpleNamespace(
+            process_id="managed-task-process", profile_id=self.identity.profile_id,
+            generation=self.identity.generation, peer_pid=733, peer_pidfd=901,
+            uid=self.identity.kernel_uid, live_peer_identity=self.identity,
+            loaded_package_proof=self.registry.loaded_package_proof_resolver(
+                self.identity, self.enrollment, peer_pid=733, peer_pidfd=901),
+            service_generation_digest=_digest("2"),
+            expires_monotonic=39.0,
+        )
+
+        class _Selection:
+            def resolve_current_execution(self, candidate):
+                if candidate is not selected:
+                    raise AuthorityDenied("resource.native_selection", "forged selection")
+                return candidate
+
+            def consume_selected_native_input_target(self, candidate, received):
+                if candidate is not selected or received is not target:
+                    raise AuthorityDenied("resource.native_target", "forged target")
+                return received
+
+        result = self.registry.capture_selected_native_ingress(
+            self.enrollment.observer_enrollment_id, payload_bytes=b"exact stdin prompt",
+            parent_context=_context(self.service, b"exact stdin prompt"),
+            selected_execution=selected, target=target,
+            selection_registry=_Selection(),
+        )
+        self.assertIsInstance(result, SourceReceiptHandle)
+        self.assertEqual(self.registry._pending, {})
+        self.assertEqual(self.registry._capsule_bytes, len(b"exact stdin prompt"))
+        self.assertIn((733, 901), self.proof_peers)
 
     def test_root_recipe_capsule_is_resolved_from_signed_receipt_and_consumed_once(self):
         event_id = self.record()

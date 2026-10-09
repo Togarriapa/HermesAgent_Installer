@@ -40,3 +40,26 @@ real systemd MainPID, procfs cgroup/executable/namespaces, loaded module
 registry, and pidfd. A macOS skip is only a platform limitation; it does not
 qualify the Linux systemd path. This implementation and fixture do not establish
 Pi installation, real selected-resource events, or complete RB-T08 acceptance.
+
+Before a source event or receipt exists, the selected ingress observer calls
+`RootControllerRoleResolver.resolve_selected_ingress_controller(role_id,
+issuer_id, backend_id)`. Its root-private binding callback returns the exact
+active role, source issuer, observer, backend/resource generation, authority
+epoch, and static ingress registration ID (the selected timer registration,
+webhook route/account/HMAC binding, or authenticated channel account/session
+binding). The resolver checks the issuer/channel/backend/profile/principal,
+observer kind, role allowlists, current service digest, and bounded lease, then
+repeats that binding lookup after acquiring systemd MainPID, PIDFD, executable,
+namespace, cgroup, and loaded-module custody. It creates no event, receipt, or
+producer identity.
+
+The returned `RootIngressControllerProof` carries the v36 proof fields, the
+selected authority epoch, and a separately owned PIDFD duplicate. The source
+registry retains its opaque `proof_handle`, calls `revalidate()` before capture,
+then releases the retained proof exactly once with
+`release_ingress_proof(handle)` after capture or
+revocation. `proof.close()` only closes the caller-owned duplicate. The
+`namespace_id` is a stable SHA-256 identifier over the observed PID, mount,
+and user namespace device/inode tuple; `live_peer_identity` preserves the full
+kernel-observed process identity. Generation, epoch, PIDFD, loaded module, or
+static binding changes make revalidation fail and release retained custody.
