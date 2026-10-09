@@ -61,6 +61,7 @@ _OPERATIONS = frozenset({
     "process.start", "process.status",
     "process.read", "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.job.admit", "resource.job.child.admit",
     "resource.orchestrator.recruit",
     "process.inspect", "connector.open", "connector.read",
     "connector.write", "connector.close", "native.event.prepare", "native.request.dispatch",
@@ -184,7 +185,9 @@ class AuthorityService:
                  process_effect_handler: Any | None = None,
                  native_bridge_broker: Any | None = None,
                  selected_operation_resolver: Callable[[str, str, str, str], Any] | None = None,
-                 remote_session_authority: Any | None = None):
+                 remote_session_authority: Any | None = None,
+                 source_receipt_delivery: Any | None = None,
+                 source_observer_registry: Any | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
@@ -216,6 +219,8 @@ class AuthorityService:
         self.native_bridge_broker = native_bridge_broker
         self.selected_operation_resolver = selected_operation_resolver
         self.remote_session_authority = remote_session_authority
+        self.source_receipt_delivery = source_receipt_delivery
+        self.source_observer_registry = source_observer_registry
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -227,8 +232,24 @@ class AuthorityService:
         # Consumption is atomic with the one-use effect nonce below.
         self._source_receipts_consumed: dict[str, float] = {}
         self._source_receipt_handles: dict[str, SourceReceipt] = {}
+        self._observed_event_ids: set[str] = set()
         self._lock = threading.RLock()
         self._client_nonces: dict[str, float] = {}
+
+    def attach_source_observer_registry(self, registry: Any) -> None:
+        """Attach one root-built source registry after service construction.
+
+        Registry construction needs the service's epoch and signing methods,
+        so daemon assembly constructs the service first and then attaches the
+        strict protected registry exactly once.
+        """
+        if (self.source_observer_registry is not None
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "consume_observation_proof", None))):
+            raise AuthorityDenied("source.enrollment", "root source observer registry binding is invalid")
+        self.source_observer_registry = registry
+        if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
+            self.source_receipt_delivery = registry
 
     def perform_delegated_effect(self, parent_authorization: EffectAuthorization, *,
                                  delegation_id: str, payload: bytes, peer_pid: int,
@@ -395,6 +416,133 @@ class AuthorityService:
             nonce=secrets.token_urlsafe(24),
         )
         return replace(receipt, signature=self._sign(receipt.claims()))
+
+    def issue_observed_source(self, observation: Any) -> Any:
+        """Sign and retain one receipt from the root-only observer registry.
+
+        This accepts the proof DTO produced after an enrolled source observer
+        captured bytes and revalidated the producer PIDFD, package role, and
+        parent closure. It is deliberately not exposed as an RPC operation.
+        """
+        from .source_observers import (
+            MAX_PARENT_RECEIPTS, MAX_OBSERVED_SOURCE_BYTES,
+            SourceReceiptHandle, VerifiedSourceObservation,
+        )
+        if not isinstance(observation, VerifiedSourceObservation):
+            raise AuthorityDenied("source.observation", "only a root observer proof can issue source evidence")
+        registry = self.source_observer_registry
+        consume_proof = getattr(registry, "consume_observation_proof", None)
+        if not callable(consume_proof) or consume_proof(observation) is not True:
+            raise AuthorityDenied("source.observation", "proof is not issued by the active root source registry")
+        context = observation.parent_context
+        now = self.monotonic()
+        if (observation.authority_epoch != self.authority_epoch
+                or not isinstance(observation.event_record_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", observation.event_record_id)
+                or not isinstance(observation.origin_id, str)
+                or not 1 <= len(observation.origin_id) <= 256
+                or type(observation.producer_pid) is not int or observation.producer_pid <= 0
+                or type(observation.producer_pidfd) is not int or observation.producer_pidfd < 0
+                or not math.isfinite(observation.issued_monotonic)
+                or not math.isfinite(observation.expires_monotonic)
+                or observation.issued_monotonic > now
+                or observation.expires_monotonic <= now
+                or observation.expires_monotonic - observation.issued_monotonic > 600
+                or len(observation.payload_bytes) > MAX_OBSERVED_SOURCE_BYTES
+                or len(observation.parent_receipts) > MAX_PARENT_RECEIPTS
+                or context.monotonic_expires_at <= now
+                or observation.producer_uid != context.uid
+                or observation.profile_id != context.profile_id
+                or observation.principal_id != context.principal_id
+                or observation.namespace_id != context.namespace_id
+                or observation.enrollment_id != context.enrollment_id
+                or observation.generation != context.generation):
+            raise AuthorityDenied("source.observation", "root observation is stale or mismatched")
+        rule = self.rules.get((observation.capability, observation.operation, observation.target_id))
+        if (rule is None or rule.operation != observation.operation
+                or rule.recipient != observation.recipient):
+            raise AuthorityDenied("source.observation", "source action is not an enrolled fixed authority route")
+        manager = self.process_effect_handler
+        resolve_live_peer = getattr(manager, "resolve_live_peer", None)
+        if not callable(resolve_live_peer):
+            raise AuthorityDenied("source.observation", "live process custody is unavailable")
+        try:
+            current_identity = resolve_live_peer(
+                observation.producer_pid, observation.producer_pidfd,
+                profile_id=observation.profile_id, generation=observation.generation,
+            )
+        except Exception:
+            current_identity = None
+        if (current_identity is None or current_identity != observation.producer_identity
+                or context.native_process_identity != self._native_process_identity(
+                    observation.producer_pid, observation.producer_uid)):
+            raise AuthorityDenied("source.peer", "root observer producer identity is no longer current")
+        binding = self._binding(context.uid)
+        self._verify_context_signature(context)
+        self._assert_current_context(context, binding, context.uid)
+        parent_ids: set[str] = set()
+        for receipt in observation.parent_receipts:
+            self._verify_source_receipt(receipt, binding)
+            if receipt.profile_id != observation.profile_id:
+                raise AuthorityDenied("source.lineage", "parent source receipt is from another profile")
+            if receipt.process_generation != observation.generation:
+                raise AuthorityDenied("source.lineage", "parent source receipt is from another generation")
+            parent_ids.add(receipt.receipt_id)
+        if len(parent_ids) != len(observation.parent_receipts):
+            raise AuthorityDenied("source.lineage", "root observer parent closure contains duplicates")
+        if (len(set(observation.parent_receipt_handles)) != len(observation.parent_receipt_handles)
+                or any(not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", item)
+                       for item in observation.parent_receipt_handles)):
+            raise AuthorityDenied("source.lineage", "root observer parent handles are malformed")
+        with self._lock:
+            now = self.monotonic()
+            self._source_receipt_handles = {
+                key: value for key, value in self._source_receipt_handles.items()
+                if value.monotonic_expires_at > now
+            }
+            supplied_parent_ids = set()
+            for handle in observation.parent_receipt_handles:
+                parent = self._source_receipt_handles.get(handle)
+                if parent is None:
+                    raise AuthorityDenied("source.lineage", "root observer parent receipt handle is unavailable")
+                supplied_parent_ids.add(parent.receipt_id)
+            by_parent_id = {item.receipt_id: item for item in self._source_receipt_handles.values()}
+            closure_ids = set(supplied_parent_ids)
+            pending_ids = list(supplied_parent_ids)
+            while pending_ids:
+                parent_id = pending_ids.pop()
+                parent = by_parent_id.get(parent_id)
+                if parent is None:
+                    raise AuthorityDenied("source.lineage", "root observer parent closure is incomplete")
+                for ancestor_id in parent.parent_receipt_ids:
+                    if ancestor_id not in closure_ids:
+                        closure_ids.add(ancestor_id)
+                        pending_ids.append(ancestor_id)
+            if closure_ids != parent_ids:
+                raise AuthorityDenied("source.lineage", "root observer parent handles do not match the verified closure")
+            if observation.event_record_id in self._observed_event_ids:
+                raise AuthorityDenied("source.replay", "root observer event was already issued")
+            if len(self._observed_event_ids) >= 100_000 or len(self._source_receipt_handles) >= 100_000:
+                raise AuthorityDenied("source.capacity", "root source receipt table is at capacity")
+            self._observed_event_ids.add(observation.event_record_id)
+        ttl = min(600, int(observation.expires_monotonic - now))
+        if ttl < 1:
+            raise AuthorityDenied("source.expired", "root observation lease is too short")
+        receipt = self.issue_source_receipt(
+            context, source_kind=observation.source_kind,
+            origin_id=f"{observation.origin_id}:{observation.event_record_id}",
+            payload=observation.payload_bytes, ttl_seconds=ttl,
+        )
+        receipt = replace(
+            receipt, parent_receipt_ids=tuple(sorted(parent_ids)), signature="pending",
+        )
+        receipt = replace(receipt, signature=self._sign(receipt.claims()))
+        handle = SourceReceiptHandle(secrets.token_urlsafe(32))
+        with self._lock:
+            if handle in self._source_receipt_handles:
+                raise AuthorityDenied("source.capacity", "opaque source receipt handle collision")
+            self._source_receipt_handles[str(handle)] = receipt
+        return handle
 
     def revalidate_effect(self, context: HostContext, authorization: EffectAuthorization, *,
                           operation: str, request_digest: str,
@@ -594,6 +742,23 @@ class AuthorityService:
                 raise AuthorityDenied("native.unavailable", "native provider gateway is not enrolled")
             return broker.dispatch(uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                                    payload=payload, cancelled=cancelled)
+        if operation == "source.receipt.take":
+            delivery = self.source_receipt_delivery
+            if delivery is None or peer_pidfd is None:
+                raise AuthorityDenied("source.delivery", "peer-bound source receipt delivery is unavailable")
+            if (not isinstance(payload, dict) or set(payload) != {"schema", "receipt_handle"}
+                    or payload.get("schema") != 1
+                    or not isinstance(payload.get("receipt_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["receipt_handle"])):
+                raise AuthorityDenied("source.delivery", "source receipt take request is malformed")
+            take = getattr(delivery, "take_source_receipt", None)
+            if not callable(take):
+                raise AuthorityDenied("source.delivery", "peer-bound source delivery adapter is unavailable")
+            result = take(payload["receipt_handle"], peer_uid=uid, peer_pid=peer_pid,
+                          peer_pidfd=peer_pidfd)
+            if str(result) != payload["receipt_handle"]:
+                raise AuthorityDenied("source.delivery", "source receipt delivery adapter returned another handle")
+            return {"schema": 1, "receipt_handle": str(result)}
         if operation in {
             "admit_remote_session", "challenge_remote_session", "renew_remote_session",
             "close_remote_session", "open_remote_connector", "read_remote_connector",
