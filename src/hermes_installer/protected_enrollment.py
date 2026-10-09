@@ -1060,8 +1060,8 @@ class ProtectedDeviceCatalog:
     """Opaque selector to root-selected device; every resolve rechecks hotplug state."""
 
     def __init__(self, devices: Mapping[str, DeviceIdentity]):
-        if not devices or len(devices) != len(set(devices)):
-            raise EnrollmentDenied("protected TPU device catalog is empty or duplicated")
+        if len(devices) != len(set(devices)):
+            raise EnrollmentDenied("protected TPU device catalog is duplicated")
         physical = [device.physical_identity for device in devices.values()]
         if len(physical) != len(set(physical)):
             raise EnrollmentDenied("one physical TPU cannot have multiple active enrollment IDs")
@@ -1240,12 +1240,8 @@ class ProtectedBuildCatalog:
 
     def __init__(self, profiles: Mapping[tuple[str, str], FixedBuildProfile]):
         self._profiles = MappingProxyType(dict(profiles))
-        if not self._profiles:
-            raise EnrollmentDenied("protected build catalog is empty")
         if any(target not in self.REQUIRED_TARGETS for target, _ in self._profiles):
             raise EnrollmentDenied("unknown hardware build target is not allowed")
-        if {target for target, _ in self._profiles} != self.REQUIRED_TARGETS:
-            raise EnrollmentDenied("protected build catalog must enroll both fixed build recipes")
 
     @classmethod
     def from_protected_records(cls, records: list[Mapping[str, Any]]) -> "ProtectedBuildCatalog":
