@@ -1895,10 +1895,23 @@ class ManagedProcessEffectHandler:
                               authorization.monotonic_expires_at)
 
         def require_live_start(parent_fd: int | None = None) -> None:
-            if (cancelled() or self.monotonic() >= launch_deadline
-                    or self.profiles.get(profile.profile_id) is not (registered_profile or profile)
-                    or (start_guard is not None and not start_guard())
-                    or (parent_fd is not None and _pidfd_exited(parent_fd))):
+            reason = None
+            if cancelled():
+                reason = "cancelled"
+            elif self.monotonic() >= launch_deadline:
+                reason = "deadline"
+            elif self.profiles.get(profile.profile_id) is not (registered_profile or profile):
+                reason = "profile-generation"
+            elif start_guard is not None and not start_guard():
+                reason = "admission-currentness"
+            elif parent_fd is not None and _pidfd_exited(parent_fd):
+                reason = "parent-pidfd"
+            if reason is not None:
+                sink = self._diagnostic_sink
+                if sink is not None:
+                    # Test-only root diagnostics expose a finite reason enum,
+                    # never paths, credentials, payloads, or process data.
+                    sink(("prelaunch-deny:" + reason).encode("ascii"))
                 raise AuthorityDenied("process.start_expired", "start grant, profile enrollment or caller expired before launch")
 
         if peer_pidfd is None:
