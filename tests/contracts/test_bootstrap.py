@@ -32,7 +32,7 @@ class FakeRunner:
             if stage=="products" and self.fail_once==stage:
                 self.fail_once=None
                 return 1,b""
-            if stage=="products":
+            if stage=="products" and "--include-desktop" in args:
                 (directory/"apps"/"desktop"/"release"/"linux-arm64-unpacked").mkdir(parents=True)
         return 0,b""
 
@@ -67,7 +67,7 @@ class BootstrapTests(unittest.TestCase):
             report=boot.install()
             self.assertTrue(report.agent_ready)
             second=[call[0][call[0].index("--stage")+1] for call in runner.calls[prior:] if "--stage" in call[0]]
-            self.assertEqual(second,["products","setup","gateway","complete"])
+            self.assertEqual(second,["products","products","setup","gateway","complete"])
     def test_changed_pinned_source_head_is_preserved_and_denied(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
