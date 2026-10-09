@@ -92,6 +92,34 @@ class ProviderTransportTests(unittest.TestCase):
             transport(route,MODEL,b'{"messages":[]}' + b"x"*1_048_577,output_token_limit=8,timeout=2,trace_id="trace")
         self.assertEqual(resolved,[])
 
+    def test_dispatcher_to_real_transport_is_idempotent_and_posts_once(self):
+        with tempfile.TemporaryDirectory() as td:
+            transport, networks = self.make()
+            root = OwnedRoot(Path(td) / "owned")
+            root.ensure()
+            dispatcher = Dispatcher(
+                DispatchPolicy({"public": default_public_route()}, "public"),
+                BudgetLedger(root), transport,
+            )
+            response = dispatcher.dispatch(
+                DispatchContext("hermes", "chat", Sensitivity.PUBLIC),
+                MODEL,
+                b'{"messages":[{"role":"user","content":"hello"}]}',
+                input_tokens=8,
+                output_token_limit=32,
+            )
+            self.assertEqual(response.status, 200)
+            self.assertEqual(len(networks), 1)
+            self.assertEqual(len(networks[0].calls), 1)
+            body = json.loads(networks[0].calls[0][3])
+            self.assertEqual(body["model"], MODEL)
+            self.assertEqual(body["max_tokens"], 32)
+            self.assertEqual(body["provider"], {
+                "allow_fallbacks": False, "require_parameters": True, "data_collection": "deny"
+            })
+            self.assertTrue(body["plugins"])
+            self.assertTrue(all(plugin["enabled"] is False for plugin in body["plugins"]))
+
     def test_secret_reference_cannot_use_environment(self):
         with self.assertRaisesRegex(Exception,"private file or secure store"):
             OpenRouterTransport("env://PROVIDER_KEY",secret_reader=lambda ref:"token")
