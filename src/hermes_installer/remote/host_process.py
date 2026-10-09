@@ -7,12 +7,11 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from ..authority.client import AuthorityClient, canonical_bytes, canonical_digest
+from ..authority.client import AuthorityClient
 from ..authority.types import AuthorityDenied, BrokeredEffectResponse
 
 
@@ -183,33 +182,11 @@ def inspect_managed_process(authority: AuthorityClient, *, process_id: str,
     _text(process_id, "process ID")
     _text(generation, "generation")
     _text(profile_id, "profile ID")
-    payload = {"schema": 1, "process_id": process_id, "generation": generation}
-    encoded = canonical_bytes(payload)
-    digest = canonical_digest(encoded)
-    target = f"{profile_id}:inspect"
-    context = authority.context(
-        purpose="hermes-process-control", intent="inspect-managed-desktop-process",
-        operation="process.inspect", final_payload_digest=digest, lease_seconds=timeout,
-    )
-    if (context.operation != "process.inspect" or context.profile_id != profile_id
-            or context.uid != os.geteuid()
-            or "hermes-process-control" not in context.capabilities
-            or context.final_payload_digest != digest):
-        raise AuthorityDenied("process.inspect", "host context does not bind the exact inspection request")
-    grant = authority.authorize_effect(
-        context, capability="hermes-process-control", target=target,
-        request_digest=digest, retry_index=0,
-    )
-    if (grant.operation != "process.inspect" or grant.capability != "hermes-process-control"
-            or grant.target != target
-            or grant.request_digest != digest or grant.retry_index != 0):
-        raise AuthorityDenied("process.inspect", "host grant does not bind the exact inspection request")
-    inspect_effect = getattr(authority, "inspect_process", None)
+    inspect_effect = getattr(authority, "inspect_profile_process", None)
     if not callable(inspect_effect):
         raise AuthorityDenied("process.inspect", "the root process inspector is not installed")
     response = inspect_effect(
-        grant, target=target, process_id=process_id, generation=generation,
-        timeout=timeout, cancelled=cancelled,
+        process_id, generation, timeout=timeout, cancelled=cancelled,
     )
     if (type(response) is not BrokeredEffectResponse or response.status != 200
             or not isinstance(response.body, bytes) or len(response.body) > 256 * 1024

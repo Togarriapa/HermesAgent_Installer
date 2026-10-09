@@ -49,7 +49,7 @@ class XpraLauncher:
     ) -> None:
         if type(authority) is not AuthorityClient:
             raise SessionUnavailable("host AuthorityClient is required for Xpra launch")
-        if not callable(getattr(authority, "inspect_process", None)):
+        if not callable(getattr(authority, "inspect_profile_process", None)):
             raise SessionUnavailable("root process inspection is not installed; Desktop session launch remains pending")
         if not isinstance(process_template, ManagedProcessSpec):
             raise SessionUnavailable("typed managed process specification is required")
