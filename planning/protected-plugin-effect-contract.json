@@ -218,5 +218,71 @@
       "concurrency_per_profile_target": 1
     },
     "larger_binary_output": "Owned immutable artifact handle with separately authorized bounded reads; no unbounded inline binary or caller output path"
-  }
+  },
+  "selected_action_schemas": {
+    "epic-kanban": {
+      "create": {
+        "operation": "plugin.epic-kanban.write",
+        "arguments": {
+          "epic_id": "opaque root-authorized Epic scope",
+          "title": "bounded plain text<=256chars"
+        },
+        "result": "owned opaque board_id"
+      },
+      "read": {
+        "operation": "plugin.epic-kanban.read",
+        "arguments": {
+          "board_id": "opaque selected Epic-owned board"
+        },
+        "result": "bounded typed item records"
+      },
+      "add_item": {
+        "operation": "plugin.epic-kanban.write",
+        "arguments": {
+          "board_id": "owned opaque ID",
+          "item_type": "epic|user-story|task|defect|spike|risk|decision",
+          "title": "<=256chars",
+          "description": "<=16384chars"
+        },
+        "result": "owned opaque item_id"
+      },
+      "move_item": {
+        "operation": "plugin.epic-kanban.write",
+        "arguments": {
+          "board_id": "owned opaque ID",
+          "item_id": "owned opaque ID",
+          "state": "backlog|ready|in-progress|review|blocked|done"
+        },
+        "result": "verified item state"
+      },
+      "delete_accepted": {
+        "operation": "plugin.epic-kanban.delete",
+        "arguments": {
+          "board_id": "owned opaque ID",
+          "accepted_lifecycle_attestation_id": "root verified accepted-summary/Epic lifecycle receipt"
+        },
+        "result": "verified archive/deletion receipt; caller accepted bool forbidden"
+      }
+    },
+    "voice-pipeline": {
+      "voice_transcribe": {
+        "operation": "plugin.voice-pipeline.stt",
+        "arguments": {
+          "session_handle": "root enrolled active mic/session permission",
+          "audio_artifact_id": "owned bounded captured audio receipt",
+          "mode": "general|home_control"
+        },
+        "result": "bounded transcript and root source receipt; fixed mode maps to selected Whisper or Speech-to-Phrase; transcript/wakeword not action authority"
+      },
+      "voice_speak": {
+        "operation": "plugin.voice-pipeline.tts",
+        "arguments": {
+          "session_handle": "root enrolled active local output session",
+          "text": "<=16384chars"
+        },
+        "result": "owned bounded audio artifact receipt; no raw path/cloudfallback"
+      }
+    }
+  },
+  "schema_rule": "Additional argument fields forbidden. IDs resolve current root principal/profile/generation and cannot encode paths/URLs/commands. These facade action schemas are not guessed upstream endpoint schemas; protected selected backend handler must separately validate source-reviewed API mapping. Unsupported requested original actions remain explicit incomplete."
 }

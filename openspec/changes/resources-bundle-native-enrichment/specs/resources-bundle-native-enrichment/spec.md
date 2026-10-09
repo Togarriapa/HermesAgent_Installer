@@ -76,3 +76,10 @@ The installer SHALL bind actual native producer package/adapter closure through 
 #### Scenario: Mutable package or divergent normalization
 - **WHEN** native closure, peer generation, issuer provenance or route-normalized final payload differs from protected enrollment
 - **THEN** deny before effect bytes and retain exact incomplete implementation/native evidence state.
+
+### Requirement: RB08 Selected facade argument schemas
+The installer SHALL enforce the finite source-bound Epic and voice facade action schemas with extra fields forbidden and root-owned lifecycle/session/artifact references.
+
+#### Scenario: Caller asserts accepted Epic or microphone permission
+- **WHEN** caller supplies lifecycle/session claims without current root verified receipt
+- **THEN** reject before deletion, microphone bytes or backend dispatch.

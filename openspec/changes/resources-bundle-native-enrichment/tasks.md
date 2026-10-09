@@ -17,3 +17,5 @@ Model: GPT-6 Luna development from Sol amendment. Additive mapping: planning/res
 - [ ] 9.1 `RB-T09` Implement RB08 protected original plugin effect catalog; prerequisites RB-T02, RB-T03, HI-T03, HI-T08, HI-T09, HI-T12. Evidence EV-RB08: actual native selected backend effects plus scope/digest/confirmation/replay/duplicate/ambiguity/private recipient negatives; all original plugin obligations and target/account acceptance remain open.
 
 Protected native composition clarification: plans/amendments/2026-10-09-native-package-binding-v1.md, planning/native-package-binding-contract.json and native-cross-process-bridge-contract.json define root-selected immutable package/resolver, observed source channels and shared route normalization. Existing HI-T08/09/11, RB-T09 and PR-F03/PR-T01 remain open; no caller provenance or late payload mutation.
+
+RB08 selected facade schemas: planning/protected-plugin-effect-contract.json and plans/amendments/2026-10-09-plugin-facade-action-schemas-v2.md. Root Epic lifecycle/voice session receipts required; backend mapping remains separately source-reviewed. Existing RB-T09 stays open.

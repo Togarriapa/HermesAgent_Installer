@@ -49,3 +49,5 @@ RB08 / RB-T09 / EV-RB08 are defined by planning/protected-plugin-effect-contract
 See planning/protected-plugin-effect-contract.json and plans/amendments/2026-10-09-protected-plugin-effects-v1.md. RB-T09 evidence EV-RB08 distinguishes implementation from actual native/account acceptance.
 
 Protected native composition clarification: plans/amendments/2026-10-09-native-package-binding-v1.md, planning/native-package-binding-contract.json and native-cross-process-bridge-contract.json define root-selected immutable package/resolver, observed source channels and shared route normalization. Existing HI-T08/09/11, RB-T09 and PR-F03/PR-T01 remain open; no caller provenance or late payload mutation.
+
+RB08 selected facade schemas: planning/protected-plugin-effect-contract.json and plans/amendments/2026-10-09-plugin-facade-action-schemas-v2.md. Root Epic lifecycle/voice session receipts required; backend mapping remains separately source-reviewed. Existing RB-T09 stays open.
