@@ -621,3 +621,17 @@ The installer SHALL authenticate initial provision through its installed root-lo
 #### Scenario: Worker fabricates bootstrap actor
 - **WHEN** a worker supplies root labels, another transaction receipt or a writable journal mapping
 - **THEN** root rejects before provision/state effects without requiring or inventing a first active worker context
+
+### Requirement: Root actual EOF and schema source receipts
+The installer SHALL require actual custody write/EOF receipts for task completion and exact root-derived schema receipts for native schema artifacts where applicable.
+
+#### Scenario: Forged or mismatched receipt
+- **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
+- **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+### Requirement: Source-backed memory lifecycle and whole turn
+The installer SHALL start only source-bound selected memory service recipes and derive whole-turn capture from actual completed root-observed native event closure with current consent and private routing.
+
+#### Scenario: Liveness or tool-only capture substituted
+- **WHEN** only a liveness response or one tool invocation exists
+- **THEN** semantic memory readiness or complete whole-turn capture is not asserted
