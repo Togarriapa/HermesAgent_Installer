@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "change": "skills-memory-applications",
+  "requirement_id": "SK01",
+  "task_id": "SK-T01",
+  "evidence_id": "EV-SK01",
+  "state": "pinned route/config source verified; actual service/kernel/native qualification pending",
+  "connector": "HI07 connector.open/read/write/close with HI12 exact operation rules, same canonical target ID and immutable finite route",
+  "targets": {
+    "openviking": {
+      "target_id": "memory-openviking:<root-enrolled-profile-id>",
+      "source": "volcengine/OpenViking@e7b2e974b1fb97cd8c6087ff013181ddfec94f77",
+      "endpoint": "private service namespace127.0.0.1:1933",
+      "routes": {
+        "openviking-ready": "GET /ready",
+        "openviking-find": "POST /api/v1/search/find",
+        "openviking-session-capture": "fixed compound POST /api/v1/sessions, POST /api/v1/sessions/{owned-session-id}/messages, POST /api/v1/sessions/{owned-session-id}/commit or /extract selected by protected recipe"
+      },
+      "constraints": "profile/account/user scope forced from root enrollment; no caller external imageURL/arbitrary viking URI; auto-commit/idle extraction disabled until selected fresh background consent/private provider route; API-key/trusted selected auth neverdev; sanitized prestart no lazy embedding/model installs; sessiondelete is not per-memory delete"
+    },
+    "claude-mem": {
+      "target_id": "memory-claude-mem:<root-enrolled-profile-id>",
+      "source": "thedotmack/claude-mem@fa8ab09f06aa05f958c5225cf3756ce52a3ebb96",
+      "endpoint": "private namespace127.0.0.1 plus literal port selected and verified against exact packaged backend config before enrollment; no caller port",
+      "backend_variants": {
+        "server-v1-sqlite": {
+          "ready": "GET /healthz",
+          "search": "POST /v1/search",
+          "capture": "POST /v1/memories",
+          "delete": "NOT PROVIDED by pinned SQLite route; affected mandatory deletion remains incomplete, never fake/delete entire session"
+        },
+        "server-v1-postgres": {
+          "ready": "GET /healthz",
+          "search": "POST /v1/search",
+          "capture": "POST /v1/memories",
+          "delete": "DELETE /v1/memories/{root-scoped-observation-id}",
+          "scope": "root-selected project/team key and actual owned isolated datastore/dependency enrollment, not assumed SQLite local worker"
+        },
+        "worker-observation": {
+          "capture": "POST /api/memory/save",
+          "search": "GET /api/search or POST /api/mem-search exact selected schema",
+          "delete": "DELETE /api/observation/{root-scoped-id} from reviewed DataRoutes; no arbitrary summary/prompt/session purge",
+          "scope": "reviewed exact worker backend with automatic Claude hooks/local-history capture disabled; no implicit mixing with server-v1 APIs"
+        }
+      },
+      "constraints": "backend_variant mandatory, one selected packaged backend/config/route schema; IDs/project/team forced root; backup/export/restore need reviewed owning store protocol, cannot invent absent REST endpoints"
+    },
+    "agentmemory": {
+      "target_id": "memory-agentmemory:<root-enrolled-profile-id>",
+      "source": "rohitg00/agentmemory@df3d4a83b966d8d415cb9180d5a4724b07f729dc",
+      "endpoint": "private service namespace127.0.0.1:3111",
+      "routes": {
+        "agentmemory-ready": "GET /agentmemory/livez",
+        "agentmemory-search": "POST /agentmemory/smart-search",
+        "agentmemory-capture": "POST /agentmemory/remember",
+        "agentmemory-delete": "POST /agentmemory/forget",
+        "agentmemory-export": "GET /agentmemory/export",
+        "agentmemory-backup": "GET /agentmemory/export",
+        "agentmemory-restore": "POST /agentmemory/import"
+      },
+      "constraints": "dedicated service+store per profile; rootforces project/agentID/session/memory identifiers, rejects caller scope; rootprotected authref; import exportData strategy merge/replace/skip finite selected, replace only own store with authorized restore and rollback; deny all other history/mesh/team/Claude/stream routes3112"
+    }
+  },
+  "root_enrollment_fields": [
+    "target_id",
+    "provider",
+    "backend_variant",
+    "profile_id",
+    "principal_id",
+    "service_enrollment_id",
+    "source_revision",
+    "service_generation",
+    "namespace_identity",
+    "literal_loopback_port",
+    "fixed_route_map",
+    "data_root_id",
+    "auth_reference_id",
+    "fixed_project_account_user_scope",
+    "memory_owner_generation",
+    "private_extraction_embedding_routes",
+    "background_consent_revision",
+    "limits"
+  ],
+  "request_fields": [
+    "target_id",
+    "generation",
+    "approved_route_id",
+    "canonical_payload",
+    "context_handle",
+    "one_use_effect_grant",
+    "memory_owner_generation"
+  ],
+  "policy": "one automatic owner per active profile, native session memory preserved; all extracted/retrieved/embedded/backup data inherits private source receipts. Actual extraction/embedding requests use host private eligible route on every retry/background boundary; health/readiness alone not usable memory. General worker network denial retained, fixed protected connector only; no caller URL/path/port/key/method/scope.",
+  "limits": {
+    "request_bytes": 262144,
+    "response_bytes": 2097152,
+    "result_limit": 100,
+    "operation_timeout_seconds": 15,
+    "whole_compound_timeout_seconds": 60,
+    "rule": "each actual effect fresh authorization within original lease; finite owned-session protocol, no timer extends priorgrant; selected rootlimits may tighten"
+  },
+  "lifecycle": "prestart sanitized reviewed service before use, bounded health/ready verify then selectedowner activation; restart/restore/generation change invalidates old connector/context/background jobs, preserve private store and prior owner generation. Rollback/quarantine mismatched backup/provider/profile/source; no automatic new owner.",
+  "evidence": "native per-profile search/capture/delete/export/backup/restore/private extraction embedding as actually supported selected variant, cross-profile/project/URI/path/method/redirect/secret/source/generation/retry/owner/restore negatives; fixture/service-source/native/account evidence separate",
+  "sources": [
+    "https://github.com/volcengine/OpenViking/blob/e7b2e974b1fb97cd8c6087ff013181ddfec94f77/openviking/server/routers/search.py",
+    "https://github.com/volcengine/OpenViking/blob/e7b2e974b1fb97cd8c6087ff013181ddfec94f77/docs/en/api/05-sessions.md",
+    "https://github.com/thedotmack/claude-mem/blob/fa8ab09f06aa05f958c5225cf3756ce52a3ebb96/src/server/routes/v1/ServerV1Routes.ts",
+    "https://github.com/thedotmack/claude-mem/blob/fa8ab09f06aa05f958c5225cf3756ce52a3ebb96/src/server/routes/v1/ServerV1PostgresRoutes.ts",
+    "https://github.com/rohitg00/agentmemory/blob/df3d4a83b966d8d415cb9180d5a4724b07f729dc/plugin/skills/agentmemory-rest-api/REFERENCE.md"
+  ],
+  "source_evidence": "Sol independently read listed pinned routes/docs; worker family/config details additionally reviewed by memory owner from pinned primary source; no target functionality claimed"
+}

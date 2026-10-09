@@ -60,3 +60,7 @@ Dependencies: installer-bootstrap-desktop, resource-registry-import, providers-c
 - Review code against every requirement/scenario and actual evidence; do not archive incomplete hardware/account tasks.
 - Run strict pinned OpenSpec validation and coverage; archive only verified completed changes using the installed documented workflow, preserving dated history and canonical specs.
 - Sol must approve refinement via append-only amendment; keep plans/2026-10-09-v1 immutable.
+
+## 3. Protected memory service connectors
+
+- [ ] 3.1 `SK-T01` Implement SK01 exact selected memory provider/backend/service/route/private owner connector enrollment; prerequisites HI-T07, HI-T08, HI-T09, HI-T12, PR-F01. Evidence EV-SK01: actual isolated selected backend capture/search/remove/export/restore/private extraction/embedding plus wrong profile/variant/project/URI/owner/secret/source/retry/generation/cancel/restore negatives. Unsupported required routes remain incomplete; no fixture/health-only native acceptance.
