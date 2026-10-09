@@ -2803,6 +2803,7 @@ class ManagedBuildJobRunner:
         pidfd_gone = False
         started = manager.monotonic()
         last_generation_check = float("-inf")
+        capture_rejection: str | None = None
 
         def require_active() -> None:
             nonlocal last_generation_check
@@ -2945,6 +2946,8 @@ class ManagedBuildJobRunner:
                         kernel_limits = observed["limits"]
                         cgroup_limits = observed["cgroup_limits"]
                         main_pidfd = observed["pidfd"]
+                    else:
+                        capture_rejection = getattr(self, "_last_build_capture_rejection", "unknown")
                 for key, _ in selector.select(.02):
                     data = os.read(key.fileobj.fileno(), 65536)
                     if data:
@@ -3012,6 +3015,10 @@ class ManagedBuildJobRunner:
             if missing_proof:
                 # Only stable field names leave the root handler; no host path,
                 # PID, cgroup path, command output, or environment is included.
+                if capture_rejection is not None:
+                    missing_proof.append("capture_" + capture_rejection)
+                if exit_code is not None:
+                    missing_proof.append("exit_code_" + str(exit_code))
                 raise AuthorityDenied("build.cleanup", "terminal proof is incomplete: " + ",".join(missing_proof))
             finished = manager.monotonic()
             proc_id = job_id
@@ -3085,6 +3092,9 @@ class ManagedBuildJobRunner:
                                 profile: ManagedProfileCustody) -> Mapping[str, Any] | None:
         manager = self.manager
         pidfd: int | None = None
+        def reject(reason: str) -> None:
+            self._last_build_capture_rejection = reason
+            return None
         try:
             output = subprocess.run([str(manager.systemctl), "--system", "show", unit,
                 "-p", "MainPID", "-p", "ControlGroup"], stdin=subprocess.DEVNULL,
@@ -3092,16 +3102,18 @@ class ManagedBuildJobRunner:
                 env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
                 timeout=.25, check=False)
         except (OSError, subprocess.TimeoutExpired):
-            return None
+            return reject("systemd_query")
         if output.returncode or len(output.stdout) > 4096:
-            return None
+            return reject("systemd_response")
         values = dict(line.split("=", 1) for line in output.stdout.decode("ascii", "ignore").splitlines()
                       if "=" in line)
         try:
             pid = int(values.get("MainPID", "0"))
             observed_cgroup = values.get("ControlGroup", "")
-            if pid <= 1 or observed_cgroup != cgroup:
-                return None
+            if pid <= 1:
+                return reject("main_pid_unavailable")
+            if observed_cgroup != cgroup:
+                return reject("cgroup_mismatch")
             ticks, actual_cgroup, device, inode = _pid_identity(pid)
             expected = Path(inputs.builder_executable).stat(follow_symlinks=False)
             exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
@@ -3115,35 +3127,35 @@ class ManagedBuildJobRunner:
                 os.close(exe_fd)
             if ((device, inode, digest) != (expected.st_dev, expected.st_ino, inputs.builder_sha256)
                     or actual_cgroup != cgroup):
-                return None
+                return reject("executable_or_membership")
             status = Path(f"/proc/{pid}/status").read_text().splitlines()
             uid_fields = next(line for line in status if line.startswith("Uid:")).split()[1:]
             if len(uid_fields) != 4 or any(int(uid) != profile.owner_uid for uid in uid_fields):
-                return None
+                return reject("uid_mismatch")
             status_map = {line.split(":", 1)[0]: line.split(":", 1)[1].strip()
                           for line in status if ":" in line}
             if status_map.get("NoNewPrivs") != "1":
-                return None
+                return reject("no_new_privileges")
             mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino for name in ("mnt", "net"))
             if mount_ns == os.stat("/proc/self/ns/mnt").st_ino or network_ns == os.stat("/proc/self/ns/net").st_ino:
-                return None
+                return reject("namespace_not_private")
             pidfd = os.pidfd_open(pid, 0)
             if (self.manager._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)
                     or _pid_identity(pid) != (ticks, cgroup, device, inode)):
                 os.close(pidfd)
                 pidfd = None
-                return None
+                return reject("pidfd_identity")
             cgroup_limits = manager._limits(cgroup)
             cpu_fields = cgroup_limits.get("cpu.max", "").split()
             io_fields = cgroup_limits.get("io.weight", "").split()
             if len(io_fields) % 2:
-                return None
+                return reject("io_weight_format")
             io_weight = dict(zip(io_fields[::2], io_fields[1::2])).get("default")
             expected_quota = str(profile.cpu_quota_percent * 1000)
             if (cgroup_limits.get("memory.max") != str(profile.memory_max_bytes)
                     or len(cpu_fields) != 2 or cpu_fields[0] != expected_quota
                     or cpu_fields[1] != "100000" or io_weight != str(profile.io_weight)):
-                return None
+                return reject("cgroup_limits")
             expected_limits = {"PrivateNetwork": "yes", "IPAddressDeny": "0.0.0.0/0 ::/0",
                                "NoNewPrivileges": "yes", "ProtectSystem": "strict"}
             readback = {}
@@ -3153,20 +3165,21 @@ class ManagedBuildJobRunner:
                     if set(actual.split()) != {"0.0.0.0/0", "::/0"}:
                         os.close(pidfd)
                         pidfd = None
-                        return None
+                        return reject("network_property")
                     actual = "0.0.0.0/0 ::/0"
                 elif actual != expected_value:
                     os.close(pidfd)
                     pidfd = None
-                    return None
+                    return reject("unit_property")
                 readback[key] = actual
             self._verify_build_mountinfo(pid, self._MOUNTS)
             if (_pidfd_exited(pidfd) or _pid_identity(pid) != (ticks, cgroup, device, inode)):
                 os.close(pidfd)
                 pidfd = None
-                return None
+                return reject("process_changed")
             retained_pidfd = pidfd
             pidfd = None
+            self._last_build_capture_rejection = ""
             return {"pid": pid, "ticks": ticks, "cgroup": actual_cgroup,
                     "mount_ns": mount_ns, "network_ns": network_ns,
                     "limits": readback, "cgroup_limits": cgroup_limits,
@@ -3175,7 +3188,7 @@ class ManagedBuildJobRunner:
             if pidfd is not None:
                 with contextlib.suppress(OSError):
                     os.close(pidfd)
-            return None
+            return reject("proc_observation")
 
     @staticmethod
     def _verify_build_mountinfo(pid: int, targets: Mapping[str, str]) -> None:
