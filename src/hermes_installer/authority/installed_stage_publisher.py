@@ -453,6 +453,10 @@ def _replace_receipt(path: Path, data: bytes, uid: int, predecessor: Any) -> Non
     parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     stage = ".current.json.stage-" + secrets.token_hex(12)
     try:
+        parent_info = os.fstat(parent_fd)
+        if (parent_info.st_dev, parent_info.st_ino) != (predecessor.parent_device,
+                                                        predecessor.parent_inode):
+            raise BootstrapEnrollmentPending("deployment parent changed during pointer CAS")
         _write_at(parent_fd, stage, data, uid, 0o600)
         os.fsync(parent_fd)
         try:

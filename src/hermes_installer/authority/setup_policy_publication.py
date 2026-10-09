@@ -365,7 +365,7 @@ def _receipt_from_record(record: Mapping[str, Any]) -> RootSetupPublicationRecei
             raise BootstrapEnrollmentError("active policy publication claim identity is malformed")
         for key in ("runtime_receipt_handles", "materialization_receipt_handles"):
             values = record.get(key)
-            if (not isinstance(values, list)
+            if (not isinstance(values, list) or not values
                     or any(not isinstance(item, str) or not _HANDLE.fullmatch(item) for item in values)
                     or len(set(values)) != len(values)):
                 raise BootstrapEnrollmentError("active policy input receipt handles are malformed")

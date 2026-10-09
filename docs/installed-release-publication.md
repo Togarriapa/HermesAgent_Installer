@@ -22,7 +22,15 @@ This publisher establishes installed release custody and stage-zero inputs.
 It does not establish account authentication, native setup completion,
 service health, target-platform qualification, or Pi acceptance. The policy
 generation publisher separately publishes compiler-produced prepared or
-active policy bytes and binds promotion to current root receipts.
+active policy bytes and binds promotion to current root receipts. Initial
+policy publication remains `prepared`; a later root-held policy promotion is
+recorded as `active-committed` only after its compiler claim, prepared
+generation, service generation, and runtime/materialization receipt closure
+are joined in the immutable descriptor and root journal. Native-output
+reservation code can call
+`PolicyPublicationReceiptResolver.verify_current_active_claim(...)` to resolve
+the current selection again and require the exact active claim and
+materialization receipt tuple.
 
 The filesystem contract tests use owned temporary directories for successful
 publication, stale-pointer denial, collision preservation, and injected
