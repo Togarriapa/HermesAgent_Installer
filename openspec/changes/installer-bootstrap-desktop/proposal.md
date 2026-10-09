@@ -41,3 +41,7 @@ BD-F01/BD-F03/LC-F03/HI-T01 use root_local_setup_session installed_selection_cat
 ### v15 native health and typed admission
 
 Use planning/protected-lifecycle-control-contract.json native_health_receipt for actual native health and planning/protected-resource-job-contract.json typed_admission/service_methods/recipe_domain for RB-T08. Original tasks/acceptance remain pending.
+
+### v16 installed input closure joins
+
+Use the exact installed_selection_catalog.release_root, task_runner_protocol.source_resolver and native-package-binding-contract.json initial_native_input_observer joins. Existing BD/HI/RB tasks and acceptance remain pending.

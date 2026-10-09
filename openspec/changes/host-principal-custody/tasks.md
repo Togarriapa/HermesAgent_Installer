@@ -131,3 +131,7 @@ HI-T08/HI-T09 use native_custody_proof_protocol.progress_wire in planning/protec
 ### v13 private probe joins
 
 HI-T12/HI-T13 use private_origin_probe.connector_authority principal_join, sequence_domains and per_action_probe in planning/remote-root-session-bridge-contract.json; current protected native principal and immutable root child handles are mandatory. Acceptance remains pending.
+
+### v16 installed input closure joins
+
+Use the exact installed_selection_catalog.release_root, task_runner_protocol.source_resolver and native-package-binding-contract.json initial_native_input_observer joins. Existing BD/HI/RB tasks and acceptance remain pending.

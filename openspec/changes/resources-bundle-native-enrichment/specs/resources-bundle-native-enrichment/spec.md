@@ -176,3 +176,11 @@ The implementation SHALL enforce the applicable native health receipt and typed 
 #### Scenario: Status without native result
 - **WHEN** only source/status/exit evidence is available
 - **THEN** functional health and task result acceptance remain incomplete.
+
+### Requirement: Root observed initial input closure
+
+The implementation SHALL resolve actual installed release custody and full admitted source receipt closure before issuing native input provenance. Private or unknown sensitivity SHALL remain unchanged absent separate reviewed clearance.
+
+#### Scenario: Digest without source closure
+- **WHEN** only a digest or caller provenance label is available
+- **THEN** no trusted input receipt or admitted native effect is created.

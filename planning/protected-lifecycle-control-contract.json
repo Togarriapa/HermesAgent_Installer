@@ -154,6 +154,7 @@
         "schema=1",
         "selection_id",
         "installer_release_commit",
+        "release_root",
         "launcher",
         "interpreter",
         "module_closure",
@@ -194,7 +195,15 @@
       "catalog_digest": "SHA256 canonical sorted compact UTF8 ensure_ascii=false JSON excluding catalog_sha256; entire lists included. Root regular0600 max2MiB <=1024 module rows and <=16 plans; duplicate keys/IDs/paths/unknown fields denied. Hash is integrity check, root deployment ownership supplies trust, not self-authenticating signature.",
       "pins": "Fixed role IDs are catalog keys, not claims of staged binaries. Actual byte hashes are computed from the reviewed deployed installer release and separately isolated installer interpreter, recorded at root deployment; refuse missing/unverified pins. Hermes PM Python3.14 is for Hermes, not inferred setup interpreter. Selected plan binds immutable baseline tag object c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8/commit653ac5fbc7a02613c9951859a7d794599603459b plus actual full baseline tree and append-only amendment manifest hashes.",
       "resolver": "InstalledRootSetupPlanResolver.resolve(artifact_id)->existing VerifiedRootSetupPlan; maps only selected catalog plan, joins launcher/interpreter/module rows and exact installed bytes. InstalledRootSetupActorVerifier.verify_current(plan) additionally checks actual proc executable/PIDFD/starttime and imported-module origins/closure, sanitized isolated import path/no user site/cwd/PYTHONPATH contamination. Protocol alone does not activate setup.",
-      "choice": "Installed CLI reads actual terminal/UI operator choice for mode and existing NSS target account, selects fixed reviewed plan ID, invokes begin_local; record actual current root actor and transaction. No env/worker chosen role/plan digest or euid-only admission."
+      "choice": "Installed CLI reads actual terminal/UI operator choice for mode and existing NSS target account, selects fixed reviewed plan ID, invokes begin_local; record actual current root actor and transaction. No env/worker chosen role/plan digest or euid-only admission.",
+      "release_root_fields": [
+        "root_id",
+        "absolute_path",
+        "device",
+        "inode",
+        "deployment_receipt_sha256"
+      ],
+      "release_root_resolution": "Exact root deployment receipt selects installed immutable release directory, captures nofollow actual device/inode/root ownership and entire launcher/interpreter/module/plan byte closure. Row release_root lives in this same initial root-owned selection file, covered catalog_sha256; no additional mutable manifest/resolver fallback. absolute_path root-only field, not worker API. InstalledRootSetupPlanResolver resolves relative rows under this held directory FD and verifies device/inode/current bytes; deployment_receipt_sha256 audit integrity, not external signature. Bootstrap root deployment is actual trust source, no arbitrary self-installed worker file can supply it."
     },
     "first_setup_artifact_fetch": {
       "constructor": "RootSetupArtifactFetcher(session_store,receipt_registry,protected_artifact_catalog,owned_store_root) constructed by installed root CLI after actual selected actor verification. Catalog rows are root-owned installed source catalog; exact allowed_artifact_ids from selected verified plan. Concrete implementation reuses ArtifactCatalog and reviewed artifact broker bounded downloader/materializer, not worker BootstrapCustody.fetch_artifact or fabricated HostContext.",
