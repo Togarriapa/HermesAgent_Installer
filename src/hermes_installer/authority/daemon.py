@@ -32,7 +32,10 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
                             profile_generations: Mapping[str, str] | None = None,
                             background_consent_active: Any | None = None,
                             delegations: Mapping[str, ChildDelegationRule] | None = None,
-                            process_effect_handler: Any | None = None) -> AuthorityService:
+                            process_effect_handler: Any | None = None,
+                            register_process_handlers: bool = True,
+                            selected_operation_resolver: Any | None = None,
+                            remote_session_authority: Any | None = None) -> AuthorityService:
     """Build the root service from already validated protected enrollments.
 
     `process_profiles`, policy, rules and handler adapters must be created by
@@ -44,7 +47,7 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
     if process_profiles and manager is None:
         from hermes_installer.managed_process_custodian import create_managed_process_handler
         manager = create_managed_process_handler(process_profiles, **dict(process_handler_options or {}))
-    if manager is not None:
+    if manager is not None and register_process_handlers:
         for key, handler in manager.handlers().items():
             if key in registered:
                 raise AuthorityDenied("authority.configuration", "duplicate fixed effect handler registration")
@@ -56,6 +59,8 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
         background_consent_active=background_consent_active,
         delegations=delegations,
         process_effect_handler=manager,
+        selected_operation_resolver=selected_operation_resolver,
+        remote_session_authority=remote_session_authority,
     )
 
 
@@ -97,12 +102,18 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
         effective_process_options["artifact_resolver"] = resolver
 
     process_manager = None
-    if enrollment.process_profiles:
-        from hermes_installer.managed_process_custodian import create_managed_process_handler
-        process_manager = create_managed_process_handler(
-            enrollment.process_profiles, **effective_process_options)
+    runtime_bindings = None
+    if artifact_catalog is not None and enrollment.service_records:
+        from .runtime_bindings import build_root_runtime_bindings
+        runtime_bindings = build_root_runtime_bindings(
+            enrollment, vault=vault, artifact_catalog=artifact_catalog,
+            authorization_check=authorization_check,
+            process_handler_options=effective_process_options, expected_uid=0,
+        )
+        process_manager = runtime_bindings.process_manager
+        handlers.update(runtime_bindings.effect_handlers)
 
-    if ARTIFACT_CATALOG_PATH.exists():
+    if runtime_bindings is None and ARTIFACT_CATALOG_PATH.exists():
         from hermes_installer.artifacts import build_artifact_handlers
         # Older broker revisions lack an effect-time authorization callback.
         # Do not silently register those handlers: cancellation during a body
@@ -171,7 +182,11 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
                              for profile_id, profile in enrollment.process_profiles.items()},
         background_consent_active=background_consent_active,
         process_effect_handler=process_manager,
+        register_process_handlers=runtime_bindings is None,
+        selected_operation_resolver=(runtime_bindings.resolve_selected_operation
+                                     if runtime_bindings is not None else None),
     )
+    service.root_runtime_bindings = runtime_bindings
     service_ref["service"] = service
     if enrollment.native_bridges:
         if process_manager is None or provider_admission is None:
@@ -276,7 +291,10 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
 def main() -> int:
     """System-service entry point; does not mutate installation state."""
     service, enrollment = build_enrolled_authority_service()
-    process_profiles = enrollment.process_profiles
+    runtime = getattr(service, "root_runtime_bindings", None)
+    process_manager = getattr(runtime, "process_manager", None)
+    process_profiles = (process_manager.profiles if process_manager is not None
+                        else enrollment.process_profiles)
     socket_gid_by_uid: dict[int, int] = {}
     for uid, binding in enrollment.bindings_by_uid.items():
         profile = process_profiles.get(binding.profile_id)
@@ -286,5 +304,16 @@ def main() -> int:
     stop_event = threading.Event()
     signal.signal(signal.SIGTERM, lambda _signum, _frame: stop_event.set())
     signal.signal(signal.SIGINT, lambda _signum, _frame: stop_event.set())
-    serve_authority(service, socket_gid_by_uid=socket_gid_by_uid, stop_event=stop_event)
+    try:
+        serve_authority(service, socket_gid_by_uid=socket_gid_by_uid, stop_event=stop_event)
+    finally:
+        if runtime is not None:
+            connector = getattr(runtime, "service_connector", None)
+            shutdown = getattr(connector, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+        remote_authority = getattr(service, "remote_session_authority", None)
+        stop_watchdog = getattr(remote_authority, "stop_watchdog", None)
+        if callable(stop_watchdog):
+            stop_watchdog()
     return 0
