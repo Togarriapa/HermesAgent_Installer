@@ -445,12 +445,13 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
                 continue
             selected_components[name] = bool(value)
 
-    adapters_by_name: dict[str, SetupAdapter] = dict(adapters or {})
-    if selected_components.get("remote_desktop") and "remote_desktop" not in adapters_by_name:
-        adapters_by_name["remote_desktop"] = CloudflareDesktopAdapter()
     secret_reader = secret_reader or (lambda prompt: read_hidden_token(prompt=prompt))
     state_root = Path(current["paths"].get("state_root", "~/HermesInstaller/state")).expanduser()
     credential_store = credential_store or PrivateFileCredentialStore(state_root)
+    from .setup_runtime_adapters import build_setup_adapters
+    adapters_by_name: dict[str, SetupAdapter] = build_setup_adapters(
+        journal=journal, credential_store=credential_store)
+    adapters_by_name.update(adapters or {})
 
     # Validate all non-secret install settings without promoting incomplete
     # component selections into the installable config.
@@ -558,8 +559,13 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
     # Persist only non-secret selections and adapter state through the caller's
     # private journal. Credential references and values are deliberately omitted.
     if journal is not None:
+        previous = journal.operation("installer:setup") if callable(getattr(journal, "operation", None)) else None
+        previous_payload = previous.get("payload") if isinstance(previous, Mapping) else None
+        setup_state = previous_payload.get("setup_state", {}) if isinstance(previous_payload, Mapping) else {}
         payload = {"mode": install_mode, "selected_components": selected_components,
                    "paths": installable.get("paths", {}), "account_states": states}
+        if isinstance(setup_state, Mapping) and setup_state:
+            payload["setup_state"] = dict(setup_state)
         journal.checkpoint("installer:setup", "failed" if failures else "pending" if pending else "ready", payload)
 
     if not pending:
