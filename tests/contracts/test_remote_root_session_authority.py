@@ -4,6 +4,7 @@ import hashlib
 import secrets
 import time
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 
 import jwt
@@ -11,13 +12,15 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.utils import base64url_encode
 
 from hermes_installer.authority.remote_sessions import (
-    RemoteAdmissionRequest, RemoteConnectorAuthorization, RemoteGatewayIdentity,
-    RemotePrincipalBinding, RemoteRuntimeState, RemoteSessionAuthority,
-    RemoteSessionEnrollment, RootRemoteAccessVerifier, _principal_mapping_digest,
+    AsyncRemotePolicyVerifierAdapter, InternalRemoteConnectorAuthorization,
+    RemoteAdmissionRequest, RemoteGatewayIdentity,
+    RemoteLease, RemotePrincipalBinding, RemoteRuntimeState, RemoteSessionAuthority,
+    RemotePolicyDecision, RemoteSessionEnrollment, RemoteSessionHandle, RootRemoteAccessVerifier,
+    _bounded_deadline, _principal_mapping_digest,
 )
 from hermes_installer.authority.types import AuthorityDenied
 from hermes_installer.authority.types import canonical_digest
-from hermes_installer.remote.gateway import RemotePolicy
+from hermes_installer.remote.gateway import Principal, RemotePolicy
 from hermes_installer.remote.jwks import JWKSCache
 
 
@@ -33,15 +36,23 @@ class _FreshPolicy:
     def __init__(self, allowed: bool = True):
         self.allowed = allowed
         self.fail = False
-        self.identity = SimpleNamespace(
-            hostname=HOST, audience="desktop-aud",
-            allowed_emails=frozenset({EMAIL}),
-        )
+        self.config_digest = CONFIG_DIGEST
+        self.nonce_override = None
+        self.validity_offset = 0.0
+        self.fingerprint_override = None
 
-    def allows(self, email: str, **_kwargs) -> bool:
+    def authorize_access(self, *, action, session_id, access_jwt, expected):
         if self.fail:
             raise RuntimeError("fixture secret-resolution canary must not escape")
-        return self.allowed and email == EMAIL
+        if not self.allowed:
+            raise RuntimeError("fresh selected Access policy denied")
+        now = time.monotonic()
+        return RemotePolicyDecision(
+            action, session_id, expected.email, expected.subject,
+            self.fingerprint_override or expected.token_fingerprint,
+            now, now, now + max(1, expected.expires_at - time.time()),
+            min(now + 50, now + max(1, expected.expires_at - time.time())) + self.validity_offset,
+            self.config_digest, self.nonce_override or secrets.token_urlsafe(32))
 
 
 class _Backend:
@@ -93,7 +104,7 @@ class RemoteRootSessionAuthorityTests(unittest.TestCase):
         self.fresh = _FreshPolicy()
         policy = RemotePolicy(HOST, ISSUER, "desktop-aud", frozenset({EMAIL}), self.cache)
         self.verifier = RootRemoteAccessVerifier(
-            policy=policy, jwks=self.cache, fresh_policy=self.fresh,
+            policy=policy, jwks=self.cache, policy_verifier=self.fresh,
             policy_revision=POLICY_REVISION, config_digest=CONFIG_DIGEST,
             verifier_enrollment_id="access-read-verifier-1")
         self.mapping = RemotePrincipalBinding(
@@ -132,25 +143,27 @@ class RemoteRootSessionAuthorityTests(unittest.TestCase):
                 raise ValueError
             return {200: self.gateway, 201: self.gateway2}[pid]
 
-        def authorize(binding, operation, digest, sequence, maximum_bytes, **_kwargs):
+        def authorize(binding, operation, payload_bytes, sequence, maximum_bytes, **_kwargs):
+            digest = hashlib.sha256(payload_bytes).hexdigest()
             self.authorized_ops.append((operation, digest, sequence, maximum_bytes, binding))
-            return RemoteConnectorAuthorization(
-                operation, binding.target_id, digest, binding.session_id, sequence,
-                maximum_bytes, binding.route_id, binding.principal_id, binding.profile_id,
-                binding.profile_generation, binding.gateway_profile_id, binding.gateway_generation,
-                binding.native_profile_id, binding.native_generation,
-                binding.native_generation,
-                binding.lease_expires_monotonic if operation == "connector.open" else binding.frame_deadline_monotonic,
-                min(binding.lease_expires_monotonic,
-                    binding.lease_expires_monotonic if operation == "connector.open" else binding.frame_deadline_monotonic),
-                secrets.token_urlsafe(18), secrets.token_urlsafe(18), object(), object())
+            now = time.monotonic()
+            return InternalRemoteConnectorAuthorization(
+                binding.principal_id, binding.native_profile_id, binding.native_generation,
+                binding.gateway_identity.identity_digest, binding.gateway_generation,
+                binding.session_id, binding.token_fingerprint, POLICY_REVISION, CONFIG_DIGEST,
+                binding.target_id, binding.route_id, operation, digest, sequence,
+                secrets.token_urlsafe(32), now, min(binding.lease_expires_monotonic,
+                                                     binding.frame_deadline_monotonic
+                                                     if operation != "connector.open"
+                                                     else binding.lease_expires_monotonic),
+                binding.service_generation_digest)
 
         self.authority = RemoteSessionAuthority(
             enrollment=self.enrollment, verifier=self.verifier,
             gateway_identity_resolver=resolve,
             gateway_identity_is_current=lambda gateway: gateway in {self.gateway, self.gateway2},
             runtime_state=lambda: self.snapshot,
-            authorize_connector_operation=authorize,
+            issue_remote_connector_effect=authorize,
             connector_backend=self.backend, watchdog=False)
 
     def _snapshot(self):
@@ -158,7 +171,8 @@ class RemoteRootSessionAuthorityTests(unittest.TestCase):
             "remote-enrollment-1", POLICY_REVISION, CONFIG_DIGEST,
             "gateway-generation-1", "desktop-generation-1",
             "native-hermes-desktop", "desktop-generation-1", "b" * 64,
-            "xpra-native", _principal_mapping_digest({"access-subject-1": self.mapping}))
+            "xpra-native", _principal_mapping_digest({"access-subject-1": self.mapping}),
+            "f" * 64)
 
     def token(self, *, email=EMAIL, subject="access-subject-1", audience="desktop-aud",
               issuer=ISSUER, expires=None):
@@ -216,11 +230,64 @@ class RemoteRootSessionAuthorityTests(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.admit(pid=999)
 
+    def test_subject_mapping_may_select_different_root_enrolled_profiles(self):
+        second = RemotePrincipalBinding(
+            "access-subject-2", "bob@example.test", "root-principal-2",
+            "hermes-desktop-secondary", "desktop-generation-secondary")
+        mixed = replace(self.enrollment, profile_id=None,
+                        principal_bindings_by_subject={self.mapping.subject: self.mapping,
+                                                       second.subject: second})
+        self.assertEqual(mixed.principal_bindings_by_subject[second.subject].profile_id,
+                         "hermes-desktop-secondary")
+
     def test_admission_nonce_replay_is_denied(self):
         request = self.request()
         self.admit(request=request)
         with self.assertRaises(AuthorityDenied):
             self.admit(request=request)
+
+    def test_root_rejects_replayed_or_mismatched_policy_verifier_decisions(self):
+        self.fresh.nonce_override = secrets.token_urlsafe(32)
+        self.admit()
+        with self.assertRaises(AuthorityDenied):
+            self.admit()
+
+        self.fresh.nonce_override = None
+        self.fresh.fingerprint_override = "0" * 64
+        with self.assertRaises(AuthorityDenied):
+            self.admit()
+
+    def test_expired_policy_verifier_lease_is_denied(self):
+        self.fresh.validity_offset = -90
+        with self.assertRaises(AuthorityDenied):
+            self.admit()
+
+    def test_async_isolated_policy_client_has_typed_sync_root_adapter(self):
+        class AsyncClient:
+            config_digest = CONFIG_DIGEST
+
+            async def authorize(self, *, action, session_id, access_jwt, expected):
+                self.request = (action, session_id, access_jwt)
+                now = time.monotonic()
+                return SimpleNamespace(
+                    action=action, session_id=session_id, principal=expected,
+                    observed_start_monotonic=now, observed_end_monotonic=now,
+                    jwt_deadline_monotonic=now + 30,
+                    valid_until_monotonic=now + 20, config_digest=CONFIG_DIGEST,
+                    nonce=secrets.token_urlsafe(32))
+
+        client = AsyncClient()
+        adapter = AsyncRemotePolicyVerifierAdapter(client, config_digest=CONFIG_DIGEST)
+        try:
+            principal = Principal(EMAIL, "sub", time.time() + 30, "f" * 64)
+            result = adapter.authorize_access(
+                action="issue", session_id="session-1", access_jwt=b"signed-token",
+                expected=principal)
+            self.assertEqual((result.action, result.session_id, result.subject),
+                             ("issue", "session-1", "sub"))
+            self.assertEqual(client.request, ("issue", "session-1", "signed-token"))
+        finally:
+            adapter.close()
 
     def test_fresh_one_use_challenge_renews_same_identity_and_replay_closes(self):
         admitted = self.admit()
@@ -235,6 +302,17 @@ class RemoteRootSessionAuthorityTests(unittest.TestCase):
             self.authority.renew_remote_session(
                 handle, self.token(), challenge.renewal_nonce,
                 peer_uid=1002, peer_pid=200, peer_pidfd=8)
+
+    def test_renewal_deadline_rounding_never_exceeds_sixty_seconds(self):
+        # This representable monotonic value makes `start + 60 - start` equal
+        # 60.00000000000001 on CPython; cap downward before minting the lease.
+        start = 63.0973294985805
+        expiry = _bounded_deadline(start, 60.0)
+        self.assertLessEqual(expiry - start, 60.0)
+        lease = RemoteLease(1, RemoteSessionHandle(secrets.token_urlsafe(32)),
+                            "remote-session-1", expiry, expiry + 1,
+                            start, POLICY_REVISION, CONFIG_DIGEST)
+        self.assertLessEqual(lease.lease_expires_monotonic - lease.policy_verified_monotonic, 60.0)
 
     def test_wrong_subject_revokes_active_stream_and_watchdog_closes_generation_drift(self):
         admitted = self.admit()
@@ -256,7 +334,8 @@ class RemoteRootSessionAuthorityTests(unittest.TestCase):
             "remote-enrollment-1", POLICY_REVISION, CONFIG_DIGEST,
             "gateway-generation-1", "desktop-generation-changed",
             "native-hermes-desktop", "desktop-generation-changed", "b" * 64,
-            "xpra-native", _principal_mapping_digest({"access-subject-1": self.mapping}))
+            "xpra-native", _principal_mapping_digest({"access-subject-1": self.mapping}),
+            "f" * 64)
         self.authority.watchdog_once()
         self.assertTrue(self.backend.closed)
 
@@ -312,13 +391,13 @@ class RemoteRootSessionAuthorityTests(unittest.TestCase):
         self.assertEqual(sent.accepted_bytes, 5)
         self.assertEqual(self.authorized_ops[-1][0], "connector.write")
         binding, open_auth, *_ = self.backend.opened[-1]
-        self.assertEqual(open_auth.request_digest, canonical_digest({
+        self.assertEqual(open_auth.canonical_payload_sha256, canonical_digest({
             "schema": 1, "enrollment_id": binding.enrollment_id,
             "generation": binding.native_generation, "target_id": binding.target_id,
             "action": "open", "approved_route_id": binding.route_id,
             "session_id": binding.session_id, "deadline": binding.lease_expires_monotonic}))
         write_binding, write_auth, *_ = self.backend.writes[-1]
-        self.assertEqual(write_auth.request_digest, canonical_digest({
+        self.assertEqual(write_auth.canonical_payload_sha256, canonical_digest({
             "schema": 1, "target_id": write_binding.target_id, "route_id": write_binding.route_id,
             "connector_id": opened.connector_handle, "session_id": write_binding.session_id,
             "generation": write_binding.native_generation, "sequence": 0,
@@ -350,7 +429,8 @@ class RemoteRootSessionAuthorityTests(unittest.TestCase):
             "remote-enrollment-1", "changed-policy", CONFIG_DIGEST,
             "gateway-generation-1", "desktop-generation-1",
             "native-hermes-desktop", "desktop-generation-1", "b" * 64,
-            "xpra-native", _principal_mapping_digest({"access-subject-1": self.mapping}))
+            "xpra-native", _principal_mapping_digest({"access-subject-1": self.mapping}),
+            "f" * 64)
         with self.assertRaises(AuthorityDenied):
             self.admit(request=request)
 
