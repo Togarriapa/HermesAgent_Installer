@@ -60,8 +60,27 @@ class RecordingTransport:
             message, finish = {"role": "assistant", "content": "private fixture tool result received"}, "stop"
         else:
             message, finish = {"role": "assistant", "content": "native fixture response"}, "stop"
+        created = 1
+        completion_id = "chatcmpl-native-fixture"
+        if request.get("stream") is True:
+            if finish == "tool_calls":
+                delta = {"role": "assistant", "tool_calls": [{
+                    "index": 0, "id": "call_fixture_echo_1", "type": "function",
+                    "function": {"name": "fixture_echo",
+                                 "arguments": json.dumps({"text": "SYNTHETIC_PRIVATE_CANARY_7f4c"})},
+                }]}
+            else:
+                delta = {"role": "assistant", "content": message.get("content")}
+            chunk = {
+                "id": completion_id, "object": "chat.completion.chunk", "created": created,
+                "model": MODEL, "choices": [{"index": 0, "delta": delta,
+                                               "finish_reason": finish}],
+            }
+            body = ("data: " + json.dumps(chunk, separators=(",", ":")) + "\n\n"
+                    + "data: [DONE]\n\n").encode("utf-8")
+            return ProviderResponse(200, body, {"Content-Type": "text/event-stream"}, 5, 3)
         body = json.dumps({
-            "id": "chatcmpl-native-fixture", "object": "chat.completion", "created": 1,
+            "id": completion_id, "object": "chat.completion", "created": created,
             "model": MODEL, "choices": [{"index": 0, "message": message, "finish_reason": finish}],
             "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
         }, separators=(",", ":")).encode("utf-8")

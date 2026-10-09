@@ -35,8 +35,10 @@ class ProviderTransportTests(unittest.TestCase):
             return network
         evidence = EligibilityEvidence.create(account_id="fixture", checked_at=1000, lifetime_seconds=60,
             free_account=True, effective_plugins_disabled=True, approved_model=MODEL,
-            evidence_source="synthetic-test-only")
-        gate = AccountEligibilityGate(model=MODEL, evidence=evidence, clock=lambda: 1001)
+            evidence_source="synthetic-test-only", credential_ref="file:///secure/provider-token",
+            credential="fixture-secret-r", policy_snapshot_sha256="a" * 64)
+        gate = AccountEligibilityGate(model=MODEL, credential_ref="file:///secure/provider-token",
+            evidence=evidence, clock=lambda: 1001, allow_test_evidence=True)
         transport=OpenRouterTransport("file:///secure/provider-token",secret_reader=lambda ref:"fixture-secret-r",network_factory=factory,eligibility=gate)
         return transport,networks
 
@@ -56,8 +58,12 @@ class ProviderTransportTests(unittest.TestCase):
 
         expired = EligibilityEvidence.create(account_id="fixture", checked_at=1000,
             lifetime_seconds=10, free_account=True, effective_plugins_disabled=True,
-            approved_model=MODEL, evidence_source="synthetic-test-only")
-        expired_gate = AccountEligibilityGate(model=MODEL, evidence=expired, clock=lambda: 1011)
+            approved_model=MODEL, evidence_source="synthetic-test-only",
+            credential_ref="file:///secure/provider-token", credential="fixture",
+            policy_snapshot_sha256="b" * 64)
+        expired_gate = AccountEligibilityGate(model=MODEL,
+            credential_ref="file:///secure/provider-token", evidence=expired,
+            clock=lambda: 1011, allow_test_evidence=True)
         transport = OpenRouterTransport("file:///secure/provider-token",
             secret_reader=lambda ref: resolved.append(ref) or "fixture",
             network_factory=lambda **kwargs: network_calls.append(kwargs),
@@ -67,6 +73,38 @@ class ProviderTransportTests(unittest.TestCase):
                       output_token_limit=8, timeout=2, trace_id="trace")
         self.assertEqual(resolved, [])
         self.assertEqual(network_calls, [])
+
+
+    def test_synthetic_evidence_is_test_only_and_bound_to_key_reference_model_and_credential(self):
+        ref = "file:///secure/provider-token"
+        evidence = EligibilityEvidence.create(account_id="fixture", checked_at=1000,
+            lifetime_seconds=60, free_account=True, effective_plugins_disabled=True,
+            approved_model=MODEL, evidence_source="synthetic-test-only",
+            credential_ref=ref, credential="bound-secret",
+            policy_snapshot_sha256="d" * 64)
+        production_gate = AccountEligibilityGate(model=MODEL, credential_ref=ref,
+            evidence=evidence, clock=lambda: 1001)
+        with self.assertRaisesRegex(PolicyDenied, "authoritative"):
+            production_gate.require_eligible(model=MODEL, credential_ref=ref)
+
+        fixture_gate = AccountEligibilityGate(model=MODEL, credential_ref=ref,
+            evidence=evidence, clock=lambda: 1001, allow_test_evidence=True)
+        with self.assertRaisesRegex(PolicyDenied, "identity"):
+            fixture_gate.require_eligible(model=MODEL, credential_ref="file:///other/key")
+        with self.assertRaisesRegex(PolicyDenied, "identity"):
+            fixture_gate.require_eligible(model="other/model", credential_ref=ref)
+        fixture_gate.require_eligible(model=MODEL, credential_ref=ref)
+        with self.assertRaisesRegex(PolicyDenied, "credential"):
+            fixture_gate.verify_credential("rotated-secret")
+
+        resolved, requests = [], []
+        transport = OpenRouterTransport(ref, secret_reader=lambda value: resolved.append(value) or "rotated-secret",
+            network_factory=lambda **kwargs: requests.append(kwargs), eligibility=fixture_gate)
+        with self.assertRaisesRegex(PolicyDenied, "credential"):
+            transport(default_public_route(), MODEL, b'{"messages":[]}',
+                output_token_limit=8, timeout=2, trace_id="bound-key")
+        self.assertEqual(resolved, [ref])
+        self.assertEqual(requests, [])
 
     def test_fixed_endpoint_secret_and_response_usage(self):
         transport,networks=self.make()
@@ -121,8 +159,10 @@ class ProviderTransportTests(unittest.TestCase):
         resolved=[]
         evidence = EligibilityEvidence.create(account_id="fixture", checked_at=1000, lifetime_seconds=60,
             free_account=True, effective_plugins_disabled=True, approved_model=MODEL,
-            evidence_source="synthetic-test-only")
-        gate = AccountEligibilityGate(model=MODEL, evidence=evidence, clock=lambda: 1001)
+            evidence_source="synthetic-test-only", credential_ref="file:///secure/provider-token",
+            credential="fixture", policy_snapshot_sha256="c" * 64)
+        gate = AccountEligibilityGate(model=MODEL, credential_ref="file:///secure/provider-token",
+            evidence=evidence, clock=lambda: 1001, allow_test_evidence=True)
         transport=OpenRouterTransport("file:///secure/provider-token",secret_reader=lambda ref:resolved.append(ref) or "fixture",network_factory=lambda **kwargs:None,eligibility=gate)
         route=default_public_route()
         with self.assertRaisesRegex(PolicyDenied,"byte limit"):
