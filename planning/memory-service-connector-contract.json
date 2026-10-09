@@ -379,5 +379,6 @@
       "finish_consumer": "At actual pinned successful TurnFacadeMixin return, worker passes the lexical delivered turn_handle and matching root final_response_delivery_handle to native.turn.finish. Root rechecks all retained observations; missing handle or mismatch is pending/unavailable, never completion proof."
     }
   },
-  "lifecycle_row_placement": "lifecycle_binding is nested in each active service_generations.memory_enrollments row, exact fields from protected_lifecycle_binding; no sibling mutable catalog. A null binding records unavailable startup, not a fabricated recipe; populated binding requires all actual source/runtime/engine/prestart joins. Existing started service cannot claim memory functional proof from readiness/liveness."
+  "lifecycle_row_placement": "lifecycle_binding is nested in each active service_generations.memory_enrollments row, exact fields from protected_lifecycle_binding; no sibling mutable catalog. A null binding records unavailable startup, not a fabricated recipe; populated binding requires all actual source/runtime/engine/prestart joins. Existing started service cannot claim memory functional proof from readiness/liveness.",
+  "root_selected_lifecycle_authority": "planning/root-selected-service-lifecycle-authority-contract.json; distinct signed root-selected context/authorization, separate actual controller proof; supersedes ordinary worker HostContext relabelling for lifecycle only."
 }

@@ -566,5 +566,6 @@
       "digests": "source_tree_digest and transformed_tree_sha256 are SHA256 of canonical sorted full regular source member rows {path,sha256,size_bytes,executable}; output_artifact_sha256 is exact deterministic output archive bytes SHA256, not tree digest. Overlay source module artifact hash is distinct. No secret cookie in receipt/evidence.",
       "lease": "lease <=600 seconds and <= admitted startup transaction/selection original deadline; renew only by actual root revalidation, no worker prolongation. Actual immutable artifact pin persists after lease, effect proof does not."
     }
-  }
+  },
+  "root_selected_lifecycle_authority": "planning/root-selected-service-lifecycle-authority-contract.json; distinct signed root-selected context/authorization, separate actual controller proof; supersedes ordinary worker HostContext relabelling for lifecycle only."
 }
