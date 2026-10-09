@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import json
 import re
 from typing import Any, Mapping, Sequence
+from types import MappingProxyType
 
 
 class MemoryRecipeDenied(PermissionError):

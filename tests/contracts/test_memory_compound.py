@@ -6,6 +6,7 @@ from hermes_installer.memory.compound import (
     MemoryRecipeDenied,
     MemoryRecipeUnavailable,
     build_memory_request,
+    MemoryRouteRecipe,
     validate_compound_envelope,
 )
 
@@ -67,6 +68,37 @@ class MemoryCompoundTests(unittest.TestCase):
         with self.assertRaises(MemoryRecipeUnavailable):
             validate_step_outcome(route_id="agentmemory-capture", step_id="capture",
                                   status=201, value={"anything": "looks successful"})
+
+    def test_protected_recipe_is_strictly_route_bound(self):
+        route = {
+            "approved_route_id": "agentmemory-search",
+            "backend_variant": "default",
+            "steps": [{
+                "step_id": "search", "method": "POST",
+                "path_template": "/agentmemory/smart-search",
+                "body_recipe_id": "agentmemory-search-owned-v1",
+                "response_schema_id": "agentmemory-search-result-v1",
+                "capture_fields": [], "next_step_id": None,
+            }],
+            "request_schema_id": "agentmemory-search-request-v1",
+            "result_schema_id": "agentmemory-search-result-v1",
+            "scope_bindings": {
+                "profile_id": "profile-1", "service_generation": "service-gen-1",
+                "memory_owner_generation": 1, "backend_project_ref": "project-1",
+                "backend_agent_ref": "agent-1", "backend_session_ref": None,
+                "private_provider_route_ref": None, "credential_reference_id": "vault-ref-1",
+            },
+            "credential_reference_id": "vault-ref-1",
+            "maximum_seconds": 10, "maximum_bytes": 65536,
+        }
+        limits = {"whole_compound_timeout_seconds": 60, "request_bytes": 262144}
+        parsed = MemoryRouteRecipe.from_protected_record(
+            "agentmemory-search", route, backend_variant="default", limits=limits)
+        self.assertEqual(parsed.steps[0].path_template, "/agentmemory/smart-search")
+        route["steps"][0]["path_template"] = "/agentmemory/export"
+        with self.assertRaises(MemoryRecipeDenied):
+            MemoryRouteRecipe.from_protected_record(
+                "agentmemory-search", route, backend_variant="default", limits=limits)
 
     def test_envelope_requires_exact_fields_and_canonical_bytes(self):
         value = {"schema": 1, "handle_id": "handle-1", "generation": "gen-1",
