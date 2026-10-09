@@ -155,7 +155,9 @@ class TwoUidVerifierSubprocessTests(unittest.TestCase):
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline and not socket_path.exists() and service.poll() is None:
                     time.sleep(0.025)
-                self.assertIsNone(service.poll(), "fixture custodian exited before binding")
+                if service.poll() is not None:
+                    stdout, stderr = service.communicate(timeout=2)
+                    self.fail(f"fixture custodian exited before binding: {stderr[-2000:]} {stdout[-500:]}")
                 socket_info = os.stat(socket_path, follow_symlinks=False)
                 self.assertTrue(stat.S_ISSOCK(socket_info.st_mode))
                 self.assertEqual(socket_info.st_uid, verifier_uid)
@@ -199,4 +201,7 @@ class TwoUidVerifierSubprocessTests(unittest.TestCase):
             finally:
                 if service.poll() is None:
                     service.kill()
-                    service.communicate(timeout=2)
+                if service.stdout is not None and not service.stdout.closed:
+                    service.stdout.close()
+                if service.stderr is not None and not service.stderr.closed:
+                    service.stderr.close()
