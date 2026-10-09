@@ -47,6 +47,8 @@ class ProviderResponseObserverTests(unittest.TestCase):
              b'"function":{"name":"lookup","arguments":"{\\"x\\":1,\\"x\\":2}"}}]},'
              b'"finish_reason":"tool_calls"}]}'),
             ("openrouter", 503, {"Content-Type": "application/json"}, b'{"choices":[]}'),
+            ("openrouter", 200, {"Content-Type": "application/json"},
+             b'{"choices":[{"message":{"content":"partial"},"finish_reason":"length"}]}'),
             ("codex", 200, {"Content-Type": "text/event-stream"},
              b'event: response.incomplete\ndata: {"type":"response.incomplete"}\n\n'),
         )
@@ -54,13 +56,21 @@ class ProviderResponseObserverTests(unittest.TestCase):
             with self.subTest(provider=provider, status=status), self.assertRaises(ProviderResponseObservationDenied):
                 parse_successful_provider_tool_calls(provider, status, headers, body)
 
-    def test_duplicate_call_ids_and_unbounded_call_sets_are_rejected(self):
+    def test_duplicate_call_ids_and_call_sets_over_bound_are_rejected(self):
         duplicate = b'{"choices":[{"message":{"tool_calls":[' + \
             b'{"id":"x","type":"function","function":{"name":"a","arguments":"{}"}},' + \
             b'{"id":"x","type":"function","function":{"name":"b","arguments":"{}"}}]},' + \
             b'"finish_reason":"tool_calls"}]}'
         with self.assertRaises(ProviderResponseObservationDenied):
             parse_successful_provider_tool_calls("openrouter", 200, {"Content-Type": "application/json"}, duplicate)
+        calls = [{"id": f"call-{index}", "type": "function",
+                  "function": {"name": "lookup", "arguments": "{}"}}
+                 for index in range(129)]
+        oversized = json.dumps({"choices": [{"message": {"tool_calls": calls},
+                                               "finish_reason": "tool_calls"}]}).encode()
+        with self.assertRaises(ProviderResponseObservationDenied):
+            parse_successful_provider_tool_calls("openrouter", 200,
+                                                 {"Content-Type": "application/json"}, oversized)
 
 
 if __name__ == "__main__":

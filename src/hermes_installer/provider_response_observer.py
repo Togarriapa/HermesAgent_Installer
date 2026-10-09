@@ -53,7 +53,8 @@ def _json_object(raw: bytes, *, max_bytes: int) -> object:
 
 
 def _bounded_text(value: object, *, limit: int) -> bool:
-    if not isinstance(value, str) or not value or "\x00" in value:
+    if (not isinstance(value, str) or not value
+            or any(ord(char) < 0x21 or ord(char) > 0x7e for char in value)):
         return False
     try:
         return len(value.encode("utf-8", errors="strict")) <= limit
@@ -154,6 +155,8 @@ def parse_successful_provider_tool_calls(provider: str, status: int,
             raise ProviderResponseObservationDenied("provider.tool_calls", "OpenRouter tool calls lack a terminal tool-call reason")
         if not raw_calls and finish_reason == "tool_calls":
             raise ProviderResponseObservationDenied("provider.tool_calls", "OpenRouter tool-call terminal has no calls")
+        if not raw_calls and finish_reason != "stop":
+            raise ProviderResponseObservationDenied("provider.response_incomplete", "OpenRouter completion did not end normally")
         return _bindings(raw_calls, codex=False)
 
     if media_type != "text/event-stream":
@@ -169,4 +172,3 @@ def parse_successful_provider_tool_calls(provider: str, status: int,
     if any(not isinstance(item, dict) for item in output):
         raise ProviderResponseObservationDenied("provider.response_format", "Codex completed output contains malformed items")
     return _bindings(raw_calls, codex=True)
-
