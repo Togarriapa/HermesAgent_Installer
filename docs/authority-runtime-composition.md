@@ -20,6 +20,17 @@ and service effect rules. The job
 ledger is created only when such a fully joined job exists and requires the
 daemon's fixed private store path.
 
+When the active generation contains typed `MemoryServiceEnrollment` rows, the
+factory builds the memory runtime using those rows, the same protected service
+catalog, process manager, credential vault, and digest-bound root-journal
+resolver. Its per-step effect adapter is attached to the existing
+`AuthorityService`; it creates no second process manager, connector, or
+caller-selected state path. The factory installs only selected `memory.search`
+handlers that have an exact protected effect rule, a resolved authority-state
+root, and a fixed compound recipe. Capture remains unavailable without a
+root-observed event join. Missing enrollment or a stale journal generation
+leaves the memory route unregistered.
+
 The source registry, native result observer, and remote session authority are
 read from the live service so daemon code may attach each actual root-built
 instance after this factory returns. `prune()` and `close()` delegate to those
@@ -27,6 +38,17 @@ instances and stop the remote lease watchdog. Derived source-observer
 enrollments are exposed as typed metadata candidates; they cannot issue
 receipts until live loaded-closure and peer-bound delivery resolvers are
 available. Active source/job rows without
-the required root observer and proof joins remain unroutable. A successful
-local fixture composition proves constructor wiring only; it does not establish
+the required root observer and proof joins remain unroutable. The HI12 loopback
+fixture exercises bounded HTTP framing and the real AuthorityService grant and
+handler path, while replacing only the OS namespace-entry boundary on macOS. It
+does not exercise the `build_memory_runtime` root-journal constructor or prove
+namespace isolation. Local composition and loopback fixtures do not establish
 native invocation, account, tunnel, or Raspberry Pi acceptance.
+
+Build execution reuses the protected build and artifact catalogs, existing
+root content-addressed store, and shared managed-process manager. The current
+inspector has no enrolled CPython runtime probe, so it offers only the fixed
+Colibri build handler. Composition installs that handler only when the active
+service generation joins its protected build profile and exact `process.start`
+rule. Coral/CPython remains unregistered until a root-managed probe is
+available.

@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 from types import MappingProxyType
 
 import pytest
@@ -76,6 +77,10 @@ def test_composition_uses_exact_service_bindings_catalog_vault_and_epoch():
     assert dict(runtime.scope_bindings) == {}
     assert dict(runtime.validators) == {}
     assert dict(runtime.job_enrollments) == {}
+    assert runtime.memory_runtime is None
+    assert runtime.build_execution_service is None
+    assert service.memory_step_effect_authority is None
+    assert not any(operation.startswith("memory.") for operation, _target in service.handlers)
     assert runtime.source_observer_enrollments["observer-a"] is observer_candidate
     with pytest.raises(TypeError):
         runtime.source_observer_enrollments["forged"] = object()
@@ -108,3 +113,17 @@ def test_root_journal_resolution_is_bound_to_active_generation_and_protected_cat
         runtime.resolve_root_journal(
             "state-root", expected_active_generation_digest=enrollment.protected_enrollment_digest,
         )
+
+
+def test_memory_rows_do_not_fall_back_when_protected_service_catalog_is_missing():
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
+    active = replace(enrollment, memory_enrollments={("service-one", "generation-one"): object()})
+
+    with pytest.raises(AuthorityDenied, match="active memory enrollments require the protected service catalog"):
+        compose_root_authority_runtime(
+            service=service, enrollment=active, bindings=bindings,
+            artifact_catalog=catalog, vault=vault,
+        )
+
+    assert not any(operation.startswith("memory.") for operation, _target in service.handlers)
+    assert service.memory_step_effect_authority is None

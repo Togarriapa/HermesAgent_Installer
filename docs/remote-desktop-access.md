@@ -60,17 +60,19 @@ cgroup, namespaces and mount. A separate setup transaction binds the current
 setup process, selected tunnel response, dedicated writer role and probe role;
 its one-use origin-probe handle expires within 30 seconds. The root client
 connects only to the active catalog's private AF_UNIX socket, verifies the
-gateway peer PID/UID/GID, and sends a fixed selection plus challenge and digest.
-The private gateway operation must collect the exact HTTP asset, WebSocket and
-native-window observations from its selected app-only connector and deny
-unauthenticated, arbitrary, shell and whole-host routes. The root verifies the
-challenge echoes and registers its own signed probe receipt before issuing
-readiness. Neither endpoint-provided booleans nor a live PID alone satisfy the
-check. Receipts expire after 30 seconds and must pass root signature, selection,
-digest and expiry checks at the activation boundary. Until the root HI12 setup
-probe connector and native-window observer are assembled, readiness remains
-unavailable; the isolated loopback/AF_UNIX fixture proves protocol behavior,
-not production connector or target readiness.
+gateway peer PID/UID/GID, and sends three bounded per-action commands, each
+with a fresh immutable child handle: pinned asset GET, pinned asset HEAD, and
+WebSocket attach. The gateway returns measured bytes, status and digests; its
+response cannot set readiness booleans. The root joins those results with
+separately root-observed loopback listener and denial-route facts plus a
+native-window observation bound to the selected Desktop PIDFD and WebSocket
+stream. Missing boundary/window observers, a stale proof, or an unexpected
+route response leaves readiness unavailable. Root registers its own signed
+probe receipt only after all joins pass. Receipts expire within 30 seconds and
+must pass root signature, selection, digest and expiry checks at the activation
+boundary. The isolated loopback/AF_UNIX fixture proves byte-level protocol
+behavior; it does not prove production observers, connector custody, or target
+readiness.
 
 Fixture evidence exercises private file effects, collision refusal, signed
 receipt validation and real isolated loopback socket exchanges. It does not

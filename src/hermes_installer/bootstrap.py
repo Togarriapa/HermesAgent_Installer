@@ -4,9 +4,10 @@ import hashlib, json, os, stat, time, uuid, re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+import asyncio
 import threading
 from .state import Journal, OwnedRoot, OwnershipError
-from .bootstrap_custody import BootstrapCustody
+from .bootstrap_custody import BootstrapCustody, RootSelectedHermesOperations
 
 HERMES_REPOSITORY = "https://github.com/NousResearch/hermes-agent.git"
 HERMES_COMMIT = "7085fbf7753266fc4943c55ac04926186bc90005"
@@ -80,7 +81,8 @@ class HermesBootstrap:
     def __init__(self, data_root: OwnedRoot, state: Journal, *, network: object | None = None,
                  runner: Callable | None = None, desktop_builder: Callable | None = None,
                  agent_probe: Callable | None = None, expected_script_blob: str = INSTALL_SCRIPT_BLOB,
-                 authority_client: object | None = None):
+                 authority_client: object | None = None,
+                 selected_operations: RootSelectedHermesOperations | None = None):
         self.data_root = data_root
         self.state = state
         self.network = network
@@ -97,10 +99,114 @@ class HermesBootstrap:
         self.operation = "hermes-agent:" + HERMES_COMMIT
         self.custody = BootstrapCustody(authority_client, journal=state,
                                         journal_operation=self.operation)
+        if selected_operations is not None and type(selected_operations) is not RootSelectedHermesOperations:
+            raise TypeError("production bootstrap accepts only root-selected Hermes operations")
+        self.selected_operations = selected_operations
         self._active_diagnostic: str | None = None
         self._upstream_log_offset: int | None = None
         self._last_artifact_receipt_id: str | None = None
         self.script_store_id: str | None = None
+
+    def install_enrolled(self, *, timeout: float = 600.0,
+                         cancelled: Callable[[], bool] | None = None) -> BootstrapReport:
+        """Run the fixed root-selected recipes without physical caller launch data.
+
+        Terminal custody receipts record that an enrolled operation ran and
+        was reaped. Activation remains separate until HI08/HI11 observe native
+        Agent registration and a real request/result in this generation.
+        """
+        if self.selected_operations is None:
+            raise BootstrapError("A committed root enrollment is required before Hermes operations")
+        if not 30 <= timeout <= 600:
+            raise ValueError("Selected Hermes operation timeout must be between 30 and 600 seconds")
+        generation = self.selected_operations.generation_id
+        stage_log = f"runtime/logs/hermes-agent/{HERMES_COMMIT[:12]}/selected-stage.log"
+        health_log = f"runtime/logs/hermes-agent/{HERMES_COMMIT[:12]}/selected-health.log"
+        self.state.record_owned("hermes-generation", generation, "staged")
+        self.state.checkpoint(self.operation, "running:selected-stage", {
+            "commit": HERMES_COMMIT, "generation_id": generation,
+            "generation_digest": self.selected_operations.generation_digest,
+            "operation_id": "hermes-agent-stage-v1", "resume": "hermes-installer resume",
+        })
+        statuses: list[StageStatus] = []
+        try:
+            stage = self.selected_operations.stage(timeout=timeout, cancelled=cancelled)
+        except BaseException as exc:
+            self._record_process_exception(exc, "selected-stage")
+            self.state.checkpoint(self.operation,
+                "cancelled:selected-stage" if isinstance(exc, (KeyboardInterrupt, asyncio.CancelledError)) else "failed:selected-stage", {
+                    "generation_id": generation, "error_type": type(exc).__name__,
+                    "cleanup_verified": getattr(exc, "cleanup_verified", None),
+                    "resume": "hermes-installer resume",
+                })
+            return BootstrapReport(HERMES_COMMIT, generation, "managed service home",
+                (StageStatus("selected-stage", "failed"),), False, False,
+                "pending: root stage operation failed or needs recovery", "hermes-installer resume", False)
+        self._persist_diagnostic(stage_log, bytearray(stage.result.diagnostic),
+                                 len(stage.result.diagnostic) >= 96 * 1024)
+        statuses.append(StageStatus("selected-stage",
+            "complete" if stage.operation_completed else "failed", stage.result.exit_code, stage_log))
+        self.state.event(self.operation, "selected-stage",
+            "completed" if stage.operation_completed else "failed", {
+                "operation_id": stage.operation_id, "enrollment_id": stage.enrollment_id,
+                "generation_id": generation, "generation_digest": stage.generation_digest,
+                "receipt_id": stage.result.receipt_id, "process_id": stage.result.process_id,
+                "cleanup_verified": stage.result.cleanup_verified,
+                "timed_out": stage.result.timed_out, "exit_code": stage.result.exit_code,
+                "diagnostic": stage_log,
+            })
+        if not stage.operation_completed:
+            self.state.checkpoint(self.operation, "failed:selected-stage", {
+                "generation_id": generation, "exit_code": stage.result.exit_code,
+                "timed_out": stage.result.timed_out, "diagnostic": stage_log,
+                "resume": "hermes-installer resume",
+            })
+            return BootstrapReport(HERMES_COMMIT, generation, "managed service home",
+                tuple(statuses), False, False,
+                "pending: root stage operation did not complete; user data was preserved",
+                "hermes-installer resume", False)
+        self.state.checkpoint(self.operation, "running:selected-health", {
+            "commit": HERMES_COMMIT, "generation_id": generation,
+            "generation_digest": self.selected_operations.generation_digest,
+            "operation_id": "hermes-agent-health-v1", "resume": "hermes-installer resume",
+        })
+        try:
+            health = self.selected_operations.health(stage, timeout=timeout, cancelled=cancelled)
+        except BaseException as exc:
+            self._record_process_exception(exc, "selected-health")
+            self.state.checkpoint(self.operation,
+                "cancelled:selected-health" if isinstance(exc, (KeyboardInterrupt, asyncio.CancelledError)) else "failed:selected-health", {
+                    "generation_id": generation, "error_type": type(exc).__name__,
+                    "cleanup_verified": getattr(exc, "cleanup_verified", None),
+                    "resume": "hermes-installer resume",
+                })
+            return BootstrapReport(HERMES_COMMIT, generation, "managed service home",
+                tuple(statuses + [StageStatus("selected-health", "failed")]), False, False,
+                "pending: root health operation failed or needs recovery", "hermes-installer resume", False)
+        self._persist_diagnostic(health_log, bytearray(health.result.diagnostic),
+                                 len(health.result.diagnostic) >= 96 * 1024)
+        statuses.append(StageStatus("selected-health",
+            "complete" if health.operation_completed else "failed", health.result.exit_code, health_log))
+        self.state.event(self.operation, "selected-health",
+            "completed" if health.operation_completed else "failed", {
+                "operation_id": health.operation_id, "enrollment_id": health.enrollment_id,
+                "generation_id": generation, "generation_digest": health.generation_digest,
+                "receipt_id": health.result.receipt_id, "process_id": health.result.process_id,
+                "cleanup_verified": health.result.cleanup_verified,
+                "timed_out": health.result.timed_out, "exit_code": health.result.exit_code,
+                "diagnostic": health_log,
+            })
+        self.state.checkpoint(self.operation, "pending:native-health-observation", {
+            "generation_id": generation, "generation_digest": self.selected_operations.generation_digest,
+            "health_operation_completed": health.operation_completed,
+            "functional_agent_ready": False, "desktop_built": False,
+            "reason": "HI08/HI11 native registration/request/result receipt is not attached",
+            "resume": "hermes-installer resume",
+        })
+        return BootstrapReport(HERMES_COMMIT, generation, "managed service home", tuple(statuses),
+            False, False,
+            "pending: root health operation completed but native Agent function evidence is required",
+            "hermes-installer resume", False)
 
     def _has_fixture_overrides(self) -> bool:
         return (self.runner is not self._default_runner
@@ -442,6 +548,10 @@ class HermesBootstrap:
     def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 600) -> BootstrapReport:
         if not 30 <= timeout_per_stage <= 600:
             raise ValueError("Stage timeout must be between 30 and 600 seconds")
+        if self.selected_operations is not None:
+            # The selected root recipe itself is the only production launcher;
+            # legacy runner callbacks remain fixture-only below.
+            return self.install_enrolled(timeout=timeout_per_stage)
         try:
             self.prepare()
         except BaseException as exc:
