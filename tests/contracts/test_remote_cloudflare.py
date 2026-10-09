@@ -24,6 +24,17 @@ class RemoteProvisionerTests(unittest.TestCase):
   stored=[]
   result=p.provision_protected(runtime_token_writer=writer or stored.append)
   return result,stored
+ def test_access_resources_checkpoint_without_route_and_resume_idempotently(self):
+  api=Recorder();p,_=self.make(api,"op-access")
+  prepared=p.prepare_access_resources()
+  self.assertEqual(prepared.access_app_id,p.journal.resources["access_app"].resource_id)
+  self.assertEqual(prepared.access_policy_id,p.journal.resources["access_policy"].resource_id)
+  self.assertEqual(prepared.identity_provider_id,p.journal.resources["identity_provider"].resource_id)
+  self.assertEqual(p.journal.phase,RemotePhase.ACCESS_READY)
+  self.assertFalse(any(path.endswith("/dns_records") or path.endswith("/cfd_tunnel") for method,path,_ in api.calls if method in {"POST","PUT","DELETE"}))
+  creates=sum(method=="POST" for method,_,_ in api.calls)
+  self.assertEqual(p.prepare_access_resources(),prepared)
+  self.assertEqual(sum(method=="POST" for method,_,_ in api.calls),creates)
  def test_policy_origin_tunnel_precede_dns_and_token_is_separate(self):
   api=Recorder();p,_=self.make(api);result,stored=self.activate(p);writes=[(i,m,path) for i,(m,path,_) in enumerate(api.calls)]
   policy=next(i for i,m,path in writes if m=="POST" and path.endswith("/policies"));dns=next(i for i,m,path in writes if m=="POST" and path.endswith("/dns_records"))
@@ -48,7 +59,7 @@ class RemoteProvisionerTests(unittest.TestCase):
  def test_unready_origin_rolls_back_owned_resources_and_never_publishes_dns(self):
   api=Recorder();p,_=self.make(api,"op2",False)
   with self.assertRaises(Exception):self.activate(p)[0]
-  self.assertFalse(any(m=="POST" and path.endswith("/dns_records") for m,path,_ in api.calls));self.assertFalse(p.journal.resources);self.assertEqual(p.journal.phase,RemotePhase.DISABLED)
+  self.assertFalse(any(m=="POST" and path.endswith("/dns_records") for m,path,_ in api.calls));self.assertTrue({"identity_provider","access_app","access_policy"}.issubset(p.journal.resources));self.assertEqual(p.journal.phase,RemotePhase.ACCESS_READY)
  def test_missing_policy_read_reference_checkpoints_access_and_never_activates(self):
   from hermes_installer.remote.cloudflare_setup import PolicyReadReferenceRequired
   setup=RemoteSetup("desk.example.net",("owner@example.net",),CloudflareZone("z1","example.net","a1","active"),"team.cloudflareaccess.com","setup-secret")
@@ -80,8 +91,9 @@ class RemoteProvisionerTests(unittest.TestCase):
  def test_ambiguous_dns_creation_failure_reconciles_then_rolls_back_only_owned(self):
   api=Recorder();api.fail_dns=True;p,_=self.make(api,"op5")
   with self.assertRaises(CloudflareError):self.activate(p)[0]
-  self.assertFalse(p.journal.resources);self.assertEqual(p.journal.phase,RemotePhase.DISABLED)
-  self.assertFalse(any(rows for path,rows in api.rows.items() if path.endswith("/access/apps") or path.endswith("/cfd_tunnel")))
+  self.assertIn("access_app",p.journal.resources);self.assertIn("tunnel",p.journal.resources)
+  self.assertNotIn("dns",p.journal.resources);self.assertEqual(p.journal.phase,RemotePhase.TUNNEL_READY)
+  self.assertTrue(any(rows for path,rows in api.rows.items() if path.endswith("/access/apps") or path.endswith("/cfd_tunnel")))
  def test_preflight_checks_existing_access_policy_before_identity_writes(self):
   from hermes_installer.remote.lifecycle import OwnedResource
   api=Recorder();p,_=self.make(api,"op6")

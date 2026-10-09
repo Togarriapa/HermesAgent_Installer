@@ -8,6 +8,7 @@ import hmac
 import http.server
 import json
 import os
+import re
 import socket
 import stat
 import threading
@@ -15,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .policy import Dispatcher, PolicyDenied, Sensitivity
+from .policy import Dispatcher, PolicyDenied, Sensitivity, normalize_chat_request
 from .state import OwnedRoot, OwnershipError
 from .provider_transport import ALLOWED_MODELS, MAX_REQUEST_BYTES
 
@@ -469,25 +470,58 @@ class LocalProviderGateway:
                                 raise PolicyDenied("request.bounds", "Output token cap is invalid")
                             requested_caps.append(cap)
                     output_cap = min([gateway.max_output_tokens, *requested_caps])
-                    input_tokens = len(raw)  # byte upper bound; tokenizers cannot exceed encoded bytes here.
+                    # Bind host context to the exact canonical bytes that the
+                    # dispatcher and broker will send, never to caller JSON.
+                    normalized_payload = normalize_chat_request(raw, gateway.model, output_cap)
+                    input_tokens = len(normalized_payload)  # conservative byte upper bound.
                     tool_request = bool(value.get("tools")) or value.get("tool_choice") not in (None, "none")
+                    handles = self.headers.get_all("X-Hermes-Installer-Context", [])
+                    if (len(handles) != 1
+                            or not isinstance(handles[0], str)
+                            or not re.fullmatch(r"[A-Za-z0-9_.:@~-]{16,512}", handles[0])):
+                        raise PolicyDenied(
+                            "context.handle_unavailable",
+                            "A single valid host-issued native request handle is required",
+                        )
+                    native_context_handle = handles[0]
                     cancellation = self._begin_request()
                     if cancellation is None:
                         self._reply(503, _error_body("gateway.closing", "Gateway is shutting down"))
                         return
                     try:
                         trace_id = str(uuid.uuid4())
-                        context = gateway.context_factory(
-                            purpose="native-hermes-chat",
-                            intent=trace_id,
-                            source_contexts=(),
-                            trace_id=trace_id,
-                            lease_seconds=30,
-                        )
+                        cancel_check = lambda: cancellation.is_set() or gateway._closing.is_set()
+                        final_digest = __import__("hashlib").sha256(normalized_payload).hexdigest()
+
+                        def issue_context(retry_index: int):
+                            # This opaque handle is a lookup key only; the host
+                            # must authenticate its native process/generation and
+                            # recover the complete verified source closure.
+                            return gateway.context_factory(
+                                native_context_handle=native_context_handle,
+                                normalized_payload=normalized_payload,
+                                purpose="native-hermes-chat",
+                                intent=trace_id,
+                                final_payload_digest=final_digest,
+                                operation="provider.dispatch",
+                                retry_index=retry_index,
+                                trace_id=trace_id,
+                                lease_seconds=30,
+                                cancelled=cancel_check,
+                            )
+
+                        context = issue_context(0)
+
+                        def refresh_context(_previous, *, final_payload_digest, operation,
+                                            retry_index, cancelled):
+                            if final_payload_digest != final_digest or operation != "provider.dispatch":
+                                raise PolicyDenied("authorization.binding", "Retry context binding changed")
+                            return issue_context(retry_index)
+
                         result = gateway.dispatcher.dispatch(
-                            context, gateway.model, raw, input_tokens=input_tokens,
+                            context, gateway.model, normalized_payload, input_tokens=input_tokens,
                             output_token_limit=output_cap, tool_request=tool_request,
-                            cancelled=lambda: cancellation.is_set() or gateway._closing.is_set(),
+                            cancelled=cancel_check, context_refresh=refresh_context,
                         )
                     finally:
                         self._end_request(cancellation)

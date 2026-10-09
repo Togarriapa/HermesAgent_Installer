@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any,Callable,Mapping
 from .cloudflare import CloudflareClient,CloudflareError
 from .config import RemoteSetup
-from .lifecycle import OwnedResource,RemoteJournal
+from .lifecycle import OwnedResource,RemoteJournal,RemotePhase
 
 class RemoteConflict(RuntimeError): pass
 class PolicyReadReferenceRequired(RuntimeError):
@@ -16,6 +16,12 @@ class ProvisionedRemote:
     access_app_id:str
     identity_provider_id:str
     dns_record_id:str
+
+@dataclass(frozen=True)
+class PreparedAccessResources:
+    access_app_id:str
+    access_policy_id:str
+    identity_provider_id:str
 
 class RemoteCloudflareProvisioner:
     """Only the caller-owned checkpoint callback persists state under process_lock."""
@@ -177,15 +183,33 @@ class RemoteCloudflareProvisioner:
             row=self._create(path,payload,lambda x:x.get("name")==host and x.get("comment")==payload["comment"],"DNS record","dns")
             rid=self._id(row); created=True
         self._save("dns","dns",rid,created); return rid
-    def provision_protected(self, *, runtime_token_writer: Callable[[str], None] | None = None):
-        if not callable(runtime_token_writer):
-            raise CloudflareError("A protected tunnel-token file writer is required before tunnel or DNS activation")
-        self._preflight() # no resource mutation before exact hostname conflicts are checked
-        from .lifecycle import RemotePhase
+    def prepare_access_resources(self):
+        """Checkpoint exact owned Access resources before route activation."""
+        self._preflight()
         try:
             idp=self.ensure_identity_provider()
             app=self.ensure_access_app(idp)
             self.ensure_email_policy(app)
+            policy=self.journal.resources.get("access_policy")
+            if policy is None:
+                raise CloudflareError("Installer-owned Access policy was not checkpointed")
+            self.journal.phase=RemotePhase.ACCESS_READY
+            self.journal.completed.add("access_ready")
+            self.journal.completed.discard("policy_read_verified")
+            self.journal.error_code=None
+            self.checkpoint(self.journal)
+            return PreparedAccessResources(app,policy.resource_id,idp)
+        except Exception:
+            self.journal.error_code="ACCESS_SETUP_INCOMPLETE"
+            self.checkpoint(self.journal)
+            raise
+    def provision_protected(self, *, runtime_token_writer: Callable[[str], None] | None = None):
+        if not callable(runtime_token_writer):
+            raise CloudflareError("A protected tunnel-token file writer is required before tunnel or DNS activation")
+        self._preflight() # no resource mutation before exact hostname conflicts are checked
+        try:
+            access=self.prepare_access_resources()
+            idp,app=access.identity_provider_id,access.access_app_id
             if self.journal.phase.value not in {RemotePhase.ACCESS_READY.value,RemotePhase.ORIGIN_READY.value,RemotePhase.TUNNEL_READY.value,RemotePhase.ACTIVE.value}:
                 self.journal.phase=RemotePhase.ACCESS_READY
                 self.journal.completed.add("access_ready")
@@ -207,6 +231,7 @@ class RemoteCloudflareProvisioner:
             except Exception:
                 self.journal.phase=RemotePhase.ACCESS_READY
                 self.journal.error_code="POLICY_READ_NOT_VERIFIED"
+                self.journal.completed.discard("policy_read_verified")
                 self.checkpoint(self.journal)
                 raise CloudflareError("Fresh protected Access policy verification failed; hostname remains unpublished") from None
             self.journal.completed.add("policy_read_verified")
@@ -240,6 +265,12 @@ class RemoteCloudflareProvisioner:
         except PolicyReadReferenceRequired:
             # Preserve the exact journal-owned Access checkpoint so the setup
             # can resume when the separate verifier token reference is supplied.
+            raise
+        except CloudflareError as exc:
+            if self.journal.error_code in {"POLICY_READ_NOT_VERIFIED", "POLICY_READ_REFERENCE_REQUIRED"}:
+                raise
+            self.journal.error_code="REMOTE_SETUP_INCOMPLETE"
+            self.checkpoint(self.journal)
             raise
         except Exception:
             self.journal.error_code="REMOTE_SETUP_INCOMPLETE"
