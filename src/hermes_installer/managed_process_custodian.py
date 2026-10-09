@@ -3083,7 +3083,7 @@ class ManagedBuildJobRunner:
                 "timed_out": timed_out, "cancelled": was_cancelled, "cleanup": cgroup_empty and pidfd_gone and launcher_reaped,
                 "limits": kernel_limits, "cgroup_limits": cgroup_limits,
                 "log_digest": log_digest, "log_bytes": len(log),
-                "started": start, "finished": finished,
+                "started": started, "finished": finished,
             }
             if successful:
                 with self._lock:
@@ -3093,7 +3093,7 @@ class ManagedBuildJobRunner:
                 pid=main_pid, start_ticks=start_ticks, exit_code=exit_code,
                 timed_out=timed_out, cancelled=was_cancelled,
                 cleanup_verified=bool(cgroup_empty and pidfd_gone and launcher_reaped),
-                started_monotonic=start, finished_monotonic=finished,
+                started_monotonic=started, finished_monotonic=finished,
                 kernel_limits=dict(kernel_limits), terminal_success_record_id=terminal_id,
                 process_identity_digest=identity, cgroup_id=observed_cgroup,
                 mount_namespace_inode=mount_ns, network_namespace_inode=network_ns,
