@@ -114,6 +114,15 @@ class PreflightContractTests(unittest.TestCase):
             self.assertIsNone(_resolve_dns(timeout=0.02))
             self.assertLess(time.monotonic() - start, 0.1)
 
+    def test_tls_probe_bounds_slow_resolver_and_keeps_certificate_validation(self) -> None:
+        import time
+        from hermes_installer.network import BoundedNetwork
+        slow=BoundedNetwork(deadline_seconds=0.15,socket_timeout=0.1,max_response_bytes=1024,
+            requester=lambda *args: time.sleep(2))
+        started=time.monotonic()
+        self.assertFalse(_tls_probe(timeout=0.15,network=slow))
+        self.assertLess(time.monotonic()-started,0.8)
+
     def test_support_matrix_checks_distribution_version_glibc_systemd_and_fhs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             os_release = Path(temporary) / "os-release"

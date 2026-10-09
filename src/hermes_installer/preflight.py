@@ -333,20 +333,18 @@ def _resolve_dns(host: str = "github.com", timeout: float = 3.0) -> list[tuple] 
     return value if isinstance(value, list) else []
 
 
-def _tls_probe(timeout: float = 3.0) -> bool | None:
-    # urllib honors explicitly configured system proxies and still uses the
-    # platform's certificate-verifying TLS context. The response body is never read.
-    request = urllib.request.Request("https://github.com/", method="HEAD", headers={"User-Agent": "hermes-installer-preflight/1"})
+def _tls_probe(timeout: float = 3.0, network=None) -> bool | None:
+    # BoundedNetwork keeps DNS, connect and TLS within the same hard deadline;
+    # the HTTPS implementation validates the platform CA chain and disables redirects.
+    from .network import BoundedNetwork, NetworkError
+    client = network or BoundedNetwork(deadline_seconds=max(0.1, min(timeout, 30.0)),
+        socket_timeout=max(0.1, min(timeout, 4.0)), max_response_bytes=1024)
     try:
-        response = urllib.request.urlopen(request, timeout=timeout, context=ssl.create_default_context())
-        response.close()
+        client.request("https://github.com/", method="HEAD",
+            headers={"User-Agent": "hermes-installer-preflight/1"})
         return True
-    except urllib.error.HTTPError:
-        # An HTTP status still proves the TLS handshake and certificate check succeeded.
-        return True
-    except (urllib.error.URLError, TimeoutError, OSError, ssl.SSLError):
+    except NetworkError:
         return False
-
 
 def _held_package_locks(lock_paths: tuple[Path, ...] = (Path("/var/lib/dpkg/lock-frontend"), Path("/var/lib/dpkg/lock"), Path("/var/lib/apt/lists/lock"), Path("/var/cache/apt/archives/lock"), Path("/var/lib/rpm/.rpm.lock")), errors: list[str] | None = None, proc_locks: Path = Path("/proc/locks")) -> tuple[str, ...]:
     identities: dict[str, str] = {}
