@@ -828,10 +828,10 @@ class RemoteServiceConnectorBackend:
             raise AuthorityDenied("connector.remote-session", "root remote session is not current for connector open")
         if binding.target_id != "xpra-native" or binding.route_id not in {"xpra-http", "xpra-websocket"}:
             raise AuthorityDenied("connector.route", "HI13 Xpra connector route is not fixed and enrolled")
-        if binding.action not in {"asset", "websocket"}:
+        if binding.action not in {"asset-read", "websocket-attach"}:
             raise AuthorityDenied("connector.action", "HI13 action is not an Xpra asset or binary WebSocket")
         route = ROUTES.get((binding.target_id, binding.route_id))
-        if route is None or (binding.action == "asset") != (route.protocol == "xpra-http"):
+        if route is None or (binding.action == "asset-read") != (route.protocol == "xpra-http"):
             raise AuthorityDenied("connector.route", "HI13 action and fixed Xpra route disagree")
         deadline = binding.lease_expires_monotonic
         payload = open_request_bytes(enrollment_id=binding.enrollment_id,
@@ -842,7 +842,8 @@ class RemoteServiceConnectorBackend:
                                       peer_uid, peer_pid, peer_pidfd,
                                       self._frame_timeout(binding),
                                       lambda: self.cancelled(binding), remote_session_seal=_REMOTE_SESSION_SEAL,
-                                      expected_deadline=deadline)
+                                      expected_deadline=deadline, expected_sequence=0,
+                                      expected_maximum_bytes=0)
         connector_id = _valid_id(value.get("connector_id"), "connector_id")
         if value.get("generation") != binding.native_generation:
             stream = self.connector._streams.get(connector_id)
@@ -925,11 +926,17 @@ class RemoteServiceConnectorBackend:
             raise AuthorityDenied("connector.response", "root connector write receipt is invalid")
         return len(data_bytes)
 
-    def close(self, binding: Any, connector_handle: str, *, authorization: Any,
+    def close(self, binding: Any, connector_handle: str, *, authorization: Any | None,
               cleanup: bool = False) -> None:
         with self._lock:
             owner = self._handles.get(connector_handle)
         if owner != (binding.session_id, binding.route_id):
+            return
+        if cleanup and authorization is None:
+            stream = self.connector._streams.get(connector_handle)
+            if stream is not None:
+                self.connector._dispose(stream)
+            self._forget(connector_handle)
             return
         # Cleanup is root-triggered and remains allowed after lease expiry.
         # The coordinator validates the one-use close grant before dispatch;
