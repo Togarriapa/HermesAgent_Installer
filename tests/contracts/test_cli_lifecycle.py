@@ -53,23 +53,28 @@ class CliLifecycleTests(unittest.TestCase):
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
             bootstrap.assert_not_called()
-    def test_selected_config_is_durable_and_mismatch_resume_is_denied(self):
+    def test_install_does_not_use_user_mode_bootstrap_or_create_state_roots(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
-            report=SimpleNamespace(commit="a"*40,generation=str(root/"data"/"generation"),
-                hermes_home=str(root/"data"/"profile"),agent_ready=True,desktop_built=True,
-                configuration_state="provider setup pending")
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
                  patch("hermes_installer.cli.HermesBootstrap") as bootstrap:
-                bootstrap.return_value.install.return_value=report
                 first=run(SimpleNamespace(command="install",config=config,dry_run=False))
                 self.assertEqual(first.state,OutcomeState.PENDING)
-                self.assertIn("./install.sh resume --config",first.resume_command)
-                changed=write_config(root/"changed.json",root/"data",root/"state",{"hermes_agent":True,"hermes_desktop":False})
-                second=run(SimpleNamespace(command="resume",config=changed))
-                self.assertEqual(second.state,OutcomeState.FAILED)
-                self.assertIn("differs",second.message)
-                self.assertEqual(bootstrap.return_value.install.call_count,1)
+                self.assertEqual(first.resume_command,"hermes-installer status")
+                self.assertIn("root-local setup launcher",first.message)
+                self.assertFalse((root/"data").exists())
+                self.assertFalse((root/"state").exists())
+                bootstrap.assert_not_called()
+
+    def test_update_apply_stays_pending_without_root_owned_lifecycle_effects(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
+            with patch("hermes_installer.cli.discover_host",return_value=self.host):
+                result=run(SimpleNamespace(command="update",action="apply",config=config))
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertFalse((root/"data").exists())
+            self.assertFalse((root/"state").exists())
+            self.assertTrue(result.findings[0].details["effects_started"] is False)
 
     def test_update_check_verifies_active_generation_without_creating_state(self):
         with tempfile.TemporaryDirectory() as td:

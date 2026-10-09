@@ -703,50 +703,23 @@ def run(args: argparse.Namespace) -> CommandResult:
             return CommandResult("install", OutcomeState.READY, "Dry run completed; no installer files, packages, services, or accounts were changed.", _host_findings(config))
         if config.components.get("hermes_agent") is False:
             return CommandResult(args.command, OutcomeState.FAILED, "Hermes Agent is explicitly disabled in configuration; no Agent stages were run.", exit_code=2)
-        data_path = Path(config.paths.get("data_root", "~/HermesInstaller/data")).expanduser()
         state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
-        resume_command = "./install.sh resume" + (f" --config {shlex.quote(str(args.config))}" if args.config else "")
-        try:
-            if args.command == "resume" and not _resume_checkpoint_exists(state_path):
-                return CommandResult("resume", OutcomeState.FAILED, "There is no readable installer checkpoint to resume; the state directory was not created.", exit_code=2)
-            data_root = OwnedRoot(data_path)
-            state_root = OwnedRoot(state_path)
-            state_root.ensure()
-            selection = {"schema_version": config.schema_version, "timezone": config.timezone,
-                "paths": config.paths, "components": config.components, "privacy": config.privacy,
-                "remote_desktop": config.remote_desktop}
-            with process_lock(state_root.path("installer.lock")):
-                data_root.ensure()
-                # Journal initialization can create/recover WAL state; keep it under
-                # the exclusive lock shared by status's immutable-reader gate.
-                journal = Journal(state_root.path("journal.sqlite3"))
-                prior = journal.operation("installer:selection")
-                if args.command == "resume" and prior is None:
-                    return CommandResult("resume", OutcomeState.FAILED, "There is no installer operation to resume; no stages were started.", exit_code=2)
-                if prior is not None and prior["payload"].get("config") != selection:
-                    return CommandResult(args.command, OutcomeState.FAILED, "Configuration differs from the durable installer selection; restore the original validated config before resuming.", resume_command=resume_command, exit_code=2)
-                if prior is None:
-                    journal.checkpoint("installer:selection", "active", {"config": selection,
-                        "config_path": str(args.config) if args.config else None})
-                report = HermesBootstrap(data_root, journal).install(include_desktop=config.components.get("hermes_desktop", True))
-                journal.checkpoint("installer:selection", "bootstrap-complete", {"config": selection,
-                    "config_path": str(args.config) if args.config else None, "commit": report.commit,
-                    "generation": report.generation, "agent_ready": report.agent_ready,
-                    "desktop_built": report.desktop_built})
-        except (BootstrapError, OwnershipError, OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
-            return CommandResult(args.command, OutcomeState.FAILED, str(exc),
-                resume_command=resume_command, exit_code=1)
-        findings = (
-            Finding("hermes.agent.bootstrap", "Pinned Hermes source and runtime stages completed", OutcomeState.READY if report.agent_ready else OutcomeState.PENDING, {"commit": report.commit, "generation": report.generation}),
-            Finding("hermes.desktop.build", "Official ARM64 Desktop artifact was produced" if report.desktop_built else "Official Desktop artifact remains unavailable", OutcomeState.READY if report.desktop_built else OutcomeState.PENDING),
-            Finding("hermes.configuration", report.configuration_state, OutcomeState.PENDING),
-        )
-        state = OutcomeState.PENDING
-        if report.agent_ready and (not config.components.get("hermes_desktop", True) or report.desktop_built):
-            message = "Pinned Hermes Agent and selected Desktop build verified; provider, user-session service, and remaining configuration steps are pending."
-        else:
-            message = "Pinned bootstrap finished with runtime verification pending; no public service was activated."
-        return CommandResult(args.command, state, message, findings, resume_command)
+        if args.command == "resume" and not _resume_checkpoint_exists(state_path):
+            return CommandResult("resume", OutcomeState.FAILED,
+                "There is no readable installer checkpoint to resume; the state directory was not created.", exit_code=2)
+        # Install/update execution belongs to the separately installed root-local
+        # setup entrypoint. The user-mode CLI has no authenticated launcher-status
+        # proof yet, so it must not create state roots or fall back to worker-side
+        # downloads/process execution. Root setup revalidates the durable selection
+        # and owns the transaction, enrollment, and managed effects.
+        resume_command = "hermes-installer status"
+        return CommandResult(args.command, OutcomeState.PENDING,
+            "The verified root-local setup launcher is not available through this user-mode command. "
+            "No installer state, data root, package, service, or account was changed. "
+            "Check the installed setup launcher with the supported status flow, then resume there.",
+            (Finding("lifecycle.root-setup", "Root-local launcher status is not verified; install/resume effects were not started.", OutcomeState.PENDING,
+                     {"launcher_verified": False, "effects_started": False}),),
+            resume_command=resume_command)
     if args.command == "data":
         facts = discover_host()
         if not facts.supported_arm64_linux:
@@ -776,11 +749,13 @@ def run(args: argparse.Namespace) -> CommandResult:
                     {"active_generation": identity, "active_digest": active.digest if active else None,
                      "candidate_generation": None, "candidate_available": False}),),
                 resume_command=f"hermes-installer update check" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
-        message = "Update activation is blocked until a pinned candidate and managed Hermes health probe are enrolled; no generation was switched."
+        message = ("The verified root-local setup launcher is not available through this user-mode command. "
+                   "No update or rollback effect was started; managed generation activation requires the root-owned transaction and live health observer.")
         return CommandResult("update", OutcomeState.PENDING, message,
             (Finding("lifecycle.update", message, OutcomeState.PENDING,
-                {"candidate_generation": None, "health_probe": "protected-managed-process-not-enrolled"}),),
-            resume_command=f"hermes-installer update {action}" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
+                {"candidate_generation": None, "health_probe": "protected-managed-process-not-enrolled",
+                 "effects_started": False}),),
+            resume_command="hermes-installer status")
     if args.command in {"configure", "test-connection", "select-memory", "resolve-source"}:
         facts = discover_host()
         if not facts.supported_arm64_linux:
