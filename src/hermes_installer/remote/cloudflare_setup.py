@@ -47,7 +47,8 @@ class RemoteCloudflareProvisioner:
         dns=self._rows(f"/zones/{self.zone}/dns_records",lambda r:r.get("name","").rstrip(".").casefold()==host)
         if dns:
             prior=self.journal.resources.get("dns")
-            if len(dns)!=1 or not prior or prior.resource_id!=dns[0].get("id"): raise RemoteConflict("Hostname has an existing unowned DNS record")
+            tunnel=self.journal.resources.get("tunnel")
+            if len(dns)!=1 or not prior or prior.resource_id!=dns[0].get("id") or not tunnel or dns[0].get("comment")!=self.marker+":hostname" or dns[0].get("type")!="CNAME" or dns[0].get("content")!=tunnel.resource_id+".cfargotunnel.com" or dns[0].get("proxied") is not True: raise RemoteConflict("Hostname has an existing unowned or changed DNS record")
         apps=self._rows(f"/accounts/{self.account}/access/apps",lambda r:host in (([r.get("domain")] if isinstance(r.get("domain"),str) else [])+(r.get("self_hosted_domains",[]) if isinstance(r.get("self_hosted_domains"),list) else [])))
         if apps:
             prior=self.journal.resources.get("access_app")
@@ -56,6 +57,10 @@ class RemoteCloudflareProvisioner:
         if tunnels:
             prior=self.journal.resources.get("tunnel")
             if len(tunnels)!=1 or not prior or prior.resource_id!=tunnels[0].get("id"): raise RemoteConflict("Same-named tunnel is not journal-owned")
+            if not prior.created:
+                conf=self.client.request("GET",f"/accounts/{self.account}/cfd_tunnel/{prior.resource_id}/configurations")
+                expected={"ingress":[{"hostname":self.setup.hostname,"service":f"http://127.0.0.1:{self.gateway_port}"},{"service":"http_status:404"}]}
+                if not isinstance(conf,dict) or conf.get("config")!=expected: raise RemoteConflict("Refusing to overwrite pre-existing journaled tunnel configuration")
     def _create(self,path,payload,predicate,label,step):
         self._intent(step)
         try:
@@ -67,13 +72,26 @@ class RemoteCloudflareProvisioner:
             raise
         raise CloudflareError("Cloudflare did not return created "+label)
     def ensure_identity_provider(self):
-        path=f"/accounts/{self.account}/access/identity_providers"
-        matches=self._rows(path,lambda x:x.get("type")=="onetimepin")
-        if len(matches)>1: raise RemoteConflict("Multiple OTP identity providers require explicit selection")
-        if matches: return self._id(matches[0])
-        name=self.marker+":email-code"
+        path=f"/accounts/{self.account}/access/identity_providers"; name=self.marker+":email-code"
+        rows=self._rows(path,lambda x:x.get("type")=="onetimepin")
+        marked=[x for x in rows if x.get("name")==name]
+        prior=self.journal.resources.get("identity_provider")
+        if len(marked)>1: raise RemoteConflict("Multiple installer OTP providers match")
+        if marked:
+            rid=self._id(marked[0])
+            if prior and prior.resource_id!=rid:raise RemoteConflict("Journaled identity-provider ID changed")
+            if not prior and "intent:identity_provider" not in self.journal.completed:raise RemoteConflict("Same-named OTP provider is not journal-owned")
+            self._save("identity_provider","identity_provider",rid,bool(prior and prior.created) or True);return rid
+        if prior:
+            if prior.created:raise RemoteConflict("Journaled identity provider is missing")
+            matches=[x for x in rows if x.get("id")==prior.resource_id]
+            if len(matches)!=1:raise RemoteConflict("Journaled shared identity provider is missing")
+            return prior.resource_id
+        if len(rows)>1:raise RemoteConflict("Multiple OTP identity providers require explicit selection")
+        if rows:
+            rid=self._id(rows[0]);self._save("identity_provider","identity_provider",rid,False);return rid
         row=self._create(path,{"name":name,"type":"onetimepin"},lambda x:x.get("name")==name and x.get("type")=="onetimepin","identity provider","identity_provider")
-        rid=self._id(row); self._save("identity_provider","identity_provider",rid,True); return rid
+        rid=self._id(row);self._save("identity_provider","identity_provider",rid,True);return rid
     def ensure_access_app(self,idp_id):
         path=f"/accounts/{self.account}/access/apps"; host=self.setup.hostname; name=self.marker+":desktop"
         row=self._one(self._rows(path,lambda x:x.get("domain")==host or host in (x.get("self_hosted_domains") or [])),"hostname Access app")
@@ -82,12 +100,14 @@ class RemoteCloudflareProvisioner:
             rid=self._id(row)
             if not prior or prior.resource_id!=rid or row.get("name")!=name: raise RemoteConflict("Hostname Access app is unowned")
             if row.get("allowed_idps")!=[idp_id]:
+                if not prior.created: raise RemoteConflict("Refusing to overwrite pre-existing journaled Access app settings")
                 self._intent("access_app_update")
                 body={"name":name,"type":"self_hosted","domain":host,"self_hosted_domains":row.get("self_hosted_domains") or [],"allowed_idps":[idp_id],"auto_redirect_to_identity":False,"session_duration":row.get("session_duration") or "24h","options":row.get("options") or {}}
                 row=self.client.request("PUT",path+"/"+rid,body)
-                if not isinstance(row,dict) or row.get("allowed_idps")!=[idp_id]: raise CloudflareError("Access app protection update was not verified")
+                if not isinstance(row,dict) or row.get("allowed_idps")!=[idp_id] or row.get("domain")!=host or row.get("type") not in {"self_hosted","self_hosted_app"}: raise CloudflareError("Access app protection update was not verified")
             self._save("access_app","access_app",rid,prior.created); return rid
         row=self._create(path,{"name":name,"type":"self_hosted","domain":host,"self_hosted_domains":[],"allowed_idps":[idp_id],"auto_redirect_to_identity":False,"session_duration":"24h","options":{}},lambda x:x.get("name")==name and x.get("domain")==host,"Access app","access_app")
+        if not isinstance(row,dict) or row.get("allowed_idps")!=[idp_id] or row.get("domain")!=host or row.get("type") not in {"self_hosted","self_hosted_app"}:raise CloudflareError("Created Access app protection was not verified")
         rid=self._id(row); self._save("access_app","access_app",rid,True); return rid
     def ensure_email_policy(self,app_id):
         path=f"/accounts/{self.account}/access/apps/{app_id}/policies"; policies=self.client.pages(path)
@@ -112,8 +132,13 @@ class RemoteCloudflareProvisioner:
         if row is None: row=self._create(path,{"name":self.tunnel_name,"config_src":"cloudflare"},lambda x:x.get("name")==self.tunnel_name,"tunnel","tunnel")
         rid=self._id(row); self._save("tunnel","tunnel",rid,created or bool(prior and prior.created))
         conf=f"/accounts/{self.account}/cfd_tunnel/{rid}/configurations"
-        self._intent("tunnel_configuration")
-        self.client.request("PUT",conf,{"config":{"ingress":[{"hostname":self.setup.hostname,"service":f"http://127.0.0.1:{self.gateway_port}"},{"service":"http_status:404"}]}})
+        desired={"ingress":[{"hostname":self.setup.hostname,"service":f"http://127.0.0.1:{self.gateway_port}"},{"service":"http_status:404"}]}
+        existing=self.client.request("GET",conf) if prior and not prior.created else None
+        if existing is not None:
+            if not isinstance(existing,dict) or existing.get("config")!=desired: raise RemoteConflict("Refusing to overwrite non-matching tunnel configuration")
+        else:
+            self._intent("tunnel_configuration")
+            self.client.request("PUT",conf,{"config":desired})
         token=self.client.request("GET",f"/accounts/{self.account}/cfd_tunnel/{rid}/token")
         if not isinstance(token,str) or not token: raise CloudflareError("Runtime tunnel token unavailable")
         return rid,token
@@ -130,8 +155,56 @@ class RemoteCloudflareProvisioner:
             rid=self._id(row); created=True
         self._save("dns","dns",rid,created); return rid
     def provision(self):
-        self._preflight() # no resource mutation before all exact conflicts have been checked
-        idp=self.ensure_identity_provider(); app=self.ensure_access_app(idp); self.ensure_email_policy(app)
-        if not self.origin_ready(): raise CloudflareError("Loopback gateway is not ready; hostname remains unpublished")
-        tunnel,token=self.ensure_tunnel(); dns=self.activate_dns(tunnel)
-        return ProvisionedRemote(tunnel,app,idp,dns,token)
+        self._preflight() # no resource mutation before exact hostname conflicts are checked
+        try:
+            idp=self.ensure_identity_provider()
+            app=self.ensure_access_app(idp)
+            self.ensure_email_policy(app)
+            if not self.origin_ready():raise CloudflareError("Loopback gateway is not ready; hostname remains unpublished")
+            tunnel,token=self.ensure_tunnel()
+            dns=self.activate_dns(tunnel)
+            return ProvisionedRemote(tunnel,app,idp,dns,token)
+        except Exception:
+            self.journal.error_code="REMOTE_SETUP_INCOMPLETE"
+            self.checkpoint(self.journal)
+            try:self.rollback()
+            except Exception:pass
+            raise
+    def rollback(self):
+        """Delete only journal-created, marker-matching resources in reverse order."""
+        from .lifecycle import RemotePhase
+        for kind in ("dns","tunnel","access_policy","access_app","identity_provider"):
+            resource=self.journal.resources.get(kind)
+            if not resource or not resource.created:continue
+            if resource.owner_marker!=self.journal.operation_id:raise RemoteConflict("refusing rollback of foreign resource")
+            if kind=="dns":
+                path=f"/zones/{self.zone}/dns_records";rows=self._rows(path,lambda x:x.get("id")==resource.resource_id)
+                tunnel=self.journal.resources.get("tunnel");target=(tunnel.resource_id+".cfargotunnel.com") if tunnel else None
+                if rows and (rows[0].get("comment")!=self.marker+":hostname" or rows[0].get("type")!="CNAME" or rows[0].get("content")!=target or rows[0].get("proxied") is not True):raise RemoteConflict("refusing to remove changed DNS record")
+                endpoint=path+"/"+resource.resource_id
+            elif kind=="tunnel":
+                path=f"/accounts/{self.account}/cfd_tunnel";rows=self._rows(path,lambda x:x.get("id")==resource.resource_id)
+                if rows and rows[0].get("name")!=self.tunnel_name:raise RemoteConflict("refusing to remove changed tunnel")
+                endpoint=path+"/"+resource.resource_id
+            elif kind=="access_app":
+                path=f"/accounts/{self.account}/access/apps";rows=self._rows(path,lambda x:x.get("id")==resource.resource_id)
+                if rows and rows[0].get("name")!=self.marker+":desktop":raise RemoteConflict("refusing to remove changed Access app")
+                endpoint=path+"/"+resource.resource_id
+            elif kind=="access_policy":
+                app=self.journal.resources.get("access_app")
+                if not app:raise RemoteConflict("cannot identify owning Access app for rollback")
+                path=f"/accounts/{self.account}/access/apps/{app.resource_id}/policies";rows=self._rows(path,lambda x:x.get("id")==resource.resource_id)
+                if rows and rows[0].get("name")!=self.marker+":allowed-emails":raise RemoteConflict("refusing to remove changed Access policy")
+                endpoint=path+"/"+resource.resource_id
+            else:
+                path=f"/accounts/{self.account}/access/identity_providers";rows=self._rows(path,lambda x:x.get("id")==resource.resource_id)
+                if rows and (rows[0].get("name")!=self.marker+":email-code" or rows[0].get("type")!="onetimepin"):raise RemoteConflict("refusing to remove changed identity provider")
+                endpoint=path+"/"+resource.resource_id
+            self._intent("rollback:"+kind)
+            try:
+                if rows:self.client.request("DELETE",endpoint)
+            except CloudflareError:
+                if self._rows(path,lambda x:x.get("id")==resource.resource_id):raise
+            if self._rows(path,lambda x:x.get("id")==resource.resource_id):raise CloudflareError("Remote rollback could not verify deletion")
+            self.journal.resources.pop(kind,None);self.journal.completed.add("rolled_back:"+kind);self.checkpoint(self.journal)
+        self.journal.phase=RemotePhase.DISABLED;self.journal.completed.add("rollback_complete");self.checkpoint(self.journal)
