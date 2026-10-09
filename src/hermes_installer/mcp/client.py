@@ -92,12 +92,15 @@ def _validate_value(value: Any, schema: Mapping[str, Any], depth: int = 0) -> No
             raise MCPError("tool argument is outside its permitted range")
 
 
+# Parameter spelling follows the live Google MCP JSON input schemas (ProtoJSON
+# camelCase), and selectors are exact resource keys, never incidental values.
 _SELECTION_ARGUMENTS: Mapping[str, Mapping[str, tuple[str, ...]]] = {
-    "figma": {"*": ("file_key",)}, "revenuecat": {"*": ("project_id",)},
-    "google-gmail": {"get_message": ("message_id",), "get_thread": ("thread_id",)},
-    "google-drive": {"*": ("file_id",)}, "google-docs": {"*": ("document_id",)},
-    "google-sheets": {"*": ("spreadsheet_id",)},
-    "google-calendar": {"get_event": ("event_id",), "list_events": ("calendar_id",)},
+    "figma": {"*": ("fileKey",)}, "revenuecat": {"*": ("projectId",)},
+    "google-gmail": {"get_message": ("messageId",), "get_thread": ("threadId",)},
+    "google-drive": {"get_file_metadata": ("fileId",), "read_file_content": ("fileId",)},
+    "google-docs": {"read_doc": ("documentId",)},
+    "google-sheets": {"get_spreadsheet": ("spreadsheetId",), "get_values": ("spreadsheetId",)},
+    "google-calendar": {"get_event": ("eventId",), "list_events": ("calendarId",)},
     "google-contacts": {"search_contacts": ("query",)},
     "home-assistant": {"*": ("entity_id", "entity_ids")}, "playwright": {"*": ("url",)},
     "fixture": {"get_state": ("entity_id",)},
