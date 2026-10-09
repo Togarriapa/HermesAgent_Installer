@@ -90,9 +90,9 @@ class RootTaskNativeObservationRegistry:
     """Join actual input, native bridge, tool-result, custody and job evidence.
 
     Dependencies are concrete root registries, not worker callbacks. The
-    registry starts capture after custody has delivered the exact admitted
-    stdin frame and EOF, then watches the root-owned native response records
-    while that exact process remains live.
+    registry binds the root coordinator's captured and delivered input before
+    custody writes stdin, then watches root-owned native response records while
+    that exact process remains live.
     """
 
     def __init__(self, source_observer_registry: Any, native_bridge_broker: Any,
@@ -606,6 +606,8 @@ class RootTaskNativeObservationRegistry:
                    and getattr(event, "producer_profile_id", None) == run.profile_id
                    and getattr(event, "producer_generation", None) == task.process_generation
                    and getattr(event, "parent_closure_digest", None) == run.source_closure.lineage_hash
+                   and getattr(event, "native_loader_ready_event_id", None)
+                   == receipt.native_loader_ready_event_id
                    and getattr(event, "expires_monotonic", 0) >= receipt.expires_monotonic]
         if len(matches) != 1:
             return None
