@@ -158,12 +158,20 @@ def load_acceptance_catalog(planning_dir: str | Path) -> dict[str, Any]:
                     "artifacts": [],
                     "blocker": "No authenticated implementation evidence has been recorded",
                 })
-        for item in manifest.get("acceptance", ()):
+        raw_acceptance = manifest.get("acceptance", ())
+        # Amendments use either a list of additions (AC16) or one metadata
+        # object (AC17/AC18). Treat the latter as one row, never as its string
+        # keys; object shapes without explicit requirement links apply to all
+        # requirements in that amendment.
+        acceptance_items = [raw_acceptance] if isinstance(raw_acceptance, Mapping) else raw_acceptance
+        if not isinstance(acceptance_items, (list, tuple)):
+            raise ValueError(f"invalid acceptance entries in {filename}")
+        for item in acceptance_items:
             if not isinstance(item, Mapping) or not item.get("id"):
                 raise ValueError(f"invalid acceptance entry in {filename}")
             requirement_ids = list(item.get("requirement_ids", item.get("requirements", ())))
             if not requirement_ids:
-                raise ValueError(f"acceptance {item['id']} has no linked requirements")
+                requirement_ids = list(requirements)
             task_ids = list(item.get("tasks", item.get("task_ids", ())))
             if not task_ids:
                 wanted_requirements = set(requirement_ids)

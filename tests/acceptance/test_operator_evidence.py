@@ -91,7 +91,7 @@ class OperatorEvidenceTests(unittest.TestCase):
         self.assertEqual("pass", verified.state.value)
         result["assertions"][request["expected_assertions"][0]] = False
         with tempfile.TemporaryDirectory() as temp:
-            record = verified.retain(OwnedRoot(temp))
+            record = verified.retain(OwnedRoot(Path(temp)))
             self.assertEqual(EvidenceState.PASS, record.state)
             self.assertEqual(EvidenceClass.FIXTURE, record.evidence_class)
             artifact = next(Path(temp).rglob("*.json"))
