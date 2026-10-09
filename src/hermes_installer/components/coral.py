@@ -96,9 +96,11 @@ class CoralDevice:
             raise CoralError("Coral USB device lacks the exact interface identity required for root-owned binding")
         if self.transport == "pcie" and not self.driver_identity:
             raise CoralError("Coral PCIe device lacks the bound driver identity required for root-owned binding")
+        if self.transport not in {"usb", "pcie"}:
+            raise CoralError("Coral transport is not enrolled for root-owned binding")
         return {
             "schema": 1,
-            "transport": self.transport,
+            "transport": "pci" if self.transport == "pcie" else "usb",
             "physical_identity": self.address,
             "address": self.address,
             "vendor_id": self.vendor_id,
@@ -115,7 +117,9 @@ class CoralDevice:
             "interface_sysfs_path": self.interface_sysfs_path,
             "driver_identity": self.driver_identity,
             "driver": self.driver_identity,
-            "identity_sha256": self.identity_sha256,
+            # This digest is a local observation check only. Root custody creates
+            # the generation-bound DeviceIdentity.selection_digest independently.
+            "observed_identity_sha256": self.identity_sha256,
         }
 
 
@@ -491,7 +495,10 @@ class CoralInferenceEvidence:
 
 
 def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
-                              *, sample_path: Path, runtime_path: Path) -> CoralInferenceEvidence:
+                              *, sample_path: Path, runtime_path: Path,
+                              root_selection_digest: str) -> CoralInferenceEvidence:
+    if not re.fullmatch(r"[0-9a-f]{64}", root_selection_digest):
+        raise CoralError("root-attested generation-bound device selection digest is required")
     _verify_sample(sample_path)
     if runtime_path.is_symlink() or not runtime_path.is_file():
         raise ArtifactError("selected Edge TPU runtime library must be a regular non-symlink file")
@@ -501,8 +508,8 @@ def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
     if raw.get("transport") != device.transport or raw.get("device_address") != device.address:
         raise ArtifactError("inference evidence does not match the selected physical Coral device")
     identity = raw.get("device_identity_sha256")
-    if identity != device.identity_sha256 or not isinstance(identity, str):
-        raise ArtifactError("inference evidence does not match the root-selected kernel device identity")
+    if identity != root_selection_digest or not isinstance(identity, str):
+        raise ArtifactError("inference evidence does not match the root-attested device selection digest")
     delegate_loaded = raw.get("delegate_loaded") is True
     delegate_used = raw.get("delegate_used") is True
     performed = raw.get("inference_performed") is True

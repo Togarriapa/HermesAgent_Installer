@@ -34,13 +34,25 @@ def test_selected_device_binding_requires_exact_kernel_node_identity() -> None:
                            "1-1:1.0", "/sys/devices/platform/usb/1-1/1-1:1.0")
     binding = selected.host_binding_request()
     assert binding["physical_identity"] == "1-1"
+    assert binding["transport"] == "usb"
     assert binding["interface_identity"] == "1-1:1.0"
     assert binding["major"] == 189 and binding["inode"] == 4242
     assert binding["device_node"] == "/dev/bus/usb/001/002"
     assert binding["device_major"] == 189 and binding["device_minor"] == 1
-    assert binding["identity_sha256"] == selected.identity_sha256
+    assert binding["observed_identity_sha256"] == selected.identity_sha256
     with pytest.raises(CoralError, match="complete kernel identity"):
         device().host_binding_request()
+
+
+def test_pcie_binding_uses_catalog_transport_and_driver_identity() -> None:
+    selected = CoralDevice("pcie", "0000:01:00.0", "1ac1", "089a", "/dev/apex_0",
+        "accessible", "/sys/devices/pci0000:00/0000:00:01.0", 120, 0, 7001,
+        driver_identity="apex")
+    binding = selected.host_binding_request()
+    assert binding["transport"] == "pci"
+    assert binding["physical_identity"] == "0000:01:00.0"
+    assert binding["driver"] == "apex"
+    assert binding["interface_identity"] is None
 
 
 def test_legacy_runtime_is_separate_and_exactly_reports_unavailable_interpreter(tmp_path: Path) -> None:
@@ -157,25 +169,30 @@ def test_delegate_use_and_actual_output_required_even_for_selected_device(tmp_pa
     runtime.write_bytes(b"runtime")
     monkeypatch.setattr(coral, "_verify_sample", lambda path: None)
     monkeypatch.setattr(coral, "_sha256", lambda path: "a" * 64)
+    selection_digest = "d" * 64
     base = {"model_sha256": coral.CORAL_SAMPLE_SHA256, "transport": "usb", "device_address": "1-1",
         "runtime_sha256": "a" * 64, "delegate_library": "/runtime/libedgetpu.so.1",
         "runtime_version": "2.14", "python_version": "3.9", "architecture": "aarch64",
         "delegate_loaded": True, "delegate_used": True, "delegated_operation_count": 1,
         "inference_performed": True, "output_sha256": "b" * 64, "elapsed_seconds": 0.04,
-        "hermes_python_changed": False, "device_identity_sha256": device().identity_sha256}
-    assert assess_inference_evidence(base, device(), sample_path=sample, runtime_path=runtime).status == "verified_delegate_used"
+        "hermes_python_changed": False, "device_identity_sha256": selection_digest}
+    evidence_args = {"sample_path": sample, "runtime_path": runtime,
+                     "root_selection_digest": selection_digest}
+    assert assess_inference_evidence(base, device(), **evidence_args).status == "verified_delegate_used"
     for patch, message in (({"delegate_used": False}, "completed inference"),
                            ({"delegated_operation_count": 0}, "completed inference"),
                            ({"inference_performed": False}, "completed inference"),
                            ({"output_sha256": None}, "output digest"),
                            ({"delegate_loaded": False}, "CPU fallback")):
         with pytest.raises(CoralError, match=message):
-            assess_inference_evidence(base | patch, device(), sample_path=sample, runtime_path=runtime)
+            assess_inference_evidence(base | patch, device(), **evidence_args)
     with pytest.raises(ArtifactError, match="model"):
-        assess_inference_evidence(base | {"model_sha256": "0" * 64}, device(), sample_path=sample, runtime_path=runtime)
-    with pytest.raises(ArtifactError, match="kernel device identity"):
-        assess_inference_evidence(base | {"device_identity_sha256": "0" * 64}, device(),
-                                  sample_path=sample, runtime_path=runtime)
+        assess_inference_evidence(base | {"model_sha256": "0" * 64}, device(), **evidence_args)
+    with pytest.raises(ArtifactError, match="root-attested device selection digest"):
+        assess_inference_evidence(base | {"device_identity_sha256": "0" * 64}, device(), **evidence_args)
+    with pytest.raises(CoralError, match="root-attested generation-bound"):
+        assess_inference_evidence(base, device(), sample_path=sample, runtime_path=runtime,
+                                  root_selection_digest="not-a-digest")
 
 
 def test_worker_calls_delegate_invokes_model_and_requires_delegate_operation(tmp_path: Path, monkeypatch) -> None:
