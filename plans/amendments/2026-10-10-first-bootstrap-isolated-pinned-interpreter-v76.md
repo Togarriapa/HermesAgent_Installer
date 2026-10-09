@@ -1,0 +1,5 @@
+# First-bootstrap isolated pinned interpreter v76
+
+Original isolated installer runtime and first-source actor obligations need an actual executable before installed deployment exists. Reuses the already exact official CPython3.14.7 ARM64 payload in a separate installer prefix, plus the existing requirements-runtime.txt exact PyYAML cp314 ARM64 wheel hash. Source/TLS/hash acquisition is staging only, followed by fixed isolated re-exec and actual actor/runtime observation before authority effects. No new OS package trust adapter, global downgrade, unpinned lock or alternate Hermes PM runtime claim. Baseline unchanged/all AC pending.
+
+Primary source: selected Hermes PM lock and [official PyYAML metadata](https://pypi.org/pypi/PyYAML/6.0.3/json). Python venv alone remains dependent on its base install; this contract requires actual dedicated full runtime closure, not merely a copied venv binary ([Python documentation](https://docs.python.org/3/library/venv.html)). Existing BD/HI evidence gates require actual Linux execution and failure probes, not Mac/source-only acceptance.
