@@ -25,8 +25,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          source_dir="\${RUNNER_TEMP}/browser-use-source"
-          output_dir="\${RUNNER_TEMP}/browser-use-lock-evidence"
+          source_dir="${RUNNER_TEMP}/browser-use-source"
+          output_dir="${RUNNER_TEMP}/browser-use-lock-evidence"
           git init "$source_dir"
           git -C "$source_dir" remote add origin https://github.com/browser-use/browser-use.git
           git -C "$source_dir" fetch --depth=1 origin "$SOURCE_REVISION"
@@ -65,6 +65,6 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # upload-artifact v4
         with:
           name: browser-use-aarch64-python314-lock
-          path: \${{ runner.temp }}/browser-use-lock-evidence/
+          path: ${{ runner.temp }}/browser-use-lock-evidence/
           if-no-files-found: error
           retention-days: 7
