@@ -45,3 +45,7 @@ Use planning/protected-lifecycle-control-contract.json native_health_receipt for
 ### v16 installed input closure joins
 
 Use the exact installed_selection_catalog.release_root, task_runner_protocol.source_resolver and native-package-binding-contract.json initial_native_input_observer joins. Existing BD/HI/RB tasks and acceptance remain pending.
+
+### v19 setup store and probe DTO
+
+Use installed_selection_catalog artifact_catalog/artifact_store joins, root task canonical payload bytes and gateway_probe_response exact envelope. Existing BD/HI/RB tasks remain pending.
