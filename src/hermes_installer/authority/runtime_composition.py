@@ -18,6 +18,32 @@ from hermes_installer.authority.service import AuthorityService
 from hermes_installer.authority.enrollment import ProtectedEnrollment, RootCredentialVault
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.protected_enrollment import RootJournalSelection
+
+_AUTHORITY_JOURNAL_ROOT_ID = "installer-authority-journal-v1"
+_RESOURCE_JOB_LEDGER_FILENAME = "resource-jobs.sqlite3"
+
+
+def _root_resource_job_ledger_path(bindings: RootRuntimeBindings,
+                                   enrollment: ProtectedEnrollment) -> Path:
+    resolver = getattr(bindings, "resolve_root_journal", None)
+    if not callable(resolver):
+        raise AuthorityDenied("journal.unavailable", "root bindings have no protected journal resolver")
+    try:
+        selection = resolver(
+            _AUTHORITY_JOURNAL_ROOT_ID,
+            expected_active_generation_digest=enrollment.protected_enrollment_digest,
+        )
+    except Exception:
+        raise AuthorityDenied("journal.unavailable", "protected authority journal is unavailable") from None
+    path = selection.path if isinstance(selection, RootJournalSelection) else None
+    if (not isinstance(selection, RootJournalSelection)
+            or selection.root_id != _AUTHORITY_JOURNAL_ROOT_ID
+            or selection.service_generation_digest != enrollment.protected_enrollment_digest
+            or not isinstance(path, Path) or not path.is_absolute()
+            or not selection.generation or selection.device < 0 or selection.inode <= 0):
+        raise AuthorityDenied("journal.unavailable", "protected authority journal selection is malformed")
+    return path / _RESOURCE_JOB_LEDGER_FILENAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +118,22 @@ class RootAuthorityRuntime:
         return getattr(self.service, "native_window_observer", None)
 
     @property
+    def native_bridge_broker(self) -> Any | None:
+        return getattr(self.service, "native_bridge_broker", None)
+
+    @property
+    def native_invocation_registry(self) -> Any | None:
+        return getattr(self.service, "native_invocation_registry", None)
+
+    @property
+    def task_native_observations(self) -> Any | None:
+        return getattr(self.service, "task_native_observations", None)
+
+    @property
+    def native_mcp_dispatcher(self) -> Any | None:
+        return getattr(self.service, "native_mcp_dispatcher", None)
+
+    @property
     def remote_session_authority(self) -> Any | None:
         return self.service.remote_session_authority
 
@@ -112,9 +154,25 @@ class RootAuthorityRuntime:
     def close(self) -> None:
         """Close attached root observers and stop the active remote lease worker."""
         errors: list[BaseException] = []
-        for component in (self.native_runtime_observer, self.source_observer_registry,
-                          self.native_loader_observation_store,
-                          self.gateway_boundary_observer, self.native_window_observer):
+        # Dependents close before the registries they retain. These attributes
+        # are populated only by the concrete one-time service attachment APIs;
+        # the composer never installs capability flags or callback placeholders.
+        components = (
+            self.task_native_observations,
+            self.native_mcp_dispatcher,
+            self.native_runtime_observer,
+            self.native_invocation_registry,
+            self.native_bridge_broker,
+            self.source_observer_registry,
+            self.native_loader_observation_store,
+            self.gateway_boundary_observer,
+            self.native_window_observer,
+        )
+        closed: set[int] = set()
+        for component in components:
+            if component is None or id(component) in closed:
+                continue
+            closed.add(id(component))
             close = getattr(component, "close", None)
             if callable(close):
                 try:
@@ -198,6 +256,15 @@ class RootAuthorityRuntime:
             expected_active_generation_digest=expected_active_generation_digest,
         )
 
+    def resource_job_ledger_path(self) -> Path:
+        """Return the fixed ledger child of the current protected authority journal.
+
+        The active journal catalog revalidates its root path and inode. The
+        database filename is an installer constant; neither setup nor a worker
+        can select a filesystem location for the job ledger.
+        """
+        return _root_resource_job_ledger_path(self.bindings, self.enrollment)
+
 
 def compose_root_authority_runtime(
     *,
@@ -206,15 +273,13 @@ def compose_root_authority_runtime(
     bindings: RootRuntimeBindings,
     artifact_catalog: ArtifactCatalog,
     vault: RootCredentialVault,
-    resource_job_store: Path | None = None,
 ) -> RootAuthorityRuntime:
     """Assemble selected runtime registries from the active verified snapshot.
 
-    The optional job store is a concrete filesystem location supplied by the
-    root daemon's fixed service configuration. If active resource jobs exist,
-    the root-installed SourceObserverRegistry must already be attached to the
-    real service; missing observer, artifact, backend, or effect joins leave
-    individual jobs unregistered.
+    Active job state is placed only below the digest-bound protected authority
+    journal. If active resource jobs exist, the root-installed source and
+    native execution registries must already be attached to the real service;
+    missing observer, artifact, backend, or effect joins leave jobs unroutable.
     """
     if (not isinstance(service, AuthorityService)
             or not isinstance(enrollment, ProtectedEnrollment)
@@ -588,13 +653,13 @@ def compose_root_authority_runtime(
 
     job_authority = None
     if jobs:
-        if not isinstance(resource_job_store, Path) or not resource_job_store.is_absolute():
-            raise AuthorityDenied("authority.composition", "active resource jobs require a fixed private root store")
         if source_observers is None:
             raise AuthorityDenied("authority.composition", "active resource jobs have no root source observer")
         from hermes_installer.registry.resource_jobs import ResourceJobLedger
 
-        ledger = ResourceJobLedger(resource_job_store, monotonic=service.monotonic)
+        job_store = _root_resource_job_ledger_path(bindings, enrollment)
+
+        ledger = ResourceJobLedger(job_store, monotonic=service.monotonic)
         selected_generations: dict[str, str] = {}
         for row in enrollment.resource_job_records:
             if row.get("selected_enabled") is True:
