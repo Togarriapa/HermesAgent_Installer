@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from hermes_installer.preflight import _disk_facts, _held_package_locks, _ports, _coral_facts, _resolve_dns, _linux_release_supported, _runtime_platform_ready, _matching_service_units
+from hermes_installer.preflight import _disk_facts, _held_package_locks, _ports, _coral_facts, _resolve_dns, _linux_release_supported, _runtime_platform_ready, _matching_service_units, _graphical_session
 
 
 def _hold_file_lock(path: str, ready, release) -> None:
@@ -22,6 +22,21 @@ def _hold_file_lock(path: str, ready, release) -> None:
 
 
 class PreflightContractTests(unittest.TestCase):
+    def test_remote_shell_discovers_active_graphical_user_session(self) -> None:
+        from unittest.mock import patch
+
+        class FakeRunner:
+            def __init__(self, **_kwargs):
+                pass
+
+            def run(self, argv, **_kwargs):
+                if argv[1] == "list-sessions":
+                    return type("Result", (), {"returncode": 0, "stdout": "3 1000 admin seat0 tty2\\n"})()
+                return type("Result", (), {"returncode": 0, "stdout": "Name=admin\\nClass=user\\nType=wayland\\nState=active\\n"})()
+
+        with patch("hermes_installer.runner.CommandRunner", FakeRunner):
+            self.assertTrue(_graphical_session({}, True))
+
     def test_existing_apt_lock_file_is_not_mistaken_for_an_active_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "dpkg.lock"

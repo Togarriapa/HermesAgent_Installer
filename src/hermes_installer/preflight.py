@@ -98,7 +98,37 @@ def discover_host(*, sys_root: Path = Path("/sys"), proc_root: Path = Path("/pro
         supported = False
     if not run_subprocess:
         limitations.append("Subprocess-based disk, service, and DNS probes were disabled by the fixture")
-    return HostFacts(os_name, version, architecture, supported, ram, disks, coral, bool(env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")), env.get("USER") or env.get("LOGNAME") or "unknown", locks, tuple(lock_errors), services, ports, dns, tls, tuple(provenance), tuple(limitations))
+    graphical = _graphical_session(env, run_subprocess)
+    if os_name == "Linux" and run_subprocess:
+        provenance.append("loginctl show-session")
+    return HostFacts(os_name, version, architecture, supported, ram, disks, coral, graphical, env.get("USER") or env.get("LOGNAME") or "unknown", locks, tuple(lock_errors), services, ports, dns, tls, tuple(provenance), tuple(limitations))
+
+
+def _graphical_session(env: dict[str, str], use_subprocess: bool) -> bool:
+    if env.get("DISPLAY") or env.get("WAYLAND_DISPLAY"):
+        return True
+    if not use_subprocess:
+        return False
+    try:
+        from .runner import CommandRunner
+
+        runner = CommandRunner(allowed_programs={"loginctl"}, timeout=2)
+        sessions = runner.run(["loginctl", "list-sessions", "--no-legend", "--no-pager"], cwd=Path("/"))
+        if sessions.returncode != 0:
+            return False
+        for line in sessions.stdout.splitlines():
+            fields = line.split()
+            if not fields or not fields[0].isdigit():
+                continue
+            detail = runner.run(["loginctl", "show-session", fields[0]], cwd=Path("/"))
+            if detail.returncode != 0:
+                continue
+            properties = dict(item.split("=", 1) for item in detail.stdout.splitlines() if "=" in item)
+            if properties.get("Type") in {"wayland", "x11"} and properties.get("Class") == "user" and properties.get("State") == "active":
+                return True
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return False
 
 
 def _read_os_release(path: Path) -> dict[str, str]:

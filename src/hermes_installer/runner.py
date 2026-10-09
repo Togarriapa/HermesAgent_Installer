@@ -29,7 +29,7 @@ class ProcessResult:
 class CommandRunner:
     """Runs an allowlisted read-only probe; argument vectors are never shell parsed."""
 
-    _SAFE_PROGRAMS = {"uname", "lsblk", "findmnt", "df", "systemctl", "dpkg-query", "rpm", "sha256sum", "shasum"}
+    _SAFE_PROGRAMS = {"uname", "lsblk", "findmnt", "df", "systemctl", "loginctl", "dpkg-query", "rpm", "sha256sum", "shasum"}
     _PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
     MAX_OUTPUT_BYTES = 1024 * 1024
 
@@ -139,6 +139,10 @@ def _approved_invocation(program: str, args: tuple[str, ...]) -> bool:
     if program == "systemctl":
         return args == ("list-units", "--all", "--type", "service", "--no-legend", "--no-pager") or (
             len(args) == 4 and args[:2] == ("show", "--property") and args[2] in {"ActiveState", "UnitFileState", "LoadState"} and _safe_unit_name(args[3])
+        )
+    if program == "loginctl":
+        return args == ("list-sessions", "--no-legend", "--no-pager") or (
+            len(args) == 2 and args[0] == "show-session" and args[1].isdigit() and len(args[1]) <= 12
         )
     if program == "dpkg-query":
         return len(args) == 2 and args[0] == "--show" and _safe_package_name(args[1])
