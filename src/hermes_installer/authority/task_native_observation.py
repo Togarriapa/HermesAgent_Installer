@@ -208,6 +208,10 @@ class RootTaskNativeObservationRegistry:
                 != run.service_generation_digest
                 or self.monotonic() >= run.deadline):
             raise AuthorityDenied("resource.native_binding", "running task selection binding is stale")
+        if not self._source_snapshot_current(
+                admission_handle, run.admitted_task, run.source_closure,
+                require_controller=False):
+            raise AuthorityDenied("resource.native_binding", "running task source closure is stale")
         state = self.process_custody._resolve_task_handle(task_handle)
         if getattr(state, "handle", None) is not run.process_handle:
             raise AuthorityDenied("resource.native_binding", "running task process identity changed")
@@ -616,17 +620,7 @@ class RootTaskNativeObservationRegistry:
                 peer_pid=pid, peer_pidfd=pidfd)
         except Exception:
             return None
-        process_bindings = getattr(self.source_observers, "_receipt_process_bindings", {})
-        process_binding = (process_bindings.get(getattr(input_receipt, "receipt_id", ""))
-                           if isinstance(process_bindings, Mapping) else None)
-        loaded_closure = getattr(process_binding, "loaded_package_proof", None)
         if (delivered != receipt.producer_context_delivery_handle
-                or process_binding is None
-                or getattr(loaded_closure, "package_id", None) != task.native_package_id
-                or getattr(loaded_closure, "profile_id", None) != run.profile_id
-                or getattr(loaded_closure, "generation", None) != task.process_generation
-                or getattr(loaded_closure, "target_peer_identity", None) != identity
-                or getattr(loaded_closure, "loader_ready_event_id", None) != ready_event_id
                 or not self._receipt_live(input_receipt, now)
                 or not self._receipt_descends_from_task(run, input_receipt)):
             return None
