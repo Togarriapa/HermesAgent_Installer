@@ -200,6 +200,15 @@ class AuthorityClient:
         """
         raise AuthorityDenied("source.issuer", "generic worker source capture is not an enrolled issuer")
 
+    def remote_sessions(self) -> Any:
+        """Return typed HI13 calls over this client's authenticated Unix RPC.
+
+        The root service still denies every remote operation unless it was
+        constructed with a complete protected RemoteSessionAuthority.
+        """
+        from .remote_sessions import RemoteAuthorityClient
+        return RemoteAuthorityClient(lambda operation, payload: self._rpc(operation, payload))
+
     def prepare_native_event(self, payload: bytes, *, parent_receipt_handles: Sequence[str] = (),
                              purpose: str, intent_id: str, trace_id: str,
                              retry_index: int = 0, timeout: float = 5.0,

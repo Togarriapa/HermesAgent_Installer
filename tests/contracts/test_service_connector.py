@@ -175,6 +175,87 @@ class FixedServiceConnectorContracts(unittest.TestCase):
             _call(self.connector, "connector.read", payload, pidfd=self.pidfd, cancelled=lambda: True)
         self.assertNotIn(opened["connector_id"], self.connector._streams)
 
+    def test_hi13_backend_drives_fixed_socket_effect_and_closes_it(self):
+        from types import SimpleNamespace
+        from hermes_installer.service_connector import RemoteServiceConnectorBackend
+
+        session_id = "session:fixture"
+        lease_deadline = time.monotonic() + 20
+        frame_deadline = time.monotonic() + 5
+        gateway_identity = SimpleNamespace(uid=1234, pid=os.getpid(),
+                                            profile_id="gateway-profile",
+                                            generation="gateway-generation")
+        binding = SimpleNamespace(
+            gateway_identity=gateway_identity, gateway_profile_id="gateway-profile",
+            gateway_generation="gateway-generation", session_id=session_id,
+            target_id="xpra-native", route_id="xpra-http", action="asset-read",
+            enrollment_id="enrollment:fixture", native_generation="generation:1",
+            native_profile_id="hermes-desktop", lease_expires_monotonic=lease_deadline,
+            frame_deadline_monotonic=frame_deadline, cancelled=lambda: False,
+        )
+
+        def root_auth(operation, payload, deadline, sequence, maximum_bytes):
+            context = _context(operation, generation="generation:1", payload=payload)
+            return SimpleNamespace(
+                operation=operation, target_id="xpra-native", route_id="xpra-http",
+                session_id=session_id, generation="generation:1", deadline=deadline,
+                sequence=sequence, maximum_bytes=maximum_bytes,
+                request_digest=canonical_digest(payload), host_context=context,
+                effect_authorization=_authorization(context, operation, "xpra-native", payload),
+            )
+
+        def authorize(operation, payload, deadline, sequence, maximum_bytes):
+            return root_auth(operation, payload, deadline, sequence, maximum_bytes)
+
+        backend = RemoteServiceConnectorBackend(self.connector, validate_binding=lambda *_: True)
+        open_payload = open_request_bytes(
+            enrollment_id="enrollment:fixture", generation="generation:1",
+            target_id="xpra-native", route_id="xpra-http", session_id=session_id,
+            deadline=lease_deadline,
+        )
+        opened = backend.open(
+            binding,
+            authorization=authorize("connector.open", open_payload, lease_deadline, 0, 0),
+            peer_uid=1234, peer_pid=os.getpid(), peer_pidfd=self.pidfd,
+        )
+        self.assertTrue(self.accepted.wait(2))
+
+        request = b"GET /client/index.html HTTP/1.1\r\nHost: attacker.invalid\r\n\r\n"
+        write_body = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
+                      "connector_id": opened, "session_id": session_id,
+                      "generation": "generation:1", "deadline": frame_deadline,
+                      "sequence": 0, "data_b64": __import__("base64").b64encode(request).decode("ascii")}
+        write_payload = json.dumps(write_body, sort_keys=True, separators=(",", ":")).encode()
+        self.assertEqual(backend.write(
+            binding, opened, 0, request,
+            authorization=authorize("connector.write", write_payload, frame_deadline, 0, len(request)),
+            peer_uid=1234, peer_pid=os.getpid(), peer_pidfd=self.pidfd, cancelled=lambda: False,
+        ), len(request))
+
+        read_body = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
+                     "connector_id": opened, "session_id": session_id,
+                     "generation": "generation:1", "deadline": frame_deadline,
+                     "sequence": 1, "max_bytes": 1024}
+        read_payload = json.dumps(read_body, sort_keys=True, separators=(",", ":")).encode()
+        reply, eof = backend.read(
+            binding, opened, 1, 1024,
+            authorization=authorize("connector.read", read_payload, frame_deadline, 1, 1024),
+            peer_uid=1234, peer_pid=os.getpid(), peer_pidfd=self.pidfd, cancelled=lambda: False,
+        )
+        expected = (b"GET /client/index.html HTTP/1.1\r\nHost: 127.0.0.1:" + str(self.port).encode()
+                    + b"\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n")
+        self.assertFalse(eof)
+        self.assertEqual(reply, expected)
+        self.assertEqual(bytes(self.received), expected)
+
+        close_body = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
+                      "connector_id": opened, "session_id": session_id,
+                      "generation": "generation:1", "deadline": frame_deadline, "sequence": 2}
+        close_payload = json.dumps(close_body, sort_keys=True, separators=(",", ":")).encode()
+        backend.close(binding, opened,
+                      authorization=authorize("connector.close", close_payload, frame_deadline, 2, 0))
+        self.assertNotIn(opened, self.connector._streams)
+
 
 class FixedConnectorProtocolContracts(unittest.TestCase):
     def test_remote_backend_requires_root_current_session_binding_before_effect(self):

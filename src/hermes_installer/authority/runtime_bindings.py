@@ -87,6 +87,33 @@ class RootRuntimeBindings:
         )
 
 
+def _load_optional_package_sets(*, catalog: Any, signing_key: bytes,
+                                key_id: str, expected_uid: int) -> Mapping[str, Any]:
+    """Load package enrollment when present; only a missing leaf is optional.
+
+    A present symlink, unreadable file, invalid parent, or malformed manifest
+    still fails closed. This lets unrelated process/connector handlers start
+    before a Coral package set has been separately enrolled.
+    """
+    from hermes_installer import artifacts
+
+    path = artifacts.PACKAGE_SET_MANIFEST_PATH
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        # The leaf alone may be absent. The fixed parent must already be
+        # protected; an absent or replaceable enrollment directory is not an
+        # invitation to silently continue.
+        artifacts._secure_directory(path.parent, expected_uid)
+        return MappingProxyType({})
+    except OSError:
+        raise EnrollmentDenied("protected package-set manifest cannot be inspected") from None
+    return artifacts.load_protected_package_sets(
+        path, catalog=catalog, signing_key=signing_key,
+        key_id=key_id, expected_uid=expected_uid,
+    )
+
+
 def build_root_runtime_bindings(
     enrollment: Any,
     *,
@@ -214,10 +241,8 @@ def build_root_runtime_bindings(
         raise EnrollmentDenied("root package-set signing key is unavailable")
     from .build_execution import ContentAddressedBuildStore
     build_store = ContentAddressedBuildStore.root_store(authority_key=signing_key)
-    from hermes_installer.artifacts import (
-        build_package_set_handlers, load_protected_package_sets,
-    )
-    package_sets = load_protected_package_sets(
+    from hermes_installer.artifacts import build_package_set_handlers
+    package_sets = _load_optional_package_sets(
         catalog=artifact_catalog, signing_key=signing_key,
         key_id=enrollment.key_id, expected_uid=expected_uid,
     )
@@ -230,14 +255,15 @@ def build_root_runtime_bindings(
                    and getattr(rule, "target", None) == target
                    for rule in enrollment.rules.values()):
             raise EnrollmentDenied("signed package set has no exact package.install authority rule")
-    effect_handlers.update(build_package_set_handlers(
-        artifact_catalog, enrollment.artifact_staging_directory, package_sets,
-        runtime_resolver=lambda spec: service_catalog.resolve_package_runtime(
-            spec.enrollment_id, spec.generation, spec.package_set_id, build_catalog,
-            build_store=build_store,
-        ),
-        expected_uid=expected_uid, authorization_check=authorization_check,
-    ))
+    if package_sets:
+        effect_handlers.update(build_package_set_handlers(
+            artifact_catalog, enrollment.artifact_staging_directory, package_sets,
+            runtime_resolver=lambda spec: service_catalog.resolve_package_runtime(
+                spec.enrollment_id, spec.generation, spec.package_set_id, build_catalog,
+                build_store=build_store,
+            ),
+            expected_uid=expected_uid, authorization_check=authorization_check,
+        ))
 
     from hermes_installer.service_connector import build_enrolled_service_connector_handlers
     service_connector, connector_handlers = build_enrolled_service_connector_handlers(
