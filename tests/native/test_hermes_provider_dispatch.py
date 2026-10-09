@@ -72,14 +72,17 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="hermes-native-parent-") as scratch:
             root = OwnedRoot(Path(scratch) / "budget")
             root.ensure()
-            # Keep HOME outside the shared data root while materializing the
-            # exact profile HERMES_HOME will use in the isolated worker.
             old_home = os.environ.get("HOME")
             old_hermes_home = os.environ.get("HERMES_HOME")
-            os.environ["HOME"] = str(Path(scratch))
-            os.environ["HERMES_HOME"] = str(data_path / "profiles" / "default")
-            sys.path.insert(0, str(source))
+            plugin = None
+            profile_home = None
+            gateway = None
+            source_on_path = False
             try:
+                os.environ["HOME"] = str(Path(scratch))
+                os.environ["HERMES_HOME"] = str(data_path / "profiles" / "default")
+                sys.path.insert(0, str(source))
+                source_on_path = True
                 from pm.environments import committed_venv, venv_command
                 data_root = OwnedRoot(data_path)
                 plugin = materialize_hermes_provider_plugin(
@@ -87,71 +90,65 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 profile_home = Path(plugin["home"])
                 materialize_hermes_profile_config(
                     data_root, home_relative=profile_relative, port=int(plugin["port"]), model=MODEL)
-                prep_env = {
-                "HOME": str(Path(scratch)),
-                "HERMES_HOME": str(profile_home),
-                "HERMES_AGENT_SOURCE_ROOT": str(source),
-                "HERMES_RUNTIME_DIR": str(data_path / "tools"),
-                "PATH": "/usr/bin:/bin",
-                "UV_NO_CONFIG": "1",
-                "PYTHONNOUSERSITE": "1",
-                "PYTHONPATH": str(source),
-            }
-            os.environ["HERMES_HOME"] = str(profile_home)
-            selected_venv = committed_venv(source)
-            self.assertIsNotNone(selected_venv, "pinned source has no committed PM environment")
-            command_prefix = venv_command(source, selected_venv)
-            self.assertTrue(command_prefix)
-            # Do not provision from the acceptance test: a separately completed, pinned
-            # PM repair is a prerequisite, and missing core packages fail before gateway start.
-            preparation = subprocess.run(
-                [*command_prefix, "-c",
-                 "import ruamel.yaml, openai; print('PM_CORE_DEPENDENCIES_READY')"],
-                cwd=str(source), env=prep_env, capture_output=True, text=True, timeout=20,
-            )
-            self.assertEqual(preparation.returncode, 0,
-                "Selected profile PM environment is not ready: " + preparation.stderr[-1500:])
-            self.assertIn("PM_CORE_DEPENDENCIES_READY", preparation.stdout)
-            finally:
-                if old_home is None:
-                    os.environ.pop("HOME", None)
-                else:
-                    os.environ["HOME"] = old_home
+                os.environ["HERMES_HOME"] = str(profile_home)
+                profile_env = {
+                    "HOME": str(Path(scratch)),
+                    "HERMES_HOME": str(profile_home),
+                    "HERMES_AGENT_SOURCE_ROOT": str(source),
+                    "HERMES_RUNTIME_DIR": str(data_path / "tools"),
+                    "PATH": "/usr/bin:/bin",
+                    "UV_NO_CONFIG": "1",
+                    "PYTHONNOUSERSITE": "1",
+                    "PYTHONPATH": str(source),
+                }
+                selected_venv = committed_venv(source)
+                self.assertIsNotNone(selected_venv, "pinned source has no committed PM environment")
+                command_prefix = venv_command(source, selected_venv)
+                self.assertTrue(command_prefix)
+                # This is verification only. PM dependency repair is a separately completed,
+                # bounded installer stage and must never be opportunistically run by acceptance.
+                preparation = subprocess.run(
+                    [*command_prefix, "-c",
+                     "import ruamel.yaml, openai; print('PM_CORE_DEPENDENCIES_READY')"],
+                    cwd=str(source), env=profile_env, capture_output=True, text=True, timeout=20,
+                )
+                self.assertEqual(preparation.returncode, 0,
+                    "Selected profile PM environment is not ready: " + preparation.stderr[-1500:])
+                self.assertIn("PM_CORE_DEPENDENCIES_READY", preparation.stdout)
                 if old_hermes_home is None:
                     os.environ.pop("HERMES_HOME", None)
                 else:
                     os.environ["HERMES_HOME"] = old_hermes_home
                 sys.path.remove(str(source))
-            transport = RecordingTransport()
-            dispatcher = Dispatcher(
-                DispatchPolicy({"public": default_public_route()}, "public"),
-                BudgetLedger(root), transport,
-            )
-            gateway = LocalProviderGateway(
-                dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-public",
-                sensitivity=Sensitivity.PUBLIC,
-                model=MODEL, port=int(plugin["port"]),
-            )
-            worker = Path(__file__)
-            env = {
-                "HOME": str(Path(scratch)),
-                "HERMES_HOME": str(profile_home),
-                "HERMES_AGENT_SOURCE_ROOT": str(source),
-                "HERMES_RUNTIME_DIR": str(data_path / "tools"),
-                "PYTHONDONTWRITEBYTECODE": "1",
-                "PATH": "/usr/bin:/bin",
-                "PYTHONPATH": str(INSTALLER_SRC) + os.pathsep + str(source),
-                "HERMES_INSTALLER_DISPATCH_KEY": FIXTURE_KEY,
-            }
-            try:
+                source_on_path = False
+
+                transport = RecordingTransport()
+                dispatcher = Dispatcher(
+                    DispatchPolicy({"public": default_public_route()}, "public"),
+                    BudgetLedger(root), transport,
+                )
+                gateway = LocalProviderGateway(
+                    dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-public",
+                    sensitivity=Sensitivity.PUBLIC, model=MODEL, port=int(plugin["port"]),
+                )
+                worker_env = {
+                    "HOME": str(Path(scratch)),
+                    "HERMES_HOME": str(profile_home),
+                    "HERMES_AGENT_SOURCE_ROOT": str(source),
+                    "HERMES_RUNTIME_DIR": str(data_path / "tools"),
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PATH": "/usr/bin:/bin",
+                    "PYTHONPATH": str(INSTALLER_SRC) + os.pathsep + str(source),
+                    "HERMES_INSTALLER_DISPATCH_KEY": FIXTURE_KEY,
+                }
                 gateway.start()
                 result = subprocess.run(
-                    [*command_prefix, str(worker), "--native-worker", "--source-root=" + str(source),
-                     "--home=" + str(profile_home), "--expected-sha=" + HERMES_PIN,
-                     "--model=" + MODEL],
-                    env=env, cwd=str(source), capture_output=True, text=True, timeout=75,
+                    [*command_prefix, str(Path(__file__).resolve()), "--native-worker",
+                     "--source-root=" + str(source), "--home=" + str(profile_home),
+                     "--expected-sha=" + HERMES_PIN, "--model=" + MODEL],
+                    env=worker_env, cwd=str(source), capture_output=True, text=True, timeout=75,
                 )
-                self.assertEqual(result.returncode, 0, result.stdout[-2000:] + result.stderr[-4000:])
+                self.assertEqual(result.returncode, 0, result.stdout[-2500:] + result.stderr[-4000:])
                 self.assertIn("NATIVE_DISPATCH_OK", result.stdout)
                 self.assertEqual(len(transport.calls), 2)
                 self.assertEqual([call[0] for call in transport.calls], ["openrouter-nemotron-free"] * 2)
@@ -161,12 +158,23 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                                  ["native primary fixture", "native auxiliary fixture"])
                 self.assertFalse((Path(plugin["plugin"]) / "__pycache__").exists())
             finally:
-                gateway.close()
-                marker_path = profile_home / ".hermes-installer-home-owned"
-                self.assertTrue(marker_path.is_file() and not marker_path.is_symlink())
-                self.assertEqual(marker_path.read_bytes(), b"hermes-installer-managed-home-v1\n")
-                import shutil
-                shutil.rmtree(profile_home)
+                if gateway is not None:
+                    gateway.close()
+                if profile_home is not None and profile_home.exists() and not profile_home.is_symlink():
+                    marker_path = profile_home / ".hermes-installer-home-owned"
+                    if marker_path.is_file() and not marker_path.is_symlink() and marker_path.read_bytes() == b"hermes-installer-managed-home-v1\n":
+                        import shutil
+                        shutil.rmtree(profile_home)
+                if source_on_path and str(source) in sys.path:
+                    sys.path.remove(str(source))
+                if old_home is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = old_home
+                if old_hermes_home is None:
+                    os.environ.pop("HERMES_HOME", None)
+                else:
+                    os.environ["HERMES_HOME"] = old_hermes_home
 
 
 def _run_native_worker():
