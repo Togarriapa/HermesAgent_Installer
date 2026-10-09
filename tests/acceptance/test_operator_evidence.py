@@ -156,6 +156,42 @@ class OperatorEvidenceTests(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 verify_operator_result(request, result_value(request, enrolled, **mutation), enrolled)
 
+    def test_unattempted_assertion_is_retained_as_pending_not_failure_or_pass(self):
+        enrolled = AuthorizedTarget.parse({
+            "target_id": "pi5-test-01", "platform": "raspberry-pi-5-arm64", "owner": "owner-123",
+            "authorization_reference": "enrollment-42",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            "allowed_acceptance": ["AC16"],
+        }, manifest_sha256=hashlib.sha256(b"manifest").hexdigest())
+        request = build_probe_request(
+            request_id=str(uuid4()), acceptance_id="AC16", evidence_id="EV-RB02",
+            candidate_sha=SHA, target_id=enrolled.target_id, platform=enrolled.platform,
+            authorization_reference=enrolled.authorization_reference,
+            target_manifest_sha256=enrolled.manifest_sha256,
+            argv=("/usr/bin/hermes-installer", "resources", "status", "--json"),
+            cwd="/home/pi/HermesInstaller", environment_allowlist=("HOME", "PATH"),
+            timeout_seconds=30, stdout_limit_bytes=65536, stderr_limit_bytes=32768,
+        ).to_dict()
+        assertions = {name: True for name in request["expected_assertions"]}
+        assertions["selected_native_workflow_invoked"] = None
+        verified = verify_operator_result(request, result_value(request, enrolled, assertions=assertions), enrolled)
+        self.assertEqual(EvidenceState.PENDING, verified.state)
+        self.assertIn("not observed", verified.blocker)
+        false_assertions = dict(assertions)
+        false_assertions["selected_native_workflow_invoked"] = False
+        failed = verify_operator_result(request, result_value(request, enrolled, assertions=false_assertions), enrolled)
+        self.assertEqual(EvidenceState.FAIL, failed.state)
+        with tempfile.TemporaryDirectory() as temp:
+            record = verified.retain(OwnedRoot(Path(temp)))
+            self.assertEqual(EvidenceState.PENDING, record.state)
+            self.assertIsNone(record.assertions["selected_native_workflow_invoked"])
+            report = acceptance_report(
+                candidate_sha=SHA, traceability=load_acceptance_catalog(Path(__file__).parents[2] / "planning"),
+                records=[record], verify_record=lambda _record: True,
+            )
+            ac16 = next(row for row in report["acceptance"] if row["acceptance_id"] == "AC16")
+            self.assertEqual("pending", ac16["state"])
+
     def test_failed_effect_or_exceeded_deadline_stays_a_failure(self):
         enrolled = target()
         request = request_value(enrolled)

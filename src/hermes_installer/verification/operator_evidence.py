@@ -232,7 +232,7 @@ class VerifiedProbe:
     started_at: str
     finished_at: str
     exit_code: int
-    assertions: Mapping[str, bool]
+    assertions: Mapping[str, bool | None]
     blocker: str | None
     request_sha256: str
     result_sha256: str
@@ -337,9 +337,9 @@ def verify_operator_result(
         raise ValueError("operator result environment exceeds the request allowlist")
     assertions = result_value["assertions"]
     if not isinstance(assertions, dict) or set(assertions) != set(request.expected_assertions) or any(
-        not isinstance(value, bool) for value in assertions.values()
+        value is not None and not isinstance(value, bool) for value in assertions.values()
     ):
-        raise ValueError("operator result does not contain the exact typed assertion set")
+        raise ValueError("operator result does not contain the exact tri-state assertion set")
     effects = result_value["effects"]
     if not isinstance(effects, list) or any(not isinstance(item, str) or not re.fullmatch(r"[a-z][a-z0-9_.:-]{1,79}", item) for item in effects):
         raise ValueError("effects must be a bounded list of stable effect IDs, never free-form output")
@@ -363,15 +363,18 @@ def verify_operator_result(
     exit_code = result_value["exit_code"]
     if exit_code != 0:
         state, blocker = EvidenceState.FAIL, f"Target probe exited with status {exit_code}"
-    elif not all(assertions.values()):
-        state, blocker = EvidenceState.FAIL, "One or more required target assertions were false"
+    elif any(value is False for value in assertions.values()):
+        state, blocker = EvidenceState.FAIL, "One or more required target assertions were observed false"
+    elif any(value is None for value in assertions.values()):
+        state, blocker = EvidenceState.PENDING, "One or more required target assertions were not observed"
     elif not effects:
-        state, blocker = EvidenceState.FAIL, "No observed effects were recorded for the passing probe"
+        state, blocker = EvidenceState.PENDING, "No observed target effects were supplied"
+    
 
     return VerifiedProbe(
         request=request, state=state,
         started_at=str(result_value["started_at"]), finished_at=str(result_value["finished_at"]),
-        exit_code=exit_code, assertions={str(key): bool(value) for key, value in assertions.items()},
+        exit_code=exit_code, assertions={str(key): value for key, value in assertions.items()},
         blocker=blocker, request_sha256=request.request_sha256, result_sha256=result_sha,
         result_json=result_json,
     )

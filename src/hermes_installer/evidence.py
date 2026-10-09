@@ -43,7 +43,7 @@ class EvidenceRecord:
     finished_at: str
     command: str
     exit_code: int | None
-    assertions: Mapping[str, bool] = field(default_factory=dict)
+    assertions: Mapping[str, bool | None] = field(default_factory=dict)
     artifact_sha256: str | None = None
     blocker: str | None = None
     resume_command: str | None = None
@@ -83,8 +83,10 @@ class EvidenceRecord:
         end = _parse_time(self.finished_at)
         if end < start:
             raise ValueError("finished_at precedes started_at")
+        if any(value is not None and not isinstance(value, bool) for value in self.assertions.values()):
+            raise ValueError("assertions must contain only true, false, or null for not observed")
         if self.state == EvidenceState.PASS:
-            if self.exit_code != 0 or not self.assertions or not all(self.assertions.values()):
+            if self.exit_code != 0 or not self.assertions or any(value is not True for value in self.assertions.values()):
                 raise ValueError("pass requires exit_code 0 and non-empty all-true observed assertions")
             if not self.artifact_sha256 or not re.fullmatch(r"[0-9a-f]{64}", self.artifact_sha256):
                 raise ValueError("pass requires a SHA-256 digest of retained evidence")
