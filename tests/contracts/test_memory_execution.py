@@ -3,6 +3,8 @@ import tempfile
 import unittest
 import hashlib
 import time
+import json
+import sqlite3
 from pathlib import Path
 
 from hermes_installer.authority.memory_execution import (
@@ -168,8 +170,12 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
             enrollment, recipe = enrolled()
             observed = {}
 
-            def effect(**kwargs):
-                observed.update(kwargs)
+            def effect(reservation_handle, canonical_connector_payload_bytes,
+                       serialized_service_request_sha256, *, timeout, cancelled):
+                observed.update({"reservation_handle": reservation_handle,
+                    "canonical_connector_payload_bytes": canonical_connector_payload_bytes,
+                    "serialized_service_request_sha256": serialized_service_request_sha256,
+                    "timeout": timeout, "cancelled": cancelled})
                 return 200, b'{"mode":"compact","results":[]}'
 
             executor = MemoryCompoundExecutor(
@@ -180,30 +186,29 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
                 body=body, source_context_wire=context.to_wire(),
                 parent_authorization=grant, parent_request_payload=payload)
             self.assertEqual(result["status"], "ok")
-            self.assertEqual(observed["request_path"], "/agentmemory/smart-search")
-            self.assertEqual(observed["request_method"], "POST")
-            self.assertEqual(observed["request_headers"], (
-                ("accept", "application/json"), ("content-type", "application/json")))
-            self.assertEqual(observed["request_body"],
-                b'{"agentId":"profile-one","limit":5,"project":"project-one","query":"private fact"}')
-            self.assertEqual(len(observed["request_digest"]), 64)
-            self.assertIn(b'"step_id":"search"', observed["compound_envelope"])
-            self.assertIsNotNone(observed["parent_authorization"])
-            binding = observed["binding"]
-            self.assertEqual(binding.parent_grant_id, grant.grant_id)
-            self.assertEqual(binding.target_id, enrollment.target_id)
-            self.assertEqual(binding.service_generation, enrollment.service_generation)
-            self.assertEqual(binding.sequence, 1)
-            self.assertEqual(binding.step_id, "search")
-            self.assertEqual(binding.compound_envelope_sha256, observed["request_digest"])
+            envelope = json.loads(observed["canonical_connector_payload_bytes"])
+            self.assertEqual(observed["reservation_handle"], envelope["compound_job_handle"])
+            self.assertEqual(envelope["generation"], enrollment.service_generation)
+            self.assertEqual(envelope["sequence"], 1)
+            self.assertEqual(envelope["step_id"], "search")
+            self.assertEqual(envelope["body"], body)
+            self.assertEqual(len(observed["serialized_service_request_sha256"]), 64)
+            self.assertGreater(observed["timeout"], 0)
+            with sqlite3.connect(Path(directory) / "owned" / "memory-queue.sqlite3") as db:
+                binding = db.execute("SELECT target_id,recipe_sha256,parent_grant_id,"
+                    "parent_context_digest,parent_request_digest FROM compound_bindings WHERE handle=?",
+                    (observed["reservation_handle"],)).fetchone()
+            self.assertEqual(binding[0], enrollment.target_id)
+            self.assertEqual(binding[2], grant.grant_id)
+            self.assertEqual(binding[4], hashlib.sha256(payload).hexdigest())
 
     def test_malformed_service_result_marks_compound_ambiguous_without_replay(self):
         with tempfile.TemporaryDirectory() as directory:
             enrollment, recipe = enrolled()
             called = []
 
-            def effect(**kwargs):
-                called.append(kwargs["job_handle"])
+            def effect(reservation_handle, _envelope, _request_digest, *, timeout, cancelled):
+                called.append(reservation_handle)
                 return 200, b'{"mode":"unrecognized","results":[]}'
 
             ledger = MemoryCompoundLedger(Path(directory) / "owned")

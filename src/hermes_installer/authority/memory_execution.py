@@ -42,16 +42,10 @@ class MemoryExecutionDenied(PermissionError):
 
 
 class MemoryStepEffect(Protocol):
-    def __call__(self, *, enrollment: MemoryServiceEnrollment,
-                 recipe: MemoryRouteRecipe, step_id: str,
-                 request_method: str, request_path: str,
-                 request_headers: tuple[tuple[str, str], ...], request_body: bytes,
-                 compound_envelope: bytes, request_digest: str,
-                 parent_authorization: Any,
-                 source_context_wire: bytes,
-                 consent_wire: bytes | None, job_handle: str,
-                 sequence: int, deadline_monotonic: float,
-                 binding: "MemoryStepBinding",
+    def __call__(self, reservation_handle: str,
+                 canonical_connector_payload_bytes: bytes,
+                 serialized_service_request_sha256: str, *,
+                 timeout: float,
                  cancelled: Callable[[], bool]) -> tuple[int, bytes]: ...
 
 
@@ -526,17 +520,16 @@ class MemoryCompoundExecutor:
                 )
                 self.ledger.verify_step_binding(binding)
                 try:
+                    remaining = job.deadline_monotonic - time.monotonic()
+                    if remaining <= 0:
+                        raise MemoryExecutionDenied("memory compound deadline expired before effect")
+                    # This root callback re-resolves the durable reservation,
+                    # route recipe, source closure, consent, owner/service
+                    # generation and current policy before minting a fresh
+                    # one-use connector grant. The parent grant is audit-only.
                     status, response_body = self.effect(
-                        enrollment=enrollment, recipe=recipe, step_id=step.step_id,
-                        request_method=request.method, request_path=request.path,
-                        request_headers=request.headers, request_body=request.body,
-                        compound_envelope=compound_envelope,
-                        request_digest=payload_digest,
-                        parent_authorization=parent_authorization,
-                        source_context_wire=source,
-                        consent_wire=consent, job_handle=job.handle, sequence=sequence,
-                        deadline_monotonic=job.deadline_monotonic,
-                        binding=binding, cancelled=cancelled)
+                        job.handle, compound_envelope, service_request_digest,
+                        timeout=remaining, cancelled=cancelled)
                     if not isinstance(response_body, bytes) or len(response_body) > enrollment.limits["response_bytes"]:
                         raise MemoryRecipeUnavailable("memory connector response exceeds enrolled bounds")
                     try:
