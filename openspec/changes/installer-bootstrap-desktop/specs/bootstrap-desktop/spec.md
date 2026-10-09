@@ -380,3 +380,17 @@ The implementation SHALL verify the selected fixed candidate-index closure membe
 #### Scenario: Ordinary cache has a matching tool name
 - **WHEN** no verified selected candidate index exists
 - **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Root initial compilation precedes policy session
+The implementation SHALL create and verify the exact v42 internal stage0 compilation context without requiring a policy-dependent setup session.
+
+#### Scenario: No bootstrap policy exists yet
+- **WHEN** the actual installed root actor compiles initial selected policy
+- **THEN** root internal stage0 custody authorizes fixed compilation and one-use publication handoff before normal setup session creation
+
+### Requirement: Exact first selection and live input target
+The implementation SHALL enforce v43 exact first-publication predecessor and admitted-source plus actual-process target join.
+
+#### Scenario: Admission exists before process launch
+- **WHEN** no actual managed producer and loader proof exists
+- **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge

@@ -101,7 +101,147 @@
   "channel": {
     "target": "root-selected fixed official Hermes channel/account connector ID; no caller account or destination",
     "inbound": "authenticated account/route/event provenance before source receipt",
-    "outbound": "fresh selected recipient authority/explicit runtime consent and per-effect policy; no installation-test external message"
+    "outbound": "fresh selected recipient authority/explicit runtime consent and per-effect policy; no installation-test external message",
+    "source_adapter_enrollments": {
+      "requirements": [
+        "RG-F03",
+        "R0060",
+        "RB07",
+        "HI08"
+      ],
+      "tasks": [
+        "RG-F03",
+        "RB-T08",
+        "HI-T08"
+      ],
+      "source_kind": "native-input for actual authenticated/captured channel input; no new source_kind or Telegram/Discord proof reuse. Transport adapter provenance is separate protected selection metadata, never caller classification.",
+      "active_join": "resource_controller_roles selected root-channel role + source_issuers matching fixed source action/capture schema + backend/channel account/resource generation and ingress selection in complete active snapshot digest",
+      "http_selection_fields": [
+        "id",
+        "channel_resource_id",
+        "resource_generation",
+        "profile_id",
+        "controller_role_id",
+        "source_issuer_id",
+        "listener_enrollment_id",
+        "jwt_verifier_enrollment_id",
+        "allowed_session_policy_id",
+        "body_schema_id",
+        "max_body_bytes",
+        "max_event_age_seconds"
+      ],
+      "http_proof_fields": [
+        "schema",
+        "proof_handle",
+        "selection_id",
+        "session_handle",
+        "authenticated_subject_receipt_handle",
+        "request_receipt_handle",
+        "body_sha256",
+        "controller_identity_digest",
+        "service_generation_digest",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "http_observation": "Root-selected private HTTP reader authenticates actual root-selected JWT signature/issuer/audience/time and current session/revocation against protected verifier, exact route/method/body schema and bounded bytes before event. proof registry retains exact request/body/session principal receipt/current controller PIDFD/module and replay nonce. No caller authorization boolean/arbitrary listener/issuer/audience/session claim. Identity follows verified session principal binding only, not body fields. Missing actual JWT/account/session enrollment pending.",
+      "audio_selection_fields": [
+        "id",
+        "channel_resource_id",
+        "resource_generation",
+        "profile_id",
+        "controller_role_id",
+        "source_issuer_id",
+        "device_enrollment_id",
+        "capture_backend_artifact_id",
+        "capture_backend_sha256",
+        "session_policy_id",
+        "max_capture_bytes",
+        "max_capture_seconds",
+        "sample_format_schema_id"
+      ],
+      "audio_proof_fields": [
+        "schema",
+        "proof_handle",
+        "selection_id",
+        "session_handle",
+        "consent_receipt_handle",
+        "capture_receipt_handle",
+        "audio_artifact_id",
+        "audio_sha256",
+        "size_bytes",
+        "format_schema_id",
+        "controller_identity_digest",
+        "service_generation_digest",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "audio_observation": "Root-selected device/session reader verifies actual scoped session permission/explicit capture consent, exact root protected device identity/backend pin/current controller PIDFD/module and bounded captured bytes. Root seals actual owned audio artifact and receipt, lease/replay and capture lifetime bound consent. No worker device/path/audio source labels or authorized_bool. Mic permission establishes capture permission only, never authenticated human identity or PUBLIC source; sensitivity UNKNOWN/private with full source ancestry.",
+      "calls": "observe_selected_http_ingress(selection_handle,root_request_record)->RootChannelInputProof; observe_selected_audio_ingress(selection_handle,root_capture_record)->RootChannelInputProof. Root-private adapters only; resolve retained actual proof via capture_selected_ingress then atomically source receipt/event mint as v36. Proof_handle transport lookup only and registry instance/current PIDFD/session/consent checked, not standalone worker proof.",
+      "delivery": "Actual captured input may invoke only already selected profile/task/voice workflow under fresh independent grants; response delivery requires separately selected channel/session recipient scope and consent/current auth. No outgoing installation-test messaging, no arbitrary outbound URL/audio device, no JARVIS expansion. Both actual denied/allowed auth or consent plus cancellation/replay/expiry/device/session changes need native target evidence."
+    },
+    "whatsapp_composio": {
+      "requirements": [
+        "RG-F03",
+        "R0060",
+        "RB07"
+      ],
+      "tasks": [
+        "RG-F03",
+        "RB-T08"
+      ],
+      "sources": [
+        "https://docs.composio.dev/toolkits/whatsapp",
+        "https://docs.composio.dev/reference/api-reference/triggers/getTriggersTypes",
+        "https://docs.composio.dev/reference/api-reference/triggers/getTriggersTypesBySlug",
+        "https://docs.composio.dev/docs/setting-up-triggers/creating-triggers",
+        "https://docs.composio.dev/docs/setting-up-triggers/subscribing-to-events"
+      ],
+      "observed_source": "2026-10-09 official docs observed toolkit latest20260915_00, WhatsApp Business only/OAuth2 or APIKey/one trigger. Vendored20260721_00 and provider-message-received semantic alias preserved; docs expose no actual WhatsApp trigger slug/payload, so no current functioning-trigger claim or silent latest upgrade.",
+      "setup_discovery": "Root selected authenticated Composio project credential ref + actual connected business account/user. Fixed GET /api/v3.1/triggers_types with toolkit_slugs=[whatsapp], toolkit_versions exact selected20260721_00, limit<=50,cursor bounded<=10pages,total<=500rows,response<=2MiB,deadline30s. GET /api/v3.1/triggers_types/<slug> only slug from same authenticated selected list/version. Existing protected Composio endpoint/TLS/credential resolver; no arbitrary URL/headers/method. Unsupported pinned version gives exact authenticated version/schema migration prerequisite, no fake slug.",
+      "trigger_artifact_fields": [
+        "schema",
+        "artifact_id",
+        "toolkit_slug",
+        "toolkit_version",
+        "trigger_slug",
+        "trigger_type",
+        "config_schema",
+        "payload_schema",
+        "requires_webhook_endpoint_setup",
+        "source_request_receipt_handle",
+        "source_response_receipt_handle",
+        "sha256"
+      ],
+      "artifact": "Actual authenticated exact selected trigger row normalized canonical UTF8 sortedcompact JSON, SHA excludes sha256 field, <=256KiB. Root stores immutable CAS source receipt and supported config/payload schemas. Unknown/unreviewed sender/message mapping keeps pending until exact root selected finite schema field binding. Semantic manifest inboundTrigger is not provider slug.",
+      "active_key": "service_generations.composio_channel_enrollments",
+      "row_fields": [
+        "id",
+        "channel_resource_id",
+        "resource_generation",
+        "profile_id",
+        "controller_role_id",
+        "source_issuer_id",
+        "composio_enrollment_id",
+        "composio_user_id",
+        "connected_account_id",
+        "auth_config_id",
+        "toolkit_version",
+        "trigger_artifact_id",
+        "trigger_artifact_sha256",
+        "trigger_slug",
+        "trigger_instance_id",
+        "webhook_subscription_id",
+        "webhook_route_enrollment_id",
+        "webhook_secret_reference_id",
+        "allowed_user_numbers",
+        "payload_field_bindings",
+        "max_event_age_seconds"
+      ],
+      "payload_field_bindings": "Strict {sender_number,message_id,message_text,event_timestamp} each finite list of schema-approved property names into selected payload_schema, never arbitrary JSONPath/expression. If provider source cannot expose corresponding authenticated message/sender facts, enrollment cannot enable until source-supported route selected. allowed_user_numbers exact normalized E164 selected list<=256, no wildcard/profile-supplied expansion.",
+      "setup": "Root business account connection scope verified; fixed selected trigger/version config validated actual source schema, create/upsert with explicit connected_account_id (never first-active default), project webhook subscription/secret actual authorized setup response journal. Existing plugin.composio.invoke broker handles only exact selected actions under independent setup grant/consent. Runtime cannot create subscriptions or export project/connection secrets. No live setup or outbound messages performed here.",
+      "ingress": "Production signed webhook only, existing native-input source kind with root-channel Composio observer action. Root actual raw body and webhook-id/timestamp/signature verified using vaultsecret, exact selected trigger/user/connectedaccount/authconfig/instance/version matching, supported payload schema then E164 allowlist. Durable dedupe eventID/logID/provider messageID, timestamp<=300s and selected stricterpolicy, actual request/session/controller PIDFD/module lineage. At-least-once retry does not rerun consumed job. Unsigned subscribe/Pusher cannot mint production provenance.",
+      "scope": "Inbound business message read/delivery into selected Hermes task is original channel obligation. Outgoing reply separate explicit account/recipient/action authority with fresh grants, zero-budget policy and no outbound installation-test messaging. Preserve missingcredential/account/trigger-schema state with exact supportedsetup/resume, not permanent omission or fabricated readiness."
+    }
   },
   "bundle": {
     "graph": "root reviewed selected immutable DAG nodes/actions/dependencies; no caller graph expansion",
@@ -472,7 +612,8 @@
           "canonical_public_import": "hermes_installer.authority.source_observers.RootTaskNativeObservationRegistry re-export",
           "implementation_owner": "luna_task_native_observation only; source_observers owner adds agreed re-export, not competing implementation"
         },
-        "terminal_sequence": "Custody issues immutable terminal receipt first after actual EOF/reap/output/cgroup observations; native_execution_receipt_handle may remain null. Runner passes that exact terminal receipt to root registry resolve_task_execution; registry returns immutable companion RootTaskNativeExecutionReceipt bound its terminal_receipt_handle and full during-live event closure. Successful selected-result capsule requires BOTH actual immutable terminal receipt and verified companion handle. Do not mutate/replace custody terminal receipt, fabricate a nonnull field or require terminal to pre-reference a later registry receipt. Optional custody finalizer may record companion after registry validation but is not required for success; companion join is authoritative."
+        "terminal_sequence": "Custody issues immutable terminal receipt first after actual EOF/reap/output/cgroup observations; native_execution_receipt_handle may remain null. Runner passes that exact terminal receipt to root registry resolve_task_execution; registry returns immutable companion RootTaskNativeExecutionReceipt bound its terminal_receipt_handle and full during-live event closure. Successful selected-result capsule requires BOTH actual immutable terminal receipt and verified companion handle. Do not mutate/replace custody terminal receipt, fabricate a nonnull field or require terminal to pre-reference a later registry receipt. Optional custody finalizer may record companion after registry validation but is not required for success; companion join is authoritative.",
+        "source_snapshot_join": "bind_running_task(admission_handle:RootResourceJobAdmissionHandle,node_id:str,source:RootAdmittedTaskSource,managed_task_handle:ManagedTaskHandle) root-only receives the SAME actual once-resolved verified source object from runner. Never re-call one-use resolve_admitted_task_source. Registry verifies object issuer/retained admission ID/current generation/lease/fullclosure/exact selected task/process join and retains immutable source snapshot for actual event capture/terminal companion. Revalidation of retained snapshot is currentness/audit only, no parent grant reuse/new event mint from caller object. RootSelectedNativeExecution task selection resolves this retained running-task join."
       }
     },
     "recipe_domain": "task_body_recipe_id/task_request_schema_id select inner Hermes prompt recipe/schema; node/body_recipe_id and backend/body_recipe_id select outer resource request recipe/schema. Distinct domains, no automatic equality requirement. Both protected/current/source-pinned/forced-scope joins are mandatory; caller cannot choose either."
