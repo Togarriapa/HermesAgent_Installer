@@ -116,14 +116,19 @@ class RootSetupExplicitChoices:
     """Nonsecret source choice captured by the root process from its TTY."""
 
     candidate_git_sha: str
+    lifecycle_action: RootSetupAction
     _seal: object
 
-    def __init__(self, candidate_git_sha: str, *, _seal: object | None = None):
+    def __init__(self, candidate_git_sha: str, lifecycle_action: RootSetupAction, *,
+                 _seal: object | None = None):
         if _seal is not _CHOICE_SEAL:
             raise TypeError("root setup choices must be issued by the root TTY selection registry")
         if not isinstance(candidate_git_sha, str) or not _CANDIDATE_SHA.fullmatch(candidate_git_sha):
             raise ValueError("candidate source choice must be an exact lowercase 40-character Git SHA")
+        if not isinstance(lifecycle_action, RootSetupAction):
+            raise ValueError("root lifecycle action must be a fixed RootSetupAction enum")
         object.__setattr__(self, "candidate_git_sha", candidate_git_sha)
+        object.__setattr__(self, "lifecycle_action", lifecycle_action)
         object.__setattr__(self, "_seal", _seal)
 
 
@@ -132,17 +137,20 @@ class VerifiedRootBootstrapCandidateSelection:
     """Sealed proof that a candidate SHA was read from the root controlling TTY."""
 
     candidate_git_sha: str
+    lifecycle_action: RootSetupAction
     input_origin: str
     choice_sha256: str
     _seal: object
 
-    def __init__(self, candidate_git_sha: str, choice_sha256: str, *, _seal: object | None = None):
+    def __init__(self, candidate_git_sha: str, lifecycle_action: RootSetupAction,
+                 choice_sha256: str, *, _seal: object | None = None):
         if _seal is not _CHOICE_SEAL:
             raise TypeError("candidate selection proofs can only be minted by the root selection registry")
         if (not isinstance(candidate_git_sha, str) or not _CANDIDATE_SHA.fullmatch(candidate_git_sha)
                 or not isinstance(choice_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", choice_sha256)):
             raise ValueError("candidate selection proof is malformed")
         object.__setattr__(self, "candidate_git_sha", candidate_git_sha)
+        object.__setattr__(self, "lifecycle_action", lifecycle_action)
         object.__setattr__(self, "input_origin", "root_tty_explicit")
         object.__setattr__(self, "choice_sha256", choice_sha256)
         object.__setattr__(self, "_seal", _seal)
@@ -151,6 +159,7 @@ class VerifiedRootBootstrapCandidateSelection:
 @dataclass(frozen=True, slots=True, init=False)
 class RootBootstrapCandidateSelectionSnapshot:
     candidate_git_sha: str
+    lifecycle_action: RootSetupAction
     input_origin: str
     choice_sha256: str
     controller_pid: int
@@ -224,15 +233,17 @@ class RootBootstrapCandidateSelectionRegistry:
         self._choice_proofs: dict[int, _RootTTYProof] = {}
         self._selection_proofs: dict[int, tuple[VerifiedRootBootstrapCandidateSelection, _RootTTYProof]] = {}
 
-    def issue_explicit_tty_choice(self) -> RootSetupExplicitChoices:
+    def issue_explicit_tty_choice(self, action: RootSetupAction) -> RootSetupExplicitChoices:
         if not sys.platform.startswith("linux") or os.getuid() != 0 or os.geteuid() != 0:
             raise RuntimeError("candidate source choice requires the Linux root setup process")
+        if not isinstance(action, RootSetupAction):
+            raise ValueError("root lifecycle action must be one of the fixed RootSetupAction values")
         if not (sys.stdin.isatty() and sys.stderr.isatty()):
             raise RuntimeError("candidate source choice requires the root controlling terminal")
         proof = _capture_root_tty_proof()
         candidate = input("Exact Hermes installer source commit (40 lowercase hex characters): ").strip()
         try:
-            choice = RootSetupExplicitChoices(candidate, _seal=_CHOICE_SEAL)
+            choice = RootSetupExplicitChoices(candidate, action, _seal=_CHOICE_SEAL)
         except BaseException:
             proof.close()
             raise
@@ -252,7 +263,11 @@ class RootBootstrapCandidateSelectionRegistry:
             raise RuntimeError("root TTY candidate choice expired before verification")
         selection = VerifiedRootBootstrapCandidateSelection(
             choices.candidate_git_sha,
-            hashlib.sha256(choices.candidate_git_sha.encode("ascii")).hexdigest(),
+            choices.lifecycle_action,
+            hashlib.sha256(
+                choices.lifecycle_action.value.encode("ascii") + b"\0"
+                + choices.candidate_git_sha.encode("ascii")
+            ).hexdigest(),
             _seal=_CHOICE_SEAL,
         )
         self._selection_proofs[id(selection)] = (selection, proof)
@@ -273,6 +288,7 @@ class RootBootstrapCandidateSelectionRegistry:
                 return RootBootstrapCandidateSelectionSnapshot(
                     _seal=_CHOICE_SEAL,
                     candidate_git_sha=selection.candidate_git_sha,
+                    lifecycle_action=selection.lifecycle_action,
                     input_origin=selection.input_origin,
                     choice_sha256=selection.choice_sha256,
                     controller_pid=proof.controller_pid,

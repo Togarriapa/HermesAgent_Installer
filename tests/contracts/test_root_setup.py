@@ -40,10 +40,11 @@ class RootSetupBoundaryTests(unittest.TestCase):
              patch("hermes_installer.root_setup._capture_root_tty_proof", return_value=proof), \
              patch("hermes_installer.root_setup._verify_root_tty_proof"), \
              patch.object(builtins, "input", return_value=candidate):
-            choice = registry.issue_explicit_tty_choice()
+            choice = registry.issue_explicit_tty_choice(RootSetupAction.INSTALL)
         self.assertEqual(choice.candidate_git_sha, candidate)
         receipt = registry.resolve(choice)
         self.assertEqual(receipt.candidate_git_sha, candidate)
+        self.assertIs(receipt.lifecycle_action, RootSetupAction.INSTALL)
         self.assertEqual(receipt.input_origin, "root_tty_explicit")
         self.assertEqual(len(receipt.choice_sha256), 64)
         with self.assertRaises(RuntimeError):
@@ -52,6 +53,7 @@ class RootSetupBoundaryTests(unittest.TestCase):
             snapshot = registry.consume_verified_selection(receipt)
         self.assertEqual(snapshot.controller_pid, os.getpid())
         self.assertEqual(snapshot.controller_start_ticks, 1)
+        self.assertIs(snapshot.lifecycle_action, RootSetupAction.INSTALL)
         controller_pidfd, controller_tty = snapshot.duplicate_controller_fds()
         self.assertGreaterEqual(os.fstat(controller_pidfd).st_ino, 0)
         self.assertGreaterEqual(os.fstat(controller_tty).st_ino, 0)
@@ -63,7 +65,7 @@ class RootSetupBoundaryTests(unittest.TestCase):
 
     def test_candidate_choice_rejects_forgery_and_noncanonical_sha(self) -> None:
         with self.assertRaises(TypeError):
-            RootSetupExplicitChoices("a" * 40)
+            RootSetupExplicitChoices("a" * 40, RootSetupAction.INSTALL)
         registry = RootBootstrapCandidateSelectionRegistry()
         stdin_fd = os.open(os.devnull, os.O_RDONLY)
         pidfd = os.open(os.devnull, os.O_RDONLY)
@@ -80,7 +82,7 @@ class RootSetupBoundaryTests(unittest.TestCase):
              patch("hermes_installer.root_setup._capture_root_tty_proof", return_value=proof), \
              patch.object(builtins, "input", return_value="A" * 40):
             with self.assertRaises(ValueError):
-                registry.issue_explicit_tty_choice()
+                registry.issue_explicit_tty_choice(RootSetupAction.INSTALL)
 
     def test_action_schema_is_finite_and_extra_arguments_are_rejected(self) -> None:
         for action in ("install", "resume", "update"):
