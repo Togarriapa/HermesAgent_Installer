@@ -14,6 +14,12 @@ from hermes_installer.components.plugin_finance import (
     FinanceDenied, FinanceUnavailable,
     NetworkClass, NetworkEnrollment,
     SQLiteExecutionLedger, WalletAction,
+    PLUGIN_ACTION_SCHEMAS,
+)
+from hermes_installer.components.plugin_effects import StaticPluginActionSchemas, _validate_schema
+from hermes_installer.components.plugin_finance_schemas import (
+    FINANCIAL_PLUGIN_MANIFEST_SHA256, PLUGIN_FINANCE_ADAPTER_SHA256,
+    validate_financial_plugin_pins,
 )
 
 
@@ -142,6 +148,46 @@ class ExecutionSpy:
 
 
 class PluginFinanceTests(unittest.TestCase):
+    def test_static_root_action_schemas_pin_all_finance_adapters_and_effect_states(self):
+        expected = {
+            ("financial-data-hub", "read"): ("plugin.financial-data-hub.read", "read-complete", False, False),
+            ("financial-execution-gateway", "execute"): ("plugin.financial-execution-gateway.execute", "committed", True, True),
+            ("agent-live-wallet", "read"): ("plugin.agent-live-wallet.read", "read-complete", False, False),
+            ("agent-live-wallet", "execute"): ("plugin.agent-live-wallet.execute", "committed", True, True),
+            ("agent-sandbox-wallet", "read"): ("plugin.agent-sandbox-wallet.read", "read-complete", False, False),
+            ("agent-sandbox-wallet", "execute"): ("plugin.agent-sandbox-wallet.execute", "committed", True, True),
+        }
+        self.assertEqual(set(PLUGIN_ACTION_SCHEMAS), set(expected))
+        catalog = StaticPluginActionSchemas(PLUGIN_ACTION_SCHEMAS)
+        for key, (operation, state, idem, confirmation) in expected.items():
+            row = catalog.resolve(*key)
+            self.assertEqual(row.operation, operation)
+            self.assertEqual(row.expected_state, state)
+            self.assertEqual(row.requires_idempotency, idem)
+            self.assertEqual(row.requires_confirmation, confirmation)
+            self.assertTrue(row.argument_schema_id.endswith(".arguments.v1"))
+            self.assertTrue(row.result_schema_id.endswith(".result.v1"))
+            self.assertEqual(row.adapter_sha256, PLUGIN_FINANCE_ADAPTER_SHA256)
+            self.assertEqual(row.request_bytes_limit, 262_144)
+            self.assertEqual(row.response_bytes_limit, 2_097_152)
+            self.assertEqual(row.deadline_seconds, 30.0)
+        _validate_schema(catalog.resolve("financial-data-hub", "read").argument_schema,
+                         {"provider": "bank-aisp", "operation": "balances", "filters": {"limit": 20}})
+        _validate_schema(catalog.resolve("financial-execution-gateway", "execute").argument_schema,
+                         {"provider": "trading212", "operation": "place-market-order",
+                          "action": {"instrument": "ACME", "side": "buy", "quantity": "1", "currency": "EUR"}})
+        _validate_schema(catalog.resolve("agent-sandbox-wallet", "execute").argument_schema,
+                         {"network": "ethereum-sepolia", "operation": "create-account",
+                          "action": {"mainnet_bridge": False}})
+        with self.assertRaises(PermissionError):
+            _validate_schema(catalog.resolve("financial-execution-gateway", "execute").argument_schema,
+                {"provider": "trading212", "operation": "place-market-order", "account": "model-chosen",
+                 "action": {"instrument": "ACME", "side": "buy", "quantity": "1", "currency": "EUR"}})
+        self.assertIsNone(catalog.resolve("financial-execution-gateway", "withdraw"))
+        self.assertEqual(set(FINANCIAL_PLUGIN_MANIFEST_SHA256), {
+            "agent-live-wallet", "agent-sandbox-wallet", "financial-data-hub", "financial-execution-gateway"})
+        validate_financial_plugin_pins()
+
     def test_data_hub_is_read_only_scoped_and_redacts_provider_identifiers(self):
         broker = ReadBroker()
         hub = FinancialDataHub(broker,
@@ -351,10 +397,31 @@ class PluginFinanceTests(unittest.TestCase):
         tool = context.tools["financial_data_read"]
         result = tool["handler"]({"provider": "bank-aisp", "operation": "balances"})
         self.assertEqual(effects.calls[0]["adapter_id"], "financial-data-hub")
-        self.assertEqual(effects.calls[0]["action_id"], "plugin.financial-data-hub.read")
+        self.assertEqual(effects.calls[0]["action_id"], "read")
         self.assertEqual(effects.calls[0]["arguments"]["operation"], "balances")
         self.assertNotIn("financial_data", vars(runtime))
         self.assertNotIn("access_token", str(result))
+
+    def test_registered_tool_schemas_reuse_exact_catalog_without_account_or_recipient(self):
+        for adapter, implementation, name in (
+            ("financial-execution-gateway", FinancialExecutionGatewayImplementation(), "financial_execute_one_order"),
+            ("agent-live-wallet", AgentLiveWalletImplementation(), "agent_live_wallet_action"),
+            ("agent-sandbox-wallet", AgentSandboxWalletImplementation(), "agent_sandbox_wallet_action"),
+        ):
+            runtime = PluginRuntime(adapter, EffectSpy("committed"))
+            context = PluginContext()
+            implementation.register(context, runtime)
+            schema = context.tools[name]["schema"]
+            self.assertFalse(schema.get("additionalProperties", True))
+            self.assertNotIn("account", schema["properties"])
+            self.assertNotIn("recipient", schema["properties"])
+            if adapter != "financial-execution-gateway":
+                nested = schema["properties"]["action"]["properties"]
+                self.assertNotIn("destination", nested)
+                self.assertNotIn("source_account", nested)
+                self.assertTrue(set(schema["properties"]["operation"]["enum"]) & {"sign", "send-test-asset"})
+            else:
+                self.assertIn("opaque_confirmation_attestation_id", schema["required"])
 
     def test_execution_requires_opaque_fresh_confirmation_and_root_dispatch(self):
         effects = EffectSpy("committed")
@@ -369,7 +436,7 @@ class PluginFinanceTests(unittest.TestCase):
         confirmation = "attestation_handle_123456"
         result = tool["handler"](base | {"opaque_confirmation_attestation_id": confirmation})
         call = effects.calls[0]
-        self.assertEqual(call["action_id"], "plugin.financial-execution-gateway.execute")
+        self.assertEqual(call["action_id"], "execute")
         self.assertEqual(call["opaque_confirmation_attestation_id"], confirmation)
         self.assertNotIn("account", call["arguments"])
         self.assertNotIn("opaque_confirmation_attestation_id", call["arguments"])
@@ -389,7 +456,7 @@ class PluginFinanceTests(unittest.TestCase):
         with self.assertRaises(FinanceDenied):
             live_tool["handler"]({"network": "mainnet", "operation": "broadcast", "action": {}})
         live_tool["handler"]({"network": "ethereum-mainnet", "operation": "inspect", "action": {}})
-        self.assertEqual(live_effects.calls[0]["action_id"], "plugin.agent-live-wallet.read")
+        self.assertEqual(live_effects.calls[0]["action_id"], "read")
 
         sandbox_effects = EffectSpy("committed")
         sandbox_runtime = PluginRuntime("agent-sandbox-wallet", sandbox_effects)
@@ -408,7 +475,7 @@ class PluginFinanceTests(unittest.TestCase):
         sandbox_tool["handler"]({"network": "ethereum-sepolia", "operation": "send-test-asset",
             "action": {"test_asset": True, "mainnet_bridge": False},
             "opaque_confirmation_attestation_id": "attestation_handle_123456"})
-        self.assertEqual(sandbox_effects.calls[0]["action_id"], "plugin.agent-sandbox-wallet.execute")
+        self.assertEqual(sandbox_effects.calls[0]["action_id"], "execute")
 
     def test_unavailable_runtime_and_ambiguous_envelope_never_claim_success(self):
         context = PluginContext()

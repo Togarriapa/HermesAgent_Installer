@@ -20,6 +20,8 @@ import stat
 import threading
 import re
 from typing import Any, Mapping, Protocol
+
+from hermes_installer.components.plugin_finance_schemas import PLUGIN_ACTION_SCHEMAS
 from urllib.parse import urlsplit
 
 
@@ -488,7 +490,9 @@ def _validate_execution_payload(provider: str, operation: str, action: Mapping[s
     elif provider in {"trading212", "pionex"}:
         allowed = order_fields
     elif provider == "regulated-pisp":
-        allowed = {"recipient", "amount", "currency", "payment_reference", "client_order_id"}
+        # Payment recipient is resolved from the protected root enrollment and
+        # the trusted human order. It is never a model-selected tool argument.
+        allowed = {"amount", "currency", "payment_reference", "client_order_id"}
     else:
         allowed = {"transaction_digest", "client_order_id"}
     if set(action) - allowed:
@@ -530,9 +534,9 @@ def _validate_execution_payload(provider: str, operation: str, action: Mapping[s
         if set(payload) - permitted:
             raise FinanceDenied("order contains price or type fields outside its selected operation")
     elif operation == "initiate-user-authorized-payment":
-        for field in ("recipient", "amount", "currency"):
+        for field in ("amount", "currency"):
             if not isinstance(payload.get(field), str) or not _ID.fullmatch(payload[field]):
-                raise FinanceDenied("payment requires exact enrolled recipient, amount and currency")
+                raise FinanceDenied("payment requires exact amount and currency; recipient is root-selected")
         _validate_economic_decimal(payload["amount"], "payment amount")
     elif operation.startswith("sign-"):
         if not isinstance(payload.get("transaction_digest"), str) or not _HEX256.fullmatch(payload["transaction_digest"]):
@@ -678,7 +682,7 @@ class _PluginImplementation:
 _CONFIRMATION_FIELD = "opaque_confirmation_attestation_id"
 _ATTESTATION = re.compile(r"^[A-Za-z0-9_-]{16,256}$")
 _DATA_ACTIONS: Mapping[tuple[DataProvider, DataOperation], str] = {
-    (provider, operation): "plugin.financial-data-hub.read"
+    (provider, operation): "read"
     for provider, operations in _DATA_SCOPES.items() for operation in operations
 }
 _EXECUTION_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -828,14 +832,46 @@ def _attested_args(args: Mapping[str, object], ordinary: frozenset[str]) -> tupl
     return {key: value for key, value in args.items() if key != _CONFIRMATION_FIELD}, attestation
 
 
+def _plain_schema(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _plain_schema(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_plain_schema(item) for item in value]
+    return value
+
+
+def _tool_schema(adapter_id: str, action_id: str, *, confirmation: bool = False,
+                 merge_action_id: str | None = None) -> dict[str, object]:
+    row = PLUGIN_ACTION_SCHEMAS[(adapter_id, action_id)]
+    result = _plain_schema(row.argument_schema)
+    if not isinstance(result, dict):
+        raise FinanceUnavailable("source-reviewed Plugin action schema is malformed")
+    result = dict(result)
+    properties = dict(result["properties"])
+    if merge_action_id is not None:
+        other = _plain_schema(PLUGIN_ACTION_SCHEMAS[(adapter_id, merge_action_id)].argument_schema)
+        other_properties = other["properties"]
+        if set(other_properties) != set(properties):
+            raise FinanceUnavailable("paired Plugin action schemas are incompatible")
+        for key in properties:
+            if key == "operation":
+                properties[key] = {**properties[key], "enum": list(dict.fromkeys(
+                    [*properties[key]["enum"], *other_properties[key]["enum"]]))}
+            elif properties[key] != other_properties[key]:
+                raise FinanceUnavailable("paired Plugin action schema field mismatch")
+    required = list(result["required"])
+    if confirmation:
+        properties[_CONFIRMATION_FIELD] = {"type": "string", "minLength": 16, "maxLength": 256}
+        required.append(_CONFIRMATION_FIELD)
+    result["properties"] = properties
+    result["required"] = required
+    return result
+
+
 class FinancialDataHubImplementation(_PluginImplementation):
     resource_id = "financial-data-hub"
     tool_name = "financial_data_read"
-    schema = {"type": "object", "properties": {
-        "provider": {"type": "string", "enum": [p.value for p in DataProvider]},
-        "operation": {"type": "string", "enum": [o.value for o in DataOperation]},
-        "filters": {"type": "object"}},
-        "required": ["provider", "operation"], "additionalProperties": False}
+    schema = _tool_schema(resource_id, "read")
     description = "Read observations only from an independently consented financial source."
 
     def handler(self, runtime_context: object):
@@ -868,11 +904,7 @@ class FinancialDataHubImplementation(_PluginImplementation):
 class FinancialExecutionGatewayImplementation(_PluginImplementation):
     resource_id = "financial-execution-gateway"
     tool_name = "financial_execute_one_order"
-    schema = {"type": "object", "properties": {
-        "provider": {"type": "string", "enum": list(_EXECUTION_OPERATIONS)},
-        "operation": {"type": "string", "maxLength": 64}, "action": {"type": "object"},
-        _CONFIRMATION_FIELD: {"type": "string", "minLength": 16, "maxLength": 256}},
-        "required": ["provider", "operation", "action", _CONFIRMATION_FIELD], "additionalProperties": False}
+    schema = _tool_schema(resource_id, "execute", confirmation=True)
     description = "Execute only the exact provider action covered by a fresh one-shot Hermes user confirmation."
 
     def handler(self, runtime_context: object):
@@ -883,11 +915,11 @@ class FinancialExecutionGatewayImplementation(_PluginImplementation):
             provider, operation = base["provider"], base["operation"]
             if not isinstance(provider, str) or not isinstance(operation, str) or operation not in _EXECUTION_OPERATIONS.get(provider, frozenset()):
                 raise FinanceDenied("provider operation is outside the fixed execution catalog")
-            action = _bounded_action(base["action"])
+            action = _validate_execution_payload(provider, operation, _bounded_action(base["action"]))
             # The root resolves the account and recipient from enrollment, then
             # binds and consumes this opaque confirmation against the final payload.
             return _effect(runtime_context, adapter_id=self.resource_id,
-                action_id="plugin.financial-execution-gateway.execute",
+                action_id="execute",
                 arguments={"provider": provider, "operation": operation, "action": action},
                 write=True, attestation=confirmation)
         return execute
@@ -896,10 +928,7 @@ class FinancialExecutionGatewayImplementation(_PluginImplementation):
 class AgentLiveWalletImplementation(_PluginImplementation):
     resource_id = "agent-live-wallet"
     tool_name = "agent_live_wallet_action"
-    schema = {"type": "object", "properties": {
-        "network": {"type": "string", "maxLength": 128}, "operation": {"type": "string", "enum": ["construct", "simulate", "estimate-fee", "inspect", "sign", "broadcast"]},
-        "action": {"type": "object"}, _CONFIRMATION_FIELD: {"type": "string", "minLength": 16, "maxLength": 256}},
-        "required": ["network", "operation", "action"], "additionalProperties": False}
+    schema = _tool_schema(resource_id, "read", confirmation=True, merge_action_id="execute")
     description = "Prepare and inspect an allowlisted live-wallet action; signing and broadcast require fresh user confirmation."
 
     def handler(self, runtime_context: object):
@@ -918,7 +947,7 @@ class AgentLiveWalletImplementation(_PluginImplementation):
                 payload, confirmation = dict(args), None
             action = _bounded_action(payload["action"])
             return _effect(runtime_context, adapter_id=self.resource_id,
-                action_id="plugin.agent-live-wallet.execute" if write else "plugin.agent-live-wallet.read",
+                action_id="execute" if write else "read",
                 arguments={"network": network, "operation": operation, "action": action},
                 write=write, attestation=confirmation)
         return act
@@ -927,11 +956,7 @@ class AgentLiveWalletImplementation(_PluginImplementation):
 class AgentSandboxWalletImplementation(_PluginImplementation):
     resource_id = "agent-sandbox-wallet"
     tool_name = "agent_sandbox_wallet_action"
-    schema = {"type": "object", "properties": {
-        "network": {"type": "string", "enum": ["ethereum-sepolia", "solana-devnet"]},
-        "operation": {"type": "string", "enum": ["create-account", "reset-account", "read-balance", "simulate", "sign-test-transaction", "send-test-asset", "deploy-test-contract", "reviewed-testnet-dapp", "inspect-receipt"]},
-        "action": {"type": "object"}, _CONFIRMATION_FIELD: {"type": "string", "minLength": 16, "maxLength": 256}},
-        "required": ["network", "operation", "action"], "additionalProperties": False}
+    schema = _tool_schema(resource_id, "read", confirmation=True, merge_action_id="execute")
     description = "Experiment with enrolled test accounts on Sepolia or Solana Devnet using test assets only."
 
     def handler(self, runtime_context: object):
@@ -955,7 +980,7 @@ class AgentSandboxWalletImplementation(_PluginImplementation):
             if operation in {"sign-test-transaction", "send-test-asset", "deploy-test-contract", "reviewed-testnet-dapp"} and action.get("test_asset") is not True:
                 raise FinanceDenied("sandbox transaction, asset and deployment writes must identify test assets")
             return _effect(runtime_context, adapter_id=self.resource_id,
-                action_id="plugin.agent-sandbox-wallet.execute" if write else "plugin.agent-sandbox-wallet.read",
+                action_id="execute" if write else "read",
                 arguments={"network": network, "operation": operation, "action": action},
                 write=write, attestation=confirmation)
         return act
