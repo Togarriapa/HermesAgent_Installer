@@ -71,7 +71,6 @@ class InvocationContexts(Protocol):
 
 class NativeInvocationContexts(Protocol):
     """Root response for one currently executing pinned Hermes tool call."""
-    schema: int
     invocation_handle: str
     source_receipt_handles: Sequence[str]
     parent_closure_digest: str
@@ -96,13 +95,19 @@ def root_invocation_source_receipt_handles(
     )
     handles = getattr(lineage, "source_receipt_handles", None)
     handles_valid = (
-        isinstance(handles, (tuple, list)) and len(handles) <= 64
+        isinstance(handles, tuple) and len(handles) <= 64
         and all(isinstance(handle, str)
                 and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
                 for handle in handles)
     )
     expires = getattr(lineage, "expires_monotonic", None)
-    if (getattr(lineage, "schema", None) != 1
+    missing_schema = object()
+    schema = getattr(lineage, "schema", missing_schema)
+    # AuthorityClient's typed NativeInvocationContexts validates schema=1
+    # while parsing the RPC response and intentionally omits the wire-only
+    # schema field from the immutable DTO. Structural test doubles may include
+    # it, in which case it must still be the exact integer 1.
+    if ((schema is not missing_schema and (type(schema) is not int or schema != 1))
             or not isinstance(getattr(lineage, "invocation_handle", None), str)
             or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", lineage.invocation_handle)
             or not _HEX.fullmatch(getattr(lineage, "parent_closure_digest", ""))
