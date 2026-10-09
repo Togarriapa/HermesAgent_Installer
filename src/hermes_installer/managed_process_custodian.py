@@ -606,7 +606,18 @@ class ManagedProcessEffectHandler:
             while self.monotonic() < deadline:
                 if cancelled() or _pidfd_exited(parent_fd):
                     raise AuthorityDenied("process.parent", "process owner ended before admission")
-                cg = self._show(unit, "ControlGroup")
+                try:
+                    cg = self._show(unit, "ControlGroup")
+                except AuthorityDenied as exc:
+                    # systemd-run returns after submitting the unit but before
+                    # systemd necessarily publishes it to `show`. Retry only
+                    # this initial fixed-property lookup while the bounded
+                    # launcher is still alive; all later readback failures
+                    # remain fail-closed.
+                    if exc.code != "process.manager.readback" or launcher.poll() is not None:
+                        raise
+                    time.sleep(.025)
+                    continue
                 if cg.startswith("/") and Path("/sys/fs/cgroup", *cg.strip("/").split()).exists():
                     members = (Path("/sys/fs/cgroup") / cg.lstrip("/") / "cgroup.procs").read_text().split()
                     for raw_pid in members:
@@ -822,7 +833,7 @@ class ManagedProcessEffectHandler:
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True, timeout=1.5, check=False)
         if result.returncode or len(result.stdout) > 4096:
-            raise AuthorityDenied("process.manager", "manager readback failed")
+            raise AuthorityDenied("process.manager.readback", "manager readback failed")
         return result.stdout.decode("utf-8", "strict").strip()
 
     def _ctl(self, args: list[str], timeout: float) -> None:
