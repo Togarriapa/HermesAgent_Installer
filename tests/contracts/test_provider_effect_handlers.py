@@ -41,6 +41,10 @@ class Network:
 
     def request(self, url, **kwargs):
         self.calls.append((url, kwargs))
+        if url == CODEX_ENDPOINT:
+            return SimpleNamespace(status=200,
+                body=b'event: response.completed\\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":4,"output_tokens":2}}}\\n\\n',
+                headers={"Content-Type": "text/event-stream", "Set-Cookie": "not-forwarded"})
         return SimpleNamespace(status=200, body=b'{"ok":true}',
                                headers={"Content-Type": "application/json",
                                         "Set-Cookie": "not-forwarded"})
