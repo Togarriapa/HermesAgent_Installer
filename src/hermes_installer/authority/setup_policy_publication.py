@@ -101,14 +101,15 @@ class RootSetupPolicyGenerationPublisher:
 
     def __init__(self, release: Any, session_store: Any, root_journal: Any,
                  compiler_publication_registry: Any):
-        if (not callable(getattr(compiler_publication_registry, "claim_compilation", None))
-                or not callable(getattr(compiler_publication_registry, "complete_publication", None))
-                or not callable(getattr(compiler_publication_registry, "release_compilation", None))):
-            raise ValueError("typed root initial-compilation registry is required")
+        from .bootstrap_runtime_factory import RootActivePolicyCompilationRegistry, RootInitialCompilationRegistry
+        if not isinstance(compiler_publication_registry,
+                          (RootInitialCompilationRegistry, RootActivePolicyCompilationRegistry)):
+            raise ValueError("typed initial or active policy compilation registry is required")
         self.release = release
         self.session_store = session_store
         self.root_journal = root_journal
         self.registry = compiler_publication_registry
+        self._active = isinstance(compiler_publication_registry, RootActivePolicyCompilationRegistry)
 
     @classmethod
     def from_root_setup(cls, verified_installer_release_receipt: Any,
@@ -117,40 +118,72 @@ class RootSetupPolicyGenerationPublisher:
                         ) -> "RootSetupPolicyGenerationPublisher":
         if not callable(getattr(verified_installer_release_receipt, "verify_current", None)):
             raise ValueError("verified installed release receipt is required")
-        from .bootstrap_runtime_factory import RootInitialCompilationRegistry
-        if not isinstance(compiler_publication_registry, RootInitialCompilationRegistry):
-            raise ValueError("initial publication requires the typed root stage-zero registry")
+        from .bootstrap_runtime_factory import RootActivePolicyCompilationRegistry, RootInitialCompilationRegistry
+        if not isinstance(compiler_publication_registry,
+                          (RootInitialCompilationRegistry, RootActivePolicyCompilationRegistry)):
+            raise ValueError("publication requires a typed initial or active compiler registry")
         return cls(verified_installer_release_receipt, session_store, root_journal,
                    compiler_publication_registry)
 
     def publish(self, publication_handle: str,
                 expected_selection_catalog_sha256: str | None) -> RootSetupPublicationReceipt:
         _require_root_linux()
-        compiled = self.registry.claim_compilation(publication_handle, expected_selection_catalog_sha256)
+        if self._active:
+            compiled = self.registry.claim_active_policy(publication_handle,
+                                                         expected_selection_catalog_sha256)
+        else:
+            compiled = self.registry.claim_compilation(publication_handle,
+                                                       expected_selection_catalog_sha256)
         try:
             self.release.verify_current()
-            self.registry.verify_current_compilation(compiled)
-            if compiled.expected_predecessor_catalog_sha256 != expected_selection_catalog_sha256:
+            if self._active:
+                self.registry.verify_current_active_policy_claim(compiled)
+                predecessor = compiled.expected_selection_catalog_sha256
+                if (compiled.compiled_policy_sha256 != _sha(compiled.policy_bytes)
+                        or compiled.compiled_artifact_catalog_sha256 != _sha(compiled.artifact_catalog_bytes)
+                        or compiled.compiled_selection_sha256 != _sha(_canonical(compiled.selection_document))
+                        or compiled.selection_catalog_sha256 != expected_selection_catalog_sha256):
+                    raise BootstrapEnrollmentError("active compiler claim digests differ from its canonical bytes")
+            else:
+                self.registry.verify_current_compilation(compiled)
+                predecessor = compiled.expected_predecessor_catalog_sha256
+            if predecessor != expected_selection_catalog_sha256:
                 raise BootstrapEnrollmentError("publication predecessor differs from the sealed stage-zero session")
+            policy_sha256 = getattr(compiled, "bootstrap_policy_sha256",
+                                    getattr(compiled, "compiled_policy_sha256", None))
+            policy_id = getattr(compiled, "bootstrap_policy_artifact_id", POLICY_ARTIFACT_ID)
+            plan_artifact_id = getattr(compiled, "plan_artifact_id",
+                                       self.release.selected_plan_artifact_id)
             _validate_compiled_documents(
                 compiled.policy_bytes, compiled.artifact_catalog_bytes,
                 compiled.selection_document, compiled.selection_catalog_sha256,
-                compiled.plan_artifact_id, compiled.plan_sha256,
-                compiled.bootstrap_policy_artifact_id,
-                compiled.bootstrap_policy_sha256, compiled.release_commit,
+                plan_artifact_id, compiled.plan_sha256,
+                policy_id, policy_sha256,
+                getattr(compiled, "release_commit", self.release.release_commit), self.release,
             )
-            receipt = self._publish_compiled(compiled, expected_selection_catalog_sha256)
-            self.registry.complete_publication(receipt)
+            receipt = self._publish_compiled(compiled, expected_selection_catalog_sha256,
+                                             state="active" if self._active else "prepared")
+            if self._active:
+                self.registry.complete_active_publication(receipt)
+            else:
+                self.registry.complete_publication(receipt)
             return receipt
         except Exception:
-            self.registry.release_compilation(publication_handle)
+            if self._active:
+                self.registry.release_active_policy(publication_handle)
+            else:
+                self.registry.release_compilation(publication_handle)
             raise
 
     def _publish_compiled(self, compiled: CompiledRootSetupPublication,
-                          expected_selection_catalog_sha256: str | None) -> RootSetupPublicationReceipt:
+                          expected_selection_catalog_sha256: str | None,
+                          *, state: str) -> RootSetupPublicationReceipt:
         # Filesystem core also powers nonprivileged fault-injection tests.
-        session = getattr(compiled, "session", getattr(compiled, "initial_session", None))
-        journal_row = getattr(session, "_root_journal_root", None)
+        session = getattr(compiled, "session", getattr(compiled, "initial_session",
+                            getattr(compiled, "_root_setup_session", None)))
+        journal_row = getattr(compiled, "_root_journal_root", None)
+        if journal_row is None:
+            journal_row = getattr(session, "_root_journal_root", None)
         if journal_row is None:
             journal_row = getattr(session, "root_journal_root", None)
         if not isinstance(journal_row, Mapping) or not isinstance(journal_row.get("absolute_path"), str):
@@ -164,6 +197,7 @@ class RootSetupPolicyGenerationPublisher:
             expected_selection_catalog_sha256=expected_selection_catalog_sha256,
             expected_uid=0,
             root_journal=journal_row,
+            publication_state=state,
         )
         return receipt
 
@@ -212,6 +246,8 @@ class PolicyPublicationReceiptResolver:
             raise BootstrapEnrollmentPending("current policy publication has no unique root journal receipt")
         record = matches[0]
         receipt = _receipt_from_record(record)
+        if receipt.state != "active":
+            raise BootstrapEnrollmentPending("current root policy publication is prepared, not active")
         expected_root = POLICY_GENERATIONS / receipt.publication_sha256
         if (generation != {
                 "id": receipt.generation_id,
@@ -321,7 +357,8 @@ class _FileSpec:
 def _validate_compiled_documents(policy_bytes: bytes, catalog_bytes: bytes,
                                  selection_document: Mapping[str, Any], selection_sha: str,
                                  plan_id: str, plan_sha: str, policy_id: str,
-                                 policy_sha: str, release_commit: str) -> None:
+                                 policy_sha: str, release_commit: str,
+                                 release: Any) -> None:
     policy = _json_bytes(policy_bytes, "bootstrap policy")
     catalog = _json_bytes(catalog_bytes, "artifact catalog")
     policy_fields = {"schema", "id", "source_artifact_id", "identity_policy", "root_policy",
@@ -377,6 +414,14 @@ def _validate_compiled_documents(policy_bytes: bytes, catalog_bytes: bytes,
             or not isinstance(plan_row["allowed_artifact_ids"], list)
             or any(item not in catalog_model.artifacts for item in plan_row["allowed_artifact_ids"])):
         raise BootstrapEnrollmentError("compiled plan row or artifact allowlist is malformed")
+    release_plan = [row for row in release.files if row.artifact_id == plan_id and "plan" in row.roles]
+    if (len(release_plan) != 1 or plan_row["relative_path"] != release_plan[0].relative_path
+            or plan_row["sha256"] != release_plan[0].sha256 or plan_row["sha256"] != plan_sha
+            or plan_row["baseline_tag_object"] != release.baseline_tag_object
+            or plan_row["baseline_commit"] != release.baseline_commit
+            or plan_row["baseline_tree_sha256"] != release.baseline_tree_sha256
+            or plan_row["amendment_manifest_sha256"] != release.amendment_manifest_sha256):
+        raise BootstrapEnrollmentError("compiled plan row differs from the verified release closure")
     policy_rows = doc.get("bootstrap_policies")
     if (not isinstance(policy_rows, list)
             or not any(isinstance(row, dict) and row.get("artifact_id") == policy_id
@@ -389,11 +434,15 @@ def _validate_compiled_documents(policy_bytes: bytes, catalog_bytes: bytes,
 def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
                                journal_root: Path, compiled: CompiledRootSetupPublication,
                                release: Any, expected_selection_catalog_sha256: str | None,
-                               expected_uid: int, root_journal: Any) -> RootSetupPublicationReceipt:
+                               expected_uid: int, root_journal: Any,
+                               publication_state: str = "prepared") -> RootSetupPublicationReceipt:
     """Filesystem publication core. All paths must be supplied by trusted caller."""
     if not policy_root.is_absolute() or not selection_path.is_absolute() or not journal_root.is_absolute():
         raise BootstrapEnrollmentError("policy publication roots must be absolute")
-    if not _SHA.fullmatch(compiled.plan_sha256) or not _SHA.fullmatch(compiled.bootstrap_policy_sha256):
+    policy_sha = getattr(compiled, "bootstrap_policy_sha256",
+                         getattr(compiled, "compiled_policy_sha256", None))
+    if (publication_state not in {"prepared", "active"} or not _SHA.fullmatch(compiled.plan_sha256)
+            or not isinstance(policy_sha, str) or not _SHA.fullmatch(policy_sha)):
         raise BootstrapEnrollmentError("compiler artifact digest is malformed")
     _verify_deployment_parent(policy_root.parent, expected_uid)
     _verify_root_directory(policy_root, expected_uid, create=True, mode=0o700)
@@ -439,7 +488,8 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
         existing_policies.append({
             "artifact_id": POLICY_ARTIFACT_ID,
             "relative_path": "plans/bootstrap-policy-v1.json",
-            "sha256": compiled.bootstrap_policy_sha256,
+            "sha256": getattr(compiled, "bootstrap_policy_sha256",
+                               getattr(compiled, "compiled_policy_sha256", None)),
         })
         final_selection["bootstrap_policies"] = existing_policies
         final_unsigned = {key: value for key, value in final_selection.items() if key != "catalog_sha256"}
@@ -452,7 +502,7 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
             _sha(compiled.policy_bytes), _sha(compiled.artifact_catalog_bytes),
             _sha(final_selection_bytes), _sha(descriptor_bytes),
             expected_selection_catalog_sha256, final_selection["catalog_sha256"],
-            receipt_inputs, "prepared", _SEAL)
+            receipt_inputs, publication_state, _SEAL)
         _write_publication_record(journal_root, compiled.transaction_handle, receipt,
                                   descriptor_bytes, expected_uid)
         # Recheck CAS under the stable transaction lock immediately before replace.
@@ -478,40 +528,72 @@ def _build_descriptor(compiled: CompiledRootSetupPublication,
                       ) -> tuple[dict[str, Any], tuple[_FileSpec, ...]]:
     policy_doc = _json_bytes(compiled.policy_bytes, "bootstrap policy")
     catalog_doc = _json_bytes(compiled.artifact_catalog_bytes, "artifact catalog")
-    if _sha(compiled.policy_bytes) != compiled.bootstrap_policy_sha256:
+    policy_sha256 = getattr(compiled, "bootstrap_policy_sha256",
+                            getattr(compiled, "compiled_policy_sha256", None))
+    if _sha(compiled.policy_bytes) != policy_sha256:
         raise BootstrapEnrollmentError("bootstrap policy digest changed after compilation")
     catalog_sha = _sha(compiled.artifact_catalog_bytes)
     selection_bytes = _canonical(dict(compiled.selection_document))
     release.verify_current()
-    template_rows = [row for row in release.files if "template" in row.roles]
-    plan_rows = [row for row in release.files if "plan" in row.roles and row.artifact_id == compiled.plan_artifact_id]
-    if len(template_rows) != 1 or len(plan_rows) != 1:
+    template_artifact_id = getattr(compiled, "template_artifact_id",
+                                   getattr(compiled, "policy_template_artifact_id", None))
+    template_sha256 = getattr(compiled, "template_sha256",
+                              getattr(compiled, "policy_template_sha256", None))
+    template_rows = [row for row in release.files if "template" in row.roles
+                     and row.artifact_id == template_artifact_id]
+    plan_id = getattr(compiled, "plan_artifact_id", release.selected_plan_artifact_id)
+    plan_rows = [row for row in release.files if "plan" in row.roles and row.artifact_id == plan_id]
+    if (len(template_rows) != 1 or len(plan_rows) != 1
+            or template_rows[0].sha256 != template_sha256):
         raise BootstrapEnrollmentError("verified release lacks one compiler template and selected plan")
     source_receipts = list(_receipt_source_handles(compiled))
-    session = getattr(compiled, "session", getattr(compiled, "initial_session", None))
+    session = getattr(compiled, "session", getattr(compiled, "initial_session",
+                        getattr(compiled, "_root_setup_session", None)))
     if session is None:
         raise BootstrapEnrollmentError("compiled publication lacks its sealed initial session")
-    session_handle = getattr(session, "compilation_session_handle", None)
+    session_handle = getattr(compiled, "setup_session_id", None)
+    if session_handle is None:
+        session_handle = getattr(session, "compilation_session_handle", None)
+    if session_handle is None:
+        session_handle = getattr(compiled, "setup_session_id", None)
     if session_handle is None:
         session_handle = getattr(session, "session_handle", None)
+    input_receipt_handles = list(source_receipts)
+    for name in ("runtime_receipt_handles", "materialization_receipt_handles"):
+        for handle in getattr(compiled, name, ()):
+            if handle not in input_receipt_handles:
+                input_receipt_handles.append(handle)
+    observed_handle = getattr(compiled, "observed_root_receipt_handle",
+                              getattr(session, "actor_observation_receipt_handle", None))
+    if observed_handle is None:
+        observed_handle = getattr(session, "observed_root_receipt_handle", None)
     input_doc = {
-        "release_commit": compiled.release_commit,
+        "release_commit": getattr(compiled, "release_commit", release.release_commit),
         "release_deployment_receipt_sha256": release.deployment_receipt_sha256,
         "release_closure_manifest_sha256": release.closure_manifest_sha256,
         "template_artifact_id": template_rows[0].artifact_id,
         "template_sha256": template_rows[0].sha256,
         "session_handle": session_handle,
         "transaction_handle": compiled.transaction_handle,
-        "plan_artifact_id": compiled.plan_artifact_id,
+        "plan_artifact_id": getattr(compiled, "plan_artifact_id", release.selected_plan_artifact_id),
         "plan_sha256": compiled.plan_sha256,
         "selection_catalog_sha256": compiled.selection_catalog_sha256,
-        "source_receipt_handles": source_receipts,
-        "observed_root_receipt_handle": compiled.observed_root_receipt_handle,
+        "source_receipt_handles": input_receipt_handles,
+        "observed_root_receipt_handle": observed_handle,
         "choices_sha256": getattr(compiled, "choices_sha256", None),
         "source_catalog_sha256": getattr(compiled, "source_catalog_sha256", None),
-        "principal_selection_receipt_handle": getattr(session, "principal_selection_receipt_handle", None),
+        "principal_selection_receipt_handle": getattr(
+            compiled, "principal_selection_receipt_handle",
+            getattr(session, "principal_selection_receipt_handle", None)),
         "predecessor_selection_catalog_sha256": predecessor_sha256,
     }
+    if hasattr(compiled, "prepared_generation_id"):
+        input_doc["prepared_generation_id"] = compiled.prepared_generation_id
+        input_doc["expected_service_generation_digest"] = compiled.expected_service_generation_digest
+        input_doc["runtime_receipt_handles"] = list(compiled.runtime_receipt_handles)
+        input_doc["materialization_receipt_handles"] = list(compiled.materialization_receipt_handles)
+        input_doc["policy_template_artifact_id"] = compiled.policy_template_artifact_id
+        input_doc["policy_template_sha256"] = compiled.policy_template_sha256
     descriptor = {
         "schema": 1,
         "id": "installer-bootstrap-policy-publication-v1",
@@ -590,15 +672,21 @@ def _write_publication_record(journal_root: Path, transaction: str,
 
 
 def _receipt_input_handles(compiled: Any) -> tuple[str, ...]:
-    handles = [compiled.observed_root_receipt_handle, *_receipt_source_handles(compiled)]
+    observed = getattr(compiled, "observed_root_receipt_handle", None)
+    handles = ([observed] if observed is not None else []) + list(_receipt_source_handles(compiled))
     if any(not isinstance(item, str) or not _HANDLE.fullmatch(item) for item in handles):
         raise BootstrapEnrollmentError("publication input receipt closure contains a malformed handle")
     return tuple(dict.fromkeys(handles))
 
 
 def _receipt_source_handles(compiled: Any) -> tuple[str, ...]:
-    handles = list(compiled.source_receipt_handles)
-    session = getattr(compiled, "session", None)
+    handles = list(getattr(compiled, "source_receipt_handles", ()))
+    for name in ("runtime_receipt_handles", "materialization_receipt_handles"):
+        handles.extend(getattr(compiled, name, ()))
+    principal_handle = getattr(compiled, "principal_selection_receipt_handle", None)
+    if principal_handle:
+        handles.append(principal_handle)
+    session = getattr(compiled, "session", getattr(compiled, "_root_setup_session", None))
     choices = getattr(session, "_choices", None)
     principal = (None if choices is None else
                  getattr(choices, "selected_principal_binding_receipt_handle", None))
