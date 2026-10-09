@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from hermes_installer.managed_process import (
@@ -26,6 +27,7 @@ from hermes_installer.managed_process import (
     ManagedProcessSupervisor,
     provision_service_identity,
 )
+from hermes_installer.managed_process_custodian import _argv_matches_recipe
 from hermes_installer.state import Journal, OwnedRoot
 from hermes_installer.authority.client import AuthorityClient
 from hermes_installer.authority.client import canonical_profile_target, profile_launch_envelope
@@ -59,7 +61,7 @@ def _authorized_spec(spec: ManagedProcessSpec) -> ManagedProcessSpec:
         target=target, profile_id=spec.profile_id, executable=spec.executable,
         artifact_sha256=spec.artifact_sha256, artifact_root=spec.artifact_root,
         cwd=spec.cwd, data_root=spec.data_root, argv=spec.argv,
-        env_allowlist=spec.env_allowlist, child_artifact_hashes=spec.child_artifact_hashes,
+        env_allowlist=spec.env_allowlist, child_artifact_refs=spec.child_artifact_refs,
         max_lifetime_seconds=int(spec.max_lifetime_seconds),
         max_output_bytes=spec.max_output_bytes, stdin_mode=spec.stdin_mode)
     now = time.monotonic()
@@ -70,6 +72,7 @@ def _authorized_spec(spec: ManagedProcessSpec) -> ManagedProcessSpec:
         lineage_hash="a" * 64, policy_revision="fixture-policy", capabilities=frozenset({"hermes-profile-invoke"}),
         issued_at_monotonic=now, monotonic_expires_at=now + 30,
         nonce="fixture-context-nonce", grant_id="fixture-context-grant", signature="fixture-signature",
+        final_payload_digest=canonical_digest(envelope),
     )
     grant = EffectAuthorization(
         principal_id=context.principal_id, profile_id=context.profile_id,
@@ -80,8 +83,34 @@ def _authorized_spec(spec: ManagedProcessSpec) -> ManagedProcessSpec:
         recipient=None, request_digest=canonical_digest(envelope), retry_index=0,
         issued_at_monotonic=now, monotonic_expires_at=now + 20, grant_id="fixture-effect-grant",
         nonce="fixture-effect-nonce", context_digest="b" * 64, signature="fixture-signature",
+        final_payload_digest=canonical_digest(envelope),
     )
     return replace(spec, authority_context=context, effect_authorization=grant)
+
+
+class ManagedProcessArgvRecipeTests(unittest.TestCase):
+    def test_code_interpreters_reject_inline_code_and_unenrolled_script_paths(self) -> None:
+        executable = Path("/usr/bin/python3")
+        child = "artifact:probe:" + "a" * 64
+        profile = SimpleNamespace(executable=executable, argv_recipe=(str(executable), "{child_artifact}"))
+        self.assertFalse(_argv_matches_recipe(profile, [str(executable), "-c", "print(1)"], {child: "a" * 64}))
+        self.assertFalse(_argv_matches_recipe(profile, [str(executable), "/tmp/attacker.py"], {child: "a" * 64}))
+        self.assertTrue(_argv_matches_recipe(profile, [str(executable), child], {child: "a" * 64}))
+        shell = Path("/bin/bash")
+        shell_profile = SimpleNamespace(executable=shell, argv_recipe=(str(shell), "{child_artifact}"))
+        self.assertFalse(_argv_matches_recipe(shell_profile, [str(shell), "-c", "id"], {child: "a" * 64}))
+        self.assertTrue(_argv_matches_recipe(shell_profile, [str(shell), child], {child: "a" * 64}))
+
+    def test_desktop_launch_options_must_match_the_protected_recipe_exactly(self) -> None:
+        executable = Path("/usr/bin/xpra")
+        recipe = (str(executable), "start", "--bind-tcp=127.0.0.1:14500", "--html=on")
+        profile = SimpleNamespace(executable=executable, argv_recipe=recipe)
+        self.assertTrue(_argv_matches_recipe(profile, list(recipe), {}))
+        for attempted in (
+                [str(executable), "start", "--bind-tcp=0.0.0.0:14500", "--html=on"],
+                [str(executable), "start", "--bind-tcp=127.0.0.1:14500", "--html=on", "--start=sh"],
+                [str(executable), "start", "--profile=other", "--bind-tcp=127.0.0.1:14500"]):
+            self.assertFalse(_argv_matches_recipe(profile, attempted, {}), attempted)
 
 
 class ManagedProcessAdmissionTests(unittest.TestCase):
@@ -204,8 +233,11 @@ class ManagedProcessKernelEvidenceTests(unittest.TestCase):
                 _, ticks, digest, pidfd = _observe_process(child.pid, cgroup)
                 identity = ProcessIdentity("fixture.service", cgroup, child.pid, ticks, digest, pidfd)
                 spec = _make_pipe_spec(self)
-                handle = ManagedProcessHandle(spec, "fixture.service", cgroup, child, identity,
-                                              time.monotonic(), {})
+                started = time.monotonic()
+                handle = ManagedProcessHandle(
+                    spec, _FixtureAuthorityVerifier(), identity, "fixture-generation",
+                    started, started + 30,
+                )
                 handle._check_live = AsyncMock()
                 self.assertEqual(await handle.write(payload[:65536], timeout=2), 65536)
                 self.assertEqual(await handle.write(payload[65536:], timeout=2), 65536)
@@ -259,6 +291,7 @@ def _make_pipe_spec(parent: unittest.TestCase) -> ManagedProcessSpec:
     )
 
 
+@unittest.skip("superseded by tests/contracts/test_managed_process_custody_linux.py; this fixture used a fake authority route")
 class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
     """Exercise the real system manager when the Linux runner provides one."""
     @classmethod
