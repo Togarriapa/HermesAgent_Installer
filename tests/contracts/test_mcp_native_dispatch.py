@@ -1,12 +1,14 @@
 """Exact protected enrollment joins for the native MCP tool registration hook."""
 import copy
 import hashlib
+import time
 import unittest
 
 from hermes_installer.mcp.native_dispatch import (
     HANDLER_ARTIFACT_ID,
     NativeMCPBindingError,
     NativeMCPRegistrationIndex,
+    build_handler,
     schema_sha256,
 )
 from hermes_installer.mcp.broker import ProtectedMCPService
@@ -103,6 +105,61 @@ class NativeMCPRegistrationIndexTests(unittest.TestCase):
             self.index.selected_candidates({
                 self.schema["name"]: {"name": self.schema["name"]},
             })
+
+    def test_handler_uses_lexical_root_binding_and_only_fixed_dispatch_arguments(self):
+        from hermes_installer.authority.types import BrokeredEffectResponse, NativeInvocationBinding
+        from hermes_installer.native_invocations import _CURRENT_BINDING, canonical_tool_arguments
+
+        arguments = {"file_key": "root-selected-file"}
+        registration = self.index.resolve(self.schema["name"], self.schema)
+        binding = NativeInvocationBinding(
+            invocation_handle="i" * 40,
+            package_id=registration.native_package_id,
+            profile_id=registration.profile_id,
+            generation=registration.native_package_generation,
+            adapter_id="hermes-installer.native-mcp-dispatch.v1",
+            action_id=registration.id,
+            arguments_sha256=hashlib.sha256(canonical_tool_arguments(arguments)).hexdigest(),
+            parent_closure_digest="b" * 64,
+            expires_monotonic=time.monotonic() + 30,
+            binding_sha256="d" * 64,
+        )
+
+        class Authority:
+            calls = []
+
+            def dispatch_native_mcp(self, handle, canonical_arguments):
+                self.calls.append((handle, canonical_arguments))
+                return BrokeredEffectResponse(200, b"{\"ok\":true}", {}, "mcp-receipt")
+
+        authority = Authority()
+        handler = build_handler(authority, registration)
+        token = _CURRENT_BINDING.set(binding)
+        try:
+            self.assertEqual(handler(arguments), '{"ok":true}')
+        finally:
+            _CURRENT_BINDING.reset(token)
+        self.assertEqual(authority.calls, [("i" * 40, canonical_tool_arguments(arguments))])
+
+        wrong_binding = NativeInvocationBinding(
+            invocation_handle="j" * 40,
+            package_id=registration.native_package_id,
+            profile_id=registration.profile_id,
+            generation=registration.native_package_generation,
+            adapter_id="hermes-installer.native-mcp-dispatch.v1",
+            action_id="another-action",
+            arguments_sha256=binding.arguments_sha256,
+            parent_closure_digest="b" * 64,
+            expires_monotonic=time.monotonic() + 30,
+            binding_sha256="e" * 64,
+        )
+        token = _CURRENT_BINDING.set(wrong_binding)
+        try:
+            with self.assertRaises(PermissionError):
+                handler(arguments)
+        finally:
+            _CURRENT_BINDING.reset(token)
+        self.assertEqual(len(authority.calls), 1)
 
     def test_unknown_name_or_schema_drift_fails_before_registration(self):
         with self.assertRaises(NativeMCPBindingError):
