@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 import secrets
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 from hermes_installer.authority.remote_origin import (
@@ -17,14 +19,19 @@ from hermes_installer.authority.remote_origin import (
     CustodyRemoteOriginProcessManager,
     HMACReceiptSigner,
     KernelOriginEvidence,
+    OriginProbeActionControlRequest,
     RemoteOriginCallerIdentity,
     RemoteOriginControlSocketResolver,
     RemoteOriginDenied,
     RemoteOriginProbeBinding,
+    RootOriginProbeRegistry,
     RemoteSetupWriterBinding,
     SelectedRemoteOrigin,
     SelectedRemoteOriginControlSocket,
     SelectedRemoteOriginProbeAuthority,
+    GatewayBoundaryHTTPFact,
+    GatewayBoundaryObservation,
+    NativeWindowObservation,
     VerifiedRemoteSetupTransaction,
     verify_origin_receipt,
     verify_selected_remote_origin,
@@ -50,6 +57,17 @@ class _Catalog:
 
     def selected_origin_control_socket(self, socket_id):
         return self.binding if socket_id == "control-socket" else None
+
+    def resolve_selected_native_principal(self, profile_id, generation,
+                                          service_generation_digest):
+        from hermes_installer.authority.service import PrincipalBinding
+        selected = self.selected
+        if (profile_id, generation, service_generation_digest) != (
+                selected.native_profile_id, selected.desktop_generation,
+                selected.service_generation_digest):
+            return None
+        return PrincipalBinding(os.getuid(), "desktop-principal", profile_id,
+                                "native-service-namespace", frozenset({"hermes-service-connect"}))
 
 
 class _Custody:
@@ -122,18 +140,18 @@ class _AppSocketFixture:
                 first = request.split(b"\r\n", 1)[0]
                 authorized = b"X-Setup-Probe: " in request
                 if not peer[0].startswith("127."):
-                    status, body = b"403 Forbidden", b"denied"
-                elif first.startswith(b"GET /client/index.html ") and authorized and self.asset_enabled:
-                    status, body = b"200 OK", b"hermes-official-desktop-asset-v1"
+                    status, body = b"403 Forbidden", b""
+                elif first.startswith((b"GET /client/index.html ", b"HEAD /client/index.html ")) and authorized and self.asset_enabled:
+                    status, body = b"200 OK", (b"" if first.startswith(b"HEAD ") else b"hermes-official-desktop-asset-v1")
                 elif first.startswith(b"GET /client/stream ") and authorized and b"Upgrade: websocket" in request:
                     conn.sendall(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                                  b"Connection: Upgrade\r\n\r\n")
                     conn.sendall(b"HERMES_NATIVE_WINDOW_FRAME:fixture-1")
                     continue
                 elif first.startswith(b"GET /client/bootstrap.html "):
-                    status, body = b"401 Unauthorized", b"denied"
+                    status, body = b"401 Unauthorized", b""
                 else:
-                    status, body = b"404 Not Found", b"denied"
+                    status, body = b"404 Not Found", b""
                 conn.sendall(b"HTTP/1.1 " + status + b"\r\nContent-Length: "
                              + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body)
 
@@ -144,10 +162,11 @@ class _AppSocketFixture:
 
 
 class _PrivateControlFixture:
-    """Root-private socket fixture which performs fixed finite HTTP/WS probes."""
+    """Fixture for the concrete per-action private control wire."""
     def __init__(self, path, app):
         self.path = path
         self.app = app
+        self.consume_action = None
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.listener.bind(str(path))
         os.chmod(path, 0o600)
@@ -156,16 +175,24 @@ class _PrivateControlFixture:
         self.thread = threading.Thread(target=self._serve, daemon=True)
         self.thread.start()
 
-    def _exchange(self, path, *, challenge=None, websocket=False):
+    def _exchange(self, path, *, method=b"GET", authorized=True, websocket=False):
         with socket.create_connection(self.app.address, timeout=2) as conn:
-            headers = b"GET " + path + b" HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n"
-            if challenge is not None:
-                headers += b"X-Setup-Probe: " + challenge.encode("ascii") + b"\r\n"
+            headers = method + b" " + path + b" HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n"
+            if authorized:
+                headers += b"X-Setup-Probe: fixture-authorized\r\n"
             if websocket:
                 headers += b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
             conn.sendall(headers + b"\r\n")
             conn.settimeout(2)
-            return conn.recv(8192)
+            response = bytearray()
+            while True:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                response.extend(chunk)
+                if len(response) > 8192:
+                    raise AssertionError("fixture origin response exceeded its read bound")
+            return bytes(response)
 
     def _serve(self):
         while not self.stop.is_set():
@@ -176,37 +203,34 @@ class _PrivateControlFixture:
             with conn:
                 try:
                     size = struct.unpack("!I", _read_exact(conn, 4))[0]
-                    if not 1 <= size <= 65536:
+                    if not 1 <= size <= 8192:
                         continue
                     request = json.loads(_read_exact(conn, size))
-                    challenge = request["challenge"]
-                    asset = self._exchange(b"/client/index.html", challenge=challenge)
-                    unauth = self._exchange(b"/client/bootstrap.html")
-                    ws = self._exchange(b"/client/stream", challenge=challenge, websocket=True)
-                    arbitrary = self._exchange(b"/random-route")
-                    shell = self._exchange(b"/shell")
-                    desktop = self._exchange(b"/desktop")
-                    frame = ws.split(b"\r\n\r\n", 1)[1] if b"\r\n\r\n" in ws else b""
-                    statuses = {
-                        "loopback_only": True,
-                        "unauthenticated_denied": unauth.startswith(b"HTTP/1.1 401"),
-                        "authorized_asset_served": asset.startswith(b"HTTP/1.1 200") and b"hermes-official-desktop-asset-v1" in asset,
-                        "authorized_websocket_attached": ws.startswith(b"HTTP/1.1 101") and bool(frame),
-                        "official_desktop_window_observed": frame.startswith(b"HERMES_NATIVE_WINDOW_FRAME:"),
-                        "arbitrary_route_denied": arbitrary.startswith(b"HTTP/1.1 404"),
-                        "shell_route_denied": shell.startswith(b"HTTP/1.1 404"),
-                        "full_host_desktop_denied": desktop.startswith(b"HTTP/1.1 404"),
-                    }
-                    response = {key: request[key] for key in (
-                        "schema", "probe_handle", "sequence", "challenge", "request_digest",
-                        "remote_enrollment_id", "gateway_profile_id", "gateway_generation",
-                        "native_profile_id", "desktop_generation", "connector_target_id",
-                        "policy_config_digest", "policy_revision", "service_generation_digest")}
-                    response.update(operation="probe_selected_origin_result", observations=statuses,
-                        observed_assertion_ids=["fixture:loopback-http", "fixture:websocket-upgrade", "fixture:native-frame"],
-                        asset_content_sha256=hashlib.sha256(b"hermes-official-desktop-asset-v1").hexdigest(),
-                        websocket_observation_id=hashlib.sha256(ws + challenge.encode()).hexdigest()[:32],
-                        native_window_observation_id=hashlib.sha256(frame + challenge.encode()).hexdigest()[:32])
+                    action = request["action"]
+                    if action in {"asset-get", "asset-head"}:
+                        method = b"GET" if action == "asset-get" else b"HEAD"
+                        raw_result = self._exchange(b"/client/index.html", method=method)
+                        header, body = raw_result.split(b"\r\n\r\n", 1)
+                        status = int(header.split(b" ", 2)[1])
+                        content = body if action == "asset-get" else b""
+                        result = {"status_code": status, "headers": {"content-type": "text/html"},
+                            "body_b64": base64.b64encode(content).decode(),
+                            "body_sha256": hashlib.sha256(content).hexdigest()}
+                    else:
+                        ws = self._exchange(b"/client/stream", websocket=True)
+                        header, frame = ws.split(b"\r\n\r\n", 1)
+                        observation_id = hashlib.sha256(b"hermes-probe-ws-v1\0" + frame).hexdigest()
+                        result = {"status_code": 101, "frame_b64": base64.b64encode(frame).decode(),
+                            "frame_bytes": len(frame), "frame_count": 1,
+                            "frame_sha256": hashlib.sha256(frame).hexdigest(),
+                            "observation_id": observation_id}
+                    if self.consume_action is not None:
+                        self.consume_action(request["probe_handle"])
+                    response = {"schema": 1, "operation": "probe_action_result",
+                        "probe_handle": request["probe_handle"], "action": action,
+                        "asset_id": request["asset_id"], "result": result}
+                    response["result_digest"] = hashlib.sha256(json.dumps(
+                        response, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
                     payload = json.dumps(response, sort_keys=True, separators=(",", ":")).encode()
                     conn.sendall(struct.pack("!I", len(payload)) + payload)
                 except Exception:
@@ -219,6 +243,19 @@ class _PrivateControlFixture:
 
 
 class RemoteOriginPrivateProbeTests(unittest.TestCase):
+    def test_private_gateway_action_wire_has_no_caller_route_or_origin_fields(self):
+        asset_id = hashlib.sha256(
+            b"hermes-client-asset-v1\0/client/index.html").hexdigest()
+        request = OriginProbeActionControlRequest.create("P" * 43, "asset-get", asset_id)
+        self.assertEqual(request.to_wire(), {
+            "schema": 1, "probe_handle": "P" * 43,
+            "action": "asset-get", "asset_id": asset_id,
+        })
+        with self.assertRaises(RemoteOriginDenied):
+            OriginProbeActionControlRequest.create("P" * 43, "asset-get", "/client/index.html")
+        with self.assertRaises(RemoteOriginDenied):
+            OriginProbeActionControlRequest.create("P" * 43, "websocket-attach", asset_id)
+
     def test_root_readiness_requires_real_private_http_websocket_and_window_exchange(self):
         # /tmp is sticky and world-writable on Linux, so a 0700 child there
         # still has an unsafe ancestor for the production fd-walk check. macOS
@@ -278,11 +315,44 @@ class RemoteOriginPrivateProbeTests(unittest.TestCase):
                     hashlib.sha256(b"setup-response").hexdigest(), now(), now() + 20)
                 signer = HMACReceiptSigner(b"R" * 32)
                 process_manager = CustodyRemoteOriginProcessManager(custody)
+                def boundary_observer(selection, gateway_digest, gateway_proof, deadline):
+                    def fact(path, *, authorized):
+                        raw = control._exchange(path, authorized=authorized)
+                        header, body = raw.split(b"\r\n\r\n", 1)
+                        return GatewayBoundaryHTTPFact(int(header.split(b" ", 2)[1]), len(body),
+                            hashlib.sha256(path + (b"\1" if authorized else b"\0")).hexdigest(),
+                            hashlib.sha256(raw).hexdigest())
+                    now_value = now()
+                    return GatewayBoundaryObservation(gateway_digest, 1, ("127.0.0.1",), {
+                        "unauthenticated": fact(b"/client/bootstrap.html", authorized=False),
+                        "arbitrary-route": fact(b"/random-route", authorized=True),
+                        "shell-route": fact(b"/shell", authorized=True),
+                        "full-host-desktop": fact(b"/desktop", authorized=True)}, now_value,
+                        min(deadline, now_value + 10))
+
+                def window_observer(selection, native_proof, websocket_id, deadline):
+                    now_value = now()
+                    marker = b"fixture-observed-window:" + websocket_id.encode()
+                    return NativeWindowObservation(selection.native_profile_id,
+                        selection.desktop_generation, native_proof["uid"], native_proof["pid"],
+                        native_proof["pid_starttime_ticks"], websocket_id,
+                        hashlib.sha256(b"fixture-window").hexdigest(),
+                        hashlib.sha256(marker).hexdigest(), now_value, min(deadline, now_value + 10))
+
                 authority = SelectedRemoteOriginProbeAuthority(
                     catalog=catalog, setup_transactions=_TransactionVerifier(tx), current_peer=_Caller(caller),
                     process_manager=process_manager, custody=custody,
+                    resolve_selected_native_principal=catalog.resolve_selected_native_principal,
                     socket_resolver=ActiveCatalogControlSocketResolver(catalog), signer=signer,
+                    boundary_observer=boundary_observer, window_observer=window_observer,
                     peer_credentials=lambda _sock: (os.getpid(), os.getuid(), os.getgid()))
+                def consume_fixture_action(child_handle):
+                    connector_id = secrets.token_urlsafe(24)
+                    authority._registry.advance_connector_effect(
+                        child_handle, "connector.open", 0, 0, connector_id)
+                    authority._registry.advance_connector_effect(
+                        child_handle, "connector.close", 1, 0, connector_id)
+                control.consume_action = consume_fixture_action
                 handle = authority.issue_selected_origin_probe("remote-enrollment", setup_handle)
                 observed = authority.probe_selected_app(selected, handle)
                 self.assertEqual(set(observed), _OBSERVATIONS)
@@ -295,6 +365,12 @@ class RemoteOriginPrivateProbeTests(unittest.TestCase):
                     expected_probe_receipt_handle=observed.probe_receipt_handle))
                 with self.assertRaises(RemoteOriginDenied):
                     authority.probe_selected_app(selected, handle)
+                missing_observer_handle = authority.issue_selected_origin_probe(
+                    "remote-enrollment", setup_handle)
+                authority._transport._boundary_observer = None
+                with self.assertRaisesRegex(RemoteOriginDenied, "observers are unavailable"):
+                    authority.probe_selected_app(selected, missing_observer_handle)
+                authority._transport._boundary_observer = boundary_observer
                 app.asset_enabled = False
                 denied_handle = authority.issue_selected_origin_probe("remote-enrollment", setup_handle)
                 with self.assertRaises(RemoteOriginDenied):
@@ -302,6 +378,39 @@ class RemoteOriginPrivateProbeTests(unittest.TestCase):
             finally:
                 control.close()
                 app.close()
+
+    def test_action_child_binds_connector_and_advances_only_after_complete_effects(self):
+        now = __import__("time").monotonic
+        registry = RootOriginProbeRegistry(HMACReceiptSigner(b"R" * 32))
+        parent_handle = "P" * 43
+        registry._handles[parent_handle] = SimpleNamespace(
+            state="running", expires=now() + 20, action_sequence=0)
+        asset_id = hashlib.sha256(
+            b"hermes-client-asset-v1\0/client/index.html").hexdigest()
+        child = registry.authorize_action(parent_handle, "asset-get", asset_id)
+        action = registry.resolve_action(child)
+        self.assertEqual((action.action, action.asset_id, action.effect_sequence,
+                          action.frame_sequence),
+                         ("asset-get", asset_id, 0, 0))
+        self.assertTrue(registry.advance_connector_effect(
+            child, "connector.open", 0, 0, "C" * 43))
+        current = registry.resolve_action(child)
+        self.assertEqual((current.effect_sequence, current.frame_sequence), (1, 0))
+        self.assertTrue(registry.advance_connector_effect(
+            child, "connector.read", 1, 0, "C" * 43))
+        current = registry.resolve_action(child)
+        self.assertEqual((current.effect_sequence, current.frame_sequence), (2, 1))
+        self.assertTrue(registry.advance_connector_effect(
+            child, "connector.close", 2, 1, "C" * 43))
+        with self.assertRaises(RemoteOriginDenied):
+            registry.resolve_action(child)
+
+        stale_child = registry.authorize_action(parent_handle, "asset-get", asset_id)
+        registry.advance_connector_effect(stale_child, "connector.open", 0, 0, "D" * 43)
+        with self.assertRaises(RemoteOriginDenied):
+            registry.advance_connector_effect(stale_child, "connector.close", 1, 0, "E" * 43)
+        with self.assertRaises(RemoteOriginDenied):
+            registry.resolve_action(stale_child)
 
 
 if __name__ == "__main__":

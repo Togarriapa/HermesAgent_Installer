@@ -213,7 +213,9 @@ class RemoteCloudflareProvisioner:
                             origin_receipt: RootOriginReadinessReceipt | None = None,
                             receipt_signer: ReceiptSigner | None = None):
         """Require root-signed origin and protected-token receipts before DNS."""
-        if (not callable(runtime_token_writer) or not setup_transaction_handle or not tunnel_enrollment_id
+        if (not callable(runtime_token_writer) or not setup_transaction_handle
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", setup_transaction_handle)
+                or not tunnel_enrollment_id
                 or not tunnel_generation or not remote_enrollment_id or receipt_signer is None):
             raise CloudflareError("Protected writer, active enrollment binding and receipt verifier are required")
         self._preflight() # no resource mutation before exact hostname conflicts are checked
@@ -260,9 +262,9 @@ class RemoteCloudflareProvisioner:
             tunnel,token=self.ensure_tunnel()
             try:
                 receipt = runtime_token_writer(
-                    tunnel_enrollment_id, token.encode("ascii"), account_id=self.account,
+                    tunnel_enrollment_id, token.encode("ascii"),
+                    setup_transaction_handle=setup_transaction_handle, account_id=self.account,
                     tunnel_id=tunnel, generation=tunnel_generation,
-                    setup_transaction_handle=setup_transaction_handle,
                 )
                 if (not verify_token_receipt(receipt, receipt_signer,
                                              selected_enrollment_id=tunnel_enrollment_id)
@@ -313,7 +315,8 @@ class RemoteCloudflareProvisioner:
                   receipt_signer: ReceiptSigner | None = None):
         """Compatibility name; protected verification and token storage are mandatory."""
         return self.provision_protected(runtime_token_writer=runtime_token_writer,
-            setup_transaction_handle=setup_transaction_handle, tunnel_enrollment_id=tunnel_enrollment_id, tunnel_generation=tunnel_generation,
+            setup_transaction_handle=setup_transaction_handle,
+            tunnel_enrollment_id=tunnel_enrollment_id, tunnel_generation=tunnel_generation,
             remote_enrollment_id=remote_enrollment_id, origin_receipt=origin_receipt,
             receipt_signer=receipt_signer)
     def rollback(self):
