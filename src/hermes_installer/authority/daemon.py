@@ -24,14 +24,21 @@ DEFAULT_SOCKET_DIR = Path("/run/hermes-installer/authority")
 
 def build_authority_service(*, signing_key_path: Path, key_id: str,
                             bindings_by_uid: Mapping[int, PrincipalBinding],
-                            rules: Mapping[tuple[str, str], EffectRule],
+                            rules: Mapping[tuple[str, str, str], EffectRule],
                             handlers: Mapping[tuple[str, str], EffectHandler],
                             policy: AuthorityPolicy,
                             process_profiles: Mapping[str, Any] | None = None,
                             process_handler_options: Mapping[str, Any] | None = None,
                             profile_generations: Mapping[str, str] | None = None,
                             background_consent_active: Any | None = None,
-                            delegations: Mapping[str, ChildDelegationRule] | None = None) -> AuthorityService:
+                            delegations: Mapping[str, ChildDelegationRule] | None = None,
+                            process_effect_handler: Any | None = None,
+                            register_process_handlers: bool = True,
+                            selected_operation_resolver: Any | None = None,
+                            remote_session_authority: Any | None = None,
+                            source_receipt_delivery: Any | None = None,
+                            source_observer_registry: Any | None = None,
+                            service_generation_digest: str | None = None) -> AuthorityService:
     """Build the root service from already validated protected enrollments.
 
     `process_profiles`, policy, rules and handler adapters must be created by
@@ -39,10 +46,12 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
     factories from a worker or from environment variables.
     """
     registered = dict(handlers)
-    if process_profiles:
-        from hermes_installer.managed_process_custodian import build_managed_process_handlers
-        for key, handler in build_managed_process_handlers(
-                process_profiles, **dict(process_handler_options or {})).items():
+    manager = process_effect_handler
+    if process_profiles and manager is None:
+        from hermes_installer.managed_process_custodian import create_managed_process_handler
+        manager = create_managed_process_handler(process_profiles, **dict(process_handler_options or {}))
+    if manager is not None and register_process_handlers:
+        for key, handler in manager.handlers().items():
             if key in registered:
                 raise AuthorityDenied("authority.configuration", "duplicate fixed effect handler registration")
             registered[key] = handler
@@ -52,6 +61,12 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
         profile_generations=profile_generations,
         background_consent_active=background_consent_active,
         delegations=delegations,
+        process_effect_handler=manager,
+        selected_operation_resolver=selected_operation_resolver,
+        remote_session_authority=remote_session_authority,
+        source_receipt_delivery=source_receipt_delivery,
+        source_observer_registry=source_observer_registry,
+        service_generation_digest=service_generation_digest,
     )
 
 
@@ -92,12 +107,19 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
             raise AuthorityDenied("authority.configuration", "process artifact resolver is fixed by protected catalog")
         effective_process_options["artifact_resolver"] = resolver
 
-    if enrollment.process_profiles:
-        from hermes_installer.managed_process_custodian import build_managed_process_handlers
-        handlers.update(build_managed_process_handlers(
-            enrollment.process_profiles, **effective_process_options))
+    process_manager = None
+    runtime_bindings = None
+    if artifact_catalog is not None and enrollment.service_records:
+        from .runtime_bindings import build_root_runtime_bindings
+        runtime_bindings = build_root_runtime_bindings(
+            enrollment, vault=vault, artifact_catalog=artifact_catalog,
+            authorization_check=authorization_check,
+            process_handler_options=effective_process_options, expected_uid=0,
+        )
+        process_manager = runtime_bindings.process_manager
+        handlers.update(runtime_bindings.effect_handlers)
 
-    if ARTIFACT_CATALOG_PATH.exists():
+    if runtime_bindings is None and ARTIFACT_CATALOG_PATH.exists():
         from hermes_installer.artifacts import build_artifact_handlers
         # Older broker revisions lack an effect-time authorization callback.
         # Do not silently register those handlers: cancellation during a body
@@ -110,18 +132,36 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
     # These integrations are composed only when their actual protected
     # eligibility/transport implementations have been supplied by the root
     # service package. Catalog presence alone is never treated as consent.
-    if enrollment.provider_enrollments and provider_admission is not None:
+    typed_providers: dict[tuple[str, str], Any] = {}
+    provider_normalization_policies: dict[tuple[str, str], Mapping[str, object]] = {}
+    for bridge in enrollment.native_bridges.values():
+        record = {
+            "id": bridge.normalization_policy_id,
+            "revision": bridge.normalization_policy_revision,
+            "route_schema_id": bridge.route_schema_id,
+            "output_limit_mode": bridge.output_limit_mode,
+            "output_limit_ceiling": bridge.output_limit_ceiling,
+            "canonicalizer_artifact_id": bridge.canonicalizer_artifact_id,
+            "canonicalizer_sha256": bridge.canonicalizer_sha256,
+            "normalization_policy_sha256": bridge.normalization_policy_sha256,
+        }
+        route_key = (bridge.target, bridge.recipient)
+        previous = provider_normalization_policies.setdefault(route_key, record)
+        if dict(previous) != record:
+            raise AuthorityDenied("enrollment.native_bridge", "provider route has conflicting normalization policies")
+    if enrollment.provider_enrollments:
         from hermes_installer.provider_effect_handlers import ProviderEnrollment, build_provider_handlers
-        typed: dict[tuple[str, str], Any] = {}
         for record in enrollment.provider_enrollments.values():
             fields = dict(record)
             fields.pop("id", None)
             fields["models"] = frozenset(fields["models"])
             fields["allowed_sensitivities"] = frozenset(fields["allowed_sensitivities"])
             route = ProviderEnrollment(**fields)
-            typed[(route.target, route.recipient)] = route
-        handlers.update(build_provider_handlers(enrollments=typed, admission=provider_admission,
-                                                vault=vault))
+            typed_providers[(route.target, route.recipient)] = route
+        if provider_admission is not None:
+            handlers.update(build_provider_handlers(enrollments=typed_providers, admission=provider_admission,
+                                                    vault=vault,
+                                                    normalization_policies=provider_normalization_policies))
 
     if enrollment.mcp_services and enrollment.mcp_http_bindings:
         # The enrolled transport owns endpoint resolution and TLS. This fixed
@@ -147,8 +187,18 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
         profile_generations={profile_id: profile.generation
                              for profile_id, profile in enrollment.process_profiles.items()},
         background_consent_active=background_consent_active,
+        process_effect_handler=process_manager,
+        register_process_handlers=runtime_bindings is None,
+        selected_operation_resolver=(runtime_bindings.resolve_selected_operation
+                                     if runtime_bindings is not None else None),
+        service_generation_digest=enrollment.protected_enrollment_digest,
     )
+    service.root_runtime_bindings = runtime_bindings
     service_ref["service"] = service
+    # Native request bridging remains unavailable until the protected
+    # root-observer registry is composed with an actual ingress/terminal event
+    # source. Enrollment metadata alone cannot turn worker-submitted bytes into
+    # trusted input provenance.
     if enrollment.memory_providers:
         from hermes_installer.memory.broker import MemoryTarget, build_memory_handlers, build_memory_runtime
         targets = {}
@@ -224,7 +274,10 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
 def main() -> int:
     """System-service entry point; does not mutate installation state."""
     service, enrollment = build_enrolled_authority_service()
-    process_profiles = enrollment.process_profiles
+    runtime = getattr(service, "root_runtime_bindings", None)
+    process_manager = getattr(runtime, "process_manager", None)
+    process_profiles = (process_manager.profiles if process_manager is not None
+                        else enrollment.process_profiles)
     socket_gid_by_uid: dict[int, int] = {}
     for uid, binding in enrollment.bindings_by_uid.items():
         profile = process_profiles.get(binding.profile_id)
@@ -234,5 +287,16 @@ def main() -> int:
     stop_event = threading.Event()
     signal.signal(signal.SIGTERM, lambda _signum, _frame: stop_event.set())
     signal.signal(signal.SIGINT, lambda _signum, _frame: stop_event.set())
-    serve_authority(service, socket_gid_by_uid=socket_gid_by_uid, stop_event=stop_event)
+    try:
+        serve_authority(service, socket_gid_by_uid=socket_gid_by_uid, stop_event=stop_event)
+    finally:
+        if runtime is not None:
+            connector = getattr(runtime, "service_connector", None)
+            shutdown = getattr(connector, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+        remote_authority = getattr(service, "remote_session_authority", None)
+        stop_watchdog = getattr(remote_authority, "stop_watchdog", None)
+        if callable(stop_watchdog):
+            stop_watchdog()
     return 0

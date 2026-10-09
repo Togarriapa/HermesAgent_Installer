@@ -19,6 +19,12 @@ jobs:
       - name: Install exact-version HTTP and WebSocket fixture stack
         run: |
           python -m pip install --no-deps --only-binary=:all: -r src/hermes_installer/remote/requirements-ci-x86-py313.lock
+      - name: Fetch pinned Xpra source for its real option parser
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/Xpra-org/xpra.git "$RUNNER_TEMP/xpra"
+          git -C "$RUNNER_TEMP/xpra" checkout --quiet --detach 521b0d2e762c770b2641d258b93d23575fa9cbea
+          git -C "$RUNNER_TEMP/xpra" rev-parse HEAD
+          echo "XPRA_SOURCE_ROOT=$RUNNER_TEMP/xpra" >> "$GITHUB_ENV"
       - name: Execute all remote HTTP, WebSocket, JWT, and IPC fixture contracts
         env:
           PYTHONPATH: src

@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
+from hermes_installer.safe_paths import canonicalize_darwin_temp_alias
 
 
 MAX_CONFIG_BYTES = 1_048_576
@@ -144,6 +145,10 @@ def merge_hermes_mcp_config(
     next_owners = dict(owners)
     for name, raw_entry in proposed.items():
         entry = _validate_entry(name, raw_entry)
+        if entry["enabled"]:
+            raise HermesMCPConfigError(
+                "installer-managed MCP entries cannot be enabled until native calls are authority-mediated"
+            )
         if name in current:
             old = current[name]
             if not isinstance(old, Mapping):
@@ -175,6 +180,11 @@ def write_selected_profile_mcp_config(
     """
     home = Path(hermes_home)
     target = Path(config_path)
+    try:
+        home = canonicalize_darwin_temp_alias(home)
+        target = canonicalize_darwin_temp_alias(target)
+    except ValueError:
+        raise HermesMCPConfigError("selected Hermes profile home is unavailable") from None
     if not isinstance(expected_owner_uid, int) or isinstance(expected_owner_uid, bool):
         raise HermesMCPConfigError("expected profile owner is invalid")
     if expected_owner_uid != os.geteuid():

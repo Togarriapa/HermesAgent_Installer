@@ -21,3 +21,5 @@ jobs:
         run: |
           site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
           sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_managed_process_custody_linux -v
+          sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_service_connector -v
+          sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_package_set_install_linux -v

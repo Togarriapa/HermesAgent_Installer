@@ -39,6 +39,24 @@ cannot satisfy this check. Only after this exact read probe passes may the
 remote-access stage continue toward the protected local gateway and publish no
 route before its origin is ready.
 
+The lifecycle continuation stores remote ownership in the private installer
+operation journal before making Cloudflare writes. Its resumable operation is
+keyed to the explicitly selected hostname and contains only the operation ID,
+resource IDs, phase, and safe error code. It first stages the installer-owned
+OTP identity provider, Access application, and exact allow-email policy. It
+then checks the separate read token against those exact journaled IDs and the
+complete policy set. A denied or incomplete read keeps the owned Access
+checkpoint for resume and does not create a tunnel or DNS record. A passed
+policy probe makes the component eligible for the later install stage, but the
+setup result remains pending while the public route is inactive.
+
+Route activation requires both a real protected-origin readiness check and an
+enrolled host-owned token sink. The tunnel token is written through that
+protected sink before DNS is created; the enrollment coordinator neither
+constructs the sink nor returns the token. Missing origin readiness, token
+storage, or current policy reads keeps the route pending. Foreign or changed
+resources fail closed and remain untouched.
+
 The scoped setup token needs account access for Cloudflare Tunnel Edit,
 Access: Apps and Policies Edit, and Access: Organizations, Identity Providers,
 and Groups Edit, plus zone access for DNS Edit and Zone Read. The read token

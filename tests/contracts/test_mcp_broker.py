@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from hermes_installer.authority import canonical_bytes, canonical_digest
 from hermes_installer.mcp.broker import (
     MCPBrokerError, ProtectedMCPService, build_mcp_handlers, mcp_intent,
+    _protected_selection_bound,
 )
 
 
@@ -85,6 +86,23 @@ class MCPBrokerTests(unittest.TestCase):
                 "unreviewed", "http", frozenset({"read"}), "root-binding",
                 "0" * 64,
             )
+
+    def test_broker_selector_requires_every_supplied_field_and_exact_lists(self):
+        selected = {"entity_id": "sensor.office",
+                    "entity_ids": ["sensor.office", "light.kitchen"]}
+        keys = ("entity_id", "entity_ids")
+        self.assertTrue(_protected_selection_bound(
+            keys, {"entity_id": "sensor.office", "entity_ids": ["sensor.office", "light.kitchen"]},
+            selected))
+        self.assertFalse(_protected_selection_bound(
+            keys, {"entity_id": "sensor.office", "entity_ids": ["sensor.office", "sensor.office"]},
+            selected))
+        self.assertFalse(_protected_selection_bound(
+            keys, {"entity_id": "sensor.office", "entity_ids": ["light.kitchen", "sensor.office"]},
+            selected))
+        self.assertFalse(_protected_selection_bound(
+            keys, {"entity_id": "sensor.office", "entity_ids": ["sensor.office", "light.kitchen", "sensor.office"]},
+            selected))
 
     def test_protected_schema_and_effect_gate_selected_read(self):
         initialize = self.invoke("initialize", {

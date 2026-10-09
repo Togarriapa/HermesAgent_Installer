@@ -600,3 +600,10 @@ The installer SHALL preserve original screenshot source Git mode/blob/tree proof
 #### Scenario: Unknown or escaping source link
 - **WHEN** link differs from pinned CLAUDE.md literal AGENTS.md or target is unstable/nonregular/unverified
 - **THEN** reject compiled activation without following link or importing upstream governance, preserve exact source proof and prior generation.
+
+### Requirement: Protected authority state and selected build mount separation
+The installer SHALL separate UID0 authority journal state from service-writable data, and resolve build paths only from finite protected artifact mount recipes.
+
+#### Scenario: Wrong state owner or caller build path
+- **WHEN** authority state aliases writable service data or a build request supplies an unselected path or mount token
+- **THEN** the root rejects the operation before effects; no fixture or source status proves native completion

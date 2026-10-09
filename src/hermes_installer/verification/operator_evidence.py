@@ -39,6 +39,18 @@ _PLATFORM_CLASS = {
     "raspberry-pi-5-arm64": EvidenceClass.PHYSICAL_PI,
 }
 
+_CONTRACT_TEST_INTERPRETERS = {
+    "/usr/bin/python3", "/usr/bin/python3.13", "/usr/bin/python3.14",
+    "/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python",
+}
+_CONTRACT_TEST_ARGS = (
+    "-X", "tracemalloc=5", "-m", "unittest",
+    "tests.contracts.test_registry_resources_runtime",
+    "tests.contracts.test_registry_native",
+    "tests.native.test_native_boundary_adapter", "-v",
+)
+_CONTRACT_TEST_ENVIRONMENT = ("PATH", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE")
+
 
 def _canonical(value: Mapping[str, Any]) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -154,6 +166,19 @@ class ProbeRequest:
             raise ValueError("probe executable must be an absolute normalized target path")
         if self.argv[0].rsplit("/", 1)[-1].lower() in _SHELLS:
             raise ValueError("shell interpreters are not accepted in target probe requests")
+        # A result verifier cannot make an arbitrary executable safe merely by
+        # binding its argv digest. Only the reviewed, non-installing AC16
+        # contract command is currently available for operator execution.
+        # Other evidence profiles remain unrequestable until a typed workflow
+        # with an exact command/effect contract is implemented.
+        if self.evidence_id != "EV-RB08":
+            raise ValueError("no reviewed target command is registered for this evidence profile")
+        if self.argv[0] not in _CONTRACT_TEST_INTERPRETERS or self.argv[1:] != _CONTRACT_TEST_ARGS:
+            raise ValueError("EV-RB08 accepts only the fixed native resource contract-test command")
+        if self.environment_allowlist != _CONTRACT_TEST_ENVIRONMENT:
+            raise ValueError("EV-RB08 environment allowlist must match the fixed contract-test command")
+        if self.timeout_seconds > 300:
+            raise ValueError("EV-RB08 contract-test request is limited to 300 seconds")
         if any(re.search(r"(?i)(?:^|\s)(?:--?)(?:token|secret|password|passwd|api[-_]?key|authorization)(?:=|\s|$)", part)
                or re.search(r"(?i)\bBearer\s+", part)
                or re.search(r"(?i)(?:token|secret|password|passwd|api[-_]?key|authorization)\s*[:=]", part)
@@ -231,7 +256,7 @@ class VerifiedProbe:
     state: EvidenceState
     started_at: str
     finished_at: str
-    exit_code: int
+    exit_code: int | None
     assertions: Mapping[str, bool | None]
     blocker: str | None
     request_sha256: str
@@ -302,7 +327,7 @@ def verify_operator_result(
     required = {
         "schema_version", "request_id", "request_sha256", "acceptance_id", "evidence_id",
         "candidate_sha", "target_id", "platform", "owner", "authorization_reference",
-        "started_at", "finished_at", "exit_code", "argv_sha256", "cwd_sha256",
+        "started_at", "finished_at", "exit_code", "timed_out", "argv_sha256", "cwd_sha256",
         "environment_names", "stdout_sha256", "stderr_sha256", "stdout_bytes", "stderr_bytes",
         "output_truncated", "assertions", "effects",
     }
@@ -345,8 +370,15 @@ def verify_operator_result(
         raise ValueError("effects must be a bounded list of stable effect IDs, never free-form output")
     if result_value["owner"] != target.owner:
         raise PermissionError("operator attestation does not match the enrolled target owner")
-    if not isinstance(result_value["exit_code"], int) or isinstance(result_value["exit_code"], bool):
-        raise ValueError("exit_code must be an integer")
+    timed_out = result_value["timed_out"]
+    if not isinstance(timed_out, bool):
+        raise ValueError("timed_out must be a boolean")
+    exit_code = result_value["exit_code"]
+    if timed_out:
+        if exit_code is not None:
+            raise ValueError("a timed-out probe must not invent an exit_code")
+    elif not isinstance(exit_code, int) or isinstance(exit_code, bool):
+        raise ValueError("a completed probe must provide an integer exit_code")
 
     started = _timestamp(result_value["started_at"], "started_at")
     finished = _timestamp(result_value["finished_at"], "finished_at")
@@ -360,8 +392,9 @@ def verify_operator_result(
     result_sha = _sha(result_json)
     state = EvidenceState.PASS
     blocker = None
-    exit_code = result_value["exit_code"]
-    if exit_code != 0:
+    if timed_out:
+        state, blocker = EvidenceState.PENDING, "Target probe timed out before producing a completed result"
+    elif exit_code != 0:
         state, blocker = EvidenceState.FAIL, f"Target probe exited with status {exit_code}"
     elif any(value is False for value in assertions.values()):
         state, blocker = EvidenceState.FAIL, "Required target assertions were observed false: " + ", ".join(sorted(key for key, value in assertions.items() if value is False))
