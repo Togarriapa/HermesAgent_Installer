@@ -268,3 +268,108 @@ The implementation SHALL use the exact applicable v36 release roles, immutable p
 #### Scenario: First ingress has no source receipt yet
 - **WHEN** root resolves selected ingress controller custody
 - **THEN** actual process/module/selected ingress proof is checked independently before atomically minting the source receipt and event handle
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Native schema artifact provenance
+The implementation SHALL resolve exact selected argument/result schema artifacts through v39 protected package/action joins.
+
+#### Scenario: Tool name exists without selected schema bytes
+- **WHEN** no verified selected schema artifact resolves
+- **THEN** the candidate remains unavailable without inferring schema from the name or ordinary cache
+
+### Requirement: Root observed selected audio and HTTP ingress
+The implementation SHALL use the distinct selected capture/JWT/session provenance schemas of v40 under existing native-input semantics.
+
+#### Scenario: Microphone permission exists
+- **WHEN** actual selected scoped capture is authorized
+- **THEN** input remains UNKNOWN/private and no human identity or public clearance is inferred from device permission
+
+### Requirement: Explicit protected native toolset owner
+The implementation SHALL obtain native server/toolset ownership and presentation description from the verified candidate index.
+
+#### Scenario: Tool name resembles a different server
+- **WHEN** registering a protected native candidate
+- **THEN** ownership follows the explicit root-selected server field and parameters-only schema digest, without parsing its name
+
+### Requirement: Exact first selection and live input target
+The implementation SHALL enforce v43 exact first-publication predecessor and admitted-source plus actual-process target join.
+
+#### Scenario: Admission exists before process launch
+- **WHEN** no actual managed producer and loader proof exists
+- **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge
+
+### Requirement: Exact native registration and retained source joins
+The implementation SHALL apply the v44 source snapshot and native registration distinctions without repeated one-use resolution.
+
+#### Scenario: Root source was already consumed for launch
+- **WHEN** binding the actual running task to native observation registry
+- **THEN** the same verified source snapshot is passed internally and revalidated, without resolving or reusing parent authorization again
+
+### Requirement: Authenticated original WhatsApp channel enrollment
+The implementation SHALL use v45 exact authenticated selected trigger schema and signed account-scoped webhook provenance for original WhatsApp channel activation.
+
+#### Scenario: Manifest semantic alias has no verified provider slug
+- **WHEN** authenticated selected trigger schema is absent
+- **THEN** channel reports exact setup/schema prerequisite and retains required scope without inventing a slug or unsigned production provenance
+
+### Requirement: Root initial input before single task stdin effect
+The implementation SHALL follow v46 concrete internal coordinator sequence during the single selected launch effect.
+
+#### Scenario: Initial source delivery fails
+- **WHEN** actual loader/input custody cannot produce a verified receipt before original deadline
+- **THEN** custody closes the owned unit before stdin and never infers source after EOF
+
+### Requirement: Peer authenticated root observed channel delivery
+The implementation SHALL use v48 actual selected root transport capture and fixed producer-bound delivery before native channel processing.
+
+#### Scenario: Worker presents an SDK message object
+- **WHEN** no actual retained root transport/account/event proof exists
+- **THEN** no source context is minted and channel effects remain unavailable with exact trusted setup prerequisite
+
+### Requirement: Explicit root registry phases
+The implementation SHALL distinguish v50 draft/bound identity selection and evidence lookup/one-use stdin consumption.
+
+#### Scenario: Source is queued but not delivered
+- **WHEN** root validates initial input receipt
+- **THEN** queued source alone cannot permit stdin and actual producer delivery/current binding is required
+
+### Requirement: Actual native materialization output CAS
+The implementation SHALL apply v51 exact source and compiled artifact role/closure joins.
+
+#### Scenario: Compiler produces a source and compiled digest
+- **WHEN** importing actual generated output into root CAS
+- **THEN** distinct byte/tree domains and transaction roles remain verified without substituting planning or source hashes for executable output
+
+### Requirement: Actual producer initial source take
+The implementation SHALL use v52 fixed peer-authenticated no-selector source delivery before selected task stdin.
+
+#### Scenario: Initial peer does not know a receipt identifier
+- **WHEN** actual rootselected initial input has been captured
+- **THEN** protected endpoint resolves the unique matching execution input for that peer without exposing metadata in the prompt or requiring a pending provider pair
+
+### Requirement: Root actual EOF and schema source receipts
+The installer SHALL require actual custody write/EOF receipts for task completion and exact root-derived schema receipts for native schema artifacts where applicable.
+
+#### Scenario: Forged or mismatched receipt
+- **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
+- **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+### Requirement: Exact native output byte encoding
+The installer SHALL bind generated native CAS artifacts to the fixed reviewed role encoding, source/member receipts and distinct archive/member-tree digests.
+
+#### Scenario: Alternate or unverified native output
+- **WHEN** generated output uses unknown archive members, alternate encoding or mismatched source/member hashes
+- **THEN** activation is denied and native acceptance remains pending
+
+### Requirement: Stable task identity across stdin phases
+The installer SHALL retain the same frozen task handle while resolving actual stdin receipt from root custody after EOF.
+
+#### Scenario: Pre-stdin receipt lookup
+- **WHEN** the coordinator receives the actual task handle before writing input
+- **THEN** no successful write receipt is available until custody observes complete write and EOF
