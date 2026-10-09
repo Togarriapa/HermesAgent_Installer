@@ -85,13 +85,21 @@ def _decode_response(value: Any, *, operation: str, process_id: str,
     if not isinstance(value, dict) or set(value) != {"status", "body", "headers", "receipt_id"}:
         raise AuthorityDenied("effect.invalid", "root process control broker response is malformed")
     if (type(value["status"]) is not int or value["status"] != 200
-            or not isinstance(value["body"], str)
+            or not isinstance(value["body"], str) or len(value["body"]) > 3 * 1024 * 1024
             or not isinstance(value["headers"], dict) or len(value["headers"]) > 32
             or not isinstance(value["receipt_id"], str)
-            or not 1 <= len(value["receipt_id"]) <= 256):
+            or not 1 <= len(value["receipt_id"]) <= 256
+            or any(ord(char) < 0x20 or ord(char) == 0x7f for char in value["receipt_id"])):
         raise AuthorityDenied("effect.denied", "root process control effect was denied")
+    if any(not isinstance(key, str) or not isinstance(item, str)
+           or not 1 <= len(key) <= 128 or len(item) > 2048
+           or any(char in key + item for char in "\r\n\x00")
+           for key, item in value["headers"].items()):
+        raise AuthorityDenied("effect.invalid", "root process control broker headers are malformed")
     try:
         body = base64.b64decode(value["body"], validate=True)
+        if base64.b64encode(body).decode("ascii") != value["body"]:
+            raise ValueError("non-canonical base64")
         value = json.loads(body.decode("ascii"))
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
         raise AuthorityDenied("effect.invalid", "root process control body is malformed") from None
