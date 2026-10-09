@@ -32,9 +32,13 @@ class SelectedComponentSource:
 def _github_source(identity: str, url: str, revision: str) -> None:
     if not _IDENTITY.fullmatch(identity) or not _REVISION.fullmatch(revision):
         raise SourceSelectionError("source selection requires owner/repository and a full commit SHA")
-    parsed = urlsplit(url)
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except (TypeError, ValueError):
+        raise SourceSelectionError("source URL is malformed") from None
     parts = parsed.path.strip("/").split("/")
-    if (parsed.scheme != "https" or parsed.hostname != "github.com" or parsed.port is not None
+    if (parsed.scheme != "https" or parsed.hostname != "github.com" or port is not None
         or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment
         or len(parts) != 2 or "/".join(parts).casefold() != identity.casefold()):
         raise SourceSelectionError("source URL must be the exact HTTPS GitHub owner/repository")
@@ -76,7 +80,9 @@ def select_component_source(
         source_default_branch=contract.source_default_branch if matches_current else None,
         source_selection="explicit-source-override" if not matches_current else contract.source_selection,
         source_resolved=True,
-        license=license if not matches_current else contract.license,
+        # A caller-supplied license string is descriptive, not evidence. Keep
+        # custom overrides unreviewed until source/license review records it.
+        license=contract.license if matches_current else None,
         source_status=("explicitly selected pin; compatibility and license review pending"
                        if not matches_current else contract.source_status),
     )

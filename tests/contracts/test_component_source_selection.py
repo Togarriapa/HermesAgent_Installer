@@ -35,6 +35,7 @@ class ComponentSourceSelectionTests(unittest.TestCase):
             url="https://github.com/other/design-skills",
             revision="a" * 40,
             explicit_selection=True,
+            license="MIT",
         )
         self.assertEqual("explicit-source-override", changed.source_selection)
         self.assertIsNone(changed.license)
