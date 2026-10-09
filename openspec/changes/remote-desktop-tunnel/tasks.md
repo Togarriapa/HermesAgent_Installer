@@ -33,3 +33,5 @@ Implement using GPT-6 Luna; Sol owns refinements. Later user additions are separ
 - Archive only genuinely verified scope, preserving immutable baseline and separate Sol amendments.
 
 RT-F03 remote native acceptance additionally requires HI-T13 / EV-HI13 root-observed JWT/policy connector session and actual bounded active revocation; current task remains open.
+
+HI13 remote root wire v2: plans/amendments/2026-10-09-remote-root-session-wire-v2.md defines typed opaque responses/challenge/rootselectedconnectorframes, distinct one-shotasset/leasedWS, internal freshHI12grant enforcement. ExistingHI-T13/RT-F03 and actualtarget evidence remainopen.

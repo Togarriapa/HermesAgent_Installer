@@ -215,3 +215,10 @@ The installer SHALL issue qualified source receipts only through root-private ac
 #### Scenario: Worker claims tool result or authentic user input
 - **WHEN** actual registered root observer/event/invocation evidence is absent, stale or replayed
 - **THEN** deny qualified receipt before effect and preserve private unknown provenance without omitted original functionality.
+
+### Requirement: Typed remote root session wire
+The installer SHALL expose distinct one-shot asset and leased WebSocket admissions through peer-bound opaque root handles and finite typed connector operations that check current session state and fresh exact grants internally.
+
+#### Scenario: Asset handle reused for WebSocket or caller chooses connector
+- **WHEN** caller reuses consumed asset admission, selects target/path or sends frame after root lease expiry
+- **THEN** reject before bytes and close owned relay without localcontext or raw FD bypass.
