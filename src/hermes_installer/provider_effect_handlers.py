@@ -62,7 +62,7 @@ class ProviderAdmission(Protocol):
                       principal_id: str, namespace_id: str, sensitivity: str,
                       capability: str, model: str, request_digest: str,
                       retry_index: int, additional_metered_fee_usd: float,
-                      credential_reference: str) -> None: ...
+                      credential_ref: str) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +73,7 @@ class ProviderEnrollment:
     account_id: str
     target: str
     recipient: str
-    credential_reference: str
+    credential_ref: str
     credential_scope: str
     models: frozenset[str]
     allowed_sensitivities: frozenset[str]
@@ -82,7 +82,7 @@ class ProviderEnrollment:
     def __post_init__(self) -> None:
         if self.provider not in {"openrouter", "codex"}:
             raise ValueError("provider enrollment is not supported")
-        if not self.account_id or len(self.account_id) > 256:
+        if not self.account_id or len(self.account_id) > 256 or not self.principal_id or len(self.principal_id) > 256:
             raise ValueError("an enrolled opaque account ID is required")
         if not self.credential_reference or len(self.credential_reference) > 2048:
             raise ValueError("a protected credential reference is required")
@@ -149,7 +149,8 @@ def _validate_binding(context: object, authorization: object, *,
             or not math.isfinite(grant_expiry) or not math.isfinite(context_expiry)
             or grant_expiry <= now or context_expiry <= now or grant_expiry > context_expiry):
         raise ProviderHandlerDenied("provider.expired", "Provider context or effect grant has expired")
-    if (getattr(authorization, "target", None) != enrollment.target
+    if (getattr(context, "principal_id", None) != enrollment.principal_id
+            or getattr(authorization, "target", None) != enrollment.target
             or getattr(authorization, "recipient", None) != enrollment.recipient
             or getattr(authorization, "request_digest", None) != digest
             or getattr(authorization, "capability", None) != capability
@@ -255,7 +256,8 @@ class _FixedProviderHandler:
         try:
             token = self._vault.resolve_reference(
                 enrollment.credential_reference, peer_uid=context.uid,
-                required_scope=enrollment.credential_scope)
+                required_scope=enrollment.credential_scope,
+                principal_id=enrollment.principal_id)
         except Exception:
             raise ProviderHandlerDenied("provider.credential_unavailable", "Protected provider credential is unavailable") from None
         if (not isinstance(token, str) or not token or len(token) > 4096
