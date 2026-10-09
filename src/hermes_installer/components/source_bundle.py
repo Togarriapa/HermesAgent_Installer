@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from hermes_installer.components.adapters import ComponentAdapterContract
-from hermes_installer.components.skill_refs import audit_skill_file_map
+from hermes_installer.components.skill_refs import audit_component_skill_file_map
 
 
 class ComponentSourceError(RuntimeError):
@@ -147,6 +147,7 @@ class VerifiedComponentSource:
     license: str | None
     license_files: tuple[str, ...]
     redistribution_license_review_required: bool
+    quarantined_skill_problems: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def generation_id(self) -> str:
@@ -333,7 +334,9 @@ class GitHubComponentSourceFetcher:
             raise ComponentSourceError("component archive contents differ from the pinned Git tree")
         if not files:
             raise ComponentSourceError("refusing an empty component source tree")
-        audit = audit_skill_file_map(files, skill_files=skill_files)
+        audit = audit_component_skill_file_map(
+            contract.component_id, revision, files, skill_files=skill_files,
+        )
         if audit.problems:
             first = audit.problems[0]
             raise ComponentSourceError(
@@ -384,6 +387,7 @@ class GitHubComponentSourceFetcher:
             license=contract.license,
             license_files=license_files,
             redistribution_license_review_required=contract.redistribution_license_review_required,
+            quarantined_skill_problems=audit.quarantined_skill_problems,
         )
 
     def _unpack(self, archive: bytes, identity: str, revision: str) -> tuple[dict[str, bytes], dict[str, int]]:

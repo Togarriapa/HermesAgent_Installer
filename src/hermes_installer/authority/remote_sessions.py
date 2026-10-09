@@ -693,7 +693,8 @@ class RemoteConnectorBackend(Protocol):
               cancelled: Callable[[], bool]) -> int: ...
     def close(self, binding: RemoteConnectorBinding, connector_handle: str, *,
               authorization: InternalRemoteConnectorAuthorization | None,
-              cleanup: bool) -> None: ...
+              cleanup: bool, peer_uid: int | None, peer_pid: int | None,
+              peer_pidfd: int | None) -> None: ...
 
     def consume_remote_connector_effect(self, authorization: InternalRemoteConnectorAuthorization,
                                         binding: RemoteConnectorBinding, operation: str,
@@ -1475,7 +1476,9 @@ class RemoteSessionAuthority:
             pass
         try:
             self.connector_backend.close(binding, handle, authorization=authorization,
-                                         cleanup=authorization is None or cleanup)
+                                         cleanup=authorization is None or cleanup,
+                                         peer_uid=peer_uid, peer_pid=peer_pid,
+                                         peer_pidfd=peer_pidfd)
         except Exception:
             # Closed state is retained even if effect cleanup reports failure;
             # root watchdog/connector owner independently reaps expired streams.

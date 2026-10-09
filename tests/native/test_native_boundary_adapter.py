@@ -24,13 +24,48 @@ from hermes_installer.native_boundary_patch import (
 
 UPSTREAM = Path("/tmp/hermes-agent-hi08")
 EXPECTED = {
-    "agent/chat_completion_helpers.py": "ef55b2bed0e91328345e66fd07733cda90df2e0800cf96f9f954023e2b122818",
+    "hermes_cli/__init__.py": "84d0d7f5b6d8340897c4c53947890f88f93de146fcc228d4f4fdd096f2a8d81b",
+    "hermes_cli/plugins.py": "11d8e9606b2b274a30f11384233bee36cd44a683abdaca674201c30a9319ca86",
+    "agent/__init__.py": "067ee01cbc088b572cbdabbbe4116d9bec0939acc0bd30ac67b287cb5d6743e6",
+    "agent/chat_completion_helpers.py": "0f234b4f9bf3e2fd29c6e2da517b1302de4c1bc3e6780d443080526fb69d9ef9",
     "agent/auxiliary_client.py": "876a97cc1c81fb1e4bc97d92872e03ceb0b1d8f43680d551d974b4376e8950c6",
-    "agent/tool_executor.py": "fd671a435cbeda36cfbec3a2b278ff34f66f8cbe37a8a87b0a372a5170e777aa",
+    "agent/tool_executor.py": "289df099d066e296e4dd3a08b8a0bfb0b2cb9b8bc329ac8ffd70fe60f3c86eb0",
 }
 
 
 class NativeBoundaryAdapterTests(unittest.TestCase):
+    def test_pinned_plugin_manager_overlay_calls_root_selected_bootstrap_in_discovery(self):
+        if not UPSTREAM.is_dir():
+            self.skipTest("exact official Hermes source checkout is not available")
+        source = UPSTREAM / "hermes_cli/plugins.py"
+        with tempfile.TemporaryDirectory(prefix="hi08-native-discovery-source-") as scratch:
+            copy = Path(scratch) / "plugins.py"
+            copy.write_bytes(source.read_bytes())
+            patched = __import__("hermes_installer.native_boundary_patch", fromlist=["_transform"])._transform(
+                "hermes_cli/plugins.py", copy.read_bytes()).decode("utf-8")
+        self.assertIn("manifests = install_selected_native_plugins(self, manifests)", patched)
+        self.assertLess(patched.index("install_selected_native_plugins(self, manifests)"),
+                        patched.index("winners = resolve_manifest_winners(manifests)"))
+        self.assertIn("finish_selected_native_plugin_discovery(self)", patched)
+        self.assertGreater(patched.index("finish_selected_native_plugin_discovery(self)"),
+                           patched.index("self._notify_plugin_loaded(loaded_before)"))
+        self.assertIn("_predeclared_modules", (UPSTREAM / "hermes_cli/plugins_loader.py").read_text())
+
+    def test_overlay_package_initializers_extend_real_pinned_source_path(self):
+        if not UPSTREAM.is_dir():
+            self.skipTest("exact official Hermes source checkout is not available")
+        with tempfile.TemporaryDirectory(prefix="hi08-native-package-overlay-") as scratch:
+            source = Path(scratch) / "source"
+            overlay = Path(scratch) / "overlay"
+            for relative in EXPECTED:
+                target = source / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(UPSTREAM / relative, target)
+            actual = apply_native_boundary_overlay(source, overlay)
+            for relative in ("hermes_cli/__init__.py", "agent/__init__.py"):
+                self.assertIn("extend_path(__path__, __name__)", (overlay / relative).read_text())
+            self.assertEqual(actual, EXPECTED)
+
     def test_provider_attempt_prepares_exact_full_body_and_adds_opaque_header(self):
         messages = [{"role": "user", "content": "local fixture"}]
         kwargs = {"messages": messages, "model": "fixture", "tools": [{"name": "lookup"}],

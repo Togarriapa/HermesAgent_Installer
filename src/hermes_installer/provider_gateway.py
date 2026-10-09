@@ -396,12 +396,21 @@ class LocalProviderGateway:
                 # Requests/bodies/headers can contain private prompts or credentials.
                 return
 
-            def _reply(self, status: int, body: bytes, content_type: str = "application/json") -> None:
+            def _reply(self, status: int, body: bytes, content_type: str = "application/json",
+                       response_ref: str | None = None) -> None:
+                if (response_ref is not None
+                        and (not isinstance(response_ref, str)
+                             or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", response_ref))):
+                    response_ref = None
                 self.send_response(status)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Connection", "close")
+                if response_ref is not None:
+                    # Opaque root lookup only. It carries no source, tool,
+                    # action, or authorization claims and is excluded from logs.
+                    self.send_header("X-Hermes-Native-Response-Ref", response_ref)
                 self.end_headers()
                 self.wfile.write(body)
                 self.close_connection = True
@@ -543,6 +552,7 @@ class LocalProviderGateway:
                     if cancellation is None:
                         self._reply(503, _error_body("gateway.closing", "Gateway is shutting down"))
                         return
+                    response_ref = None
                     try:
                         cancel_check = lambda: cancellation.is_set() or gateway._closing.is_set()
                         if gateway.native_bridge is not None:
@@ -565,6 +575,16 @@ class LocalProviderGateway:
                                     or len(response_body) > 4 * 1024 * 1024
                                     or not isinstance(response_headers, dict)):
                                 raise PolicyDenied("response.bounds", "Host provider broker returned an invalid response")
+                            refs = [value for key, value in response_headers.items()
+                                    if isinstance(key, str)
+                                    and key.casefold() == "x-hermes-native-response-ref"]
+                            if len(refs) == 1:
+                                response_ref = refs[0]
+                            if (200 <= status < 300
+                                    and (not isinstance(response_ref, str)
+                                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", response_ref))):
+                                raise PolicyDenied("response.metadata_unavailable",
+                                                   "Root response metadata delivery is unavailable")
                             result = ProviderResponse(status, response_body, response_headers, 0, 0)
                         else:
                             trace_id = str(uuid.uuid4())
@@ -589,6 +609,7 @@ class LocalProviderGateway:
                         self._reply(503, _error_body("gateway.cancelled", "Gateway request was cancelled"))
                     else:
                         self._reply(503 if exc.code == "authorization.unavailable" else
+                                    502 if exc.code.startswith("response.metadata") else
                                     403 if exc.code.startswith(("route.", "context.")) else 400,
                                     _error_body(exc.code, str(exc)))
                     return
@@ -598,7 +619,7 @@ class LocalProviderGateway:
                 content_type = result.headers.get("Content-Type", "application/json")
                 if content_type not in {"application/json", "text/event-stream"}:
                     content_type = "application/json"
-                self._reply(result.status, result.body, content_type)
+                self._reply(result.status, result.body, content_type, response_ref=response_ref)
 
             def do_PUT(self) -> None:
                 self._reply(405, _error_body("route.method", "Method is not available"))

@@ -24,11 +24,13 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping
 
 from hermes_installer.authority.types import AuthorityDenied, EffectAuthorization, HostContext, canonical_digest
+from hermes_installer.registry.resource_jobs import RootAdmittedTask
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +197,37 @@ class ManagedNamespaceLease:
 
 
 @dataclass(slots=True)
+class ManagedProcessIdentityLease:
+    """Root-only duplicated PIDFD plus freshly revalidated process identity."""
+
+    process_id: str
+    profile_id: str
+    generation: str
+    uid: int
+    gid: int
+    pid: int
+    start_ticks: int
+    executable_device: int
+    executable_inode: int
+    executable_sha256: str
+    cgroup_identity: str
+    mount_namespace_inode: int
+    network_namespace_inode: int
+    expires_monotonic: float
+    pidfd: int
+    _closed: bool = False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            os.close(self.pidfd)
+        except OSError:
+            pass
+
+
+@dataclass(slots=True)
 class _Handle:
     process_id: str
     profile: ManagedProfileCustody
@@ -225,6 +258,97 @@ class _Handle:
     # The immutable profile registered by the root daemon. ``profile`` may be a
     # derived record selecting one exact enrolled operation executable.
     registered_profile: ManagedProfileCustody | None = None
+    task_owned: bool = False
+    native_loader_observation_handle: str | None = None
+    native_loader_ready_event_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedTaskHandle:
+    """Opaque root-only reference to a started task process; never put on wire."""
+
+    handle_id: str
+    generation: str
+    process_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class RootTaskTerminalReceipt:
+    """Root-observed bounded task completion and cleanup facts."""
+
+    task_handle: str
+    terminal_receipt_handle: str
+    job_id: str
+    node_id: str
+    admission_id: str
+    admission_handle_id: str
+    backend_enrollment_id: str
+    operation_id: str
+    task_body_recipe_id: str
+    task_request_schema_id: str
+    resource_generation: str
+    profile_id: str
+    process_generation: str
+    process_id: str
+    exit_code: int | None
+    timed_out: bool
+    cancelled: bool
+    started_monotonic: float
+    finished_monotonic: float
+    cgroup_identity: str
+    cgroup_empty: bool
+    main_pidfd_gone: bool
+    descendants_gone: bool
+    launcher_reaped: bool
+    cleanup_verified: bool
+    stdout: bytes
+    stderr: bytes
+    stdout_sha256: str
+    stderr_sha256: str
+    output_complete: bool
+    schema: int
+    state: str
+    observed_monotonic: float
+    stdout_size_bytes: int
+    stderr_size_bytes: int
+    parent_closure_digest: str
+    native_loader_ready_event_id: str | None
+    # Native execution observations are issued by the companion registry and
+    # remain separate from this immutable custody terminal receipt.
+    native_execution_receipt_handle: str | None = None
+
+    @property
+    def task_handle_id(self) -> str:
+        """Compatibility accessor for internal journal adapters."""
+        return self.task_handle
+
+    @property
+    def terminal_receipt_id(self) -> str:
+        """Compatibility accessor for internal journal adapters."""
+        return self.terminal_receipt_handle
+
+    @property
+    def profile_generation(self) -> str:
+        return self.process_generation
+
+
+@dataclass(slots=True)
+class _ManagedTaskState:
+    handle: _Handle
+    admission: RootAdmittedTask
+    deadline: float
+    stdin_deadline: float
+    cancelled: Callable[[], bool]
+    selection_payload: bytes
+    admission_handle_id: str
+    input_closed: bool = False
+    stdout: bytearray = field(default_factory=bytearray)
+    stderr: bytearray = field(default_factory=bytearray)
+    stdout_eof: bool = False
+    stderr_eof: bool = False
+    output_overflow: bool = False
+    consumed: bool = False
+    lock: threading.RLock = field(default_factory=threading.RLock)
 
 
 _LAUNCH_FIELDS = {
@@ -606,6 +730,8 @@ class ManagedProcessEffectHandler:
                  systemctl: Path = Path("/usr/bin/systemctl"),
                  artifact_resolver: Callable[[str, str], Any] | None = None,
                  native_package_resolver: Callable[[str, str], ManagedNativePackageMount | None] | None = None,
+                 native_loader_observation_store: Any | None = None,
+                 task_admission_current: Callable[[RootAdmittedTask, bytes], bool] | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if not profiles or any(key != item.profile_id for key, item in profiles.items()):
             raise ValueError("root process custody requires an explicit profile registry")
@@ -615,9 +741,14 @@ class ManagedProcessEffectHandler:
         self.monotonic = monotonic
         self.artifact_resolver = artifact_resolver
         self.native_package_resolver = native_package_resolver
+        self.native_loader_observation_store = native_loader_observation_store
+        self._systemd_openfile_supported: bool | None = None
+        self.task_admission_current = task_admission_current
         self._handles: dict[str, _Handle] = {}
+        self._task_handles: dict[str, _ManagedTaskState] = {}
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
+        self._task_terminal_receipts: dict[str, tuple[str, RootTaskTerminalReceipt, float]] = {}
         self._lock = threading.RLock()
         self._member_key = os.urandom(32)
         # Root-only test harness may capture bounded manager diagnostics. This
@@ -625,6 +756,78 @@ class ManagedProcessEffectHandler:
         self._diagnostic_sink: Callable[[bytes], None] | None = None
         for profile in self.profiles.values():
             self._validate_profile(profile)
+
+    def set_native_loader_observation_store(self, store: Any) -> None:
+        """Install the root-owned loader observer after manager construction.
+
+        The observer is constructed with this manager as its custody resolver;
+        workers cannot call or replace this hook.
+        """
+        if (store is None or not callable(getattr(store, "register_launch", None))
+                or not callable(getattr(store, "receive_loader_progress", None))
+                or not callable(getattr(store, "revoke_process", None))):
+            raise ValueError("native loader observer must implement the fixed root API")
+        with self._lock:
+            if self.native_loader_observation_store is not None:
+                raise ValueError("native loader observer is already installed")
+            self.native_loader_observation_store = store
+
+    def register_native_loader_channel(self, process_id: str, channel: Any, *,
+                                       expected_loader_role_artifact_id: str,
+                                       expected_loader_role_sha256: str,
+                                       deadline_monotonic: float) -> str:
+        """Attach one channel to the currently owned process registry entry."""
+        with self._lock:
+            handle = self._handles.get(process_id)
+            store = self.native_loader_observation_store
+            if handle is None or handle.stopped or store is None:
+                raise AuthorityDenied("native.loader", "selected process or observer is unavailable")
+            if self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd):
+                raise AuthorityDenied("native.loader", "selected process is no longer active")
+            if not self.is_owned_active_process_handle(handle):
+                raise AuthorityDenied("native.loader", "selected process is not current custody state")
+            observation = store.register_launch(
+                handle, channel, expected_loader_role_artifact_id,
+                expected_loader_role_sha256, channel.launch_nonce,
+                deadline_monotonic,
+            )
+            handle.native_loader_observation_handle = observation
+            return observation
+
+    def receive_native_loader_progress(self, process_id: str, *,
+                                       cancelled: Callable[[], bool]) -> str:
+        """Wait for the selected loader's root-authenticated three-frame ready event."""
+        with self._lock:
+            handle = self._handles.get(process_id)
+            store = self.native_loader_observation_store
+            observation = (handle.native_loader_observation_handle if handle is not None else None)
+            if (handle is None or handle.stopped or store is None or observation is None
+                    or not self.is_owned_active_process_handle(handle)):
+                raise AuthorityDenied("native.loader", "selected loader observation is not active")
+        ready_event_id = store.receive_loader_progress(observation, cancelled)
+        with self._lock:
+            current = self._handles.get(process_id)
+            if current is not handle or current.stopped or self.monotonic() >= current.expires:
+                store.revoke_process(process_id, handle.profile.generation)
+                raise AuthorityDenied("native.loader", "process changed during loader observation")
+            current.native_loader_ready_event_id = ready_event_id
+        return ready_event_id
+
+    def _require_systemd_openfile(self) -> None:
+        if self._systemd_openfile_supported is None:
+            try:
+                result = subprocess.run([str(self.systemctl), "--version"],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                    timeout=2.0, check=False)
+                first = result.stdout.splitlines()[0].decode("ascii", "strict") if result.stdout else ""
+                match = re.match(r"systemd\s+(\d+)(?:\s|$)", first)
+                self._systemd_openfile_supported = bool(
+                    result.returncode == 0 and match is not None and int(match.group(1)) >= 253)
+            except (OSError, subprocess.TimeoutExpired, UnicodeError, ValueError):
+                self._systemd_openfile_supported = False
+        if not self._systemd_openfile_supported:
+            raise AuthorityDenied("native.loader", "systemd v253 OpenFile support is required")
 
     def _prepare_native_package_mount(self, profile: ManagedProfileCustody,
                                       process_id: str) -> tuple[Path | None, NativePackageMountReceipt | None]:
@@ -992,7 +1195,12 @@ class ManagedProcessEffectHandler:
     def _remove_native_staging(stage: Path) -> None:
         if stage.parent != Path("/run/hermes-installer/native-staging"):
             raise AuthorityDenied("native.cleanup", "native staging path is outside fixed custody")
-        info = stage.lstat()
+        try:
+            info = stage.lstat()
+        except FileNotFoundError:
+            # Several bounded preparation failures unwind through both their
+            # local exception branch and the outer launch-finally block.
+            return
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
             raise AuthorityDenied("native.cleanup", "native staging tree custody changed")
         ManagedProcessEffectHandler._umount_native_staging(stage)
@@ -1147,7 +1355,15 @@ class ManagedProcessEffectHandler:
                     payload: bytes, timeout: float, peer_pid: int,
                     peer_pidfd: int | None,
                     cancelled: Callable[[], bool]) -> Mapping[str, Any]:
-            return self.dispatch(profile, operation, context=context, authorization=authorization,
+            # Resolve the current immutable enrollment row for this handler ID.
+            # A refreshed row with the same effect target must be used for
+            # admission; a changed target remains unreachable through this
+            # already-registered handler key and is rejected by dispatch.
+            with self._lock:
+                current_profile = self.profiles.get(profile.profile_id)
+            if current_profile is None:
+                raise AuthorityDenied("process.profile", "enrolled process profile is no longer active")
+            return self.dispatch(current_profile, operation, context=context, authorization=authorization,
                                  payload=payload, timeout=timeout, peer_pid=peer_pid,
                                  peer_pidfd=peer_pidfd,
                                  cancelled=cancelled)
@@ -1173,11 +1389,39 @@ class ManagedProcessEffectHandler:
                 or peer_pid <= 0 or canonical_digest(payload) != authorization.request_digest):
             raise AuthorityDenied("process.binding", "process grant does not match the enrolled profile effect")
         if operation == "process.start":
-            return self._start(profile, context, authorization, payload, timeout, peer_pid,
-                               peer_pidfd, cancelled)
+            try:
+                return self._start(profile, context, authorization, payload, timeout, peer_pid,
+                                   peer_pidfd, cancelled)
+            except Exception as exc:
+                self._record_test_diagnostic("start-deny", exc)
+                raise
         if operation == "process.inspect":
-            return self._inspect(profile, context, payload, timeout, cancelled)
+            try:
+                return self._inspect(profile, context, payload, timeout, cancelled)
+            except Exception as exc:
+                self._record_test_diagnostic("inspect-deny", exc)
+                raise
         return self._control(profile, context, operation, payload, timeout, cancelled)
+
+    def _record_test_diagnostic(self, prefix: str, exc: Exception) -> None:
+        """Emit only bounded exception class/code/line into root-only test evidence."""
+        sink = self._diagnostic_sink
+        if sink is None:
+            return
+        code = getattr(exc, "code", "internal")
+        if not isinstance(code, str) or not re.fullmatch(r"[a-z0-9_.-]{1,64}", code):
+            code = "internal"
+        exception_type = type(exc).__name__
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", exception_type):
+            exception_type = "Exception"
+        import traceback
+        frames = traceback.extract_tb(exc.__traceback__)[-5:] if exc.__traceback__ else []
+        frame_path = ",".join(f"{frame.name}:{frame.lineno}" for frame in frames)
+        # Function names and source line numbers contain no request values or
+        # host paths, and make root-only fixture failures actionable.
+        if not re.fullmatch(r"[A-Za-z0-9_.,:< >-]{0,384}", frame_path):
+            frame_path = "unavailable"
+        sink((prefix + ":" + code + ":" + exception_type + ":frames=" + frame_path).encode("ascii"))
 
     @staticmethod
     def _json(payload: bytes) -> dict[str, Any]:
@@ -1198,7 +1442,9 @@ class ManagedProcessEffectHandler:
     def _start(self, profile: ManagedProfileCustody, context: HostContext,
                authorization: EffectAuthorization, payload: bytes, timeout: float,
                peer_pid: int, peer_pidfd: int | None,
-               cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+               cancelled: Callable[[], bool], *,
+               start_guard: Callable[[], bool] | None = None,
+               task_admission: RootAdmittedTask | None = None) -> Mapping[str, Any]:
         with self._lock:
             if (profile.profile_id in self._starting
                     or any(item.profile.profile_id == profile.profile_id for item in self._handles.values())):
@@ -1209,9 +1455,10 @@ class ManagedProcessEffectHandler:
                 return self.start_selected_operation(
                     profile, context, authorization, payload, timeout=timeout,
                     peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
+                    _start_guard=start_guard, _task_admission=task_admission,
                 )
             return self._start_reserved(profile, context, authorization, payload, timeout,
-                                        peer_pid, peer_pidfd, cancelled)
+                                        peer_pid, peer_pidfd, cancelled, start_guard=start_guard)
         finally:
             with self._lock:
                 self._starting.discard(profile.profile_id)
@@ -1219,7 +1466,9 @@ class ManagedProcessEffectHandler:
     def start_selected_operation(self, profile: ManagedProfileCustody, context: HostContext,
                                  authorization: EffectAuthorization, payload: bytes, *,
                                  timeout: float, peer_pid: int, peer_pidfd: int | None,
-                                 cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+                                 cancelled: Callable[[], bool],
+                                 _start_guard: Callable[[], bool] | None = None,
+                                 _task_admission: RootAdmittedTask | None = None) -> Mapping[str, Any]:
         """Resolve a selection-only worker request to one immutable root recipe.
 
         This method is called only after dispatch has checked the consumed
@@ -1227,7 +1476,11 @@ class ManagedProcessEffectHandler:
         executable, environment, PID, namespace, or socket comes from the peer.
         """
         request = self._json(payload)
-        if (set(request) != {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
+        expected_fields = {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
+        if _task_admission is not None:
+            expected_fields |= {"admission_handle", "node_id", "task_payload_sha256",
+                                "stdin_sha256", "stdin_size_bytes"}
+        if (set(request) != expected_fields
                 or type(request.get("schema")) is not int or request["schema"] != 1
                 or request.get("enrollment_id") != profile.enrollment_id
                 or request.get("generation") != profile.generation):
@@ -1242,6 +1495,14 @@ class ManagedProcessEffectHandler:
         parameters = request.get("parameters")
         if not isinstance(parameters, dict):
             raise AuthorityDenied("process.parameters", "operation parameters must be a bounded object")
+        if _task_admission is not None and (
+                request.get("node_id") != _task_admission.node_id
+                or request.get("task_payload_sha256") != _task_admission.task_payload_sha256
+                or request.get("stdin_sha256") != _task_admission.stdin_sha256
+                or request.get("stdin_size_bytes") != _task_admission.stdin_size_bytes
+                or not isinstance(request.get("admission_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", request["admission_handle"])):
+            raise AuthorityDenied("resource.task_selection", "internal task selection differs from its admission")
         schema_id = recipe["parameter_schema_id"]
         schema = (profile.parameter_schemas or {}).get(schema_id)
         if not isinstance(schema, Mapping):
@@ -1323,7 +1584,369 @@ class ManagedProcessEffectHandler:
         }
         launch_bytes = json.dumps(launch, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
         return self._start_reserved(derived, context, authorization, launch_bytes, timeout,
-                                   peer_pid, peer_pidfd, cancelled, registered_profile=profile)
+                                   peer_pid, peer_pidfd, cancelled, registered_profile=profile,
+                                   start_guard=_start_guard)
+
+    def start_selected_task(self, profile: ManagedProfileCustody, context: HostContext,
+                            authorization: EffectAuthorization, selection_payload: bytes, *,
+                            task_handle: RootAdmittedTask, exact_stdin: bytes,
+                            expected_stdin_sha256: str, peer_pid: int,
+                            peer_pidfd: int, timeout: float,
+                            cancelled: Callable[[], bool]) -> ManagedTaskHandle:
+        """Start one admitted task and write/EOF its prompt before returning.
+
+        This is an internal root call, not a worker RPC. The resource ledger
+        must mint ``RootAdmittedTask`` only after consuming the one-use child
+        admission. The request carries only a selected recipe id; executable,
+        argv, environment and roots are resolved from the protected profile.
+        """
+        if (not isinstance(task_handle, RootAdmittedTask)
+                or not isinstance(exact_stdin, bytes) or len(exact_stdin) > 262144
+                or not isinstance(expected_stdin_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", expected_stdin_sha256)
+                or hashlib.sha256(exact_stdin).hexdigest() != expected_stdin_sha256
+                or task_handle.stdin_sha256 != expected_stdin_sha256
+                or task_handle.stdin_size_bytes != len(exact_stdin)
+                or not isinstance(task_handle.task_payload_bytes, bytes)
+                or len(task_handle.task_payload_bytes) > 262144
+                or hashlib.sha256(task_handle.task_payload_bytes).hexdigest()
+                   != task_handle.task_payload_sha256
+                or not self._task_admission_is_current(task_handle, selection_payload)):
+            raise AuthorityDenied("resource.task_admission", "root task admission or prompt digest is invalid")
+        if (profile.generation != task_handle.process_generation
+                or profile.enrollment_id != task_handle.process_enrollment_id
+                or self.profiles.get(profile.profile_id) != profile
+                or not isinstance(profile.operation_recipes, Mapping)
+                or task_handle.operation_id not in profile.operation_recipes
+                or task_handle.deadline_monotonic <= self.monotonic()
+                or task_handle.operation_id != "hermes-resource-profile-task-v1"
+                or authorization.operation != "process.start"
+                or authorization.target != process_start_target(profile)
+                or authorization.capability != "hermes-profile-invoke"
+                or context.profile_id != profile.profile_id
+                or context.enrollment_id != profile.enrollment_id
+                or context.generation != profile.generation
+                or context.operation != "process.start"
+                or authorization.profile_id != profile.profile_id
+                or authorization.enrollment_id != profile.enrollment_id
+                or authorization.generation != profile.generation
+                or authorization.request_digest != canonical_digest(selection_payload)
+                or context.final_payload_digest != authorization.request_digest
+                or authorization.final_payload_digest != authorization.request_digest
+                or context.principal_id != authorization.principal_id
+                or context.namespace_id != authorization.namespace_id
+                or context.trace_id != authorization.trace_id
+                or context.intent_id != authorization.intent_id
+                or context.purpose != authorization.purpose
+                or context.sensitivity != authorization.sensitivity
+                or context.lineage_hash != authorization.lineage_hash
+                or context.policy_revision != authorization.policy_revision
+                or context.uid != authorization.uid
+                or peer_pid <= 0 or peer_pidfd < 0 or _pidfd_exited(peer_pidfd)
+                or self._pidfd_target(peer_pidfd) != peer_pid
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= 600):
+            raise AuthorityDenied("resource.task_binding", "selected task, grant, profile or parent is stale")
+        try:
+            if len(task_handle.task_payload_bytes) > 262144:
+                raise ValueError("task body exceeds its bound")
+            task_request = json.loads(task_handle.task_payload_bytes.decode("utf-8"))
+            from hermes_installer.registry.resource_jobs import _canonical as canonical_task_json
+            if canonical_task_json(task_request) != task_handle.task_payload_bytes:
+                raise ValueError("task body is not canonical JSON")
+            prompt_value = task_request.get("prompt")
+            if (set(task_request) != {"prompt"} or not isinstance(prompt_value, str) or not prompt_value
+                    or prompt_value.encode("utf-8") != exact_stdin):
+                raise ValueError("task body does not resolve to the exact stdin bytes")
+        except (AuthorityDenied, UnicodeError, ValueError, TypeError):
+            raise AuthorityDenied("resource.task_payload", "admitted task prompt is malformed or mismatched") from None
+        selection = self._json(selection_payload)
+        if (set(selection) != {"schema", "enrollment_id", "generation", "operation_id", "parameters",
+                               "admission_handle", "node_id", "task_payload_sha256",
+                               "stdin_sha256", "stdin_size_bytes"}
+                or selection.get("schema") != 1
+                or selection.get("enrollment_id") != profile.enrollment_id
+                or selection.get("generation") != profile.generation
+                or selection.get("operation_id") != task_handle.operation_id
+                or selection.get("parameters") != {}
+                or selection.get("node_id") != task_handle.node_id
+                or selection.get("task_payload_sha256") != task_handle.task_payload_sha256
+                or selection.get("stdin_sha256") != task_handle.stdin_sha256
+                or selection.get("stdin_size_bytes") != task_handle.stdin_size_bytes):
+            raise AuthorityDenied("resource.task_selection", "task recipe selection is not the admitted fixed operation")
+        recipe = profile.operation_recipes[task_handle.operation_id]
+        if not isinstance(recipe, Mapping) or recipe.get("stdin_mode") != "bounded-typed-bytes":
+            raise AuthorityDenied("resource.task_stdin", "selected recipe does not admit one bounded stdin frame")
+        launch_deadline = min(float(task_handle.deadline_monotonic),
+                              float(authorization.monotonic_expires_at), self.monotonic() + timeout)
+        if launch_deadline <= self.monotonic() or cancelled():
+            raise AuthorityDenied("resource.task_expired", "task expired before process admission")
+        response = self._start(profile, context, authorization, selection_payload,
+                               launch_deadline - self.monotonic(),
+                               peer_pid, peer_pidfd, cancelled,
+                               task_admission=task_handle,
+                               start_guard=lambda: bool(self._task_admission_is_current(task_handle, selection_payload)
+                                   and self.monotonic() < task_handle.deadline_monotonic
+                                   and not cancelled()))
+        try:
+            body = json.loads(response["body"].decode("ascii"))
+            process_id = body["process_id"]
+            with self._lock:
+                handle = self._handles.get(process_id)
+            if (handle is None or handle.profile.profile_id != profile.profile_id
+                    or handle.profile.generation != profile.generation or handle.stopped):
+                raise AuthorityDenied("resource.task_start", "selected process did not remain registered")
+            handle.task_owned = True
+            task_deadline = min(float(task_handle.deadline_monotonic),
+                                self.monotonic() + timeout, handle.expires)
+            state = _ManagedTaskState(handle, task_handle, task_deadline,
+                                      min(task_deadline, float(authorization.monotonic_expires_at)),
+                                      cancelled, selection_payload,
+                                      selection["admission_handle"])
+            opaque_id = uuid.uuid4().hex
+            with self._lock:
+                self._task_handles[opaque_id] = state
+            root_handle = ManagedTaskHandle(opaque_id, profile.generation, handle.process_id)
+            self.write_initial_task_stdin_and_close(root_handle, exact_stdin)
+            if (not self._task_admission_is_current(task_handle, selection_payload)
+                    or self.monotonic() >= state.deadline or cancelled()):
+                raise AuthorityDenied("resource.task_expired", "task admission expired while receiving stdin")
+            return root_handle
+        except BaseException as start_error:
+            if "opaque_id" in locals():
+                with self._lock:
+                    self._task_handles.pop(opaque_id, None)
+            if "handle" in locals() and handle is not None:
+                try:
+                    proof = self._stop(handle, timeout=5.0)
+                except Exception:
+                    raise AuthorityDenied(
+                        "resource.task_cleanup_ambiguous",
+                        "failed task start could not prove owned-process cleanup",
+                    ) from start_error
+                if not (proof.cleanup_verified and proof.cgroup_empty
+                        and proof.main_pidfd_gone and proof.launcher_reaped):
+                    raise AuthorityDenied(
+                        "resource.task_cleanup_ambiguous",
+                        "failed task start could not prove owned-process cleanup",
+                    ) from start_error
+            raise
+
+    def _task_admission_is_current(self, admission: RootAdmittedTask,
+                                   selection_payload: bytes) -> bool:
+        callback = self.task_admission_current
+        if callback is None:
+            return False
+        try:
+            return callback(admission, selection_payload) is True
+        except Exception:
+            return False
+
+    def write_initial_task_stdin_and_close(self, task_handle: ManagedTaskHandle,
+                                           exact_bytes: bytes) -> int:
+        """Write one complete bounded frame and close stdin within the start effect."""
+        state = self._resolve_task_handle(task_handle)
+        handle = state.handle
+        if (not isinstance(exact_bytes, bytes) or len(exact_bytes) > 262144
+                or hashlib.sha256(exact_bytes).hexdigest() != state.admission.stdin_sha256
+                or len(exact_bytes) != state.admission.stdin_size_bytes):
+            raise AuthorityDenied("resource.task_stdin", "stdin differs from the consumed admission")
+        with state.lock:
+            if state.input_closed or handle.launcher.stdin is None or handle.stopped:
+                raise AuthorityDenied("resource.task_stdin", "task stdin is already closed or unavailable")
+            fd = handle.launcher.stdin.fileno()
+            offset = 0
+            while offset < len(exact_bytes):
+                if (state.cancelled() or self.monotonic() >= state.stdin_deadline
+                        or _pidfd_exited(handle.parent_pidfd)
+                        or _pidfd_exited(handle.child_pidfd)
+                        or not self._task_admission_is_current(state.admission, state.selection_payload)):
+                    raise AuthorityDenied("resource.task_expired", "task admission expired during stdin delivery")
+                writable = []
+                reads = [stream.fileno() for stream, eof in (
+                    (handle.launcher.stdout, state.stdout_eof),
+                    (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof]
+                _, writable, _ = select.select(reads, [fd], [], min(.1, max(.001, state.stdin_deadline - self.monotonic())))
+                self._drain_task_streams(state, reads, timeout=0)
+                if fd in writable:
+                    try:
+                        count = os.write(fd, exact_bytes[offset:offset + 65536])
+                    except BlockingIOError:
+                        count = 0
+                    except OSError:
+                        raise AuthorityDenied("resource.task_stdin", "task closed stdin before receiving its frame") from None
+                    if count <= 0:
+                        continue
+                    offset += count
+                if state.output_overflow:
+                    raise AuthorityDenied("resource.task_output", "task exceeded its bounded output before stdin EOF")
+            handle.launcher.stdin.close()
+            state.input_closed = True
+            return offset
+
+    def wait_owned_task_terminal(self, task_handle: ManagedTaskHandle, *,
+                                 deadline_monotonic: float,
+                                 cancelled: Callable[[], bool]) -> RootTaskTerminalReceipt:
+        """Wait for one root-owned task and return truthful bounded cleanup proof."""
+        state = self._resolve_task_handle(task_handle)
+        if not state.input_closed:
+            raise AuthorityDenied("resource.task_stdin", "task has not received its one stdin frame and EOF")
+        if (isinstance(deadline_monotonic, bool) or not isinstance(deadline_monotonic, (int, float))
+                or not math.isfinite(deadline_monotonic)):
+            raise AuthorityDenied("resource.task_deadline", "task wait deadline is invalid")
+        # The root may pass the original task deadline even when the manager
+        # imposed a tighter per-operation cap. Intersect them; never extend.
+        state.deadline = min(state.deadline, float(deadline_monotonic))
+        handle, admission = state.handle, state.admission
+        timed_out = False
+        was_cancelled = False
+        with state.lock:
+            if state.consumed:
+                raise AuthorityDenied("resource.task_handle", "task terminal handle is already consumed")
+            try:
+                while True:
+                    current = self._task_admission_is_current(admission, state.selection_payload)
+                    if (cancelled() or state.cancelled() or _pidfd_exited(handle.parent_pidfd)
+                            or not current):
+                        was_cancelled = True
+                        break
+                    if self.monotonic() >= state.deadline:
+                        timed_out = True
+                        break
+                    self._drain_task_streams(state, [stream.fileno() for stream, eof in (
+                        (handle.launcher.stdout, state.stdout_eof),
+                        (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof], timeout=.05)
+                    if state.output_overflow:
+                        break
+                    if (handle.launcher.poll() is not None and state.stdout_eof and state.stderr_eof):
+                        break
+                # Drain already buffered bytes after natural exit, without
+                # allowing an unbounded child or exceeding the root cap.
+                for _ in range(16):
+                    fds = [stream.fileno() for stream, eof in (
+                        (handle.launcher.stdout, state.stdout_eof),
+                        (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof]
+                    if not fds:
+                        break
+                    self._drain_task_streams(state, fds, timeout=.01)
+                    if handle.launcher.poll() is None:
+                        break
+                proof = self._stop(handle, timeout=5.0)
+                exit_code = handle.launcher.returncode
+                clean = bool(proof.cleanup_verified and proof.cgroup_empty
+                             and proof.main_pidfd_gone and proof.launcher_reaped
+                             and not self._pids(handle.cgroup))
+                result = RootTaskTerminalReceipt(
+                    task_handle=task_handle.handle_id,
+                    terminal_receipt_handle=uuid.uuid4().hex,
+                    job_id=admission.job_id,
+                    node_id=admission.node_id, admission_id=admission.admission_id,
+                    admission_handle_id=state.admission_handle_id,
+                    backend_enrollment_id=admission.backend_enrollment_id,
+                    operation_id=admission.operation_id,
+                    task_body_recipe_id=admission.task_body_recipe_id,
+                    task_request_schema_id=admission.task_request_schema_id,
+                    resource_generation=admission.resource_generation,
+                    profile_id=handle.profile.profile_id, process_generation=admission.process_generation,
+                    process_id=handle.process_id, exit_code=exit_code,
+                    timed_out=timed_out, cancelled=was_cancelled,
+                    started_monotonic=handle.started, finished_monotonic=self.monotonic(),
+                    cgroup_identity=handle.cgroup, cgroup_empty=proof.cgroup_empty,
+                    main_pidfd_gone=proof.main_pidfd_gone, descendants_gone=proof.cgroup_empty,
+                    launcher_reaped=proof.launcher_reaped, cleanup_verified=clean,
+                    stdout=bytes(state.stdout), stderr=bytes(state.stderr),
+                    stdout_sha256=hashlib.sha256(state.stdout).hexdigest(),
+                    stderr_sha256=hashlib.sha256(state.stderr).hexdigest(),
+                    output_complete=(not state.output_overflow and state.stdout_eof and state.stderr_eof),
+                    schema=1,
+                    state=("cancelled" if was_cancelled else
+                           "failed" if timed_out or exit_code != 0 or state.output_overflow
+                           or not (state.stdout_eof and state.stderr_eof) else "completed"),
+                    observed_monotonic=self.monotonic(),
+                    stdout_size_bytes=len(state.stdout), stderr_size_bytes=len(state.stderr),
+                    parent_closure_digest=admission.parent_closure_digest,
+                    native_loader_ready_event_id=handle.native_loader_ready_event_id)
+                if not clean:
+                    raise AuthorityDenied("resource.task_cleanup", "task terminal cleanup was not proven")
+                state.consumed = True
+                with self._lock:
+                    self._task_handles.pop(task_handle.handle_id, None)
+                    now = self.monotonic()
+                    for receipt_id, (_task_id, _receipt, expires) in tuple(self._task_terminal_receipts.items()):
+                        if expires <= now:
+                            self._task_terminal_receipts.pop(receipt_id, None)
+                    if len(self._task_terminal_receipts) >= 4096:
+                        raise AuthorityDenied("resource.task_receipts", "terminal receipt registry is full")
+                    self._task_terminal_receipts[result.terminal_receipt_handle] = (
+                        task_handle.handle_id, result, now + 30.0)
+                return result
+            except BaseException:
+                raise
+
+    def resolve_task_terminal(self, task_handle_id: str,
+                              terminal_receipt_handle: str) -> RootTaskTerminalReceipt:
+        """Resolve the exact recent terminal object produced by this manager.
+
+        This root-internal lookup lets the task-native observer join terminal
+        facts without reconstructing them or accepting a caller-produced DTO.
+        Its consumer owns one-use semantics; the bounded receipt remains
+        available only until its short resolver lease or profile generation
+        ends.
+        """
+        if (not isinstance(task_handle_id, str) or not re.fullmatch(r"[0-9a-f]{32}", task_handle_id)
+                or not isinstance(terminal_receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", terminal_receipt_handle)):
+            raise AuthorityDenied("resource.task_receipt", "task terminal receipt selector is malformed")
+        with self._lock:
+            entry = self._task_terminal_receipts.get(terminal_receipt_handle)
+            if entry is None:
+                raise AuthorityDenied("resource.task_receipt", "task terminal receipt is unavailable")
+            bound_task_id, receipt, expires = entry
+            profile = self.profiles.get(receipt.profile_id)
+            if (bound_task_id != task_handle_id or expires <= self.monotonic()
+                    or profile is None or profile.generation != receipt.process_generation
+                    or receipt.task_handle != task_handle_id
+                    or receipt.terminal_receipt_handle != terminal_receipt_handle):
+                self._task_terminal_receipts.pop(terminal_receipt_handle, None)
+                raise AuthorityDenied("resource.task_receipt", "task terminal receipt is stale or mismatched")
+            return receipt
+
+    def _resolve_task_handle(self, task_handle: ManagedTaskHandle) -> _ManagedTaskState:
+        if not isinstance(task_handle, ManagedTaskHandle):
+            raise AuthorityDenied("resource.task_handle", "root task handle has the wrong type")
+        with self._lock:
+            state = self._task_handles.get(task_handle.handle_id)
+        if (state is None or state.consumed or task_handle.generation != state.admission.process_generation
+                or state.handle.process_id not in self._handles
+                or state.handle.stopped):
+            raise AuthorityDenied("resource.task_handle", "root task handle is stale or consumed")
+        return state
+
+    def _drain_task_streams(self, state: _ManagedTaskState, fds: list[int], *, timeout: float) -> None:
+        if not fds:
+            return
+        try:
+            ready, _, _ = select.select(fds, [], [], max(0.0, timeout))
+        except (OSError, ValueError):
+            raise AuthorityDenied("resource.task_output", "task output stream became invalid") from None
+        for fd in ready:
+            stream_name = "stdout" if state.handle.launcher.stdout and fd == state.handle.launcher.stdout.fileno() else "stderr"
+            try:
+                chunk = os.read(fd, 65536)
+            except BlockingIOError:
+                continue
+            except OSError:
+                chunk = b""
+            if not chunk:
+                setattr(state, stream_name + "_eof", True)
+                continue
+            target = getattr(state, stream_name)
+            if len(state.stdout) + len(state.stderr) + len(chunk) > state.handle.output_cap:
+                state.output_overflow = True
+                remaining = max(0, state.handle.output_cap - len(state.stdout) - len(state.stderr))
+                target.extend(chunk[:remaining])
+            else:
+                target.extend(chunk)
 
     @staticmethod
     def _validate_operation_parameters(parameters: Mapping[str, Any], schema: Mapping[str, Any]) -> dict[str, Any]:
@@ -1379,14 +2002,37 @@ class ManagedProcessEffectHandler:
                         authorization: EffectAuthorization, payload: bytes, timeout: float,
                         peer_pid: int, peer_pidfd: int | None,
                         cancelled: Callable[[], bool], *,
-                        registered_profile: ManagedProfileCustody | None = None) -> Mapping[str, Any]:
+                        registered_profile: ManagedProfileCustody | None = None,
+                        start_guard: Callable[[], bool] | None = None) -> Mapping[str, Any]:
         launch_deadline = min(self.monotonic() + max(0.0, timeout),
                               authorization.monotonic_expires_at)
 
         def require_live_start(parent_fd: int | None = None) -> None:
-            if (cancelled() or self.monotonic() >= launch_deadline
-                    or self.profiles.get(profile.profile_id) is not (registered_profile or profile)
-                    or (parent_fd is not None and _pidfd_exited(parent_fd))):
+            reason = None
+            if cancelled():
+                reason = "cancelled"
+            elif self.monotonic() >= launch_deadline:
+                reason = "deadline"
+            elif self.profiles.get(profile.profile_id) != (registered_profile or profile):
+                reason = "profile-generation"
+            elif start_guard is not None and not start_guard():
+                reason = "admission-currentness"
+            elif parent_fd is not None and _pidfd_exited(parent_fd):
+                reason = "parent-pidfd"
+            if reason is not None:
+                sink = self._diagnostic_sink
+                if sink is not None:
+                    # Test-only root diagnostics expose a finite reason enum,
+                    # never paths, credentials, payloads, or process data.
+                    details = ""
+                    if reason == "profile-generation":
+                        current = self.profiles.get(profile.profile_id)
+                        expected = registered_profile or profile
+                        names = getattr(type(expected), "__dataclass_fields__", {})
+                        differing = [name for name in names
+                                     if getattr(current, name, object()) != getattr(expected, name, object())]
+                        details = ":fields=" + ",".join(differing[:24])
+                    sink(("prelaunch-deny:" + reason + details).encode("ascii", "backslashreplace")[:512])
                 raise AuthorityDenied("process.start_expired", "start grant, profile enrollment or caller expired before launch")
 
         if peer_pidfd is None:
@@ -1490,6 +2136,7 @@ class ManagedProcessEffectHandler:
         artifact_target: Path | None = None
         native_mount_source: Path | None = None
         native_mount_receipt: NativePackageMountReceipt | None = None
+        native_loader_channel: Any | None = None
         artifact_path: Path | None = resolved_children.get(selected_child_ref) if selected_child_ref else None
         if selected_child_ref is not None and artifact_path is None:
             os.close(parent_fd)
@@ -1540,15 +2187,49 @@ class ManagedProcessEffectHandler:
             properties.append(f"--property=CPUQuota={profile.cpu_quota_percent}%")
         if profile.io_weight is not None:
             properties.append(f"--property=IOWeight={profile.io_weight}")
+        try:
+            native_mount_source, native_mount_receipt = self._prepare_native_package_mount(profile, process_id)
+            if native_mount_receipt is not None:
+                if self.native_loader_observation_store is None:
+                    raise AuthorityDenied("native.loader", "root loader observation store is unavailable")
+                self._require_systemd_openfile()
+                binding = getattr(profile.native_package, "binding", profile.native_package)
+                role_artifact_id = getattr(binding, "entrypoint_artifact_id", None)
+                role_sha256 = getattr(binding, "entrypoint_sha256", None)
+                if (not isinstance(role_artifact_id, str) or not role_artifact_id
+                        or not isinstance(role_sha256, str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", role_sha256)):
+                    raise AuthorityDenied("native.loader", "selected loader role pin is unavailable")
+                runtime_dir = Path("/run/hermes-installer/native-loader")
+                self._ensure_root_runtime_directory(runtime_dir.parent, 0o711)
+                self._ensure_root_runtime_directory(runtime_dir, 0o700)
+                from hermes_installer.authority.native_custody_proof import create_native_loader_channel
+                native_loader_channel = create_native_loader_channel(runtime_dir)
+                properties.append("--property=OpenFile=" + native_loader_channel.systemd_open_file_property)
+        except BaseException:
+            os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
+            raise
         env_args = ["--setenv=" + key + "=" + value for key, value in sorted(env.items())]
         try:
             require_live_start(parent_fd)
         except BaseException:
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise
         remaining = launch_deadline - self.monotonic()
         if remaining <= 0:
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.start_expired", "start lease ended during preparation")
         try:
             manager_env = subprocess.run([str(self.systemctl), "--system", "show-environment"],
@@ -1557,19 +2238,30 @@ class ManagedProcessEffectHandler:
                 timeout=min(2.0, remaining), check=False)
         except (OSError, subprocess.TimeoutExpired):
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.environment", "system manager environment could not be bounded") from None
         try:
             require_live_start(parent_fd)
         except BaseException:
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise
         if manager_env.returncode != 0 or len(manager_env.stdout) > 65536:
             if self._diagnostic_sink is not None:
                 self._diagnostic_sink(
                     f"manager-environment-failed:returncode={manager_env.returncode}:bytes={len(manager_env.stdout)}".encode("ascii"))
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.environment", "system manager environment cannot be safely cleared")
-        import re
         manager_keys = {line.split("=", 1)[0] for line in manager_env.stdout.decode("utf-8", "replace").splitlines()
                         if "=" in line and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", line.split("=", 1)[0])}
         manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
@@ -1577,9 +2269,15 @@ class ManagedProcessEffectHandler:
                              "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME",
                              "SHELL", "PWD", "SYSTEMD_EXEC_PID", "MEMORY_PRESSURE_WATCH",
                              "MEMORY_PRESSURE_WRITE"})
-        unset_keys = sorted(manager_keys - set(env))
+        activation_keys = ({"LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"}
+                           if native_loader_channel is not None else set())
+        unset_keys = sorted(manager_keys - set(env) - activation_keys)
         if sum(len(key) + 1 for key in unset_keys) > 60000:
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.environment", "system manager environment exceeds its safe bound")
         if unset_keys:
             properties.append("--property=UnsetEnvironment=" + " ".join(unset_keys))
@@ -1598,7 +2296,6 @@ class ManagedProcessEffectHandler:
                     os.close(fd)
                 argv[artifact_args[0]] = str(artifact_target)
                 properties.append(f"--property=BindReadOnlyPaths={artifact_path}:{artifact_target}")
-            native_mount_source, native_mount_receipt = self._prepare_native_package_mount(profile, process_id)
             if native_mount_source is not None and native_mount_receipt is not None:
                 properties.append(
                     "--property=BindReadOnlyPaths=" + str(native_mount_source) + ":"
@@ -1615,6 +2312,8 @@ class ManagedProcessEffectHandler:
                 _remove_artifact_mount(artifact_mount_dir)
             if native_mount_source is not None:
                 self._remove_native_staging(native_mount_source)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
             raise
         command = [str(self.systemd_run), "--system", "--unit=" + unit, "--service-type=exec",
                    "--wait", "--collect", "--pipe", "--quiet", "--working-directory=" + target_cwd,
@@ -1654,6 +2353,8 @@ class ManagedProcessEffectHandler:
                 _remove_artifact_mount(artifact_mount_dir)
             if native_mount_source is not None:
                 self._remove_native_staging(native_mount_source)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
             raise AuthorityDenied("process.launcher_start", "root process manager could not start the enrolled service") from None
         except BaseException:
             os.close(parent_fd)
@@ -1661,6 +2362,8 @@ class ManagedProcessEffectHandler:
                 _remove_artifact_mount(artifact_mount_dir)
             if native_mount_source is not None:
                 self._remove_native_staging(native_mount_source)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
             raise
         started = self.monotonic()
         deadline = min(launch_deadline, started + 10.0)
@@ -1772,13 +2475,19 @@ class ManagedProcessEffectHandler:
             if self._show(unit, "SupplementaryGroups") not in {"", "-"}:
                 raise AuthorityDenied("process.groups", "worker has unexpected supplemental groups")
             actual_environment = self._read_environment(pid)
-            if actual_environment != env:
+            expected_environment = dict(env)
+            if native_loader_channel is not None:
+                expected_environment.update({
+                    "LISTEN_PID": str(pid), "LISTEN_FDS": "1",
+                    "LISTEN_FDNAMES": "hermes-loader-progress",
+                })
+            if actual_environment != expected_environment:
                 if self._diagnostic_sink is not None:
                     # Keep values out of the diagnostic path: only the
                     # variable names needed to identify manager injection are
                     # included in this root-only test sink.
                     actual_keys = sorted(actual_environment)
-                    expected_keys = sorted(env)
+                    expected_keys = sorted(expected_environment)
                     self._diagnostic_sink(
                         ("child-environment-mismatch:actual_keys=" + ",".join(actual_keys)
                          + ":expected_keys=" + ",".join(expected_keys)).encode("ascii", "backslashreplace")[:1024])
@@ -1829,6 +2538,21 @@ class ManagedProcessEffectHandler:
             network_namespace_fd = None
             with self._lock:
                 self._handles[process_id] = handle
+            if native_loader_channel is not None:
+                binding = getattr(profile.native_package, "binding", profile.native_package)
+                observation = self.register_native_loader_channel(
+                    process_id, native_loader_channel,
+                    expected_loader_role_artifact_id=binding.entrypoint_artifact_id,
+                    expected_loader_role_sha256=binding.entrypoint_sha256,
+                    deadline_monotonic=min(handle.expires, self.monotonic() + 10.0),
+                )
+                if not native_loader_channel._transferred:
+                    raise AuthorityDenied("native.loader", "system manager did not transfer the loader channel")
+                handle.native_loader_observation_handle = observation
+                handle.native_loader_ready_event_id = self.receive_native_loader_progress(
+                    process_id,
+                    cancelled=lambda: cancelled() or _pidfd_exited(handle.parent_pidfd),
+                )
             threading.Thread(target=self._watch_parent, args=(handle,), daemon=True,
                              name="hermes-custody-watch").start()
             return _response(200, {"schema": 1, "process_id": process_id, "pid": pid,
@@ -1841,7 +2565,23 @@ class ManagedProcessEffectHandler:
                 "network_namespace_inode": net, "kernel_limits": limits})
         except BaseException:
             try:
-                self._stop_partial(unit, launcher)
+                with self._lock:
+                    registered_handle = self._handles.get(process_id)
+                if registered_handle is not None:
+                    try:
+                        proof = self._stop(registered_handle, timeout=5.0)
+                    except Exception as cleanup_error:
+                        raise AuthorityDenied(
+                            "process.cleanup_ambiguous",
+                            "failed process admission could not prove owned-process cleanup",
+                        ) from cleanup_error
+                    if not proof.cleanup_verified:
+                        raise AuthorityDenied(
+                            "process.cleanup_ambiguous",
+                            "failed process admission could not prove owned-process cleanup",
+                        )
+                else:
+                    self._stop_partial(unit, launcher)
             finally:
                 try:
                     if artifact_mount_dir is not None:
@@ -1851,6 +2591,8 @@ class ManagedProcessEffectHandler:
                         if native_mount_source is not None:
                             self._remove_native_staging(native_mount_source)
                     finally:
+                        if native_loader_channel is not None:
+                            native_loader_channel.close()
                         for fd in (parent_fd, child_fd, network_namespace_fd):
                             if fd is not None:
                                 try:
@@ -1886,8 +2628,8 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.inspect", "inspection request is malformed or stale")
         with self._lock:
             handle = self._handles.get(item["process_id"])
-        if (handle is None or handle.registered_profile is not profile
-                or self.profiles.get(profile.profile_id) is not profile or handle.stopped
+        if (handle is None or handle.registered_profile != profile
+                or self.profiles.get(profile.profile_id) != profile or handle.stopped
                 or context.principal_id != handle.principal_id
                 or context.namespace_id != handle.authority_namespace_id
                 or cancelled() or self.monotonic() >= handle.expires
@@ -2064,10 +2806,45 @@ class ManagedProcessEffectHandler:
         namespace_identity = getattr(binding, "namespace_identity", None)
         if not isinstance(profile_id, str) or not isinstance(generation, str) or not isinstance(namespace_identity, str):
             return None
+        return self._resolve_profile_namespace_lease(profile_id, generation, namespace_identity)
+
+    def resolve_observer_namespace_lease(self, profile_id: str, generation: str,
+                                         expected_namespace_identity: str
+                                         ) -> ManagedNamespaceLease | None:
+        """Return a short-lived namespace FD for one exact enrolled live process.
+
+        This is the bounded root-only seam for observers that must inspect a
+        protected service namespace. It selects no process or namespace from a
+        caller PID/path and requires the supplied identity to equal both the
+        current profile enrollment and its live manager-owned handle.
+        """
+        if (not isinstance(profile_id, str) or not profile_id
+                or not isinstance(generation, str) or not generation
+                or not isinstance(expected_namespace_identity, str)
+                or not re.fullmatch(r"mnt:[1-9][0-9]*;net:[1-9][0-9]*",
+                                    expected_namespace_identity)):
+            return None
+        registered = self.profiles.get(profile_id)
+        if registered is None or registered.generation != generation:
+            return None
+        return self._resolve_profile_namespace_lease(
+            profile_id, generation, expected_namespace_identity,
+            registered_profile=registered,
+        )
+
+    def _resolve_profile_namespace_lease(self, profile_id: str, generation: str,
+                                         namespace_identity: str, *,
+                                         registered_profile: ManagedProfileCustody | None = None
+                                         ) -> ManagedNamespaceLease | None:
         with self._lock:
+            registered = registered_profile or self.profiles.get(profile_id)
+            if (registered is None or registered.profile_id != profile_id
+                    or registered.generation != generation):
+                return None
             matches = [handle for handle in self._handles.values()
                        if handle.profile.profile_id == profile_id
                        and handle.profile.generation == generation
+                       and handle.registered_profile is registered
                        and handle.kernel_namespace_id == namespace_identity]
         if len(matches) != 1:
             return None
@@ -2075,6 +2852,7 @@ class ManagedProcessEffectHandler:
         with handle.lock:
             if (handle.stopped or handle.network_namespace_fd is None
                     or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
+                    or handle.registered_profile is not registered
                     or handle.pid not in self._pids(handle.cgroup)):
                 return None
             expected_net = int(namespace_identity.rsplit("net:", 1)[1])
@@ -2144,6 +2922,24 @@ class ManagedProcessEffectHandler:
                 ticks, exe_sha256, cgroup, handle.kernel_namespace_id)
         except (OSError, ValueError, StopIteration):
             return None
+
+    def is_owned_active_process_handle(self, handle: _Handle) -> bool:
+        """Check exact object membership and current kernel liveness in this manager."""
+        if not isinstance(handle, _Handle):
+            return False
+        with self._lock:
+            current = self._handles.get(handle.process_id)
+            if (current is not handle or handle.stopped
+                    or handle.registered_profile is not self.profiles.get(handle.profile.profile_id)
+                    or handle.profile.generation != handle.registered_profile.generation
+                    or handle.expires <= self.monotonic()):
+                return False
+        try:
+            pid = self._pidfd_target(handle.child_pidfd)
+            return (pid == handle.pid and not _pidfd_exited(handle.child_pidfd)
+                    and pid in self._pids(handle.cgroup))
+        except (OSError, AuthorityDenied, ValueError):
+            return False
 
     def inspect_enrolled_process(self, profile_id: str,
                                  generation: str) -> RemoteOriginKernelProof | None:
@@ -2229,6 +3025,241 @@ class ManagedProcessEffectHandler:
             if pidfd is not None:
                 os.close(pidfd)
 
+    def resolve_active_process_handle(
+        self, profile_id: str, generation: str,
+    ) -> ManagedProcessIdentityLease | None:
+        """Return a duplicated PIDFD lease for the unique active enrolled process.
+
+        Selection is exclusively through the manager's current registry. The
+        identity is re-read from procfs and compared with the retained PIDFD,
+        cgroup, executable pin, and namespace identity immediately before the
+        lease is returned. Callers own and must close the returned PIDFD.
+        """
+        proof = self.inspect_enrolled_process(profile_id, generation)
+        if proof is None:
+            return None
+        with self._lock:
+            handle = self._handles.get(proof.process_id)
+            registered = self.profiles.get(profile_id)
+            if (handle is None or handle.stopped or registered is None
+                    or registered.generation != generation
+                    or handle.registered_profile is not registered
+                    or handle.profile.profile_id != profile_id
+                    or handle.profile.generation != generation
+                    or handle.expires <= self.monotonic()):
+                return None
+            try:
+                lease_fd = os.dup(handle.child_pidfd)
+            except OSError:
+                return None
+        transferred = False
+        try:
+            pid = self._pidfd_target(lease_fd)
+            if pid != proof.pid or pid != handle.pid or _pidfd_exited(lease_fd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            if (ticks != proof.pid_starttime_ticks or ticks != handle.start_ticks
+                    or cgroup != proof.cgroup_id or cgroup != handle.cgroup
+                    or (device, inode) != (proof.executable_device, proof.executable_inode)
+                    or (device, inode) != (executable.st_dev, executable.st_ino)
+                    or mount_ns != proof.mount_namespace_inode
+                    or network_ns != proof.network_namespace_inode
+                    or f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or pid not in self._pids(handle.cgroup)
+                    or _pidfd_exited(handle.child_pidfd)
+                    or self._pidfd_target(handle.child_pidfd) != pid):
+                return None
+            with self._lock:
+                if (self._handles.get(proof.process_id) is not handle or handle.stopped
+                        or self.profiles.get(profile_id) is not registered
+                        or handle.registered_profile is not registered
+                        or handle.expires <= self.monotonic()):
+                    return None
+            lease = ManagedProcessIdentityLease(
+                process_id=proof.process_id, profile_id=profile_id,
+                generation=generation, uid=proof.uid, gid=proof.gid,
+                pid=pid, start_ticks=ticks, executable_device=device,
+                executable_inode=inode, executable_sha256=proof.executable_sha256,
+                cgroup_identity=cgroup, mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns,
+                expires_monotonic=min(proof.expires_monotonic, handle.expires),
+                pidfd=lease_fd,
+            )
+            transferred = True
+            return lease
+        except (OSError, ValueError):
+            return None
+        finally:
+            if not transferred:
+                try:
+                    os.close(lease_fd)
+                except OSError:
+                    pass
+
+    def resolve_managed_task_process_handle(
+        self, task_handle: ManagedTaskHandle,
+    ) -> ManagedProcessIdentityLease | None:
+        """Resolve one exact active root task to a duplicated PIDFD lease."""
+        if not isinstance(task_handle, ManagedTaskHandle):
+            return None
+        try:
+            state = self._resolve_task_handle(task_handle)
+        except AuthorityDenied:
+            return None
+        handle = state.handle
+        with self._lock:
+            if (self._task_handles.get(task_handle.handle_id) is not state
+                    or self._handles.get(task_handle.process_id) is not handle
+                    or handle.process_id != task_handle.process_id
+                    or handle.profile.generation != task_handle.generation
+                    or handle.stopped or state.consumed
+                    or state.deadline <= self.monotonic()):
+                return None
+            try:
+                lease_fd = os.dup(handle.child_pidfd)
+            except OSError:
+                return None
+        transferred = False
+        try:
+            pid = self._pidfd_target(lease_fd)
+            if pid != handle.pid or _pidfd_exited(lease_fd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or (device, inode) != (executable.st_dev, executable.st_ino)
+                    or pid not in self._pids(handle.cgroup)
+                    or f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or _pidfd_exited(handle.child_pidfd)
+                    or self._pidfd_target(handle.child_pidfd) != pid):
+                return None
+            digest = hashlib.sha256()
+            exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            try:
+                observed = os.fstat(exe_fd)
+                if (observed.st_dev, observed.st_ino) != (device, inode):
+                    return None
+                while True:
+                    chunk = os.read(exe_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            finally:
+                os.close(exe_fd)
+            exe_sha256 = digest.hexdigest()
+            if exe_sha256 != handle.profile.artifact_sha256:
+                return None
+            with self._lock:
+                if (self._task_handles.get(task_handle.handle_id) is not state
+                        or self._handles.get(task_handle.process_id) is not handle
+                        or handle.stopped or state.consumed
+                        or state.deadline <= self.monotonic()):
+                    return None
+            lease = ManagedProcessIdentityLease(
+                process_id=handle.process_id, profile_id=handle.profile.profile_id,
+                generation=handle.profile.generation, uid=handle.profile.owner_uid,
+                gid=handle.profile.owner_gid, pid=pid, start_ticks=ticks,
+                executable_device=device, executable_inode=inode,
+                executable_sha256=exe_sha256, cgroup_identity=cgroup,
+                mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns,
+                expires_monotonic=min(handle.expires, state.deadline), pidfd=lease_fd)
+            transferred = True
+            return lease
+        except (OSError, ValueError, AuthorityDenied):
+            return None
+        finally:
+            if not transferred:
+                try:
+                    os.close(lease_fd)
+                except OSError:
+                    pass
+
+    def resolve_owned_process_handle(
+        self, handle: _Handle,
+    ) -> ManagedProcessIdentityLease | None:
+        """Resolve a root-held active manager handle without profile selection.
+
+        This is for root registries that already selected and retained the
+        exact manager handle. It deliberately rejects structurally similar or
+        stale handles by object identity against this manager's live registry.
+        """
+        if not isinstance(handle, _Handle):
+            return None
+        with self._lock:
+            registered = self.profiles.get(handle.profile.profile_id)
+            if (self._handles.get(handle.process_id) is not handle or handle.stopped
+                    or registered is None or handle.registered_profile is not registered
+                    or handle.profile.generation != handle.registered_profile.generation
+                    or handle.expires <= self.monotonic()):
+                return None
+            try:
+                lease_fd = os.dup(handle.child_pidfd)
+            except OSError:
+                return None
+        transferred = False
+        try:
+            pid = self._pidfd_target(lease_fd)
+            if pid != handle.pid or _pidfd_exited(lease_fd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or (device, inode) != (executable.st_dev, executable.st_ino)
+                    or pid not in self._pids(handle.cgroup)
+                    or f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or _pidfd_exited(handle.child_pidfd)
+                    or self._pidfd_target(handle.child_pidfd) != pid):
+                return None
+            digest = hashlib.sha256()
+            exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            try:
+                observed = os.fstat(exe_fd)
+                if (observed.st_dev, observed.st_ino) != (device, inode):
+                    return None
+                while True:
+                    chunk = os.read(exe_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            finally:
+                os.close(exe_fd)
+            exe_sha256 = digest.hexdigest()
+            if exe_sha256 != handle.profile.artifact_sha256:
+                return None
+            with self._lock:
+                registered = self.profiles.get(handle.profile.profile_id)
+                if (self._handles.get(handle.process_id) is not handle or handle.stopped
+                        or registered is None or handle.registered_profile is not registered
+                        or handle.expires <= self.monotonic()):
+                    return None
+            lease = ManagedProcessIdentityLease(
+                process_id=handle.process_id, profile_id=handle.profile.profile_id,
+                generation=handle.profile.generation, uid=handle.profile.owner_uid,
+                gid=handle.profile.owner_gid, pid=pid, start_ticks=ticks,
+                executable_device=device, executable_inode=inode,
+                executable_sha256=exe_sha256, cgroup_identity=cgroup,
+                mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns,
+                expires_monotonic=handle.expires, pidfd=lease_fd)
+            transferred = True
+            return lease
+        except (OSError, ValueError, AuthorityDenied):
+            return None
+        finally:
+            if not transferred:
+                try:
+                    os.close(lease_fd)
+                except OSError:
+                    pass
+
     def resolve_process_operation(self, process_id: str, generation: str, operation: str, *,
                                   peer_uid: int, peer_pid: int,
                                   peer_pidfd: int) -> tuple[ManagedProfileCustody, str] | None:
@@ -2280,7 +3311,7 @@ class ManagedProcessEffectHandler:
         with self._lock:
             handle = self._handles.get(process_id)
         if (handle is None or handle.profile.generation != generation or handle.stopped
-                or self.profiles.get(handle.profile.profile_id) is not handle.registered_profile
+                or self.profiles.get(handle.profile.profile_id) != handle.registered_profile
                 or handle.native_mount_receipt is None or handle.native_mount_source is None
                 or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
                 or handle.pid not in self._pids(handle.cgroup)):
@@ -2385,6 +3416,8 @@ class ManagedProcessEffectHandler:
                                                or self.monotonic() >= handle.expires):
             self._stop(handle, timeout=min(timeout, 5.0))
             raise AuthorityDenied("process.expired", "parent, lease or service lifetime ended")
+        if handle.task_owned:
+            raise AuthorityDenied("process.task_owned", "resource task streams are root-owned")
         if operation == "process.status":
             code = handle.launcher.poll()
             # Control status is deliberately non-identifying. Detailed host
@@ -2575,6 +3608,11 @@ class ManagedProcessEffectHandler:
                 raise AuthorityDenied("process.cleanup", "root service launcher did not reap") from None
             if handle.launcher.returncode is None:
                 raise AuthorityDenied("process.cleanup", "root service launcher was not reaped")
+            if handle.native_loader_observation_handle is not None:
+                store = self.native_loader_observation_store
+                if store is None:
+                    raise AuthorityDenied("native.loader", "loader observer disappeared during cleanup")
+                store.revoke_process(handle.process_id, handle.profile.generation)
             try:
                 _remove_artifact_mount(handle.artifact_mount_dir)
             finally:
@@ -2634,3 +3672,1271 @@ def build_managed_process_handlers(profiles: Mapping[str, ManagedProfileCustody]
 def create_managed_process_handler(profiles: Mapping[str, ManagedProfileCustody], **kwargs: Any) -> ManagedProcessEffectHandler:
     """Create the root registry object shared by process, inspect and connector handlers."""
     return ManagedProcessEffectHandler(profiles, **kwargs)
+
+
+class ManagedBuildJobRunner:
+    """Run one root-selected build recipe in a private transient systemd unit.
+
+    This adapter deliberately uses a separate, terminal lifecycle from the
+    long-lived profile handles. The consumed ``process.start`` authorization
+    admits exactly one immutable build selection; this object then observes,
+    cancels, and reaps that already-admitted unit as root-private bookkeeping.
+    It never exposes status/read/stop controls or accepts a path/argv from the
+    worker.
+    """
+
+    _LOG_LIMIT = 1024 * 1024
+    _MOUNT_RESERVATION = ("__fixed-build-mounts__", "__root__")
+    _MOUNTS = {
+        "builder": "/run/hermes-installer/build/builder",
+        "source": "/run/hermes-installer/build/source",
+        "toolchain": "/run/hermes-installer/build/toolchain",
+        "work": "/run/hermes-installer/build/work",
+        "output": "/run/hermes-installer/build/output",
+    }
+
+    def __init__(self, manager: ManagedProcessEffectHandler, *,
+                 process_profile_resolver: Callable[[str, str], ManagedProfileCustody],
+                 diagnostic_observer: Callable[[bytes], None] | None = None):
+        if not isinstance(manager, ManagedProcessEffectHandler) or not callable(process_profile_resolver):
+            raise ValueError("build runner requires the root process manager and protected profile resolver")
+        if diagnostic_observer is not None and not callable(diagnostic_observer):
+            raise ValueError("build diagnostic observer must be callable")
+        self.manager = manager
+        self.process_profile_resolver = process_profile_resolver
+        self._diagnostic_observer = diagnostic_observer
+        self._active: set[tuple[str, str]] = set()
+        self._records: dict[str, Mapping[str, Any]] = {}
+        self._lock = threading.RLock()
+
+    def run_selected_build(self, inputs: Any, *, context: HostContext,
+                           authorization: EffectAuthorization, peer_pid: int,
+                           peer_pidfd: int, timeout: float,
+                           cancelled: Callable[[], bool]):
+        from hermes_installer.authority.build_execution import (
+            BUILD_MOUNT_TARGETS, ManagedBuildResult, managed_process_identity_digest,
+        )
+
+        start = self.manager.monotonic()
+        if (not isinstance(context, HostContext) or not isinstance(authorization, EffectAuthorization)
+                or not callable(cancelled) or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or timeout <= 0
+                or not sys.platform.startswith("linux") or os.geteuid() != 0):
+            raise AuthorityDenied("build.runner", "root Linux build runner inputs are unavailable")
+        required_input_fields = (
+            "target_id", "generation", "service_generation_digest", "enrollment_id",
+            "operation_id", "selection_digest", "source_artifact_id", "source_sha256",
+            "source_root", "source_tree_files", "source_tree_manifest_sha256",
+            "toolchain_artifact_id", "toolchain_sha256", "toolchain_root",
+            "toolchain_tree_files", "toolchain_tree_manifest_sha256", "builder_artifact_id",
+            "builder_sha256", "builder_executable", "argv_recipe", "environment",
+            "output_root", "output_root_id", "output_owner_uid", "max_lifetime_seconds",
+            "output_owner_gid", "output_specs",
+        )
+        if any(not hasattr(inputs, name) for name in required_input_fields):
+            raise AuthorityDenied("build.inputs", "root build catalog returned an incomplete immutable recipe")
+        service_enrollment = getattr(inputs, "build_service_enrollment_id", None)
+        service_generation = getattr(inputs, "build_service_generation", None)
+        if (not isinstance(service_enrollment, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", service_enrollment)
+                or not isinstance(service_generation, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", service_generation)
+                or type(inputs.max_lifetime_seconds) is not int or not 1 <= inputs.max_lifetime_seconds <= 600
+                or type(inputs.output_owner_uid) is not int or inputs.output_owner_uid <= 0
+                or type(inputs.output_owner_gid) is not int or inputs.output_owner_gid <= 0
+                or any(not isinstance(getattr(inputs, field), str)
+                       or not re.fullmatch(r"[0-9a-f]{64}", getattr(inputs, field))
+                       for field in ("service_generation_digest", "selection_digest", "source_sha256",
+                                     "source_tree_manifest_sha256", "toolchain_sha256",
+                                     "toolchain_tree_manifest_sha256", "builder_sha256"))
+                or isinstance(timeout, bool) or not 0 < timeout <= 600):
+            raise AuthorityDenied("build.service_join", "build record has no protected service enrollment join")
+        if (authorization.operation != "process.start" or context.operation != "process.start"
+                or authorization.capability != "hermes-profile-invoke"
+                or authorization.request_digest != inputs.selection_digest
+                or authorization.enrollment_id != inputs.enrollment_id
+                or context.enrollment_id != inputs.enrollment_id
+                or authorization.generation != inputs.generation
+                or context.generation != inputs.generation
+                or authorization.target != inputs.target_id
+                or authorization.profile_id != context.profile_id
+                or authorization.uid != context.uid
+                or context.final_payload_digest != inputs.selection_digest):
+            raise AuthorityDenied("build.authorization", "consumed start authorization does not bind the selected build")
+        if (_pidfd_exited(peer_pidfd) or self.manager._pidfd_target(peer_pidfd) != peer_pid):
+            raise AuthorityDenied("build.parent", "build requester is no longer live")
+        try:
+            # The build catalog joins the selected build target and build
+            # generation to a separate protected service enrollment. The
+            # resolver performs that join and returns the service profile;
+            # never treat the build record's generation as the service epoch.
+            profile = self.process_profile_resolver(inputs.target_id, inputs.generation)
+        except Exception:
+            raise AuthorityDenied("build.service_join", "root build service enrollment is unavailable") from None
+        if (not isinstance(profile, ManagedProfileCustody)
+                or self.manager.profiles.get(profile.profile_id) is not profile
+                or profile.enrollment_id != service_enrollment
+                or profile.generation != service_generation
+                or profile.operation_targets is None
+                or profile.operation_targets.get("process.start") != inputs.target_id
+                or profile.owner_uid != inputs.output_owner_uid
+                or profile.owner_gid != inputs.output_owner_gid
+                or profile.owner_uid <= 0 or profile.owner_uid == context.uid
+                or profile.owner_uid == 0
+                or type(profile.memory_max_bytes) is not int
+                or type(profile.cpu_quota_percent) is not int
+                or type(profile.io_weight) is not int):
+            raise AuthorityDenied("build.service_join", "build service identity does not match its protected enrollment")
+        try:
+            account = pwd.getpwuid(profile.owner_uid)
+            groups = os.getgrouplist(account.pw_name, account.pw_gid)
+        except (KeyError, OSError):
+            raise AuthorityDenied("build.service_identity", "dedicated build service account is unavailable") from None
+        if (account.pw_gid != profile.owner_gid or set(groups) != {profile.owner_gid}
+                or account.pw_name != profile.service_user):
+            raise AuthorityDenied("build.service_identity", "build service account or exclusive primary group changed")
+
+        target_generation = (inputs.target_id, service_generation)
+        with self._lock:
+            if target_generation in self._active or self._MOUNT_RESERVATION in self._active:
+                raise AuthorityDenied("build.generation", "fixed build mount targets already have an active job")
+            self._active.add(target_generation)
+            self._active.add(self._MOUNT_RESERVATION)
+        try:
+            return self._run_one(inputs, profile, context, authorization, peer_pid,
+                                 peer_pidfd, float(timeout), cancelled,
+                                 ManagedBuildResult, managed_process_identity_digest,
+                                 BUILD_MOUNT_TARGETS)
+        finally:
+            with self._lock:
+                self._active.discard(target_generation)
+                self._active.discard(self._MOUNT_RESERVATION)
+
+    def run_attested_cpython39_probe(self, inputs: Any, build_result: Any, *,
+                                     timeout: float,
+                                     cancelled: Callable[[], bool]):
+        """Run the sole enrolled-output ABI probe as root-private build bookkeeping.
+
+        This is not a public process effect. It can only follow a successful
+        build terminal receipt retained by this runner, and all executable,
+        mount, UID/GID, argv and output limits are constants selected here.
+        """
+        from hermes_installer.authority.build_execution import managed_process_identity_digest
+        from hermes_installer.authority.build_probe import (
+            ManagedBuildProbeResult, _PROBE_ARGV, _read_selected_executable,
+        )
+
+        manager = self.manager
+        if (not callable(cancelled) or isinstance(timeout, bool)
+                or not isinstance(timeout, (int, float)) or not math.isfinite(timeout)
+                or not 0 < timeout <= 15 or not sys.platform.startswith("linux") or os.geteuid() != 0):
+            raise AuthorityDenied("build.python_probe", "fixed root CPython probe inputs are unavailable")
+        if (getattr(inputs, "target_id", None) != "coral-cpython-build:start"
+                or getattr(inputs, "operation_id", None) != "coral-cpython39-source-build-v1"
+                or getattr(inputs, "build_service_enrollment_id", None) is None
+                or getattr(inputs, "build_service_generation", None) is None
+                or type(getattr(inputs, "output_owner_uid", None)) is not int
+                or type(getattr(inputs, "output_owner_gid", None)) is not int):
+            raise AuthorityDenied("build.python_probe", "probe is not bound to the fixed CPython build selection")
+        terminal_id = getattr(build_result, "terminal_success_record_id", None)
+        if (not terminal_id or getattr(build_result, "exit_code", None) != 0
+                or getattr(build_result, "timed_out", True) or getattr(build_result, "cancelled", True)
+                or getattr(build_result, "cleanup_verified", False) is not True):
+            raise AuthorityDenied("build.python_probe", "probe requires a clean successful build terminal")
+        with self._lock:
+            record = self._records.get(terminal_id)
+            if record is None:
+                raise AuthorityDenied("build.python_probe", "build terminal is not owned by this root runner")
+            record = dict(record)
+        try:
+            profile = self.process_profile_resolver(inputs.target_id, inputs.generation)
+        except Exception:
+            raise AuthorityDenied("build.service_join", "selected build service generation is unavailable") from None
+        if (not isinstance(profile, ManagedProfileCustody)
+                or self.manager.profiles.get(profile.profile_id) is not profile
+                or record.get("target") != inputs.target_id
+                or record.get("generation") != inputs.generation
+                or record.get("selection_digest") != inputs.selection_digest
+                or record.get("service_generation") != inputs.build_service_generation
+                or profile.enrollment_id != inputs.build_service_enrollment_id
+                or profile.generation != inputs.build_service_generation
+                or profile.operation_targets is None
+                or profile.operation_targets.get("process.start") != inputs.target_id
+                or profile.owner_uid != inputs.output_owner_uid
+                or profile.owner_gid != inputs.output_owner_gid
+                or record.get("uid") != profile.owner_uid or record.get("gid") != profile.owner_gid
+                or record.get("uid") != getattr(build_result, "uid", None)
+                or record.get("generation") != getattr(build_result, "generation", None)
+                or record.get("cleanup") is not True
+                or record.get("exit_code") != 0 or record.get("timed_out") is not False
+                or record.get("cancelled") is not False
+                or record.get("exit_code") != getattr(build_result, "exit_code", None)
+                or record.get("timed_out") != getattr(build_result, "timed_out", None)
+                or record.get("cancelled") != getattr(build_result, "cancelled", None)
+                or record.get("cleanup") != getattr(build_result, "cleanup_verified", None)
+                or record.get("process_identity_digest") != build_result.process_identity_digest
+                or record.get("process_id") != build_result.process_id
+                or record.get("pid") != build_result.pid
+                or record.get("start_ticks") != build_result.start_ticks
+                or record.get("cgroup") != build_result.cgroup_id
+                or record.get("mount_ns") != build_result.mount_namespace_inode
+                or record.get("network_ns") != build_result.network_namespace_inode
+                or record.get("limits") != getattr(build_result, "kernel_limits", None)
+                or record.get("log_digest") != getattr(build_result, "bounded_log_digest", None)
+                or record.get("log_bytes") != getattr(build_result, "log_bytes", None)
+                or record.get("output_root_id") != inputs.output_root_id
+                or record.get("output_root_path") != str(Path(inputs.output_root))):
+            raise AuthorityDenied("build.python_probe", "build receipt does not match the protected current profile")
+        if (type(profile.memory_max_bytes) is not int or type(profile.cpu_quota_percent) is not int
+                or type(profile.io_weight) is not int or profile.owner_uid <= 0
+                or profile.owner_gid <= 0 or isinstance(profile.max_lifetime_seconds, bool)
+                or not isinstance(profile.max_lifetime_seconds, (int, float))
+                or not math.isfinite(profile.max_lifetime_seconds) or profile.max_lifetime_seconds <= 0):
+            raise AuthorityDenied("build.service_identity", "selected build resource identity is incomplete")
+        try:
+            account = pwd.getpwuid(profile.owner_uid)
+            groups = os.getgrouplist(account.pw_name, account.pw_gid)
+        except (KeyError, OSError):
+            raise AuthorityDenied("build.service_identity", "selected build service account is unavailable") from None
+        if account.pw_gid != profile.owner_gid or set(groups) != {profile.owner_gid}:
+            raise AuthorityDenied("build.service_identity", "selected build group is no longer exclusive")
+
+        executable = Path(inputs.output_root) / "runtime/bin/python3.9"
+        executable_sha256, executable_size, executable_info, output_info = _read_selected_executable(
+            inputs, executable)
+        if (record.get("output_root_device") != output_info.st_dev
+                or record.get("output_root_inode") != output_info.st_ino
+                or record.get("output_root_path") != str(Path(inputs.output_root))):
+            raise AuthorityDenied("build.python_probe", "selected output root changed after build completion")
+        if cancelled():
+            raise AuthorityDenied("build.expired", "fixed CPython probe was cancelled before launch")
+        reservation = (inputs.target_id, profile.generation)
+        with self._lock:
+            if reservation in self._active or self._MOUNT_RESERVATION in self._active:
+                raise AuthorityDenied("build.generation", "another build action owns the fixed build mount namespace")
+            self._active.add(reservation)
+            self._active.add(self._MOUNT_RESERVATION)
+
+        job_id = uuid.uuid4().hex
+        unit = "hermes-installer-build-probe-" + job_id + ".service"
+        cgroup = "/system.slice/" + unit
+        probe_lifetime = min(float(timeout), 15.0, float(profile.max_lifetime_seconds))
+        deadline = manager.monotonic() + probe_lifetime
+        job_root = Path("/run/hermes-installer/build-jobs") / ("probe-" + job_id)
+        work = job_root / "work"
+        empty_source = job_root / "source"
+        empty_toolchain = job_root / "toolchain"
+        launcher: subprocess.Popen[bytes] | None = None
+        selector = None
+        main_pidfd: int | None = None
+        main_pid: int | None = None
+        start_ticks = mount_ns = network_ns = 0
+        observed_cgroup = ""
+        limits: dict[str, str] = {}
+        cgroup_limits: dict[str, str] = {}
+        log = bytearray()
+        stderr_output = bytearray()
+        timed_out = False
+        was_cancelled = False
+        cgroup_empty = pidfd_gone = launcher_reaped = False
+        unit_started = False
+        try:
+            current = self.process_profile_resolver(inputs.target_id, inputs.generation)
+            if (current is not profile or manager.profiles.get(profile.profile_id) is not profile
+                    or manager.monotonic() >= deadline or cancelled()):
+                raise AuthorityDenied("build.generation", "build profile changed before the fixed probe")
+            self._prepare_mount_targets()
+            manager._ensure_root_runtime_directory(Path("/run/hermes-installer/build-jobs"), 0o700)
+            job_root.mkdir(mode=0o700)
+            os.chown(job_root, 0, 0)
+            os.chmod(job_root, 0o700)
+            for directory in (work, empty_source, empty_toolchain):
+                directory.mkdir(mode=0o700)
+                os.chown(directory, profile.owner_uid, profile.owner_gid)
+                os.chmod(directory, 0o700)
+            mount_targets = dict(self._MOUNTS)
+            argv = [mount_targets["builder"], *_PROBE_ARGV]
+            properties = [
+                "--property=Type=exec", f"--property=RuntimeMaxSec={probe_lifetime:.3f}s",
+                "--property=KillMode=control-group", "--property=ProtectSystem=strict",
+                "--property=ProtectHome=tmpfs", "--property=PrivateTmp=yes",
+                "--property=ProtectProc=invisible", "--property=ProcSubset=pid",
+                "--property=PrivateDevices=yes", "--property=NoNewPrivileges=yes",
+                "--property=ProtectKernelTunables=yes", "--property=ProtectKernelModules=yes",
+                "--property=ProtectControlGroups=yes", "--property=RestrictSUIDSGID=yes",
+                "--property=RestrictNamespaces=user", "--property=RestrictAddressFamilies=AF_UNIX",
+                "--property=PrivateNetwork=yes", "--property=IPAddressDeny=any",
+                "--property=MountFlags=private", "--property=PrivateMounts=yes",
+                f"--property=User={profile.service_user}", "--property=SupplementaryGroups=",
+                "--property=Description=HermesInstaller CPython probe " + job_id,
+                "--property=WorkingDirectory=" + mount_targets["work"],
+                "--property=BindReadOnlyPaths=" + str(executable) + ":" + mount_targets["builder"],
+                "--property=BindReadOnlyPaths=" + str(empty_source) + ":" + mount_targets["source"],
+                "--property=BindReadOnlyPaths=" + str(empty_toolchain) + ":" + mount_targets["toolchain"],
+                "--property=BindPaths=" + str(work) + ":" + mount_targets["work"],
+                "--property=BindReadOnlyPaths=" + str(inputs.output_root) + ":" + mount_targets["output"],
+                "--property=InaccessiblePaths=-/etc/hermes-installer -/var/lib/hermes-installer -/etc/ssh -/etc/ssl/private",
+            ]
+            if profile.memory_max_bytes is not None:
+                properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
+            if profile.cpu_quota_percent is not None:
+                properties.append(f"--property=CPUQuota={profile.cpu_quota_percent}%")
+            if profile.io_weight is not None:
+                properties.append(f"--property=IOWeight={profile.io_weight}")
+            manager_env = subprocess.run([str(manager.systemctl), "--system", "show-environment"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=min(1.0, max(.1, deadline-manager.monotonic())), check=False)
+            if manager_env.returncode or len(manager_env.stdout) > 65536:
+                raise AuthorityDenied("build.environment", "system manager environment could not be cleared")
+            manager_keys = {line.split("=", 1)[0] for line in manager_env.stdout.decode("utf-8", "replace").splitlines()
+                            if "=" in line and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", line.split("=", 1)[0])}
+            manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
+                "WATCHDOG_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES", "XDG_RUNTIME_DIR",
+                "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME", "SHELL", "PWD", "SYSTEMD_EXEC_PID",
+                "MEMORY_PRESSURE_WATCH", "MEMORY_PRESSURE_WRITE", "LC_CTYPE"})
+            if sum(len(key) + 1 for key in manager_keys) > 60000:
+                raise AuthorityDenied("build.environment", "manager environment exceeds the fixed probe clear bound")
+            if manager_keys:
+                properties.append("--property=UnsetEnvironment=" + " ".join(sorted(manager_keys)))
+            command = [str(manager.systemd_run), "--system", "--unit=" + unit,
+                "--quiet", "--service-type=exec", "--wait", "--pipe", *properties,
+                "--setenv=LANG=C", "--setenv=LC_ALL=C", "--setenv=HOME=/tmp",
+                "--setenv=TMPDIR=/tmp", "--setenv=PATH=/usr/bin:/bin", *argv]
+            launcher = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+                close_fds=True, shell=False)
+            unit_started = True
+            import selectors as selectors_module
+            selector = selectors_module.DefaultSelector()
+            assert launcher.stdout is not None and launcher.stderr is not None
+            os.set_blocking(launcher.stdout.fileno(), False)
+            os.set_blocking(launcher.stderr.fileno(), False)
+            selector.register(launcher.stdout, selectors_module.EVENT_READ, "stdout")
+            selector.register(launcher.stderr, selectors_module.EVENT_READ, "stderr")
+            capture_inputs = SimpleNamespace(builder_executable=executable, builder_sha256=executable_sha256)
+            while launcher.poll() is None:
+                if cancelled() or manager.monotonic() >= deadline:
+                    was_cancelled = cancelled()
+                    timed_out = not was_cancelled
+                    break
+                if manager.profiles.get(profile.profile_id) is not profile:
+                    raise AuthorityDenied("build.generation", "build service profile changed during probe")
+                if self.process_profile_resolver(inputs.target_id, inputs.generation) is not profile:
+                    raise AuthorityDenied("build.generation", "build service generation changed during probe")
+                if main_pid is None:
+                    observed = self._capture_build_identity(
+                        unit, cgroup, capture_inputs, profile, output_readonly=True)
+                    if observed is not None:
+                        main_pid = observed["pid"]
+                        start_ticks = observed["ticks"]
+                        observed_cgroup = observed["cgroup"]
+                        mount_ns = observed["mount_ns"]
+                        network_ns = observed["network_ns"]
+                        limits = observed["limits"]
+                        cgroup_limits = observed["cgroup_limits"]
+                        main_pidfd = observed["pidfd"]
+                for key, _ in selector.select(.02):
+                    chunk = os.read(key.fileobj.fileno(), 4096)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    destination = log if key.data == "stdout" else stderr_output
+                    if len(destination) + len(chunk) > 4096:
+                        raise AuthorityDenied("build.python_probe", "CPython probe output exceeded its bound")
+                    destination.extend(chunk)
+            if was_cancelled or timed_out:
+                self._terminate_unit(unit, cgroup, launcher)
+            if launcher.poll() is None:
+                try:
+                    launcher.wait(timeout=max(.1, min(2.0, deadline-manager.monotonic()+2.0)))
+                except subprocess.TimeoutExpired:
+                    launcher.kill()
+                    launcher.wait(timeout=1.0)
+            if selector is not None:
+                for key in list(selector.get_map().values()):
+                    while True:
+                        try:
+                            chunk = os.read(key.fileobj.fileno(), 4096)
+                        except BlockingIOError:
+                            break
+                        if not chunk:
+                            break
+                        destination = log if key.data == "stdout" else stderr_output
+                        if len(destination) + len(chunk) > 4096:
+                            raise AuthorityDenied("build.python_probe", "CPython probe output exceeded its bound")
+                        destination.extend(chunk)
+            exit_code = launcher.returncode
+            launcher_reaped = exit_code is not None
+            if manager._pids(cgroup):
+                self._terminate_unit(unit, cgroup, launcher)
+            cgroup_empty = not manager._pids(cgroup)
+            if main_pidfd is not None:
+                end = time.monotonic() + 2.0
+                while not _pidfd_exited(main_pidfd) and time.monotonic() < end:
+                    select.select([main_pidfd], [], [], .02)
+                pidfd_gone = _pidfd_exited(main_pidfd)
+            if (not cgroup_empty or not pidfd_gone or not launcher_reaped or not main_pid
+                    or not observed_cgroup or not start_ticks or not mount_ns or not network_ns
+                    or not limits or not cgroup_limits):
+                raise AuthorityDenied("build.python_probe", "probe terminal cleanup or process identity is unproven")
+            if timed_out or was_cancelled or exit_code != 0 or stderr_output:
+                raise AuthorityDenied("build.python_probe", "isolated CPython ABI probe did not exit cleanly")
+            after_sha, after_size, after_executable, after_root = _read_selected_executable(inputs, executable)
+            if ((after_sha, after_size, after_executable.st_dev, after_executable.st_ino,
+                 after_root.st_dev, after_root.st_ino)
+                    != (executable_sha256, executable_size, executable_info.st_dev, executable_info.st_ino,
+                        output_info.st_dev, output_info.st_ino)):
+                raise AuthorityDenied("build.python_probe", "CPython output changed during isolated probing")
+            identity = managed_process_identity_digest(
+                process_id=job_id, generation=inputs.generation, uid=profile.owner_uid,
+                pid=main_pid, start_ticks=start_ticks, cgroup_id=observed_cgroup,
+                mount_namespace_inode=mount_ns, network_namespace_inode=network_ns)
+            probe_terminal_id = uuid.uuid4().hex
+            stdout = bytes(log)
+            probe_evidence = {
+                "terminal_success_record_id": probe_terminal_id,
+                "build_terminal_success_record_id": terminal_id,
+                "build_process_identity_digest": build_result.process_identity_digest,
+                "process_identity_digest": identity, "process_id": job_id,
+                "target": inputs.target_id, "generation": inputs.generation,
+                "service_generation": profile.generation, "output_root_id": inputs.output_root_id,
+                "output_root_path": str(Path(inputs.output_root)),
+                "output_root_device": output_info.st_dev, "output_root_inode": output_info.st_ino,
+                "executable_sha256": executable_sha256, "executable_size_bytes": executable_size,
+                "uid": profile.owner_uid, "gid": profile.owner_gid,
+                "pid": main_pid, "start_ticks": start_ticks, "cgroup": observed_cgroup,
+                "mount_ns": mount_ns, "network_ns": network_ns, "exit_code": 0,
+                "cleanup": True, "limits": limits, "cgroup_limits": cgroup_limits,
+                "log_digest": hashlib.sha256(stdout).hexdigest(), "log_bytes": len(stdout),
+            }
+            with self._lock:
+                self._records[probe_terminal_id] = probe_evidence
+            return ManagedBuildProbeResult(
+                terminal_success_record_id=probe_terminal_id,
+                build_terminal_success_record_id=terminal_id,
+                build_process_identity_digest=build_result.process_identity_digest,
+                process_identity_digest=identity,
+                process_id=job_id, generation=inputs.generation,
+                uid=profile.owner_uid, gid=profile.owner_gid, pid=main_pid,
+                start_ticks=start_ticks, exit_code=0, cleanup_verified=True,
+                cgroup_id=observed_cgroup, mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns, output_root_id=inputs.output_root_id,
+                output_root_device=output_info.st_dev, output_root_inode=output_info.st_ino,
+                executable_sha256=executable_sha256, executable_size_bytes=executable_size,
+                bounded_log_digest=hashlib.sha256(stdout).hexdigest(), log_bytes=len(stdout),
+                stdout=stdout)
+        except BaseException:
+            if unit_started and launcher is not None:
+                with contextlib.suppress(Exception):
+                    self._terminate_unit(unit, cgroup, launcher)
+            raise
+        finally:
+            if selector is not None:
+                with contextlib.suppress(Exception):
+                    selector.close()
+            if launcher is not None:
+                for stream in (launcher.stdout, launcher.stderr):
+                    if stream is not None:
+                        with contextlib.suppress(Exception):
+                            stream.close()
+                if launcher.poll() is None:
+                    with contextlib.suppress(Exception):
+                        launcher.kill()
+                with contextlib.suppress(Exception):
+                    launcher.wait(timeout=1.0)
+            if main_pidfd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(main_pidfd)
+            if job_root.exists():
+                shutil.rmtree(job_root)
+            if unit_started:
+                subprocess.run([str(manager.systemctl), "--system", "stop", unit],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                    timeout=1.0, check=False)
+                subprocess.run([str(manager.systemctl), "--system", "reset-failed", unit],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                    timeout=1.0, check=False)
+            with self._lock:
+                self._active.discard(reservation)
+                self._active.discard(self._MOUNT_RESERVATION)
+
+    def _run_one(self, inputs: Any, profile: ManagedProfileCustody, context: HostContext,
+                 authorization: EffectAuthorization, peer_pid: int, peer_pidfd: int,
+                 timeout: float, cancelled: Callable[[], bool], result_type: Any,
+                 identity_digest: Callable[..., str], mount_targets: Mapping[str, str]):
+        manager = self.manager
+        job_id = uuid.uuid4().hex
+        service_generation = profile.generation
+        unit = f"hermes-installer-build-{job_id}.service"
+        cgroup = f"/system.slice/{unit}"
+        # Authorization is checked again at the launch effect point below.
+        # Once admitted, the one-use start effect owns this exact job; its
+        # protected max lifetime is the terminal bookkeeping deadline. The
+        # manager must never mint another public effect or extend the job.
+        deadline = min(manager.monotonic() + timeout,
+                       manager.monotonic() + float(inputs.max_lifetime_seconds),
+                       manager.monotonic() + profile.max_lifetime_seconds)
+        parent_fd = os.dup(peer_pidfd)
+        unit_started = False
+        launcher: subprocess.Popen[bytes] | None = None
+        main_pidfd: int | None = None
+        main_pid: int | None = None
+        start_ticks = 0
+        mount_ns = 0
+        network_ns = 0
+        observed_cgroup = ""
+        kernel_limits: dict[str, str] = {}
+        cgroup_limits: dict[str, str] = {}
+        mounted: list[Path] = []
+        output_root_info: os.stat_result | None = None
+        job_root = Path("/run/hermes-installer/build-jobs") / job_id
+        log = bytearray()
+        selector = None
+        timed_out = False
+        was_cancelled = False
+        exit_code: int | None = None
+        launcher_reaped = False
+        cgroup_empty = False
+        pidfd_gone = False
+        started = manager.monotonic()
+        last_generation_check = float("-inf")
+        capture_rejection: str | None = None
+
+        def require_active() -> None:
+            nonlocal last_generation_check
+            if (cancelled() or manager.monotonic() >= deadline or _pidfd_exited(parent_fd)
+                    or self.manager.profiles.get(profile.profile_id) is not profile):
+                raise AuthorityDenied("build.expired", "build lease, caller or service generation expired")
+            now = manager.monotonic()
+            if now - last_generation_check >= 0.25:
+                try:
+                    current = self.process_profile_resolver(inputs.target_id, inputs.generation)
+                except Exception:
+                    raise AuthorityDenied("build.generation", "active build service generation could not be revalidated") from None
+                if not isinstance(current, ManagedProfileCustody) or current != profile:
+                    raise AuthorityDenied("build.generation", "selected build service generation was revoked or replaced")
+                last_generation_check = now
+
+        try:
+            require_active()
+            self._verify_inputs(inputs)
+            self._validate_output_root(Path(inputs.output_root), profile.owner_uid, profile.owner_gid)
+            output_root_info = Path(inputs.output_root).lstat()
+            self._prepare_mount_targets()
+            manager._ensure_root_runtime_directory(Path("/run/hermes-installer/build-jobs"), 0o700)
+            job_root.mkdir(mode=0o700)
+            os.chown(job_root, 0, 0)
+            os.chmod(job_root, 0o700)
+            work = job_root / "work"
+            work.mkdir(mode=0o700)
+            os.chown(work, profile.owner_uid, profile.owner_gid)
+            os.chmod(work, 0o700)
+            for child in ("home", "tmp", "source"):
+                path = work / child
+                path.mkdir(mode=0o700)
+                os.chown(path, profile.owner_uid, profile.owner_gid)
+                os.chmod(path, 0o700)
+            self._copy_build_tree(Path(inputs.source_root), work / "source",
+                                  inputs.source_tree_files, profile.owner_uid, profile.owner_gid)
+            mount_inputs = {
+                "builder": Path(inputs.builder_executable),
+                "source": Path(inputs.source_root),
+                "toolchain": Path(inputs.toolchain_root),
+                "work": work,
+                "output": Path(inputs.output_root),
+            }
+            self._verify_file(mount_inputs["builder"], inputs.builder_sha256, executable=True)
+            for name, path in mount_inputs.items():
+                if name in {"source", "toolchain", "builder"}:
+                    self._protect_build_mount(path, readonly=True)
+                else:
+                    self._protect_build_mount(path, readonly=False)
+                mounted.append(path)
+            require_active()
+            argv = self._resolve_build_argv(inputs.argv_recipe, mount_targets)
+            if argv[0] != mount_targets["builder"]:
+                raise AuthorityDenied("build.argv", "argv[0] does not resolve to the fixed selected builder")
+            env = self._build_environment(inputs.environment, mount_targets)
+            properties = [
+                "--property=Type=exec", f"--property=RuntimeMaxSec={max(.1, deadline-manager.monotonic()):.3f}s",
+                "--property=KillMode=control-group", "--property=ProtectSystem=strict",
+                "--property=ProtectHome=tmpfs", "--property=PrivateTmp=yes",
+                "--property=ProtectProc=invisible", "--property=ProcSubset=pid",
+                "--property=PrivateDevices=yes", "--property=NoNewPrivileges=yes",
+                "--property=ProtectKernelTunables=yes", "--property=ProtectKernelModules=yes",
+                "--property=ProtectControlGroups=yes", "--property=RestrictSUIDSGID=yes",
+                "--property=RestrictNamespaces=user", "--property=RestrictAddressFamilies=AF_UNIX",
+                "--property=PrivateNetwork=yes", "--property=IPAddressDeny=any",
+                "--property=MountFlags=private", "--property=PrivateMounts=yes",
+                f"--property=User={profile.service_user}", "--property=SupplementaryGroups=",
+                "--property=Description=HermesInstaller build " + job_id,
+                "--property=WorkingDirectory=" + mount_targets["work"],
+                "--property=BindReadOnlyPaths=" + str(inputs.builder_executable) + ":" + mount_targets["builder"],
+                "--property=BindReadOnlyPaths=" + str(inputs.source_root) + ":" + mount_targets["source"],
+                "--property=BindReadOnlyPaths=" + str(inputs.toolchain_root) + ":" + mount_targets["toolchain"],
+                "--property=BindPaths=" + str(work) + ":" + mount_targets["work"],
+                "--property=BindPaths=" + str(inputs.output_root) + ":" + mount_targets["output"],
+                # Every mask is optional on a clean development host: systemd
+                # rejects the namespace if an unprefixed masked path is absent.
+                "--property=InaccessiblePaths=-/etc/hermes-installer -/var/lib/hermes-installer -/etc/ssh -/etc/ssl/private",
+            ]
+            if profile.memory_max_bytes is not None:
+                properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
+            if profile.cpu_quota_percent is not None:
+                properties.append(f"--property=CPUQuota={profile.cpu_quota_percent}%")
+            if profile.io_weight is not None:
+                properties.append(f"--property=IOWeight={profile.io_weight}")
+            env_args = ["--setenv=" + name + "=" + value for name, value in sorted(env.items())]
+            # Drop manager/user-session variables before setting the closed build environment.
+            manager_env = subprocess.run([str(manager.systemctl), "--system", "show-environment"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=min(2.0, max(.1, deadline - manager.monotonic())), check=False)
+            if manager_env.returncode or len(manager_env.stdout) > 65536:
+                raise AuthorityDenied("build.environment", "system manager environment could not be safely cleared")
+            manager_keys = {line.split("=", 1)[0] for line in manager_env.stdout.decode("utf-8", "replace").splitlines()
+                            if "=" in line and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", line.split("=", 1)[0])}
+            manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
+                "WATCHDOG_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES", "XDG_RUNTIME_DIR",
+                "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME", "SHELL", "PWD", "SYSTEMD_EXEC_PID",
+                "MEMORY_PRESSURE_WATCH", "MEMORY_PRESSURE_WRITE", "LC_CTYPE"})
+            unset = sorted(manager_keys - set(env))
+            if sum(len(key) + 1 for key in unset) > 60000:
+                raise AuthorityDenied("build.environment", "manager environment exceeds the safe clear bound")
+            if unset:
+                properties.append("--property=UnsetEnvironment=" + " ".join(unset))
+            require_active()
+            # Re-stat and rehash the builder and both immutable trees at the
+            # effect point, after mounts and unit properties are prepared.
+            self._verify_inputs(inputs)
+            command = [str(manager.systemd_run), "--system", "--unit=" + unit,
+                "--service-type=exec", "--wait", "--pipe",
+                "--working-directory=" + mount_targets["work"], *properties, *env_args, *argv]
+            require_active()
+            if manager.monotonic() >= authorization.monotonic_expires_at:
+                raise AuthorityDenied("build.expired", "start authorization expired before the unit launch effect")
+            launcher = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+                close_fds=True, shell=False)
+            unit_started = True
+            import selectors as selectors_module
+            selector = selectors_module.DefaultSelector()
+            for stream_name, stream in (("stdout", launcher.stdout), ("stderr", launcher.stderr)):
+                if stream is not None:
+                    os.set_blocking(stream.fileno(), False)
+                    selector.register(stream, selectors_module.EVENT_READ, stream_name)
+            started = manager.monotonic()
+            while launcher.poll() is None:
+                try:
+                    require_active()
+                except AuthorityDenied as exc:
+                    if exc.code == "build.expired":
+                        was_cancelled = cancelled() or _pidfd_exited(parent_fd)
+                        timed_out = not was_cancelled
+                        break
+                    raise
+                if main_pid is None:
+                    observed = self._capture_build_identity(unit, cgroup, inputs, profile)
+                    if observed is not None:
+                        main_pid = observed["pid"]
+                        start_ticks = observed["ticks"]
+                        observed_cgroup = observed["cgroup"]
+                        mount_ns = observed["mount_ns"]
+                        network_ns = observed["network_ns"]
+                        kernel_limits = observed["limits"]
+                        cgroup_limits = observed["cgroup_limits"]
+                        main_pidfd = observed["pidfd"]
+                    else:
+                        capture_rejection = getattr(self, "_last_build_capture_rejection", "unknown")
+                for key, _ in selector.select(.02):
+                    data = os.read(key.fileobj.fileno(), 65536)
+                    if data:
+                        if len(log) + len(data) > self._LOG_LIMIT:
+                            raise AuthorityDenied("build.logs", "build emitted more than the root log bound")
+                        log.extend(data)
+                    else:
+                        selector.unregister(key.fileobj)
+                if launcher.poll() is None and not selector.get_map():
+                    time.sleep(.01)
+            if was_cancelled or timed_out:
+                self._terminate_unit(unit, cgroup, launcher)
+            if launcher.poll() is None:
+                try:
+                    launcher.wait(timeout=max(.1, min(3.0, deadline-manager.monotonic()+3.0)))
+                except subprocess.TimeoutExpired:
+                    launcher.kill()
+                    launcher.wait(timeout=1.0)
+            # Drain the remaining pipe bytes without blocking or exceeding the cap.
+            if selector is not None:
+                for key in list(selector.get_map().values()):
+                    stream = key.fileobj
+                    while True:
+                        try:
+                            data = os.read(stream.fileno(), 65536)
+                        except BlockingIOError:
+                            break
+                        if not data:
+                            break
+                        if len(log) + len(data) > self._LOG_LIMIT:
+                            raise AuthorityDenied("build.logs", "build emitted more than the root log bound")
+                        log.extend(data)
+                    with contextlib.suppress(Exception):
+                        selector.unregister(stream)
+            exit_code = launcher.returncode
+            launcher_reaped = exit_code is not None
+            # systemd-run --wait holds its caller until the transient unit is
+            # terminal; force cleanup of any surviving cgroup descendants.
+            if manager._pids(cgroup):
+                self._terminate_unit(unit, cgroup, launcher)
+            cgroup_empty = not manager._pids(cgroup)
+            if main_pidfd is None and main_pid is not None:
+                try:
+                    main_pidfd = os.pidfd_open(main_pid, 0)
+                except OSError:
+                    main_pidfd = None
+            if main_pidfd is not None:
+                deadline_cleanup = time.monotonic() + 3.0
+                while not _pidfd_exited(main_pidfd) and time.monotonic() < deadline_cleanup:
+                    select.select([main_pidfd], [], [], .02)
+                pidfd_gone = _pidfd_exited(main_pidfd)
+            else:
+                pidfd_gone = main_pid is not None and main_pid not in manager._pids(cgroup)
+            # The manager launcher must be reaped even on normal completion.
+            if launcher.poll() is None:
+                launcher.wait(timeout=1.0)
+            launcher_reaped = launcher.returncode is not None
+            output_root_after = Path(inputs.output_root).lstat()
+            if (output_root_info is None or (output_root_info.st_dev, output_root_info.st_ino)
+                    != (output_root_after.st_dev, output_root_after.st_ino)):
+                raise AuthorityDenied("build.output", "selected output root changed before terminal attestation")
+            missing_proof = [name for name, valid in (
+                ("cgroup_empty", cgroup_empty), ("pidfd_gone", pidfd_gone),
+                ("launcher_reaped", launcher_reaped), ("cgroup_identity", bool(observed_cgroup)),
+                ("main_pid", bool(main_pid)), ("start_ticks", bool(start_ticks)),
+                ("mount_namespace", bool(mount_ns)), ("network_namespace", bool(network_ns)),
+                ("kernel_limits", bool(kernel_limits)),
+            ) if not valid]
+            if missing_proof:
+                # Only stable field names leave the root handler; no host path,
+                # PID, cgroup path, command output, or environment is included.
+                if capture_rejection is not None:
+                    missing_proof.append("capture_" + capture_rejection)
+                if exit_code is not None:
+                    missing_proof.append("exit_code_" + str(exit_code))
+                output = bytes(log).decode("utf-8", "replace").casefold()
+                diagnostic_sources = [output]
+                diagnostic_bytes = [bytes(log)]
+                if exit_code == 226:
+                    try:
+                        journal = subprocess.run([str(manager.systemctl), "--system", "status",
+                            "--no-pager", "--full", unit], stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                            timeout=1.0, check=False)
+                        # `systemctl status` returns nonzero for a failed unit
+                        # while still placing the diagnostic status on stdout.
+                        if len(journal.stdout) <= 16384 and journal.stdout:
+                            diagnostic_bytes.append(journal.stdout)
+                            diagnostic_sources.append(journal.stdout.decode("utf-8", "replace").casefold())
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
+                for needle, category in (
+                    ("mount namespacing", "mount_namespace_setup"),
+                    ("network namespacing", "network_namespace_setup"),
+                    ("failed to set up namespace", "namespace_setup"),
+                    ("failed to set up mount", "mount_setup"),
+                    ("failed to set up network", "network_setup"),
+                    ("failed at step namespace", "namespace_setup"),
+                    ("failed at step mount", "mount_setup"),
+                    ("failed at step setgroups", "group_setup"),
+                    ("permission denied", "permission_denied"),
+                    ("no such file", "missing_runtime_input"),
+                ):
+                    if any(needle in source for source in diagnostic_sources):
+                        missing_proof.append("systemd_" + category)
+                        break
+                if self._diagnostic_observer is not None:
+                    # Root-only injected diagnostic sink for isolated fixture
+                    # tests; normal production assembly leaves this unset.
+                    with contextlib.suppress(Exception):
+                        self._diagnostic_observer(b"\n".join(diagnostic_bytes))
+                raise AuthorityDenied("build.cleanup", "terminal proof is incomplete: " + ",".join(missing_proof))
+            finished = manager.monotonic()
+            proc_id = job_id
+            identity = identity_digest(process_id=proc_id, generation=inputs.generation,
+                uid=profile.owner_uid, pid=main_pid, start_ticks=start_ticks, cgroup_id=observed_cgroup,
+                mount_namespace_inode=mount_ns, network_namespace_inode=network_ns)
+            log_digest = hashlib.sha256(bytes(log)).hexdigest()
+            successful = exit_code == 0 and not timed_out and not was_cancelled
+            terminal_id = uuid.uuid4().hex if successful else ""
+            evidence = {
+                "terminal_success_record_id": terminal_id, "target": inputs.target_id,
+                "generation": inputs.generation, "service_generation": service_generation,
+                "selection_digest": authorization.request_digest, "process_identity_digest": identity,
+                "output_root_id": inputs.output_root_id,
+                "output_root_path": str(Path(inputs.output_root)),
+                "output_root_device": output_root_info.st_dev,
+                "output_root_inode": output_root_info.st_ino,
+                "process_id": proc_id, "uid": profile.owner_uid, "gid": profile.owner_gid,
+                "pid": main_pid,
+                "start_ticks": start_ticks, "cgroup": observed_cgroup,
+                "mount_ns": mount_ns, "network_ns": network_ns, "exit_code": exit_code,
+                "timed_out": timed_out, "cancelled": was_cancelled, "cleanup": cgroup_empty and pidfd_gone and launcher_reaped,
+                "limits": kernel_limits, "cgroup_limits": cgroup_limits,
+                "log_digest": log_digest, "log_bytes": len(log),
+                "started": started, "finished": finished,
+            }
+            if successful:
+                with self._lock:
+                    self._records[terminal_id] = dict(evidence)
+            return result_type(
+                process_id=proc_id, generation=inputs.generation, uid=profile.owner_uid,
+                pid=main_pid, start_ticks=start_ticks, exit_code=exit_code,
+                timed_out=timed_out, cancelled=was_cancelled,
+                cleanup_verified=bool(cgroup_empty and pidfd_gone and launcher_reaped),
+                started_monotonic=started, finished_monotonic=finished,
+                kernel_limits=dict(kernel_limits), terminal_success_record_id=terminal_id,
+                process_identity_digest=identity, cgroup_id=observed_cgroup,
+                mount_namespace_inode=mount_ns, network_namespace_inode=network_ns,
+                bounded_log_digest=log_digest, log_bytes=len(log),
+            )
+        except BaseException:
+            if unit_started and launcher is not None:
+                with contextlib.suppress(Exception):
+                    self._terminate_unit(unit, cgroup, launcher)
+            raise
+        finally:
+            if selector is not None:
+                with contextlib.suppress(Exception):
+                    selector.close()
+            if launcher is not None:
+                for stream in (launcher.stdout, launcher.stderr, launcher.stdin):
+                    if stream is not None:
+                        with contextlib.suppress(Exception):
+                            stream.close()
+                if launcher.poll() is None:
+                    with contextlib.suppress(Exception):
+                        launcher.kill()
+                with contextlib.suppress(Exception):
+                    launcher.wait(timeout=1.0)
+            for fd in (parent_fd, main_pidfd):
+                if fd is not None:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+            # Mount teardown follows unit death, and never recursively follows
+            # worker-controlled paths. A leaked mount is a hard failure.
+            for path in reversed(mounted):
+                try:
+                    self._umount_build(path)
+                except OSError as exc:
+                    raise AuthorityDenied("build.mount_cleanup", "private build input mount could not be removed") from exc
+            if job_root.exists():
+                shutil.rmtree(job_root)
+            # The unique transient unit is not auto-collected, so status can
+            # be inspected on failure. Remove its manager record after process
+            # and mount cleanup on every path.
+            subprocess.run([str(manager.systemctl), "--system", "stop", unit],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=1.0, check=False)
+            subprocess.run([str(manager.systemctl), "--system", "reset-failed", unit],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=1.0, check=False)
+
+    def _capture_build_identity(self, unit: str, cgroup: str, inputs: Any,
+                                profile: ManagedProfileCustody, *,
+                                output_readonly: bool = False) -> Mapping[str, Any] | None:
+        manager = self.manager
+        pidfd: int | None = None
+        def reject(reason: str) -> None:
+            self._last_build_capture_rejection = reason
+            return None
+        try:
+            output = subprocess.run([str(manager.systemctl), "--system", "show", unit,
+                "-p", "MainPID", "-p", "ControlGroup"], stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=.25, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return reject("systemd_query")
+        if output.returncode or len(output.stdout) > 4096:
+            return reject("systemd_response")
+        values = dict(line.split("=", 1) for line in output.stdout.decode("ascii", "ignore").splitlines()
+                      if "=" in line)
+        try:
+            pid = int(values.get("MainPID", "0"))
+            observed_cgroup = values.get("ControlGroup", "")
+            if pid <= 1:
+                return reject("main_pid_unavailable")
+            if observed_cgroup != cgroup:
+                return reject("cgroup_mismatch")
+            ticks, actual_cgroup, device, inode = _pid_identity(pid)
+            expected = Path(inputs.builder_executable).stat(follow_symlinks=False)
+            exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            try:
+                exe_info = os.fstat(exe_fd)
+                hasher = hashlib.sha256()
+                while chunk := os.read(exe_fd, 128 * 1024):
+                    hasher.update(chunk)
+                digest = hasher.hexdigest()
+            finally:
+                os.close(exe_fd)
+            if ((device, inode, digest) != (expected.st_dev, expected.st_ino, inputs.builder_sha256)
+                    or actual_cgroup != cgroup):
+                return reject("executable_or_membership")
+            status = Path(f"/proc/{pid}/status").read_text().splitlines()
+            uid_fields = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            if len(uid_fields) != 4 or any(int(uid) != profile.owner_uid for uid in uid_fields):
+                return reject("uid_mismatch")
+            gid_fields = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            if len(gid_fields) != 4 or any(int(gid) != profile.owner_gid for gid in gid_fields):
+                return reject("gid_mismatch")
+            status_map = {line.split(":", 1)[0]: line.split(":", 1)[1].strip()
+                          for line in status if ":" in line}
+            if status_map.get("NoNewPrivs") != "1":
+                return reject("no_new_privileges")
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino for name in ("mnt", "net"))
+            if mount_ns == os.stat("/proc/self/ns/mnt").st_ino or network_ns == os.stat("/proc/self/ns/net").st_ino:
+                return reject("namespace_not_private")
+            pidfd = os.pidfd_open(pid, 0)
+            if (self.manager._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)
+                    or _pid_identity(pid) != (ticks, cgroup, device, inode)):
+                os.close(pidfd)
+                pidfd = None
+                return reject("pidfd_identity")
+            cgroup_limits = manager._limits(cgroup)
+            cpu_fields = cgroup_limits.get("cpu.max", "").split()
+            io_fields = cgroup_limits.get("io.weight", "").split()
+            if len(io_fields) % 2:
+                return reject("io_weight_format")
+            io_weight = dict(zip(io_fields[::2], io_fields[1::2])).get("default")
+            expected_quota = str(profile.cpu_quota_percent * 1000)
+            if (cgroup_limits.get("memory.max") != str(profile.memory_max_bytes)
+                    or len(cpu_fields) != 2 or cpu_fields[0] != expected_quota
+                    or cpu_fields[1] != "100000" or io_weight != str(profile.io_weight)):
+                return reject("cgroup_limits")
+            expected_limits = {"PrivateNetwork": "yes", "IPAddressDeny": "0.0.0.0/0 ::/0",
+                               "NoNewPrivileges": "yes", "ProtectSystem": "strict"}
+            readback = {}
+            for key, expected_value in expected_limits.items():
+                actual = manager._show(unit, key)
+                if key == "IPAddressDeny":
+                    if set(actual.split()) != {"0.0.0.0/0", "::/0"}:
+                        os.close(pidfd)
+                        pidfd = None
+                        return reject("network_property")
+                    actual = "0.0.0.0/0 ::/0"
+                elif actual != expected_value:
+                    os.close(pidfd)
+                    pidfd = None
+                    return reject("unit_property")
+                readback[key] = actual
+            self._verify_build_mountinfo(pid, self._MOUNTS, output_readonly=output_readonly)
+            if (_pidfd_exited(pidfd) or _pid_identity(pid) != (ticks, cgroup, device, inode)):
+                os.close(pidfd)
+                pidfd = None
+                return reject("process_changed")
+            retained_pidfd = pidfd
+            pidfd = None
+            self._last_build_capture_rejection = ""
+            return {"pid": pid, "ticks": ticks, "cgroup": actual_cgroup,
+                    "mount_ns": mount_ns, "network_ns": network_ns,
+                    "limits": readback, "cgroup_limits": cgroup_limits,
+                    "uid": profile.owner_uid, "pidfd": retained_pidfd}
+        except (OSError, ValueError, StopIteration, AuthorityDenied):
+            if pidfd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(pidfd)
+            return reject("proc_observation")
+
+    @staticmethod
+    def _verify_build_mountinfo(pid: int, targets: Mapping[str, str], *,
+                                output_readonly: bool = False) -> None:
+        rows: dict[str, tuple[set[str], set[str]]] = {}
+        for line in Path(f"/proc/{pid}/mountinfo").read_text().splitlines():
+            parts = line.split()
+            try:
+                separator = parts.index("-")
+                mountpoint = parts[4].replace("\\040", " ").replace("\\134", "\\")
+                options = set(parts[5].split(","))
+                optional = set(parts[6:separator])
+                superoptions = set(parts[separator + 3].split(","))
+            except (IndexError, ValueError):
+                continue
+            rows[mountpoint] = (options | superoptions, optional)
+        for target in targets.values():
+            observed = rows.get(target)
+            if observed is None:
+                raise AuthorityDenied("build.mount", "required fixed build mount is absent")
+            options, propagation = observed
+            if "nosuid" not in options or "nodev" not in options or {"shared", "master"} & {
+                    key.split(":", 1)[0] for key in propagation}:
+                raise AuthorityDenied("build.mount", "fixed build mount flags or propagation are unsafe")
+            writable_targets = {targets["work"]}
+            if not output_readonly:
+                writable_targets.add(targets["output"])
+            readonly = target not in writable_targets
+            if (readonly and "ro" not in options) or (not readonly and "rw" not in options):
+                raise AuthorityDenied("build.mount", "fixed build mount access mode differs from policy")
+
+    def _prepare_mount_targets(self) -> None:
+        root = Path("/run/hermes-installer/build")
+        self.manager._ensure_root_runtime_directory(root, 0o755)
+        for key, raw in self._MOUNTS.items():
+            target = Path(raw)
+            parent = target.parent
+            if parent != root:
+                self.manager._ensure_root_runtime_directory(parent, 0o755)
+            try:
+                info = target.lstat()
+            except FileNotFoundError:
+                if key == "builder":
+                    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                                 | getattr(os, "O_NOFOLLOW", 0), 0o555)
+                    os.fchown(fd, 0, 0)
+                    os.fchmod(fd, 0o555)
+                    os.close(fd)
+                else:
+                    target.mkdir(mode=0o755)
+                    os.chown(target, 0, 0)
+                    os.chmod(target, 0o755)
+                info = target.lstat()
+            is_directory = key != "builder"
+            if (info.st_uid != 0 or stat.S_ISLNK(info.st_mode)
+                    or (is_directory and not stat.S_ISDIR(info.st_mode))
+                    or (not is_directory and not stat.S_ISREG(info.st_mode))
+                    or info.st_mode & 0o022):
+                raise AuthorityDenied("build.mount", "fixed build mountpoint custody is invalid")
+
+    @staticmethod
+    def _tree_rows(tree_files: Any) -> list[dict[str, Any]]:
+        if not isinstance(tree_files, (tuple, list)) or not tree_files or len(tree_files) > 20000:
+            raise AuthorityDenied("build.tree", "build tree catalog manifest is absent or oversized")
+        rows = []
+        names = set()
+        for item in tree_files:
+            relative = getattr(item, "path", None)
+            if (not isinstance(relative, str) or not relative or "\\" in relative
+                    or Path(relative).is_absolute() or any(part in {"", ".", ".."} for part in relative.split("/"))
+                    or getattr(item, "kind", None) != "file" or getattr(item, "link_target", None) is not None
+                    or relative in names):
+                raise AuthorityDenied("build.tree", "build input tree contains an invalid path or non-file entry")
+            names.add(relative)
+            digest = getattr(item, "sha256", None)
+            size = getattr(item, "size_bytes", None)
+            executable = getattr(item, "executable", None)
+            if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or type(size) is not int or size < 0 or type(executable) is not bool):
+                raise AuthorityDenied("build.tree", "build tree row is malformed")
+            rows.append({"path": relative, "sha256": digest,
+                         "size_bytes": size, "executable": executable})
+        if rows != sorted(rows, key=lambda item: item["path"]):
+            raise AuthorityDenied("build.tree", "build tree rows are not canonically sorted")
+        return rows
+
+    def _verify_build_tree(self, root: Path, tree_files: Any, manifest_sha256: str) -> None:
+        rows = self._tree_rows(tree_files)
+        digest = hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(",", ":"),
+                                           ensure_ascii=False).encode("utf-8")).hexdigest()
+        if digest != manifest_sha256:
+            raise AuthorityDenied("build.tree", "catalog tree manifest digest changed")
+        root = _root_path(root, directory=True)
+        observed = {}
+        for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
+            base = Path(current)
+            for dirname in dirs:
+                info = (base / dirname).lstat()
+                if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                    raise AuthorityDenied("build.tree", "build tree contains an untrusted directory")
+            for filename in files:
+                path = base / filename
+                info = path.lstat()
+                relative = path.relative_to(root).as_posix()
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222
+                        or info.st_nlink != 1):
+                    raise AuthorityDenied("build.tree", "build tree contains a mutable or special file")
+                content = hashlib.sha256(path.read_bytes()).hexdigest()
+                observed[relative] = {"path": relative, "sha256": content,
+                    "size_bytes": info.st_size, "executable": bool(info.st_mode & 0o111)}
+        if sorted(observed.values(), key=lambda item: item["path"]) != rows:
+            raise AuthorityDenied("build.tree", "materialized build input differs from its catalog file manifest")
+
+    def _verify_inputs(self, inputs: Any) -> None:
+        self._verify_build_tree(Path(inputs.source_root), inputs.source_tree_files,
+                                inputs.source_tree_manifest_sha256)
+        self._verify_build_tree(Path(inputs.toolchain_root), inputs.toolchain_tree_files,
+                                inputs.toolchain_tree_manifest_sha256)
+        self._verify_file(Path(inputs.builder_executable), inputs.builder_sha256, executable=True)
+
+    @staticmethod
+    def _verify_file(path: Path, digest: str, *, executable: bool) -> None:
+        resolved = _root_path(path, directory=False)
+        info = resolved.stat(follow_symlinks=False)
+        if (info.st_nlink != 1 or info.st_size > 512 * 1024 * 1024
+                or executable and not info.st_mode & 0o111
+                or hashlib.sha256(resolved.read_bytes()).hexdigest() != digest):
+            raise AuthorityDenied("build.artifact", "selected build executable differs from its immutable root pin")
+
+    @staticmethod
+    def _validate_output_root(path: Path, uid: int, gid: int) -> None:
+        if not path.is_absolute() or path != path.resolve(strict=True):
+            raise AuthorityDenied("build.output", "selected output root is not canonical")
+        info = path.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or info.st_uid != uid or info.st_gid != gid or stat.S_IMODE(info.st_mode) != 0o700
+                or any(path.iterdir())):
+            raise AuthorityDenied("build.output", "selected output root is not a fresh private directory")
+
+    @staticmethod
+    def _copy_build_tree(source: Path, destination: Path, tree_files: Any, uid: int, gid: int) -> None:
+        rows = ManagedBuildJobRunner._tree_rows(tree_files)
+        expected = {item["path"]: item for item in rows}
+        for relative, row in expected.items():
+            source_file = source / relative
+            fd = os.open(source_file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_CLOEXEC", 0))
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222
+                        or info.st_nlink != 1 or info.st_size != row["size_bytes"]):
+                    raise AuthorityDenied("build.source", "source file changed before work-copy staging")
+                target = destination / relative
+                directory = destination
+                for part in Path(relative).parts[:-1]:
+                    directory = directory / part
+                    try:
+                        directory.mkdir(mode=0o700)
+                    except FileExistsError:
+                        pass
+                    info = directory.lstat()
+                    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                        raise AuthorityDenied("build.source", "source path contains a non-directory component")
+                    os.chown(directory, uid, gid)
+                    os.chmod(directory, 0o700)
+                out = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                              | getattr(os, "O_NOFOLLOW", 0), 0o700 if row["executable"] else 0o600)
+                digest = hashlib.sha256()
+                try:
+                    while chunk := os.read(fd, 128 * 1024):
+                        digest.update(chunk)
+                        view = memoryview(chunk)
+                        while view:
+                            count = os.write(out, view)
+                            view = view[count:]
+                    if digest.hexdigest() != row["sha256"]:
+                        raise AuthorityDenied("build.source", "source bytes changed during work-copy staging")
+                    os.fchown(out, uid, gid)
+                    os.fchmod(out, 0o700 if row["executable"] else 0o600)
+                finally:
+                    os.close(out)
+            finally:
+                os.close(fd)
+
+    @staticmethod
+    def _protect_build_mount(path: Path, *, readonly: bool) -> None:
+        flags_bind, flags_rec = 4096, 16384
+        flags_private = 1 << 18
+        flags_remount, flags_ro, flags_nosuid, flags_nodev = 32, 1, 2, 4
+        ManagedProcessEffectHandler._mount_call(path, path, flags_bind | flags_rec)
+        try:
+            ManagedProcessEffectHandler._mount_call(path, path, flags_private | flags_rec)
+            flags = flags_bind | flags_remount | flags_nosuid | flags_nodev
+            if readonly:
+                flags |= flags_ro
+            ManagedProcessEffectHandler._mount_call(path, path, flags)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                ManagedBuildJobRunner._umount_build(path)
+            raise
+
+    @staticmethod
+    def _umount_build(path: Path) -> None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        umount2 = libc.umount2
+        umount2.argtypes = (ctypes.c_char_p, ctypes.c_int)
+        umount2.restype = ctypes.c_int
+        if umount2(os.fsencode(path), 0) != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error), str(path))
+
+    @classmethod
+    def _resolve_build_argv(cls, recipe: Any, targets: Mapping[str, str]) -> list[str]:
+        from hermes_installer.authority.build_execution import _resolve_argv_recipe
+        normalized = _resolve_argv_recipe(recipe)
+        argv = []
+        for index, node in enumerate(normalized):
+            if "literal" in node:
+                value = node["literal"]
+            else:
+                value = node["build_path"]
+                mount_id = value["mount_id"]
+                relative = value["relative_path"]
+                if mount_id == "builder" and relative:
+                    raise AuthorityDenied("build.argv", "builder executable path must be its fixed mount root")
+                value = targets[mount_id] if not relative else str(Path(targets[mount_id]) / relative)
+            if not isinstance(value, str) or "\x00" in value or len(value) > 4096:
+                raise AuthorityDenied("build.argv", "resolved build argv token is invalid")
+            argv.append(value)
+        if not argv or argv[0] != targets["builder"] or sum(len(arg.encode()) for arg in argv) > 65536:
+            raise AuthorityDenied("build.argv", "build argv differs from the exact fixed builder recipe")
+        if any(any(flag in value.casefold() for flag in ("--token", "--secret", "--password", "--api-key", "--credential"))
+               for value in argv[1:]):
+            raise AuthorityDenied("build.argv", "credential-bearing build arguments are forbidden")
+        return argv
+
+    @staticmethod
+    def _build_environment(raw: Mapping[str, str], targets: Mapping[str, str]) -> dict[str, str]:
+        if not isinstance(raw, Mapping) or len(raw) > 32:
+            raise AuthorityDenied("build.environment", "root build environment is malformed")
+        fixed = {
+            "HOME": targets["work"] + "/home",
+            "TMPDIR": targets["work"] + "/tmp",
+            "PATH": targets["toolchain"] + "/bin",
+        }
+        result = dict(raw)
+        for key, value in fixed.items():
+            if key in result and result[key] != value:
+                raise AuthorityDenied("build.environment", "build root path differs from the fixed mount contract")
+            result[key] = value
+        for key, value in result.items():
+            if (not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key)
+                    or key not in {"HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "TZ", "SOURCE_DATE_EPOCH",
+                                  "CC", "CXX", "AR", "RANLIB", "CFLAGS", "CPPFLAGS", "LDFLAGS", "MAKEFLAGS"}
+                    or not isinstance(value, str) or len(value) > 4096
+                    or any(char in value for char in ("\x00", "\n", "\r", "`", "$"))
+                    or re.search(r"token|secret|credential|password|api[_-]?key", value, re.I)
+                    or re.search(r"token|secret|credential|password|api[_-]?key", key, re.I)):
+                raise AuthorityDenied("build.environment", "build environment is outside its reviewed finite allowlist")
+        result.setdefault("LANG", "C")
+        result.setdefault("LC_ALL", "C")
+        return result
+
+    def _terminate_unit(self, unit: str, cgroup: str,
+                        launcher: subprocess.Popen[bytes] | None) -> None:
+        manager = self.manager
+        for signal_name in ("SIGTERM", "SIGKILL"):
+            if not manager._pids(cgroup):
+                break
+            with contextlib.suppress(AuthorityDenied):
+                manager._ctl(["kill", "--kill-whom=all", "--signal=" + signal_name, unit], 1.0)
+            if signal_name == "SIGTERM":
+                until = time.monotonic() + .25
+                while manager._pids(cgroup) and time.monotonic() < until:
+                    time.sleep(.01)
+        if manager._pids(cgroup):
+            with contextlib.suppress(AuthorityDenied):
+                manager._ctl(["stop", unit], 1.0)
+        until = time.monotonic() + 2.0
+        while manager._pids(cgroup) and time.monotonic() < until:
+            time.sleep(.02)
+        if launcher is not None and launcher.poll() is None:
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                launcher.wait(timeout=.2)
+            if launcher.poll() is None:
+                launcher.kill()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    launcher.wait(timeout=1.0)
