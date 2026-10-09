@@ -12,6 +12,7 @@ from ..policy import ContextAuthorizer, DispatchContext
 from .adapters import MCPService, ReadOnlyAdapter, SERVICES
 from .client import MCPClient
 from .transports import StdioTransport, StreamableHTTPTransport, is_supervised_stdio_handle
+from .privacy import scrub_mcp_result
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +83,14 @@ class MCPConnectionRegistry:
             if not allowed_tools <= tools:
                 raise PermissionError("MCP requested tools exceed the reviewed read-only allowlist")
             tools = allowed_tools
+        service_scrubber = scrub_mcp_result(service_id)
+        if result_scrubber is not None and not callable(result_scrubber):
+            raise TypeError("MCP result scrubber must be callable")
+        if result_scrubber is None:
+            result_scrubber = service_scrubber
+        else:
+            supplied_scrubber = result_scrubber
+            result_scrubber = lambda value: service_scrubber(supplied_scrubber(value))
         client = MCPClient(
             transport, tools, service_id=service_id, selection=selection,
             dispatch_context=self.context, context_authorizer=self.context_authorizer,

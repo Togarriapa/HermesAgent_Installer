@@ -6,6 +6,7 @@ import time
 import unittest
 
 from hermes_installer.mcp.client import MCPClient, MCPError
+from hermes_installer.mcp.privacy import MCPPrivacyError, scrub_mcp_result
 from hermes_installer.policy import DispatchAuthorization, DispatchContext, Sensitivity
 
 
@@ -161,6 +162,19 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(MCPError):
             await client.call_read("get_state", {"entity_id": "sensor.office"})
         await client.close()
+
+    async def test_service_scrubber_removes_private_canaries_recursively(self):
+        scrub = scrub_mcp_result("google-gmail")
+        result = scrub({"content": [{"type": "text", "text": "Bearer canary-token"},
+                                   {"type": "resource", "access_token": "canary-secret",
+                                    "body": "api_key=canary-key"}],
+                        "authorization": "canary-header", "safe": True})
+        self.assertEqual(result["content"][0]["text"], "Bearer [REDACTED]")
+        self.assertNotIn("access_token", result["content"][1])
+        self.assertEqual(result["content"][1]["body"], "api_key=[REDACTED]")
+        self.assertNotIn("authorization", result)
+        with self.assertRaises(MCPPrivacyError):
+            scrub_mcp_result("unreviewed-server")
 
     async def test_missing_scrubber_fails_before_selected_resource_effect(self):
         transport = FixtureTransport()
