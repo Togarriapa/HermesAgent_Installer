@@ -27,7 +27,7 @@ HERMES_PIN = "7085fbf7753266fc4943c55ac04926186bc90005"
 FIXTURE_KEY = "native-local-fixture-key-0123456789abcdef"
 
 
-def synthetic_host_context_factory(*, profile_id, purpose, sensitivity, trace_id, cancelled, tool_request):
+def synthetic_host_context_factory(*, profile_id, purpose, sensitivity, trace_id, cancelled, tool_request, intent=None, **_ignored):
     # Synthetic test authority only; this is not a production context issuer.
     if profile_id != "native-fixture-private":
         return DispatchContext(profile_id, purpose, sensitivity, trace_id=trace_id, cancelled=cancelled)
@@ -257,6 +257,7 @@ plugins:
                     dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-private",
                     sensitivity=Sensitivity.PRIVATE, model=MODEL, port=int(plugin["port"]),
                     context_factory=synthetic_host_context_factory,
+                    fixture_only_allow_synthetic_context=True,
                 )
                 fixture_marker = Path(scratch) / "fixture-called"
                 worker_env = {

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from hermes_installer.codex_responses import (
@@ -11,6 +13,19 @@ from hermes_installer.codex_responses import (
     normalize_responses_request,
 )
 from hermes_installer.policy import PolicyDenied
+from hermes_installer.provider_effect_handlers import canonical_provider_request
+
+
+def _normalization_policy():
+    module = Path(inspect.getsourcefile(canonical_provider_request))
+    record = {"id": "siwc-output-unsupported-v1", "revision": 1,
+              "route_schema_id": "siwc-responses-preview-v1",
+              "output_limit_mode": "unsupported-field-reject", "output_limit_ceiling": None,
+              "canonicalizer_artifact_id": "provider-canonicalizer-v1",
+              "canonicalizer_sha256": hashlib.sha256(module.read_bytes()).hexdigest()}
+    record["normalization_policy_sha256"] = hashlib.sha256(
+        json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return record
 
 
 class FakeAuthority:
@@ -20,6 +35,7 @@ class FakeAuthority:
         self.issued = []
         self.verified = []
         self.calls = []
+        self.native_calls = []
 
     def authorize_effect(self, context, *, capability, target, recipient, request_digest, retry_index):
         binding = (capability, target, recipient, request_digest, retry_index)
@@ -47,8 +63,16 @@ class FakeAuthority:
             raise RuntimeError("fake broker failure")
         self.calls.append((grant, target, recipient, request_digest, payload, timeout, cancelled))
         return SimpleNamespace(status=200,
-            body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":9,"output_tokens":4}}}\n\n',
+            body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":9,"output_tokens":4}}}\n\n',
             headers={"Content-Type": "text/event-stream", "Retry-After": "2", "Set-Cookie": "secret"})
+
+    def dispatch_native_request(self, handle, normalized_payload, *, retry_index, timeout, cancelled=None):
+        if self.fail_dispatch:
+            raise RuntimeError("fake bridge failure")
+        self.native_calls.append((handle, normalized_payload, retry_index, timeout, cancelled))
+        return SimpleNamespace(status=200,
+            body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":9,"output_tokens":4}}}\n\n',
+            headers={"Content-Type": "text/event-stream"})
 
 
 def context(sensitivity="private", lease=20, final_payload_digest=None):
@@ -69,10 +93,29 @@ def request(**extra):
 
 
 class CodexResponsesTests(unittest.TestCase):
+    def test_native_event_uses_single_atomic_bridge_and_requires_exact_handle(self):
+        authority = FakeAuthority()
+        transport = CodexResponsesTransport(authority)
+        payload = request()
+        normalized, _model, _tools = normalize_responses_request(payload)
+        response = transport.dispatch_native_event(
+            "a" * 48, payload, retry_index=2, timeout=4,
+            normalization_policy=_normalization_policy(),
+        )
+        self.assertEqual((response.status, response.input_tokens, response.output_tokens), (200, 9, 4))
+        self.assertEqual(len(authority.native_calls), 1)
+        self.assertEqual(authority.native_calls[0][:3], ("a" * 48, normalized, 2))
+        self.assertEqual(authority.calls, [])
+        for invalid in ("short", "x" * 129, "x" * 48 + "!"):
+            with self.subTest(handle=invalid), self.assertRaises(PolicyDenied):
+                transport.dispatch_native_event(invalid, payload,
+                                                normalization_policy=_normalization_policy())
+        self.assertEqual(len(authority.native_calls), 1)
+
     def test_fixed_responses_target_binds_canonical_payload_and_tool_capability(self):
         authority = FakeAuthority()
         transport = CodexResponsesTransport(authority)
-        payload = request(tools=[{"type": "function", "name": "read_file", "parameters": {"type": "object"}}])
+        payload = request(tools=[{"type": "namespace", "name": "fs", "tools": [{"type": "function", "name": "read_file", "parameters": {"type": "object"}}]}])
         normalized, _model, _uses_tools = normalize_responses_request(payload)
         digest = hashlib.sha256(normalized).hexdigest()
         response = transport(context(final_payload_digest=digest), payload, retry_index=1, timeout=5)
@@ -178,12 +221,68 @@ class CodexResponsesTests(unittest.TestCase):
         unterminated=b'event: response.completed\ndata: {"type":"response.completed","response":{}}'
         with self.assertRaisesRegex(PolicyDenied, "before response.completed"):
             validate_responses_sse(unterminated, "text/event-stream")
-        complete=b'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":7,"output_tokens":3}}}\n\n'
-        self.assertEqual(validate_responses_sse(complete, "text/event-stream"), (7, 3))
+        complete=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed","usage":{"input_tokens":7,"output_tokens":3}}}\n\n'
+        self.assertEqual(validate_responses_sse(complete, "text/event-stream; charset=utf-8"), (7, 3))
+        for response in ({}, {"id":"resp_fixture","usage":{"input_tokens":7,"output_tokens":3}},
+                         {"id":"resp_fixture","status":"completed"}):
+            event=json.dumps({"type":"response.completed","response":response}, separators=(",", ":"))
+            with self.subTest(response=response), self.assertRaises(PolicyDenied):
+                validate_responses_sse(("event: response.completed\ndata: "+event+"\n\n").encode(), "text/event-stream")
+
+    def test_completed_function_call_history_round_trips_with_linked_output(self):
+        authority = FakeAuthority()
+        transport = CodexResponsesTransport(authority)
+        tool = {"type": "namespace", "name": "fs", "tools": [{"type": "function", "name": "read_file", "parameters": {"type": "object"}}]}
+        history = [
+            {"type": "message", "role": "user", "content": "read README"},
+            {"type": "function_call", "call_id": "call_read_1", "name": "read_file", "namespace": "fs",
+             "arguments": "{\"path\":\"README.md\"}", "status": "completed"},
+            {"type": "function_call_output", "call_id": "call_read_1", "namespace": "fs", "name": "read_file",
+             "output": "{\"text\":\"synthetic result\"}"},
+        ]
+        payload = request(input=history, tools=[tool])
+        normalized, model, uses_tools = normalize_responses_request(payload)
+        self.assertEqual(model, "codex-model")
+        self.assertTrue(uses_tools)
+        digest = hashlib.sha256(normalized).hexdigest()
+        response = transport(context(final_payload_digest=digest), payload, retry_index=0)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(authority.calls), 1)
+        self.assertEqual(authority.calls[0][4], normalized)
+        sent = json.loads(authority.calls[0][4])
+        self.assertEqual(sent["input"], history)
+        self.assertFalse(sent["store"])
+        self.assertTrue(sent["stream"])
+
+    def test_undocumented_flat_function_tools_are_rejected_for_siwc(self):
+        with self.assertRaisesRegex(PolicyDenied, "namespace"):
+            normalize_responses_request(request(tools=[
+                {"type": "function", "name": "read_file", "parameters": {"type": "object"}}]))
+
+    def test_function_call_history_requires_declared_tool_and_matching_output(self):
+        tool = {"type": "namespace", "name": "fs", "tools": [{"type": "function", "name": "read_file", "parameters": {"type": "object"}}]}
+        call = {"type": "function_call", "call_id": "call_1", "name": "read_file", "namespace": "fs",
+                "arguments": "{}", "status": "completed"}
+        bad_requests = [
+            request(input=[call], tools=[tool]),
+            request(input=[dict(call, name="unknown"), {
+                "type": "function_call_output", "call_id": "call_1", "output": "x"}], tools=[tool]),
+            request(input=[call, {"type": "function_call_output", "call_id": "other", "output": "x"}], tools=[tool]),
+        ]
+        for payload in bad_requests:
+            with self.subTest(payload=payload), self.assertRaises(PolicyDenied):
+                normalize_responses_request(payload)
 
     def test_function_tool_output_requires_tool_capability(self):
-        _, _, uses_tools = normalize_responses_request(request(input=[
-            {"type": "function_call_output", "call_id": "call_1", "output": "fixture"}]))
+        tool = {"type": "namespace", "name": "fs", "tools": [
+            {"type": "function", "name": "read_file", "parameters": {"type": "object"}}]}
+        history = [
+            {"type": "function_call", "call_id": "call_1", "name": "read_file",
+             "namespace": "fs", "arguments": "{}", "status": "completed"},
+            {"type": "function_call_output", "call_id": "call_1", "namespace": "fs",
+             "name": "read_file", "output": "fixture"},
+        ]
+        _, _, uses_tools = normalize_responses_request(request(input=history, tools=[tool]))
         self.assertTrue(uses_tools)
 
 

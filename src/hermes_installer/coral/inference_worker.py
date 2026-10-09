@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import platform
+import re
 import sys
 import time
 from pathlib import Path
@@ -25,12 +26,15 @@ def _verify_sample(path: Path) -> None:
 
 
 def run_inference(model: Path, *, transport: str, address: str, device_selector: str,
+                  device_identity_sha256: str,
                   runtime_library: str = "libedgetpu.so.1") -> dict[str, object]:
     _verify_sample(model)
     if transport not in {"usb", "pcie"} or not device_selector.startswith(transport + ":"):
         raise ValueError("device selector does not match the selected Coral transport")
     if device_selector not in {"usb:0", "pci:0"}:
         raise ValueError("Coral delegate selector is not a supported exact device selector")
+    if not isinstance(device_identity_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", device_identity_sha256):
+        raise ValueError("root-selected kernel device identity is required")
     import numpy as np
     import tflite_runtime.interpreter as tflite
 
@@ -67,6 +71,7 @@ def run_inference(model: Path, *, transport: str, address: str, device_selector:
         "model_bytes": CORAL_SAMPLE_BYTES,
         "transport": transport,
         "device_address": address,
+        "device_identity_sha256": device_identity_sha256,
         "delegate_library": runtime_library,
         "runtime_sha256": hashlib.sha256(runtime_path.read_bytes()).hexdigest(),
         "runtime_version": str(getattr(tflite, "__version__", "unknown")),
@@ -88,11 +93,13 @@ def main() -> int:
     parser.add_argument("--transport", required=True, choices=("usb", "pcie"))
     parser.add_argument("--address", required=True)
     parser.add_argument("--device-selector", required=True)
+    parser.add_argument("--device-identity-sha256", required=True)
     parser.add_argument("--runtime-library", default="libedgetpu.so.1")
     args = parser.parse_args()
     try:
         evidence = run_inference(args.model, transport=args.transport, address=args.address,
-            device_selector=args.device_selector, runtime_library=args.runtime_library)
+            device_selector=args.device_selector, device_identity_sha256=args.device_identity_sha256,
+            runtime_library=args.runtime_library)
     except Exception as exc:
         # No interpreter/delegate failure is converted into a CPU fallback.
         print(json.dumps({"status": "failed", "failure_reason": str(exc)}, sort_keys=True))

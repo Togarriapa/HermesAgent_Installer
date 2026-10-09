@@ -7,12 +7,15 @@ individual root-only files only when Authentik authority is queried.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import re
 import secrets
 import stat
 from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from .authentik import (
@@ -27,7 +30,7 @@ AUTHORITY_KEY_PATH = Path("/etc/hermes-installer/authority.key")
 CREDENTIAL_DIRECTORY = Path("/etc/hermes-installer/credentials")
 ARTIFACT_CATALOG_PATH = Path("/etc/hermes-installer/artifact-catalog.json")
 ARTIFACT_STAGING_DIRECTORY = Path("/var/lib/hermes-installer/artifacts")
-MAX_CONFIG_BYTES = 1_048_576
+MAX_CONFIG_BYTES = 8 * 1_048_576
 MAX_CREDENTIAL_BYTES = 16_384
 
 
@@ -152,10 +155,12 @@ def write_authority_config(document: Mapping[str, Any], *, expected_uid: int = 0
     root = dict(document)
     _reject_secret_material(root)
     required = {"schema", "key_id", "principals", "rules", "authentik", "process_profiles",
-                "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "delegations"}
+                "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers",
+                "native_bridges", "normalization_policies", "delegations", "service_generations"}
     root = _exact(root, required, "authority")
     if root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "authority configuration schema version is unsupported")
+    _validate_service_generations(root["service_generations"])
     encoded = json.dumps(root, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
     write_protected_file(AUTHORITY_CONFIG_PATH, encoded, expected_uid=expected_uid)
 
@@ -313,10 +318,54 @@ def _read_id(value: Any, label: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class NativeBridgeEnrollment:
+    """Root-selected producer/gateway pair and exact canonical provider route."""
+
+    bridge_id: str
+    producer_profile_id: str
+    producer_uid: int
+    producer_generation: str
+    producer_executable: Path
+    producer_executable_sha256: str
+    producer_principal_id: str
+    gateway_profile_id: str
+    gateway_uid: int
+    gateway_generation: str
+    gateway_executable: Path
+    gateway_executable_sha256: str
+    gateway_principal_id: str
+    canonicalizer_artifact_id: str
+    canonicalizer_sha256: str
+    normalization_policy_id: str
+    normalization_policy_sha256: str
+    normalization_policy_revision: int
+    route_schema_id: str
+    output_limit_mode: str
+    output_limit_ceiling: int | None
+    approved_operation: str
+    provider_enrollment_id: str
+    target: str
+    recipient: str
+
+
+@dataclass(frozen=True, slots=True)
+class SourceIssuerRecord:
+    issuer_channel_id: str
+    producer_profile_id: str
+    producer_role_artifact_id: str
+    producer_role_sha256: str
+    capture_schema_id: str
+    allowed_parent_channels: tuple[str, ...]
+    generation: str
+    observer_enrollment_id: str
+    source_action_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ProtectedEnrollment:
     key_id: str
     bindings_by_uid: Mapping[int, PrincipalBinding]
-    rules: Mapping[tuple[str, str], EffectRule]
+    rules: Mapping[tuple[str, str, str], EffectRule]
     policy: AuthorityPolicy
     process_profiles: Mapping[str, Any]
     provider_enrollments: Mapping[str, Any]
@@ -324,10 +373,356 @@ class ProtectedEnrollment:
     mcp_http_bindings: Mapping[str, Any]
     delegations: Mapping[str, ChildDelegationRule]
     memory_providers: Mapping[str, Any]
+    native_bridges: Mapping[str, NativeBridgeEnrollment]
     artifact_catalog: Mapping[str, Any]
     package_catalog: Mapping[str, Any]
     artifact_catalog_path: Path
     artifact_staging_directory: Path
+    service_records: list[Mapping[str, Any]]
+    protected_devices: list[Mapping[str, Any]]
+    protected_build_records: list[Mapping[str, Any]]
+    protected_enrollment_digest: str
+    native_package_records: list[Mapping[str, Any]]
+    memory_enrollments: Mapping[tuple[str, str], Any]
+    operation_parameter_schemas: list[Mapping[str, Any]]
+    source_issuers: tuple[SourceIssuerRecord, ...]
+    resource_job_records: tuple[Mapping[str, Any], ...]
+    remote_session_records: tuple[Mapping[str, Any], ...]
+    resource_backend_enrollment_records: tuple[Mapping[str, Any], ...]
+    resource_body_recipe_records: tuple[Mapping[str, Any], ...]
+
+
+_SOURCE_ACTIONS_BY_CHANNEL = {
+    "native-input": frozenset({"authenticated-input"}),
+    "tool-result": frozenset({"registered-tool-result"}),
+    "memory-result": frozenset({"registered-memory-result"}),
+    "effect-result": frozenset({"registered-effect-result"}),
+    "delegated-child": frozenset({"registered-child-result"}),
+    "schedule-event": frozenset({"root-timer-event"}),
+}
+
+
+def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
+    if not isinstance(value, list) or len(value) > 1024:
+        raise AuthorityDenied("enrollment.source", "protected source issuer catalog is invalid")
+    result = []
+    seen_ids: set[str] = set()
+    seen_bindings: set[tuple[str, str, str]] = set()
+    expected = {"issuer_channel_id", "producer_profile_id", "producer_role_artifact_id",
+                "producer_role_sha256", "capture_schema_id", "allowed_parent_channels",
+                "generation", "observer_enrollment_id", "source_action_ids"}
+    channels = set(_SOURCE_ACTIONS_BY_CHANNEL)
+    for row in value:
+        item = _exact(row, expected, "source issuer")
+        channel = _read_id(item["issuer_channel_id"], "issuer channel")
+        profile = _read_id(item["producer_profile_id"], "source producer profile")
+        role_artifact = _read_id(item["producer_role_artifact_id"], "source producer role artifact")
+        capture_schema = _read_id(item["capture_schema_id"], "source capture schema")
+        generation = _read_id(item["generation"], "source producer generation")
+        observer_id = _read_id(item["observer_enrollment_id"], "source observer enrollment")
+        role_sha = item["producer_role_sha256"]
+        actions = item["source_action_ids"]
+        parents = item["allowed_parent_channels"]
+        if (channel not in channels or not isinstance(role_sha, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", role_sha)
+                or not isinstance(actions, list) or not actions or len(actions) > 16
+                or any(not isinstance(action, str) for action in actions)
+                or len(actions) != len(set(actions))
+                or not set(actions).issubset(_SOURCE_ACTIONS_BY_CHANNEL[channel])
+                or not isinstance(parents, list) or len(parents) > len(channels)
+                or any(not isinstance(parent, str) or parent not in channels for parent in parents)
+                or len(parents) != len(set(parents))):
+            raise AuthorityDenied("enrollment.source", "protected source issuer row is malformed")
+        binding_key = (channel, profile, generation)
+        if observer_id in seen_ids or binding_key in seen_bindings:
+            raise AuthorityDenied("enrollment.source", "protected source issuer is duplicated")
+        seen_ids.add(observer_id)
+        seen_bindings.add(binding_key)
+        result.append(SourceIssuerRecord(
+            channel, profile, role_artifact, role_sha, capture_schema,
+            tuple(parents), generation, observer_id, tuple(actions),
+        ))
+    return tuple(result)
+
+
+def _validate_service_generations(value: Any) -> dict[str, Any]:
+    """Validate the one active, root-owned HI09 catalog snapshot and its digest."""
+    keys = {"schema", "generation_id", "service_records", "protected_devices",
+            "protected_build_records", "native_packages", "memory_enrollments",
+            "operation_parameter_schemas", "source_issuers", "resource_jobs",
+            "remote_session_enrollments", "resource_backend_enrollments",
+            "resource_body_recipes",
+            "generation_digest"}
+    item = _exact(value, keys, "service generation snapshot")
+    if type(item["schema"]) is not int or item["schema"] != 1:
+        raise AuthorityDenied("enrollment.generation", "service generation snapshot schema is unsupported")
+    _read_id(item["generation_id"], "service generation snapshot ID")
+    digest = item["generation_digest"]
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise AuthorityDenied("enrollment.generation", "service generation snapshot digest is invalid")
+    unsigned = {key: child for key, child in item.items() if key != "generation_digest"}
+    actual = hashlib.sha256(json.dumps(
+        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    if actual != digest:
+        raise AuthorityDenied("enrollment.generation", "service generation snapshot digest does not match")
+    list_fields = ("service_records", "protected_devices", "protected_build_records",
+                   "native_packages", "memory_enrollments", "operation_parameter_schemas",
+                   "source_issuers")
+    for name in list_fields:
+        rows = item[name]
+        if (not isinstance(rows, list) or len(rows) > 1024
+                or any(not isinstance(row, dict) for row in rows)):
+            raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    jobs = item["resource_jobs"]
+    if (not isinstance(jobs, list) or len(jobs) > 692
+            or any(not isinstance(row, dict) for row in jobs)):
+        raise AuthorityDenied("enrollment.generation", "protected resource_jobs catalog is invalid")
+    resource_fields = {
+        "resource_id", "kind", "selected_enabled", "profile_id", "principal_id",
+        "generation", "consent_revision", "approved_action_ids", "fixed_target_ids",
+        "credential_reference_ids", "recipient_scope", "source_policy", "schedule_or_route_id",
+        "max_children", "max_concurrency", "max_runtime_seconds", "max_payload_bytes",
+        "max_replay_entries", "enrollment_id", "source_issuer_channel_id",
+        "observer_enrollment_id", "backend_enrollment_id", "approved_dag",
+    }
+    seen_resource_ids: set[str] = set()
+    for row in jobs:
+        resource = _exact(row, resource_fields, "resource job enrollment")
+        resource_id = _read_id(resource["resource_id"], "resource job ID")
+        if resource_id in seen_resource_ids:
+            raise AuthorityDenied("enrollment.generation", "resource job enrollment is duplicated")
+        seen_resource_ids.add(resource_id)
+        dag = _exact(resource["approved_dag"], {"dag_sha256", "nodes"}, "resource job DAG")
+        if (not isinstance(dag["dag_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", dag["dag_sha256"])
+                or not isinstance(dag["nodes"], list) or not 1 <= len(dag["nodes"]) <= 128):
+            raise AuthorityDenied("enrollment.generation", "protected resource job DAG is malformed")
+        node_fields = {"node_id", "resource_id", "action_id", "operation", "target_id",
+                       "recipient", "request_schema_id", "body_recipe_id", "depends_on",
+                       "maximum_attempts"}
+        node_ids: set[str] = set()
+        for raw_node in dag["nodes"]:
+            node = _exact(raw_node, node_fields, "resource job DAG node")
+            node_id = _read_id(node["node_id"], "resource DAG node ID")
+            if node_id in node_ids:
+                raise AuthorityDenied("enrollment.generation", "resource job DAG node is duplicated")
+            node_ids.add(node_id)
+    remote_rows = item["remote_session_enrollments"]
+    if not isinstance(remote_rows, list) or len(remote_rows) > 128:
+        raise AuthorityDenied("enrollment.generation", "protected remote session catalog is invalid")
+    remote_fields = {
+        "id", "gateway_profile_id", "gateway_role_artifact_id", "gateway_role_sha256",
+        "native_desktop_profile_id", "native_generation", "connector_target_id",
+        "approved_asset_routes", "approved_websocket_route", "expected_hostname",
+        "expected_origin", "jwt_issuer", "jwt_audience", "jwks_origin",
+        "jwt_algorithm_allowlist", "allowed_email_reference_id", "policy_verifier_enrollment_id",
+        "policy_config_digest", "maximum_lease_seconds", "watchdog_interval_seconds",
+        "policy_revision", "principal_bindings_by_subject", "access_policy_binding",
+        "tunnel_runtime_binding",
+    }
+    access_fields = {
+        "verifier_enrollment_id", "account_id", "application_id", "policy_id",
+        "otp_identity_provider_id", "otp_provider_type", "verifier_config_digest",
+        "read_credential_reference_id",
+    }
+    tunnel_fields = {
+        "tunnel_enrollment_id", "tunnel_id", "cloudflared_profile_id",
+        "tunnel_token_reference_id", "token_sink_id", "origin_readiness_policy_id",
+    }
+    seen_remote_ids: set[str] = set()
+    for row in remote_rows:
+        remote = _exact(row, remote_fields, "remote session enrollment")
+        remote_id = _read_id(remote["id"], "remote session enrollment ID")
+        if remote_id in seen_remote_ids:
+            raise AuthorityDenied("enrollment.generation", "remote session enrollment is duplicated")
+        try:
+            for name in (
+                "gateway_profile_id", "gateway_role_artifact_id", "native_desktop_profile_id",
+                "native_generation", "connector_target_id", "approved_websocket_route",
+                "expected_hostname", "expected_origin", "jwt_issuer", "jwt_audience",
+                "jwks_origin", "allowed_email_reference_id", "policy_verifier_enrollment_id",
+                "policy_revision",
+            ):
+                _read_id(remote[name], f"remote session {name}")
+            if (not isinstance(remote["gateway_role_sha256"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", remote["gateway_role_sha256"])
+                    or not isinstance(remote["policy_config_digest"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", remote["policy_config_digest"])):
+                raise ValueError("remote session digest is invalid")
+            assets = remote["approved_asset_routes"]
+            algorithms = remote["jwt_algorithm_allowlist"]
+            if (not isinstance(assets, list) or not assets or len(assets) > 32
+                    or any(not isinstance(route, str) for route in assets)
+                    or len(assets) != len(set(assets))
+                    or not isinstance(algorithms, list) or algorithms != ["RS256"]
+                    or type(remote["maximum_lease_seconds"]) is not int
+                    or not 1 <= remote["maximum_lease_seconds"] <= 60
+                    or type(remote["watchdog_interval_seconds"]) is not int
+                    or not 1 <= remote["watchdog_interval_seconds"] <= 5):
+                raise ValueError("remote session routes, JWT, or lease bounds are invalid")
+            for route in assets:
+                _read_id(route, "remote approved asset route")
+            principals = remote["principal_bindings_by_subject"]
+            if not isinstance(principals, dict) or not principals or len(principals) > 256:
+                raise ValueError("remote principal subject map is invalid")
+            for subject, binding in principals.items():
+                _read_id(subject, "remote verified subject")
+                item_binding = _exact(binding, {"principal_id", "profile_id", "email"},
+                                      "remote verified principal binding")
+                _read_id(item_binding["principal_id"], "remote principal ID")
+                _read_id(item_binding["profile_id"], "remote profile ID")
+                email = item_binding["email"]
+                if (not isinstance(email, str) or len(email) > 320 or "@" not in email
+                        or email != email.casefold() or any(c.isspace() for c in email)):
+                    raise ValueError("remote verified email binding is invalid")
+            access = _exact(remote["access_policy_binding"], access_fields,
+                            "remote Access policy binding")
+            for name in access_fields - {"otp_provider_type", "verifier_config_digest"}:
+                _read_id(access[name], f"remote access {name}")
+            if (access["otp_provider_type"] != "onetimepin"
+                    or not isinstance(access["verifier_config_digest"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", access["verifier_config_digest"])):
+                raise ValueError("remote Access verifier binding is invalid")
+            tunnel = _exact(remote["tunnel_runtime_binding"], tunnel_fields,
+                            "remote tunnel runtime binding")
+            for name in tunnel_fields:
+                _read_id(tunnel[name], f"remote tunnel {name}")
+        except (TypeError, ValueError, AuthorityDenied):
+            raise AuthorityDenied("enrollment.generation", "protected remote session record is malformed") from None
+        seen_remote_ids.add(remote_id)
+    backend_rows = item["resource_backend_enrollments"]
+    if (not isinstance(backend_rows, list) or len(backend_rows) > 692
+            or any(not isinstance(row, dict) for row in backend_rows)):
+        raise AuthorityDenied("enrollment.generation", "protected resource backend catalog is invalid")
+    backend_fields = {
+        "id", "resource_id", "profile_id", "principal_id", "generation", "consent_revision",
+        "source_issuer_channel_id", "observer_enrollment_id", "native_package_id",
+        "native_package_generation", "handler_artifact_id", "handler_sha256",
+        "approved_action_ids", "operation", "target_id", "recipient",
+        "credential_reference_ids", "request_schema_id", "result_schema_id", "body_recipe_id",
+        "scope_binding_id", "maximum_request_bytes", "maximum_response_bytes", "maximum_seconds",
+    }
+    seen_backend_ids: set[str] = set()
+    for row in backend_rows:
+        backend = _exact(row, backend_fields, "resource backend enrollment")
+        backend_id = _read_id(backend["id"], "resource backend enrollment ID")
+        if backend_id in seen_backend_ids:
+            raise AuthorityDenied("enrollment.generation", "resource backend enrollment is duplicated")
+        seen_backend_ids.add(backend_id)
+        for name in (backend_fields - {"handler_sha256", "approved_action_ids",
+                                       "credential_reference_ids", "maximum_request_bytes",
+                                       "maximum_response_bytes", "maximum_seconds", "recipient"}):
+            _read_id(backend[name], f"resource backend {name}")
+        if (not isinstance(backend["handler_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", backend["handler_sha256"])
+                or not isinstance(backend["approved_action_ids"], list)
+                or not backend["approved_action_ids"]
+                or len(backend["approved_action_ids"]) > 64
+                or any(not isinstance(value, str) for value in backend["approved_action_ids"])
+                or len(set(backend["approved_action_ids"])) != len(backend["approved_action_ids"])
+                or not isinstance(backend["credential_reference_ids"], list)
+                or len(backend["credential_reference_ids"]) > 64
+                or any(not _is_credential_reference(value) for value in backend["credential_reference_ids"])
+                or len(set(backend["credential_reference_ids"])) != len(backend["credential_reference_ids"])
+                or type(backend["maximum_request_bytes"]) is not int
+                or not 1 <= backend["maximum_request_bytes"] <= 256 * 1024
+                or type(backend["maximum_response_bytes"]) is not int
+                or not 1 <= backend["maximum_response_bytes"] <= 2 * 1024 * 1024
+                or type(backend["maximum_seconds"]) is not int
+                or not 1 <= backend["maximum_seconds"] <= 600):
+            raise AuthorityDenied("enrollment.generation", "protected resource backend bounds are invalid")
+        for action in backend["approved_action_ids"]:
+            _read_id(action, "resource backend action ID")
+        if backend["recipient"] is not None:
+            _read_id(backend["recipient"], "resource backend recipient")
+    body_rows = item["resource_body_recipes"]
+    if (not isinstance(body_rows, list) or len(body_rows) > 4096
+            or any(not isinstance(row, dict) for row in body_rows)):
+        raise AuthorityDenied("enrollment.generation", "protected resource body recipe catalog is invalid")
+    body_fields = {"id", "schema_id", "source_artifact_id", "source_sha256",
+                   "output_fields", "scope_bindings", "maximum_bytes"}
+    seen_body_ids: set[str] = set()
+    for row in body_rows:
+        body = _exact(row, body_fields, "resource body recipe")
+        body_id = _read_id(body["id"], "resource body recipe ID")
+        if body_id in seen_body_ids:
+            raise AuthorityDenied("enrollment.generation", "resource body recipe is duplicated")
+        seen_body_ids.add(body_id)
+        for name in ("schema_id", "source_artifact_id"):
+            _read_id(body[name], f"resource body recipe {name}")
+        if (not isinstance(body["source_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", body["source_sha256"])
+                or type(body["maximum_bytes"]) is not int
+                or not 1 <= body["maximum_bytes"] <= 256 * 1024
+                or not isinstance(body["output_fields"], list)
+                or not 1 <= len(body["output_fields"]) <= 64
+                or not isinstance(body["scope_bindings"], dict)
+                or len(body["scope_bindings"]) > 64):
+            raise AuthorityDenied("enrollment.generation", "protected resource body recipe is malformed")
+        output_names: set[str] = set()
+        for output in body["output_fields"]:
+            item_output = _exact(output, {"name", "source", "value", "validator_id"},
+                                 "resource body recipe output")
+            name = _read_id(item_output["name"], "resource body field name")
+            if (name in output_names or item_output["source"] not in {
+                    "literal", "observed-event-field", "owned-parent-result-field"}):
+                raise AuthorityDenied("enrollment.generation", "resource body recipe output is invalid")
+            _read_id(item_output["validator_id"], "resource body validator ID")
+            output_names.add(name)
+        for scope_name, scope_id in body["scope_bindings"].items():
+            _read_id(scope_name, "resource body scope name")
+            _read_id(scope_id, "resource body scope binding ID")
+    # Parse the exact active source-issuer schema here, after verifying the
+    # digest, so callers cannot fall back to an unsigned sidecar catalog.
+    _parse_source_issuers(item["source_issuers"])
+    return item
+
+
+def _verify_active_process_rules(service_profiles: Mapping[str, Any],
+                                authority_profiles: Mapping[str, Any],
+                                bindings: Mapping[int, Any],
+                                rules: Mapping[tuple[str, str, str], Any]) -> None:
+    """Require one exact authority rule for every root-registered process verb."""
+    if set(service_profiles) != set(authority_profiles):
+        raise ValueError("active service generations and authority process profiles differ")
+    binding_by_profile: dict[str, Any] = {}
+    for binding in bindings.values():
+        if binding.profile_id in binding_by_profile:
+            raise ValueError("authority process profile principal is duplicated")
+        binding_by_profile[binding.profile_id] = binding
+    process_operations = (
+        ("hermes-profile-invoke", "process.start"),
+        ("hermes-process-control", "process.status"),
+        ("hermes-process-control", "process.read"),
+        ("hermes-process-control", "process.write"),
+        ("hermes-process-control", "process.stop"),
+        ("hermes-process-control", "process.inspect"),
+    )
+    seen_targets: set[tuple[str, str]] = set()
+    for profile_id, service in service_profiles.items():
+        authority_profile = authority_profiles[profile_id]
+        binding = binding_by_profile.get(profile_id)
+        if (authority_profile.owner_uid != service.service_uid
+                or authority_profile.owner_gid != service.service_gid
+                or authority_profile.generation != service.generation
+                or binding is None or binding.principal_id != service.principal_id
+                or binding.profile_id != service.profile_id
+                or binding.namespace_id != service.namespace_identity
+                or binding.uid != service.service_uid):
+            raise ValueError("service generation does not join its authority process identity")
+        for capability, operation in process_operations:
+            target = service.operation_targets.get(operation)
+            if not isinstance(target, str) or not target:
+                raise ValueError("active service generation omits a registered process target")
+            handler_key = (operation, target)
+            if handler_key in seen_targets:
+                raise ValueError("managed process target is duplicated")
+            seen_targets.add(handler_key)
+            rule = rules.get((capability, operation, target))
+            if (rule is None or rule.operation != operation or rule.recipient is not None
+                    or capability not in binding.capabilities):
+                raise ValueError("managed process handler has no exact authority rule")
 
 
 def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
@@ -341,10 +736,11 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                            object_pairs_hook=_unique_pairs)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         raise AuthorityDenied("enrollment.schema", "protected authority configuration is malformed") from None
-    root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "delegations"}, "authority")
+    root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges", "normalization_policies", "delegations", "service_generations"}, "authority")
     _reject_secret_material(root)
     if type(root["schema"]) is not int or root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "protected authority schema version is unsupported")
+    service_generations = _validate_service_generations(root["service_generations"])
     key_id = _read_id(root["key_id"], "key_id")
     if not isinstance(root["principals"], list) or not root["principals"] or len(root["principals"]) > 256:
         raise AuthorityDenied("enrollment.schema", "protected principal catalog is invalid")
@@ -384,14 +780,14 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         uid_by_principal[principal_id] = uid
     if not isinstance(root["rules"], list) or not root["rules"] or len(root["rules"]) > 4096:
         raise AuthorityDenied("enrollment.schema", "protected effect rule catalog is invalid")
-    rules: dict[tuple[str, str], EffectRule] = {}
+    rules: dict[tuple[str, str, str], EffectRule] = {}
     for raw in root["rules"]:
         item = _exact(raw, {"capability", "operation", "target", "recipient"}, "effect rule")
         capability = _read_id(item["capability"], "capability")
         target = _read_id(item["target"], "effect target")
         rule = EffectRule(capability, _read_id(item["operation"], "operation"), target,
                           None if item["recipient"] is None else _read_id(item["recipient"], "recipient"))
-        key = (capability, target)
+        key = (capability, rule.operation, target)
         if key in rules:
             raise AuthorityDenied("enrollment.rule", "protected effect rule is duplicated")
         rules[key] = rule
@@ -450,7 +846,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         )
     except (TypeError, ValueError):
         raise AuthorityDenied("enrollment.authentik", "protected Authentik transport enrollment is invalid") from None
-    for (cap, _target), rule in rules.items():
+    for (cap, _operation, _target), rule in rules.items():
         if (cap, rule.target) not in enrollment.allowed_effects:
             raise AuthorityDenied("enrollment.rule", "effect rule is outside Authentik protected allowlist")
     if not isinstance(root["delegations"], list) or len(root["delegations"]) > 512:
@@ -476,8 +872,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         )
         parent_binding = profiles_by_id.get(rule.parent_profile_id)
         child_binding = profiles_by_id.get(rule.child_profile_id)
-        parent_rule = rules.get((rule.parent_capability, rule.parent_target))
-        child_rule = rules.get((rule.child_capability, rule.child_target))
+        parent_rule = rules.get((rule.parent_capability, rule.parent_operation, rule.parent_target))
+        child_rule = rules.get((rule.child_capability, rule.child_operation, rule.child_target))
         if (rule.delegation_id in delegations or parent_binding is None or child_binding is None
                 or rule.parent_capability not in parent_binding.capabilities
                 or rule.child_capability not in child_binding.capabilities
@@ -521,19 +917,6 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
     primary_gids = [process_profiles[binding.profile_id].owner_gid for binding in bindings.values()]
     if len(primary_gids) != len(set(primary_gids)) or any(type(gid) is not int or gid <= 0 for gid in primary_gids):
         raise AuthorityDenied("enrollment.principal", "socket principals require unique protected primary groups")
-    from hermes_installer.managed_process_custodian import process_control_target, process_start_target
-    for profile in process_profiles.values():
-        required_process_rules = [
-            ("hermes-profile-invoke", "process.start", process_start_target(profile)),
-            *(("hermes-process-control", operation, process_control_target(profile, operation))
-              for operation in ("process.status", "process.read", "process.write", "process.stop")),
-        ]
-        for capability, operation, target in required_process_rules:
-            rule = rules.get((capability, target))
-            if (rule is None or rule.operation != operation or rule.recipient is not None
-                    or any(capability not in binding.capabilities
-                           for binding in bindings.values() if binding.profile_id == profile.profile_id)):
-                raise AuthorityDenied("enrollment.process", "managed process verb is not explicitly enrolled")
     catalogs = {}
     for field in ("provider_enrollments", "mcp_services", "memory_providers"):
         entries = root[field]
@@ -564,6 +947,117 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                 or isinstance(item["additional_metered_fee_usd"], bool)
                 or item["additional_metered_fee_usd"] < 0):
             raise AuthorityDenied("enrollment.provider", "provider enrollment lacks a precise protected route binding")
+    # HI11 root role pairing. The producer and gateway are selected only from
+    # protected process/principal records; worker payloads never name either.
+    raw_bridges = root["native_bridges"]
+    if not isinstance(raw_bridges, list) or len(raw_bridges) > 128:
+        raise AuthorityDenied("enrollment.native_bridge", "protected native bridge catalog is invalid")
+    native_bridges: dict[str, Any] = {}
+    bridge_pairs: set[tuple[str, str]] = set()
+    binding_by_profile = {binding.profile_id: binding for binding in bindings.values()}
+    for raw in raw_bridges:
+        item = _exact(raw, {"id", "producer_profile_id", "gateway_profile_id",
+                            "canonicalizer_artifact_id", "canonicalizer_sha256",
+                            "normalization_policy_id", "normalization_policy_sha256",
+                            "normalization_policy_revision", "route_schema_id",
+                            "output_limit_mode", "output_limit_ceiling",
+                            "approved_operation"}, "native bridge")
+        bridge_id = _read_id(item["id"], "native bridge ID")
+        producer_id = _read_id(item["producer_profile_id"], "native producer profile")
+        gateway_id = _read_id(item["gateway_profile_id"], "native gateway profile")
+        canonicalizer_id = _read_id(item["canonicalizer_artifact_id"], "native canonicalizer artifact")
+        canonicalizer_sha = item["canonicalizer_sha256"]
+        policy_id = _read_id(item["normalization_policy_id"], "normalization policy ID")
+        policy_sha = item["normalization_policy_sha256"]
+        policy_revision = item["normalization_policy_revision"]
+        route_schema_id = _read_id(item["route_schema_id"], "provider route schema")
+        limit_mode = item["output_limit_mode"]
+        output_ceiling = item["output_limit_ceiling"]
+        pair = (producer_id, gateway_id)
+        producer = process_profiles.get(producer_id)
+        gateway = process_profiles.get(gateway_id)
+        producer_binding = binding_by_profile.get(producer_id)
+        gateway_binding = binding_by_profile.get(gateway_id)
+        if (bridge_id in native_bridges or pair in bridge_pairs or producer_id == gateway_id
+                or item["approved_operation"] != "provider.dispatch"
+                or canonicalizer_id != "provider-canonicalizer-v1"
+                or canonicalizer_sha != "8539e50998ca68e1075030c021a5cb9d698fb2b01b50806f7218d8d1d1a50a52"
+                or not isinstance(canonicalizer_sha, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", canonicalizer_sha)
+                or producer is None or gateway is None
+                or producer_binding is None or gateway_binding is None
+                or producer.owner_uid == gateway.owner_uid
+                or producer_binding.uid != producer.owner_uid
+                or gateway_binding.uid != gateway.owner_uid):
+            raise AuthorityDenied("enrollment.native_bridge", "native bridge identity or canonicalizer binding is invalid")
+        provider_routes = [route for route in catalogs["provider_enrollments"].values()
+                           if route["principal_id"] == producer_binding.principal_id]
+        if len(provider_routes) != 1 or "provider-dispatch" not in producer_binding.capabilities:
+            raise AuthorityDenied("enrollment.native_bridge", "producer must have one exact enrolled provider route")
+        route = provider_routes[0]
+        raw_policies = root["normalization_policies"]
+        if not isinstance(raw_policies, list) or len(raw_policies) > 64:
+            raise AuthorityDenied("enrollment.native_bridge", "normalization policy catalog is invalid")
+        policy_catalog: dict[str, dict[str, Any]] = {}
+        for raw_policy in raw_policies:
+            policy = _exact(raw_policy, {"id", "revision", "route_schema_id", "output_limit_mode",
+                                         "output_limit_ceiling", "canonicalizer_artifact_id",
+                                         "canonicalizer_sha256", "normalization_policy_sha256"},
+                            "normalization policy")
+            item_id = _read_id(policy["id"], "normalization policy ID")
+            if item_id in policy_catalog:
+                raise AuthorityDenied("enrollment.native_bridge", "normalization policy is duplicated")
+            revision = policy["revision"]
+            module_hash = policy["canonicalizer_sha256"]
+            policy_hash = policy["normalization_policy_sha256"]
+            body = {key: value for key, value in policy.items() if key != "normalization_policy_sha256"}
+            expected_policy_hash = hashlib.sha256(json.dumps(
+                body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+            if (type(revision) is not int or revision < 1
+                    or not isinstance(module_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", module_hash)
+                    or not isinstance(policy_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", policy_hash)
+                    or policy_hash != expected_policy_hash):
+                raise AuthorityDenied("enrollment.native_bridge", "normalization policy hash or revision is invalid")
+            policy_catalog[item_id] = policy
+        if route["provider"] == "openrouter":
+            expected_policy = ("provider-output-reject-4096-v1", 1, "provider-chat-compatible-v1",
+                              "reject-over-ceiling", 4096)
+        elif route["provider"] == "codex":
+            expected_policy = ("siwc-output-unsupported-v1", 1, "siwc-responses-preview-v1",
+                              "unsupported-field-reject", None)
+        else:
+            raise AuthorityDenied("enrollment.native_bridge", "provider route has no reviewed native normalization policy")
+        policy_record = policy_catalog.get(policy_id)
+        if (policy_record is None or type(policy_revision) is not int or policy_revision < 1
+                or policy_record["id"] != expected_policy[0]
+                or policy_revision != expected_policy[1]
+                or policy_record["revision"] != policy_revision
+                or policy_record["normalization_policy_sha256"] != policy_sha
+                or (policy_record["route_schema_id"], policy_record["output_limit_mode"],
+                    policy_record["output_limit_ceiling"]) != expected_policy[2:]
+                or (policy_id, policy_revision, route_schema_id, limit_mode, output_ceiling) != expected_policy
+                or policy_record["canonicalizer_artifact_id"] != canonicalizer_id
+                or policy_record["canonicalizer_sha256"] != canonicalizer_sha):
+            raise AuthorityDenied("enrollment.native_bridge", "native request normalization policy is not the selected route policy")
+        provider_target = _read_id(route["target"], "native provider target")
+        provider_recipient = _read_id(route["recipient"], "native provider recipient")
+        native_bridges[bridge_id] = NativeBridgeEnrollment(
+            bridge_id=bridge_id, producer_profile_id=producer_id,
+            producer_uid=producer.owner_uid, producer_generation=producer.generation,
+            producer_executable=producer.executable, producer_executable_sha256=producer.artifact_sha256,
+            producer_principal_id=producer_binding.principal_id,
+            gateway_profile_id=gateway_id, gateway_uid=gateway.owner_uid,
+            gateway_generation=gateway.generation, gateway_executable=gateway.executable,
+            gateway_executable_sha256=gateway.artifact_sha256,
+            gateway_principal_id=gateway_binding.principal_id,
+            canonicalizer_artifact_id=canonicalizer_id, canonicalizer_sha256=canonicalizer_sha,
+            normalization_policy_id=policy_id, normalization_policy_sha256=policy_sha,
+            normalization_policy_revision=policy_revision, route_schema_id=route_schema_id,
+            output_limit_mode=limit_mode, output_limit_ceiling=output_ceiling,
+            approved_operation="provider.dispatch", provider_enrollment_id=route["id"],
+            target=provider_target, recipient=provider_recipient,
+        )
+        bridge_pairs.add(pair)
     mcp_bindings: dict[str, Any] = {}
     raw_bindings = root["mcp_http_bindings"]
     if not isinstance(raw_bindings, list) or len(raw_bindings) > 256:
@@ -618,58 +1112,88 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             raise ValueError("every protected HTTP service needs exactly one binding")
     except (TypeError, ValueError, ImportError):
         raise AuthorityDenied("enrollment.mcp", "protected MCP service/endpoint enrollment is invalid") from None
-    memory_targets: set[tuple[str, str, str]] = set()
-    used_memory_paths: set[tuple[str, str, str]] = set()
-    profiles_by_id = process_profiles
-    bindings_by_profile = {binding.profile_id: binding for binding in bindings.values()}
-    for raw in catalogs["memory_providers"].values():
-        target = _exact(raw, {"id", "provider", "profile_id", "namespace_id", "service_id",
-                              "source_revision", "service_generation", "data_root_id", "dedicated_store",
-                              "approved_route_ids"},
-                        "memory provider")
-        profile_id = _read_id(target["profile_id"], "memory profile ID")
-        namespace_id = _read_id(target["namespace_id"], "memory namespace ID")
-        provider = _read_id(target["provider"], "memory provider ID")
-        service_id = _read_id(target["service_id"], "memory service ID")
-        source_revision = _read_id(target["source_revision"], "memory source revision")
-        service_generation = target["service_generation"]
-        if type(service_generation) is not int or service_generation < 1:
-            raise AuthorityDenied("enrollment.memory", "memory service generation is invalid")
-        data_root_id = _read_id(target["data_root_id"], "memory data-root identity")
-        route_ids = target["approved_route_ids"]
-        route_catalog = {
-            "openviking": {"memory.openviking.ready.v1", "memory.openviking.search.find.v1",
-                           "memory.openviking.session.capture.v1"},
-            "claude-mem": {"memory.claude-mem.healthz.v1", "memory.claude-mem.search.v1",
-                           "memory.claude-mem.create.v1", "memory.claude-mem.delete.v1"},
-            "agentmemory": {"memory.agentmemory.livez.v1", "memory.agentmemory.smart-search.v1",
-                            "memory.agentmemory.remember.v1", "memory.agentmemory.forget.v1",
-                            "memory.agentmemory.export.v1", "memory.agentmemory.import.v1"},
-        }
-        if (not isinstance(route_ids, list) or not route_ids or len(route_ids) > 16
-                or any(not isinstance(route, str) for route in route_ids)
-                or len(route_ids) != len(set(route_ids))
-                or not set(route_ids).issubset(route_catalog.get(provider, set()))):
-            raise AuthorityDenied("enrollment.memory", "approved memory route IDs are invalid")
-        profile = profiles_by_id.get(profile_id)
-        binding = bindings_by_profile.get(profile_id)
-        if (provider not in {"openviking", "claude-mem", "agentmemory"}
-                or target["dedicated_store"] is not True
-                or profile is None or binding is None
-                or binding.namespace_id != namespace_id
-                or not Path(data_root_id).is_absolute()
-                or Path(data_root_id) != profile.data_root):
-            raise AuthorityDenied("enrollment.memory", "memory target lacks a matching protected profile data root")
-        key = (profile_id, namespace_id, provider)
-        uniqueness = (profile_id, service_id, data_root_id)
-        if key in memory_targets or uniqueness in used_memory_paths:
-            raise AuthorityDenied("enrollment.memory", "memory target or private store is duplicated")
-        memory_targets.add(key)
-        used_memory_paths.add(uniqueness)
-    return ProtectedEnrollment(key_id, bindings, rules, policy, process_profiles,
-                               catalogs["provider_enrollments"], catalogs["mcp_services"],
-                               mcp_bindings, delegations, catalogs["memory_providers"], {}, {}, ARTIFACT_CATALOG_PATH,
-                               ARTIFACT_STAGING_DIRECTORY)
+    if catalogs["memory_providers"]:
+        raise AuthorityDenied("enrollment.memory", "legacy memory provider rows cannot authorize active services")
+    memory_enrollments: dict[tuple[str, str], Any] = {}
+    if service_generations["memory_enrollments"]:
+        try:
+            from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+            generation_records: dict[tuple[str, str], Mapping[str, Any]] = {}
+            for service_record in service_generations["service_records"]:
+                identity = (service_record.get("enrollment_id"), service_record.get("generation"))
+                if not all(isinstance(value, str) and value for value in identity) or identity in generation_records:
+                    raise ValueError("service generation identity is malformed or duplicated")
+                generation_records[identity] = service_record
+            for raw_memory in service_generations["memory_enrollments"]:
+                memory = MemoryServiceEnrollment.from_protected_record(raw_memory)
+                key = (memory.service_enrollment_id, memory.service_generation)
+                if key in memory_enrollments:
+                    raise ValueError("memory service enrollment generation is duplicated")
+                service_record = generation_records.get(key)
+                profile = process_profiles.get(memory.profile_id)
+                principal = next((binding for binding in bindings.values()
+                                  if binding.profile_id == memory.profile_id), None)
+                if (service_record is None or service_record.get("profile_id") != memory.profile_id
+                        or service_record.get("principal_id") != memory.principal_id
+                        or service_record.get("namespace_identity") != memory.namespace_identity
+                        or profile is None or profile.generation != memory.service_generation
+                        or principal is None
+                        or memory.principal_id != principal.principal_id
+                        or memory.namespace_identity != principal.namespace_id
+                        or memory.data_root_id != profile.data_id):
+                    raise ValueError("memory row does not join its protected service identity and data root")
+                memory_enrollments[key] = memory
+        except (ImportError, TypeError, ValueError, KeyError):
+            raise AuthorityDenied("enrollment.memory", "protected memory service generation is invalid") from None
+    # Process effect rules are joined to the active digest-bound service
+    # snapshot, not targets reconstructed from caller journal/profile paths.
+    # The root manager registers precisely these six handlers per profile.
+    try:
+        from hermes_installer.protected_enrollment import ProtectedEnrollmentCatalog
+        generation_catalog = ProtectedEnrollmentCatalog.from_verified_records(
+            service_generations["service_records"],
+            protected_digest=service_generations["generation_digest"],
+            expected_uid=0,
+            native_packages=service_generations["native_packages"],
+            memory_enrollments=memory_enrollments,
+            parameter_schemas=service_generations["operation_parameter_schemas"],
+        )
+        generation_profiles = {}
+        for service_record in service_generations["service_records"]:
+            service = generation_catalog.resolve(
+                service_record["enrollment_id"], service_record["generation"],
+            )
+            if service.profile_id in generation_profiles:
+                raise ValueError("service profile is duplicated")
+            authority_profile = process_profiles.get(service.profile_id)
+            if (authority_profile is None
+                    or authority_profile.owner_uid != service.service_uid
+                    or authority_profile.owner_gid != service.service_gid
+                    or authority_profile.generation != service.generation):
+                raise ValueError("service generation does not join its authority process identity")
+            generation_profiles[service.profile_id] = service
+        _verify_active_process_rules(generation_profiles, process_profiles, bindings, rules)
+    except (ImportError, AttributeError, KeyError, PermissionError, TypeError, ValueError):
+        raise AuthorityDenied("enrollment.process", "managed process targets do not join the active service generation") from None
+    return ProtectedEnrollment(
+        key_id, bindings, rules, policy, process_profiles,
+        catalogs["provider_enrollments"], catalogs["mcp_services"],
+        mcp_bindings, delegations, catalogs["memory_providers"],
+        native_bridges, {}, {}, ARTIFACT_CATALOG_PATH,
+        ARTIFACT_STAGING_DIRECTORY,
+        service_generations["service_records"],
+        service_generations["protected_devices"],
+        service_generations["protected_build_records"],
+        service_generations["generation_digest"],
+        service_generations["native_packages"],
+        MappingProxyType(memory_enrollments),
+        service_generations["operation_parameter_schemas"],
+        _parse_source_issuers(service_generations["source_issuers"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["resource_jobs"]),
+        tuple(dict(row) for row in service_generations["remote_session_enrollments"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["resource_backend_enrollments"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["resource_body_recipes"]),
+    )
 
 
 def load_artifact_catalog(enrollment: ProtectedEnrollment) -> Any:

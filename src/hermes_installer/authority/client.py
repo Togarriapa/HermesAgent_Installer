@@ -21,18 +21,36 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
-    VerifiedEffectAuthorization, canonical_bytes, canonical_digest,
+    NativeEventHandle, NativeInvocationBinding, NativeInvocationContexts, NativeToolCallBinding,
+    VerifiedEffectAuthorization, canonical_bytes, canonical_digest, strict_json_loads,
 )
+from .process_controls import ProcessControlResponse
 
 _OPERATIONS = frozenset({
     "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor",
     "memory.capture", "memory.search", "memory.export", "memory.delete", "memory.extract",
     "memory.embed", "memory.backup", "memory.restore", "memory.enqueue", "memory.result",
-    "host.write", "alert.deliver", "process.start", "process.status", "process.read",
+    "host.write", "alert.deliver", "plugin.agent-live-wallet.execute",
+    "plugin.agent-live-wallet.read", "plugin.agent-sandbox-wallet.execute",
+    "plugin.agent-sandbox-wallet.read", "plugin.authentik-authorization.read",
+    "plugin.cloudflare-homelab.read", "plugin.cloudflare-homelab.write",
+    "plugin.codex.run", "plugin.composio.invoke", "plugin.ebook-toolchain.run",
+    "plugin.epic-kanban.delete", "plugin.epic-kanban.read", "plugin.epic-kanban.write",
+    "plugin.financial-data-hub.read", "plugin.financial-execution-gateway.execute",
+    "plugin.github.admin", "plugin.github.read", "plugin.github.write",
+    "plugin.homelab-ops-broker.read", "plugin.homelab-ops-broker.write",
+    "plugin.kobo-bridge.deliver", "plugin.kobo-bridge.read",
+    "plugin.resource-overlay-store.backup", "plugin.resource-overlay-store.read",
+    "plugin.resource-overlay-store.write", "plugin.voice-pipeline.session",
+    "plugin.voice-pipeline.stt", "plugin.voice-pipeline.tts", "plugin.web.read",
+    "process.start", "process.status", "process.read",
     "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
-    "resource.orchestrator.recruit",
-    "source.capture",
+    "resource.webhook.run", "resource.channel.run", "resource.bundle.node.run",
+    "resource.job.admit", "resource.job.child.admit",
+    "resource.orchestrator.recruit", "process.inspect", "connector.open",
+    "connector.read", "connector.write", "connector.close",
+    "native.event.prepare", "native.request.dispatch",
 })
 
 MAX_REQUEST = 6 * 1024 * 1024 + 16_384
@@ -47,16 +65,6 @@ def default_socket_path(uid: int | None = None) -> Path:
     if type(peer_uid) is not int or peer_uid <= 0:
         raise AuthorityDenied("authority.endpoint", "current user has no enrolled authority endpoint")
     return DEFAULT_SOCKET_DIR / f"{peer_uid}.sock"
-_OPERATIONS = frozenset({
-    "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor", "memory.capture",
-    "memory.search", "memory.export", "memory.delete", "memory.extract",
-    "memory.embed", "memory.backup", "memory.restore", "memory.enqueue", "memory.result",
-    "host.write", "alert.deliver",
-    "process.start", "process.status", "process.read", "process.write", "process.stop",
-    "artifact.fetch", "package.install",
-    "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
-    "resource.orchestrator.recruit",
-})
 
 
 def canonical_profile_target(profile_id: str, executable: Path, data_root: Path) -> str:
@@ -189,26 +197,168 @@ class AuthorityClient:
     def capture_source(self, payload: bytes, *, parent_receipt_handles: Sequence[str] = (),
                        timeout: float = 5.0,
                        cancelled: Callable[[], bool] | None = None) -> str:
-        """Let the root broker hash exact submitted bytes and return an opaque private receipt handle."""
-        if not isinstance(payload, bytes) or not 1 <= len(payload) <= 1_048_576:
-            raise AuthorityDenied("source.invalid", "source capture exceeds its fixed byte bound")
-        if (len(parent_receipt_handles) > 64
-                or any(not isinstance(item, str) or not item for item in parent_receipt_handles)):
-            raise AuthorityDenied("source.invalid", "parent receipt handles are invalid")
-        if cancelled is not None and cancelled():
-            raise AuthorityDenied("source.cancelled", "source capture was cancelled")
+        """The old same-peer caller-byte minting endpoint is intentionally retired.
+
+        Native evidence must use the paired producer/gateway event bridge; a
+        generic enrolled worker is not a trusted source issuer.
+        """
+        raise AuthorityDenied("source.issuer", "generic worker source capture is not an enrolled issuer")
+
+    def take_source_receipt(self, receipt_handle: str) -> str:
+        """Take one already-issued receipt handle over the authenticated peer socket.
+
+        The root delivery registry decides whether this process is the
+        enrolled recipient. This method never creates receipt claims.
+        """
+        if not isinstance(receipt_handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", receipt_handle):
+            raise AuthorityDenied("source.delivery", "source receipt handle is malformed")
+        result = self._rpc("source.receipt.take", {"schema": 1, "receipt_handle": receipt_handle})
+        if (not isinstance(result, dict) or set(result) != {"schema", "receipt_handle"}
+                or result.get("schema") != 1 or result.get("receipt_handle") != receipt_handle):
+            raise AuthorityDenied("source.delivery", "root returned a mismatched source receipt handle")
+        return receipt_handle
+
+    def begin_native_invocation(self, producer_context_handle: str,
+                                observed_call_handle: str,
+                                canonical_arguments: bytes) -> NativeInvocationBinding:
+        """Resolve one root-observed tool call to its registered action binding."""
         import base64
-        result = self._rpc("capture_source", {
-            "schema": 1,
-            "payload": base64.b64encode(payload).decode("ascii"),
+        for name, handle in (("producer context", producer_context_handle),
+                             ("observed call", observed_call_handle)):
+            if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+                raise AuthorityDenied("native.invocation", f"{name} handle is malformed")
+        if not isinstance(canonical_arguments, bytes) or not 1 <= len(canonical_arguments) <= 2 * 1024 * 1024:
+            raise AuthorityDenied("native.invocation", "canonical native arguments exceed their bound")
+        result = self._rpc("native.invocation.begin", {
+            "schema": 1, "producer_context_handle": producer_context_handle,
+            "observed_call_handle": observed_call_handle,
+            "canonical_arguments_b64": base64.b64encode(canonical_arguments).decode("ascii"),
+        })
+        binding = NativeInvocationBinding.from_wire(result, monotonic=self.monotonic)
+        import hashlib
+        if binding.arguments_sha256 != hashlib.sha256(canonical_arguments).hexdigest():
+            raise AuthorityDenied("native.invocation", "root invocation binding covers different arguments")
+        return binding
+
+    def get_invocation_contexts(self, invocation_handle: str) -> NativeInvocationContexts:
+        """Fetch root-registered source ancestry bound to this native peer."""
+        if not isinstance(invocation_handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", invocation_handle):
+            raise AuthorityDenied("native.invocation", "native invocation handle is malformed")
+        result = self._rpc("native.invocation.contexts", {
+            "schema": 1, "invocation_handle": invocation_handle,
+        })
+        contexts = NativeInvocationContexts.from_wire(result, monotonic=self.monotonic)
+        if contexts.invocation_handle != invocation_handle:
+            raise AuthorityDenied("native.invocation", "root invocation context belongs to another call")
+        return contexts
+
+    def remote_sessions(self) -> Any:
+        """Return typed HI13 calls over this client's authenticated Unix RPC.
+
+        The root service still denies every remote operation unless it was
+        constructed with a complete protected RemoteSessionAuthority.
+        """
+        from .remote_sessions import RemoteAuthorityClient
+        return RemoteAuthorityClient(lambda operation, payload: self._rpc(operation, payload))
+
+    def prepare_native_event(self, payload: bytes, *, parent_receipt_handles: Sequence[str] = (),
+                             purpose: str, intent_id: str, trace_id: str,
+                             retry_index: int = 0, timeout: float = 5.0,
+                             cancelled: Callable[[], bool] | None = None) -> NativeEventHandle:
+        """Capture one complete SDK request for the paired root-selected gateway.
+
+        Root enrollment selects both process identities and canonicalizer. A
+        new handle is required for every retry; it never contains a bearer grant.
+        """
+        if (not isinstance(payload, bytes) or not 1 <= len(payload) <= 1_048_576
+                or not isinstance(purpose, str) or not 1 <= len(purpose) <= 128
+                or not isinstance(intent_id, str) or not 1 <= len(intent_id) <= 512
+                or not isinstance(trace_id, str) or not 1 <= len(trace_id) <= 128
+                or type(retry_index) is not int or not 0 <= retry_index <= 100
+                or len(parent_receipt_handles) > 64
+                or any(not isinstance(item, str) or not item for item in parent_receipt_handles)
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not 0 < timeout <= MAX_TIMEOUT):
+            raise AuthorityDenied("native.request", "native source event request is malformed or outside bounds")
+        if cancelled is not None and cancelled():
+            raise AuthorityDenied("effect.cancelled", "native source event was cancelled")
+        import base64
+        result = self._rpc("prepare_native_event", {
+            "schema": 1, "payload": base64.b64encode(payload).decode("ascii"),
             "parent_receipt_handles": list(parent_receipt_handles),
-        }, timeout=min(self.timeout, timeout), cancelled=cancelled)
-        if not isinstance(result, dict) or set(result) != {"receipt_handle"}:
-            raise AuthorityDenied("source.invalid", "source broker returned an invalid receipt handle")
-        handle = result["receipt_handle"]
-        if not isinstance(handle, str) or not 32 <= len(handle) <= 128:
-            raise AuthorityDenied("source.invalid", "source broker returned an invalid receipt handle")
+            "purpose": purpose, "intent_id": intent_id, "trace_id": trace_id,
+            "retry_index": retry_index,
+        }, timeout=min(float(timeout), self.timeout), cancelled=cancelled)
+        if not isinstance(result, dict) or set(result) != {"native_event_handle", "expires_monotonic"}:
+            raise AuthorityDenied("native.handle", "authority returned a malformed native event handle")
+        handle = NativeEventHandle(result["native_event_handle"], result["expires_monotonic"])
+        if not self.monotonic() < handle.expires_monotonic <= self.monotonic() + 600:
+            raise AuthorityDenied("native.handle", "native event handle lease is stale or overlong")
         return handle
+
+    def dispatch_native_request(self, handle: NativeEventHandle | str, normalized_payload: bytes, *,
+                                retry_index: int = 0, timeout: float = 30.0,
+                                cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
+        """Atomically claim a producer event at its enrolled gateway and dispatch it.
+
+        The worker never receives a context, effect grant, provider endpoint, or
+        credential. The root validates the payload/lineage and calls its fixed
+        provider handler as one broker operation.
+        """
+        event_key = (handle.native_event_handle if isinstance(handle, NativeEventHandle) else handle)
+        if (not isinstance(event_key, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", event_key)
+                or isinstance(handle, NativeEventHandle) and handle.expires_monotonic <= self.monotonic()
+                or not isinstance(normalized_payload, bytes)
+                or not 1 <= len(normalized_payload) <= 4 * 1024 * 1024
+                or type(retry_index) is not int or not 0 <= retry_index <= 100
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not 0 < timeout <= MAX_TIMEOUT):
+            raise AuthorityDenied("native.dispatch", "native gateway request is malformed or expired")
+        if cancelled is not None and cancelled():
+            raise AuthorityDenied("effect.cancelled", "native gateway request was cancelled")
+        import base64
+        result = self._rpc("dispatch_native_request", {
+            "schema": 1, "native_event_handle": event_key,
+            "normalized_payload": base64.b64encode(normalized_payload).decode("ascii"),
+            "retry_index": retry_index,
+        }, timeout=min(float(timeout), self.timeout), cancelled=cancelled)
+        base_fields = {"status", "body", "headers", "receipt_id"}
+        native_fields = {"producer_context_handle", "tool_call_bindings"}
+        allowed_fields = (base_fields, base_fields | {"source_receipt_handle"},
+                          base_fields | native_fields,
+                          base_fields | native_fields | {"source_receipt_handle"})
+        if not isinstance(result, dict) or set(result) not in allowed_fields:
+            raise AuthorityDenied("native.dispatch", "authority returned a malformed dispatch result")
+        try:
+            body = base64.b64decode(result["body"], validate=True)
+        except Exception:
+            raise AuthorityDenied("native.dispatch", "authority returned a malformed dispatch body") from None
+        headers = result["headers"]
+        if (type(result["status"]) is not int or not 0 <= result["status"] <= 599
+                or len(body) > 4 * 1024 * 1024 or not isinstance(headers, dict) or len(headers) > 32
+                or any(not isinstance(k, str) or not isinstance(v, str)
+                       or any(char in k + v for char in "\r\n\x00") for k, v in headers.items())
+                or not isinstance(result["receipt_id"], str) or not result["receipt_id"]):
+            raise AuthorityDenied("native.dispatch", "authority dispatch response exceeds its bound")
+        source_handle = result.get("source_receipt_handle")
+        if source_handle is not None and (not isinstance(source_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle)):
+            raise AuthorityDenied("native.dispatch", "authority returned a malformed source result handle")
+        producer_handle = result.get("producer_context_handle")
+        tool_calls: tuple[NativeToolCallBinding, ...] = ()
+        if native_fields.issubset(result):
+            raw_calls = result["tool_call_bindings"]
+            if (not isinstance(raw_calls, list) or len(raw_calls) > 128
+                    or (producer_handle is None and raw_calls)
+                    or (producer_handle is not None and not 200 <= result["status"] < 300)):
+                raise AuthorityDenied("native.dispatch", "root provider invocation bindings are malformed")
+            if producer_handle is not None and (not isinstance(producer_handle, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", producer_handle)):
+                raise AuthorityDenied("native.dispatch", "root provider context handle is malformed")
+            tool_calls = tuple(NativeToolCallBinding.from_wire(item) for item in raw_calls)
+        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"],
+                                      source_handle, producer_handle, tool_calls)
 
     def authorize_effect(self, context: HostContext, *, capability: str,
                          target: str, recipient: str | None = None,
@@ -287,7 +437,9 @@ class AuthorityClient:
             raise AuthorityDenied("effect.cancelled", "effect was cancelled before response delivery")
         if self.monotonic() - started > timeout:
             raise AuthorityDenied("effect.deadline", "brokered effect exceeded its deadline")
-        if not isinstance(result, dict) or set(result) != {"status", "body", "headers", "receipt_id"}:
+        if (not isinstance(result, dict)
+                or set(result) not in ({"status", "body", "headers", "receipt_id"},
+                                      {"status", "body", "headers", "receipt_id", "source_receipt_handle"})):
             raise AuthorityDenied("effect.invalid", "broker effect response is malformed")
         import base64
         try:
@@ -303,7 +455,11 @@ class AuthorityClient:
                        or any(char in k + v for char in "\r\n\x00") for k, v in headers.items())
                 or not isinstance(result["receipt_id"], str) or not 1 <= len(result["receipt_id"]) <= 256):
             raise AuthorityDenied("effect.invalid", "broker effect response exceeds its bound")
-        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"])
+        source_handle = result.get("source_receipt_handle")
+        if source_handle is not None and (not isinstance(source_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle)):
+            raise AuthorityDenied("effect.invalid", "broker source result handle is malformed")
+        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"], source_handle)
 
     def dispatch_provider(self, authorization: EffectAuthorization, *, target: str,
                           recipient: str, request_digest: str, payload: bytes,
@@ -406,17 +562,123 @@ class AuthorityClient:
         return self.perform_effect(authorization, operation="process.start", payload=payload,
                                    timeout=timeout, cancelled=cancelled)
 
+    def process_start_operation(
+        self, authorization: EffectAuthorization, *, enrollment_id: str,
+        generation: str, operation_id: str, parameters: Mapping[str, Any],
+        timeout: float = 5.0, cancelled: Callable[[], bool] | None = None,
+    ) -> BrokeredEffectResponse:
+        """Request one protected launch recipe using selection-only parameters.
+
+        Executable, roots, cwd, argv recipe, environment, and resource bounds
+        are resolved by the enrolled root handler. This request intentionally
+        carries no caller paths, command line, or environment.
+        """
+        if (not isinstance(authorization, EffectAuthorization)
+                or authorization.operation != "process.start"
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", enrollment_id)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", generation)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", operation_id)
+                or not isinstance(parameters, Mapping) or len(parameters) > 64):
+            raise AuthorityDenied("effect.launch", "protected process operation selection is malformed")
+        payload = canonical_bytes({"schema": 1, "enrollment_id": enrollment_id,
+                                   "generation": generation, "operation_id": operation_id,
+                                   "parameters": dict(parameters)})
+        if (canonical_digest(payload) != authorization.request_digest
+                or not authorization.target or "\x00" in authorization.target
+                or any(not isinstance(value, (str, int, bool)) or isinstance(value, float)
+                       for value in parameters.values())):
+            raise AuthorityDenied("effect.binding", "process selection does not match its host grant")
+        return self.perform_effect(authorization, operation="process.start", payload=payload,
+                                   timeout=min(timeout, 30.0), cancelled=cancelled)
+
+    def start_enrolled_process_operation(
+        self, *, enrollment_id: str, generation: str, operation_id: str,
+        parameters: Mapping[str, Any], purpose: str = "selected-process-operation",
+        intent: str | None = None, timeout: float = 30.0,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> BrokeredEffectResponse:
+        """Start one root-selected process recipe without exposing its target.
+
+        The authority resolves the target from protected enrollment while
+        issuing the exact grant. Callers provide only the opaque selection and
+        values checked against the enrolled parameter schema.
+        """
+        if (not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", enrollment_id)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", generation)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", operation_id)
+                or not isinstance(parameters, Mapping) or len(parameters) > 64
+                or any(not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", key)
+                       or not isinstance(value, (str, int, bool)) or isinstance(value, float)
+                       for key, value in parameters.items())
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not 0.1 <= timeout <= 30.0):
+            raise AuthorityDenied("effect.launch", "protected process operation selection is malformed")
+        body = {"schema": 1, "enrollment_id": enrollment_id,
+                "generation": generation, "operation_id": operation_id,
+                "parameters": dict(parameters)}
+        payload = canonical_bytes(body)
+        digest = canonical_digest(payload)
+        context = self.context(
+            purpose=purpose,
+            intent=intent or f"process-start:{enrollment_id}:{generation}:{operation_id}",
+            operation="process.start", final_payload_digest=digest,
+            lease_seconds=min(float(timeout), 30.0), cancelled=cancelled,
+        )
+        result = self._rpc("authorize_process_start", {
+            "context": context.to_wire(), "enrollment_id": enrollment_id,
+            "generation": generation, "operation_id": operation_id,
+            "request_digest": digest, "retry_index": 0,
+        }, timeout=min(self.timeout, float(timeout)), cancelled=cancelled)
+        authorization = EffectAuthorization.from_wire(result)
+        if (authorization.operation != "process.start"
+                or authorization.capability != "hermes-profile-invoke"
+                or authorization.request_digest != digest
+                or not authorization.target):
+            raise AuthorityDenied("effect.binding", "authority returned a mismatched selected process grant")
+        return self.process_start_operation(
+            authorization, enrollment_id=enrollment_id, generation=generation,
+            operation_id=operation_id, parameters=parameters,
+            timeout=min(float(timeout), 30.0), cancelled=cancelled,
+        )
+
     def process_control(self, authorization: EffectAuthorization, *, operation: str,
                         target: str, payload: bytes, timeout: float = 5.0,
                         cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
-        if operation not in {"process.status", "process.read", "process.write", "process.stop"}:
+        if operation not in {"process.status", "process.read", "process.write", "process.stop", "process.inspect"}:
             raise AuthorityDenied("effect.operation", "process control verb is not fixed")
-        if authorization.target != target or not target.startswith("hermes-profile-control:"):
+        target_valid = (target.startswith("hermes-profile-control:")
+                        if operation != "process.inspect" else bool(re.fullmatch(r"[A-Za-z0-9_.:@/-]{1,256}:inspect", target)))
+        if authorization.target != target or not target_valid:
             raise AuthorityDenied("effect.binding", "process control target does not match its host grant")
         if canonical_digest(payload) != authorization.request_digest:
             raise AuthorityDenied("effect.binding", "process control payload digest does not match grant")
         return self.perform_effect(authorization, operation=operation, payload=payload,
                                    timeout=timeout, cancelled=cancelled)
+
+    def process_control_operation(self, operation: str, *, process_id: str,
+                                  generation: str, fields: Mapping[str, Any] | None = None,
+                                  timeout: float = 5.0,
+                                  cancelled: Callable[[], bool] | None = None) -> ProcessControlResponse:
+        """Ask root to resolve the live handle and perform one fixed control.
+
+        This is a single root RPC; callers provide no target, context,
+        capability, or grant. The root resolves all authorization bindings
+        from the active process registry and protected enrollment.
+        """
+        from .process_controls import process_control_operation
+        return process_control_operation(
+            self, operation, process_id=process_id, generation=generation,
+            fields=fields, timeout=timeout, cancelled=cancelled,
+        )
+
+    def inspect_profile_process(self, process_id: str, generation: str, *,
+                                timeout: float = 5.0,
+                                cancelled: Callable[[], bool] | None = None) -> ProcessControlResponse:
+        """Inspect through root's live process-handle resolver, never caller-derived targets."""
+        return self.process_control_operation(
+            "process.inspect", process_id=process_id, generation=generation,
+            fields={}, timeout=timeout, cancelled=cancelled,
+        )
 
     def fetch_artifact(self, authorization: EffectAuthorization, *, target: str,
                        artifact_id: str, sha256: str, max_bytes: int,
@@ -451,6 +713,34 @@ class AuthorityClient:
             raise AuthorityDenied("package.binding", "package request does not match its host grant")
         return self.perform_effect(authorization, operation="package.install", payload=payload,
                                    timeout=min(timeout, MAX_TIMEOUT), cancelled=cancelled)
+
+    def install_package_set(
+        self, authorization: EffectAuthorization, *, package_set_id: str,
+        manifest_sha256: str, enrollment_id: str, generation: str,
+        timeout: float = 600.0, cancelled: Callable[[], bool] | None = None,
+    ) -> BrokeredEffectResponse:
+        """Install one signed root-enrolled offline package set.
+
+        The manifest controls the runtime, exact wheel IDs/hashes and venv.
+        The client sends only the opaque selection IDs; it cannot provide paths,
+        package names, URLs, pip flags, or requirements.
+        """
+        if (not isinstance(authorization, EffectAuthorization)
+                or authorization.operation != "package.install"
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", package_set_id)
+                or not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", enrollment_id)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", generation)
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not 0 < timeout <= MAX_TIMEOUT):
+            raise AuthorityDenied("package.binding", "protected package-set selection is malformed")
+        target = f"package-set:{package_set_id}:{manifest_sha256}"
+        payload = canonical_bytes({"schema": 1, "package_set_id": package_set_id,
+                                   "enrollment_id": enrollment_id, "generation": generation})
+        if (authorization.target != target or canonical_digest(payload) != authorization.request_digest):
+            raise AuthorityDenied("package.binding", "package-set request does not match its host grant")
+        return self.perform_effect(authorization, operation="package.install", payload=payload,
+                                   timeout=min(float(timeout), MAX_TIMEOUT), cancelled=cancelled)
 
     @staticmethod
     def _check_binding(grant: EffectAuthorization, target: str, recipient: str | None, digest: str) -> None:
@@ -520,8 +810,8 @@ class AuthorityClient:
                 break
             if chunk == b"\n":
                 try:
-                    return json.loads(line.decode("ascii"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return strict_json_loads(line.decode("ascii"))
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                     raise AuthorityDenied("authority.protocol", "authority response is malformed") from None
             line.extend(chunk)
         raise AuthorityDenied("authority.bounds", "authority response is incomplete or oversized")

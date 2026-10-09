@@ -119,7 +119,7 @@ class AuthentikSystemAuthorityContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             policy.allow_effect(context=make_context("alarm"), rule=rule, request_digest="b" * 64, retry_index=0)
 
-    def test_non_write_effects_also_require_fresh_system_membership(self):
+    def test_provider_effect_does_not_use_system_membership_as_a_global_gate(self):
         transport = FakeAuthentik()
         policy = make_policy(transport)
         rule = EffectRule("provider-dispatch", "provider.dispatch", "provider://openrouter/fixed-model")
@@ -127,15 +127,18 @@ class AuthentikSystemAuthorityContracts(unittest.TestCase):
             context=make_context("native-hermes-chat"), rule=rule,
             request_digest="c" * 64, retry_index=0,
         ))
+        self.assertEqual(transport.calls, [])
+
+    def test_public_identity_snapshot_returns_fresh_direct_and_indirect_groups(self):
+        transport = FakeAuthentik()
+        policy = make_policy(transport)
+        snapshot = policy.principal_snapshot(make_context(), require_system_membership=True)
+        self.assertEqual(snapshot.principal_id, "principal:alice")
+        self.assertEqual(snapshot.subject_id, "123")
+        self.assertEqual(snapshot.direct_group_ids, frozenset({"child"}))
+        self.assertEqual(snapshot.effective_group_ids, frozenset({"child", "system", "writers"}))
+        self.assertTrue(snapshot.system_member)
         self.assertIn("/api/v3/core/users/me/", {call[0] for call in transport.calls})
-        transport.calls.clear()
-        transport.user_groups = []
-        with self.assertRaises(AuthorityDenied):
-            policy.allow_effect(
-                context=make_context("native-hermes-chat"), rule=rule,
-                request_digest="c" * 64, retry_index=0,
-            )
-        self.assertEqual([path for path, _token, _timeout in transport.calls], ["/api/v3/core/users/me/"])
 
     def test_actor_revocation_cycle_ambiguity_and_incomplete_graph_fail_closed(self):
         transport = FakeAuthentik()

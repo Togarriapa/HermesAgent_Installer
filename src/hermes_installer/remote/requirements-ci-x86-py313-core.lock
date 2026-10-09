@@ -1,5 +1,9 @@
-# CI-only JWT crypto primitives; Python 3.13 on ubuntu-24.04 x86-64.
+# CI-only JWT/crypto closure; Python 3.13 on ubuntu-24.04 x86-64.
 PyJWT==2.15.1 \
     --hash=sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193
 cryptography==50.0.2 \
     --hash=sha256:9dab55f57c74c3cad24c323bacbbd04be4705ba6eb0d92e920b1fc4837ed5079
+cffi==2.0.0 \
+    --hash=sha256:c8d3b5532fc71b7a77c09192b4a5a200ea992702734a2e9279a37f2478236f26
+pycparser==3.0 \
+    --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992

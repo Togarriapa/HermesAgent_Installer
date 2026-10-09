@@ -9,6 +9,7 @@ worker transport. The authority rule map must independently enroll each target.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 import secrets
@@ -16,6 +17,7 @@ import time
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Mapping, Protocol
 
 from .codex_responses import (
@@ -32,6 +34,7 @@ from .policy import (
     canonical_provider_target,
     normalize_chat_request,
     request_requires_tools,
+    PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING,
 )
 
 OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -41,6 +44,13 @@ MAX_REQUEST_BYTES = 1_048_576
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_TIMEOUT_SECONDS = 30.0
 _ALLOWED_SENSITIVITY = frozenset({"public", "private"})
+NORMALIZATION_POLICY_ARTIFACT_ID = "provider-canonicalizer-v1"
+_NORMALIZATION_POLICY_PREIMAGE_FIELDS = (
+    "id", "revision", "route_schema_id", "output_limit_mode",
+    "output_limit_ceiling", "canonicalizer_artifact_id", "canonicalizer_sha256",
+)
+_NORMALIZATION_POLICY_FIELDS = frozenset((*_NORMALIZATION_POLICY_PREIMAGE_FIELDS,
+                                          "normalization_policy_sha256"))
 
 
 class ProviderHandlerDenied(PermissionError):
@@ -65,6 +75,7 @@ class ProviderAdmission(Protocol):
                       principal_id: str, namespace_id: str, sensitivity: str,
                       capability: str, target: str, recipient: str, endpoint: str,
                       model: str, request_digest: str, retry_index: int,
+                      output_limit_ceiling: int | None,
                       additional_metered_fee_usd: float, credential_ref: str,
                       credential: str, payload: bytes, timeout: float,
                       cancelled: Callable[[], bool], expected_zero_price: bool,
@@ -173,10 +184,76 @@ def _validate_binding(context: object, authorization: object, *,
         raise ProviderHandlerDenied("provider.budget", "Additional metered provider use is disabled")
 
 
-def _canonical_request(enrollment: ProviderEnrollment, payload: bytes) -> tuple[bytes, str, str]:
+def _unique_json_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizationPolicy:
+    """Root-selected schema and output ceiling, independently digest-bound."""
+
+    id: str
+    revision: int
+    route_schema_id: str
+    output_limit_mode: str
+    output_limit_ceiling: int | None
+    canonicalizer_artifact_id: str
+    canonicalizer_sha256: str
+    normalization_policy_sha256: str
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, object], *, provider: str) -> "NormalizationPolicy":
+        if not isinstance(record, Mapping) or set(record) != _NORMALIZATION_POLICY_FIELDS:
+            raise ProviderHandlerDenied("provider.normalization_policy", "Protected normalization policy record is malformed")
+        try:
+            selected = {name: record[name] for name in _NORMALIZATION_POLICY_PREIMAGE_FIELDS}
+            canonical = json.dumps(selected, sort_keys=True, separators=(",", ":"),
+                                   ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError, UnicodeEncodeError):
+            raise ProviderHandlerDenied("provider.normalization_policy", "Protected normalization policy record is malformed") from None
+        policy_digest = hashlib.sha256(canonical).hexdigest()
+        module_path = inspect.getsourcefile(canonical_provider_request)
+        try:
+            module_digest = hashlib.sha256(Path(module_path).read_bytes()).hexdigest() if module_path else ""
+        except OSError:
+            module_digest = ""
+        if (record.get("normalization_policy_sha256") != policy_digest
+                or record.get("canonicalizer_artifact_id") != NORMALIZATION_POLICY_ARTIFACT_ID
+                or record.get("canonicalizer_sha256") != module_digest
+                or type(record.get("revision")) is not int or record["revision"] != 1):
+            raise ProviderHandlerDenied("provider.normalization_policy", "Protected normalization policy digest or canonicalizer pin is invalid")
+        if provider == "openrouter":
+            if (record.get("id") != "provider-output-reject-4096-v1"
+                    or record.get("route_schema_id") != "provider-chat-compatible-v1"
+                    or record.get("output_limit_mode") != "reject-over-ceiling"
+                    or type(record.get("output_limit_ceiling")) is not int
+                    or record["output_limit_ceiling"] != 4096):
+                raise ProviderHandlerDenied("provider.normalization_policy", "OpenRouter requires an enrolled compatible-route output ceiling")
+        elif provider == "codex":
+            if (record.get("id") != "siwc-output-unsupported-v1"
+                    or record.get("route_schema_id") != "siwc-responses-preview-v1"
+                    or record.get("output_limit_mode") != "unsupported-field-reject"
+                    or record.get("output_limit_ceiling") is not None):
+                raise ProviderHandlerDenied("provider.normalization_policy", "SIWC must retain its unsupported output-field policy")
+        else:
+            raise ProviderHandlerDenied("provider.normalization_policy", "No normalization schema is enrolled for this provider")
+        return cls(**{name: record[name] for name in _NORMALIZATION_POLICY_FIELDS})
+
+    def as_record(self) -> dict[str, object]:
+        return {name: getattr(self, name) for name in _NORMALIZATION_POLICY_FIELDS}
+
+
+def _canonical_request(enrollment: ProviderEnrollment, payload: bytes,
+                       normalization_policy: NormalizationPolicy) -> tuple[bytes, str, str]:
     if enrollment.provider == "openrouter":
         try:
-            decoded = json.loads(payload)
+            decoded = json.loads(payload, object_pairs_hook=_unique_json_pairs,
+                                 parse_constant=lambda _item: (_ for _ in ()).throw(ValueError("constant")))
         except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
             raise ProviderHandlerDenied("provider.request_format", "Provider request is invalid JSON") from None
         if not isinstance(decoded, dict):
@@ -184,9 +261,18 @@ def _canonical_request(enrollment: ProviderEnrollment, payload: bytes) -> tuple[
         model = decoded.get("model", OPENROUTER_MODEL)
         if model != OPENROUTER_MODEL:
             raise ProviderHandlerDenied("provider.model", "Provider model is not the enrolled free model")
-        max_tokens = decoded.get("max_tokens", decoded.get("max_completion_tokens", 4096))
-        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= 65_536:
-            raise ProviderHandlerDenied("provider.request_bounds", "Output token limit is invalid")
+        output_aliases = [decoded[name] for name in
+                          ("max_tokens", "max_completion_tokens", "max_output_tokens")
+                          if name in decoded]
+        if len(output_aliases) > 1:
+            raise ProviderHandlerDenied("provider.request_bounds", "Output token aliases cannot be combined")
+        ceiling = normalization_policy.output_limit_ceiling
+        if type(ceiling) is not int:
+            raise ProviderHandlerDenied("provider.normalization_policy", "OpenRouter output ceiling is unavailable")
+        max_tokens = output_aliases[0] if output_aliases else ceiling
+        if (isinstance(max_tokens, bool) or not isinstance(max_tokens, int)
+                or not 1 <= max_tokens <= ceiling):
+            raise ProviderHandlerDenied("provider.request_bounds", "Output token limit exceeds the public route ceiling")
         capability = "provider-tool-call" if request_requires_tools(payload) else "provider-inference"
         body = normalize_chat_request(payload, OPENROUTER_MODEL, max_tokens)
         # Independent route enforcement: no provider fallbacks, optional plugins,
@@ -199,6 +285,10 @@ def _canonical_request(enrollment: ProviderEnrollment, payload: bytes) -> tuple[
                 or normalized.get("stream") is True):
             raise ProviderHandlerDenied("provider.request_policy", "OpenRouter request exceeds its public route policy")
         return body, OPENROUTER_MODEL, capability
+    if (normalization_policy.id != "siwc-output-unsupported-v1"
+            or normalization_policy.output_limit_mode != "unsupported-field-reject"
+            or normalization_policy.output_limit_ceiling is not None):
+        raise ProviderHandlerDenied("provider.normalization_policy", "SIWC output-field policy is incompatible")
     try:
         body, model, uses_tools = normalize_responses_request(payload)
     except PolicyDenied as exc:
@@ -206,10 +296,53 @@ def _canonical_request(enrollment: ProviderEnrollment, payload: bytes) -> tuple[
     return body, model, "provider-tool-call" if uses_tools else "provider-inference"
 
 
+def canonical_provider_request(
+    root_selected_enrollments: Mapping[tuple[str, str], ProviderEnrollment], payload: bytes,
+    *, normalization_policy: Mapping[str, object],
+) -> tuple[bytes, str, str, str, str]:
+    """Purely normalize a request using one root-selected exact account route.
+
+    The mapping is selected from protected root enrollment, never a provider
+    catalog or caller configuration. This helper is not account eligibility,
+    price, privacy or budget proof: the fixed effect handler rechecks each of
+    those immediately before egress. The required normalization policy is a
+    separately digest-bound root record, never a caller-selected ceiling. It
+    accepts no URL, credential, callback or route label and performs no network
+    or vault operation. Model selection must resolve to one exact route.
+    """
+    if not isinstance(payload, bytes) or not 1 <= len(payload) <= MAX_REQUEST_BYTES:
+        raise ProviderHandlerDenied("provider.request_bounds", "Provider request exceeds its byte limit")
+    if not isinstance(root_selected_enrollments, Mapping) or not root_selected_enrollments:
+        raise ProviderHandlerDenied("provider.not_enrolled", "No protected provider enrollment is available")
+    try:
+        decoded = json.loads(payload, object_pairs_hook=_unique_json_pairs,
+                             parse_constant=lambda _item: (_ for _ in ()).throw(ValueError("constant")))
+    except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+        raise ProviderHandlerDenied("provider.request_format", "Provider request is invalid JSON") from None
+    if not isinstance(decoded, dict) or not isinstance(decoded.get("model"), str):
+        raise ProviderHandlerDenied("provider.model", "Provider request must name an enrolled model")
+    model = decoded["model"]
+    matches: list[ProviderEnrollment] = []
+    for key, enrollment in root_selected_enrollments.items():
+        if (not isinstance(enrollment, ProviderEnrollment)
+                or not isinstance(key, tuple) or key != (enrollment.target, enrollment.recipient)):
+            raise ProviderHandlerDenied("provider.enrollment", "Protected provider enrollment map is malformed")
+        if model in enrollment.models:
+            matches.append(enrollment)
+    if len(matches) != 1:
+        raise ProviderHandlerDenied("provider.not_enrolled", "Provider model is absent or ambiguous in protected enrollment")
+    enrollment = matches[0]
+    policy = NormalizationPolicy.from_record(normalization_policy, provider=enrollment.provider)
+    body, normalized_model, capability = _canonical_request(enrollment, payload, policy)
+    if normalized_model != model:
+        raise ProviderHandlerDenied("provider.model", "Canonical request changed the selected model")
+    return body, enrollment.target, enrollment.recipient, capability, normalized_model
+
+
 def _safe_headers(headers: Mapping[str, str]) -> dict[str, str]:
     result = {"Content-Type": "application/json"}
     content_type = headers.get("Content-Type") or headers.get("content-type")
-    if isinstance(content_type, str) and content_type in {"application/json", "text/event-stream"}:
+    if isinstance(content_type, str) and content_type.split(";", 1)[0].strip().casefold() in {"application/json", "text/event-stream"}:
         result["Content-Type"] = content_type
     retry_after = headers.get("Retry-After") or headers.get("retry-after")
     if isinstance(retry_after, str) and len(retry_after) <= 32:
@@ -269,6 +402,7 @@ class OpenRouterLiveAdmission:
                       principal_id: str, namespace_id: str, sensitivity: str,
                       capability: str, target: str, recipient: str, endpoint: str,
                       model: str, request_digest: str, retry_index: int,
+                      output_limit_ceiling: int | None,
                       additional_metered_fee_usd: float, credential_ref: str,
                       credential: str, payload: bytes, timeout: float,
                       cancelled: Callable[[], bool], expected_zero_price: bool,
@@ -296,7 +430,9 @@ class OpenRouterLiveAdmission:
                 or request.get("provider") != {"allow_fallbacks": False, "require_parameters": True, "data_collection": "deny"}
                 or request.get("plugins") != DISABLED_PUBLIC_PLUGINS
                 or request.get("stream") is True
-                or type(request.get("max_tokens")) is not int or not 1 <= request["max_tokens"] <= 65_536):
+                or type(output_limit_ceiling) is not int
+                or type(request.get("max_tokens")) is not int
+                or not 1 <= request["max_tokens"] <= output_limit_ceiling):
             raise ProviderHandlerDenied("provider.request_policy", "OpenRouter request does not satisfy the enrolled public route")
         now = self._clock()
         if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
@@ -318,7 +454,7 @@ class OpenRouterLiveAdmission:
         remaining = key.get("limit_remaining")
         if remaining is not None:
             try:
-                if not math.isfinite(float(remaining)) or float(remaining) < 0:
+                if not math.isfinite(float(remaining)) or float(remaining) <= 0:
                     raise ValueError("invalid quota")
             except (TypeError, ValueError, OverflowError):
                 raise ProviderHandlerDenied("provider.account_ineligible", "OpenRouter free-key quota is invalid or exhausted") from None
@@ -356,15 +492,18 @@ class OpenRouterLiveAdmission:
                 or type(model_data.get("context_length")) is not int
                 or not len(payload) <= context_length):
             raise ProviderHandlerDenied("provider.model_ineligible", "Current OpenRouter model metadata does not meet the zero-cost text route")
-        if request["max_tokens"] > max_completion or cancelled():
+        if request["max_tokens"] > min(max_completion, output_limit_ceiling) or cancelled():
             raise ProviderHandlerDenied("provider.model_ineligible", "OpenRouter request exceeds live model limits")
 
 
 class _FixedProviderHandler:
     def __init__(self, *, enrollment: ProviderEnrollment,
+                 normalization_policy: Mapping[str, object],
                  admission: ProviderAdmission, vault: HostCredentialVault,
                  network_factory: Callable[..., BoundedNetwork]):
         self._enrollment = enrollment
+        self._normalization_policy = NormalizationPolicy.from_record(
+            normalization_policy, provider=enrollment.provider)
         self._admission = admission
         self._vault = vault
         self._network_factory = network_factory
@@ -382,7 +521,7 @@ class _FixedProviderHandler:
             raise ProviderHandlerDenied("provider.bounds", "Provider attempt bounds are invalid")
         if cancelled():
             raise ProviderHandlerDenied("provider.cancelled", "Provider request was cancelled")
-        body, model, capability = _canonical_request(enrollment, payload)
+        body, model, capability = _canonical_request(enrollment, payload, self._normalization_policy)
         digest = hashlib.sha256(body).hexdigest()
         retry_index = getattr(authorization, "retry_index", None)
         if type(retry_index) is not int or not 0 <= retry_index < 3:
@@ -422,6 +561,7 @@ class _FixedProviderHandler:
             endpoint=OPENROUTER_ENDPOINT if enrollment.provider == "openrouter" else CODEX_ENDPOINT,
             model=model, request_digest=digest,
             retry_index=retry_index,
+            output_limit_ceiling=self._normalization_policy.output_limit_ceiling,
             additional_metered_fee_usd=enrollment.additional_metered_fee_usd,
             credential_ref=enrollment.credential_ref, credential=token,
             payload=body, timeout=remaining, cancelled=cancelled,
@@ -474,6 +614,7 @@ class _FixedProviderHandler:
 
 
 def build_provider_handlers(*, enrollments: Mapping[tuple[str, str], ProviderEnrollment],
+                            normalization_policies: Mapping[tuple[str, str], Mapping[str, object]] | None,
                             admission: ProviderAdmission | None,
                             vault: HostCredentialVault | None,
                             network_factory: Callable[..., BoundedNetwork] = BoundedNetwork
@@ -484,7 +625,7 @@ def build_provider_handlers(*, enrollments: Mapping[tuple[str, str], ProviderEnr
     account-policy admission or root vault yields an empty map, while Authority
     rules remain a separate mandatory protected enrollment.
     """
-    if admission is None or vault is None:
+    if admission is None or vault is None or not isinstance(normalization_policies, Mapping):
         return {}
     if not isinstance(enrollments, Mapping):
         raise TypeError("protected provider enrollments must be a mapping")
@@ -492,6 +633,9 @@ def build_provider_handlers(*, enrollments: Mapping[tuple[str, str], ProviderEnr
     for key, enrollment in enrollments.items():
         if not isinstance(enrollment, ProviderEnrollment) or key != (enrollment.target, enrollment.recipient):
             raise ValueError("provider enrollment map key does not match its immutable target binding")
+        policy_record = normalization_policies.get(key)
+        if policy_record is None:
+            continue
         if enrollment.provider == "openrouter":
             operation, expected_endpoint = "provider.dispatch", OPENROUTER_ENDPOINT
         else:
@@ -499,6 +643,7 @@ def build_provider_handlers(*, enrollments: Mapping[tuple[str, str], ProviderEnr
         if expected_endpoint not in {OPENROUTER_ENDPOINT, CODEX_ENDPOINT}:
             raise ValueError("provider endpoint is not an enrolled fixed endpoint")
         handlers[(operation, enrollment.target)] = _FixedProviderHandler(
-            enrollment=enrollment, admission=admission, vault=vault,
+            enrollment=enrollment, normalization_policy=policy_record,
+            admission=admission, vault=vault,
             network_factory=network_factory)
     return handlers
