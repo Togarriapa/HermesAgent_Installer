@@ -116,6 +116,26 @@ class RootAuthorityRuntime:
             raise AuthorityDenied("native.unavailable", "root process custody has no loaded package resolver")
         return resolver(process_id, generation)
 
+    def resolve_root_journal(self, root_id: str, *,
+                             expected_active_generation_digest: str) -> Any:
+        """Resolve a journal only inside this exact active protected snapshot.
+
+        The protected enrollment catalog revalidates its selected root row and
+        filesystem identity. This wrapper prevents a caller from asking the
+        catalog for a root under a stale or caller-selected generation.
+        """
+        if (not isinstance(root_id, str) or not root_id
+                or expected_active_generation_digest
+                != self.enrollment.protected_enrollment_digest):
+            raise AuthorityDenied("journal.unavailable", "journal root is outside the active protected generation")
+        resolver = getattr(self.bindings, "resolve_root_journal", None)
+        if not callable(resolver):
+            raise AuthorityDenied("journal.unavailable", "root bindings have no protected journal resolver")
+        return resolver(
+            root_id,
+            expected_active_generation_digest=expected_active_generation_digest,
+        )
+
 
 def compose_root_authority_runtime(
     *,

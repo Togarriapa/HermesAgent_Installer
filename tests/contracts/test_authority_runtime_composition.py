@@ -80,3 +80,20 @@ def test_composition_rejects_stale_artifact_catalog_identity():
             service=service, enrollment=enrollment, bindings=bindings,
             artifact_catalog=ArtifactCatalog({}, {}), vault=vault,
         )
+
+
+def test_root_journal_resolution_is_bound_to_active_generation_and_protected_catalog():
+    service, enrollment, bindings, catalog, vault, _connector = _inputs()
+    runtime = compose_root_authority_runtime(
+        service=service, enrollment=enrollment, bindings=bindings,
+        artifact_catalog=catalog, vault=vault,
+    )
+
+    with pytest.raises(AuthorityDenied, match="outside the active protected generation"):
+        runtime.resolve_root_journal(
+            "state-root", expected_active_generation_digest="b" * 64,
+        )
+    with pytest.raises(AuthorityDenied, match="no protected journal resolver"):
+        runtime.resolve_root_journal(
+            "state-root", expected_active_generation_digest=enrollment.protected_enrollment_digest,
+        )

@@ -9,8 +9,10 @@ bindings; the composition layer never creates duplicate instances.
 
 The returned `RootAuthorityRuntime` exposes the bound build/device catalogs,
 remote-session enrollments, artifact-store resolver, live-peer and loaded
-native-package custody lookups, and the fixed operation/native-package/device
-resolvers. Its `boot_epoch` is the service's fresh authority epoch. It parses
+native-package custody lookups, the fixed operation/native-package/device
+resolvers, and a root-journal resolver that accepts only the active protected
+generation digest before delegating to the protected catalog. Its `boot_epoch`
+is the service's fresh authority epoch. It parses
 resource backend and body-recipe records from the active protected generation
 and registers a `ResourceJobAuthority` only for records that join the active
 backend, source issuer, observer, recipes, and service effect rules. The job
