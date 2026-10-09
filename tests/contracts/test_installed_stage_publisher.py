@@ -69,7 +69,7 @@ class BuildReceipt:
 
 class InstalledStagePublicationTests(unittest.TestCase):
     def _fixture(self, temp: str):
-        root = Path(temp)
+        root = Path(temp).resolve()
         output = root / "output"
         output.mkdir(mode=0o700)
         source = output / "baseline-file"

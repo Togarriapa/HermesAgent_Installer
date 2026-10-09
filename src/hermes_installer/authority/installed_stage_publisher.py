@@ -636,13 +636,28 @@ def _write_at(parent_fd: int, name: str, data: bytes, uid: int, mode: int) -> No
 
 
 def _verify_directory(path: Path, uid: int, mode: int | None) -> os.stat_result:
-    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    if not path.is_absolute():
+        raise BootstrapEnrollmentError("fixed deployment directory is not absolute")
+    strict_chain = uid == 0 and path in {DEPLOYMENT_RECEIPT_PATH.parent, RELEASE_STORE_ROOT}
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
+        for index, part in enumerate(path.parts[1:]):
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                            dir_fd=fd)
+            os.close(fd)
+            fd = child
+            info = os.fstat(fd)
+            final = index == len(path.parts[1:]) - 1
+            if (not stat.S_ISDIR(info.st_mode)
+                    or final and (info.st_uid != uid or info.st_gid != _gid(uid)
+                                  or stat.S_IMODE(info.st_mode) & 0o022
+                                  or mode is not None and stat.S_IMODE(info.st_mode) != mode)
+                    or strict_chain and (info.st_uid != 0 or info.st_gid != 0
+                                         or stat.S_IMODE(info.st_mode) & 0o022)):
+                raise BootstrapEnrollmentError("fixed deployment directory custody is unsafe")
         info = os.fstat(fd)
-        if (info.st_uid != uid or info.st_gid != _gid(uid)
-                or stat.S_IMODE(info.st_mode) & 0o022
-                or mode is not None and stat.S_IMODE(info.st_mode) != mode):
-            raise BootstrapEnrollmentError("fixed deployment directory custody is unsafe")
+        if path == Path("/") and (info.st_uid != uid or info.st_gid != _gid(uid)):
+            raise BootstrapEnrollmentError("deployment root directory ownership differs")
         return info
     finally:
         os.close(fd)
