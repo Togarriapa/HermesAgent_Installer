@@ -217,11 +217,14 @@ def _run_setup(args: argparse.Namespace) -> CommandResult:
             details = {"selected_components": dict(result.selected_components),
                 "account_states": account_states, "next_steps": next_steps,
                 "config": config_output, "saved_config": str(saved_path) if saved_path else None}
-            exit_code = result.exit_code
-            if state_name == "pending" and exit_code == 0:
+            if state_name == "failed":
+                # Retain a wizard validation code, but do not return the
+                # resumable-pending code for an owned-resource conflict.
+                exit_code = result.exit_code if result.state == "failed" and result.exit_code else 1
+            elif state_name == "pending":
                 exit_code = 4
-            elif state_name == "failed" and exit_code == 0:
-                exit_code = 1
+            else:
+                exit_code = 0
             return CommandResult("setup", state, message,
                 (Finding("setup.wizard", message, state, details),),
                 result.resume_command or resume, exit_code)

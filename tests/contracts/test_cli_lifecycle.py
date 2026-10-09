@@ -159,27 +159,36 @@ class CliLifecycleTests(unittest.TestCase):
                 message="Remote setup pending", resume_command="hermes-installer setup",
                 next_steps=(), account_states={"remote_desktop":"pending"}, exit_code=4)
             calls=[]
+            enrollment_state={"value":"pending"}
             enrollment_module=types.ModuleType("hermes_installer.remote.enrollment")
             def enroll(received_config, journal, **kwargs):
                 calls.append((received_config, journal, kwargs))
-                return SimpleNamespace(state="pending", access_state="ready",
-                    policy_read_state="ready", route_state="pending", phase="access-verified",
+                return SimpleNamespace(state=enrollment_state["value"], access_state="ready",
+                    policy_read_state="verified", route_state="pending", phase="access-verified",
                     message="Access is verified; route activation awaits an enrolled origin.",
                     next_steps=("Enroll the protected origin, then resume install.",),
-                    resource_ids={"access_app":"owned-app-id"}, component_installable=True)
+                    resource_ids={"access_app":"owned-app-id"},
+                    component_installable=enrollment_state["value"] == "pending")
             enrollment_module.run_remote_desktop_enrollment=enroll
             with patch.dict(sys.modules, {"hermes_installer.remote.enrollment":enrollment_module}), \
                  patch("hermes_installer.setup_wizard.run_setup_wizard", return_value=wizard):
                 result=run(SimpleNamespace(command="setup",config=config,non_interactive=True,
                     save_config=None,json=True))
-            self.assertEqual(len(calls),1)
+                self.assertEqual(Journal(root/"state"/"journal.sqlite3").operation("installer:setup-command")["status"],"pending")
+                enrollment_state["value"]="failed"
+                failed=run(SimpleNamespace(command="setup",config=config,non_interactive=True,
+                    save_config=None,json=True))
+            self.assertEqual(len(calls),2)
             self.assertIsInstance(calls[0][1],Journal)
             self.assertFalse(calls[0][2]["activate_route"])
             self.assertEqual(result.state,OutcomeState.PENDING)
             self.assertEqual(result.message,"Access is verified; route activation awaits an enrolled origin.")
             self.assertEqual(result.findings[0].details["account_states"]["remote_desktop_access"],"ready")
+            self.assertEqual(result.findings[0].details["account_states"]["remote_desktop_policy_read"],"verified")
             self.assertTrue(result.findings[0].details["config"]["components"]["remote_desktop"])
-            self.assertEqual(Journal(root/"state"/"journal.sqlite3").operation("installer:setup-command")["status"],"pending")
+            self.assertEqual(len(calls),2)
+            self.assertEqual(failed.state,OutcomeState.FAILED)
+            self.assertEqual(failed.exit_code,1)
 
     def test_interactive_setup_without_tty_has_no_filesystem_effect(self):
         with tempfile.TemporaryDirectory() as td:
