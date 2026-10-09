@@ -108,15 +108,18 @@ def dispatch_native_mcp_tool_call(authority: Any, registration: Any,
                 or not _SHA256.fullmatch(schema_digest)):
             raise ValueError("protected MCP schema is unavailable")
         schema = _thaw_native_mcp_schema(frozen_schema)
-        schema_bytes = json.dumps(schema, ensure_ascii=True, sort_keys=True,
-                                  separators=(",", ":"), allow_nan=False).encode("ascii")
-        if (len(schema_bytes) > _MAX_NATIVE_MCP_ARGUMENT_BYTES
-                or hashlib.sha256(schema_bytes).hexdigest() != schema_digest):
-            raise ValueError("protected MCP schema pin differs")
         input_schema = schema.get("parameters") if isinstance(schema, dict) else None
         if (not isinstance(input_schema, Mapping) or type(arguments) is not dict
                 or schema.get("name") != getattr(registration, "native_tool_name", None)):
             raise ValueError("native MCP arguments must be a JSON object")
+        # Sol's index digest domain is the argument schema only, encoded as
+        # canonical UTF-8 JSON with ensure_ascii=False.  The Hermes envelope
+        # also contains description/name and is not part of that pin.
+        schema_bytes = json.dumps(input_schema, ensure_ascii=False, sort_keys=True,
+                                  separators=(",", ":"), allow_nan=False).encode("utf-8")
+        if (len(schema_bytes) > _MAX_NATIVE_MCP_ARGUMENT_BYTES
+                or hashlib.sha256(schema_bytes).hexdigest() != schema_digest):
+            raise ValueError("protected MCP argument-schema pin differs")
         _validate_schema(input_schema)
         _validate_value(arguments, input_schema)
         arguments_bytes = canonical_tool_arguments(arguments)

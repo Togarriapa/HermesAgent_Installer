@@ -30,6 +30,9 @@ EXPECTED = {
     "agent/chat_completion_helpers.py": "0f234b4f9bf3e2fd29c6e2da517b1302de4c1bc3e6780d443080526fb69d9ef9",
     "agent/auxiliary_client.py": "876a97cc1c81fb1e4bc97d92872e03ceb0b1d8f43680d551d974b4376e8950c6",
     "agent/tool_executor.py": "289df099d066e296e4dd3a08b8a0bfb0b2cb9b8bc329ac8ffd70fe60f3c86eb0",
+    "tools/__init__.py": "cd92cb5947a7ceeff2cce118857e7e6285eafefb2c32a0a119afdc33865b7ffe",
+    "tools/mcp_tool_registration.py": "4e9cbd62da220be24e8a2ec9b140f28914642e7968eb59a92a5127875c43af2a",
+    "tools/mcp_tool_discovery.py": "283939251074fc02244f98fb5339f0be8a670653a1f662e0e155f0e3b4f87900",
 }
 
 
@@ -62,9 +65,22 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(UPSTREAM / relative, target)
             actual = apply_native_boundary_overlay(source, overlay)
-            for relative in ("hermes_cli/__init__.py", "agent/__init__.py"):
+            for relative in ("hermes_cli/__init__.py", "agent/__init__.py", "tools/__init__.py"):
                 self.assertIn("extend_path(__path__, __name__)", (overlay / relative).read_text())
             self.assertEqual(actual, EXPECTED)
+
+    def test_mcp_registration_is_gated_before_config_and_later_candidate_registration(self):
+        if not UPSTREAM.is_dir():
+            self.skipTest("exact official Hermes source checkout is not available")
+        for relative, expected in (
+            ("tools/mcp_tool_discovery.py", "return list(prepare_native_mcp_candidate_discovery())"),
+            ("tools/mcp_tool_registration.py", "filter_unselected_native_mcp_candidates(name, candidates)"),
+        ):
+            patched = __import__("hermes_installer.native_boundary_patch", fromlist=["_transform"])._transform(
+                relative, (UPSTREAM / relative).read_bytes()).decode("utf-8")
+            self.assertIn(expected, patched)
+            if relative.endswith("mcp_tool_discovery.py"):
+                self.assertLess(patched.index(expected), patched.index("with _owner_secret_scope():"))
 
     def test_provider_attempt_prepares_exact_full_body_and_adds_opaque_header(self):
         messages = [{"role": "user", "content": "local fixture"}]

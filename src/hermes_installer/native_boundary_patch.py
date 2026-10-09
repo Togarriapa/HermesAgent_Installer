@@ -44,6 +44,17 @@ _FILES = {
             1,
         ),),
     },
+    "tools/__init__.py": {
+        "source_sha256": "7bca460f476ac9ace706c8cfd07e98f8aae34d839862f0f68abafc3a8397cf35",
+        "edits": ((
+            "\n\n\ndef check_file_requirements():\n",
+            "\n\n# Allow only the hash-pinned installer leaf overlay to precede this pristine package.\n"
+            "from pkgutil import extend_path as _extend_path\n"
+            "__path__ = _extend_path(__path__, __name__)\n"
+            "\n\ndef check_file_requirements():\n",
+            1,
+        ),),
+    },
     "hermes_cli/plugins.py": {
         "source_sha256": "a618a69581355e5fe56cb3d2250fc02647315359aae7fa0e6bd4dccc4ed3d3ad",
         "edits": (
@@ -65,6 +76,35 @@ _FILES = {
                 1,
             ),
         ),
+    },
+    "tools/mcp_tool_registration.py": {
+        "source_sha256": "7e73a415283c5255fedeb9318fceeb556eb31a19cea2e9bd3d9fdfc0f9297ade",
+        "edits": ((
+            "    ``_server_tool_scopes`` records the registering scope (default: this scope's own).\"\"\"\n"
+            "    from tools.registry import registry\n",
+            "    ``_server_tool_scopes`` records the registering scope (default: this scope's own).\"\"\"\n"
+            "    from hermes_installer.native_plugin_loader import filter_unselected_native_mcp_candidates\n"
+            "    candidates = filter_unselected_native_mcp_candidates(name, candidates)\n"
+            "    if not candidates:\n"
+            "        return []\n"
+            "    from tools.registry import registry\n",
+            1,
+        ),),
+    },
+    "tools/mcp_tool_discovery.py": {
+        "source_sha256": "cf2dc204fd293727e0e13a045428152f8e1925aa48ea521f6ec97035dd1e86d9",
+        "edits": ((
+            "    each); it only affects which servers start, not which names ``-t`` validation can see.\"\"\"\n"
+            "    with _owner_secret_scope():",
+            "    each); it only affects which servers start, not which names ``-t`` validation can see.\"\"\"\n"
+            "    from hermes_installer.native_plugin_loader import prepare_native_mcp_candidate_discovery\n"
+            "    # The installer profile has no worker-configured MCP authority.\n"
+            "    # Return only candidates installed from the sealed root index;\n"
+            "    # do not connect mcp_servers or load schema-cache handlers.\n"
+            "    return list(prepare_native_mcp_candidate_discovery())\n"
+            "    with _owner_secret_scope():",
+            1,
+        ),),
     },
     "agent/chat_completion_helpers.py": {
         "source_sha256": "fbd79987a8257f79de6ed291d398f455456385f828631dd8d9d0e6cea3ba46f2",

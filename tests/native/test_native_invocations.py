@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import time
 import unittest
@@ -107,7 +108,7 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
                       }, "required": ["resource", "limit"], "additionalProperties": False,
                   }}
         schema_digest = hashlib.sha256(json.dumps(
-            schema, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+            schema["parameters"], ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode("utf-8")).hexdigest()
         registration = SimpleNamespace(
             id="mcp.read.selected", native_tool_name="mcp__selected__read_selected",
@@ -149,10 +150,11 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
         from hermes_installer.native_invocations import _CURRENT_BINDING
 
         arguments = {"resource": "selected"}
-        encoded_schema = (b'{"description":"selected fixture tool","name":"mcp__selected__read_selected",'
-                         b'"parameters":{"additionalProperties":false,"properties":{"resource":{"type":"string"}},'
-                         b'"required":["resource"],"type":"object"}}')
-        schema = json.loads(encoded_schema)
+        encoded_schema = (b'{"additionalProperties":false,"properties":{"resource":{"type":"string"}},'
+                          b'"required":["resource"],"type":"object"}')
+        argument_schema = json.loads(encoded_schema)
+        schema = {"description": "selected fixture tool", "name": "mcp__selected__read_selected",
+                  "parameters": argument_schema}
         schema_digest = hashlib.sha256(encoded_schema).hexdigest()
         registration = SimpleNamespace(
             id="mcp.read.selected", native_tool_name="mcp__selected__read_selected",
@@ -202,6 +204,44 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
         finally:
             _CURRENT_BINDING.reset(token)
         self.assertNotIn("secret", str(denied.exception))
+
+    def test_native_mcp_argument_schema_digest_ignores_envelope_and_uses_utf8(self):
+        from hermes_installer.native_invocations import _CURRENT_BINDING
+
+        arguments = {"resource": "selected"}
+        parameters = {"type": "object", "properties": {"resource": {"type": "string"}},
+                      "required": ["resource"], "additionalProperties": False,
+                      "description": "café"}
+        schema_digest = hashlib.sha256(json.dumps(
+            parameters, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+        registration = SimpleNamespace(
+            id="mcp.read.selected", native_tool_name="mcp__selected__read_selected",
+            native_schema_sha256=schema_digest,
+            native_schema={"name": "mcp__selected__read_selected", "description": "envelope text is not pinned",
+                           "parameters": parameters},
+            native_package_id="package-a", native_package_generation="generation-a", profile_id="profile-a",
+        )
+        binding = SimpleNamespace(
+            invocation_handle="i" * 40, package_id="package-a", profile_id="profile-a",
+            generation="generation-a", adapter_id="hermes-installer.native-mcp-dispatch.v1",
+            action_id="mcp.read.selected", arguments_sha256=hashlib.sha256(
+                canonical_tool_arguments(arguments)).hexdigest(),
+        )
+
+        class Authority:
+            def __init__(self): self.calls = []
+            def dispatch_native_mcp(self, *args):
+                self.calls.append(args)
+                return SimpleNamespace(status=200, body=b"ok")
+
+        authority = Authority()
+        token = _CURRENT_BINDING.set(binding)
+        try:
+            self.assertEqual(dispatch_native_mcp_tool_call(authority, registration, arguments), "ok")
+        finally:
+            _CURRENT_BINDING.reset(token)
+        self.assertEqual(len(authority.calls), 1)
 
     def test_root_response_call_binding_is_single_use_and_action_binding_is_checked(self):
         arguments = {"record": "one"}
