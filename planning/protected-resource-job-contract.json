@@ -614,6 +614,39 @@
         },
         "terminal_sequence": "Custody issues immutable terminal receipt first after actual EOF/reap/output/cgroup observations; native_execution_receipt_handle may remain null. Runner passes that exact terminal receipt to root registry resolve_task_execution; registry returns immutable companion RootTaskNativeExecutionReceipt bound its terminal_receipt_handle and full during-live event closure. Successful selected-result capsule requires BOTH actual immutable terminal receipt and verified companion handle. Do not mutate/replace custody terminal receipt, fabricate a nonnull field or require terminal to pre-reference a later registry receipt. Optional custody finalizer may record companion after registry validation but is not required for success; companion join is authoritative.",
         "source_snapshot_join": "bind_running_task(admission_handle:RootResourceJobAdmissionHandle,node_id:str,source:RootAdmittedTaskSource,managed_task_handle:ManagedTaskHandle) root-only receives the SAME actual once-resolved verified source object from runner. Never re-call one-use resolve_admitted_task_source. Registry verifies object issuer/retained admission ID/current generation/lease/fullclosure/exact selected task/process join and retains immutable source snapshot for actual event capture/terminal companion. Revalidation of retained snapshot is currentness/audit only, no parent grant reuse/new event mint from caller object. RootSelectedNativeExecution task selection resolves this retained running-task join."
+      },
+      "initial_input_coordinator": {
+        "owner_module": "hermes_installer.authority.native_observer_wiring",
+        "class": "RootTaskInputCoordinator",
+        "constructor": "from_root_runtime(task_native_observation_registry,selected_native_execution_registry,initial_native_input_observer,source_delivery_registry,process_custody_registry)",
+        "prepare_call": "prepare_initial_input(*,task_admission:RootAdmittedTask,admission_handle:RootResourceJobAdmissionHandle,node_id:str,source:RootAdmittedTaskSource,managed_task_handle:ManagedTaskHandle,exact_stdin:bytes,timeout:float,cancelled)->RootTaskInitialInputReceipt",
+        "receipt_module": "hermes_installer.registry.resource_jobs",
+        "receipt_fields": [
+          "schema",
+          "receipt_handle",
+          "task_handle",
+          "admission_id",
+          "node_id",
+          "process_id",
+          "process_generation",
+          "selected_execution_handle",
+          "source_receipt_handle",
+          "producer_context_delivery_handle",
+          "native_loader_ready_event_id",
+          "stdin_sha256",
+          "stdin_size_bytes",
+          "parent_closure_digest",
+          "service_generation_digest",
+          "resource_generation",
+          "issued_monotonic",
+          "expires_monotonic"
+        ],
+        "receipt_types": "Immutable root-only registry-backed DTO; schema1; opaque IDs strings; hashes64lowerhex; stdin_size integer0..selected bound<=262144; times finite monotonic original lease; no paths/secret/public bool. Parent closure/source actual root verified retained snapshot; handle alone not standalone proof.",
+        "sequence": "ONE authorized selected process.start. Custody creates/retains actual ManagedTaskHandle internally immediately after selected unit launch in launched/pre-stdin phase; passes actual admission/source/handle to concrete injected coordinator. Coordinator binds already-resolved source and running task, waits actual loader-ready/custody proof within original timeout, creates exact RootSelectedNativeExecution, captures admitted exact stdin bytes and root peer-delivers initial source context, records actual delivery receipt then returns verified RootTaskInitialInputReceipt. Custody independently resolves receipt in root registry and verifies exact task/process/generation/stdinSHA+size/expiry/cancel; only then writes once/drains/closes stdinEOF, records actual write receipt, returns ManagedTaskHandle to runner. No worker close-stdin verb or separate/reused grant; no postEOF source inference.",
+        "custody_signature": "start_selected_task(...,task_admission:RootAdmittedTask,admission_handle:RootResourceJobAdmissionHandle,node_id:str,admitted_source:RootAdmittedTaskSource,exact_stdin:bytes,expected_stdin_sha256,...)->ManagedTaskHandle retains existing root effect inputs; coordinator is concrete root construction dependency, never caller-provided callback.",
+        "registry_bind": "bind_task_input(*,task_handle:ManagedTaskHandle,admission:RootResourceJobAdmissionHandle,source:RootAdmittedTaskSource,selected_execution:RootSelectedNativeExecution,initial_input:RootTaskInitialInputReceipt)->None; verifies issuer/current active generations/actual process/loader proof/receipt registry/exact admitted byteSHA+size/fullparent closure/lease, records once prestdin. Does not re-resolve one-use source or mint ancestry from DTO.",
+        "actual_write_join": "Root custody actual stdin write/EOF receipt binds initial_input.receipt_handle + exact bytes SHA/size/task/process generation and is a required later terminal/native companion event join. Initial input receipt proves capture/delivery, not actual stdin write or successful backend result.",
+        "failure": "Expiry/cancellation/wrongsource/readiness/delivery mismatch aborts before stdin and closes/reaps whole owned cgroup; retained root bookkeeping no further effects/new worker grant. Partial write failed/ambiguous, no replay. Root observation registry later native request/result/tool events remain independently required for result capsule; no blanket postturn tool source issuance."
       }
     },
     "recipe_domain": "task_body_recipe_id/task_request_schema_id select inner Hermes prompt recipe/schema; node/body_recipe_id and backend/body_recipe_id select outer resource request recipe/schema. Distinct domains, no automatic equality requirement. Both protected/current/source-pinned/forced-scope joins are mandatory; caller cannot choose either."

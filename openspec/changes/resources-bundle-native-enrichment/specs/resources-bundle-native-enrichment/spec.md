@@ -317,3 +317,10 @@ The implementation SHALL use v45 exact authenticated selected trigger schema and
 #### Scenario: Manifest semantic alias has no verified provider slug
 - **WHEN** authenticated selected trigger schema is absent
 - **THEN** channel reports exact setup/schema prerequisite and retains required scope without inventing a slug or unsigned production provenance
+
+### Requirement: Root initial input before single task stdin effect
+The implementation SHALL follow v46 concrete internal coordinator sequence during the single selected launch effect.
+
+#### Scenario: Initial source delivery fails
+- **WHEN** actual loader/input custody cannot produce a verified receipt before original deadline
+- **THEN** custody closes the owned unit before stdin and never infers source after EOF
