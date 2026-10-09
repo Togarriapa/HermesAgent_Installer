@@ -1674,6 +1674,12 @@ class RootNativeExecutionSelectionRegistry:
                     or record.authority_epoch != self.service.authority_epoch
                     or record.selection.service_generation_digest != self.service.service_generation_digest):
                 self._selections.pop(handle, None)
+                target = self._targets.pop(handle, None)
+                if target is not None:
+                    try:
+                        os.close(target.peer_pidfd)
+                    except OSError:
+                        pass
 
     def close(self) -> None:
         with self._lock:
