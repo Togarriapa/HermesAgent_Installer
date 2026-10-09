@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .policy import DispatchContext, Dispatcher, PolicyDenied, Sensitivity
+from .policy import Dispatcher, PolicyDenied, Sensitivity
 from .state import OwnedRoot, OwnershipError
 from .provider_transport import ALLOWED_MODELS, MAX_REQUEST_BYTES
 
