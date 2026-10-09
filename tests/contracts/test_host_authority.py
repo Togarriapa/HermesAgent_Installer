@@ -138,6 +138,7 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
                                    "namespace:result", frozenset({"provider-result"}))
         rule = EffectRule("provider-result", "provider.dispatch", "provider:fixture", "recipient:fixture")
         calls = []
+        deliveries = []
 
         class Observer:
             effect_observer_ids = {(rule.capability, rule.operation, rule.target): "observer:fixture"}
@@ -146,6 +147,11 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
                 calls.append(kwargs)
                 return "R" * 40
 
+        class Delivery:
+            def take_source_receipt(self, handle, *, peer_uid, peer_pid, peer_pidfd):
+                deliveries.append((handle, peer_uid, peer_pid, peer_pidfd))
+                return handle
+
         service = AuthorityService(
             signing_key=b"o" * 32, key_id="result-observer-fixture",
             bindings_by_uid={binding.uid: binding},
@@ -153,6 +159,7 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
             handlers={(rule.operation, rule.target): lambda **_kwargs: {
                 "status": 200, "body": b"validated-result", "headers": {}, "receipt_id": "receipt"}},
             policy=FixturePolicy(), native_runtime_observer=Observer(),
+            source_receipt_delivery=Delivery(),
         )
         payload = b"request"
         context = HostContext.from_wire(service._issue_context(binding.uid, {
@@ -178,6 +185,7 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
         self.assertEqual(calls[0]["context"].generation, context.generation)
         self.assertEqual(calls[0]["authorization"].grant_id, grant["grant_id"])
         self.assertEqual(calls[0]["peer_pidfd"], 77)
+        self.assertEqual(deliveries, [("R" * 40, binding.uid, os.getpid(), 77)])
 
     def test_root_observed_source_is_unavailable_without_composed_registry(self):
         binding = PrincipalBinding(

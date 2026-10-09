@@ -1555,9 +1555,15 @@ class AuthorityService:
             )
             if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
                 raise AuthorityDenied("source.observer", "root result observer returned an invalid receipt handle")
-            # This opaque reference is delivered only on this authenticated
-            # same-peer response. It is not signed source evidence; the next
-            # context request must still resolve it against root state.
+            delivery = self.source_receipt_delivery
+            take = getattr(delivery, "take_source_receipt", None)
+            if not callable(take) or peer_pidfd is None:
+                raise AuthorityDenied("source.delivery", "peer-bound result receipt delivery is unavailable")
+            delivered = take(handle, peer_uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+            if str(delivered) != handle:
+                raise AuthorityDenied("source.delivery", "root delivered a different result receipt handle")
+            # The registry atomically marks this handle delivered to the exact
+            # live peer before the opaque reference enters the response.
             result["source_receipt_handle"] = handle
         return result
 

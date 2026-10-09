@@ -199,6 +199,14 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
     )
     service.root_runtime_bindings = runtime_bindings
     service_ref["service"] = service
+    authority_runtime = None
+    if runtime_bindings is not None and artifact_catalog is not None:
+        from .runtime_composition import compose_root_authority_runtime
+        authority_runtime = compose_root_authority_runtime(
+            service=service, enrollment=enrollment, bindings=runtime_bindings,
+            artifact_catalog=artifact_catalog, vault=vault,
+        )
+    service.root_authority_runtime = authority_runtime
     # Native request bridging remains unavailable until the protected
     # root-observer registry is composed with an actual ingress/terminal event
     # source. Enrollment metadata alone cannot turn worker-submitted bytes into
@@ -254,6 +262,19 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
     failures: list[BaseException] = []
     failure_lock = threading.Lock()
 
+    def prune_root_observers() -> None:
+        while not stop_event.wait(1.0):
+            runtime = getattr(service, "root_authority_runtime", None)
+            prune = getattr(runtime, "prune", None)
+            if callable(prune):
+                try:
+                    prune()
+                except BaseException as exc:
+                    with failure_lock:
+                        failures.append(exc)
+                    stop_event.set()
+                    return
+
     def run_one(uid: int, gid: int) -> None:
         try:
             service.serve_unix(socket_dir / f"{uid}.sock", socket_gid=gid,
@@ -267,10 +288,15 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
     threads = [threading.Thread(target=run_one, args=(uid, gid),
                                 name=f"authority-uid-{uid}", daemon=False)
                for uid, gid in sorted(socket_gid_by_uid.items())]
+    pruner = threading.Thread(target=prune_root_observers,
+                              name="authority-observer-prune", daemon=False)
+    pruner.start()
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
+    stop_event.set()
+    pruner.join()
     if failures:
         raise AuthorityDenied("authority.listener", "protected authority listener exited") from failures[0]
 
@@ -278,7 +304,8 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
 def main() -> int:
     """System-service entry point; does not mutate installation state."""
     service, enrollment = build_enrolled_authority_service()
-    runtime = getattr(service, "root_runtime_bindings", None)
+    runtime = (getattr(service, "root_authority_runtime", None)
+               or getattr(service, "root_runtime_bindings", None))
     process_manager = getattr(runtime, "process_manager", None)
     process_profiles = (process_manager.profiles if process_manager is not None
                         else enrollment.process_profiles)
@@ -294,6 +321,10 @@ def main() -> int:
     try:
         serve_authority(service, socket_gid_by_uid=socket_gid_by_uid, stop_event=stop_event)
     finally:
+        authority_runtime = getattr(service, "root_authority_runtime", None)
+        close_runtime = getattr(authority_runtime, "close", None)
+        if callable(close_runtime):
+            close_runtime()
         if runtime is not None:
             connector = getattr(runtime, "service_connector", None)
             shutdown = getattr(connector, "shutdown", None)
