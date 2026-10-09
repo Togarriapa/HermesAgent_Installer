@@ -63,6 +63,7 @@ async def main() -> None:
         startup_deadline_monotonic=time.monotonic() + float(request.get("startup_timeout", 12)),
         max_lifetime_seconds=60, profile_id=profile_id,
         child_artifact_refs=request["child_artifact_refs"],
+        max_output_bytes=65536, stdin_mode="closed",
         authority_context=context, effect_authorization=grant,
     )
     try:
