@@ -143,3 +143,9 @@ Root key/source producer/catalog selection v61: `plans/amendments/2026-10-10-roo
 First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-bootstrap-actor-v62.md`; existing scope/tasks remain open.
 
 Prepared base/reader/release manifest v63: `plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63.md`; existing gates remain open.
+
+Raw resource event/result closure v66: `plans/amendments/2026-10-10-resource-raw-event-result-closure-v66.md`; existing RB task gates open.
+
+Resource capture schemas v67: `plans/amendments/2026-10-10-resource-capture-schema-artifacts-v67.md`; existing task/acceptance gates open.
+
+Channel retained receipts/source choice v68: `plans/amendments/2026-10-10-channel-receipts-source-selection-v68.md`; existing task gates unchanged.
