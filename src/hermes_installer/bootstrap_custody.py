@@ -99,7 +99,7 @@ class BootstrapCustody:
         return self.client
 
     def fetch_artifact(self, *, artifact_id: str, sha256: str,
-                       max_bytes: int, timeout: float = 30.0) -> tuple[bytes, str]:
+                       max_bytes: int, timeout: float = 30.0) -> tuple[str, str]:
         client = self._required_client()
         target = f"artifact:{artifact_id}:{sha256}"
         payload = {"schema": 1, "artifact_id": artifact_id, "sha256": sha256,
@@ -113,11 +113,20 @@ class BootstrapCustody:
         response = client.fetch_artifact(grant, target=target, artifact_id=artifact_id,
             sha256=sha256, max_bytes=max_bytes, timeout=timeout)
         self._record_receipt("artifact.fetch", target, response)
-        if response.status != 200 or len(response.body) > max_bytes:
-            raise BootstrapCustodyError("Pinned host artifact fetch was denied or exceeded its size bound")
-        if hashlib.sha256(response.body).hexdigest() != sha256:
-            raise BootstrapCustodyError("Host artifact bytes do not match the enrolled digest")
-        return response.body, str(getattr(response, "receipt_id", ""))
+        if response.status != 200:
+            raise BootstrapCustodyError("Pinned host artifact fetch was denied")
+        try:
+            receipt = json.loads(response.body.decode("utf-8"))
+        except (AttributeError, UnicodeError, ValueError):
+            raise BootstrapCustodyError("Host artifact fetch receipt was malformed") from None
+        if (not isinstance(receipt, dict) or receipt.get("artifact_id") != artifact_id
+                or receipt.get("sha256") != sha256
+                or type(receipt.get("size_bytes")) is not int
+                or not 0 <= receipt["size_bytes"] <= max_bytes
+                or not isinstance(receipt.get("version"), str)
+                or receipt.get("store_id") != f"artifact:{artifact_id}:{sha256}"):
+            raise BootstrapCustodyError("Host artifact receipt does not match the requested immutable artifact")
+        return receipt["store_id"], str(getattr(response, "receipt_id", ""))
 
     def _control(self, *, profile_id: str, data_root: Path, operation: str,
                  payload: Mapping[str, Any], source_receipt: str | None = None,
@@ -148,7 +157,7 @@ class BootstrapCustody:
                     timeout: float, output_limit: int = 4 * 1024 * 1024,
                     stdout_return_limit: int = 64 * 1024,
                     diagnostic_limit: int = 96 * 1024,
-                    child_artifact_hashes: Mapping[str, str] | None = None) -> ManagedCommandResult:
+                    child_artifact_refs: Mapping[str, str] | None = None) -> ManagedCommandResult:
         if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
                 or not math.isfinite(timeout) or not 0 < timeout <= 600
                 or type(output_limit) is not int or not 1 <= output_limit <= 4 * 1024 * 1024
@@ -181,10 +190,10 @@ class BootstrapCustody:
             argv=argv, env_allowlist=env_allowlist,
             max_lifetime_seconds=max(1, min(int(timeout), 600)),
             max_output_bytes=output_limit, stdin_mode="closed")
-        if child_artifact_hashes:
-            if "child_artifact_hashes" not in inspect.signature(profile_launch_envelope).parameters:
-                raise BootstrapCustodyError("Host launch contract cannot pin the installer script bytes")
-            launch_args["child_artifact_hashes"] = dict(child_artifact_hashes)
+        if child_artifact_refs:
+            if "child_artifact_refs" not in inspect.signature(profile_launch_envelope).parameters:
+                raise BootstrapCustodyError("Host launch contract cannot pin opaque installer artifact references")
+            launch_args["child_artifact_refs"] = dict(child_artifact_refs)
         launch = profile_launch_envelope(**launch_args)
         launch_digest = canonical_digest(launch)
         context = client.context(purpose="hermes-bootstrap",

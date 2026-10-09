@@ -13,7 +13,6 @@ HERMES_COMMIT = "7085fbf7753266fc4943c55ac04926186bc90005"
 INSTALL_SCRIPT_BLOB = "055c725f114db694db751f34fd312e70f5ed90d8"
 INSTALL_SCRIPT_SHA256 = "034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86"
 INSTALL_SCRIPT_ARTIFACT_ID = "hermes-install-script-7085fbf77532"
-INSTALL_SCRIPT_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/7085fbf7753266fc4943c55ac04926186bc90005/scripts/install.sh"
 _DIAGNOSTIC_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*"),
     re.compile(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)\s*[:=]\s*)[^\s,;]+"),
@@ -91,49 +90,52 @@ class HermesBootstrap:
         self.install_dir = data_root.path("generations/hermes-agent-" + HERMES_COMMIT[:12])
         self.hermes_home = data_root.path("profiles/default")
         self.private_home = data_root.path("runtime/bootstrap-home")
-        self.script_path = data_root.path("cache/hermes-install-" + HERMES_COMMIT[:12] + ".sh")
         self.operation = "hermes-agent:" + HERMES_COMMIT
         self.custody = BootstrapCustody(authority_client, journal=state,
                                         journal_operation=self.operation)
         self._active_diagnostic: str | None = None
         self._upstream_log_offset: int | None = None
         self._last_artifact_receipt_id: str | None = None
+        self.script_store_id: str | None = None
 
-    def _script_bytes(self) -> bytes:
+    def _stage_script_artifact(self) -> str:
         try:
             if self.network is not None:
-                # Test-only artifact fixture adapter; production uses the fixed
-                # artifact.fetch verb and never accepts a caller-provided URL.
+                # Fixture-only source seam. Production receives an opaque store
+                # ID from the protected artifact broker and never handles bytes.
                 response = self.network.fetch_artifact(artifact_id=INSTALL_SCRIPT_ARTIFACT_ID,
                     sha256=INSTALL_SCRIPT_SHA256, max_bytes=128 * 1024)
                 body = response.body
                 if response.status != 200:
                     raise BootstrapError("Pinned official Hermes installer artifact was not available")
                 self._last_artifact_receipt_id = str(getattr(response, "receipt_id", "fixture"))
+                if (git_blob_sha1(body) != self.expected_script_blob
+                        or not body.startswith(b"#!/usr/bin/env bash\n") or len(body) > 128 * 1024):
+                    raise BootstrapError("Pinned official Hermes installer content did not match its Git object identity")
+                digest = hashlib.sha256(body).hexdigest()
+                self.script_store_id = f"artifact:{INSTALL_SCRIPT_ARTIFACT_ID}:{digest}"
             else:
-                body, self._last_artifact_receipt_id = self.custody.fetch_artifact(
+                self.script_store_id, self._last_artifact_receipt_id = self.custody.fetch_artifact(
                     artifact_id=INSTALL_SCRIPT_ARTIFACT_ID, sha256=INSTALL_SCRIPT_SHA256,
                     max_bytes=128 * 1024)
         except BootstrapError:
             raise
         except Exception:
             raise BootstrapError("Pinned host download broker is unavailable or denied the official installer artifact") from None
-        if git_blob_sha1(body) != self.expected_script_blob:
-            raise BootstrapError("Pinned official Hermes installer content did not match its Git object identity")
-        if not body.startswith(b"#!/usr/bin/env bash\n") or len(body) > 128 * 1024:
-            raise BootstrapError("Pinned official Hermes installer format or size is invalid")
-        return body
+        if not self.script_store_id:
+            raise BootstrapError("Pinned official Hermes artifact broker did not return an immutable store reference")
+        return self.script_store_id
 
     def prepare(self) -> None:
         self.data_root.ensure()
         for relative in ("generations", "profiles", "runtime", "runtime/bootstrap-home", "runtime/bootstrap-home/share",
                          "runtime/bootstrap-home/config", "runtime/bootstrap-home/cache", "cache"):
             self.data_root.path(relative).mkdir(parents=True, exist_ok=True, mode=0o700)
-        content = self._script_bytes()
-        _write_private(self.script_path, content)
+        store_id = self._stage_script_artifact()
         self.state.event(self.operation, "download-broker", "artifact_staged", {
             "artifact_id": INSTALL_SCRIPT_ARTIFACT_ID,
             "sha256": INSTALL_SCRIPT_SHA256,
+            "store_id": store_id,
             "receipt_id": self._last_artifact_receipt_id,
         })
         self.hermes_home.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -160,9 +162,8 @@ class HermesBootstrap:
 
     def _run_process(self, args: list[str], *, timeout: float, capture: bool = False, diagnostic_path: str | None = None) -> tuple[int, bytes]:
         bash = Path("/bin/bash").resolve(strict=True)
-        if not bash.is_file() or not self.script_path.is_file() or self.script_path.is_symlink():
+        if not bash.is_file() or not self.script_store_id:
             raise BootstrapError("Pinned Hermes installer inputs are unavailable for the managed process")
-        script_digest = hashlib.sha256(self.script_path.read_bytes()).hexdigest()
         upstream_log = self.hermes_home / "logs" / "install.log"
         self._upstream_log_offset = 0
         try:
@@ -174,10 +175,10 @@ class HermesBootstrap:
         step = args[args.index("--stage") + 1] if "--stage" in args else "manifest"
         try:
             result = self.custody.run_process(executable=bash,
-                artifact_root=self.data_root.root, cwd=self.data_root.root,
-                data_root=self.data_root.root, argv=[str(bash), str(self.script_path), *args],
+                artifact_root=bash.parent, cwd=self.data_root.root,
+                data_root=self.data_root.root, argv=[str(bash), self.script_store_id, *args],
                 env_allowlist=self._environment(), timeout=timeout,
-                child_artifact_hashes={str(self.script_path.resolve(strict=True)): script_digest})
+                child_artifact_refs={self.script_store_id: INSTALL_SCRIPT_SHA256})
         except Exception as exc:
             self._record_process_exception(exc, step)
             self.state.event(self.operation, step, "custody_denied", {
