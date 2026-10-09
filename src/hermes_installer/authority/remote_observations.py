@@ -91,6 +91,10 @@ class SelectedNativeWindow:
     xauthority_device: int
     xauthority_inode: int
     xauthority_uid: int
+    xauthority_receipt_handle: str = field(default="", repr=False)
+    xauthority_gid: int = 0
+    xauthority_mode: int = 0o600
+    xauthority_sha256: str = field(default="", repr=False)
 
 
 class RemoteObservationCatalog(Protocol):
@@ -111,6 +115,10 @@ class RootProcessCustody(Protocol):
                           profile_id: str, generation: str) -> Any: ...
     def resolve_observer_namespace_lease(self, profile_id: str, generation: str,
                                         expected_namespace_identity: str) -> Any: ...
+
+
+class RootXauthorityStartupRegistry(Protocol):
+    def resolve_catalog_selection(self, catalog: Any, remote_enrollment_id: str) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -628,15 +636,18 @@ class NativeWindowObserver:
     """
 
     def __init__(self, *, catalog: RemoteObservationCatalog, custody: RootProcessCustody,
-                 stream_registry: Any, signer: RemoteObservationSigner,
+                 stream_registry: Any, xauthority_registry: RootXauthorityStartupRegistry,
+                 signer: RemoteObservationSigner,
                  monotonic: Callable[[], float] = time.monotonic):
         if (not callable(getattr(catalog, "selected_native_window", None))
                 or not callable(getattr(custody, "inspect_enrolled_process", None))
                 or not callable(getattr(custody, "resolve_live_peer", None))
                 or not callable(getattr(stream_registry, "resolve_window_stream", None))
+                or not callable(getattr(xauthority_registry, "resolve_catalog_selection", None))
                 or not callable(getattr(signer, "sign", None))):
             raise RemoteObservationUnavailable("root native-window observer dependencies are incomplete")
         self._catalog, self._custody, self._streams = catalog, custody, stream_registry
+        self._xauthority = xauthority_registry
         self._signer, self._now = signer, monotonic
 
     def __call__(self, selected: Any, native_proof: Any,
@@ -673,9 +684,20 @@ class NativeWindowObserver:
                                                 native_proof)
         server_identity = self._current_profile(row.display_server_profile_id,
             row.display_server_generation, None, None, None)
-        with _X11_LOCK:
-            observed = _observe_x11_app_window(row, native_identity,
-                                               server_identity, self._custody)
+        try:
+            authority_file = self._xauthority.resolve_catalog_selection(self._catalog, enrollment_id)
+        except Exception:
+            raise RemoteObservationUnavailable("current root Xauthority startup receipt is unavailable") from None
+        try:
+            _verify_xauthority_receipt(row, authority_file, server_identity)
+            with _X11_LOCK:
+                observed = _observe_x11_app_window(row, native_identity,
+                    server_identity, self._custody, authority_file)
+            _verify_xauthority_receipt(row, authority_file, server_identity)
+        finally:
+            close = getattr(authority_file, "close", None)
+            if callable(close):
+                close()
         if float(self._now()) >= expiry:
             raise RemoteObservationUnavailable("native-window probe expired before receipt creation")
         issued = float(self._now())
@@ -728,7 +750,8 @@ _X11_LOCK = threading.RLock()
 
 
 def _observe_x11_app_window(row: SelectedNativeWindow, native_identity: Any,
-                            server_identity: Any, custody: RootProcessCustody) -> dict[str, Any]:
+                            server_identity: Any, custody: RootProcessCustody,
+                            authority_file: Any) -> dict[str, Any]:
     if not sys_platform_linux() or not hasattr(os, "pidfd_open"):
         raise RemoteObservationUnavailable("native XRes window observation requires Linux PIDFD custody")
     if (not re.fullmatch(r":[0-9]{1,4}(?:\.[0-9]{1,2})?", row.display_name)
@@ -736,7 +759,8 @@ def _observe_x11_app_window(row: SelectedNativeWindow, native_identity: Any,
             or any(not _sha(value) for value in row.allowed_executable_sha256s)):
         raise RemoteObservationUnavailable("catalog-selected local display or official package closure is malformed")
     display_number = row.display_name.split(":", 1)[1].split(".", 1)[0]
-    cookie = _read_xauthority(row, display_number)
+    cookie = _read_xauthority_receipt(row, authority_file, display_number,
+                                      server_identity)
     x11_name = ctypes.util.find_library("X11")
     xres_name = ctypes.util.find_library("XRes") or ctypes.util.find_library("Xres")
     if not x11_name or not xres_name:
@@ -803,6 +827,75 @@ def _observe_x11_app_window(row: SelectedNativeWindow, native_identity: Any,
         x11.XCloseDisplay(display)
         for index in range(len(cookie)):
             cookie[index] = 0
+
+
+def _verify_xauthority_receipt(row: SelectedNativeWindow, receipt: Any,
+                               server_identity: Any) -> None:
+    names = ("file_fd", "pidfd", "device", "inode", "owner_uid", "owner_gid",
+             "mode", "content_sha256", "process_id", "process_generation",
+             "pid_start_ticks", "pidfd_identity", "cgroup_id", "close",
+             "receipt_handle", "remote_enrollment_id", "native_profile_id",
+             "native_generation", "display_profile_id", "display_generation",
+             "display_name")
+    if receipt is None or any(not hasattr(receipt, name) for name in names):
+        raise RemoteObservationUnavailable("root Xauthority startup receipt is incomplete")
+    if (type(receipt.file_fd) is not int or receipt.file_fd < 0
+            or type(receipt.pidfd) is not int or receipt.pidfd < 0
+            or not _sha(receipt.content_sha256)
+            or receipt.receipt_handle != row.xauthority_receipt_handle
+            or receipt.remote_enrollment_id != row.remote_enrollment_id
+            or receipt.native_profile_id != row.native_profile_id
+            or receipt.native_generation != row.native_generation
+            or receipt.display_profile_id != row.display_server_profile_id
+            or receipt.display_generation != row.display_server_generation
+            or receipt.display_name != row.display_name
+            or receipt.process_id != getattr(server_identity, "process_id", None)
+            or receipt.process_generation != row.display_server_generation
+            or receipt.pid_start_ticks != getattr(server_identity, "pid_starttime_ticks", None)
+            or receipt.cgroup_id != getattr(server_identity, "cgroup_id", None)
+            or not isinstance(receipt.pidfd_identity, str) or not receipt.pidfd_identity):
+        raise RemoteObservationUnavailable("Xauthority receipt differs from selected file or live display identity")
+    try:
+        poller = select.poll()
+        poller.register(receipt.pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
+        if poller.poll(0):
+            raise RemoteObservationUnavailable("Xauthority receipt display-server PIDFD is stale")
+        os.fstat(receipt.file_fd)
+        os.fstat(receipt.pidfd)
+    except RemoteObservationUnavailable:
+        raise
+    except OSError:
+        raise RemoteObservationUnavailable("Xauthority receipt descriptors are no longer live") from None
+
+
+def _read_xauthority_receipt(row: SelectedNativeWindow, receipt: Any,
+                             display_number: str, server_identity: Any) -> bytearray:
+    _verify_xauthority_receipt(row, receipt, server_identity)
+    try:
+        st = os.fstat(receipt.file_fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_nlink != 1
+                or st.st_dev != receipt.device or st.st_ino != receipt.inode
+                or st.st_uid != receipt.owner_uid or st.st_gid != receipt.owner_gid
+                or stat.S_IMODE(st.st_mode) != receipt.mode or st.st_size > 64 * 1024):
+            raise RemoteObservationUnavailable("held Xauthority startup file changed custody")
+        raw = bytearray()
+        offset = 0
+        while offset <= 64 * 1024:
+            block = os.pread(receipt.file_fd, min(4096, 64 * 1024 + 1 - offset), offset)
+            if not block:
+                break
+            raw.extend(block)
+            offset += len(block)
+        if (len(raw) > 64 * 1024
+                or hashlib.sha256(raw).hexdigest() != receipt.content_sha256):
+            raise RemoteObservationUnavailable("held Xauthority bytes differ from the signed startup receipt")
+        if os.fstat(receipt.file_fd).st_ino != st.st_ino:
+            raise RemoteObservationUnavailable("held Xauthority inode changed during cookie read")
+    except RemoteObservationUnavailable:
+        raise
+    except OSError:
+        raise RemoteObservationUnavailable("held Xauthority startup file could not be read") from None
+    return _select_xauthority_cookie(raw, display_number)
 
 
 def _open_pidfd(pid: int) -> int:
@@ -875,6 +968,10 @@ def _read_xauthority(row: SelectedNativeWindow, display_number: str) -> bytearra
         raise
     except OSError:
         raise RemoteObservationUnavailable("selected Xauthority file is unavailable") from None
+    return _select_xauthority_cookie(raw, display_number)
+
+
+def _select_xauthority_cookie(raw: bytearray, display_number: str) -> bytearray:
     hostname = socket.gethostname().encode("ascii", "ignore")
     found: list[bytearray] = []
     index = 0
@@ -915,7 +1012,8 @@ def _xopen_authorized_display(x11: Any, display_name: str, cookie: bytearray) ->
     x11.XSetAuthorization.restype = None
     x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
     x11.XOpenDisplay.restype = ctypes.c_void_p
-    x11.XSetAuthorization(b"MIT-MAGIC-COOKIE-1", len(cookie), bytes(cookie), len(cookie))
+    authorization_name = b"MIT-MAGIC-COOKIE-1"
+    x11.XSetAuthorization(authorization_name, len(authorization_name), bytes(cookie), len(cookie))
     display = x11.XOpenDisplay(display_name.encode("ascii"))
     x11.XSetAuthorization(b"", 0, b"", 0)
     if not display:
@@ -957,7 +1055,7 @@ class _XResClientIdSpec(ctypes.Structure):
 
 class _XResClientIdValue(ctypes.Structure):
     _fields_ = [("spec", _XResClientIdSpec), ("length", ctypes.c_long),
-                ("value", ctypes.POINTER(ctypes.c_ulong))]
+                ("value", ctypes.c_void_p)]
 
 
 class _XWindowAttributes(ctypes.Structure):
@@ -1053,25 +1151,31 @@ def _xres_client_pids(x11: Any, xres: Any, display: int) -> tuple[tuple[int, int
         raise RemoteObservationUnavailable("XRes client inventory is unavailable")
     result: list[tuple[int, int, int]] = []
     try:
-        for index in range(count.value):
-            client = clients[index]
-            spec = _XResClientIdSpec(client.resource_base, 1 << 1)  # LocalClientPid
-            value_count = ctypes.c_long()
-            values = ctypes.POINTER(_XResClientIdValue)()
-            if not xres.XResQueryClientIds(display, 1, ctypes.byref(spec),
-                                           ctypes.byref(value_count), ctypes.byref(values)):
-                raise RemoteObservationUnavailable("XRes local-client PID query failed")
-            try:
-                for value_index in range(value_count.value):
-                    value = values[value_index]
-                    if (value.spec.client == client.resource_base
-                            and value.spec.mask & (1 << 1) and value.length == 1
-                            and bool(value.value)):
-                        result.append((int(client.resource_base), int(client.resource_mask),
-                                       int(value.value[0])))
-            finally:
-                if values:
-                    x11.XFree(values)
+        resource_ranges = {int(clients[index].resource_base):
+                          (int(clients[index].resource_base), int(clients[index].resource_mask))
+                          for index in range(count.value)}
+        # XRes 1.2 defines client=None as selecting all connected clients. The
+        # server expands that wildcard to one concrete resource_base per reply;
+        # querying its special server-owned base individually can raise BadValue.
+        spec = _XResClientIdSpec(0, 1 << 1)  # None, LocalClientPid
+        value_count = ctypes.c_long()
+        values = ctypes.POINTER(_XResClientIdValue)()
+        if not xres.XResQueryClientIds(display, 1, ctypes.byref(spec),
+                                       ctypes.byref(value_count), ctypes.byref(values)):
+            raise RemoteObservationUnavailable("XRes local-client PID query failed")
+        try:
+            for value_index in range(value_count.value):
+                value = values[value_index]
+                if (value.spec.mask != (1 << 1) or value.length != 1
+                        or not value.value):
+                    continue
+                client_range = resource_ranges.get(int(value.spec.client))
+                if client_range is not None:
+                    pid_values = ctypes.cast(value.value, ctypes.POINTER(ctypes.c_uint32))
+                    result.append((*client_range, int(pid_values[0])))
+        finally:
+            if values:
+                x11.XFree(values)
     finally:
         if clients:
             x11.XFree(clients)
