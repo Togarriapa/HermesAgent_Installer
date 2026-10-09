@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import os
 import re
 import pwd
@@ -361,7 +362,8 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
     now = time.monotonic()
     if not now < spec.startup_deadline_monotonic <= now + 600:
         raise ManagedProcessError("startup deadline must be an absolute bounded monotonic time")
-    if not 0 < spec.max_lifetime_seconds <= 600:
+    if (isinstance(spec.max_lifetime_seconds, bool) or not isinstance(spec.max_lifetime_seconds, (int, float))
+            or not math.isfinite(spec.max_lifetime_seconds) or not 0 < spec.max_lifetime_seconds <= 600):
         raise ManagedProcessError("manager-enforced process lifetime must be finite and at most ten minutes")
     allowed = {"HOME", "PATH", "LANG", "LC_ALL", "DISPLAY", "WAYLAND_DISPLAY",
                "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "HERMES_HOME", "TMPDIR"}
@@ -626,6 +628,9 @@ class ManagedProcessSupervisor:
             raise ManagedProcessError("dedicated service identity is not provisioned") from None
         if service_account.pw_uid in {0, os.getuid()}:
             raise ManagedProcessError("managed service identity must be distinct and non-root")
+        if not any(item["resource_id"] == spec.service_user and item["state"] == "active"
+                   for item in spec.journal.owned("service-user")):
+            raise ManagedProcessError("service identity is not owned by this installer journal")
 
         manager_env = await _systemctl_async("show-environment", timeout=3.0)
         unset_names = tuple(name for name in _manager_environment_keys(manager_env)
@@ -636,7 +641,7 @@ class ManagedProcessSupervisor:
         target_cwd = "/hermes" if relative_cwd == "." else "/hermes/" + relative_cwd
         properties = [
             "--property=Type=exec",
-            "--property=RuntimeMaxSec=" + str(int(spec.max_lifetime_seconds)) + "s",
+            "--property=RuntimeMaxSec=" + format(float(spec.max_lifetime_seconds), ".6f").rstrip("0").rstrip(".") + "s",
             "--property=KillMode=control-group",
             "--property=Description=" + description,
             "--property=ProtectSystem=strict",
@@ -805,7 +810,7 @@ class ManagedProcessSupervisor:
         if len(raw) > 65536:
             raise ManagedProcessError("process environment exceeds its safety bound")
         result = {}
-        for item in raw.split(b"\\x00"):
+        for item in raw.split(b"\x00"):
             if item:
                 key, sep, value = item.partition(b"=")
                 if sep:
