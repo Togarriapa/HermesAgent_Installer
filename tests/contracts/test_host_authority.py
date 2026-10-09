@@ -12,11 +12,14 @@ from pathlib import Path
 from hermes_installer.authority.client import (
     AuthorityClient, canonical_profile_target, profile_launch_envelope,
 )
+from hermes_installer.authority.authentik import (
+    AuthentikEnrollment, AuthentikResponse, AuthentikSystemPolicy, PrincipalIdentity,
+)
 from hermes_installer.authority.service import (
-    AuthorityService, EffectRule, PrincipalBinding,
+    AuthorityService, ChildDelegationRule, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
-    AuthorityDenied, HostContext, Sensitivity, canonical_digest,
+    AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
 )
 
 
@@ -33,27 +36,23 @@ class ProfileLaunchEnvelopeContracts(unittest.TestCase):
             data_root = root / "profile-data"
             data_root.mkdir()
             target = canonical_profile_target("profile:one", executable, data_root)
+            digest = canonical_digest(child.read_bytes())
+            store_id = f"artifact:install.sh:{digest}"
             launch = profile_launch_envelope(
                 target=target, profile_id="profile:one", executable=executable,
                 artifact_sha256="a" * 64, artifact_root=artifact_root,
                 cwd=artifact_root, data_root=data_root,
-                argv=[str(executable.resolve()), str(child.resolve())],
-                env_allowlist={}, child_artifact_hashes={
-                    str(child.resolve()): canonical_digest(child.read_bytes()),
-                },
+                argv=[str(executable.resolve()), store_id],
+                env_allowlist={}, child_artifact_refs={store_id: digest},
             )
-            self.assertEqual(launch["child_artifact_hashes"][str(child.resolve())], canonical_digest(child.read_bytes()))
-            outside = root / "outside.sh"
-            outside.write_bytes(b"outside")
+            self.assertEqual(launch["child_artifact_refs"][store_id], digest)
             with self.assertRaises(AuthorityDenied):
                 profile_launch_envelope(
                     target=target, profile_id="profile:one", executable=executable,
                     artifact_sha256="a" * 64, artifact_root=artifact_root,
                     cwd=artifact_root, data_root=data_root,
-                    argv=[str(executable.resolve()), str(outside.resolve())],
-                    env_allowlist={}, child_artifact_hashes={
-                        str(outside.resolve()): canonical_digest(outside.read_bytes()),
-                    },
+                    argv=[str(executable.resolve()), "artifact:outside:" + "b" * 64],
+                    env_allowlist={}, child_artifact_refs={store_id: digest},
                 )
 
 
@@ -67,6 +66,99 @@ class FixturePolicy:
 
     def allow_effect(self, *, context, rule, request_digest, retry_index):
         return context.sensitivity is Sensitivity.PRIVATE and retry_index <= 3
+
+
+class AuthentikEffectScopeContracts(unittest.TestCase):
+    def setUp(self):
+        self.enrollment = AuthentikEnrollment(
+            principal_identities={"principal:a": PrincipalIdentity("alice", "alice@example.test", "42")},
+            system_group_id="group:system", write_group_by_target={"host:demo": "group:operators"},
+            recipient_group_id="group:recipients", recipient_email_by_id={},
+            allowed_effects=frozenset({("profile-run", "process.start"),
+                                       ("homelab-write", "host:demo")}),
+        )
+        self.context = HostContext(
+            principal_id="principal:a", profile_id="profile:a", namespace_id="namespace:a",
+            uid=1001, purpose="bootstrap", intent_id="intent:a", trace_id="trace:a",
+            sensitivity=Sensitivity.UNKNOWN, lineage_hash="a" * 64,
+            policy_revision="authentik-policy-v1", capabilities=frozenset({"profile-run", "homelab-write"}),
+            issued_at_monotonic=10.0, monotonic_expires_at=40.0,
+            nonce="nonce:a", grant_id="grant:a", signature="signed",
+        )
+
+    @staticmethod
+    def _response(body):
+        import json
+        return AuthentikResponse(200, json.dumps(body).encode(), {"content-type": "application/json"})
+
+    def test_local_pinned_process_effect_uses_kernel_enrollment_without_system_claim(self):
+        policy = AuthentikSystemPolicy(
+            enrollment=self.enrollment, actor_token=lambda _principal: None,
+            directory_token=lambda: None,
+            transport=lambda *_args, **_kwargs: self.fail("local effect must not query Authentik"),
+        )
+        rule = EffectRule("profile-run", "process.start", "process.start")
+        binding = PrincipalBinding(1001, "principal:a", "profile:a", "namespace:a",
+                                   frozenset({"profile-run"}))
+        effects = []
+        def handler(*, context, authorization, payload, timeout, peer_pid, cancelled):
+            effects.append((context.profile_id, payload))
+            return {"status": 200, "body": b"started", "headers": {}, "receipt_id": "start"}
+        service = AuthorityService(
+            signing_key=b"l" * 32, key_id="local-fixture",
+            bindings_by_uid={1001: binding}, rules={(rule.capability, rule.target): rule},
+            handlers={(rule.operation, rule.target): handler}, policy=policy,
+        )
+        context = HostContext.from_wire(service._issue_context(1001, {
+            "purpose": "bootstrap", "intent": "start-pinned-profile", "trace_id": "trace-local",
+            "lease_seconds": 10, "source_contexts": [],
+        }))
+        payload = b"{}"
+        grant = service._authorize_effect(1001, {
+            "context": context.to_wire(), "capability": rule.capability,
+            "target": rule.target, "recipient": None,
+            "request_digest": canonical_digest(payload), "retry_index": 0,
+        })
+        import base64
+        result = service._perform_effect(1001, os.getpid(), {
+            "authorization": grant, "operation": rule.operation,
+            "payload": base64.b64encode(payload).decode(), "timeout": 1,
+        }, cancelled=lambda: False)
+        self.assertEqual(context.sensitivity, Sensitivity.UNKNOWN)
+        self.assertEqual(effects, [("profile:a", payload)])
+        self.assertEqual(result["status"], 200)
+
+    def test_homelab_write_denies_when_authentik_system_membership_is_missing(self):
+        policy = AuthentikSystemPolicy(
+            enrollment=self.enrollment, actor_token=lambda _principal: None,
+            directory_token=lambda: None,
+            transport=lambda *_args, **_kwargs: self.fail("no actor token means no lookup"),
+        )
+        rule = EffectRule("homelab-write", "host.write", "host:demo")
+        with self.assertRaises(AuthorityDenied) as denied:
+            policy.allow_effect(context=replace(self.context, sensitivity=Sensitivity.PRIVATE), rule=rule,
+                                request_digest="c" * 64, retry_index=0)
+        self.assertEqual(denied.exception.code, "authentik.principal")
+
+    def test_homelab_write_denies_stale_system_hierarchy(self):
+        class Transport:
+            def get(_self, path, *, bearer_token, timeout):
+                self.assertEqual(bearer_token, "fresh-actor-token")
+                self.assertGreater(timeout, 0)
+                if path == "/api/v3/core/users/me/":
+                    return self._response({"user": {"pk": 42, "username": "alice",
+                                                     "email": "alice@example.test", "is_active": True,
+                                                     "groups": []}})
+                self.fail("no direct memberships means no group lookups")
+        policy = AuthentikSystemPolicy(
+            enrollment=self.enrollment, actor_token=lambda _principal: "fresh-actor-token",
+            directory_token=lambda: None, transport=Transport(),
+        )
+        rule = EffectRule("homelab-write", "host.write", "host:demo")
+        with self.assertRaises(AuthorityDenied) as denied:
+            policy.allow_effect(context=replace(self.context, sensitivity=Sensitivity.PRIVATE), rule=rule,
+                                request_digest="d" * 64, retry_index=0)
+        self.assertEqual(denied.exception.code, "authentik.system-membership")
 
 
 class BackgroundMemoryConsentContracts(unittest.TestCase):
@@ -94,12 +186,13 @@ class BackgroundMemoryConsentContracts(unittest.TestCase):
             profile_generations={"profile:a": "generation-a"},
             background_consent_active=lambda _consent_id: True,
         )
+        service.memory_owner_state = lambda _profile: ("openviking", 1)
         source = HostContext.from_wire(service._issue_context(binding.uid, {
             "purpose": "memory-capture", "intent": "source-event", "trace_id": "trace-a",
             "lease_seconds": 10.0, "source_contexts": [],
         }))
         consent = service.create_background_consent(
-            source, provider_id="openviking", owner_generation="generation-a", ttl_seconds=300)
+            source, provider_id="openviking", owner_generation=1, ttl_seconds=300)
         now[0] += 11.0
 
         with self.assertRaises(AuthorityDenied):
@@ -111,7 +204,7 @@ class BackgroundMemoryConsentContracts(unittest.TestCase):
 
         result = service.perform_memory_effect(
             source.to_wire(), consent.to_wire(), provider_id="openviking",
-            owner_generation="generation-a", action="extract", capability="memory-extraction",
+            owner_generation=1, action="extract", capability="memory-extraction",
             payload=b'{"schema":1}', timeout=1,
         )
         self.assertEqual(result.status, 200)
@@ -122,9 +215,70 @@ class BackgroundMemoryConsentContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             service.perform_memory_effect(
                 source.to_wire(), consent.to_wire(), provider_id="openviking",
-                owner_generation="generation-a", action="extract", capability="memory-extraction",
+                owner_generation=1, action="extract", capability="memory-extraction",
                 payload=b'{"schema":1}', timeout=1,
             )
+        self.assertEqual(len(effects), 1)
+
+
+class ChildDelegationContracts(unittest.TestCase):
+    def test_root_handler_mints_one_child_grant_for_fixed_profile_target(self):
+        parent = PrincipalBinding(1001, "principal:parent", "profile:parent", "namespace:parent",
+                                  frozenset({"resource-run"}))
+        child = PrincipalBinding(1002, "principal:child", "profile:child", "namespace:child",
+                                 frozenset({"hermes-profile-invoke"}))
+        parent_rule = EffectRule("resource-run", "resource.cron.run", "resource:cron:weekly")
+        child_rule = EffectRule("hermes-profile-invoke", "process.start", "hermes-profile-invoke:child")
+        delegation = ChildDelegationRule(
+            "cron-weekly-child", "profile:parent", "resource-run", "resource.cron.run",
+            "resource:cron:weekly", "profile:child", "hermes-profile-invoke", "process.start",
+            "hermes-profile-invoke:child", None, "scheduled-hermes-profile-run")
+        effects = []
+        service_ref = {}
+
+        def child_handler(*, context, authorization, payload, timeout, peer_pid, cancelled):
+            effects.append((context.profile_id, authorization.uid, authorization.target, payload))
+            return {"status": 200, "body": b'{"started":true}',
+                    "headers": {"content-type": "application/json"}, "receipt_id": "child-start"}
+
+        def parent_handler(*, context, authorization, payload, timeout, peer_pid, cancelled):
+            result = service_ref["service"].perform_delegated_effect(
+                authorization, delegation_id="cron-weekly-child", payload=b'{"argv":["pinned"]}',
+                peer_pid=peer_pid, timeout=timeout, cancelled=cancelled)
+            return {"status": result.status, "body": result.body,
+                    "headers": dict(result.headers), "receipt_id": "parent-dispatch"}
+
+        service = AuthorityService(
+            signing_key=b"d" * 32, key_id="fixture",
+            bindings_by_uid={parent.uid: parent, child.uid: child},
+            rules={(parent_rule.capability, parent_rule.target): parent_rule,
+                   (child_rule.capability, child_rule.target): child_rule},
+            handlers={(parent_rule.operation, parent_rule.target): parent_handler,
+                      (child_rule.operation, child_rule.target): child_handler},
+            policy=FixturePolicy(), delegations={delegation.delegation_id: delegation})
+        service_ref["service"] = service
+        source = HostContext.from_wire(service._issue_context(parent.uid, {
+            "purpose": "resource-cron", "intent": "run-selected-job", "trace_id": "trace-child",
+            "lease_seconds": 20.0, "source_contexts": [],
+        }))
+        parent_payload = b'{"job":"weekly"}'
+        parent_grant = EffectAuthorization.from_wire(service._authorize_effect(parent.uid, {
+            "context": source.to_wire(), "capability": parent_rule.capability,
+            "target": parent_rule.target, "recipient": None,
+            "request_digest": canonical_digest(parent_payload), "retry_index": 0,
+        }))
+        import base64
+        response = service._perform_effect(parent.uid, os.getpid(), {
+            "authorization": parent_grant.to_wire(), "operation": parent_rule.operation,
+            "payload": base64.b64encode(parent_payload).decode("ascii"), "timeout": 10.0,
+        }, cancelled=lambda: False)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(effects, [("profile:child", child.uid, child_rule.target,
+                                    b'{"argv":["pinned"]}')])
+        with self.assertRaises(AuthorityDenied):
+            service.perform_delegated_effect(parent_grant, delegation_id="cron-weekly-child",
+                                             payload=b'{"argv":["again"]}', peer_pid=os.getpid(),
+                                             timeout=10.0, cancelled=lambda: False)
         self.assertEqual(len(effects), 1)
 
 

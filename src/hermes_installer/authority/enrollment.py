@@ -19,7 +19,7 @@ from .authentik import (
     AuthentikEnrollment, AuthentikSystemPolicy, PrincipalIdentity,
     TLSAuthentikTransport,
 )
-from .service import AuthorityPolicy, EffectRule, PrincipalBinding
+from .service import AuthorityPolicy, ChildDelegationRule, EffectRule, PrincipalBinding
 from .types import AuthorityDenied, Sensitivity
 
 AUTHORITY_CONFIG_PATH = Path("/etc/hermes-installer/authority.json")
@@ -152,7 +152,7 @@ def write_authority_config(document: Mapping[str, Any], *, expected_uid: int = 0
     root = dict(document)
     _reject_secret_material(root)
     required = {"schema", "key_id", "principals", "rules", "authentik", "process_profiles",
-                "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers"}
+                "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "delegations"}
     root = _exact(root, required, "authority")
     if root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "authority configuration schema version is unsupported")
@@ -322,6 +322,7 @@ class ProtectedEnrollment:
     provider_enrollments: Mapping[str, Any]
     mcp_services: Mapping[str, Any]
     mcp_http_bindings: Mapping[str, Any]
+    delegations: Mapping[str, ChildDelegationRule]
     memory_providers: Mapping[str, Any]
     artifact_catalog: Mapping[str, Any]
     package_catalog: Mapping[str, Any]
@@ -340,7 +341,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                            object_pairs_hook=_unique_pairs)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         raise AuthorityDenied("enrollment.schema", "protected authority configuration is malformed") from None
-    root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers"}, "authority")
+    root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "delegations"}, "authority")
     _reject_secret_material(root)
     if type(root["schema"]) is not int or root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "protected authority schema version is unsupported")
@@ -348,6 +349,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
     if not isinstance(root["principals"], list) or not root["principals"] or len(root["principals"]) > 256:
         raise AuthorityDenied("enrollment.schema", "protected principal catalog is invalid")
     bindings: dict[int, PrincipalBinding] = {}
+    profiles_seen: set[str] = set()
     identities: dict[str, PrincipalIdentity] = {}
     actor_refs: dict[str, str] = {}
     uid_by_principal: dict[str, int] = {}
@@ -366,6 +368,9 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                                    _read_id(item["profile_id"], "profile ID"),
                                    _read_id(item["namespace_id"], "namespace ID"),
                                    frozenset(caps))
+        if binding.profile_id in profiles_seen:
+            raise AuthorityDenied("enrollment.principal", "each managed profile has one protected principal UID")
+        profiles_seen.add(binding.profile_id)
         bindings[uid] = binding
         try:
             identities[principal_id] = PrincipalIdentity(
@@ -448,16 +453,53 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
     for (cap, _target), rule in rules.items():
         if (cap, rule.target) not in enrollment.allowed_effects:
             raise AuthorityDenied("enrollment.rule", "effect rule is outside Authentik protected allowlist")
+    if not isinstance(root["delegations"], list) or len(root["delegations"]) > 512:
+        raise AuthorityDenied("enrollment.delegation", "protected delegation catalog is invalid")
+    delegations: dict[str, ChildDelegationRule] = {}
+    profiles_by_id = {binding.profile_id: binding for binding in bindings.values()}
+    for raw in root["delegations"]:
+        item = _exact(raw, {"id", "parent_profile_id", "parent_capability", "parent_operation",
+                            "parent_target", "child_profile_id", "child_capability", "child_operation",
+                            "child_target", "child_recipient", "child_purpose"}, "child delegation")
+        rule = ChildDelegationRule(
+            delegation_id=_read_id(item["id"], "delegation ID"),
+            parent_profile_id=_read_id(item["parent_profile_id"], "parent profile ID"),
+            parent_capability=_read_id(item["parent_capability"], "parent capability"),
+            parent_operation=_read_id(item["parent_operation"], "parent operation"),
+            parent_target=_read_id(item["parent_target"], "parent target"),
+            child_profile_id=_read_id(item["child_profile_id"], "child profile ID"),
+            child_capability=_read_id(item["child_capability"], "child capability"),
+            child_operation=_read_id(item["child_operation"], "child operation"),
+            child_target=_read_id(item["child_target"], "child target"),
+            child_recipient=None if item["child_recipient"] is None else _read_id(item["child_recipient"], "child recipient"),
+            child_purpose=_read_id(item["child_purpose"], "child purpose"),
+        )
+        parent_binding = profiles_by_id.get(rule.parent_profile_id)
+        child_binding = profiles_by_id.get(rule.child_profile_id)
+        parent_rule = rules.get((rule.parent_capability, rule.parent_target))
+        child_rule = rules.get((rule.child_capability, rule.child_target))
+        if (rule.delegation_id in delegations or parent_binding is None or child_binding is None
+                or rule.parent_capability not in parent_binding.capabilities
+                or rule.child_capability not in child_binding.capabilities
+                or parent_rule is None or parent_rule.operation != rule.parent_operation
+                or child_rule is None or child_rule.operation != rule.child_operation
+                or child_rule.recipient != rule.child_recipient):
+            raise AuthorityDenied("enrollment.delegation", "child delegation is outside protected principal/effect rules")
+        delegations[rule.delegation_id] = rule
     profiles = root["process_profiles"]
     if not isinstance(profiles, list) or len(profiles) > 256:
         raise AuthorityDenied("enrollment.process", "protected process profile catalog is invalid")
     process_profiles: dict[str, Any] = {}
     for raw in profiles:
         from hermes_installer.managed_process_custodian import ManagedProfileCustody
-        item = _exact(raw, {"profile_id", "owner_uid", "owner_gid", "service_user", "executable", "artifact_sha256", "artifact_root", "data_root", "generation", "memory_max_bytes", "cpu_quota_percent", "io_weight", "max_lifetime_seconds", "child_artifact_hashes"}, "process profile")
+        item = _exact(raw, {"profile_id", "owner_uid", "owner_gid", "service_user", "executable", "artifact_sha256", "artifact_root", "data_root", "generation", "memory_max_bytes", "cpu_quota_percent", "io_weight", "max_lifetime_seconds", "child_artifact_refs", "argv_recipe"}, "process profile")
         profile_id = _read_id(item["profile_id"], "process profile ID")
         if profile_id in process_profiles:
             raise AuthorityDenied("enrollment.process", "process profile is duplicated")
+        recipe = item["argv_recipe"]
+        if (not isinstance(recipe, list) or not recipe or len(recipe) > 64
+                or any(not isinstance(arg, str) or len(arg) > 4096 or "\x00" in arg for arg in recipe)):
+            raise AuthorityDenied("enrollment.process", "protected argv recipe is malformed")
         process_profiles[profile_id] = ManagedProfileCustody(
             profile_id=profile_id, owner_uid=item["owner_uid"], owner_gid=item["owner_gid"],
             service_user=_read_id(item["service_user"], "service user"),
@@ -468,7 +510,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             generation=_read_id(item["generation"], "generation"),
             memory_max_bytes=item["memory_max_bytes"], cpu_quota_percent=item["cpu_quota_percent"],
             io_weight=item["io_weight"], max_lifetime_seconds=item["max_lifetime_seconds"],
-            child_artifact_hashes=item["child_artifact_hashes"],
+            child_artifact_refs=item["child_artifact_refs"],
+            argv_recipe=tuple(recipe),
             authority_socket=Path(f"/run/hermes-installer/authority/{item['owner_uid']}.sock"),
         )
     if (not process_profiles or any(binding.profile_id not in process_profiles
@@ -478,6 +521,19 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
     primary_gids = [process_profiles[binding.profile_id].owner_gid for binding in bindings.values()]
     if len(primary_gids) != len(set(primary_gids)) or any(type(gid) is not int or gid <= 0 for gid in primary_gids):
         raise AuthorityDenied("enrollment.principal", "socket principals require unique protected primary groups")
+    from hermes_installer.managed_process_custodian import process_control_target, process_start_target
+    for profile in process_profiles.values():
+        required_process_rules = [
+            ("hermes-profile-invoke", "process.start", process_start_target(profile)),
+            *(("hermes-process-control", operation, process_control_target(profile, operation))
+              for operation in ("process.status", "process.read", "process.write", "process.stop")),
+        ]
+        for capability, operation, target in required_process_rules:
+            rule = rules.get((capability, target))
+            if (rule is None or rule.operation != operation or rule.recipient is not None
+                    or any(capability not in binding.capabilities
+                           for binding in bindings.values() if binding.profile_id == profile.profile_id)):
+                raise AuthorityDenied("enrollment.process", "managed process verb is not explicitly enrolled")
     catalogs = {}
     for field in ("provider_enrollments", "mcp_services", "memory_providers"):
         entries = root[field]
@@ -575,7 +631,9 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         provider = _read_id(target["provider"], "memory provider ID")
         service_id = _read_id(target["service_id"], "memory service ID")
         source_revision = _read_id(target["source_revision"], "memory source revision")
-        service_generation = _read_id(target["service_generation"], "memory service generation")
+        service_generation = target["service_generation"]
+        if type(service_generation) is not int or service_generation < 1:
+            raise AuthorityDenied("enrollment.memory", "memory service generation is invalid")
         data_root_id = _read_id(target["data_root_id"], "memory data-root identity")
         profile = profiles_by_id.get(profile_id)
         binding = bindings_by_profile.get(profile_id)
@@ -594,7 +652,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         used_memory_paths.add(uniqueness)
     return ProtectedEnrollment(key_id, bindings, rules, policy, process_profiles,
                                catalogs["provider_enrollments"], catalogs["mcp_services"],
-                               mcp_bindings, catalogs["memory_providers"], {}, {}, ARTIFACT_CATALOG_PATH,
+                               mcp_bindings, delegations, catalogs["memory_providers"], {}, {}, ARTIFACT_CATALOG_PATH,
                                ARTIFACT_STAGING_DIRECTORY)
 
 

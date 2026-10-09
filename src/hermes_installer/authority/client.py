@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .types import (
-    AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
+    AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, SourceReceipt,
     VerifiedEffectAuthorization, canonical_bytes, canonical_digest,
 )
 
@@ -134,6 +134,8 @@ class AuthorityClient:
 
     def context(self, *, purpose: str, intent: str,
                 source_contexts: Sequence[HostContext] = (),
+                source_receipts: Sequence[SourceReceipt] = (),
+                final_payload_digest: str | None = None,
                 trace_id: str | None = None,
                 lease_seconds: float = 30.0,
                 cancelled: Callable[[], bool] | None = None) -> HostContext:
@@ -146,12 +148,26 @@ class AuthorityClient:
             raise AuthorityDenied("context.invalid", "trace ID is invalid")
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, (int, float)) or not 0 < lease_seconds <= MAX_TIMEOUT:
             raise AuthorityDenied("context.invalid", "context lease exceeds its fixed upper bound")
-        if len(source_contexts) > 64 or any(not isinstance(x, HostContext) for x in source_contexts):
+        if (len(source_contexts) > 64 or any(not isinstance(x, HostContext) for x in source_contexts)
+                or len(source_receipts) > 64 or any(not isinstance(x, SourceReceipt) for x in source_receipts)):
             raise AuthorityDenied("context.invalid", "source lineage is invalid")
-        result = self._rpc("issue_context", {
+        if source_contexts and source_receipts:
+            raise AuthorityDenied("context.invalid", "use one complete source lineage representation")
+        if final_payload_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", final_payload_digest):
+            raise AuthorityDenied("context.invalid", "final payload digest is invalid")
+        if source_receipts and final_payload_digest is None:
+            raise AuthorityDenied("context.invalid", "source receipts require a final payload digest")
+        request = {
             "purpose": purpose, "intent": intent, "trace_id": trace_id,
             "lease_seconds": float(lease_seconds),
             "source_contexts": [ctx.to_wire() for ctx in source_contexts],
+        }
+        if source_receipts:
+            request["source_receipts"] = [receipt.to_wire() for receipt in source_receipts]
+        if final_payload_digest is not None:
+            request["final_payload_digest"] = final_payload_digest
+        result = self._rpc("issue_context", {
+            **request,
         }, timeout=min(self.timeout, float(lease_seconds)), cancelled=cancelled)
         return HostContext.from_wire(result)
 
@@ -191,12 +207,12 @@ class AuthorityClient:
             "request_digest": request_digest or authorization.request_digest,
             "retry_index": authorization.retry_index if retry_index is None else retry_index,
         }, timeout=min(self.timeout, remaining), cancelled=cancelled)
-        if not isinstance(result, dict) or set(result) != {"operation", "consumed_at_monotonic", "verification_receipt"}:
+        if not isinstance(result, dict) or set(result) != {"operation", "verified_at_monotonic", "verification_receipt"}:
             raise AuthorityDenied("grant.invalid", "authority verification receipt is malformed")
-        consumed = result["consumed_at_monotonic"]
-        if isinstance(consumed, bool) or not isinstance(consumed, (int, float)) or not math.isfinite(consumed):
+        verified = result["verified_at_monotonic"]
+        if isinstance(verified, bool) or not isinstance(verified, (int, float)) or not math.isfinite(verified):
             raise AuthorityDenied("grant.invalid", "authority verification receipt is malformed")
-        return VerifiedEffectAuthorization(authorization, str(result["operation"]), float(consumed), str(result["verification_receipt"]))
+        return VerifiedEffectAuthorization(authorization, str(result["operation"]), float(verified), str(result["verification_receipt"]))
 
     def perform_effect(self, authorization: EffectAuthorization, *, operation: str,
                        payload: bytes, timeout: float,

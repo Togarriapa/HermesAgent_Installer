@@ -21,12 +21,12 @@ import struct
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
 from .types import (
-    AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity,
+    AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity, SourceReceipt,
     canonical_digest,
 )
 
@@ -76,6 +76,30 @@ class EffectRule:
     def __post_init__(self) -> None:
         if self.operation not in _OPERATIONS or not self.capability or not self.target:
             raise ValueError("effect rule must name a fixed operation, capability and target")
+
+
+@dataclass(frozen=True, slots=True)
+class ChildDelegationRule:
+    """One fixed root-only parent action to one fixed child effect."""
+
+    delegation_id: str
+    parent_profile_id: str
+    parent_capability: str
+    parent_operation: str
+    parent_target: str
+    child_profile_id: str
+    child_capability: str
+    child_operation: str
+    child_target: str
+    child_recipient: str | None
+    child_purpose: str
+
+    def __post_init__(self) -> None:
+        if (not self.delegation_id or not self.parent_profile_id or not self.parent_capability
+                or not self.parent_operation or not self.parent_target or not self.child_profile_id
+                or not self.child_capability or not self.child_operation or not self.child_target
+                or not self.child_purpose):
+            raise ValueError("child delegation binding is incomplete")
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,11 +162,15 @@ class AuthorityService:
                  monotonic: Callable[[], float] = time.monotonic,
                  wall_clock: Callable[[], float] = time.time,
                  profile_generations: Mapping[str, str] | None = None,
-                 background_consent_active: Callable[[str], bool] | None = None):
+                 background_consent_active: Callable[[str], bool] | None = None,
+                 delegations: Mapping[str, ChildDelegationRule] | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
             raise ValueError("UID map must be an explicit protected identity mapping")
+        profile_ids = [binding.profile_id for binding in bindings_by_uid.values()]
+        if len(profile_ids) != len(set(profile_ids)):
+            raise ValueError("each managed profile must map to exactly one host principal UID")
         if any(key != (rule.capability, rule.target) for key, rule in rules.items()):
             raise ValueError("effect rule map keys must match their protected rule bindings")
         enrolled_operations = {(rule.operation, rule.target) for rule in rules.values()}
@@ -157,11 +185,173 @@ class AuthorityService:
         self.monotonic = monotonic
         self.wall_clock = wall_clock
         self.profile_generations = dict(profile_generations or {})
+        self.delegations = dict(delegations or {})
+        if any(key != rule.delegation_id for key, rule in self.delegations.items()):
+            raise ValueError("delegation map keys must match fixed enrollment IDs")
+        self._delegated_parents: set[str] = set()
         # Queue adapters must supply a durable root-owned revocation lookup.
         self.background_consent_active = background_consent_active or (lambda _consent_id: False)
+        self.memory_owner_state: Callable[[str], tuple[str | None, int]] | None = None
         self._nonces: dict[str, float] = {}
         self._lock = threading.RLock()
         self._client_nonces: dict[str, float] = {}
+
+    def perform_delegated_effect(self, parent_authorization: EffectAuthorization, *,
+                                 delegation_id: str, payload: bytes, peer_pid: int,
+                                 timeout: float, cancelled: Callable[[], bool]) -> BrokeredEffectResponse:
+        """Root-handler-only child effect with fresh child identity and one-use grant.
+
+        This is deliberately not an RPC operation. Only an installed trusted
+        effect handler can call it after validating its selected resource/action.
+        """
+        rule = self.delegations.get(delegation_id)
+        if rule is None or not isinstance(parent_authorization, EffectAuthorization):
+            raise AuthorityDenied("delegation.unavailable", "fixed delegation is not enrolled")
+        parent_binding = self._binding(parent_authorization.uid)
+        self._verify_grant_signature(parent_authorization)
+        self._assert_grant_current(parent_authorization, parent_binding, parent_authorization.uid)
+        parent_effect_rule = self.rules.get((parent_authorization.capability, parent_authorization.target))
+        with self._lock:
+            consumed = parent_authorization.nonce in self._nonces
+            already_delegated = parent_authorization.grant_id in self._delegated_parents
+            if consumed and not already_delegated and len(self._delegated_parents) < 100_000:
+                self._delegated_parents.add(parent_authorization.grant_id)
+        if (not consumed or already_delegated
+                or len(self._delegated_parents) >= 100_000
+                or parent_binding.profile_id != rule.parent_profile_id
+                or parent_authorization.capability != rule.parent_capability
+                or parent_effect_rule is None
+                or parent_effect_rule.operation != rule.parent_operation
+                or parent_effect_rule.target != rule.parent_target
+                or parent_effect_rule.recipient != parent_authorization.recipient
+                or not self.policy.allow_effect(
+                    context=self._context_from_grant(parent_authorization, parent_binding),
+                    rule=parent_effect_rule, request_digest=parent_authorization.request_digest,
+                    retry_index=parent_authorization.retry_index)):
+            raise AuthorityDenied("delegation.denied", "parent effect cannot delegate this child action")
+        if not isinstance(payload, bytes) or not 1 <= len(payload) <= MAX_REQUEST:
+            raise AuthorityDenied("delegation.payload", "child effect payload is outside bounds")
+        # All parent claims and child identity come from verified signed records;
+        # no caller may select a child principal, UID, namespace or capability.
+        child_binding = next((item for item in self.bindings_by_uid.values()
+                              if item.profile_id == rule.child_profile_id), None)
+        child_effect_rule = self.rules.get((rule.child_capability, rule.child_target))
+        if (child_binding is None or rule.child_capability not in child_binding.capabilities
+                or child_effect_rule is None or child_effect_rule.operation != rule.child_operation
+                or child_effect_rule.recipient != rule.child_recipient
+                or (child_effect_rule.operation, child_effect_rule.target) not in self.handlers):
+            raise AuthorityDenied("delegation.target", "delegated child target is not enrolled")
+        try:
+            decoded = json.loads(payload.decode("utf-8"))
+            if json.dumps(decoded, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                          allow_nan=False).encode("utf-8") != payload:
+                raise ValueError
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
+            raise AuthorityDenied("delegation.payload", "child effect payload must be canonical JSON") from None
+        now = self.monotonic()
+        expiry = min(parent_authorization.monotonic_expires_at, now + 30.0)
+        if expiry <= now or timeout <= 0:
+            raise AuthorityDenied("delegation.expired", "parent effect lease has expired")
+        payload_digest = canonical_digest(payload)
+        context = HostContext(
+            principal_id=child_binding.principal_id, profile_id=child_binding.profile_id,
+            namespace_id=child_binding.namespace_id, uid=child_binding.uid,
+            purpose=rule.child_purpose,
+            intent_id=canonical_digest({"delegation": delegation_id,
+                                        "parent_intent": parent_authorization.intent_id,
+                                        "payload_digest": payload_digest}),
+            trace_id=parent_authorization.trace_id,
+            sensitivity=parent_authorization.sensitivity,
+            lineage_hash=canonical_digest({"parent_lineage": parent_authorization.lineage_hash,
+                                           "parent_grant": parent_authorization.grant_id,
+                                           "delegation": delegation_id,
+                                           "payload_digest": payload_digest}),
+            policy_revision=self._policy_revision(), capabilities=child_binding.capabilities,
+            issued_at_monotonic=now, monotonic_expires_at=expiry,
+            nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24), signature="pending")
+        child_context = HostContext.from_wire(self._signed_context(context, self._sign(context.claims())))
+        grant_wire = self._authorize_effect(child_binding.uid, {
+            "context": child_context.to_wire(), "capability": rule.child_capability,
+            "target": rule.child_target, "recipient": rule.child_recipient,
+            "request_digest": payload_digest, "retry_index": 0,
+        })
+        grant = EffectAuthorization.from_wire(grant_wire)
+        bounded_timeout = self._bounded(timeout, 30.0)
+        effective_timeout = min(bounded_timeout, expiry - self.monotonic())
+        if effective_timeout <= 0:
+            raise AuthorityDenied("delegation.expired", "child effect lease expired before dispatch")
+        response = self._perform_effect(child_binding.uid, peer_pid, {
+            "authorization": grant.to_wire(), "operation": rule.child_operation,
+            "payload": __import__("base64").b64encode(payload).decode("ascii"),
+            "timeout": effective_timeout,
+        }, cancelled=lambda: cancelled() or self.monotonic() >= expiry)
+        import base64
+        return BrokeredEffectResponse(response["status"], base64.b64decode(response["body"], validate=True),
+                                      response["headers"], response["receipt_id"])
+
+    def issue_source_receipt(self, parent_context: HostContext, *, source_kind: str,
+                             origin_id: str, payload: bytes,
+                             ttl_seconds: int = 300) -> SourceReceipt:
+        """Mint private provenance only from a trusted in-process source adapter.
+
+        This is deliberately absent from the worker RPC verb set. A registered
+        root adapter calls it only after capturing the exact source bytes. No
+        caller-provided sensitivity or public declassification is accepted.
+        """
+        if (not isinstance(parent_context, HostContext) or not isinstance(payload, bytes)
+                or not 1 <= len(payload) <= MAX_REQUEST or type(ttl_seconds) is not int
+                or not 1 <= ttl_seconds <= 600):
+            raise AuthorityDenied("source.request", "trusted source receipt request is malformed")
+        if source_kind not in {"native-input", "tool-result", "memory-record", "static-context",
+                               "schedule-event", "webhook-event", "provider-result"}:
+            raise AuthorityDenied("source.kind", "source kind is not enrolled in the host adapter")
+        if not isinstance(origin_id, str) or not 1 <= len(origin_id) <= 256:
+            raise AuthorityDenied("source.origin", "source origin is invalid")
+        binding = self._binding(parent_context.uid)
+        self._verify_context_signature(parent_context)
+        self._assert_current_context(parent_context, binding, parent_context.uid)
+        now = self.monotonic()
+        expiry = min(parent_context.monotonic_expires_at, now + ttl_seconds)
+        if expiry <= now:
+            raise AuthorityDenied("source.expired", "source context expired before receipt issuance")
+        receipt = SourceReceipt(
+            receipt_id=secrets.token_urlsafe(24), issuer_id="host-authority",
+            source_kind=source_kind, principal_id=binding.principal_id,
+            profile_id=binding.profile_id, namespace_id=binding.namespace_id, uid=binding.uid,
+            origin_id=origin_id, process_generation=self.profile_generations.get(binding.profile_id, "unversioned"),
+            payload_digest=canonical_digest(payload), sensitivity=Sensitivity.PRIVATE,
+            parent_lineage_hash=parent_context.lineage_hash,
+            policy_revision=self._policy_revision(), recipient_ceiling=frozenset(),
+            issued_at_monotonic=now, monotonic_expires_at=expiry, signature="pending",
+        )
+        return replace(receipt, signature=self._sign(receipt.claims()))
+
+    def revalidate_effect(self, context: HostContext, authorization: EffectAuthorization, *,
+                          operation: str, request_digest: str,
+                          retry_index: int) -> bool:
+        """Fresh non-consuming check for a handler's final pre-effect boundary."""
+        if (not isinstance(context, HostContext)
+                or not isinstance(authorization, EffectAuthorization)
+                or not isinstance(operation, str)
+                or not isinstance(request_digest, str)
+                or not isinstance(retry_index, int) or isinstance(retry_index, bool)):
+            raise AuthorityDenied("effect.revalidation", "effect revalidation binding is malformed")
+        binding = self._binding(context.uid)
+        self._verify_context_signature(context)
+        self._verify_grant_signature(authorization)
+        self._assert_current_context(context, binding, context.uid)
+        self._assert_grant_current(authorization, binding, context.uid)
+        rule = self.rules.get((authorization.capability, authorization.target))
+        if (rule is None or rule.operation != operation
+                or authorization.context_digest != _context_digest(context)
+                or authorization.source_receipts != context.source_receipts
+                or authorization.request_digest != request_digest
+                or authorization.retry_index != retry_index
+                or not self.policy.allow_effect(context=context, rule=rule,
+                                                request_digest=request_digest,
+                                                retry_index=retry_index)):
+            raise AuthorityDenied("effect.revalidation", "fresh host policy denied the final effect boundary")
+        return True
 
     def serve_unix(self, socket_path: Path, *, socket_gid: int,
                    stop_event: threading.Event,
@@ -306,7 +496,8 @@ class AuthorityService:
         return binding
 
     def _issue_context(self, uid: int, payload: Any, *, allow_expired_sources: bool = False) -> dict[str, Any]:
-        if not isinstance(payload, dict) or set(payload) != {"purpose", "intent", "trace_id", "lease_seconds", "source_contexts"}:
+        required = {"purpose", "intent", "trace_id", "lease_seconds", "source_contexts"}
+        if not isinstance(payload, dict) or frozenset(payload) not in {frozenset(required), frozenset(required | {"source_receipts"})}:
             raise AuthorityDenied("context.request", "context request fields are invalid")
         binding = self._binding(uid)
         purpose, intent = payload["purpose"], payload["intent"]
@@ -318,6 +509,10 @@ class AuthorityService:
         if not isinstance(raw_sources, list) or len(raw_sources) > 64:
             raise AuthorityDenied("context.lineage", "source lineage exceeds its bound")
         sources = tuple(HostContext.from_wire(item) for item in raw_sources)
+        raw_receipts = payload.get("source_receipts", [])
+        if not isinstance(raw_receipts, list) or len(raw_receipts) > 64:
+            raise AuthorityDenied("context.lineage", "source receipts are malformed or mixed with context lineage")
+        parsed_receipts = [SourceReceipt.from_wire(item) for item in raw_receipts]
         now = self.monotonic()
         for source in sources:
             self._verify_context_signature(source)
@@ -327,11 +522,34 @@ class AuthorityService:
                     or (not allow_expired_sources and source.monotonic_expires_at <= now)
                     or source.policy_revision != self._policy_revision()):
                 raise AuthorityDenied("context.lineage", "source context belongs to another principal")
+            parsed_receipts.extend(source.source_receipts)
+        if len(parsed_receipts) > 64:
+            raise AuthorityDenied("context.lineage", "complete source receipt closure exceeds its bound")
+        receipts = tuple({receipt.receipt_id: receipt for receipt in parsed_receipts}.values())
+        if len(receipts) != len(parsed_receipts):
+            # Repeated references are accepted only if they name identical
+            # immutable signed evidence; conflicting copies are rejected.
+            for receipt in parsed_receipts:
+                if receipt != next(item for item in receipts if item.receipt_id == receipt.receipt_id):
+                    raise AuthorityDenied("context.lineage", "source receipt identifier has conflicting claims")
+        for receipt in receipts:
+            self._verify_source_receipt(receipt, binding, allow_expired=allow_expired_sources)
         trace_id = payload["trace_id"] or secrets.token_urlsafe(24)
         if not isinstance(trace_id, str) or not 1 <= len(trace_id) <= 128:
             raise AuthorityDenied("context.request", "trace ID is invalid")
         sensitivity, lineage_hash = self.policy.classify(
             purpose=purpose, intent=intent, source_contexts=sources, binding=binding)
+        if receipts:
+            order = (Sensitivity.PUBLIC, Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN)
+            # A root-issued receipt may refine an otherwise empty UNKNOWN
+            # source set, but can never lower sensitivity or public-clear it.
+            receipt_sensitivity = max((item.sensitivity for item in receipts), key=order.index)
+            sensitivity = max((sensitivity, receipt_sensitivity), key=order.index)
+            lineage_hash = canonical_digest({
+                "base": lineage_hash,
+                "receipts": sorted((item.receipt_id, canonical_digest(item.claims())) for item in receipts),
+                "parents": sorted(item.parent_lineage_hash for item in receipts),
+            })
         if not isinstance(sensitivity, Sensitivity):
             raise AuthorityDenied("policy.classification", "host policy returned an invalid classification")
         now = self.monotonic()
@@ -343,12 +561,13 @@ class AuthorityService:
             policy_revision=self._policy_revision(), capabilities=binding.capabilities,
             issued_at_monotonic=now, monotonic_expires_at=now + lease,
             nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24), signature="pending",
+            source_receipts=receipts,
         )
         signature = self._sign(context.claims())
         return HostContext(**{**context.__dict__, "signature": signature}).to_wire() if hasattr(context, "__dict__") else self._signed_context(context, signature)
 
     def create_background_consent(self, context: HostContext, *, provider_id: str,
-                                  owner_generation: str, ttl_seconds: int = 3600) -> BackgroundConsent:
+                                  owner_generation: int, ttl_seconds: int = 300) -> BackgroundConsent:
         """Issue source-bound consent for fixed automatic memory stages.
 
         Intended only for the root-owned memory enqueue handler. The user
@@ -362,8 +581,9 @@ class AuthorityService:
         if (not isinstance(provider_id, str) or not provider_id
                 or type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 86_400):
             raise AuthorityDenied("memory.consent", "memory consent binding or lifetime is invalid")
-        current_generation = self.profile_generations.get(context.profile_id)
-        if (not current_generation or owner_generation != current_generation
+        owner_state = self.memory_owner_state
+        if (owner_state is None or type(owner_generation) is not int or owner_generation < 1
+                or owner_state(context.profile_id) != (provider_id, owner_generation)
                 or self.rules.get(("memory-capture", f"memory:{provider_id}:enqueue")) is None):
             raise AuthorityDenied("memory.consent", "memory provider generation or enqueue target is not enrolled")
         enqueue_rule = self.rules[("memory-capture", f"memory:{provider_id}:enqueue")]
@@ -390,7 +610,7 @@ class AuthorityService:
 
     def context_for_job(self, source_context_wire: bytes | Mapping[str, Any],
                         consent_wire: bytes | Mapping[str, Any], *, provider_id: str,
-                        owner_generation: str, action: str, trace_id: str | None = None,
+                        owner_generation: int, action: str, trace_id: str | None = None,
                         lease_seconds: float = 30.0) -> HostContext:
         """Reissue a fresh short context from valid persisted source consent."""
         source = self._decode_wire(source_context_wire, "source context")
@@ -416,6 +636,7 @@ class AuthorityService:
                 or consent["provider_id"] != provider_id
                 or consent["owner_generation"] != owner_generation
                 or consent["policy_revision"] != self._policy_revision()
+                or type(consent["owner_generation"]) is not int
                 or action not in consent["allowed_actions"]
                 or type(consent["issued_at_unix"]) not in (int, float)
                 or type(consent["expires_at_unix"]) not in (int, float)
@@ -428,7 +649,8 @@ class AuthorityService:
         if (binding.profile_id != source_context.profile_id
                 or binding.principal_id != source_context.principal_id
                 or binding.namespace_id != source_context.namespace_id
-                or self.profile_generations.get(binding.profile_id) != owner_generation):
+                or self.memory_owner_state is None
+                or self.memory_owner_state(binding.profile_id) != (provider_id, owner_generation)):
             raise AuthorityDenied("memory.consent", "background owner identity or generation changed")
         if source_context.policy_revision != self._policy_revision():
             raise AuthorityDenied("memory.consent", "source policy revision is stale")
@@ -441,15 +663,15 @@ class AuthorityService:
 
     def perform_memory_effect(self, source_context_wire: bytes | Mapping[str, Any],
                               consent_wire: bytes | Mapping[str, Any], *, provider_id: str,
-                              owner_generation: str, action: str, capability: str,
+                              owner_generation: int, action: str, capability: str,
                               payload: bytes,
                               trace_id: str | None = None, timeout: float = 30.0,
                               cancelled: Callable[[], bool] = lambda: False) -> Any:
         """Run one memory stage with a fresh context, authorization and broker dispatch."""
         capabilities = {"extract": "memory-extraction", "embed": "memory-embedding",
                         "capture": "memory-capture"}
-        capability = capabilities.get(action)
-        if capability != capabilities.get(action) or not isinstance(payload, bytes):
+        expected_capability = capabilities.get(action)
+        if expected_capability is None or capability != expected_capability or not isinstance(payload, bytes):
             raise AuthorityDenied("memory.effect", "memory stage or canonical payload is invalid")
         context = self.context_for_job(source_context_wire, consent_wire, provider_id=provider_id,
                                        owner_generation=owner_generation, action=action,
@@ -460,11 +682,19 @@ class AuthorityService:
             "context": context.to_wire(), "capability": capability, "target": target,
             "recipient": None, "request_digest": digest, "retry_index": 0,
         })
+        consent_value = self._decode_wire(consent_wire, "background consent")
+        consent_id = consent_value.get("consent_id") if isinstance(consent_value, dict) else None
+        if not isinstance(consent_id, str):
+            raise AuthorityDenied("memory.consent", "background consent identifier is missing")
+        def effect_cancelled() -> bool:
+            owner_current = (self.memory_owner_state is not None
+                             and self.memory_owner_state(context.profile_id) == (provider_id, owner_generation))
+            return cancelled() or not owner_current or not self.background_consent_active(consent_id)
         result = self._perform_effect(context.uid, os.getpid(), {
             "authorization": authorization, "operation": f"memory.{action}",
             "payload": __import__("base64").b64encode(payload).decode("ascii"),
             "timeout": timeout,
-        }, cancelled=cancelled)
+        }, cancelled=effect_cancelled)
         import base64
         return BrokeredEffectResponse(result["status"], base64.b64decode(result["body"], validate=True),
                                       result["headers"], result["receipt_id"])
@@ -520,15 +750,14 @@ class AuthorityService:
             retry_index=retry_index, issued_at_monotonic=now,
             monotonic_expires_at=expiry, grant_id=secrets.token_urlsafe(24),
             nonce=secrets.token_urlsafe(24), context_digest=_context_digest(context),
-            signature="pending",
+            signature="pending", source_receipts=context.source_receipts,
         )
         signed = self._sign(grant.claims())
         return {**grant.claims(), "signature": signed}
 
     def _verify_effect(self, uid: int, payload: Any) -> dict[str, Any]:
         grant, context, rule = self._parse_effect_request(uid, payload)
-        self._consume(grant)
-        return {"operation": rule.operation, "consumed_at_monotonic": self.monotonic(),
+        return {"operation": rule.operation, "verified_at_monotonic": self.monotonic(),
                 "verification_receipt": secrets.token_urlsafe(24)}
 
     def _perform_effect(self, uid: int, peer_pid: int, payload: Any,
@@ -601,6 +830,7 @@ class AuthorityService:
         self._assert_current_context(context, binding, uid)
         self._assert_grant_current(grant, binding, uid)
         if (grant.context_digest != _context_digest(context)
+                or grant.source_receipts != context.source_receipts
                 or grant.capability != payload["capability"] or grant.target != payload["target"]
                 or grant.recipient != payload["recipient"] or grant.request_digest != payload["request_digest"]
                 or grant.retry_index != payload["retry_index"]):
@@ -620,6 +850,8 @@ class AuthorityService:
                 or context.monotonic_expires_at <= self.monotonic()
                 or context.policy_revision != self._policy_revision()):
             raise AuthorityDenied("context.stale", "host context is stale or bound to another principal")
+        for receipt in context.source_receipts:
+            self._verify_source_receipt(receipt, binding)
 
     def _assert_grant_current(self, grant: EffectAuthorization, binding: PrincipalBinding, uid: int) -> None:
         if (grant.uid != uid or grant.principal_id != binding.principal_id
@@ -627,6 +859,8 @@ class AuthorityService:
                 or grant.monotonic_expires_at <= self.monotonic()
                 or grant.policy_revision != self._policy_revision()):
             raise AuthorityDenied("grant.stale", "effect grant is stale or bound to another principal")
+        for receipt in grant.source_receipts:
+            self._verify_source_receipt(receipt, binding)
 
     def _context_from_grant(self, grant: EffectAuthorization, binding: PrincipalBinding) -> HostContext:
         # Handler receives only claims already authenticated by this service.
@@ -639,6 +873,7 @@ class AuthorityService:
             capabilities=binding.capabilities, issued_at_monotonic=grant.issued_at_monotonic,
             monotonic_expires_at=grant.monotonic_expires_at, nonce=grant.nonce,
             grant_id=grant.grant_id, signature="verified-in-service",
+            source_receipts=grant.source_receipts,
         )
 
     def _consume(self, grant: EffectAuthorization) -> None:
@@ -653,6 +888,20 @@ class AuthorityService:
 
     def _verify_context_signature(self, context: HostContext) -> None:
         self._verify_signature(context.claims(), context.signature)
+
+    def _verify_source_receipt(self, receipt: SourceReceipt, binding: PrincipalBinding,
+                               *, allow_expired: bool = False) -> None:
+        self._verify_signature(receipt.claims(), receipt.signature)
+        if (receipt.issuer_id != "host-authority"
+                or receipt.uid != binding.uid
+                or receipt.principal_id != binding.principal_id
+                or receipt.profile_id != binding.profile_id
+                or receipt.namespace_id != binding.namespace_id
+                or receipt.process_generation != self.profile_generations.get(binding.profile_id, "unversioned")
+                or receipt.policy_revision != self._policy_revision()
+                or receipt.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL}
+                or not allow_expired and receipt.monotonic_expires_at <= self.monotonic()):
+            raise AuthorityDenied("source.lineage", "source receipt is stale or bound to another host identity")
 
     def _verify_grant_signature(self, grant: EffectAuthorization) -> None:
         self._verify_signature(grant.claims(), grant.signature)

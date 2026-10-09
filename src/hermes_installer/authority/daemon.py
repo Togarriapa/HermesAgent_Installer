@@ -14,7 +14,8 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .service import AuthorityPolicy, AuthorityService, EffectHandler, EffectRule, PrincipalBinding
+from .service import (AuthorityPolicy, AuthorityService, ChildDelegationRule,
+                      EffectHandler, EffectRule, PrincipalBinding)
 from .types import AuthorityDenied
 
 DEFAULT_SOCKET_DIR = Path("/run/hermes-installer/authority")
@@ -28,7 +29,8 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
                             process_profiles: Mapping[str, Any] | None = None,
                             process_handler_options: Mapping[str, Any] | None = None,
                             profile_generations: Mapping[str, str] | None = None,
-                            background_consent_active: Any | None = None) -> AuthorityService:
+                            background_consent_active: Any | None = None,
+                            delegations: Mapping[str, ChildDelegationRule] | None = None) -> AuthorityService:
     """Build the root service from already validated protected enrollments.
 
     `process_profiles`, policy, rules and handler adapters must be created by
@@ -48,6 +50,7 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
         rules=rules, handlers=registered, policy=policy,
         profile_generations=profile_generations,
         background_consent_active=background_consent_active,
+        delegations=delegations,
     )
 
 
@@ -71,16 +74,23 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
     vault = RootCredentialVault()
     enrollment = load_protected_enrollment(vault=vault)
     handlers: dict[tuple[str, str], EffectHandler] = {}
+    artifact_catalog = load_artifact_catalog(enrollment) if ARTIFACT_CATALOG_PATH.exists() else None
+    effective_process_options = dict(process_handler_options or {})
+    if artifact_catalog is not None:
+        resolver = lambda store_id, sha256: artifact_catalog.resolve_store_id(
+            store_id, enrollment.artifact_staging_directory, expected_uid=0)
+        if "artifact_resolver" in effective_process_options:
+            raise AuthorityDenied("authority.configuration", "process artifact resolver is fixed by protected catalog")
+        effective_process_options["artifact_resolver"] = resolver
 
     if enrollment.process_profiles:
         from hermes_installer.managed_process_custodian import build_managed_process_handlers
         handlers.update(build_managed_process_handlers(
-            enrollment.process_profiles, **dict(process_handler_options or {})))
+            enrollment.process_profiles, **effective_process_options))
 
     if ARTIFACT_CATALOG_PATH.exists():
         from hermes_installer.artifacts import build_artifact_handlers
-        catalog = load_artifact_catalog(enrollment)
-        handlers.update(build_artifact_handlers(catalog, enrollment.artifact_staging_directory,
+        handlers.update(build_artifact_handlers(artifact_catalog, enrollment.artifact_staging_directory,
                                                expected_uid=0))
 
     # These integrations are composed only when their actual protected
@@ -92,6 +102,8 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
         for record in enrollment.provider_enrollments.values():
             fields = dict(record)
             fields.pop("id", None)
+            fields["models"] = frozenset(fields["models"])
+            fields["allowed_sensitivities"] = frozenset(fields["allowed_sensitivities"])
             route = ProviderEnrollment(**fields)
             typed[(route.target, route.recipient)] = route
         handlers.update(build_provider_handlers(enrollments=typed, admission=provider_admission,
@@ -117,27 +129,27 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
         signing_key_path=AUTHORITY_KEY_PATH, key_id=enrollment.key_id,
         bindings_by_uid=enrollment.bindings_by_uid, rules=enrollment.rules,
         handlers=handlers, policy=enrollment.policy,
+        delegations=enrollment.delegations,
         profile_generations={profile_id: profile.generation
                              for profile_id, profile in enrollment.process_profiles.items()},
         background_consent_active=background_consent_active,
     )
     if enrollment.memory_providers:
-        from hermes_installer.memory.broker import MemoryTarget, build_memory_handlers
-        from hermes_installer.memory.runtime import build_memory_runtime
+        from hermes_installer.memory.broker import MemoryTarget, build_memory_handlers, build_memory_runtime
         targets = {}
         for raw in enrollment.memory_providers.values():
             target = MemoryTarget(**{key: value for key, value in raw.items() if key != "id"})
             targets[(target.profile_id, target.namespace_id, target.provider)] = target
         runtime = build_memory_runtime(
             targets, service, root_data_dir=Path("/var/lib/hermes-installer/memory"), vault=vault)
-        if background_consent_active is None:
-            background_consent_active = runtime["consent_active"]
-            service.background_consent_active = background_consent_active
+        service.memory_owner_state = runtime["owner_state"]
+        active_lookup = runtime["consent_active"]
+        if callable(active_lookup):
+            service.background_consent_active = active_lookup
         memory_handlers = build_memory_handlers(
             targets=runtime["targets"], owner_state=runtime["owner_state"], queue=runtime["queue"],
             ipc=runtime["ipc"], engines=runtime["engines"], eligibility=runtime["eligibility"],
-            maximum_timeout=runtime["maximum_timeout"], consent_issuer=service.create_background_consent,
-            context_for_job=service.context_for_job, perform_memory_effect=service.perform_memory_effect,
+            maximum_timeout=runtime["maximum_timeout"],
         )
         enrolled_operations = {(rule.operation, rule.target) for rule in enrollment.rules.values()}
         for key, handler in memory_handlers.items():
