@@ -38,7 +38,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             root_policy={"journal_root_id": "installer-authority-journal-v1",
                          "service_home_root_id": "hermes-home-v1", "service_work_root_id": "hermes-work-v1",
                          "service_data_root_id": "hermes-data-v1",
-                         "service_parent_root": "/var/lib/hermes-installer/services"},
+                         "service_parent_root": "/var/lib/hermes-installer/services/hermes-agent-native-v1"},
             authority_base_template={"schema": 1, "key_id": "root-key", "principals": {}, "rules": {},
                                      "authentik": {}, "process_profiles": {}, "provider_enrollments": {},
                                      "mcp_services": {}, "mcp_http_bindings": {}, "memory_providers": {},
@@ -71,8 +71,8 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         self.assertEqual(prepared.activation_state, "prepared")
         self.assertEqual(prepared.records, ())
         self.assertEqual(prepared.root_journal_roots, (dict(authorization.root_journal_root),))
-        self.assertEqual(prepared.home_root.as_posix(), "/var/lib/hermes-installer/services/home")
-        self.assertEqual(prepared.data_root.as_posix(), "/var/lib/hermes-installer/services/data")
+        self.assertEqual(prepared.home_root.as_posix(), "/var/lib/hermes-installer/services/hermes-agent-native-v1/home")
+        self.assertEqual(prepared.data_root.as_posix(), "/var/lib/hermes-installer/services/hermes-agent-native-v1/data")
 
     def test_prepared_policy_can_activate_only_after_a_root_runtime_receipt(self):
         record = {"generation": "template-generation", "service_uid": 0, "service_gid": 0,
@@ -86,7 +86,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             root_policy={"journal_root_id": "installer-authority-journal-v1",
                          "service_home_root_id": "hermes-home-v1", "service_work_root_id": "hermes-work-v1",
                          "service_data_root_id": "hermes-data-v1",
-                         "service_parent_root": "/var/lib/hermes-installer/services"},
+                         "service_parent_root": "/var/lib/hermes-installer/services/hermes-agent-native-v1"},
             authority_base_template={"schema": 1, "key_id": "root-key", "principals": {}, "rules": {},
                                      "authentik": {}, "process_profiles": {}, "provider_enrollments": {},
                                      "mcp_services": {}, "mcp_http_bindings": {}, "memory_providers": {},
