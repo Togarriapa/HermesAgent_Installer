@@ -11,6 +11,7 @@ from unittest.mock import patch
 from hermes_installer.authority.source_observers import (
     LiveSourceProducer,
     NativeInitialInputDelivery,
+    RootSelectedNativeExecution,
     SourceObserverEnrollment,
     SourceObserverRegistry,
     SourceReceiptHandle,
@@ -379,18 +380,17 @@ class SourceObserverContracts(unittest.TestCase):
         object.__setattr__(self.selected_package, "adapter_records", {
             "hermes-main": replace(_Adapter(), generation=package_generation),
         })
-        selected = SimpleNamespace(
-            selection_handle="s" * 43,
+        selected = RootSelectedNativeExecution(
+            schema=1, selection_handle="s" * 43, kind="resource-task",
+            execution_handle=SimpleNamespace(parent_closure_digest=_digest("c")),
+            process_handle=SimpleNamespace(process_id="managed-task-process"),
             observer_enrollment_id=self.enrollment.observer_enrollment_id,
             profile_id=self.enrollment.profile_id,
             generation=self.enrollment.generation,
             native_package_id=self.enrollment.package_id,
             native_package_generation=package_generation,
             source_action_id=self.enrollment.source_action_id,
-            service_generation_digest=_digest("2"),
-            expires_monotonic=39.0,
-            execution_handle=SimpleNamespace(parent_closure_digest=_digest("c")),
-            process_handle=SimpleNamespace(process_id="managed-task-process"),
+            service_generation_digest=_digest("2"), expires_monotonic=39.0,
         )
         target = SimpleNamespace(
             process_id="managed-task-process", profile_id=self.identity.profile_id,
@@ -489,6 +489,10 @@ class SourceObserverContracts(unittest.TestCase):
         self.assertTrue(self.registry._receipt_delivery_bindings[str(result)].delivered)
         self.assertIsNone(input_delivery.take_selected_native_input(
             peer_uid=2001, peer_pid=733, peer_pidfd=901))
+        self.assertTrue(input_delivery.cancel_selected_input(selected))
+        self.assertNotIn(str(result), self.service._source_receipt_handles)
+        self.assertFalse(input_delivery.cancel_selected_input(selected))
+        self.assertFalse(self.registry.revoke_source_handle(result))
 
     def test_root_recipe_capsule_is_resolved_from_signed_receipt_and_consumed_once(self):
         event_id = self.record()
