@@ -1,0 +1,3 @@
+# Resource backend and remote role bindings v4
+
+Sol additive original RB07/RB-T08 and HI13/HI-T13 exactbackend integration. Active service_generations.resource_backend_enrollments/resource_body_recipes strictrows tie selectedresource/nativehandler/action/schema/sourceobserver/accountscope/consent/recipe/digest; rootprivate invocation consumesfresh childgrant, nativeworkflow nestedsideeffects independentlyauthorized. No legacyexecutionmetadata or callerURL/account/bodyauthority. HI13row explicitlyassigns gatewayprofile-role artifact, rootactualroleproof binds sealedlaunchnativeentrypoint/peer/ready event, notartifactexistence or inferredrecipe/callerhashmap. ExactcontractJSONupdated; no newIDs/frozenbaselinechange ornative/accountacceptanceclaim.

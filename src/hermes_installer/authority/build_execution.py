@@ -20,6 +20,7 @@ import secrets
 import stat
 import sys
 import time
+import base64
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Protocol
@@ -1304,7 +1305,7 @@ class RootBuildExecutionService:
                                          cancelled=lambda: cancelled() or self.monotonic() >= deadline)
         # The current-index rename in publish is the success linearization point;
         # cancellation after that point cannot revoke an already-issued receipt.
-        return {"status": 200, "body": _canonical(attestation.to_wire()),
+        return {"status": 200, "body": base64.b64encode(_canonical(attestation.to_wire())).decode("ascii"),
                 "headers": {"content-type": "application/json"}, "receipt_id": attestation.attestation_id}
 
     def _resolve_inputs(self, profile: Any) -> ResolvedBuildInputs:
