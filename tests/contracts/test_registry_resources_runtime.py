@@ -295,6 +295,18 @@ class ResourcesRuntimeTests(unittest.TestCase):
         self.assertFalse(artifact.readiness.materialized)
         self.assertTrue(any("PluginContext loader" in blocker for blocker in artifact.blockers))
 
+    def test_unavailable_plugin_keeps_canonical_adapter_and_specific_blocker(self):
+        artifact = materialize_runtime_resource(
+            "plugins", "agent37-discovery", "1.0.0",
+            "plugins/agent37-discovery.yaml", {"name": "agent37-discovery"},
+            {}, "a" * 40, "2.3.1",
+        )
+        self.assertEqual(artifact.adapter_id, "agent37-discovery")
+        self.assertIsNone(artifact.native_path)
+        self.assertFalse(artifact.readiness.materialized)
+        self.assertTrue(any("No one-to-one reviewed seed-source crosswalk" in blocker
+                            for blocker in artifact.blockers))
+
     def test_selected_cron_handler_delegates_only_the_pinned_profile_launch(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
