@@ -1644,8 +1644,11 @@ class WebhookVerifier:
         delivery_header = replay.get("deliveryIdHeader") if isinstance(replay, Mapping) else None
         if delivery_header is None and isinstance(policy, Mapping):
             delivery_header = policy.get("deliveryIdHeader")
-        event_id = normalized.get(delivery_header.lower(), "") if isinstance(delivery_header, str) else ""
-        if not event_id:
+        if isinstance(delivery_header, str):
+            event_id = normalized.get(delivery_header.lower(), "")
+            if not event_id:
+                raise ResourceRuntimeError("configured webhook delivery identity header is missing")
+        else:
             event_id = hashlib.sha256(body).hexdigest()
         if not event_id or len(event_id) > 256 or any(ord(c) < 0x20 for c in event_id):
             raise ResourceRuntimeError("webhook delivery identity is missing or invalid")

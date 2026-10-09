@@ -158,6 +158,8 @@ class ResourcesRuntimeTests(unittest.TestCase):
         self.assertEqual(receipt.body_sha256, hashlib.sha256(body).hexdigest())
         with self.assertRaisesRegex(ResourceRuntimeError, "duplicate"):
             verifier.verify("example", spec, headers, body, secret)
+        with self.assertRaisesRegex(ResourceRuntimeError, "identity header is missing"):
+            verifier.verify("example", spec, {key: value for key, value in headers.items() if key != "X-Delivery"}, body, secret)
         with self.assertRaises(ResourceRuntimeError):
             verifier.verify("example", spec, {**headers, "X-Signature": "sha256=" + "0" * 64}, body, secret)
 
