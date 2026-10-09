@@ -58,6 +58,8 @@ class OAuthAttempt:
     nonce: str = field(repr=False)
     verifier: str = field(repr=False)
     authorize_url: str = field(repr=False)
+    issued_at_monotonic: float = field(default=0.0, repr=False)
+    monotonic_expires_at: float = field(default=0.0, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,7 +228,8 @@ class ChatGPTPlanAuth:
     def __init__(self, *, host_id: str, agent_name: str, transport: OAuthTransport,
                  vault: HostCredentialVault,
                  verify_id_token: Callable[[str, str, str], Mapping[str, object]] | None = None,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time,
+                 monotonic_clock: Callable[[], float] = time.monotonic):
         try:
             canonical_host_id = "urn:uuid:" + str(uuid.UUID(host_id.removeprefix("urn:uuid:")))
         except (TypeError, ValueError, AttributeError):
@@ -238,9 +241,11 @@ class ChatGPTPlanAuth:
         self.host_id, self.agent_name = host_id, agent_name
         self.transport, self.vault = transport, vault
         self.verify_id_token = verify_id_token or OpenAIIDTokenVerifier(transport, clock=clock)
-        self.clock = clock
+        self.clock, self.monotonic_clock = clock, monotonic_clock
         self._locks_guard = threading.Lock()
         self._account_locks: dict[str, threading.Lock] = {}
+        self._used_attempts: dict[str, float] = {}
+        self._attempts_lock = threading.Lock()
 
     def begin(self, *, callback_uri: str, client_id: str | None = None,
               id_token_hint: str | None = None, login_hint: str | None = None) -> OAuthAttempt:
@@ -264,7 +269,11 @@ class ChatGPTPlanAuth:
         if login_hint:
             params["login_hint"] = _nonempty(login_hint, "login hint", 512)
         url = AUTHORIZE_ENDPOINT + "?" + urlencode(params)
-        return OAuthAttempt(callback_uri, self.host_id, selected, state, nonce, verifier, url)
+        issued = self.monotonic_clock()
+        if isinstance(issued, bool) or not isinstance(issued, (int, float)) or not math.isfinite(issued):
+            raise OAuthAttemptError("Host monotonic clock is unavailable")
+        return OAuthAttempt(callback_uri, self.host_id, selected, state, nonce, verifier, url,
+                            float(issued), float(issued) + 600.0)
 
     def complete(self, attempt: OAuthAttempt, callback_url: str, *, credential_ref: str,
                  expected_subject: str | None = None) -> ChatGPTAccount:
@@ -283,12 +292,23 @@ class ChatGPTPlanAuth:
                 or parsed.username or parsed.password
                 or parsed.netloc != f"127.0.0.1:{expected_port}"):
             raise OAuthAttemptError("OAuth callback endpoint does not match the pending request")
+        now = self.monotonic_clock()
+        if (isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now)
+                or attempt.issued_at_monotonic > now or attempt.monotonic_expires_at <= now
+                or attempt.monotonic_expires_at - attempt.issued_at_monotonic > 600):
+            raise OAuthAttemptError("OpenAI sign-in attempt expired")
         fields = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
         if any(len(v) != 1 for v in fields.values()):
             raise OAuthAttemptError("OAuth callback contains duplicate parameters")
         state = _nonempty(fields.get("state", [None])[0], "state", 256)
         if not secrets.compare_digest(state, attempt.state):
             raise OAuthAttemptError("OAuth callback state did not match")
+        state_key = hashlib.sha256(state.encode("utf-8")).hexdigest()
+        with self._attempts_lock:
+            self._used_attempts = {key: expiry for key, expiry in self._used_attempts.items() if expiry > now}
+            if state_key in self._used_attempts:
+                raise OAuthAttemptError("OpenAI sign-in callback was already consumed")
+            self._used_attempts[state_key] = float(attempt.monotonic_expires_at)
         if fields.get("error"):
             raise OAuthAttemptError("OpenAI authorization was declined or failed")
         code = _nonempty(fields.get("code", [None])[0], "authorization code")
