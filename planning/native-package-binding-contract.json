@@ -59,7 +59,8 @@
       "package_id",
       "generation",
       "resolver_digest",
-      "expires_monotonic"
+      "expires_monotonic",
+      "compiled_closure_sha256"
     ],
     "semantics": "Opaque binding resolves fixed in-process immutable loader/resolver only; not bearer authority. Root registry fixes issuer channels and action enrollment. No root access to arbitrary plugin imports from caller paths.",
     "selected_boot_api": {
@@ -69,7 +70,18 @@
         "schema=1"
       ],
       "selection": "Root resolves exactly one active package from authenticated live peer/process profile/generation and protected package catalog; zero or ambiguous denies. No caller env/path/profile/package ID supplies authority. Existing explicit bind_native_package(package_id,generation) only optional equality assertion against same root-resolved selection, never choice.",
-      "loader": "Returned opaque binding and read_native_resolver result feed fixed root-installed loader; actual entrypoint imports only root-selected compiled closure verified digest/read-only mount. No user site/plugins/PYTHONPATH/importlib caller path/fallback discovery. Closure module mapping and allowed imports pinned by package artifact, external dependencies root attested catalog only."
+      "loader": "Returned opaque binding and read_native_resolver result feed fixed root-installed loader; actual entrypoint imports only root-selected compiled closure verified digest/read-only mount. No user site/plugins/PYTHONPATH/importlib caller path/fallback discovery. Closure module mapping and allowed imports pinned by package artifact, external dependencies root attested catalog only.",
+      "response_fields": [
+        "schema=1",
+        "opaque_binding_handle",
+        "package_id",
+        "profile_id",
+        "generation",
+        "resolver_digest",
+        "compiled_closure_sha256",
+        "expires_monotonic"
+      ],
+      "response_note": "Closure digest non-authoritative presentation only permits fixedmount derivation; service_mount_id/path selection rootonly, actualmount/closure verifiedroot. Existingresolver preimage unchanged."
     }
   },
   "plugin_effects": {
