@@ -742,6 +742,23 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 result = dict(executed)
                 result["profile_id"] = context.profile_id
                 result["namespace_id"] = context.namespace_id
+                if action == "search":
+                    semantic_result = result.get("result")
+                    records = semantic_result.get("records") if isinstance(semantic_result, Mapping) else None
+                    if not isinstance(records, list) or len(records) > limit:
+                        raise BrokerUnavailable("memory search returned no bounded validated record set")
+                    scoped_records = []
+                    for record in records:
+                        if (not isinstance(record, Mapping) or set(record) != {"id", "source", "text"}
+                                or record.get("source") != target.provider
+                                or not isinstance(record.get("id"), str)
+                                or not isinstance(record.get("text"), str)):
+                            raise BrokerUnavailable("memory search record differs from its validated provider schema")
+                        # Scope labels are derived by the root broker after provider
+                        # response validation; upstream/caller JSON cannot choose them.
+                        scoped_records.append({**record, "profile": context.profile_id,
+                                               "namespace": context.namespace_id})
+                    result["records"] = scoped_records
                 if action == "doctor":
                     probe = result.get("result")
                     if not isinstance(probe, Mapping):
