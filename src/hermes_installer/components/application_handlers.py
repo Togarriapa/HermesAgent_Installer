@@ -281,3 +281,21 @@ def build_hyperframes_render_fixture(
         180,
         2048,
     )
+
+
+def build_hyperframes_probe_invocation(
+    ffprobe_executable: str,
+    work_root: str,
+) -> ComponentInvocation:
+    """Build a bounded local probe for the fixed Hyperframes output artifact."""
+    ffprobe = _absolute_path(ffprobe_executable, "ffprobe executable")
+    work = _absolute_path(work_root, "work root")
+    output = work.rstrip("/") + "/rendered.mp4"
+    return ComponentInvocation(
+        "hyperframes", ffprobe,
+        ("-v", "error", "-count_frames", "-show_entries",
+         "stream=codec_type,codec_name,width,height,nb_read_frames:format=duration",
+         "-of", "json", output),
+        work, (), (), ("component.hyperframes.read-private-work",),
+        "PRIVATE", "deny", 30, 256,
+    )

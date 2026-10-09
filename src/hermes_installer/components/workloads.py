@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
+import json
+import math
+import re
 from types import MappingProxyType
 from threading import Lock
 from typing import Callable, Mapping
@@ -15,6 +18,7 @@ from typing import Callable, Mapping
 from hermes_installer.components.application_handlers import (
     ComponentInvocation,
     build_graphify_code_fixture,
+    build_hyperframes_probe_invocation,
     build_hyperframes_render_fixture,
 )
 from hermes_installer.components.browser_use import build_browser_use_fixture_invocation
@@ -70,10 +74,53 @@ def _graphify_fixture(args, runtime_roots, work_roots):
 def _hyperframes_fixture(args, runtime_roots, work_roots):
     if args:
         raise ValueError("hyperframes-render-fixture takes no caller-controlled paths")
-    return (build_hyperframes_render_fixture(
-        runtime_roots["hyperframes"], work_roots["hyperframes-fixture"],
-        work_roots["hyperframes"],
-    ),)
+    return (
+        build_hyperframes_render_fixture(
+            runtime_roots["hyperframes"], work_roots["hyperframes-fixture"],
+            work_roots["hyperframes"],
+        ),
+        build_hyperframes_probe_invocation(
+            runtime_roots["ffprobe"], work_roots["hyperframes"],
+        ),
+    )
+
+
+def _verify_hyperframes_fixture(result: object) -> object:
+    if not isinstance(result, Mapping) or result.get("exit_code") != 0:
+        raise RuntimeError("Hyperframes output probe did not exit successfully")
+    output = result.get("stdout")
+    if not isinstance(output, str):
+        raise RuntimeError("Hyperframes output probe returned no structured media metadata")
+    try:
+        metadata = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Hyperframes output probe returned invalid JSON") from exc
+    if not isinstance(metadata, dict):
+        raise RuntimeError("Hyperframes output probe returned invalid media metadata")
+    streams = metadata.get("streams")
+    fmt = metadata.get("format")
+    if not isinstance(streams, list) or not streams or not isinstance(fmt, dict):
+        raise RuntimeError("Hyperframes output is missing a video stream or duration")
+    video = next((stream for stream in streams if isinstance(stream, dict)
+                  and stream.get("codec_type") == "video"), None)
+    if video is None:
+        raise RuntimeError("Hyperframes output has no video stream")
+    duration_value = fmt.get("duration")
+    frames_value = video.get("nb_read_frames")
+    try:
+        duration = float(duration_value) if isinstance(duration_value, (str, int, float)) else math.nan
+    except ValueError:
+        duration = math.nan
+    frames = int(frames_value) if isinstance(frames_value, str) and re.fullmatch(r"[0-9]{1,4}", frames_value) else frames_value
+    width, height = video.get("width"), video.get("height")
+    if (isinstance(duration_value, bool) or not math.isfinite(duration) or not 0 < duration <= 30
+            or isinstance(frames, bool) or not isinstance(frames, int) or not 1 <= frames <= 900
+            or isinstance(width, bool) or not isinstance(width, int) or not 1 <= width <= 1920
+            or isinstance(height, bool) or not isinstance(height, int) or not 1 <= height <= 1080
+            or not isinstance(video.get("codec_name"), str) or not video["codec_name"]):
+        raise RuntimeError("Hyperframes output dimensions, frame count, codec, or duration are outside fixture bounds")
+    return {"duration_seconds": float(duration), "frames": frames,
+            "width": width, "height": height, "codec": video["codec_name"]}
 
 
 _REGISTERED: Mapping[str, _Definition] = MappingProxyType({
@@ -90,8 +137,10 @@ _REGISTERED: Mapping[str, _Definition] = MappingProxyType({
     ),
     "hyperframes-render-fixture": _Definition(
         frozenset(),
-        frozenset({"component.hyperframes.read-fixture", "component.hyperframes.write-private-work"}),
+        frozenset({"component.hyperframes.read-fixture", "component.hyperframes.write-private-work",
+                   "component.hyperframes.read-private-work"}),
         2048, 180, "deny", None, Decimal("0"), _hyperframes_fixture,
+        _verify_hyperframes_fixture,
     ),
 })
 
