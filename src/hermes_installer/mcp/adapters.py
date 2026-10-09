@@ -19,12 +19,16 @@ class MCPService:
 
 SERVICES: Mapping[str, MCPService] = {
     "figma": MCPService("figma", "https://mcp.figma.com/mcp",
-        frozenset({"get_design_context", "get_metadata", "get_file", "get_file_nodes",
-                   "get_screenshot", "download_assets", "get_figjam"}),
+        frozenset({"get_design_context", "get_metadata", "get_screenshot", "download_assets",
+                   "get_figjam", "get_variable_defs", "get_motion_context", "get_libraries",
+                   "search_design_system", "get_code_connect_map", "get_context_for_code_connect"}),
         "Figma OAuth", "selected file", True,
         "https://developers.figma.com/docs/figma-mcp-server/tools-and-prompts/"),
     "revenuecat": MCPService("revenuecat", "https://mcp.revenuecat.ai/mcp",
-        frozenset({"list_projects", "get_project", "list_apps", "get_app"}),
+        frozenset({"get-app", "list-apps", "get-project-ui-config", "get-refund-request-preferences",
+                   "list-audit-logs", "list-collaborators", "get-product", "list-products",
+                   "get-entitlement", "list-entitlements", "get-offering", "list-offerings",
+                   "get-paywall", "list-paywalls", "get-overview-metrics", "get-revenue-metric"}),
         "RevenueCat OAuth or scoped API v2 key", "selected project", True,
         "https://www.revenuecat.com/docs/tools/mcp/tools-reference"),
     "google-gmail": MCPService("google-gmail", "https://gmailmcp.googleapis.com/mcp/v1",
@@ -47,8 +51,8 @@ SERVICES: Mapping[str, MCPService] = {
         frozenset({"get_event", "list_events", "list_calendars", "search_events"}),
         "Google Workspace Developer Preview OAuth", "one selected event or calendar", True,
         "https://developers.google.com/workspace/calendar/api/v3/reference/mcp"),
-    "google-people": MCPService("google-people", "https://people.googleapis.com/mcp",
-        frozenset({"search_directory_people"}),
+    "google-contacts": MCPService("google-contacts", "https://people.googleapis.com/mcp",
+        frozenset({"search_contacts", "get_contact"}),
         "Google Workspace Developer Preview OAuth", "one explicitly selected directory person", True,
         "https://developers.google.com/people/api/mcp"),
     "home-assistant": MCPService("home-assistant", None,
@@ -58,7 +62,7 @@ SERVICES: Mapping[str, MCPService] = {
         frozenset(), "user-configured OAuth", "one selected Google resource", False,
         "https://github.com/taylorwilsdon/google_workspace_mcp"),
     "playwright": MCPService("playwright", None,
-        frozenset(), "host-managed pinned local process", "isolated loopback fixture", True,
+        frozenset({"browser_navigate", "browser_snapshot", "browser_screenshot"}), "host-managed pinned local process", "isolated loopback fixture", True,
         "https://playwright.dev/docs/getting-started-mcp"),
 }
 
@@ -127,7 +131,7 @@ class ReadOnlyAdapter:
         for name, schema in discovered.items():
             annotations = schema.get("annotations", {})
             if (name in self.client.allowed_tools
-                    and annotations.get("readOnlyHint") is True
+                    and annotations.get("readOnlyHint") is not False
                     and annotations.get("destructiveHint") is not True):
                 accepted[name] = schema
         self.client._tools = accepted
