@@ -84,6 +84,10 @@ def read_selected_native_input(stream: Any) -> str:
     any mismatch prevents the first provider request.
     """
     global _initial_input, _initial_input_failed
+    # A second/failed admission must not inherit a previous turn's lexical
+    # completion handles, even if this process unexpectedly stays alive.
+    _CURRENT_NATIVE_TURN_HANDLE.set(None)
+    _CURRENT_FINAL_RESPONSE.set(None)
     with _initial_input_lock:
         _initial_input_failed = True
     try:
