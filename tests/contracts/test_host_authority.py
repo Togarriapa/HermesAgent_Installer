@@ -93,30 +93,29 @@ class HostAuthorityIPCContracts(unittest.TestCase):
             handlers={(rule.operation, rule.target): handler},
             policy=FixturePolicy(),
         )
-        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.listener.bind(str(self.socket_path))
-        self.socket_path.chmod(0o600)
-        self.listener.listen(16)
-        self.listener.settimeout(0.05)
         self.stop = threading.Event()
-        self.acceptor = threading.Thread(target=self._accept, daemon=True)
+        self.server_error = []
+        def serve():
+            try:
+                self.service.serve_unix(
+                    self.socket_path, socket_gid=os.getgid(), stop_event=self.stop,
+                    expected_uid=os.getuid(), max_clients=16,
+                )
+            except BaseException as exc:
+                self.server_error.append(exc)
+        self.acceptor = threading.Thread(target=serve, daemon=True)
         self.acceptor.start()
+        deadline = time.monotonic() + 2
+        while not self.socket_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
         self.client = AuthorityClient(self.socket_path, server_uid=os.getuid(), timeout=2)
 
     def tearDown(self):
         self.stop.set()
         self.acceptor.join(timeout=1)
-        self.listener.close()
+        self.assertFalse(self.acceptor.is_alive())
+        self.assertEqual(self.server_error, [])
         self.temp.cleanup()
-
-    def _accept(self):
-        while not self.stop.is_set():
-            try:
-                conn, _ = self.listener.accept()
-            except TimeoutError:
-                continue
-            thread = threading.Thread(target=self.service.handle_connection, args=(conn,), daemon=True)
-            thread.start()
 
     def _context_and_grant(self, payload=b"capture"):
         context = self.client.context(purpose="memory-capture", intent="store approved source")

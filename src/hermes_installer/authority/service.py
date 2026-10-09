@@ -123,6 +123,8 @@ class AuthorityService:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
             raise ValueError("UID map must be an explicit protected identity mapping")
+        if any(key != (rule.capability, rule.target) for key, rule in rules.items()):
+            raise ValueError("effect rule map keys must match their protected rule bindings")
         enrolled_operations = {(rule.operation, rule.target) for rule in rules.values()}
         if set(handlers) - enrolled_operations:
             raise ValueError("effect handler has no protected enrollment rule")
