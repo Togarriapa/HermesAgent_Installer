@@ -284,6 +284,36 @@ class AuthorityService:
             raise AuthorityDenied("source.capsule", "root source handle revocation is unavailable")
         return revoke(handle)
 
+    def resolve_retained_source_receipt(
+        self, handle: Any, *, payload_digest: str,
+        profile_id: str | None = None, generation: str | None = None,
+    ) -> SourceReceipt:
+        """Resolve a root-retained receipt for another protected root verifier.
+
+        This is an in-process integrity check, not an RPC or receipt minting
+        API. Callers must already hold the opaque handle from a protected
+        registry; the exact stored, signed receipt is returned only if its
+        payload and any requested identity pins match.
+        """
+        from .source_observers import SourceReceiptHandle
+
+        if (type(handle) is not SourceReceiptHandle
+                or not isinstance(payload_digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", payload_digest)
+                or profile_id is not None and (not isinstance(profile_id, str) or not profile_id)
+                or generation is not None and (not isinstance(generation, str) or not generation)):
+            raise AuthorityDenied("source.receipt", "root retained receipt lookup is malformed")
+        with self._lock:
+            receipt = self._source_receipt_handles.get(str(handle))
+            if receipt is None:
+                raise AuthorityDenied("source.receipt", "root retained source receipt is unavailable")
+            if (receipt.payload_digest != payload_digest
+                    or profile_id is not None and receipt.profile_id != profile_id
+                    or generation is not None and receipt.process_generation != generation):
+                raise AuthorityDenied("source.receipt", "root retained source receipt binding does not match")
+            self._verify_source_receipt(receipt, self._binding(receipt.uid))
+            return receipt
+
     def attach_native_runtime_observer(self, observer: Any) -> None:
         """Attach the root-only post-effect observer exactly once after loading.
 
@@ -1444,7 +1474,7 @@ class AuthorityService:
                 or not isinstance(body, bytes) or len(body) > 4 * 1024 * 1024
                 or not isinstance(headers, Mapping) or len(headers) > 32
                 or any(not isinstance(key, str) or not isinstance(item, str)
-                       or any(char in key + item for char in "\\r\\n\\x00")
+                       or any(char in key + item for char in "\r\n\x00")
                        for key, item in headers.items())
                 or not isinstance(receipt_id, str) or not 1 <= len(receipt_id) <= 256
                 or source_handle is not None and (not isinstance(source_handle, str)
