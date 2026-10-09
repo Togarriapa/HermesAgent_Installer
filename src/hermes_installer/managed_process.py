@@ -435,7 +435,8 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
     if any(re.search(r"(?i)(?:--?(?:token|secret|password|api[-_]?key|credential)(?:=|$)|authorization:\s*bearer\s+)", value)
            for value in spec.argv[1:]):
         raise ManagedProcessError("secret-bearing command arguments are not accepted")
-    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", spec.profile_id):
+    if (not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", spec.profile_id)
+            or spec.profile_id in {".", ".."}):
         raise ManagedProcessError("profile identity is invalid")
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", spec.journal_operation):
         raise ManagedProcessError("journal operation id is invalid")
@@ -806,8 +807,11 @@ class ManagedProcessSupervisor:
                             if name not in spec.env_allowlist)
         unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
         description = "HermesInstaller " + spec.service_identity + " " + spec.journal_operation
+        # Keep Hermes' native profile layout: HERMES_HOME=/hermes and this
+        # profile's exact writable root at /hermes/profiles/<profile_id>.
+        profile_mount = "/hermes/profiles/" + spec.profile_id
         relative_cwd = cwd.relative_to(data).as_posix()
-        target_cwd = "/hermes" if relative_cwd == "." else "/hermes/" + relative_cwd
+        target_cwd = profile_mount if relative_cwd == "." else profile_mount + "/" + relative_cwd
         properties = [
             "--property=Type=exec",
             "--property=RuntimeMaxSec=" + format(float(spec.max_lifetime_seconds), ".6f").rstrip("0").rstrip(".") + "s",
@@ -831,7 +835,7 @@ class ManagedProcessSupervisor:
             "--property=RestrictAddressFamilies=AF_UNIX",
             "--property=PrivateNetwork=yes",
             "--property=IPAddressDeny=any",
-            "--property=BindPaths=" + str(data) + ":/hermes",
+            "--property=BindPaths=" + str(data) + ":" + profile_mount,
             "--property=BindReadOnlyPaths=" + str(artifact) + ":" + str(artifact),
             "--property=UnsetEnvironment=" + " ".join(unset_names),
         ]
