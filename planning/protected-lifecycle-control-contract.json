@@ -560,7 +560,8 @@
           "selection": "Compiler emits immutable RootNativeOutputSelection {schema:1,artifact_role,output_kind,artifact_id,package_id,generation,payload_sha256,size_bytes,member_tree_sha256,compiler_artifact_id,compiler_sha256,source_receipt_handles}; stored registry binding verifies actual prepared transaction/source receipts and exact role/kind/member mapping before writer publishes. Caller-provided selection document alone cannot authorize.",
           "member_modes": "JSON mode integers exactly420 or493 (octal0644/0755), not strings; tar permission bits correspond. Entry point closure_files schema exactly {relative_path:str,sha256:str,size_bytes:int,mode:int}; normalized path relative to closure/, sorted unique complete tree. No mode coercion.",
           "overlay_member_path": "overlay/manifest.json is the sole member row for boundary-overlay JSON role. Exact JSON fields schema=1,source_commit,compiler_artifact_id,compiler_sha256,members; no unknown fields. members use NativeOutputMember path/sha256/size_bytes/mode rows referencing actual closure/... members. Boundary overlay document itself may be included at fixed archive overlay/manifest.json; it is outside compiled closure tree."
-        }
+        },
+        "candidate_index_identity": "Exception preserving existing native index_delivery: native-candidate-index role artifact_id is exactly native-candidate-index:<package_id>:<generation>, same string in output receipt, ArtifactCatalog and entrypoint candidate_index.artifact_id. Other roles use native-output:<artifact_role>:<package_id>:<generation>. No separate presentation alias/different manifest identity. Components bounded as existing selection, exact receipt bytes/hash required."
       }
     },
     "resources_source": {
