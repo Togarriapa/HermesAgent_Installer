@@ -232,7 +232,7 @@
       "archive_tag": "archive/luna-host-isolation-30d63fdf",
       "annotated_tag_object": "0b590ed1730e7fed37b03f846cbc6a027f60dcce",
       "target": "30d63fdf33eca7f778519ff64c33225a60c1a933",
-      "verified": "fresh remote refs and fetched tag; failed unique history preserved by immutable annotated archive tag, not claimed integrated runtime acceptance",
+      "verified": "fresh remote refs and fetched annotated tag at exact observed object preserve failed unique history; no claim of external tag protection or integrated runtime acceptance",
       "state": "ref retired after archival preservation"
     }
   },
