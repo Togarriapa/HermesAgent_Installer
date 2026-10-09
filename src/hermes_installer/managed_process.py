@@ -68,6 +68,62 @@ class ChildIdentity:
     pidfd: int
 
 
+def provision_service_identity(owned_root: OwnedRoot, journal: Journal, profile_id: str,
+                              operation: str) -> tuple[str, int, int]:
+    """Create or verify the fixed non-login UID bound to one private profile.
+
+    Existing account names are accepted only when the durable installer journal
+    already records ownership. No account gets a shell, home directory, or
+    supplemental groups.
+    """
+    if not isinstance(owned_root, OwnedRoot) or not isinstance(journal, Journal):
+        raise ManagedProcessError("profile identity provisioning requires durable owned state")
+    if not isinstance(profile_id, str) or not profile_id or len(profile_id) > 256:
+        raise ManagedProcessError("profile identity is invalid")
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", operation):
+        raise ManagedProcessError("profile identity operation is invalid")
+    username = "hermes-" + hashlib.sha256(profile_id.encode("utf-8")).hexdigest()[:16]
+    registered = any(item["resource_id"] == username and item["state"] == "active"
+                     for item in journal.owned("service-user"))
+    try:
+        account = pwd.getpwnam(username)
+    except KeyError:
+        account = None
+    created = False
+    if account is None:
+        sudo = shutil.which("sudo", path="/usr/bin:/bin")
+        useradd = shutil.which("useradd", path="/usr/sbin:/usr/bin:/bin")
+        if sudo is None or useradd is None:
+            raise ManagedProcessError("privileged profile identity provisioning is unavailable")
+        completed = subprocess.run(
+            [sudo, "-n", useradd, "--system", "--no-create-home",
+             "--home-dir=/nonexistent", "--shell=/usr/sbin/nologin",
+             "--user-group", username],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/sbin:/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+            timeout=5, check=False,
+        )
+        if completed.returncode != 0:
+            raise ManagedProcessError("dedicated profile identity could not be provisioned")
+        created = True
+        try:
+            account = pwd.getpwnam(username)
+        except KeyError:
+            raise ManagedProcessError("new profile identity is missing from NSS") from None
+    if not created and not registered:
+        raise ManagedProcessError("unrecorded existing account conflicts with the installer identity")
+    assert account is not None
+    if (account.pw_uid in {0, os.getuid()} or account.pw_gid in {0}
+            or account.pw_dir != "/nonexistent" or account.pw_shell != "/usr/sbin/nologin"
+            or os.getgrouplist(username, account.pw_gid) != [account.pw_gid]):
+        raise ManagedProcessError("profile account is not an isolated non-login identity")
+    journal.record_owned("service-user", username, "active")
+    journal.checkpoint(operation, "identity-ready", {
+        "service_user": username, "uid": account.pw_uid, "gid": account.pw_gid,
+    })
+    return username, account.pw_uid, account.pw_gid
+
+
 def _within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
