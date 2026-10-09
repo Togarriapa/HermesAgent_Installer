@@ -1,8 +1,8 @@
-"""Pinned source contracts for the 34 non-MCP components (R0063-R0096).
+"""Pinned source contracts for non-MCP component adapters.
 
-These records preserve identity and per-component requirements. They do not
-imply that a source has been installed, authenticated, exercised, or accepted
-on a target. MCP identities are implemented in hermes_installer.mcp.
+The selected repository is resolved from each contract's selected_source_url.
+Alternative repositories remain separate pinned offers and never become aliases
+or handlers for the selected source.
 """
 from __future__ import annotations
 
@@ -12,12 +12,23 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
+class AlternateSourcePin:
+    identity: str | None
+    url: str | None
+    revision: str | None
+    default_branch: str | None
+    license: str | None
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
 class ComponentAdapterContract:
     component_id: str
     requirement_ids: tuple[str, ...]
     requested_name: str
     aliases: tuple[str, ...]
     source_urls: tuple[str, ...]
+    selected_source_url: str
     source_selection: str
     source_identity: str | None
     revision: str | None
@@ -32,6 +43,7 @@ class ComponentAdapterContract:
     identity_confidence: str
     selected_for_runtime_activation: bool
     source_resolved: bool
+    alternate_sources: tuple[AlternateSourcePin, ...]
 
     def unresolved_reason(self) -> str | None:
         if not self.source_resolved or self.source_identity is None or self.revision is None:
@@ -62,7 +74,7 @@ class ComponentAdapterContract:
 
         return ComponentSpec(
             id=self.component_id,
-            source_url=self.source_urls[0],
+            source_url=self.selected_source_url,
             revision=self.revision,
             aliases=self.aliases,
             kind=self.source_kind,
@@ -86,6 +98,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/affaan-m/ECC"
     ],
+    "selected_source_url": "https://github.com/affaan-m/ECC",
     "source_selection": "explicit-seed",
     "source_identity": "affaan-m/ECC",
     "revision": "ef648e01899ba3e8dc6371642deaaf64b4477775",
@@ -101,7 +114,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "jakeschincariol-replica-skill",
@@ -115,6 +129,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/Jakeschincariol/replica-skill"
     ],
+    "selected_source_url": "https://github.com/Jakeschincariol/replica-skill",
     "source_selection": "explicit-seed",
     "source_identity": "Jakeschincariol/replica-skill",
     "revision": "77c9436fb3d18c3d58169efb8caf4fe906b0dc51",
@@ -130,7 +145,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "graphify",
@@ -146,6 +162,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/Graphify-Labs/graphify"
     ],
+    "selected_source_url": "https://github.com/Graphify-Labs/graphify",
     "source_selection": "explicit-seed",
     "source_identity": "Graphify-Labs/graphify",
     "revision": "5b74d7d74911cf435c8f1636b6f96ea202cc6246",
@@ -161,7 +178,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "public-apis-public-apis",
@@ -175,6 +193,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/public-apis/public-apis"
     ],
+    "selected_source_url": "https://github.com/public-apis/public-apis",
     "source_selection": "explicit-seed",
     "source_identity": "public-apis/public-apis",
     "revision": "874e5879d20843f7c2a5822cef4c0752127b3775",
@@ -190,7 +209,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "adewaskar-jarvis",
@@ -204,6 +224,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/adewaskar/jarvis"
     ],
+    "selected_source_url": "https://github.com/adewaskar/jarvis",
     "source_selection": "explicit-seed",
     "source_identity": "adewaskar/jarvis",
     "revision": "1c4016afdf86f7043efc6882ceffef84ad0d8783",
@@ -219,7 +240,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "omniroute",
@@ -234,6 +256,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/diegosouzapw/OmniRoute"
     ],
+    "selected_source_url": "https://github.com/diegosouzapw/OmniRoute",
     "source_selection": "explicit-seed",
     "source_identity": "diegosouzapw/OmniRoute",
     "revision": "4ea24a2f8e1faf8a606c8b8dce45e5b1ab6c9bb0",
@@ -249,7 +272,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "ponytail",
@@ -263,6 +287,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/DietrichGebert/ponytail"
     ],
+    "selected_source_url": "https://github.com/DietrichGebert/ponytail",
     "source_selection": "explicit-seed",
     "source_identity": "DietrichGebert/ponytail",
     "revision": "9cc65d03aa2da1db7121b912d03596409ee340b8",
@@ -278,7 +303,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "addy-osmani-s-agent-skills",
@@ -292,6 +318,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/addyosmani/agent-skills"
     ],
+    "selected_source_url": "https://github.com/addyosmani/agent-skills",
     "source_selection": "explicit-seed",
     "source_identity": "addyosmani/agent-skills",
     "revision": "1401c8b8030e023baeebb31781a6653fe8e93026",
@@ -307,7 +334,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "claude-mem",
@@ -321,6 +349,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/thedotmack/claude-mem"
     ],
+    "selected_source_url": "https://github.com/thedotmack/claude-mem",
     "source_selection": "explicit-seed",
     "source_identity": "thedotmack/claude-mem",
     "revision": "fa8ab09f06aa05f958c5225cf3756ce52a3ebb96",
@@ -336,7 +365,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "browser-use",
@@ -350,6 +380,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/browser-use/browser-use"
     ],
+    "selected_source_url": "https://github.com/browser-use/browser-use",
     "source_selection": "explicit-seed",
     "source_identity": "browser-use/browser-use",
     "revision": "c75e8476e26d18b7617643bc2ae082fae8eae431",
@@ -365,7 +396,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "agent-memory",
@@ -379,6 +411,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/rohitg00/agentmemory"
     ],
+    "selected_source_url": "https://github.com/rohitg00/agentmemory",
     "source_selection": "selected-by-user-star-policy",
     "source_identity": "rohitg00/agentmemory",
     "revision": "df3d4a83b966d8d415cb9180d5a4724b07f729dc",
@@ -394,7 +427,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "user-authorized most-starred matching repository selection; dated primary API/search evidence retained",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "scientific-agent-skills",
@@ -408,6 +442,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/K-Dense-AI/scientific-agent-skills"
     ],
+    "selected_source_url": "https://github.com/K-Dense-AI/scientific-agent-skills",
     "source_selection": "explicit-seed",
     "source_identity": "K-Dense-AI/scientific-agent-skills",
     "revision": "92ace75ac21efe19a620434e0ca4e356081fe807",
@@ -423,7 +458,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "diagram-design",
@@ -437,6 +473,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/cathrynlavery/diagram-design"
     ],
+    "selected_source_url": "https://github.com/cathrynlavery/diagram-design",
     "source_selection": "explicit-seed",
     "source_identity": "cathrynlavery/diagram-design",
     "revision": "f4547ee95f88e5b28a52517feff6b6c11cc657f9",
@@ -452,7 +489,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "antropic-cybersecurity-skills",
@@ -468,6 +506,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/mukul975/Anthropic-Cybersecurity-Skills"
     ],
+    "selected_source_url": "https://github.com/mukul975/Anthropic-Cybersecurity-Skills",
     "source_selection": "explicit-seed",
     "source_identity": "mukul975/Anthropic-Cybersecurity-Skills",
     "revision": "54a798831d2266a3ca61ce68a7acb80b81160d57",
@@ -483,7 +522,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "awesome-harness-engineering",
@@ -498,6 +538,7 @@ _ROWS = json.loads(r"""
       "https://github.com/ai-boost/awesome-harness-engineering",
       "https://github.com/walkinglabs/awesome-harness-engineering"
     ],
+    "selected_source_url": "https://github.com/ai-boost/awesome-harness-engineering",
     "source_selection": "selected-by-user-star-policy",
     "source_identity": "ai-boost/awesome-harness-engineering",
     "revision": "6826dfaaaa6a996507336e4539f4b88d2fff709e",
@@ -513,7 +554,17 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "user-authorized most-starred matching repository selection; dated primary API/search evidence retained",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": [
+      {
+        "identity": "walkinglabs/awesome-harness-engineering",
+        "url": "https://github.com/walkinglabs/awesome-harness-engineering",
+        "revision": "cff9b006ef64c624a62cbb1ee36b0c4b2b3a67ad",
+        "default_branch": "main",
+        "license": "NOASSERTION",
+        "status": "identity-and-revision-verified; ARM64/functionality not verified"
+      }
+    ]
   },
   {
     "component_id": "open-viking",
@@ -528,6 +579,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/volcengine/OpenViking"
     ],
+    "selected_source_url": "https://github.com/volcengine/OpenViking",
     "source_selection": "explicit-seed",
     "source_identity": "volcengine/OpenViking",
     "revision": "e7b2e974b1fb97cd8c6087ff013181ddfec94f77",
@@ -543,7 +595,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "panniantong-agent-reach",
@@ -557,6 +610,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/Panniantong/Agent-Reach"
     ],
+    "selected_source_url": "https://github.com/Panniantong/Agent-Reach",
     "source_selection": "explicit-seed",
     "source_identity": "Panniantong/Agent-Reach",
     "revision": "94f06c1969dfc1834001269d79d3ad0972d9dee6",
@@ -572,7 +626,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "superpowers",
@@ -586,6 +641,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/obra/superpowers"
     ],
+    "selected_source_url": "https://github.com/obra/superpowers",
     "source_selection": "explicit-seed",
     "source_identity": "obra/superpowers",
     "revision": "8ca22dba9a94f28898bbce59f2537ff4d87c747d",
@@ -601,7 +657,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "gstack",
@@ -615,6 +672,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/garrytan/gstack"
     ],
+    "selected_source_url": "https://github.com/garrytan/gstack",
     "source_selection": "explicit-seed",
     "source_identity": "garrytan/gstack",
     "revision": "20eb6202fa8ea83a882e7c0463b722cd8a31af1e",
@@ -630,7 +688,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "ruflo",
@@ -644,6 +703,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/ruvnet/ruflo"
     ],
+    "selected_source_url": "https://github.com/ruvnet/ruflo",
     "source_selection": "explicit-seed",
     "source_identity": "ruvnet/ruflo",
     "revision": "58e0ae7e14e68aab45a4127d6f42f567bbcfb328",
@@ -659,7 +719,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "open-executive",
@@ -673,6 +734,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/SenteLabsAI/OpenExecutive"
     ],
+    "selected_source_url": "https://github.com/SenteLabsAI/OpenExecutive",
     "source_selection": "explicit-seed",
     "source_identity": "SenteLabsAI/OpenExecutive",
     "revision": "303d45eaa0b2323f2e9646d19bf35dbcc98c6d71",
@@ -688,7 +750,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "ui-ux-pro-max",
@@ -702,6 +765,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill"
     ],
+    "selected_source_url": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
     "source_selection": "explicit-seed",
     "source_identity": "nextlevelbuilder/ui-ux-pro-max-skill",
     "revision": "50d8a7de0900119855614541f15a1a616691eb33",
@@ -717,7 +781,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "taste-skill",
@@ -731,6 +796,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/Leonxlnx/taste-skill"
     ],
+    "selected_source_url": "https://github.com/Leonxlnx/taste-skill",
     "source_selection": "explicit-seed",
     "source_identity": "Leonxlnx/taste-skill",
     "revision": "18dfc928b135629e0eddfdd445a06400d04ed439",
@@ -746,7 +812,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "awesome-design",
@@ -760,6 +827,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/bergside/awesome-design-skills"
     ],
+    "selected_source_url": "https://github.com/bergside/awesome-design-skills",
     "source_selection": "selected-by-user-star-policy",
     "source_identity": "bergside/awesome-design-skills",
     "revision": "f631a09b4fcc0166f2e2c1a8c81906ef680c57e8",
@@ -775,7 +843,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "user-authorized most-starred matching repository selection; dated primary API/search evidence retained",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "emil-kowalski-impeccable",
@@ -792,11 +861,12 @@ _ROWS = json.loads(r"""
       "https://github.com/pbakaus/impeccable",
       "https://github.com/emilkowalski/skills"
     ],
+    "selected_source_url": "https://github.com/pbakaus/impeccable",
     "source_selection": "explicit-seed",
-    "source_identity": "emilkowalski/skills",
-    "revision": "e8a175de22ae1e49370fc144c1f3bb9aeedf988d",
+    "source_identity": "pbakaus/impeccable",
+    "revision": "d631a8827f99414d2b6daba4ef08b7f8701751d7",
     "source_default_branch": "main",
-    "license": "MIT",
+    "license": "Apache-2.0",
     "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
     "expected_architecture": "linux/aarch64; unverified",
     "component_type": "Impeccable skill/command routing adapter",
@@ -807,7 +877,17 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "Impeccable is pbakaus; Emil Kowalski skills preserved as a distinct optional pack",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": [
+      {
+        "identity": "emilkowalski/skills",
+        "url": "https://github.com/emilkowalski/skills",
+        "revision": "e8a175de22ae1e49370fc144c1f3bb9aeedf988d",
+        "default_branch": "main",
+        "license": "MIT",
+        "status": "identity-and-revision-verified; ARM64/functionality not verified"
+      }
+    ]
   },
   {
     "component_id": "hyperframes",
@@ -821,6 +901,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/heygen-com/hyperframes"
     ],
+    "selected_source_url": "https://github.com/heygen-com/hyperframes",
     "source_selection": "explicit-seed",
     "source_identity": "heygen-com/hyperframes",
     "revision": "46f6cb356785bed79e1ce7b79d7e7accc697786a",
@@ -836,7 +917,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "humanizer",
@@ -850,6 +932,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/blader/humanizer"
     ],
+    "selected_source_url": "https://github.com/blader/humanizer",
     "source_selection": "explicit-seed",
     "source_identity": "blader/humanizer",
     "revision": "225a6f39ac85f76ee48dbad772ea4abe4ed6c9d8",
@@ -865,7 +948,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "obsidian-skills",
@@ -879,6 +963,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/kepano/obsidian-skills"
     ],
+    "selected_source_url": "https://github.com/kepano/obsidian-skills",
     "source_selection": "explicit-seed",
     "source_identity": "kepano/obsidian-skills",
     "revision": "3ccff5338ea700537839b21900aa5358a0402c98",
@@ -894,7 +979,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "banana-claude",
@@ -908,6 +994,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/AgriciDaniel/banana-claude"
     ],
+    "selected_source_url": "https://github.com/AgriciDaniel/banana-claude",
     "source_selection": "explicit-seed",
     "source_identity": "AgriciDaniel/banana-claude",
     "revision": "6a2b1b51fdcc35932184f06e513646a6f6f4f7d8",
@@ -923,7 +1010,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "screenshot-to-code",
@@ -937,6 +1025,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/abi/screenshot-to-code"
     ],
+    "selected_source_url": "https://github.com/abi/screenshot-to-code",
     "source_selection": "explicit-seed",
     "source_identity": "abi/screenshot-to-code",
     "revision": "d026163f586dfa8c5c10d28c36edd59a9d3b0e88",
@@ -952,7 +1041,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "scrapegraph-ai",
@@ -966,6 +1056,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/ScrapeGraphAI/Scrapegraph-ai"
     ],
+    "selected_source_url": "https://github.com/ScrapeGraphAI/Scrapegraph-ai",
     "source_selection": "explicit-seed",
     "source_identity": "ScrapeGraphAI/Scrapegraph-ai",
     "revision": "194055e203afce41ed4e70365dbc416bad756115",
@@ -981,7 +1072,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "book-to-skill",
@@ -996,10 +1088,11 @@ _ROWS = json.loads(r"""
       "https://github.com/virgiliojr94/book-to-skill",
       "https://github.com/apple-ouyang/book-to-skill"
     ],
+    "selected_source_url": "https://github.com/virgiliojr94/book-to-skill",
     "source_selection": "selected-by-user-star-policy",
-    "source_identity": "apple-ouyang/book-to-skill",
-    "revision": "a24960ac89a3baa96a87cdf5ebaecf16c5d2eab1",
-    "source_default_branch": "main",
+    "source_identity": "virgiliojr94/book-to-skill",
+    "revision": "e180fc46365e8c1aab0120778cc8a40b9515324b",
+    "source_default_branch": "master",
     "license": "MIT",
     "source_status": "identity-and-revision-verified; ARM64/functionality not verified",
     "expected_architecture": "linux/aarch64; unverified",
@@ -1011,7 +1104,17 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "user-authorized most-starred matching repository selection; dated primary API/search evidence retained",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": [
+      {
+        "identity": "apple-ouyang/book-to-skill",
+        "url": "https://github.com/apple-ouyang/book-to-skill",
+        "revision": "a24960ac89a3baa96a87cdf5ebaecf16c5d2eab1",
+        "default_branch": "main",
+        "license": "MIT",
+        "status": "identity-and-revision-verified; ARM64/functionality not verified"
+      }
+    ]
   },
   {
     "component_id": "apple-design",
@@ -1025,6 +1128,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/dickwu/apple-design-skill"
     ],
+    "selected_source_url": "https://github.com/dickwu/apple-design-skill",
     "source_selection": "selected-by-user-star-policy",
     "source_identity": "dickwu/apple-design-skill",
     "revision": "904b0eedc7cc778152f545506075d5bb5219ce77",
@@ -1041,7 +1145,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "user-authorized most-starred matching repository selection; dated primary API/search evidence retained",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   },
   {
     "component_id": "latent-spaces-brag",
@@ -1055,6 +1160,7 @@ _ROWS = json.loads(r"""
     "source_urls": [
       "https://github.com/latent-spaces/brag"
     ],
+    "selected_source_url": "https://github.com/latent-spaces/brag",
     "source_selection": "explicit-seed",
     "source_identity": "latent-spaces/brag",
     "revision": "7079945d391573edebe48fdc0a23b39c4b4e8726",
@@ -1070,7 +1176,8 @@ _ROWS = json.loads(r"""
     ],
     "identity_confidence": "explicit seed identity; metadata verification is not compatibility proof",
     "selected_for_runtime_activation": false,
-    "source_resolved": true
+    "source_resolved": true,
+    "alternate_sources": []
   }
 ]
 """)
@@ -1083,10 +1190,12 @@ COMPONENT_ADAPTERS = tuple(
             "aliases": tuple(row["aliases"]),
             "source_urls": tuple(row["source_urls"]),
             "blockers": tuple(row["blockers"]),
+            "alternate_sources": tuple(AlternateSourcePin(**pin) for pin in row["alternate_sources"]),
         }
     )
     for row in _ROWS
 )
+
 _BY_NAME: dict[str, ComponentAdapterContract] = {}
 for _adapter in COMPONENT_ADAPTERS:
     for _name in (_adapter.component_id, *_adapter.aliases):
@@ -1096,11 +1205,43 @@ for _adapter in COMPONENT_ADAPTERS:
             raise ValueError(f"component alias collision: {_name}")
         _BY_NAME[_key] = _adapter
 
-# These IDs belong to the separate MCP protocol adapters; their source aliases
-# remain authoritative in planning/component-contracts.json.
+# MCP handlers are owned by hermes_installer.mcp; these IDs and links remain
+# in planning/component-contracts.json to prevent duplicated protocol handlers.
 MCP_COMPONENT_IDS = frozenset(
     {"figma-mcp", "playwright-mcp", "revenuecat-mcp", "google", "home-assistant"}
 )
+
+_OPTIONAL_SOURCE_ROW = json.loads(r"""
+{
+  "component_id": "emil-kowalski-skills",
+  "requirement_id": "R0087",
+  "aliases": [
+    "emilkowalski/skills"
+  ],
+  "parent_component": "emil-kowalski-impeccable",
+  "aliases": [
+    "emilkowalski/skills"
+  ],
+  "source_identity": "emilkowalski/skills",
+  "source_url": "https://github.com/emilkowalski/skills",
+  "revision": "e8a175de22ae1e49370fc144c1f3bb9aeedf988d",
+  "default_branch": "main",
+  "license": "MIT",
+  "status": "optional distinct source pack; not selected for automatic import"
+}
+""")
+OPTIONAL_SOURCE_OFFERS = (AlternateSourcePin(
+    identity=_OPTIONAL_SOURCE_ROW["source_identity"],
+    url=_OPTIONAL_SOURCE_ROW["source_url"],
+    revision=_OPTIONAL_SOURCE_ROW["revision"],
+    default_branch=_OPTIONAL_SOURCE_ROW["default_branch"],
+    license=_OPTIONAL_SOURCE_ROW["license"],
+    status=_OPTIONAL_SOURCE_ROW["status"],
+),)
+OPTIONAL_SOURCE_ALIASES = {
+    alias.casefold(): "emil-kowalski-skills"
+    for alias in _OPTIONAL_SOURCE_ROW["aliases"]
+}
 
 
 def resolve_component_adapter(name: str) -> ComponentAdapterContract:
@@ -1110,8 +1251,17 @@ def resolve_component_adapter(name: str) -> ComponentAdapterContract:
         raise KeyError(f"unknown component {name!r}; use an explicit source selection") from exc
 
 
+def resolve_optional_source_offer(name: str) -> AlternateSourcePin:
+    try:
+        return OPTIONAL_SOURCE_OFFERS[
+            tuple(OPTIONAL_SOURCE_ALIASES).index(name.casefold())
+        ]
+    except (KeyError, ValueError) as exc:
+        raise KeyError(f"unknown optional source offer {name!r}") from exc
+
+
 def source_copy_specs():
-    """Return only pinned, licensed-independent private source-copy specs."""
+    """Return only pinned private-import specs that are portable source trees."""
     return tuple(
         adapter.as_component_spec()
         for adapter in COMPONENT_ADAPTERS

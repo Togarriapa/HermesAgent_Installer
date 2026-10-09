@@ -1,10 +1,12 @@
-"""Pinned adapter contracts retain every non-MCP source identity."""
+"""Pinned adapter contracts retain source choices without alias conflation."""
 import unittest
 
 from hermes_installer.components.adapters import (
     COMPONENT_ADAPTERS,
     MCP_COMPONENT_IDS,
+    OPTIONAL_SOURCE_OFFERS,
     resolve_component_adapter,
+    resolve_optional_source_offer,
     source_copy_specs,
 )
 
@@ -26,6 +28,25 @@ class ComponentAdapterContractTests(unittest.TestCase):
         )
         with self.assertRaises(KeyError):
             resolve_component_adapter("figma-mcp")
+
+    def test_selected_sources_follow_explicit_source_url_and_keep_alternates(self):
+        impeccable = resolve_component_adapter("pbakaus/impeccable")
+        self.assertEqual("pbakaus/impeccable", impeccable.source_identity)
+        self.assertEqual("d631a8827f99414d2b6daba4ef08b7f8701751d7", impeccable.revision)
+        self.assertEqual("emilkowalski/skills", impeccable.alternate_sources[0].identity)
+
+        book = resolve_component_adapter("book-to-skill")
+        self.assertEqual("virgiliojr94/book-to-skill", book.source_identity)
+        self.assertEqual("e180fc46365e8c1aab0120778cc8a40b9515324b", book.revision)
+        self.assertEqual("apple-ouyang/book-to-skill", book.alternate_sources[0].identity)
+
+    def test_emil_skill_pack_is_a_separate_optional_offer(self):
+        self.assertEqual(1, len(OPTIONAL_SOURCE_OFFERS))
+        offer = resolve_optional_source_offer("emilkowalski/skills")
+        self.assertEqual("emilkowalski/skills", offer.identity)
+        self.assertEqual("e8a175de22ae1e49370fc144c1f3bb9aeedf988d", offer.revision)
+        with self.assertRaises(KeyError):
+            resolve_component_adapter("emilkowalski/skills")
 
     def test_private_import_and_redistribution_review_are_separate(self):
         apple = resolve_component_adapter("apple-design")
