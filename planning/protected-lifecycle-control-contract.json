@@ -606,7 +606,19 @@
         "secure_intake_call": "collect_authentik_actor_credential(stage0_session_handle,policy_selection_handle,*,secure_existing_vault_reference=None)->opaque root_vault_reference",
         "intake": "Installed authorized root local wizard either masked terminal/UI SecretBuffer intake (echo disabled, no argv/env/log/caller user journal) or securely resolves explicit existing root-owned vault reference. Root writes unique credential encrypted/protected through RootCredentialVault under scope authentik-system-read/currentstage0/selectedorigin; metadata owner0 nofollow/private0700 storage0600 and exact original secret-store contract. Plain token memory is bounded<=16KiB, used private network credential resolver only and wiped finally; no raw token return or profile credential file. User-private PrivateFileCredentialStore refs do not substitute root-held reference.",
         "binding": "Root policy handle is minted only after actual credential-store receipt/rootactor/session validation; contains ref not secret. Actual identity observer resolves this selection and token within same root vault; fixed v35 GET paths and v42 stage0 rules. No bearer on worker socket; no credential copy on handoff. Handoff retains existing ref/selection receipt under root new session linkage, old stage0intake revoked.",
-        "failures": "Wrongstage0/plan/actor/origin/refscope/unsafevaultfile/expiry/credentialfailure aborts beforeidentitypublication; pending supported secureintake/setup step. No Homelab write or public eligibility is authorized by intake. Code fixture tests only; no live account mutation/identity assertion from nonsecret form."
+        "failures": "Wrongstage0/plan/actor/origin/refscope/unsafevaultfile/expiry/credentialfailure aborts beforeidentitypublication; pending supported secureintake/setup step. No Homelab write or public eligibility is authorized by intake. Code fixture tests only; no live account mutation/identity assertion from nonsecret form.",
+        "policy_template": {
+          "artifact_id": "installer-authentik-policy-template-v1",
+          "source_path": "plans/amendments/2026-10-09-authentik-template-actor-api-v49/authentik-policy-template-v1.json",
+          "installed_relative_path": "templates/authentik-policy-template-v1.json",
+          "sha256": "617f78fc4a692de6a22dd69456fd92b874c9bc82e0869f3817910c953bd2ceb8",
+          "size_bytes": 261,
+          "role": "template",
+          "policy_revision": "authentik-policy-v1",
+          "resolve_call": "RootInitialCompilationRegistry.resolve_identity_policy_template(stage0_session_handle)->VerifiedIdentityPolicyTemplate",
+          "verification": "Same verified installed deployment closure exact additional template-role artifact, stage0 selected plan/template closure/current actor/lease. Return immutable parsed exact template after held FD SHA/root ownership, no digest-only/session-label or environment constant substitute. Identity intake reads returned policy_revision; no arbitrary caller revision."
+        },
+        "actor_verifier": "Existing InstalledRootSetupActorVerifier.verify_current(plan:VerifiedRootSetupPlan)->Mapping[str,Any] actual current executable/interpreter/imported module closure verifier. RootInitialCompilationRegistry constructs exact verified setup plan from installed deployment plan role + launcher/interpreter/module manifest rows before root-setup-selection/policy publication. No active policy prerequisite; no caller raw plan object. Same actual verifier later normal session checks. Stage0 stores verified plan privately and resolve_actor_plan(stage0_session_handle)->VerifiedRootSetupPlan returns current verified object to intake; no worker path."
       }
     }
   },
