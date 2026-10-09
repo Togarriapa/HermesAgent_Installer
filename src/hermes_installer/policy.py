@@ -10,6 +10,7 @@ import contextlib
 import json
 import math
 import os
+import re
 import sqlite3
 import stat
 import threading
@@ -50,16 +51,33 @@ class DispatchContext:
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     deadline: float | None = None
     cancelled: Callable[[], bool] = field(default=lambda: False, compare=False, repr=False)
+    principal_id: str = ""
+    namespace: str = ""
+    provenance: str = ""
+    capabilities: frozenset[str] = frozenset()
+    policy_revision: str = ""
+    grant_id: str = ""
+    lease_expires_at: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.profile_id or not self.purpose or not self.trace_id:
             raise PolicyDenied("context.missing", "Trusted dispatch context is incomplete")
+        if (not isinstance(self.principal_id, str) or not isinstance(self.namespace, str)
+                or not isinstance(self.provenance, str) or not isinstance(self.capabilities, frozenset)
+                or any(not isinstance(item, str) or not item for item in self.capabilities)
+                or not isinstance(self.policy_revision, str) or not isinstance(self.grant_id, str)):
+            raise PolicyDenied("context.claims", "Host dispatch claims have invalid structure")
+        if self.provenance and not re.fullmatch(r"sha256:[0-9a-f]{64}", self.provenance):
+            raise PolicyDenied("context.provenance", "Host provenance must be a canonical SHA-256 digest")
+        if (isinstance(self.lease_expires_at, bool) or not isinstance(self.lease_expires_at, (int, float))
+                or not math.isfinite(self.lease_expires_at)):
+            raise PolicyDenied("context.lease", "Host lease expiry must be a finite monotonic timestamp")
         if not isinstance(self.sensitivity, Sensitivity) or any(not isinstance(x, Sensitivity) for x in self.derived_from):
             raise PolicyDenied("context.classification", "Sensitivity must be assigned by trusted host policy")
         if not callable(self.cancelled):
             raise PolicyDenied("context.cancel", "Cancellation hook must be callable")
-        if self.deadline is not None and not math.isfinite(self.deadline):
-            raise PolicyDenied("context.deadline", "Deadline must be finite")
+        if self.deadline is not None and (isinstance(self.deadline, bool) or not isinstance(self.deadline, (int, float)) or not math.isfinite(self.deadline)):
+            raise PolicyDenied("context.deadline", "Deadline must be a finite monotonic timestamp")
 
     @property
     def effective_sensitivity(self) -> Sensitivity:
@@ -119,6 +137,32 @@ class DispatchPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class DispatchAuthorization:
+    """Short-lived host-issued authority for one provider dispatch.
+
+    A verifier must derive principal, namespace and effective sensitivity from
+    its trusted host/broker state. Values supplied by a DispatchContext are only
+    correlation claims and never grant access by themselves.
+    """
+    principal_id: str
+    profile_id: str
+    namespace: str
+    trace_id: str
+    capabilities: frozenset[str]
+    effective_sensitivity: Sensitivity
+    policy_revision: str
+    purpose: str
+    capability: str
+    intent_id: str
+    lineage_sha256: str
+    grant_id: str
+    expires_at_monotonic: float
+
+
+ContextAuthorizer = Callable[[DispatchContext, str, str, float, float, Callable[[], bool]], DispatchAuthorization | None]
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderResponse:
     status: int
     body: bytes
@@ -130,6 +174,22 @@ class ProviderResponse:
 class Transport(Protocol):
     def __call__(self, route: Route, model: str, payload: bytes, *, output_token_limit: int,
                  timeout: float, trace_id: str, cancelled: Callable[[], bool]) -> ProviderResponse: ...
+
+
+def request_requires_tools(payload: bytes) -> bool:
+    """Inspect the chat envelope so a caller flag cannot hide tool use."""
+    try:
+        value = json.loads(payload)
+    except (TypeError, ValueError, UnicodeDecodeError):
+        raise PolicyDenied("request.format", "Provider request must be valid JSON") from None
+    if not isinstance(value, dict) or not isinstance(value.get("messages"), list):
+        raise PolicyDenied("request.format", "Provider request must contain a messages array")
+    if value.get("tools") not in (None, []):
+        return True
+    if value.get("tool_choice") not in (None, "none"):
+        return True
+    return any(isinstance(message, dict) and bool(message.get("tool_calls"))
+               for message in value["messages"])
 
 
 def normalize_chat_request(payload: bytes, model: str, output_token_limit: int) -> bytes:
@@ -290,11 +350,83 @@ class Dispatcher:
     """Bounded shared gate for primary inference, tools, memory extraction and retries."""
 
     def __init__(self, policy: DispatchPolicy, ledger: BudgetLedger, transport: Transport, *,
+                 context_authorizer: ContextAuthorizer | None = None,
                  clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep):
+        if not callable(clock) or not callable(sleep):
+            raise TypeError("dispatcher clock and sleeper must be callable")
         self.policy, self.ledger, self.transport = policy, ledger, transport
+        # Missing host authorization intentionally makes this dispatcher unusable.
+        # Test fixtures must inject an explicit synthetic authorizer.
+        self.context_authorizer = context_authorizer
         self.clock, self.sleep = clock, sleep
         self._lock = threading.Lock()
         self._active: set[str] = set()
+
+    def _now(self) -> float:
+        value = self.clock()
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise PolicyDenied("authorization.clock", "Host monotonic clock is invalid")
+        return float(value)
+
+    def _authorize(self, context: DispatchContext, capability: str, intent_id: str,
+                   deadline: float) -> DispatchAuthorization:
+        authorizer = self.context_authorizer
+        now = self._now()
+        if authorizer is None:
+            raise PolicyDenied("authorization.unavailable", "Trusted host provider authorization is unavailable")
+        if context.cancelled():
+            raise PolicyDenied("dispatch.cancelled", "Request was cancelled before provider authorization")
+        required_claims = (context.principal_id, context.namespace, context.provenance,
+                           context.policy_revision, context.grant_id)
+        if (any(not value for value in required_claims) or capability not in context.capabilities
+                or context.lease_expires_at <= now):
+            raise PolicyDenied("authorization.context_unavailable", "Trusted principal, namespace, provenance, capability or lease is unavailable")
+        if not context.provenance.startswith("sha256:") or len(context.provenance) != 71:
+            raise PolicyDenied("authorization.context_unavailable", "Trusted host provenance is invalid")
+        deadline = min(deadline, context.lease_expires_at)
+        remaining = deadline - now
+        if remaining <= 0:
+            raise PolicyDenied("dispatch.deadline", "Request or host lease deadline elapsed before provider authorization")
+        def authorization_cancelled() -> bool:
+            return context.cancelled() or self._now() >= deadline
+        try:
+            # The injected host adapter must implement bounded, cancellable reads
+            # and join any helper it starts before returning or raising.
+            grant = authorizer(context, capability, intent_id, now, remaining, authorization_cancelled)
+        except Exception:
+            if context.cancelled():
+                raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider authorization") from None
+            if self._now() >= deadline:
+                raise PolicyDenied("dispatch.deadline", "Provider authorization exceeded the request deadline") from None
+            raise PolicyDenied("authorization.failed", "Trusted host provider authorization failed") from None
+        finished = self._now()
+        if context.cancelled():
+            raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider authorization")
+        if finished >= deadline:
+            raise PolicyDenied("dispatch.deadline", "Provider authorization exceeded the request deadline")
+        if not isinstance(grant, DispatchAuthorization):
+            raise PolicyDenied("authorization.denied", "Trusted host denied this provider capability")
+        if (not grant.principal_id or not grant.profile_id or not grant.namespace
+                or not grant.trace_id or not grant.policy_revision or not grant.purpose
+                or not grant.capability or not grant.intent_id or not grant.grant_id
+                or grant.principal_id != context.principal_id or grant.profile_id != context.profile_id
+                or grant.namespace != context.namespace or grant.trace_id != context.trace_id
+                or grant.policy_revision != context.policy_revision
+                or grant.lineage_sha256 != context.provenance[7:]
+                or grant.purpose != context.purpose or grant.capability != capability
+                or grant.intent_id != intent_id or capability not in grant.capabilities
+                or not isinstance(grant.effective_sensitivity, Sensitivity)
+                or isinstance(grant.expires_at_monotonic, bool)
+                or not isinstance(grant.expires_at_monotonic, (int, float))
+                or not math.isfinite(grant.expires_at_monotonic)
+                or grant.expires_at_monotonic <= finished
+                or grant.expires_at_monotonic - finished > 3600
+                or grant.expires_at_monotonic > context.lease_expires_at
+                or not isinstance(grant.lineage_sha256, str)
+                or len(grant.lineage_sha256) != 64
+                or any(ch not in "0123456789abcdef" for ch in grant.lineage_sha256)):
+            raise PolicyDenied("authorization.stale", "Host provider authorization is stale, mismatched, or insufficient")
+        return grant
 
     def _wait(self, context: DispatchContext, delay: float, deadline: float) -> None:
         remaining = min(max(0.0, delay), max(0.0, deadline - self.clock()))
@@ -328,7 +460,17 @@ class Dispatcher:
                 raise PolicyDenied("dispatch.cancelled", "Request was cancelled")
             if started >= deadline:
                 raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
-            sensitivity = context.effective_sensitivity
+            requires_tools = request_requires_tools(payload)
+            if not isinstance(tool_request, bool) or tool_request != requires_tools:
+                raise PolicyDenied("authorization.request_mismatch", "Tool capability flag does not match the request body")
+            capability = "tool-call" if requires_tools else "inference"
+            payload_sha256 = __import__("hashlib").sha256(payload).hexdigest()
+            lineage_claim = ",".join(value.name for value in context.derived_from)
+            intent_material = chr(31).join((context.profile_id, context.trace_id, context.purpose,
+                context.sensitivity.name, lineage_claim, capability, model, payload_sha256))
+            intent_id = __import__("hashlib").sha256(intent_material.encode("utf-8")).hexdigest()
+            initial_authorization = self._authorize(context, capability, intent_id, deadline)
+            sensitivity = initial_authorization.effective_sensitivity
             if sensitivity == Sensitivity.PUBLIC:
                 first = self.policy.public_route
             else:
@@ -371,14 +513,31 @@ class Dispatcher:
                     remaining = deadline - self.clock()
                     if remaining <= 0:
                         raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
+                    current_authorization = self._authorize(context, capability, intent_id, deadline)
+                    if (current_authorization.principal_id != initial_authorization.principal_id
+                            or current_authorization.profile_id != initial_authorization.profile_id
+                            or current_authorization.namespace != initial_authorization.namespace
+                            or current_authorization.trace_id != initial_authorization.trace_id
+                            or current_authorization.policy_revision != initial_authorization.policy_revision
+                            or current_authorization.purpose != initial_authorization.purpose
+                            or current_authorization.capability != initial_authorization.capability
+                            or current_authorization.intent_id != initial_authorization.intent_id
+                            or current_authorization.lineage_sha256 != initial_authorization.lineage_sha256
+                            or current_authorization.effective_sensitivity != sensitivity):
+                        raise PolicyDenied("authorization.changed", "Host authorization changed during provider routing")
+                    if current_authorization.expires_at_monotonic <= self.clock() or self.clock() >= deadline:
+                        raise PolicyDenied("authorization.expired", "Host authorization expired before provider dispatch")
                     reservation = self.ledger.reserve(estimate, self.policy.metered_budget_usd)
-                    timeout = min(self.policy.max_retry_after_seconds or remaining, remaining)
+                    authorization_remaining = current_authorization.expires_at_monotonic - self.clock()
+                    timeout = min(self.policy.max_retry_after_seconds or remaining, remaining, authorization_remaining)
                     if timeout <= 0:
                         self.ledger.release(reservation)
                         raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
                     try:
                         try:
-                            response = self.transport(route, model, normalized_payload, output_token_limit=output_token_limit, timeout=timeout, trace_id=context.trace_id, cancelled=context.cancelled)
+                            def dispatch_cancelled() -> bool:
+                                return context.cancelled() or self.clock() >= current_authorization.expires_at_monotonic
+                            response = self.transport(route, model, normalized_payload, output_token_limit=output_token_limit, timeout=timeout, trace_id=context.trace_id, cancelled=dispatch_cancelled)
                         except PolicyDenied:
                             self.ledger.settle(reservation)
                             raise
@@ -393,6 +552,8 @@ class Dispatcher:
                         self.ledger.settle(reservation, actual)
                         if context.cancelled():
                             raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider dispatch")
+                        if self.clock() >= current_authorization.expires_at_monotonic:
+                            raise PolicyDenied("authorization.expired", "Host authorization expired during provider dispatch")
                         if self.clock() >= deadline:
                             raise PolicyDenied("dispatch.deadline", "Request deadline elapsed during provider dispatch")
                     except BaseException:
