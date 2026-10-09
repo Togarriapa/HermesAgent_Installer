@@ -142,7 +142,7 @@ class RootSetupPolicyGenerationPublisher:
                 if (compiled.compiled_policy_sha256 != _sha(compiled.policy_bytes)
                         or compiled.compiled_artifact_catalog_sha256 != _sha(compiled.artifact_catalog_bytes)
                         or compiled.compiled_selection_sha256 != _sha(_canonical(compiled.selection_document))
-                        or compiled.selection_catalog_sha256 != expected_selection_catalog_sha256):
+                        or compiled.selection_catalog_sha256 != compiled.selection_document.get("catalog_sha256")):
                     raise BootstrapEnrollmentError("active compiler claim digests differ from its canonical bytes")
             else:
                 self.registry.verify_current_compilation(compiled)
@@ -186,6 +186,28 @@ class RootSetupPolicyGenerationPublisher:
             journal_row = getattr(session, "_root_journal_root", None)
         if journal_row is None:
             journal_row = getattr(session, "root_journal_root", None)
+        if isinstance(journal_row, Path):
+            expected_path = Path("/var/lib/hermes-installer/authority-journal")
+            supplied_path = self.root_journal if isinstance(self.root_journal, Path) else None
+            identity = getattr(self.root_journal, "identity", None)
+            if supplied_path is None and isinstance(identity, Mapping):
+                supplied_path = Path(str(identity.get("absolute_path", "")))
+            if journal_row != expected_path or supplied_path != journal_row:
+                raise BootstrapEnrollmentError("active compiler journal differs from fixed root setup journal")
+            fd = os.open(journal_row, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                info = os.fstat(fd)
+                journal_row = {
+                    "root_id": "installer-authority-journal-v1",
+                    "absolute_path": str(journal_row),
+                    "owner_uid": info.st_uid,
+                    "owner_gid": info.st_gid,
+                    "mode": stat.S_IMODE(info.st_mode),
+                    "device": info.st_dev,
+                    "inode": info.st_ino,
+                }
+            finally:
+                os.close(fd)
         if not isinstance(journal_row, Mapping) or not isinstance(journal_row.get("absolute_path"), str):
             raise BootstrapEnrollmentError("stage-zero compilation has no observed root journal selection")
         receipt = _publish_policy_generation(
@@ -397,6 +419,7 @@ def _validate_compiled_documents(policy_bytes: bytes, catalog_bytes: bytes,
     if (supplied != selection_sha
             or _sha(_canonical(unsigned)) != selection_sha):
         raise BootstrapEnrollmentError("compiled selection digest differs from canonical selection bytes")
+    _validate_selection_rows(doc, release, plan_id, plan_sha, policy_id, policy_sha)
     catalog_row = doc.get("artifact_catalog")
     if (not isinstance(catalog_row, dict)
             or set(catalog_row) != {"artifact_id", "relative_path", "sha256"}
@@ -412,8 +435,24 @@ def _validate_compiled_documents(policy_bytes: bytes, catalog_bytes: bytes,
                    "allowed_artifact_ids", "bootstrap_policy_artifact_id"}
     if (set(plan_row) != plan_fields or plan_row["bootstrap_policy_artifact_id"] != policy_id
             or not isinstance(plan_row["allowed_artifact_ids"], list)
+            or not plan_row["allowed_artifact_ids"]
+            or len(plan_row["allowed_artifact_ids"]) > 256
+            or any(not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", item)
+                   for item in plan_row["allowed_artifact_ids"])
+            or plan_row["allowed_artifact_ids"] != sorted(set(plan_row["allowed_artifact_ids"]))
             or any(item not in catalog_model.artifacts for item in plan_row["allowed_artifact_ids"])):
         raise BootstrapEnrollmentError("compiled plan row or artifact allowlist is malformed")
+    try:
+        from .bootstrap_runtime_factory import InstalledBootstrapPolicyResolver
+        # Reuse the installed loader's full nested-schema validation before the
+        # bytes are written. The method validates the policy and selected plan
+        # row; its selection parameter is intentionally not read by the parser.
+        InstalledBootstrapPolicyResolver()._parse_policy(
+            policy, policy_sha, plan_row, None)
+    except BootstrapEnrollmentError:
+        raise
+    except Exception:
+        raise BootstrapEnrollmentError("compiled policy failed installed-loader validation") from None
     release_plan = [row for row in release.files if row.artifact_id == plan_id and "plan" in row.roles]
     if (len(release_plan) != 1 or plan_row["relative_path"] != release_plan[0].relative_path
             or plan_row["sha256"] != release_plan[0].sha256 or plan_row["sha256"] != plan_sha
@@ -429,6 +468,103 @@ def _validate_compiled_documents(policy_bytes: bytes, catalog_bytes: bytes,
                        and row.get("relative_path") == "plans/bootstrap-policy-v1.json"
                        for row in policy_rows)):
         raise BootstrapEnrollmentError("compiled selection does not join the exact bootstrap policy bytes")
+
+
+def _validate_selection_rows(doc: Mapping[str, Any], release: Any, plan_id: str,
+                             plan_sha: str, policy_id: str, policy_sha: str) -> None:
+    """Validate the full loader row closure before the generation is written."""
+    try:
+        from .bootstrap_runtime_factory import InstalledBootstrapPolicyResolver
+        row = InstalledBootstrapPolicyResolver._selection_row
+        release_row = doc["release_root"]
+        if (not isinstance(release_row, dict)
+                or set(release_row) != {"root_id", "absolute_path", "device", "inode",
+                                        "deployment_receipt_sha256"}
+                or release_row["absolute_path"] != str(release.release_root)
+                or release_row["device"] != release.root_device
+                or release_row["inode"] != release.root_inode
+                or release_row["deployment_receipt_sha256"] != release.deployment_receipt_sha256):
+            raise BootstrapEnrollmentError("compiled selection release custody differs from verified release")
+        launcher = row(doc["launcher"], {"artifact_id", "relative_path", "sha256"})
+        interpreter = row(doc["interpreter"], {"artifact_id", "relative_path", "sha256"})
+        if (launcher["artifact_id"] != "installer-root-setup-launcher-v1"
+                or interpreter["artifact_id"] != "installer-root-setup-interpreter-v1"):
+            raise BootstrapEnrollmentError("compiled selection lacks the fixed launcher and interpreter")
+        modules = doc["module_closure"]
+        plans = doc["plans"]
+        policies = doc["bootstrap_policies"]
+        if (not isinstance(modules, list) or not 1 <= len(modules) <= 1024
+                or not isinstance(plans, list) or not 1 <= len(plans) <= 16
+                or not isinstance(policies, list) or not 1 <= len(policies) <= 16):
+            raise BootstrapEnrollmentError("compiled selection row bounds are invalid")
+        module_rows = []
+        for item in modules:
+            entry = row(item, {"module_name", "artifact_id", "relative_path", "sha256"})
+            if (not isinstance(entry["module_name"], str)
+                    or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,191}", entry["module_name"])):
+                raise BootstrapEnrollmentError("compiled selection module identity is malformed")
+            module_rows.append(entry)
+        plan_fields = {"artifact_id", "relative_path", "sha256", "baseline_tag_object",
+                       "baseline_commit", "baseline_tree_sha256", "amendment_manifest_sha256",
+                       "allowed_artifact_ids", "bootstrap_policy_artifact_id"}
+        checked_plans = [row(item, plan_fields) for item in plans]
+        if len(checked_plans) != 1:
+            raise BootstrapEnrollmentError("compiled selection must contain exactly one selected root plan")
+        checked_policies = [row(item, {"artifact_id", "relative_path", "sha256"}) for item in policies]
+        catalog_row = row(doc["artifact_catalog"], {"artifact_id", "relative_path", "sha256"})
+        if (catalog_row["artifact_id"] != CATALOG_ARTIFACT_ID
+                or catalog_row["relative_path"] != "catalog/artifacts.json"):
+            raise BootstrapEnrollmentError("compiled selection catalog row is not the fixed catalog")
+        store = doc["artifact_store"]
+        if (not isinstance(store, dict)
+                or set(store) != {"root_id", "journal_root_id", "relative_path", "owner_uid", "owner_gid", "mode"}
+                or store != {"root_id": "installer-bootstrap-artifact-store-v1",
+                             "journal_root_id": "installer-authority-journal-v1",
+                             "relative_path": "bootstrap-artifacts", "owner_uid": 0,
+                             "owner_gid": 0, "mode": 0o700}):
+            raise BootstrapEnrollmentError("compiled selection artifact-store row differs from fixed root custody")
+        all_rows = [launcher, interpreter, *module_rows, *checked_plans, *checked_policies]
+        if (len({item["artifact_id"] for item in all_rows}) != len(all_rows)
+                or len({item["relative_path"] for item in all_rows}) != len(all_rows)):
+            raise BootstrapEnrollmentError("compiled selection contains duplicate artifact identities or paths")
+        fixed_release_rows = {entry.artifact_id: entry for entry in release.files}
+        for selected in (launcher, interpreter, *module_rows, *checked_plans, catalog_row):
+            actual = fixed_release_rows.get(selected["artifact_id"])
+            if (actual is None or actual.relative_path != selected["relative_path"]
+                    or actual.sha256 != selected["sha256"]):
+                raise BootstrapEnrollmentError("compiled selection row differs from verified release closure")
+        if (fixed_release_rows[launcher["artifact_id"]].roles != ("launcher",)
+                or launcher["relative_path"] != "bin/hermes-installer-root-setup"
+                or fixed_release_rows[interpreter["artifact_id"]].roles != ("interpreter",)
+                or interpreter["relative_path"] != "runtime/bin/python"
+                or fixed_release_rows[catalog_row["artifact_id"]].roles != ("artifact-catalog",)
+                or fixed_release_rows[plan_id].roles != ("plan",)):
+            raise BootstrapEnrollmentError("compiled selection joins a non-fixed release role")
+        from .installer_release import _module_name
+        for selected in module_rows:
+            actual = fixed_release_rows[selected["artifact_id"]]
+            if (actual.roles != ("module",)
+                    or selected["module_name"] != _module_name(actual.relative_path)
+                    or selected["artifact_id"] != "installer-module:" + selected["module_name"]):
+                raise BootstrapEnrollmentError("compiled module row does not join its fixed module role")
+        target_plan = [item for item in checked_plans if item["artifact_id"] == plan_id]
+        if (len(target_plan) != 1 or target_plan[0]["sha256"] != plan_sha
+                or target_plan[0]["bootstrap_policy_artifact_id"] != policy_id
+                or target_plan[0]["baseline_tag_object"] != release.baseline_tag_object
+                or target_plan[0]["baseline_commit"] != release.baseline_commit
+                or target_plan[0]["baseline_tree_sha256"] != release.baseline_tree_sha256
+                or target_plan[0]["amendment_manifest_sha256"] != release.amendment_manifest_sha256
+                or target_plan[0]["allowed_artifact_ids"] != sorted(set(target_plan[0]["allowed_artifact_ids"]))
+                or not target_plan[0]["allowed_artifact_ids"]):
+            raise BootstrapEnrollmentError("compiled root plan provenance or allowlist is malformed")
+        target_policy = [item for item in checked_policies if item["artifact_id"] == policy_id]
+        if (len(target_policy) != 1 or target_policy[0]["relative_path"] != "plans/bootstrap-policy-v1.json"
+                or target_policy[0]["sha256"] != policy_sha):
+            raise BootstrapEnrollmentError("compiled selection policy row differs from selected policy bytes")
+    except BootstrapEnrollmentError:
+        raise
+    except Exception:
+        raise BootstrapEnrollmentError("compiled selection failed installed-loader row validation") from None
 
 
 def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
