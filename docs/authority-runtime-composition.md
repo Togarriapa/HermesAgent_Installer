@@ -38,8 +38,11 @@ instances and stop the remote lease watchdog. Derived source-observer
 enrollments are exposed as typed metadata candidates; they cannot issue
 receipts until live loaded-closure and peer-bound delivery resolvers are
 available. Active source/job rows without
-the required root observer and proof joins remain unroutable. A successful
-local fixture composition proves constructor wiring only; it does not establish
+the required root observer and proof joins remain unroutable. The HI12 loopback
+fixture exercises bounded HTTP framing and the real AuthorityService grant and
+handler path, while replacing only the OS namespace-entry boundary on macOS. It
+does not exercise the `build_memory_runtime` root-journal constructor or prove
+namespace isolation. Local composition and loopback fixtures do not establish
 native invocation, account, tunnel, or Raspberry Pi acceptance.
 
 Build execution reuses the protected build and artifact catalogs, existing
