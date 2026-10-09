@@ -251,3 +251,16 @@ The installer SHALL use actual root source CAS/predecessor proofs and finite sel
 #### Scenario: Unbound startup or deployment predecessor
 - **WHEN** caller state substitutes root startup admission or ignores an existing deployment pointer
 - **THEN** startup/publication denies without overwriting unowned or mismatched state
+
+### Requirement: Actual selected Xpra root credential
+The installer SHALL prevent selected Xpra from regenerating or exposing root display cookie and verify the fixed readonly root credential is used by its owned virtual X server and official Desktop.
+
+#### Scenario: Writable cookie or secret argv fallback
+- **WHEN** selected startup falls back to a generated cookie or passes secret cookie values in argv/logs
+- **THEN** startup fails closed and remote readiness is not asserted
+
+Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.
+
+Xpra root overlay receipt API v73: `plans/amendments/2026-10-10-xpra-overlay-root-receipt-api-v73.md`; existing RT/HI tasks remain open pending actual source/runtime proof.
+
+Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.

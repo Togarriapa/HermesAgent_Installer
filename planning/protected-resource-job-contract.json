@@ -968,5 +968,67 @@
       "resources/vendor/hermes-agent-resources-2.3.1/webhooks/cloudflare-alert.yaml",
       "https://docs.github.com/en/webhooks/webhook-events-and-payloads#push"
     ]
+  },
+  "native_turn_delivery": {
+    "contract": "planning/memory-service-connector-contract.json#whole_turn_capture.handle_delivery",
+    "input_DTO_addition": "turn_handle: opaque string supplied only by root retained current turn; NativeInitialInputDelivery and ChannelEventDelivery",
+    "response_DTO_additions": "ProviderResponseMetadata.turn_handle: opaque string; final_response_delivery_handle: opaque string|null; supplied only by actual root response observer",
+    "authority": "Authenticated peer delivery only; DTO handles do not themselves mint context, public clearance or effect grants."
+  },
+  "composio_trigger_artifact_derivation": {
+    "owner_module": "hermes_installer.authority.artifacts",
+    "registry": "RootComposioTriggerArtifactRegistry",
+    "constructor": "from_root_setup(selected_session_registry,catalog_exchange_registry,owned_artifact_store,artifact_catalog,journal,signer)",
+    "API": "persist_selected_trigger_type(exchange_receipt_handle,selected_returned_slug)->RootComposioTriggerArtifactReceipt root-local. Resolves exact actual authenticated fixed GET detail exchange/current selected project/version; slug must equal returned detail and selected authenticated list candidate. No caller schema/body/artifact/path/URL/account readiness fields.",
+    "document_fields": [
+      "schema",
+      "artifact_id",
+      "toolkit_slug",
+      "toolkit_version",
+      "trigger_slug",
+      "trigger_type",
+      "config_schema",
+      "payload_schema",
+      "requires_webhook_endpoint_setup",
+      "source_request_receipt_handle",
+      "source_response_receipt_handle",
+      "sha256"
+    ],
+    "mapping": "schema=1, toolkit_slug=whatsapp, selected pinned toolkit_version; all trigger type/schema/webhook fields derived from actual authenticated detail response and typed finite adapter. Request/response source fields are same actual RootComposioCatalogReadReceipt exchange handle via fixed domain accessors v68; no two invented SourceReceipt events. Details lacking exact selected version/schema deny.",
+    "identity": "artifact_id = composio-whatsapp-trigger-type: + SHA256(canonical JSON {toolkit_version,trigger_slug,response_sha256}); source exchange actual response_sha256 only, no raw caller digest. This identity is nonsecret and does not imply connected account/auth setup.",
+    "encoding": "Canonical UTF8 JSON sorted keys compact separators ensure_ascii=false with one LF; document sha256 hashes canonical same fields excluding sha256 and excluding terminal LF. Stored CAS artifact_sha256 hashes exact full document bytes including sha256 and LF. Distinct digest domains, never use document semantic digest as ArtifactCatalog byte hash. Bound<=262144 bytes; no executing schemas/instructions/source content.",
+    "receipt_fields": [
+      "schema",
+      "receipt_handle",
+      "artifact_id",
+      "artifact_sha256",
+      "size_bytes",
+      "document_sha256",
+      "toolkit_version",
+      "trigger_slug",
+      "exchange_receipt_handle",
+      "request_sha256",
+      "response_sha256",
+      "request_policy_artifact_id",
+      "request_policy_sha256",
+      "setup_session_handle",
+      "transaction_handle",
+      "principal_id",
+      "project_id",
+      "issued_monotonic",
+      "expires_monotonic",
+      "signature"
+    ],
+    "consumer": "resolve_selected_trigger_artifact(receipt_handle,current_setup_session)->typed root retained receipt and immutable exact bytes; active trigger_type_artifact_id/sha256 use stored artifact ID/exact byte hash. Root factory selects and persists through this registry; helper never independently publishes caller dict or claims account readiness. Actual connected account/Business/phone/trigger instance/signed webhook/sender pointer enrollments remain separate authenticated setup receipts, unknown until configured.",
+    "lease": "<=30 seconds and actual exchange/session original expiry for selection effect; immutable artifact persists with source receipts. New session may re-observe actual source/current authenticated catalog; stale exchange cannot silently reactivate configuration."
+  },
+  "fresh_node_attempt_context": {
+    "existing_type": "hermes_installer.registry.resource_jobs.ResourceChildAdmission; no new worker retry DTO. Existing actual job ledger issues separate admission_id and retry_index per bounded attempt.",
+    "API": "RootResourceControllerRegistry.issue_resource_job_context(event_handle,node_id,operation,final_payload_digest,*,child_admission:ResourceChildAdmission,node_result_closure_handle=None)->fresh context. Root-private caller supplies actual root ledger return; issuer re-resolves it in ResourceJobAuthority/ResourceJobLedger before issuance, never trusts dataclass fields alone.",
+    "resolver": "ResourceJobAuthority.resolve_current_child_attempt(child_admission)->root retained current attempt snapshot; exact job/event/resource generation/service generation/node/action/op/target/recipient/payload SHA/source and prerequisite result closure/current active consent. Only latest admitted not-terminal/not-cancelled actual attempt; incoming retry_index or fabricated ID cannot mint.",
+    "use_key": "(root_event_handle,node_id,child_admission.admission_id,child_admission.retry_index), consumed atomically once per issuer context. Existing (event,node) one-use key is superseded only for bounded actual child attempts. Entire source/result lineage revalidated every attempt, fresh context/effect nonce; no parent grant or failed nonce reused.",
+    "budget": "Existing protected node.maximum_attempts 1..10, sum attempts<=selected max_children and original job deadline/concurrency/generation/consent. Retry only latest failed safe-to-retry ledger state. If actual effect outcome ambiguous, mark ambiguous and do not automatically retry. Grant/context mint failure records failed attempt before a newly admitted next attempt; cannot loop same consumed issuance.",
+    "closure": "v66 RootResourceNodeResultClosure remains root job authority-owned actual prerequisite capsule resolver; same closure revalidated against current actual completed prerequisites per attempt. No mutable event.parent_results/caller result body substitutes.",
+    "evidence": "First attempt+safe failed retry have different context/grant/admission IDs, identical inherited source constraints and actual final payload digest; repeated current attempt, spoofed retry index, budget exceeded, ambiguous outcome, changed prerequisite capsule/consent/generation deny."
   }
 }
