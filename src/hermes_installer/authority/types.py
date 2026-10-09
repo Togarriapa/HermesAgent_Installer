@@ -564,6 +564,8 @@ class NativeResponseMetadata:
 
     producer_context_handle: str
     tool_call_bindings: tuple[NativeToolCallBinding, ...]
+    turn_handle: str | None
+    final_response_delivery_handle: str | None
 
     def __post_init__(self) -> None:
         if (not isinstance(self.producer_context_handle, str)
@@ -572,7 +574,13 @@ class NativeResponseMetadata:
                 or len(self.tool_call_bindings) > 128
                 or any(not isinstance(item, NativeToolCallBinding) for item in self.tool_call_bindings)
                 or len({item.observed_call_handle for item in self.tool_call_bindings})
-                    != len(self.tool_call_bindings)):
+                    != len(self.tool_call_bindings)
+                or self.turn_handle is not None
+                    and (not isinstance(self.turn_handle, str)
+                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle))
+                or self.final_response_delivery_handle is not None
+                    and (not isinstance(self.final_response_delivery_handle, str)
+                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.final_response_delivery_handle))):
             raise AuthorityDenied("native.response.take", "provider response metadata is malformed")
 
     def to_wire(self) -> dict[str, Any]:
@@ -585,11 +593,14 @@ class NativeResponseMetadata:
                  "arguments_sha256": item.arguments_sha256}
                 for item in self.tool_call_bindings
             ],
+            "turn_handle": self.turn_handle,
+            "final_response_delivery_handle": self.final_response_delivery_handle,
         }
 
     @classmethod
     def from_wire(cls, value: Any) -> "NativeResponseMetadata":
-        fields = {"producer_context_handle", "tool_call_bindings"}
+        fields = {"producer_context_handle", "tool_call_bindings", "turn_handle",
+                  "final_response_delivery_handle"}
         if (not isinstance(value, dict) or set(value) != fields
                 or not isinstance(value["tool_call_bindings"], list)
                 or len(value["tool_call_bindings"]) > 128):
@@ -597,7 +608,50 @@ class NativeResponseMetadata:
         return cls(
             value["producer_context_handle"],
             tuple(NativeToolCallBinding.from_wire(item) for item in value["tool_call_bindings"]),
+            value["turn_handle"], value["final_response_delivery_handle"],
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RootCompletedNativeTurnPresentation:
+    """Opaque completion reference released after a root-verified native turn."""
+
+    schema: int
+    receipt_handle: str
+    turn_handle: str
+    state: str
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (type(self.schema) is not int or self.schema != 1
+                or not isinstance(self.receipt_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.receipt_handle)
+                or not isinstance(self.turn_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle)
+                or self.state != "completed"
+                or isinstance(self.expires_monotonic, bool)
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not math.isfinite(self.expires_monotonic)):
+            raise AuthorityDenied("native.turn.finish", "native turn presentation is malformed")
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "receipt_handle": self.receipt_handle,
+            "turn_handle": self.turn_handle,
+            "state": self.state,
+            "expires_monotonic": self.expires_monotonic,
+        }
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "RootCompletedNativeTurnPresentation":
+        fields = {"schema", "receipt_handle", "turn_handle", "state", "expires_monotonic"}
+        if not isinstance(value, dict) or set(value) != fields:
+            raise AuthorityDenied("native.turn.finish", "native turn presentation fields are invalid")
+        try:
+            return cls(**value)
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.turn.finish", "native turn presentation is malformed") from None
 
 
 def canonical_bytes(value: bytes | Mapping[str, Any] | list[Any]) -> bytes:
