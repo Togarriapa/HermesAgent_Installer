@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+import hashlib
 import json
 import socket
 import threading
@@ -11,6 +12,9 @@ from typing import Any, Callable, Protocol
 from urllib.parse import urlsplit
 
 from hermes_installer.components.plugin_local_voice_web import PluginAdapterError
+from hermes_installer.components.plugin_channel_provenance import (
+    AudioIngressSelection, ObservedChannelIngress, SelectedAudioIngressProducer,
+)
 
 MAX_PACKET_HEADER = 64 * 1024
 MAX_PACKET_DATA = 64 * 1024
@@ -69,11 +73,18 @@ class WyomingEvent:
     payload: bytes = b""
 
 
-class AudioSessionBoundary(Protocol):
-    """Trusted native session issuer and playback adapter, outside plugin args."""
-    def current(self) -> tuple[str, bool]: ...
-    def capture(self, session_id: str, *, max_bytes: int, timeout: float) -> bytes: ...
-    def play(self, session_id: str, audio: bytes) -> None: ...
+class RootSelectedAudioCaptureSource(Protocol):
+    """Root device/session/consent reader; worker booleans are not accepted."""
+    def capture_selected_audio(self, selection_handle: object, session_handle: object, *, max_bytes: int,
+                               max_seconds: int) -> object: ...
+    def discard_selected_capture(self, selection_handle: object, capture_record: object) -> None: ...
+
+
+class OwnedAudioArtifactStore(Protocol):
+    """Root-owned sealed capture store; paths and raw audio never cross the API."""
+    def read_selected_capture(self, selection_handle: object, proof: object,
+                              *, max_bytes: int) -> bytearray: ...
+    def consume_selected_capture(self, selection_handle: object, proof: object) -> None: ...
 
 
 class WyomingClient:
@@ -84,10 +95,10 @@ class WyomingClient:
             raise ValueError("Wyoming deadline must be between 0.1 and 30 seconds")
         self.endpoint, self.timeout = endpoint, timeout
 
-    def transcribe(self, audio: bytes) -> str:
+    def transcribe(self, audio: bytes | bytearray) -> str:
         if self.endpoint.role not in {"stt", "home_stt"}:
             raise WyomingProtocolError("selected endpoint is not an STT service")
-        if not isinstance(audio, bytes) or not audio or len(audio) > MAX_AUDIO_INPUT or len(audio) % 2:
+        if not isinstance(audio, (bytes, bytearray)) or not audio or len(audio) > MAX_AUDIO_INPUT or len(audio) % 2:
             raise WyomingProtocolError("PCM input must be non-empty, bounded 16-bit mono data")
         deadline = time.monotonic() + self.timeout
         with self._connection() as sock:
@@ -97,7 +108,7 @@ class WyomingClient:
                 "rate": 16000, "width": 2, "channels": 1, "timestamp": 0,
             }), deadline)
             for offset in range(0, len(audio), CHUNK_BYTES):
-                chunk = audio[offset:offset + CHUNK_BYTES]
+                chunk = bytes(audio[offset:offset + CHUNK_BYTES])
                 _write_event(sock, WyomingEvent("audio-chunk", {
                     "rate": 16000, "width": 2, "channels": 1, "timestamp": offset // 32,
                 }, chunk), deadline)
@@ -177,64 +188,89 @@ class _Connection:
 
 
 class WyomingSessionService:
-    """Implements the injected voice service methods for the native plugin."""
-    def __init__(self, boundary: AudioSessionBoundary, endpoints: dict[str, WyomingEndpoint]):
-        if not all(callable(getattr(boundary, name, None)) for name in ("current", "capture", "play")):
-            raise TypeError("voice adapter requires trusted session capture and playback methods")
+    """Root-only local STT backend consuming a selected sealed audio artifact.
+
+    There is deliberately no ``authorized`` boolean, worker session ID, direct
+    microphone API, or playback sink here. A root workflow must first capture
+    through its selected device/consent authority and issue a v40 proof.
+    """
+    def __init__(self, capture_source: RootSelectedAudioCaptureSource,
+                 artifact_store: OwnedAudioArtifactStore,
+                 ingress: SelectedAudioIngressProducer,
+                 endpoints: dict[str, WyomingEndpoint]):
+        if not isinstance(ingress, SelectedAudioIngressProducer):
+            raise TypeError("voice adapter requires the root-selected audio provenance producer")
+        if not all(callable(getattr(capture_source, name, None)) for name in
+                   ("capture_selected_audio", "discard_selected_capture")):
+            raise TypeError("voice adapter requires the root-selected consent/device capture authority")
+        if not all(callable(getattr(artifact_store, name, None)) for name in
+                   ("read_selected_capture", "consume_selected_capture")):
+            raise TypeError("voice adapter requires the root-owned sealed audio artifact store")
         if set(endpoints) - {"stt", "home_stt", "tts"}:
             raise ValueError("unsupported Wyoming endpoint role")
         for role, endpoint in endpoints.items():
             if not isinstance(endpoint, WyomingEndpoint) or endpoint.role != role:
                 raise ValueError("Wyoming endpoint roles must match the root enrollment map")
-        self.boundary, self.endpoints = boundary, dict(endpoints)
-        self._capture_lease_session: str | None = None
+        if not ingress.selection_handle:
+            raise TypeError("protected root audio selection handle is required")
+        self.capture_source, self.artifact_store = capture_source, artifact_store
+        self.ingress, self.endpoints = ingress, dict(endpoints)
         self._operation_lock = threading.Lock()
 
-    def current(self) -> tuple[str, bool]:
-        value = self.boundary.current()
-        if not isinstance(value, tuple) or len(value) != 2 or not isinstance(value[0], str) or type(value[1]) is not bool:
-            raise PluginAdapterError("native audio boundary returned invalid session state")
-        return value
-
-    def capture_current_session(self, *, max_bytes: int, timeout: float) -> bytes:
+    def transcribe_selected_capture(self, session_handle: object, endpoint: str,
+                                    *, timeout: float) -> tuple[str, ObservedChannelIngress]:
+        """Capture and transcribe one root-observed artifact without retaining PCM."""
         if not self._operation_lock.acquire(blocking=False):
             raise PluginAdapterError("another voice operation is active")
+        capture_record = None
+        ingress = None
+        audio = None
         try:
-            if self._capture_lease_session is not None:
-                raise PluginAdapterError("a voice capture is already awaiting local STT")
-            session_id, authorized = self.current()
-            if not authorized:
-                raise PluginAdapterError("microphone lease is not authorized for this session")
-            audio = self.boundary.capture(session_id, max_bytes=min(max_bytes, MAX_AUDIO_INPUT),
-                                          timeout=min(timeout, 10.0))
-            if not isinstance(audio, bytes) or not audio or len(audio) > MAX_AUDIO_INPUT:
-                raise PluginAdapterError("session capture returned invalid or oversized audio")
-            current_id, still_authorized = self.current()
-            if current_id != session_id or not still_authorized:
-                del audio
-                raise PluginAdapterError("microphone lease expired during session capture")
-            self._capture_lease_session = session_id
-            return audio
+            selected = next((row for row in self.endpoints.values() if row.uri == endpoint
+                             and row.role in {"stt", "home_stt"}), None)
+            if selected is None:
+                raise PluginAdapterError("requested Wyoming STT endpoint is not root-selected")
+            if not isinstance(session_handle, str) or not 8 <= len(session_handle) <= 128:
+                raise PluginAdapterError("root voice session handle is missing or malformed")
+            selection = self.ingress.selection
+            capture_record = self.capture_source.capture_selected_audio(
+                self.ingress.protected_selection_handle, session_handle,
+                max_bytes=min(selection.max_capture_bytes, MAX_AUDIO_INPUT),
+                max_seconds=selection.max_capture_seconds)
+            ingress = self.ingress.observe(capture_record)
+            claims = self.ingress.proof_claims(ingress.proof)
+            audio = self.artifact_store.read_selected_capture(
+                self.ingress.protected_selection_handle, ingress.proof,
+                max_bytes=min(selection.max_capture_bytes, MAX_AUDIO_INPUT))
+            if (not isinstance(audio, bytearray) or not audio or len(audio) != claims["size_bytes"]
+                    or len(audio) % 2 or hashlib.sha256(audio).hexdigest() != claims["audio_sha256"]):
+                raise PluginAdapterError("root audio artifact differs from its selected capture receipt")
+            if not self.ingress.validate_claims(ingress.proof):
+                raise PluginAdapterError("audio consent, device selection or capture lease expired")
+            transcript = WyomingClient(selected, timeout=min(timeout, 15.0)).transcribe(audio)
+            if not self.ingress.validate_claims(ingress.proof):
+                raise PluginAdapterError("audio source was revoked while local transcription ran")
+            return transcript, ingress
+        except PluginAdapterError:
+            raise
+        except Exception:
+            raise PluginAdapterError("root-selected local audio transcription failed closed") from None
         finally:
-            self._operation_lock.release()
-
-    def transcribe_local(self, endpoint: str, audio: bytes, *, timeout: float) -> str:
-        selected = next((row for row in self.endpoints.values() if row.uri == endpoint
-                         and row.role in {"stt", "home_stt"}), None)
-        if selected is None:
-            raise PluginAdapterError("requested Wyoming STT endpoint is not root-selected")
-        if not self._operation_lock.acquire(blocking=False):
-            raise PluginAdapterError("another voice operation is active")
-        try:
-            session_id, authorized = self.current()
-            if not authorized or session_id != self._capture_lease_session:
-                self._capture_lease_session = None
-                raise PluginAdapterError("current-session microphone lease is missing or expired")
-            try:
-                return WyomingClient(selected, timeout=min(timeout, 15.0)).transcribe(audio)
-            finally:
-                self._capture_lease_session = None
-        finally:
+            if audio is not None:
+                for index in range(len(audio)):
+                    audio[index] = 0
+            if ingress is not None:
+                try:
+                    self.artifact_store.consume_selected_capture(
+                        self.ingress.protected_selection_handle, ingress.proof)
+                except Exception:
+                    pass
+            elif capture_record is not None:
+                try:
+                    self.capture_source.discard_selected_capture(
+                        self.ingress.protected_selection_handle, capture_record)
+                except Exception:
+                    pass
             self._operation_lock.release()
 
     def synthesize_local(self, endpoint: str, text: str, *, timeout: float) -> bytes:
@@ -242,12 +278,6 @@ class WyomingSessionService:
         if selected is None or selected.uri != endpoint:
             raise PluginAdapterError("requested Piper endpoint is not root-selected")
         return WyomingClient(selected, timeout=min(timeout, 15.0)).synthesize(text)
-
-    def play_current_session(self, session_id: str, audio: bytes) -> None:
-        current_id, _ = self.current()
-        if current_id != session_id or not isinstance(audio, bytes) or len(audio) > MAX_AUDIO_OUTPUT:
-            raise PluginAdapterError("playback lease expired or audio is outside bounds")
-        self.boundary.play(session_id, audio)
 
 
 def encode_event(event: WyomingEvent) -> bytes:

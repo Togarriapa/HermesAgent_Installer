@@ -314,6 +314,27 @@ class ResourceBodyRecipe:
 
 
 @dataclass(frozen=True, slots=True)
+class ResourceCredentialBinding:
+    """Exact protected mapping from a reviewed request placeholder to a vault ref."""
+
+    source_placeholder: str
+    credential_reference_id: str
+    usage: str
+
+    def __post_init__(self) -> None:
+        # Preserve the exact selected manifest token. Environment-style
+        # placeholders are data labels only: they never become environment
+        # variable names or an implicit vault lookup.
+        if (not isinstance(self.source_placeholder, str)
+                or not (re.fullmatch(r"\$\{[A-Z][A-Z0-9_]{0,127}\}", self.source_placeholder)
+                        or _ID.fullmatch(self.source_placeholder))):
+            raise ResourceJobDenied("credential source placeholder is invalid")
+        _ident(self.credential_reference_id, "credential reference")
+        if self.usage not in {"webhook-hmac-verify", "channel-account", "backend-account"}:
+            raise ResourceJobDenied("credential binding usage is outside the protected closed set")
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceBackendEnrollment:
     backend_id: str
     resource_id: str
@@ -341,6 +362,7 @@ class ResourceBackendEnrollment:
     maximum_seconds: int
     profile_generation: str = ""
     execution_binding: Mapping[str, Any] | None = None
+    credential_bindings: tuple[ResourceCredentialBinding, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -382,6 +404,14 @@ class ResourceBackendEnrollment:
             if not isinstance(values, (set, frozenset)):
                 raise ResourceJobDenied(f"resource backend {name} must be a protected set")
             object.__setattr__(self, name, frozenset(_ident(value, name) for value in values))
+        bindings = self.credential_bindings
+        if (not isinstance(bindings, (tuple, list)) or len(bindings) > 16
+                or any(not isinstance(item, ResourceCredentialBinding) for item in bindings)
+                or len({item.source_placeholder for item in bindings}) != len(bindings)
+                or any(item.credential_reference_id not in self.credential_reference_ids
+                       for item in bindings)):
+            raise ResourceJobDenied("resource backend credential bindings are invalid")
+        object.__setattr__(self, "credential_bindings", tuple(bindings))
         if not self.approved_action_ids:
             raise ResourceJobDenied("resource backend has no approved actions")
         for name, maximum in (("maximum_request_bytes", 256 * 1024),
@@ -1597,5 +1627,31 @@ class ResourceJobLedger:
         except sqlite3.Error as exc:
             db.rollback()
             raise ResourceJobDenied("generation revocation failed closed") from exc
+        finally:
+            db.close()
+
+    def cancel_job(self, job_id: str, *, current_generation: str) -> bool:
+        """Cancel one root admission and all of its uncompleted children atomically."""
+        _ident(job_id, "job id")
+        if not isinstance(current_generation, str) or not current_generation:
+            raise ResourceJobDenied("current resource generation is invalid")
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT generation,status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None or row[0] != current_generation:
+                db.rollback()
+                return False
+            db.execute(
+                "UPDATE children SET status='cancelled' WHERE job_id=? AND status IN ('pending','admitted','running')",
+                (job_id,),
+            )
+            cursor = db.execute("UPDATE jobs SET status='cancelled' WHERE job_id=? AND status='running'",
+                                (job_id,))
+            db.commit()
+            return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            db.rollback()
+            raise ResourceJobDenied("job cancellation failed closed") from exc
         finally:
             db.close()
