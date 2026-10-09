@@ -63,6 +63,9 @@ _ROWS = {
     "EV-HI04": ProbeProfile(("AC18",), ("native_dispatch_mediated", "direct_native_bypass_denied", "ineligible_route_receives_no_request_or_secret")),
     "EV-HI05": ProbeProfile(("AC18",), ("owned_generation_recovered_or_disabled", "stale_grant_rejected", "unrelated_bytes_preserved", "credentials_preserved")),
     "EV-HI06": ProbeProfile(("AC18",), ("implementation_and_target_evidence_separate", "target_tasks_remain_open_without_observation", "no_full_compliance_label")),
+    "EV-HI07": ProbeProfile(("AC18",), ("connector_target_principal_generation_bound", "caller_destination_override_denied_before_bytes", "expired_stream_cancelled_at_original_deadline", "worker_external_network_remains_denied")),
+    "EV-HI08": ProbeProfile(("AC18",), ("host_receipt_binds_source_bytes_and_lineage", "sensitivity_inherits_all_contributors", "final_payload_digest_verified", "missing_or_stale_lineage_denied_before_effect")),
+    "EV-HI09": ProbeProfile(("AC18",), ("opaque_enrollment_selects_fixed_executable_and_socket", "service_home_work_data_roots_are_distinct", "caller_physical_root_override_rejected", "attested_process_identity_matches_enrollment")),
 }
 
 PROBE_PROFILES = MappingProxyType(_ROWS)

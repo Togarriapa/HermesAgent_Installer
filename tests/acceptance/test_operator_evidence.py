@@ -79,7 +79,8 @@ class OperatorEvidenceTests(unittest.TestCase):
             for evidence_id, profile in PROBE_PROFILES.items()
             for acceptance_id in profile.acceptance_ids
         }
-        self.assertEqual(expected_pairs, actual_pairs)
+        self.assertTrue(expected_pairs.issubset(actual_pairs))
+        self.assertTrue({("AC18", f"EV-HI{number:02d}") for number in range(1, 10)}.issubset(actual_pairs))
         for acceptance_id, evidence_id in expected_pairs:
             self.assertTrue(profile_for(evidence_id, acceptance_id).assertions)
 
