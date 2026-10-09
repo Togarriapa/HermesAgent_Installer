@@ -65,8 +65,8 @@ def _enable_loopback() -> None:
 
 
 def _spawn_private_namespace_responder(service_uid: int, service_gid: int,
-                                      port: int) -> tuple[int, int]:
-    """Return (pid, pidfd); only expected capability failures skip CI."""
+                                      port: int) -> tuple[int, int, int]:
+    """Return (pid, pidfd, diagnostic-fd); only capability failures skip CI."""
     read_fd, write_fd = os.pipe()
     pid = os.fork()
     if pid == 0:
@@ -84,7 +84,6 @@ def _spawn_private_namespace_responder(service_uid: int, service_gid: int,
             listener.listen(1)
             listener.settimeout(10)
             os.write(write_fd, b"OK")
-            os.close(write_fd)
             os.setgroups([])
             os.setgid(service_gid)
             os.setuid(service_uid)
@@ -114,10 +113,11 @@ def _spawn_private_namespace_responder(service_uid: int, service_gid: int,
                 peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
                              + f"Content-Length: {len(response)}\r\nConnection: close\r\n\r\n".encode("ascii")
                              + response)
+            os.write(write_fd, b"DONE")
             listener.close()
-        except BaseException:
+        except BaseException as exc:
             try:
-                os.write(write_fd, b"ERR:unexpected")
+                os.write(write_fd, f"ERR:{type(exc).__name__}:{exc}".encode("utf-8", "replace")[:1024])
             except OSError:
                 pass
         finally:
@@ -139,7 +139,7 @@ def _spawn_private_namespace_responder(service_uid: int, service_gid: int,
         os.kill(pid, signal.SIGKILL)
         os.waitpid(pid, 0)
         raise unittest.SkipTest("Linux pidfd API is unavailable")
-    return pid, os.pidfd_open(pid)
+    return pid, os.pidfd_open(pid), read_fd
 
 
 @unittest.skipUnless(platform.system() == "Linux" and hasattr(os, "unshare")
@@ -151,7 +151,7 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
             self.skipTest("fixture requires the isolated Linux root CI job")
         service_account = pwd.getpwnam("nobody")
         port = 3111  # exact literal listener port from the selected protected AgentMemory config
-        pid, responder_pidfd = _spawn_private_namespace_responder(
+        pid, responder_pidfd, responder_diagnostic_fd = _spawn_private_namespace_responder(
             service_account.pw_uid, service_account.pw_gid, port)
         namespace_fd = os.open(f"/proc/{pid}/ns/net", os.O_RDONLY | os.O_CLOEXEC)
         namespace_identity = f"netns:{os.fstat(namespace_fd).st_ino}"
@@ -359,10 +359,16 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
                 )
                 service.handlers[(outer.operation, outer.target)] = routed[(outer.operation, outer.target)]
                 import base64
-                effect = service._perform_effect(uid, os.getpid(), {
-                    "authorization": parent.to_wire(), "operation": outer.operation,
-                    "payload": base64.b64encode(source_payload).decode("ascii"), "timeout": 10.0,
-                }, cancelled=lambda: False, enforce_peer_identity=False)
+                try:
+                    effect = service._perform_effect(uid, os.getpid(), {
+                        "authorization": parent.to_wire(), "operation": outer.operation,
+                        "payload": base64.b64encode(source_payload).decode("ascii"), "timeout": 10.0,
+                    }, cancelled=lambda: False, enforce_peer_identity=False)
+                except BaseException:
+                    os.waitpid(pid, 0)
+                    os.set_blocking(responder_diagnostic_fd, False)
+                    diagnostic = os.read(responder_diagnostic_fd, 2048).decode("utf-8", "replace")
+                    self.fail("loopback responder diagnostic: " + diagnostic)
                 result = json.loads(base64.b64decode(effect["body"], validate=True))
                 self.assertEqual(result.get("status"), "ok", result)
                 self.assertEqual(result["result"], {"mode": "compact", "results": []})
@@ -427,6 +433,7 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
             try:
                 os.close(namespace_fd)
                 os.close(responder_pidfd)
+                os.close(responder_diagnostic_fd)
             except OSError:
                 pass
             try:
