@@ -153,6 +153,7 @@ class NativeBridgeBroker:
                     request_context=pending.context,
                     request_source_receipts=pending.context.source_receipts,
                     authorization=authorization,
+                    native_request_handle=pending.handle,
                     target=bridge.target,
                     recipient=bridge.recipient,
                     request_digest=canonical_digest(normalized),
@@ -163,23 +164,14 @@ class NativeBridgeBroker:
                     expires_monotonic=min(pending.expires, authorization.monotonic_expires_at),
                     cancelled=cancelled,
                 )
-                producer_handle = getattr(metadata, "producer_context_handle", None)
-                tool_bindings = getattr(metadata, "tool_call_bindings", None)
-                if (not isinstance(producer_handle, str)
-                        or not 32 <= len(producer_handle) <= 128
-                        or not isinstance(tool_bindings, tuple)
-                        or len(tool_bindings) > 128):
-                    raise AuthorityDenied("provider.observer_metadata", "root response observer returned malformed metadata")
-                result["producer_context_handle"] = producer_handle
-                result["tool_call_bindings"] = [
-                    {
-                        "observed_call_handle": item.observed_call_handle,
-                        "provider_tool_call_id": item.provider_tool_call_id,
-                        "tool_name": item.tool_name,
-                        "arguments_sha256": item.arguments_sha256,
-                    }
-                    for item in tool_bindings
-                ]
+                delivery_handle = getattr(metadata, "response_delivery_handle", None)
+                if (not isinstance(delivery_handle, str)
+                        or not 32 <= len(delivery_handle) <= 128
+                        or any(char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+                               for char in delivery_handle)):
+                    raise AuthorityDenied("provider.observer_metadata", "root response delivery reference is malformed")
+                result["headers"] = dict(result["headers"])
+                result["headers"]["X-Hermes-Native-Response-Ref"] = delivery_handle
             return result
         finally:
             __import__("os").close(pending.producer_pidfd)
