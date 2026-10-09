@@ -46,26 +46,36 @@ _PLUGIN_IDS = (
     "voice-pipeline",
     "web",
 )
+_PLUGIN_VERSIONS = {
+    "agent-live-wallet": "1.0.0", "agent-sandbox-wallet": "1.0.0",
+    "agent37-discovery": "1.0.0", "authentik-authorization": "1.0.0",
+    "cloudflare-homelab": "1.0.0", "codex": "1.0.1", "composio": "1.0.0",
+    "ebook-toolchain": "1.0.0", "epic-kanban": "1.0.1",
+    "financial-data-hub": "1.0.1", "financial-execution-gateway": "1.0.0",
+    "github": "1.0.1", "homelab-ops-broker": "1.0.0", "kobo-bridge": "1.0.0",
+    "mcp-registry": "1.0.0", "resource-overlay-store": "1.0.1",
+    "voice-pipeline": "1.0.1", "web": "1.0.1",
+}
 
 _PLUGIN_BLOCKERS = {
-    "agent-live-wallet": "Unavailable: no enrolled wallet runtime, encrypted host vault, network/asset allowlist or one-shot explicit-order confirmation path. Resume after the user selects an exact wallet backend, network, assets and protected signer; mainnet activity is not enabled.",
-    "agent-sandbox-wallet": "Unavailable: no isolated wallet runtime or reviewed Sepolia/Solana Devnet RPC and test-asset route is enrolled. Resume after selecting a sandbox backend and fixed test-network recipients; never connect mainnet or user funds.",
+    "agent-live-wallet": "Reviewed fixed handler exists; selected activation remains blocked until an enrolled wallet runtime, encrypted host vault, network/asset allowlist, protected signer, and one-shot explicit-order confirmation path are supplied. Mainnet activity is not enabled.",
+    "agent-sandbox-wallet": "Reviewed fixed handler exists; selected activation remains blocked until an isolated wallet runtime and reviewed Sepolia/Solana Devnet RPC and test-asset route are enrolled. Never connect mainnet or user funds.",
     "agent37-discovery": "Handler is implemented; public reads still require root `registry-agent37-read` enrollment and the protected installer loader before native discovery/invocation.",
-    "authentik-authorization": "Unavailable: Authentik base URL, read-only token reference, System group identity and signed principal-resolution bridge are not securely enrolled. Resume with those protected references and a direct/indirect membership negative test.",
-    "cloudflare-homelab": "Unavailable: no owned account/zone/tunnel enrollment, scoped runtime token reference or live Authentik System check is bound. Resume only after the root operator identifies owned resources and reviews fixed DNS/tunnel effect verbs.",
+    "authentik-authorization": "Reviewed fixed broker handler exists; activation requires root-enrolled Authentik principal/session and live effective-System-membership resolvers plus recipient listing. No caller-supplied principal, group, endpoint, or token is accepted.",
+    "cloudflare-homelab": "Reviewed fixed broker handler exists; activation requires root-enrolled owned account/zone/tunnel targets, scoped token reference, and live Authentik System check. Only the fixed DNS/tunnel verbs are exposed.",
     "codex": "Unavailable: no host-owned Codex authentication provider, assigned-workspace identity or bounded task runner is injected. Resume when the trusted host runtime supplies these without copying credentials into plugin state.",
     "composio": "Unavailable: no user-authorized Composio connection, per-profile toolkit allowlist or runtime credential-vault reference is enrolled. Resume after the user selects toolkits and connects the account through its protected OAuth flow.",
-    "ebook-toolchain": "Unavailable: no fixed ebook component adapter or isolated, installer-managed pandoc/epubcheck/calibre executable registry is implemented. Resume by adding a fixed-builder adapter and proving EPUB/PDF outputs in an owned fixture; DRM removal and arbitrary shell stay denied.",
-    "epic-kanban": "Unavailable: no per-Epic local board store/adapter is registered and no GitHub Projects v2 account or project scope is enrolled. Resume with the chosen local-only or user-authorized Projects backend and ephemeral board lifecycle tests.",
-    "financial-data-hub": "Unavailable: no user-consented read-only institution/provider connections or namespaced token vault is enrolled. Resume through each provider's consent flow and verify read scopes; payment, trading, signing and transfer operations remain excluded.",
-    "financial-execution-gateway": "Unavailable: no provider execution adapters, independently enrolled account scopes, duplicate protection or fresh one-shot confirmation verifier exists. Resume only after a separately reviewed explicit-order workflow; no standing or autonomous financial actions.",
+    "ebook-toolchain": "The bounded EPUB builder is implemented; native tools remain unavailable until root supplies rights-attested source material and approved per-profile output roots. DRM removal and arbitrary shell stay denied.",
+    "epic-kanban": "A local ephemeral-board adapter is implemented; native tools remain unavailable until root supplies a profile-bound board store. GitHub Projects remains separate and requires an enrolled project scope.",
+    "financial-data-hub": "Reviewed read-only handler exists; activation requires user-consented per-provider accounts and namespaced host-vault refs. Payment, trading, signing and transfer operations remain excluded.",
+    "financial-execution-gateway": "Reviewed fixed execution handler exists; activation requires provider adapters, independently enrolled account scopes, duplicate protection and a fresh one-shot confirmation verifier. No standing or autonomous financial actions.",
     "github": "Unavailable: no host credential-vault reference, repository scope or reviewed fixed GitHub effect catalog is injected. Resume after selecting an account/repository and enrolling least-privilege scopes; write operations require separate task authorization and post-write verification.",
-    "homelab-ops-broker": "Unavailable: no protected operations-broker target IDs, read/write capability enrollment, Authentik System verifier or bounded fixed-operation transport is injected. Resume after operator enrollment of exact owned Hermes/Nextcloud targets and negative cross-target tests; raw shell/SSH remain denied.",
-    "kobo-bridge": "Unavailable: no detected Kobo model, exported-notebook source, USB mount ownership or user-authorized Dropbox/Drive connection is available. Resume after a model/capability probe and explicit non-DRM file transfer choice; account scraping and notebook writes remain denied.",
+    "homelab-ops-broker": "Reviewed fixed broker handler exists; activation requires root-enrolled target IDs, read/write capabilities, Authentik System verifier and bounded fixed-operation transport. Raw shell/SSH remain denied.",
+    "kobo-bridge": "A no-overwrite EPUB export primitive is implemented; native tools remain unavailable until root supplies an enrolled model/device resolver, approved USB-root custody and explicit non-DRM transfer consent. Account scraping and notebook writes remain denied.",
     "mcp-registry": "Handler is implemented; public reads still require root `registry-read` enrollment and the protected installer loader before native discovery/invocation.",
     "resource-overlay-store": "Encrypted backup is unavailable until lifecycle provides a host-managed encrypted backup/restore API; local private CAS read/write/history/delete remains profile-scoped.",
-    "voice-pipeline": "Unavailable: no selected local Wyoming STT/TTS endpoints, session-authorized microphone adapter or audio boundary is enrolled. Resume after confirming bounded local endpoints and session permissions; cloud fallback and raw-audio persistence remain denied.",
-    "web": "Unavailable: no reviewed public-web retrieval runtime with fixed URL policy, redirect handling, TLS and host dispatch mediation is injected. Resume when the selected browser/retriever adapter is registered; authenticated actions and credential-bearing requests remain denied.",
+    "voice-pipeline": "A session-bound local Wyoming/Piper adapter is implemented; native tools remain unavailable until root enrolls local endpoints and injects the current-session microphone/audio boundary. Cloud fallback and raw-audio persistence remain denied.",
+    "web": "A bounded public-HTTPS adapter is implemented; native tools remain unavailable until root injects a direct one-hop TLS reader that proves destination IP and disables inherited proxies. Authenticated actions and credential-bearing requests remain denied.",
 }
 
 # Plugin resources are source identities from the user's preserved registry,
@@ -76,9 +86,20 @@ NATIVE_PLUGIN_ADAPTERS = tuple(
         adapter_id=plugin_id,
         resource_id=plugin_id,
         component_adapter_id=None,
-        handler_available=(plugin_id in {"resource-overlay-store", "mcp-registry", "agent37-discovery"}),
+        handler_available=(plugin_id in {
+            "resource-overlay-store", "mcp-registry", "agent37-discovery",
+            "agent-live-wallet", "agent-sandbox-wallet", "authentik-authorization",
+            "cloudflare-homelab", "financial-data-hub", "financial-execution-gateway",
+            "homelab-ops-broker",
+        }),
         status=("reviewed-local-profile-handler" if plugin_id == "resource-overlay-store"
                 else "reviewed-root-brokered-public-read" if plugin_id in {"mcp-registry", "agent37-discovery"}
+                else "reviewed-root-brokered-handler" if plugin_id in {
+                    "authentik-authorization", "cloudflare-homelab", "homelab-ops-broker",
+                }
+                else "reviewed-scoped-financial-handler" if plugin_id in {
+                    "agent-live-wallet", "agent-sandbox-wallet", "financial-data-hub", "financial-execution-gateway",
+                }
                 else "typed-adapter-registry-required"),
         blocker=_PLUGIN_BLOCKERS[plugin_id],
     )
@@ -129,7 +150,8 @@ def create_native_plugin_handler(adapter_id: str, runtime_context: NativePluginR
         raise NativePluginUnavailable(f"{adapter_id}: trusted selected-adapter registry is unavailable")
     identity = getattr(runtime_context, "identity", None)
     if (identity is None or getattr(identity, "kind", None) != "plugins"
-            or getattr(identity, "resource_id", None) != adapter_id):
+            or getattr(identity, "resource_id", None) != adapter_id
+            or getattr(identity, "version", None) != _PLUGIN_VERSIONS[adapter_id]):
         raise NativePluginUnavailable(f"{adapter_id}: trusted context does not match the selected Plugin identity")
     implementation = runtime_context.selected_adapters.resolve_plugin_adapter(adapter_id)
     if implementation is None:
@@ -407,4 +429,11 @@ def resolve_native_plugin_implementation(adapter_id: str) -> NativePluginImpleme
         return MCP_REGISTRY_IMPLEMENTATION
     if adapter_id == "agent37-discovery":
         return AGENT37_DISCOVERY_IMPLEMENTATION
+    if adapter_id in {"agent-live-wallet", "agent-sandbox-wallet",
+                      "financial-data-hub", "financial-execution-gateway"}:
+        from hermes_installer.components.plugin_finance import FINANCIAL_PLUGIN_IMPLEMENTATIONS
+        return FINANCIAL_PLUGIN_IMPLEMENTATIONS.get(adapter_id)
+    if adapter_id in {"authentik-authorization", "cloudflare-homelab", "homelab-ops-broker"}:
+        from hermes_installer.components.plugin_homelab import resolve_homelab_plugin_implementation
+        return resolve_homelab_plugin_implementation(adapter_id)
     return None
