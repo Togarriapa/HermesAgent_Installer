@@ -224,9 +224,10 @@ def validate_step_outcome(*, route_id: str, step_id: str, status: int,
                 raise MemoryRecipeUnavailable("OpenViking session step did not report success")
             return MemoryStepOutcome({"status": "ok"}, {})
     if route_id.startswith("agentmemory-"):
-        if "error" in value:
-            raise MemoryRecipeUnavailable("AgentMemory response contains an error")
-        return MemoryStepOutcome(value, {})
+        # Pinned REST routes forward function payloads from the upstream
+        # memory engine. Until the selected result shape has its own reviewed
+        # schema artifact, do not convert arbitrary JSON into success.
+        raise MemoryRecipeUnavailable("AgentMemory semantic result validator is not installed")
     if route_id == "openviking-find":
         if value.get("status") != "ok" or not isinstance(value.get("result"), dict):
             raise MemoryRecipeUnavailable("OpenViking find response failed source schema")
