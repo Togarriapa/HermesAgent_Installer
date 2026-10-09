@@ -60,7 +60,7 @@ def validate_access_jwt(token:str,*,policy:RemotePolicy,now:Callable[[],float]=t
  if numeric["iat"]>ts+policy.clock_skew_seconds or numeric["nbf"]>ts+policy.clock_skew_seconds or numeric["exp"]<=ts or numeric["iat"]>=numeric["exp"] or numeric["nbf"]>=numeric["exp"]:raise GatewayDenied("Access token is not currently valid")
  return Principal(email.casefold(),subject,float(numeric["exp"]),hashlib.sha256(token.encode()).hexdigest())
 def authorize_request(*,token:str|None,policy:RemotePolicy,method:str,path:str,host:str,origin:str|None,now:Callable[[],float]=time.time)->Principal:
- if not (path in {"/","/session","/renew","/stream","/client/"} or (path.startswith("/client/") and all(x not in {".",".."} for x in path.split("/")))):raise GatewayDenied("route is not exposed")
+ if not (path in {"/","/session","/renew","/logout","/stream","/client/"} or (path.startswith("/client/") and all(x not in {".",".."} for x in path.split("/")))):raise GatewayDenied("route is not exposed")
  if method not in {"GET","HEAD","POST"} or host.casefold()!=policy.hostname.casefold():raise GatewayDenied("request target is not allowed")
  if origin is not None:
   u=urlsplit(origin)
