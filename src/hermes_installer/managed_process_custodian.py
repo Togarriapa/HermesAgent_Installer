@@ -1911,7 +1911,15 @@ class ManagedProcessEffectHandler:
                 if sink is not None:
                     # Test-only root diagnostics expose a finite reason enum,
                     # never paths, credentials, payloads, or process data.
-                    sink(("prelaunch-deny:" + reason).encode("ascii"))
+                    details = ""
+                    if reason == "profile-generation":
+                        current = self.profiles.get(profile.profile_id)
+                        expected = registered_profile or profile
+                        names = getattr(type(expected), "__dataclass_fields__", {})
+                        differing = [name for name in names
+                                     if getattr(current, name, object()) != getattr(expected, name, object())]
+                        details = ":fields=" + ",".join(differing[:24])
+                    sink(("prelaunch-deny:" + reason + details).encode("ascii", "backslashreplace")[:512])
                 raise AuthorityDenied("process.start_expired", "start grant, profile enrollment or caller expired before launch")
 
         if peer_pidfd is None:
