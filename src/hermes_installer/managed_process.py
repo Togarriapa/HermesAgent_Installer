@@ -1,12 +1,13 @@
-"""Owned transient services for bounded, isolated installer child processes.
+"""Client API for root-custodied, bounded installer child processes.
 
-The user system manager owns each process cgroup and enforces a finite runtime
-maximum. Cleanup authority is the manager-issued unit and cgroup, never a PID
-or process-group number. Unsupported kernel or manager features fail closed.
+The root authority broker owns service creation, cgroups, pidfds and cleanup;
+this module accepts only host-issued grants and fixed process-control verbs.
 """
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import hashlib
 import math
 import os
@@ -15,6 +16,7 @@ import pwd
 import select
 import stat
 import contextlib
+import threading
 from hermes_installer.state import Journal, OwnedRoot, OwnershipError
 import shutil
 import subprocess
@@ -26,9 +28,9 @@ from typing import Mapping, Sequence
 
 from hermes_installer.authority.client import AuthorityClient
 from hermes_installer.authority.types import (
-    AuthorityDenied, EffectAuthorization, HostContext, VerifiedEffectAuthorization,
-    canonical_digest,
+    AuthorityDenied, EffectAuthorization, HostContext, canonical_digest,
 )
+from hermes_installer.authority.client import canonical_profile_target, profile_launch_envelope
 
 
 class ManagedProcessError(RuntimeError):
@@ -56,6 +58,9 @@ class ManagedProcessResult:
     memory_max_bytes: int | None
     cpu_quota_percent: int | None
     io_weight: int | None
+    process_id: str = ""
+    generation: str = ""
+    kernel_limits: Mapping[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,13 +79,15 @@ class ManagedProcessSpec:
     service_user: str
     startup_deadline_monotonic: float
     max_lifetime_seconds: float
-    child_artifact_hashes: Mapping[str, str] | None = None
     profile_id: str = ""
     authority_context: HostContext | None = None
     effect_authorization: EffectAuthorization | None = None
     memory_max_bytes: int | None = None
     cpu_quota_percent: int | None = None
     io_weight: int | None = None
+    child_artifact_refs: Mapping[str, str] | None = None
+    max_output_bytes: int = 1_048_576
+    stdin_mode: str = "pipe"
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +104,9 @@ class ProcessIdentity:
     network_namespace_inode: int = 0
     uid: int = 0
     gid: int = 0
+    process_id: str = ""
+    generation: str = ""
+    kernel_limits: Mapping[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,17 +410,29 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
         raise ManagedProcessError("managed processes require an OwnedRoot and durable Journal")
     try:
         root = spec.owned_root.root.resolve(strict=True)
-        exe = spec.owned_root.path(Path(spec.executable).relative_to(root).as_posix()).resolve(strict=True)
-        artifact = spec.owned_root.path(Path(spec.artifact_root).relative_to(root).as_posix()).resolve(strict=True)
         cwd = spec.owned_root.path(Path(spec.cwd).relative_to(root).as_posix()).resolve(strict=True)
-        data = spec.owned_root.path(Path(spec.data_root).relative_to(root).as_posix()).resolve(strict=True)
+        requested_data = Path(spec.data_root).resolve(strict=True)
+        data = (root if requested_data == root else
+                spec.owned_root.path(requested_data.relative_to(root).as_posix()).resolve(strict=True))
         journal_path = spec.journal.path.resolve(strict=True)
     except (OwnershipError, OSError, ValueError):
         raise ManagedProcessError("executable, cwd, data root, or journal is outside safe owned paths") from None
+    try:
+        exe = Path(spec.executable).resolve(strict=True)
+        artifact = Path(spec.artifact_root).resolve(strict=True)
+    except OSError:
+        raise ManagedProcessError("pinned executable or protected artifact catalog is missing") from None
     if not (root.is_dir() and exe.is_file() and artifact.is_dir() and cwd.is_dir() and data.is_dir()):
         raise ManagedProcessError("owned roots, pinned artifact root and working directory must exist")
-    if not exe.is_relative_to(artifact) or not cwd.is_relative_to(data) or not journal_path.is_relative_to(root):
+    if not cwd.is_relative_to(data) or not journal_path.is_relative_to(root):
         raise ManagedProcessError("working directory and journal must remain inside the owned profile root")
+    for protected in (exe, artifact):
+        cursor = Path(protected.anchor)
+        for part in protected.parts[1:]:
+            cursor /= part
+            info = cursor.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise ManagedProcessError("pinned executable and artifact catalog cannot traverse symlinks")
     info = root.lstat()
     marker = root / ".hermes-installer-owned"
     try:
@@ -430,6 +452,13 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
     exe_info = exe.stat(follow_symlinks=False)
     if not stat.S_ISREG(exe_info.st_mode) or exe_info.st_nlink != 1:
         raise ManagedProcessError("pinned executable must be a single-link regular file")
+    for store_id, digest in (spec.child_artifact_refs or {}).items():
+        if (not isinstance(store_id, str) or not re.fullmatch(r"artifact:[A-Za-z0-9_.-]{1,128}:[0-9a-f]{64}", store_id)
+                or store_id.rsplit(":", 1)[-1] != digest):
+            raise ManagedProcessError("child artifact reference is malformed")
+    if any(arg.startswith("artifact:") and arg not in (spec.child_artifact_refs or {})
+           for arg in spec.argv):
+        raise ManagedProcessError("argv contains an unenrolled opaque artifact reference")
     if not spec.argv or spec.argv[0] != str(exe) or any(not isinstance(x, str) or "\x00" in x for x in spec.argv):
         raise ManagedProcessError("argv must start with the pinned executable and contain NUL-free strings")
     if any(re.search(r"(?i)(?:--?(?:token|secret|password|api[-_]?key|credential)(?:=|$)|authorization:\s*bearer\s+)", value)
@@ -483,13 +512,19 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
     return spec.owned_root, exe, artifact, cwd, data
 
 class ManagedProcessHandle:
-    def __init__(self, spec: ManagedProcessSpec, unit: str, cgroup: str,
-                 launcher: subprocess.Popen[bytes], identity: ProcessIdentity,
-                 started: float, target_env: Mapping[str, str]):
-        self.spec, self.unit, self.cgroup = spec, unit, cgroup
-        self._launcher, self.identity = launcher, identity
-        self._started, self._target_env = started, dict(target_env)
+    """Brokered handle to a root-owned process record and cgroup."""
+    def __init__(self, spec: ManagedProcessSpec, authority: AuthorityClient,
+                 identity: ProcessIdentity, generation: str, started: float, expires: float):
+        self.spec, self.identity = spec, identity
+        self.authority, self.generation = authority, generation
+        self.unit, self.cgroup = identity.unit, identity.cgroup
+        self._started, self._expires = started, expires
         self._closed = False
+        self._stdout_cursor = 0
+        self._stderr_cursor = 0
+        self._stdin_cursor = 0
+        self._exit_code: int | None = None
+        self._eof = {"stdout": False, "stderr": False}
         self._watchdog = asyncio.create_task(self._enforce_lifetime())
 
     async def __aenter__(self) -> "ManagedProcessHandle":
@@ -500,163 +535,110 @@ class ManagedProcessHandle:
         await asyncio.shield(self.stop("operation complete" if exc is None else "operation failed"))
 
     async def _enforce_lifetime(self) -> None:
-        await asyncio.sleep(max(0.0, self.spec.max_lifetime_seconds - (time.monotonic() - self._started)))
+        await asyncio.sleep(max(0.0, self._expires - time.monotonic()))
         if not self._closed:
-            await self.stop("manager lifetime guard", timeout=5.0)
+            await self.stop("bounded lifetime expired", timeout=5.0)
 
-    def _check_clock(self) -> None:
-        if self._closed or time.monotonic() - self._started >= self.spec.max_lifetime_seconds:
-            raise ManagedProcessError("managed process is closed or expired")
-
-    async def _check_custody(self) -> None:
-        self._check_clock()
-        if await _show_async(self.unit, "ControlGroup") != self.cgroup:
-            raise ManagedProcessError("systemd unit custody changed")
-        if await _show_async(self.unit, "Description") != self._description:
-            raise ManagedProcessError("systemd operation identity changed")
-    async def _check_live(self) -> None:
-        await self._check_custody()
-        if self._launcher.poll() is not None:
-            raise ManagedProcessError("systemd service supervisor exited unexpectedly")
+    def _control_sync(self, operation: str, fields: Mapping[str, object], timeout: float) -> dict[str, object]:
+        payload = json.dumps({"schema": 1, "process_id": self.identity.process_id,
+                              "generation": self.generation, **fields},
+                             sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+        context = self.authority.context(
+            purpose="managed-process-control", intent=f"{operation}:{self.identity.pid}:{self.generation}",
+            source_contexts=(self.spec.authority_context,) if self.spec.authority_context else (),
+            trace_id=self.spec.authority_context.trace_id if self.spec.authority_context else None,
+            lease_seconds=min(5.0, max(.1, timeout)),
+            final_payload_digest=canonical_digest(payload), operation=operation)
+        verb = operation.removeprefix("process.")
+        if verb not in {"status", "read", "write", "stop"}:
+            raise ManagedProcessError("process control verb is not fixed")
+        target = (f"hermes-profile-control:{self.spec.profile_id}:"
+                  f"{Path(self.spec.data_root).resolve(strict=True)}:{verb}")
+        grant = self.authority.authorize_effect(
+            context, capability="hermes-process-control", target=target,
+            request_digest=canonical_digest(payload), retry_index=0)
+        response = self.authority.process_control(
+            grant, operation=operation, target=target, payload=payload,
+            timeout=min(5.0, max(.1, timeout)))
+        if response.status != 200:
+            raise ManagedProcessError("root process control denied the operation")
         try:
-            if _proc_cgroup(self.identity.pid) != self.cgroup:
-                raise ManagedProcessError("managed process left its owned cgroup")
-            if _proc_stat(self.identity.pid)[1] != self.identity.start_ticks:
-                raise ManagedProcessError("managed process identity changed")
-            if _pidfd_exited(self.identity.pidfd):
-                raise ManagedProcessError("managed process exited")
-            pinned = _proc_executable_identity(self.identity.pid)
-            if pinned != (self.identity.executable_sha256, self.identity.executable_device,
-                          self.identity.executable_inode):
-                raise ManagedProcessError("managed process executable pin changed")
-            self._verify_target_environment()
-        except (FileNotFoundError, ProcessLookupError):
-            raise ManagedProcessError("managed process exited") from None
+            result = json.loads(response.body.decode("ascii"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ManagedProcessError("root process control returned a malformed receipt") from None
+        if not isinstance(result, dict) or result.get("schema") != 1:
+            raise ManagedProcessError("root process control returned an invalid receipt")
+        return result
 
-    def _verify_target_environment(self) -> None:
-        if ManagedProcessSupervisor._read_process_environment(self.identity.pid) != self._target_env:
-            raise ManagedProcessError("started process environment differs from the sanitized allowlist")
+    async def _control(self, operation: str, fields: Mapping[str, object], timeout: float = 5.0) -> dict[str, object]:
+        return await asyncio.to_thread(self._control_sync, operation, fields, timeout)
+
+    async def _check_live(self) -> None:
+        if self._closed or time.monotonic() >= self._expires:
+            raise ManagedProcessError("managed process is closed or expired")
+        result = await self._control("process.status", {})
+        if result.get("state") != "running":
+            self._exit_code = result.get("exit_code") if type(result.get("exit_code")) is int else None
+            raise ManagedProcessError("managed process exited")
 
     async def snapshot_children(self) -> tuple[ChildIdentity, ...]:
-        """Observe pinned descendants; the caller must close every returned pidfd."""
-        await self._check_custody()
-        base = Path("/sys/fs/cgroup") / self.cgroup.lstrip("/")
-        try:
-            pids = [int(x) for x in (base / "cgroup.procs").read_text().split()]
-        except (OSError, ValueError):
-            raise ManagedProcessError("owned cgroup membership cannot be observed") from None
-        by_pid: dict[int, tuple[int, int, str, int, int, int]] = {}
-        out: list[ChildIdentity] = []
-        try:
-            for pid in pids:
-                try:
-                    parent, ticks, digest, device, inode, fd = _observe_process_identity(pid, self.cgroup)
-                    by_pid[pid] = (parent, ticks, digest, device, inode, fd)
-                except (OSError, ValueError, ManagedProcessError):
-                    continue
-            pins = self.spec.child_artifact_hashes or {}
-            for pid, (parent, ticks, digest, device, inode, fd) in tuple(by_pid.items()):
-                role = next((name for name, pin in pins.items() if pin == digest), None)
-                ancestor, seen, valid = parent, set(), False
-                while role and ancestor not in seen and ancestor > 1:
-                    if ancestor == self.identity.pid:
-                        valid = True
-                        break
-                    seen.add(ancestor)
-                    if ancestor not in by_pid:
-                        break
-                    ancestor = by_pid[ancestor][0]
-                if role and valid and _proc_cgroup(pid) == self.cgroup and not _pidfd_exited(fd):
-                    out.append(ChildIdentity(role, pid, ticks, parent, digest, self.cgroup, fd,
-                                             device, inode))
-                    by_pid.pop(pid, None)
-            return tuple(out)
-        except BaseException:
-            for _, _, _, _, _, fd in by_pid.values():
-                with contextlib.suppress(OSError):
-                    os.close(fd)
-            for child in out:
-                with contextlib.suppress(OSError):
-                    os.close(child.pidfd)
-            raise
+        raise ManagedProcessError("root custodian exposes cgroup cleanup proof, not PID snapshots")
 
-    async def read(self, maximum_bytes: int, timeout: float) -> bytes:
-        if not 1 <= maximum_bytes <= 1_048_576 or not 0 <= timeout <= 30:
-            raise ValueError("read bounds are invalid")
-        await self._check_live()
-        stream = self._launcher.stdout
-        if stream is None:
-            raise ManagedProcessError("managed stdout is unavailable")
-        fd, loop = stream.fileno(), asyncio.get_running_loop()
-        os.set_blocking(fd, False)
-        ready = loop.create_future()
-        loop.add_reader(fd, lambda: None if ready.done() else ready.set_result(None))
+    async def read(self, maximum_bytes: int, timeout: float, *, stream: str = "stdout") -> bytes:
+        if not 1 <= maximum_bytes <= 65536 or not 0 <= timeout <= 30 or stream not in {"stdout", "stderr"}:
+            raise ValueError("read bounds or stream are invalid")
+        if self._closed or time.monotonic() >= self._expires:
+            raise ManagedProcessError("managed process is closed or expired")
+        cursor = self._stdout_cursor if stream == "stdout" else self._stderr_cursor
+        result = await self._control("process.read", {"stream": stream, "after_cursor": cursor,
+                                                       "max_bytes": maximum_bytes}, timeout=max(1.0, timeout))
         try:
-            try:
-                await asyncio.wait_for(ready, timeout)
-            except asyncio.TimeoutError:
-                return b""
-            await self._check_live()
-            try:
-                return os.read(fd, maximum_bytes)
-            except BlockingIOError:
-                return b""
-        finally:
-            loop.remove_reader(fd)
+            data = base64.b64decode(result["data"], validate=True)
+            new_cursor = int(result["cursor"])
+        except Exception:
+            raise ManagedProcessError("root process stream receipt is malformed") from None
+        if new_cursor != cursor + len(data):
+            raise ManagedProcessError("root process stream cursor is inconsistent")
+        if stream == "stdout":
+            self._stdout_cursor = new_cursor
+        else:
+            self._stderr_cursor = new_cursor
+        self._eof[stream] = bool(result.get("eof", False))
+        return data
 
     async def write(self, data: bytes, timeout: float) -> int:
-        if not isinstance(data, bytes) or len(data) > 65536 or not 0 <= timeout <= 30:
+        if not isinstance(data, bytes) or len(data) > 1_048_576 or not 0 <= timeout <= 30:
             raise ValueError("write bounds are invalid")
         await self._check_live()
-        stream = self._launcher.stdin
-        if stream is None:
-            raise ManagedProcessError("managed stdin is unavailable")
-        fd, loop = stream.fileno(), asyncio.get_running_loop()
-        os.set_blocking(fd, False)
         deadline, written = time.monotonic() + timeout, 0
-        while written < len(data):
-            await self._check_live()
-            try:
-                written += os.write(fd, data[written:])
-                continue
-            except BlockingIOError:
-                pass
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            ready = loop.create_future()
-            loop.add_writer(fd, lambda: None if ready.done() else ready.set_result(None))
-            try:
-                await asyncio.wait_for(ready, remaining)
-            finally:
-                loop.remove_writer(fd)
+        while written < len(data) and time.monotonic() < deadline:
+            chunk = data[written:written + 65536]
+            result = await self._control("process.write", {
+                "stdin_cursor": self._stdin_cursor,
+                "data": base64.b64encode(chunk).decode("ascii"),
+            }, timeout=max(.1, min(5.0, deadline - time.monotonic())))
+            count = result.get("bytes_written")
+            cursor = result.get("stdin_cursor")
+            if type(count) is not int or not 0 <= count <= len(chunk) or cursor != self._stdin_cursor + count:
+                raise ManagedProcessError("root stdin receipt is inconsistent")
+            self._stdin_cursor = int(cursor)
+            written += count
+            if count == 0:
+                await asyncio.sleep(.01)
         return written
 
     async def wait(self, timeout: float) -> int | None:
-        if not 0 <= timeout <= 30:
+        if not 0 <= timeout <= 600:
             raise ValueError("wait bound is invalid")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            state = await _show_async(self.unit, "ActiveState", timeout=min(1.0, max(.1, deadline-time.monotonic())))
-            if state not in {"active", "activating", "reloading"}:
-                return self._launcher.poll()
-            await asyncio.sleep(min(.05, max(0.0, deadline-time.monotonic())))
+            result = await self._control("process.status", {}, timeout=min(5.0, max(.1, deadline-time.monotonic())))
+            if result.get("state") != "running":
+                code = result.get("exit_code")
+                self._exit_code = code if type(code) is int else None
+                return self._exit_code
+            await asyncio.sleep(min(.2, max(0, deadline-time.monotonic())))
         return None
-
-    def _remaining(self, deadline: float) -> float:
-        left = deadline - time.monotonic()
-        if left <= 0:
-            raise ManagedProcessError("cleanup deadline expired")
-        return left
-
-    def _cgroup_pids(self) -> tuple[int, ...]:
-        path = Path("/sys/fs/cgroup") / self.cgroup.lstrip("/") / "cgroup.procs"
-        try:
-            return tuple(int(x) for x in path.read_text().split())
-        except FileNotFoundError:
-            return ()
-        except (OSError, ValueError):
-            raise ManagedProcessError("cannot verify that owned descendants exited") from None
 
     async def stop(self, reason: str, timeout: float = 5.0) -> None:
         if not reason or len(reason) > 160 or not 0 < timeout <= 10:
@@ -665,458 +647,185 @@ class ManagedProcessHandle:
             return
         if asyncio.current_task() is not self._watchdog:
             self._watchdog.cancel()
-        deadline = time.monotonic() + timeout
         try:
-            try:
-                await self._check_custody()
-            except ManagedProcessError:
-                if (self._launcher.poll() is not None and _pidfd_exited(self.identity.pidfd)
-                        and not self._cgroup_pids()):
-                    await asyncio.to_thread(self.spec.journal.checkpoint, self.spec.journal_operation,
-                                            "stopped", {"unit": self.unit, "cgroup": self.cgroup,
-                                                         "pid": self.identity.pid,
-                                                         "start_ticks": self.identity.start_ticks,
-                                                         "executable_sha256": self.identity.executable_sha256,
-                                                         "executable_device": self.identity.executable_device,
-                                                         "executable_inode": self.identity.executable_inode,
-                                                         "mount_namespace_inode": self.identity.mount_namespace_inode,
-                                                         "network_namespace_inode": self.identity.network_namespace_inode,
-                                                        "uid": self.identity.uid, "gid": self.identity.gid,
-                                                "memory_max_bytes": self.spec.memory_max_bytes,
-                                                "cpu_quota_percent": self.spec.cpu_quota_percent,
-                                                "io_weight": self.spec.io_weight,
-                                                "service_identity": self.spec.service_identity,
-                                                         "reason": reason[:160], "manager_collected": True})
-                    self._closed = True
-                    with contextlib.suppress(OSError):
-                        os.close(self.identity.pidfd)
-                    for stream in (self._launcher.stdout, self._launcher.stderr, self._launcher.stdin):
-                        if stream:
-                            stream.close()
-                    return
-                raise
-            await _systemctl_async("kill", "--kill-whom=all", "--signal=SIGTERM", self.unit,
-                                   timeout=min(1.0, self._remaining(deadline)))
-            grace = min(deadline, time.monotonic() + .5)
-            while self._cgroup_pids() and time.monotonic() < grace:
-                await asyncio.sleep(min(.025, grace-time.monotonic()))
-            if self._cgroup_pids():
-                await _systemctl_async("kill", "--kill-whom=all", "--signal=SIGKILL", self.unit,
-                                       timeout=min(1.0, self._remaining(deadline)))
-            await _systemctl_async("stop", self.unit, timeout=min(1.0, self._remaining(deadline)))
-            while self._cgroup_pids() and time.monotonic() < deadline:
-                await asyncio.sleep(min(.025, deadline-time.monotonic()))
-            if self._cgroup_pids():
-                raise ManagedProcessError("manager did not empty the owned cgroup before the cleanup deadline")
+            result = await asyncio.shield(self._control("process.stop", {}, timeout=timeout))
+            if result.get("stopped") is not True or result.get("cleanup_verified") is not True:
+                raise ManagedProcessError("root custodian did not prove process cleanup")
             await asyncio.to_thread(self.spec.journal.checkpoint, self.spec.journal_operation,
                                     "stopped", {"unit": self.unit, "cgroup": self.cgroup,
-                                                "pid": self.identity.pid,
-                                                "start_ticks": self.identity.start_ticks,
-                                                "executable_sha256": self.identity.executable_sha256,
-                                                "executable_device": self.identity.executable_device,
-                                                "executable_inode": self.identity.executable_inode,
-                                                "mount_namespace_inode": self.identity.mount_namespace_inode,
-                                                "network_namespace_inode": self.identity.network_namespace_inode,
-                                                         "uid": self.identity.uid, "gid": self.identity.gid,
-                                                         "memory_max_bytes": self.spec.memory_max_bytes,
-                                                         "cpu_quota_percent": self.spec.cpu_quota_percent,
-                                                         "io_weight": self.spec.io_weight,
-                                                         "service_identity": self.spec.service_identity,
-                                                "reason": reason[:160]})
+                                    "pid": self.identity.pid, "start_ticks": self.identity.start_ticks,
+                                    "process_id": self.identity.process_id, "generation": self.generation,
+                                    "executable_sha256": self.identity.executable_sha256,
+                                    "executable_device": self.identity.executable_device,
+                                    "executable_inode": self.identity.executable_inode,
+                                    "mount_namespace_inode": self.identity.mount_namespace_inode,
+                                    "network_namespace_inode": self.identity.network_namespace_inode,
+                                    "uid": self.identity.uid, "gid": self.identity.gid,
+                                    "kernel_limits": dict(self.identity.kernel_limits or {}),
+                                    "reason": reason[:160], "cleanup_verified": True})
             self._closed = True
-            os.close(self.identity.pidfd)
-            for stream in (self._launcher.stdout, self._launcher.stderr, self._launcher.stdin):
-                if stream:
-                    stream.close()
-            if self._launcher.poll() is None:
-                self._launcher.kill()
-                try:
-                    await asyncio.wait_for(asyncio.to_thread(self._launcher.wait), self._remaining(deadline))
-                except asyncio.TimeoutError:
-                    raise ManagedProcessError("systemd-run client did not exit after unit cleanup") from None
         except BaseException:
             with contextlib.suppress(BaseException):
-                await asyncio.shield(asyncio.to_thread(
-                    self.spec.journal.checkpoint, self.spec.journal_operation,
-                    "cleanup-failed", {"unit": self.unit, "cgroup": self.cgroup,
-                                       "service_identity": self.spec.service_identity}))
+                await asyncio.shield(asyncio.to_thread(self.spec.journal.checkpoint,
+                    self.spec.journal_operation, "cleanup-failed", {"unit": self.unit,
+                    "cgroup": self.cgroup, "process_id": self.identity.process_id}))
             raise
-
-    @property
-    def _description(self) -> str:
-        return "HermesInstaller " + self.spec.service_identity + " " + self.spec.journal_operation
 
 
 class ManagedProcessSupervisor:
-    """Starts private transient services with manager-enforced descendant custody."""
+    """Client of the root-owned fixed process.start and process-control verbs."""
     def __init__(self, authority_verifier: AuthorityClient | None = None):
         self.authority_verifier = authority_verifier
 
     async def start(self, spec: ManagedProcessSpec) -> ManagedProcessHandle:
-        if (not spec.profile_id or not isinstance(spec.profile_id, str)
-                or spec.authority_context is None or spec.effect_authorization is None
-                or self.authority_verifier is None
-                or not isinstance(self.authority_verifier, AuthorityClient)
-                or not isinstance(spec.authority_context, HostContext)
+        authority = self.authority_verifier
+        if (not isinstance(authority, AuthorityClient) or not isinstance(spec.authority_context, HostContext)
                 or not isinstance(spec.effect_authorization, EffectAuthorization)):
-            raise ManagedProcessError("trusted host context, effect grant and authority verifier are required")
-        if (spec.authority_context.uid != os.geteuid()
-                or spec.authority_context.profile_id != spec.profile_id):
+            raise ManagedProcessError("trusted host context, effect grant and authority client are required")
+        if spec.authority_context.uid != os.geteuid() or spec.authority_context.profile_id != spec.profile_id:
             raise ManagedProcessError("host context does not identify this caller and exact profile")
         owned, exe, artifact, cwd, data = _validate_spec(spec)
-        executable_info = exe.stat(follow_symlinks=False)
-        executable_device, executable_inode = executable_info.st_dev, executable_info.st_ino
+        if type(spec.max_output_bytes) is not int or not 1 <= spec.max_output_bytes <= 4 * 1024 * 1024:
+            raise ManagedProcessError("root process output limit is invalid")
+        if spec.stdin_mode not in {"closed", "pipe"}:
+            raise ManagedProcessError("root process stdin mode is invalid")
+        target = canonical_profile_target(spec.profile_id, exe, data)
+        launch = profile_launch_envelope(
+            target=target, profile_id=spec.profile_id, executable=exe,
+            artifact_sha256=spec.artifact_sha256, artifact_root=artifact, cwd=cwd,
+            data_root=data, argv=spec.argv, env_allowlist=spec.env_allowlist,
+            child_artifact_refs=spec.child_artifact_refs,
+            max_lifetime_seconds=spec.max_lifetime_seconds,
+            max_output_bytes=spec.max_output_bytes, stdin_mode=spec.stdin_mode,
+        )
+        digest = canonical_digest(launch)
+        if (spec.authority_context.final_payload_digest != digest
+                or spec.authority_context.operation != "process.start"):
+            raise ManagedProcessError("host context does not bind this process.start payload")
+        grant = spec.effect_authorization
+        if (grant.capability != "hermes-profile-invoke" or grant.target != target
+                or grant.profile_id != spec.profile_id or grant.uid != spec.authority_context.uid
+                or grant.request_digest != digest or grant.retry_index != 0
+                or grant.operation != "process.start"):
+            raise ManagedProcessError("host start grant does not match the canonical launch envelope")
         try:
-            request_digest = canonical_digest(list(spec.argv))
-            target = (f"hermes-profile-invoke:{spec.profile_id}:{exe}:"
-                      f"{spec.artifact_sha256}:{data}")
-            verified = await asyncio.to_thread(
-                self.authority_verifier.verify_effect, spec.effect_authorization,
-                spec.authority_context, capability="hermes-profile-invoke", target=target,
-                recipient=None, request_digest=request_digest, retry_index=0,
-            )
-            if (not isinstance(verified, VerifiedEffectAuthorization)
-                    or verified.authorization != spec.effect_authorization):
-                raise ManagedProcessError("authority verifier returned no typed verified grant")
-        except ManagedProcessError:
-            raise
+            await asyncio.to_thread(spec.journal.checkpoint, spec.journal_operation, "starting", {
+                "service_identity": spec.service_identity, "artifact_sha256": spec.artifact_sha256,
+                "max_lifetime_seconds": spec.max_lifetime_seconds,
+            })
+            cancelled = threading.Event()
+            try:
+                response = await asyncio.to_thread(
+                    authority.process_start, grant, target=target, launch=launch,
+                    timeout=min(10.0, max(.1, spec.startup_deadline_monotonic - time.monotonic())),
+                    cancelled=cancelled.is_set)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            if response.status != 200:
+                raise ManagedProcessError("root process custodian denied activation")
+            receipt = json.loads(response.body.decode("ascii"))
+            required = {"schema", "process_id", "pid", "uid", "gid", "namespace_id", "generation",
+                        "started_at_monotonic", "stdout_cursor", "stderr_cursor", "expires_at_monotonic",
+                        "cgroup", "start_ticks", "executable_device", "executable_inode",
+                        "mount_namespace_inode", "network_namespace_inode", "kernel_limits"}
+            if not isinstance(receipt, dict) or not required.issubset(receipt) or receipt.get("schema") != 1:
+                raise ManagedProcessError("root process custodian receipt is malformed")
+            identity = ProcessIdentity(
+                unit=str(receipt.get("unit", "root-custodian")), cgroup=str(receipt["cgroup"]),
+                pid=int(receipt["pid"]), start_ticks=int(receipt["start_ticks"]),
+                executable_sha256=spec.artifact_sha256, pidfd=-1,
+                executable_device=int(receipt["executable_device"]), executable_inode=int(receipt["executable_inode"]),
+                mount_namespace_inode=int(receipt["mount_namespace_inode"]),
+                network_namespace_inode=int(receipt["network_namespace_inode"]),
+                uid=int(receipt["uid"]), gid=int(receipt["gid"]),
+                process_id=str(receipt["process_id"]), generation=str(receipt["generation"]),
+                kernel_limits=dict(receipt["kernel_limits"]))
+            if (identity.uid == 0 or identity.gid == 0 or identity.generation == ""
+                    or identity.executable_device != exe.stat().st_dev or identity.executable_inode != exe.stat().st_ino):
+                raise ManagedProcessError("root process receipt does not match pinned executable identity")
+            if not isinstance(receipt["kernel_limits"], dict):
+                raise ManagedProcessError("root process cgroup readback is malformed")
+            spec.journal.record_owned("managed-systemd-service", identity.process_id, "active")
+            await asyncio.to_thread(spec.journal.checkpoint, spec.journal_operation, "running", {
+                "process_id": identity.process_id, "generation": identity.generation,
+                "unit": identity.unit, "cgroup": identity.cgroup, "pid": identity.pid,
+                "start_ticks": identity.start_ticks, "executable_sha256": identity.executable_sha256,
+                "executable_device": identity.executable_device, "executable_inode": identity.executable_inode,
+                "mount_namespace_inode": identity.mount_namespace_inode,
+                "network_namespace_inode": identity.network_namespace_inode,
+                "uid": identity.uid, "gid": identity.gid,
+                "kernel_limits": dict(identity.kernel_limits or {}),
+            })
+            handle = ManagedProcessHandle(spec, authority, identity, identity.generation,
+                                          float(receipt["started_at_monotonic"]), float(receipt["expires_at_monotonic"]))
+            return handle
         except asyncio.CancelledError:
             raise
-        except AuthorityDenied:
-            raise ManagedProcessError("host effect authorization was denied before process start") from None
-        except BaseException:
-            raise ManagedProcessError("host effect authorization was denied before process start") from None
-        if not hasattr(os, "pidfd_open"):
-            raise ManagedProcessError("kernel pidfd support is required")
-        systemd_run = shutil.which("systemd-run", path="/usr/bin:/bin")
-        sudo = shutil.which("sudo", path="/usr/bin:/bin")
-        if not systemd_run or not sudo or not Path("/sys/fs/cgroup/cgroup.controllers").exists():
-            raise ManagedProcessError("root-owned system services and cgroup v2 are required")
-        try:
-            service_account = pwd.getpwnam(spec.service_user)
-        except KeyError:
-            raise ManagedProcessError("dedicated service identity is not provisioned") from None
-        if service_account.pw_uid in {0, os.getuid()}:
-            raise ManagedProcessError("managed service identity must be distinct and non-root")
-        if not any(item["resource_id"] == spec.service_user and item["state"] == "active"
-                   for item in spec.journal.owned("service-user")):
-            raise ManagedProcessError("service identity is not owned by this installer journal")
-
-        manager_env = await _systemctl_async("show-environment", timeout=3.0)
-        unset_names = tuple(name for name in _manager_environment_keys(manager_env)
-                            if name not in spec.env_allowlist)
-        unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
-        description = "HermesInstaller " + spec.service_identity + " " + spec.journal_operation
-        # Keep Hermes' native profile layout: HERMES_HOME=/hermes and this
-        # profile's exact writable root at /hermes/profiles/<profile_id>.
-        profile_mount = "/hermes/profiles/" + spec.profile_id
-        relative_cwd = cwd.relative_to(data).as_posix()
-        target_cwd = profile_mount if relative_cwd == "." else profile_mount + "/" + relative_cwd
-        properties = [
-            "--property=Type=exec",
-            "--property=RuntimeMaxSec=" + format(float(spec.max_lifetime_seconds), ".6f").rstrip("0").rstrip(".") + "s",
-            "--property=KillMode=control-group",
-            "--property=Description=" + description,
-            "--property=ProtectSystem=strict",
-            "--property=ProtectHome=tmpfs",
-            "--property=ProtectProc=invisible",
-            "--property=ProcSubset=pid",
-            "--property=InaccessiblePaths=-/run/user -/run/dbus/system_bus_socket -/run/docker.sock -/var/run/docker.sock -/run/containerd -/run/podman/podman.sock",
-            "--property=PrivateTmp=yes",
-            "--property=PrivateDevices=yes",
-            "--property=NoNewPrivileges=yes",
-            "--property=User=" + spec.service_user,
-            "--property=SupplementaryGroups=",
-            "--property=ProtectKernelTunables=yes",
-            "--property=ProtectKernelModules=yes",
-            "--property=ProtectControlGroups=yes",
-            "--property=RestrictSUIDSGID=yes",
-            "--property=RestrictNamespaces=user",
-            "--property=RestrictAddressFamilies=AF_UNIX",
-            "--property=PrivateNetwork=yes",
-            "--property=IPAddressDeny=any",
-            "--property=BindPaths=" + str(data) + ":" + profile_mount,
-            "--property=BindReadOnlyPaths=" + str(artifact) + ":" + str(artifact),
-            "--property=UnsetEnvironment=" + " ".join(unset_names),
-        ]
-        if spec.memory_max_bytes is not None:
-            properties.append("--property=MemoryMax=" + str(spec.memory_max_bytes))
-        if spec.cpu_quota_percent is not None:
-            properties.append("--property=CPUQuota=" + str(spec.cpu_quota_percent) + "%")
-        if spec.io_weight is not None:
-            properties.append("--property=IOWeight=" + str(spec.io_weight))
-        if len(spec.env_allowlist) > 32:
-            raise ManagedProcessError("environment allowlist exceeds its bound")
-        env_args = ["--setenv=" + key + "=" + value
-                    for key, value in sorted(spec.env_allowlist.items())]
-        argv = [sudo, "-n", systemd_run, "--system", "--unit=" + unit, "--service-type=exec",
-                "--wait", "--collect", "--pipe", "--quiet",
-                "--working-directory=" + target_cwd, *properties, *env_args,
-                str(exe), *spec.argv[1:]]
-        # The manager connection needs only a validated UID-owned bus. No
-        # inherited application variables or credential values enter this client.
-        client_env = _bus_environment()
-        started = time.monotonic()
-        spec.journal.checkpoint(spec.journal_operation, "starting", {
-            "unit": unit, "service_identity": spec.service_identity,
-            "artifact_sha256": spec.artifact_sha256, "max_lifetime_seconds": spec.max_lifetime_seconds,
-        })
-        try:
-            launcher = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE, env=client_env,
-                                        close_fds=True, shell=False)
-        except OSError:
-            spec.journal.checkpoint(spec.journal_operation, "start-failed", {
-                "unit": unit, "service_identity": spec.service_identity, "reason": "client launch failed",
-            })
-            raise ManagedProcessError("systemd transient service launch failed") from None
-        for stream in (launcher.stdin, launcher.stdout, launcher.stderr):
-            if stream is not None:
-                os.set_blocking(stream.fileno(), False)
-        admission_pidfd: int | None = None
-
-        def close_admission_pidfd() -> None:
-            nonlocal admission_pidfd
-            if admission_pidfd is not None:
-                with contextlib.suppress(OSError):
-                    os.close(admission_pidfd)
-                admission_pidfd = None
-
-        try:
-            while time.monotonic() < spec.startup_deadline_monotonic:
-                if launcher.poll() is not None:
-                    raise ManagedProcessError("systemd service exited before admission")
-                try:
-                    cgroup = await _show_async(unit, "ControlGroup", timeout=.5)
-                    if (not cgroup.startswith("/") or ".." in Path(cgroup).parts
-                            or Path(cgroup).name != unit):
-                        raise ManagedProcessError("manager did not provide a cgroup")
-                    members = (Path("/sys/fs/cgroup") / cgroup.lstrip("/") / "cgroup.procs").read_text().split()
-                    matching = []
-                    for candidate in members:
-                        pid = int(candidate)
-                        try:
-                            observed = _observe_process_identity(pid, cgroup)
-                        except (OSError, ValueError, ManagedProcessError):
-                            continue
-                        parent, ticks, digest, device, inode, pidfd = observed
-                        os.close(pidfd)
-                        if (digest == spec.artifact_sha256 and device == executable_device
-                                and inode == executable_inode):
-                            matching.append((pid, parent, ticks, device, inode))
-                    if len(matching) == 1:
-                        pid, parent, ticks, _, _ = matching[0]
-                        break
-                except (ManagedProcessError, FileNotFoundError, ValueError):
-                    pass
-                await asyncio.sleep(.05)
-            else:
-                raise ManagedProcessError("managed process startup deadline expired")
-
-            group = _proc_cgroup(pid)
-            parent, ticks, digest, device, inode, pidfd = _observe_process_identity(pid, cgroup)
-            admission_pidfd = pidfd
-            if (group != cgroup or digest != spec.artifact_sha256
-                    or device != executable_device or inode != executable_inode
-                    or parent != matching[0][1] or ticks != matching[0][2]):
-                raise ManagedProcessError("systemd process identity changed during admission")
-            for prop, expected in (("KillMode", "control-group"),
-                                   ("ProtectSystem", "strict"),
-                                   ("PrivateTmp", "yes"),
-                                   ("PrivateDevices", "yes"),
-                                   ("NoNewPrivileges", "yes"),
-                                   ("IPAddressDeny", "any"), ("PrivateNetwork", "yes"),
-                                   ("RestrictAddressFamilies", "AF_UNIX"),
-                                   ("ProtectHome", "tmpfs"), ("ProtectProc", "invisible"),
-                                   ("ProcSubset", "pid"), ("User", spec.service_user)):
-                if await _show_async(unit, prop) != expected:
-                    raise ManagedProcessError("required systemd isolation property was not applied")
-            if await _show_async(unit, "Description") != description:
-                raise ManagedProcessError("manager operation identity does not match the journal binding")
-            maximum = await _show_async(unit, "RuntimeMaxUSec")
-            if _parse_systemd_timespan_us(maximum) < int(spec.max_lifetime_seconds * 1_000_000):
-                raise ManagedProcessError("manager-enforced process lifetime is missing or too short")
-            _verify_cgroup_limits(cgroup, spec)
-            actual_env = self._read_process_environment(pid)
-            if actual_env != dict(spec.env_allowlist):
-                raise ManagedProcessError("actual process environment differs from the sanitized allowlist")
-            network_namespace_inode = _proc_inode(pid, "net")
-            if network_namespace_inode == os.stat("/proc/self/ns/net").st_ino:
-                raise ManagedProcessError("private network namespace was not applied")
-            mount_namespace_inode = _proc_inode(pid, "mnt")
-            if mount_namespace_inode == os.stat("/proc/self/ns/mnt").st_ino:
-                raise ManagedProcessError("private mount namespace was not applied")
-            status = Path(f"/proc/{pid}/status").read_text()
-            uid_line = next((line for line in status.splitlines() if line.startswith("Uid:")), "")
-            groups_line = next((line for line in status.splitlines() if line.startswith("Groups:")), "")
-            observed_uids = tuple(int(x) for x in uid_line.split()[1:])
-            observed_groups = tuple(int(x) for x in groups_line.split()[1:])
-            if len(observed_uids) != 4 or any(uid != service_account.pw_uid for uid in observed_uids):
-                raise ManagedProcessError("service UID isolation was not applied")
-            if observed_groups != (service_account.pw_gid,):
-                raise ManagedProcessError("supplementary service groups were not cleared")
-            if not _protected_home_is_empty(pid):
-                raise ManagedProcessError("host home directories remain visible inside service")
-            identity = ProcessIdentity(unit, cgroup, pid, ticks, digest, pidfd,
-                                       device, inode, mount_namespace_inode,
-                                       network_namespace_inode, service_account.pw_uid,
-                                       service_account.pw_gid)
-            await _systemctl_async("show", "--property=Description", "--value", unit, timeout=1.0)
-            spec.journal.record_owned("managed-systemd-service", unit, "active")
-            spec.journal.checkpoint(spec.journal_operation, "running", {
-                "unit": unit, "cgroup": cgroup, "pid": pid, "start_ticks": ticks,
-                "executable_sha256": digest, "executable_device": device,
-                "executable_inode": inode, "mount_namespace_inode": mount_namespace_inode,
-                "network_namespace_inode": network_namespace_inode,
-                "uid": service_account.pw_uid, "gid": service_account.pw_gid,
-                "memory_max_bytes": spec.memory_max_bytes,
-                "cpu_quota_percent": spec.cpu_quota_percent,
-                "io_weight": spec.io_weight,
-                "service_identity": spec.service_identity,
-            })
-            handle = ManagedProcessHandle(spec, unit, cgroup, launcher, identity, started,
-                                          spec.env_allowlist)
-            admission_pidfd = None
-            return handle
-        except BaseException:
-            close_admission_pidfd()
-            try:
-                cgroup = await _show_async(unit, "ControlGroup", timeout=.5)
-                if cgroup.startswith("/"):
-                    await _systemctl_async("kill", "--kill-whom=all", "--signal=SIGKILL", unit, timeout=1)
-                    await _systemctl_async("stop", unit, timeout=1)
-            except BaseException:
-                pass
-            if launcher.poll() is None:
-                launcher.kill()
-                try:
-                    launcher.wait(timeout=.5)
-                except subprocess.TimeoutExpired:
-                    pass
-            with contextlib.suppress(BaseException):
-                spec.journal.checkpoint(spec.journal_operation, "start-failed", {
-                    "unit": unit, "service_identity": spec.service_identity,
-                    "reason": "admission or isolation verification failed",
-                })
+        except ManagedProcessError:
             raise
-
-    @staticmethod
-    def _read_process_environment(pid: int) -> dict[str, str]:
-        head = shutil.which("head", path="/usr/bin:/bin")
-        if head is None:
-            raise ManagedProcessError("bounded environment inspection is unavailable")
-        raw = _privileged_output([head, "-c", "65537", f"/proc/{pid}/environ"], limit=65536)
-        if len(raw) > 65536:
-            raise ManagedProcessError("process environment exceeds its safety bound")
-        result = {}
-        for item in raw.split(b"\x00"):
-            if item:
-                key, sep, value = item.partition(b"=")
-                if sep:
-                    result[key.decode("utf-8", "strict")] = value.decode("utf-8", "strict")
-        return result
+        except BaseException:
+            await asyncio.to_thread(spec.journal.checkpoint, spec.journal_operation,
+                                    "start-failed", {"service_identity": spec.service_identity,
+                                    "reason": "root process start or receipt validation failed"})
+            raise ManagedProcessError("root process start failed or returned invalid evidence") from None
 
     @staticmethod
     def close_child_snapshot(children: Sequence[ChildIdentity]) -> None:
-        for child in children:
-            try:
-                os.close(child.pidfd)
-            except OSError:
-                pass
+        # Child PIDs are descriptions only; cleanup stays with the root cgroup owner.
+        return None
 
 
 async def run_managed_process(spec: ManagedProcessSpec, *, timeout: float,
                               stdout_limit: int = 65536, stderr_limit: int = 65536,
                               input_bytes: bytes = b"",
                               authority_verifier: AuthorityClient | None = None) -> ManagedProcessResult:
-    """Run a pinned executable with bounded, separate stdout/stderr capture.
-
-    The manager starts it under ``spec.service_user`` and its verified private
-    namespaces. Deadlines and all exceptional exits stop the complete owned cgroup.
-    """
+    """Run through the root fixed-verb broker with bounded independent streams."""
     if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
             or not math.isfinite(timeout) or not 0 < timeout <= 600
             or not 0 <= stdout_limit <= 1_048_576 or not 0 <= stderr_limit <= 1_048_576
-            or not isinstance(input_bytes, bytes) or len(input_bytes) > 1_048_576):
+            or not isinstance(input_bytes, bytes) or len(input_bytes) > 1_048_576
+            or stdout_limit + stderr_limit > spec.max_output_bytes):
         raise ValueError("managed command bounds are invalid")
-    handle = await ManagedProcessSupervisor(authority_verifier=authority_verifier).start(spec)
+    if input_bytes and spec.stdin_mode != "pipe":
+        raise ValueError("input bytes require pipe stdin mode")
+    handle = await ManagedProcessSupervisor(authority_verifier).start(spec)
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     caps = {"stdout": stdout_limit, "stderr": stderr_limit}
-    streams = {"stdout": handle._launcher.stdout, "stderr": handle._launcher.stderr}
-    loop = asyncio.get_running_loop()
     deadline = time.monotonic() + timeout
-
-    async def drain(name: str) -> None:
-        stream = streams[name]
-        if stream is None:
-            raise ManagedProcessError("managed output stream is unavailable")
-        fd = stream.fileno()
-        while True:
-            try:
-                block = os.read(fd, min(16384, max(1, caps[name] - len(buffers[name]) + 1)))
-            except BlockingIOError:
-                ready = loop.create_future()
-                loop.add_reader(fd, lambda: None if ready.done() else ready.set_result(None))
-                try:
-                    await asyncio.wait_for(ready, max(0.001, deadline - time.monotonic()))
-                finally:
-                    loop.remove_reader(fd)
-                continue
-            if not block:
-                return
-            buffers[name].extend(block)
-            if len(buffers[name]) > caps[name]:
-                raise ManagedProcessError(f"managed {name} exceeded its output bound")
-
-    drainers = [asyncio.create_task(drain(name)) for name in ("stdout", "stderr")]
-    timed_out = False
     try:
         if input_bytes:
             written = await handle.write(input_bytes, min(30.0, max(0.0, deadline-time.monotonic())))
             if written != len(input_bytes):
                 raise ManagedProcessError("managed command did not accept its bounded input")
-        if handle._launcher.stdin:
-            handle._launcher.stdin.close()
         while time.monotonic() < deadline:
-            for task in drainers:
-                if task.done() and not task.cancelled() and task.exception():
-                    raise task.exception()
-            if handle._launcher.poll() is not None:
+            for name in ("stdout", "stderr"):
+                if handle._eof[name]:
+                    continue
+                block = await handle.read(min(65536, max(1, caps[name] - len(buffers[name]) + 1)),
+                                          timeout=min(.2, max(.01, deadline-time.monotonic())), stream=name)
+                buffers[name].extend(block)
+                if len(buffers[name]) > caps[name]:
+                    raise ManagedProcessError(f"managed {name} exceeded its output bound")
+            code = await handle.wait(min(.01, max(.001, deadline-time.monotonic())))
+            if code is not None and all(handle._eof.values()):
                 break
-            state = await _show_async(handle.unit, "ActiveState", timeout=min(1.0, max(.1, deadline-time.monotonic())))
-            if state not in {"active", "activating", "reloading"}:
-                break
-            await asyncio.sleep(min(.05, max(.001, deadline-time.monotonic())))
+            await asyncio.sleep(.01)
         else:
-            timed_out = True
-        if timed_out:
-            await handle.stop("managed command deadline", timeout=min(5.0, max(.1, 600.0)))
-            for task in drainers:
-                task.cancel()
-            await asyncio.gather(*drainers, return_exceptions=True)
+            await asyncio.shield(handle.stop("managed command deadline", timeout=5.0))
             return _managed_result(handle, None, buffers, timed_out=True)
-        await asyncio.wait_for(asyncio.gather(*drainers), max(.05, deadline-time.monotonic()))
-        await asyncio.to_thread(handle._launcher.wait, max(.05, deadline-time.monotonic()))
-        code = handle._launcher.returncode
-        if code is None:
-            raise ManagedProcessError("managed command exit status is unavailable")
-        await handle.stop("managed command completed", timeout=min(5.0, max(.1, deadline-time.monotonic())))
-        return _managed_result(handle, code, buffers, timed_out=False)
+        status = await handle._control("process.status", {})
+        code = status.get("exit_code")
+        await asyncio.shield(handle.stop("managed command completed", timeout=5.0))
+        return _managed_result(handle, code if type(code) is int else None, buffers, timed_out=False)
     except asyncio.CancelledError:
-        for task in drainers:
-            task.cancel()
-        await asyncio.gather(*drainers, return_exceptions=True)
         if not handle._closed:
             await asyncio.shield(handle.stop("managed command cancelled", timeout=5.0))
         raise
     except BaseException:
-        for task in drainers:
-            task.cancel()
-        await asyncio.gather(*drainers, return_exceptions=True)
         if not handle._closed:
             await asyncio.shield(handle.stop("managed command failed", timeout=5.0))
         raise
-
 
 def _managed_result(handle: ManagedProcessHandle, exit_code: int | None,
                     buffers: Mapping[str, bytearray], *, timed_out: bool) -> ManagedProcessResult:
@@ -1127,4 +836,5 @@ def _managed_result(handle: ManagedProcessHandle, exit_code: int | None,
                                 identity.executable_inode, identity.mount_namespace_inode,
                                 identity.network_namespace_inode, identity.uid, identity.gid,
                                 handle.spec.memory_max_bytes, handle.spec.cpu_quota_percent,
-                                handle.spec.io_weight)
+                                handle.spec.io_weight, identity.process_id, identity.generation,
+                                dict(identity.kernel_limits or {}))

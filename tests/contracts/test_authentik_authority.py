@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from dataclasses import replace
 
 from hermes_installer.authority.authentik import (
     AuthentikEnrollment, AuthentikResponse, AuthentikSystemPolicy,
@@ -77,6 +78,19 @@ def make_context(purpose="host-write"):
 
 
 class AuthentikSystemAuthorityContracts(unittest.TestCase):
+    def test_subject_id_mismatch_denies_even_when_username_and_email_match(self):
+        transport = FakeAuthentik()
+        policy = make_policy(transport)
+        policy.enrollment = replace(
+            policy.enrollment,
+            principal_identities={"principal:alice": PrincipalIdentity("alice", "alice@example.test", "different-subject")},
+        )
+        rule = EffectRule("homelab-write", "host.write", "homelab:boiler:off")
+        with self.assertRaises(AuthorityDenied):
+            policy.allow_effect(context=make_context(), rule=rule,
+                                request_digest="a" * 64, retry_index=0)
+        self.assertEqual([call[0] for call in transport.calls], ["/api/v3/core/users/me/"])
+
     def test_direct_and_indirect_system_membership_authorizes_only_enrolled_target(self):
         transport = FakeAuthentik()
         policy = make_policy(transport)
@@ -146,12 +160,12 @@ class AuthentikSystemAuthorityContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             policy.allow_effect(context=make_context("alarm"), rule=alert, request_digest="b" * 64, retry_index=0)
 
-    def test_empty_sources_are_unknown_except_exact_protected_public_profile_purpose(self):
+    def test_empty_sources_remain_unknown_even_for_a_listed_purpose(self):
         transport = FakeAuthentik()
         policy = make_policy(transport)
         binding = type("Binding", (), {"profile_id": "profile:one"})()
         sensitivity, _ = policy.classify(purpose="host-write", intent="caller says public", source_contexts=(), binding=binding)
-        self.assertIs(sensitivity, Sensitivity.PUBLIC)
+        self.assertIs(sensitivity, Sensitivity.UNKNOWN)
         sensitivity, _ = policy.classify(purpose="chat", intent="caller says public", source_contexts=(), binding=binding)
         self.assertIs(sensitivity, Sensitivity.UNKNOWN)
 

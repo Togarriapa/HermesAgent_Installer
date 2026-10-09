@@ -24,9 +24,20 @@ from .types import (
     VerifiedEffectAuthorization, canonical_bytes, canonical_digest,
 )
 
+_OPERATIONS = frozenset({
+    "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor",
+    "memory.capture", "memory.search", "memory.export", "memory.delete", "memory.extract",
+    "memory.embed", "memory.backup", "memory.restore", "memory.enqueue", "memory.result",
+    "host.write", "alert.deliver", "process.start", "process.status", "process.read",
+    "process.write", "process.stop", "artifact.fetch", "package.install",
+    "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.orchestrator.recruit",
+    "source.capture",
+})
+
 MAX_REQUEST = 6 * 1024 * 1024 + 16_384
 MAX_RESPONSE = 4 * 1024 * 1024 + 32_768
-MAX_TIMEOUT = 120.0
+MAX_TIMEOUT = 600.0
 DEFAULT_SOCKET_DIR = Path("/run/hermes-installer/authority")
 
 
@@ -43,6 +54,8 @@ _OPERATIONS = frozenset({
     "host.write", "alert.deliver",
     "process.start", "process.status", "process.read", "process.write", "process.stop",
     "artifact.fetch", "package.install",
+    "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.orchestrator.recruit",
 })
 
 
@@ -69,7 +82,7 @@ def profile_launch_envelope(*, target: str, profile_id: str, executable: Path,
                             artifact_sha256: str, artifact_root: Path, cwd: Path,
                             data_root: Path, argv: Sequence[str],
                             env_allowlist: Mapping[str, str],
-                            child_artifact_hashes: Mapping[str, str] | None = None,
+                            child_artifact_refs: Mapping[str, str] | None = None,
                             max_lifetime_seconds: int = 600,
                             max_output_bytes: int = 1_048_576,
                             stdin_mode: str = "closed") -> dict[str, Any]:
@@ -84,16 +97,15 @@ def profile_launch_envelope(*, target: str, profile_id: str, executable: Path,
         raise AuthorityDenied("effect.bounds", "process lifetime or output limit is invalid")
     if stdin_mode not in {"closed", "pipe"}:
         raise AuthorityDenied("effect.launch", "stdin mode is invalid")
-    child_hashes: dict[str, str] = {}
-    for child_path, child_digest in (child_artifact_hashes or {}).items():
-        resolved = Path(child_path).resolve(strict=True)
-        try:
-            resolved.relative_to(Path(artifact_root).resolve(strict=True))
-        except ValueError:
-            raise AuthorityDenied("effect.launch", "child artifact escapes the pinned artifact root") from None
-        if not resolved.is_file() or not re.fullmatch(r"[0-9a-f]{64}", child_digest) or _file_digest(resolved) != child_digest:
-            raise AuthorityDenied("effect.launch", "child artifact hash does not match its pinned file")
-        child_hashes[str(resolved)] = child_digest
+    child_refs: dict[str, str] = {}
+    for store_id, child_digest in (child_artifact_refs or {}).items():
+        if (not isinstance(store_id, str) or not re.fullmatch(r"artifact:[A-Za-z0-9_.-]{1,128}:[0-9a-f]{64}", store_id)
+                or store_id.rsplit(":", 1)[-1] != child_digest
+                or not re.fullmatch(r"[0-9a-f]{64}", child_digest)):
+            raise AuthorityDenied("effect.launch", "child artifact reference is invalid")
+        child_refs[store_id] = child_digest
+    if any(arg.startswith("artifact:") and arg not in child_refs for arg in argv):
+        raise AuthorityDenied("effect.launch", "argv names an unregistered artifact reference")
     return {
         "schema": 1, "target": target, "profile_id": profile_id,
         "executable": str(executable.resolve(strict=True)),
@@ -102,7 +114,7 @@ def profile_launch_envelope(*, target: str, profile_id: str, executable: Path,
         "cwd": str(cwd.resolve(strict=True)),
         "data_root": str(data_root.resolve(strict=True)),
         "argv": list(argv), "env_allowlist": dict(env_allowlist),
-        "child_artifact_hashes": child_hashes,
+        "child_artifact_refs": child_refs,
         "max_lifetime_seconds": max_lifetime_seconds,
         "max_output_bytes": max_output_bytes, "stdin_mode": stdin_mode,
     }
@@ -116,7 +128,7 @@ class AuthorityClient:
                  timeout: float = 5.0, monotonic: Callable[[], float] = time.monotonic):
         if not socket_path.is_absolute() or type(server_uid) is not int or server_uid < 0:
             raise ValueError("absolute authority socket path and server UID are required")
-        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0.1 <= timeout <= 30:
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0.1 <= timeout <= MAX_TIMEOUT:
             raise ValueError("authority timeout must be bounded")
         self.socket_path = socket_path
         self.server_uid = server_uid
@@ -131,8 +143,10 @@ class AuthorityClient:
         """Connect only to the installed fixed endpoint; never consult env vars."""
         return cls(default_socket_path(), server_uid=0, server_gid=os.getgid(), timeout=timeout)
 
-    def context(self, *, purpose: str, intent: str,
+    def context(self, *, purpose: str, intent: str, operation: str,
                 source_contexts: Sequence[HostContext] = (),
+                source_receipt_handles: Sequence[str] = (),
+                final_payload_digest: str | None = None,
                 trace_id: str | None = None,
                 lease_seconds: float = 30.0,
                 cancelled: Callable[[], bool] | None = None) -> HostContext:
@@ -141,18 +155,60 @@ class AuthorityClient:
             raise AuthorityDenied("context.invalid", "purpose is invalid")
         if not isinstance(intent, str) or not 1 <= len(intent) <= 512:
             raise AuthorityDenied("context.invalid", "intent is invalid")
+        if operation not in _OPERATIONS:
+            raise AuthorityDenied("context.invalid", "operation is not a fixed host effect")
         if trace_id is not None and (not isinstance(trace_id, str) or not 1 <= len(trace_id) <= 128):
             raise AuthorityDenied("context.invalid", "trace ID is invalid")
-        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, (int, float)) or not 0 < lease_seconds <= 30:
-            raise AuthorityDenied("context.invalid", "context lease must be at most 30 seconds")
-        if len(source_contexts) > 64 or any(not isinstance(x, HostContext) for x in source_contexts):
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, (int, float)) or not 0 < lease_seconds <= MAX_TIMEOUT:
+            raise AuthorityDenied("context.invalid", "context lease exceeds its fixed upper bound")
+        if (len(source_contexts) > 64 or any(not isinstance(x, HostContext) for x in source_contexts)
+                or len(source_receipt_handles) > 64
+                or any(not isinstance(x, str) or not x for x in source_receipt_handles)):
             raise AuthorityDenied("context.invalid", "source lineage is invalid")
-        result = self._rpc("issue_context", {
+        if source_contexts and source_receipt_handles:
+            raise AuthorityDenied("context.invalid", "use one complete source lineage representation")
+        if final_payload_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", final_payload_digest):
+            raise AuthorityDenied("context.invalid", "final payload digest is invalid")
+        if source_receipt_handles and final_payload_digest is None:
+            raise AuthorityDenied("context.invalid", "source receipts require a final payload digest")
+        request = {
             "purpose": purpose, "intent": intent, "trace_id": trace_id,
             "lease_seconds": float(lease_seconds),
             "source_contexts": [ctx.to_wire() for ctx in source_contexts],
+        }
+        if source_receipt_handles:
+            request["source_receipt_handles"] = list(source_receipt_handles)
+        if final_payload_digest is not None:
+            request["final_payload_digest"] = final_payload_digest
+        request["operation"] = operation
+        result = self._rpc("issue_context", {
+            **request,
         }, timeout=min(self.timeout, float(lease_seconds)), cancelled=cancelled)
         return HostContext.from_wire(result)
+
+    def capture_source(self, payload: bytes, *, parent_receipt_handles: Sequence[str] = (),
+                       timeout: float = 5.0,
+                       cancelled: Callable[[], bool] | None = None) -> str:
+        """Let the root broker hash exact submitted bytes and return an opaque private receipt handle."""
+        if not isinstance(payload, bytes) or not 1 <= len(payload) <= 1_048_576:
+            raise AuthorityDenied("source.invalid", "source capture exceeds its fixed byte bound")
+        if (len(parent_receipt_handles) > 64
+                or any(not isinstance(item, str) or not item for item in parent_receipt_handles)):
+            raise AuthorityDenied("source.invalid", "parent receipt handles are invalid")
+        if cancelled is not None and cancelled():
+            raise AuthorityDenied("source.cancelled", "source capture was cancelled")
+        import base64
+        result = self._rpc("capture_source", {
+            "schema": 1,
+            "payload": base64.b64encode(payload).decode("ascii"),
+            "parent_receipt_handles": list(parent_receipt_handles),
+        }, timeout=min(self.timeout, timeout), cancelled=cancelled)
+        if not isinstance(result, dict) or set(result) != {"receipt_handle"}:
+            raise AuthorityDenied("source.invalid", "source broker returned an invalid receipt handle")
+        handle = result["receipt_handle"]
+        if not isinstance(handle, str) or not 32 <= len(handle) <= 128:
+            raise AuthorityDenied("source.invalid", "source broker returned an invalid receipt handle")
+        return handle
 
     def authorize_effect(self, context: HostContext, *, capability: str,
                          target: str, recipient: str | None = None,
@@ -190,12 +246,12 @@ class AuthorityClient:
             "request_digest": request_digest or authorization.request_digest,
             "retry_index": authorization.retry_index if retry_index is None else retry_index,
         }, timeout=min(self.timeout, remaining), cancelled=cancelled)
-        if not isinstance(result, dict) or set(result) != {"operation", "consumed_at_monotonic", "verification_receipt"}:
+        if not isinstance(result, dict) or set(result) != {"operation", "verified_at_monotonic", "verification_receipt"}:
             raise AuthorityDenied("grant.invalid", "authority verification receipt is malformed")
-        consumed = result["consumed_at_monotonic"]
-        if isinstance(consumed, bool) or not isinstance(consumed, (int, float)) or not math.isfinite(consumed):
+        verified = result["verified_at_monotonic"]
+        if isinstance(verified, bool) or not isinstance(verified, (int, float)) or not math.isfinite(verified):
             raise AuthorityDenied("grant.invalid", "authority verification receipt is malformed")
-        return VerifiedEffectAuthorization(authorization, str(result["operation"]), float(consumed), str(result["verification_receipt"]))
+        return VerifiedEffectAuthorization(authorization, str(result["operation"]), float(verified), str(result["verification_receipt"]))
 
     def perform_effect(self, authorization: EffectAuthorization, *, operation: str,
                        payload: bytes, timeout: float,
@@ -223,7 +279,10 @@ class AuthorityClient:
         request = {"authorization": authorization.to_wire(), "operation": operation,
                    "payload": __import__("base64").b64encode(payload).decode("ascii"),
                    "timeout": float(timeout)}
-        result = self._rpc("perform_effect", request, timeout=min(self.timeout, float(timeout)), cancelled=cancelled)
+        remaining = authorization.monotonic_expires_at - self.monotonic()
+        if remaining <= 0:
+            raise AuthorityDenied("grant.stale", "effect authorization lease expired")
+        result = self._rpc("perform_effect", request, timeout=min(float(timeout), remaining), cancelled=cancelled)
         if cancelled is not None and cancelled():
             raise AuthorityDenied("effect.cancelled", "effect was cancelled before response delivery")
         if self.monotonic() - started > timeout:
@@ -317,19 +376,19 @@ class AuthorityClient:
                       cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
         if authorization.target != target or not target.startswith("hermes-profile-invoke:"):
             raise AuthorityDenied("effect.binding", "profile start target does not match its host grant")
-        required = {"schema", "target", "profile_id", "executable", "artifact_sha256", "artifact_root", "cwd", "data_root", "argv", "env_allowlist", "child_artifact_hashes", "max_lifetime_seconds", "max_output_bytes", "stdin_mode"}
+        required = {"schema", "target", "profile_id", "executable", "artifact_sha256", "artifact_root", "cwd", "data_root", "argv", "env_allowlist", "child_artifact_refs", "max_lifetime_seconds", "max_output_bytes", "stdin_mode"}
         if not isinstance(launch, Mapping) or set(launch) != required or launch.get("schema") != 1 or launch.get("target") != target:
             raise AuthorityDenied("effect.launch", "profile launch envelope is malformed")
         argv = launch.get("argv")
         environment = launch.get("env_allowlist")
-        child_hashes = launch.get("child_artifact_hashes")
+        child_refs = launch.get("child_artifact_refs")
         if (not isinstance(argv, list) or not argv or len(argv) > 128
                 or any(not isinstance(arg, str) or "\x00" in arg or len(arg) > 4096 for arg in argv)
                 or not isinstance(environment, Mapping)
-                or not isinstance(child_hashes, Mapping) or len(child_hashes) > 64
-                or any(not isinstance(k, str) or not Path(k).is_absolute()
-                       or not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{64}", v)
-                       for k, v in child_hashes.items())
+                or not isinstance(child_refs, Mapping) or len(child_refs) > 64
+                or any(not isinstance(k, str) or not re.fullmatch(r"artifact:[A-Za-z0-9_.-]{1,128}:[0-9a-f]{64}", k)
+                       or not isinstance(v, str) or k.rsplit(":", 1)[-1] != v
+                       or not re.fullmatch(r"[0-9a-f]{64}", v) for k, v in child_refs.items())
                 or any(not isinstance(k, str) or not isinstance(v, str) or "\x00" in v for k, v in environment.items())):
             raise AuthorityDenied("effect.bounds", "profile launch arguments or environment are invalid")
         if (type(launch.get("max_lifetime_seconds")) is not int

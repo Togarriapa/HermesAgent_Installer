@@ -19,3 +19,11 @@ None; this additive capability refines pending registry requirements without pub
 # Impact
 
 Release packaging, registry/native adapters, skill/plugin workflow integrations, lifecycle generations and acceptance ledger. No target installation or Resources deletion in this planning change.
+
+## Fixed discovery refinement
+
+Append-only fixed-registry-discovery-v1 adds RB06/RB-T07/EV-RB06 for two already bundled plugins; preserves RB01..05, original requirements and AC16. This is operationalization of existing read-only discovery, not source installation or activation.
+
+## Protected selected event jobs refinement
+
+Append protected-resource-jobs-v1 with RB07/RB-T08/EV-RB07; preserve original scheduler/webhook/channel/bundle obligations and no automatic enablement.
