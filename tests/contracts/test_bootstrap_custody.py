@@ -45,7 +45,9 @@ class BootstrapCustodyContractTests(unittest.TestCase):
         self.assertEqual(receipt, "artifact-receipt")
         context_call = next(call for call in client.calls if call[0] == "context")
         self.assertEqual(context_call[1]["purpose"], "hermes-bootstrap")
+        self.assertEqual(context_call[1]["operation"], "artifact.fetch")
         grant_call = next(call for call in client.calls if call[0] == "authorize")
+        self.assertEqual(grant_call[1]["capability"], "installer-bootstrap")
         self.assertEqual(grant_call[1]["target"], f"artifact:hermes-installer-fixture:{digest}")
         request = json.dumps({"schema": 1, "artifact_id": "hermes-installer-fixture",
             "sha256": digest, "max_bytes": 1024}, sort_keys=True,
