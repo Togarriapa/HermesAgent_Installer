@@ -374,6 +374,24 @@ class RootTaskNativeObservationRegistry:
             if run.watcher.is_alive():
                 raise AuthorityDenied("resource.native_timeout", "cancelled task native observer did not stop")
 
+    def cancel_running_task(self, task_handle: Any) -> None:
+        """Drop a retained task binding when pre-stdin selection never completes."""
+        from ..managed_process_custodian import ManagedTaskHandle
+
+        if type(task_handle) is not ManagedTaskHandle:
+            raise AuthorityDenied("resource.native_cancel", "running task cancellation reference is malformed")
+        with self._lock:
+            run = self._runs.get(task_handle.handle_id)
+            if run is None or run.task_handle is not task_handle:
+                raise AuthorityDenied("resource.native_cancel", "running task is unknown or already consumed")
+            self._runs.pop(task_handle.handle_id, None)
+            self._completed_tasks[task_handle.handle_id] = run.deadline
+            run.stop.set()
+        if run.watcher is not None and run.watcher is not threading.current_thread():
+            run.watcher.join(timeout=1.0)
+            if run.watcher.is_alive():
+                raise AuthorityDenied("resource.native_timeout", "cancelled task native observer did not stop")
+
     def verify_receipt(self, receipt: RootTaskNativeExecutionReceipt) -> bool:
         """Check exact in-memory issuance; a copied or reconstructed DTO is not accepted."""
         if type(receipt) is not RootTaskNativeExecutionReceipt:

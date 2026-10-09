@@ -157,6 +157,25 @@ def test_cancel_task_input_stops_watcher_and_rejects_replay():
         registry.cancel_task_input(task_handle, receipt)
 
 
+def test_cancel_running_task_cleans_selection_failure_before_input_receipt():
+    registry = _registry({})
+    handle_args = dict(handle_id="u" * 40, generation="profile-generation-a")
+    if "process_id" in ManagedTaskHandle.__dataclass_fields__:
+        handle_args["process_id"] = "process-b"
+    task_handle = ManagedTaskHandle(**handle_args)
+    stop = threading.Event()
+    watcher = threading.Thread(target=stop.wait)
+    run = SimpleNamespace(task_handle=task_handle, deadline=20.0, stop=stop, watcher=watcher)
+    registry._runs[task_handle.handle_id] = run
+    watcher.start()
+
+    registry.cancel_running_task(task_handle)
+    assert not watcher.is_alive()
+    assert task_handle.handle_id not in registry._runs
+    with pytest.raises(AuthorityDenied):
+        registry.cancel_running_task(task_handle)
+
+
 def test_model_receipt_requires_complete_task_source_ancestry():
     source = _receipt("source")
     task_input = _receipt("task-input", parents=("source",))
