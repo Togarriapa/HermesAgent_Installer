@@ -713,12 +713,12 @@
       "capability": "hardware-inference",
       "task_id": "HW-R0042",
       "test_id": "EV-R0042",
-      "test_path": "tests/contracts/test_authorization.py",
+      "test_path": "tests/contracts/test_coral.py",
       "component_id": null,
       "kind": "requirement",
       "state": "specified; implementation-pending",
-      "implementation_module": "src/hermes_installer/runtime/authorization.py",
-      "verification_method": "Denial fixture at actual dispatch/process/filesystem boundary: attempts beyond authorized scope fail before target side effect, including schedule/webhook/delegated identities and fresh lookup failure"
+      "implementation_module": "src/hermes_installer/components/coral.py",
+      "verification_method": "Run the official compiled quantized sample through the selected USB/PCIe TPU delegate in an isolated compatible environment; record delegate-used output and runtime/device/model digests. Reject CPU fallback and enumeration-only success, preserve Hermes/host Python, and keep missing-device native acceptance pending."
     },
     {
       "id": "R0043",
@@ -6979,14 +6979,14 @@
       "requirement_ids": [
         "R0042"
       ],
-      "implementation_module": "src/hermes_installer/runtime/authorization.py",
+      "implementation_module": "src/hermes_installer/components/coral.py",
       "depends_on": [
         "HW-F01"
       ],
       "test_paths": [
-        "tests/contracts/test_authorization.py"
+        "tests/contracts/test_coral.py"
       ],
-      "verification_method": "Denial fixture at actual dispatch/process/filesystem boundary: attempts beyond authorized scope fail before target side effect, including schedule/webhook/delegated identities and fresh lookup failure",
+      "verification_method": "Run the official compiled quantized sample through the selected USB/PCIe TPU delegate in an isolated compatible environment; record delegate-used output and runtime/device/model digests. Reject CPU fallback and enumeration-only success, preserve Hermes/host Python, and keep missing-device native acceptance pending.",
       "docs": "docs/hardware-inference.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
@@ -12114,9 +12114,9 @@
       "task_ids": [
         "HW-R0042"
       ],
-      "method": "Denial fixture at actual dispatch/process/filesystem boundary: attempts beyond authorized scope fail before target side effect, including schedule/webhook/delegated identities and fresh lookup failure",
+      "method": "Run the official compiled quantized sample through the selected USB/PCIe TPU delegate in an isolated compatible environment; record delegate-used output and runtime/device/model digests. Reject CPU fallback and enumeration-only success, preserve Hermes/host Python, and keep missing-device native acceptance pending.",
       "assertion": "Install the appropriate runtime and permissions in an isolated dependency environment. Do not downgrade Hermes or the host Python to satisfy older PyCoral packages. Test actual TPU inference with a small official compiled sample model and record that the TPU delegate was used; device enumeration alone is insufficient. Keep Coral inference separate from LLM model routing.",
-      "fixture_test": "tests/contracts/test_authorization.py",
+      "fixture_test": "tests/contracts/test_coral.py",
       "platform": "fixture first; actual ARM64/Pi/accounts separately when relevant",
       "result": "not-run",
       "candidate_sha": null,
