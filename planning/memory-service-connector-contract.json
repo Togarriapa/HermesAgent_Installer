@@ -98,7 +98,8 @@
     "memory_owner_generation",
     "private_extraction_embedding_routes",
     "background_consent_revision",
-    "limits"
+    "limits",
+    "lifecycle_binding"
   ],
   "request_fields": [
     "target_id",
@@ -296,6 +297,87 @@
     "step_binding": "Durable reservation binds profile/namespace/principal, service enrollment and opaque service generation, memory owner integer generation, route/recipe, job/step/sequence, original monotonic deadline, source closure and consent digests, consumed parent grant ID/context/request digests, canonical compound envelope digest and exact root serialized service request digest.",
     "parent_grant_semantics": "Persisted parent grant ID/context/request digests are audit and original-admission bindings only, never reusable authorization. Root-private memory child issuer resolves active reservation and current parent lineage/consent/generations and emits one fresh HI12 exact operation/target/payload/step grant; consumed parent cannot be replayed.",
     "issuer": "Root-private issue_memory_step_effect(reservation_handle, canonical_connector_payload_bytes, serialized_service_request_sha256); no worker RPC accepts binding claims or HTTP. Issuer independently resolves protected reservation, recipe/serializer and actual current state; capability/target/recipient inherit root selected outer action and reduced child policy.",
-    "restart": "In-flight restart becomes ambiguous and cannot replay effect; wipe payload/provenance, preserve bounded audit receipt; new authorized operation required. Concurrent/revoked/expired/stale generation denied before every byte."
-  }
+    "restart": "In-flight restart becomes ambiguous and cannot replay effect; wipe payload/provenance, preserve bounded audit receipt; new authorized operation required. Concurrent/revoked/expired/stale generation denied before every byte.",
+    "catalog_source": "Use exact active service_generations.root_journal_roots from protected-runtime-assembly-contract.json; resolve_root_journal validates actual root path device/inode/owner/mode and current digest before providing RootJournalSelection. Root memory mapping cannot be caller injected or guessed sidecar."
+  },
+  "protected_lifecycle_binding": {
+    "active": "memory_enrollments[*].lifecycle_binding under existing active service snapshot digest",
+    "fields": {
+      "service_enrollment_id": "exact selected process service ID",
+      "service_generation": "opaque process generation",
+      "start_operation_id": "finite reviewed operation recipe ID",
+      "start_parameter_schema_id": "exact protected empty parameter schema ID",
+      "prestart_receipt_handles": "tuple actual verified package/config/model/engine receipts",
+      "readiness_route_id": "existing source-backed fixed route ID",
+      "readiness_schema_id": "source-backed bounded semantic validator ID",
+      "restart_policy": "manual-owned-restart|bounded-owned-restart",
+      "maximum_restart_attempts": "int0..3",
+      "original_deadline_seconds": "int1..600"
+    },
+    "API": "RootMemoryServiceLifecycle.from_root_runtime(active_bindings,custody,source_receipt_registry,connector_registry).start_selected_memory(provider,profile_id)->RootMemoryServiceStartReceipt; root current selected enrollment/consent only, no worker command/path/env. stop/restart resolves same owned current process handle and invalidates previous service generation/compound reservation before replacement. Each start fresh reduced process grant; internal owned cleanup never reused effects.",
+    "recipe": "Each start operation recipe parameters={} and root selected fixed executable/runtime/child artifacts, config and sanitized profile HOME/data/work. Source receipt artifact hashes are not executable hashes. No latest/unpinned install/curl/shell fallback/credential copying/lazy model downloads; exact source-built/pinned package and separately selected dependencies/engine/config receipts must be present before activation. Missing artifact support remains explicit resumable prerequisite, not omitted original provider.",
+    "providers": {
+      "openviking": {
+        "operation_id": "memory-openviking-serve-v1",
+        "source": "volcengine/OpenViking@e7b2e974b1fb97cd8c6087ff013181ddfec94f77",
+        "launch": "Actual enrolled pinned openviking-server entrypoint, foreground, root preconfigured sanitized config; interactive init is setup only and cannot run in managed startup. Fixed port1933 and existing trusted API-key mode. Source README init then serve informs setup, not unpinned uv tool install.",
+        "readiness": "openviking-ready GET /ready, exact source status ready/checks validator; health is liveness. Separate actual capture/extraction/retrieval proof required."
+      },
+      "agentmemory": {
+        "operation_id": "memory-agentmemory-serve-v1",
+        "source": "rohitg00/agentmemory@df3d4a83b966d8d415cb9180d5a4724b07f729dc",
+        "launch": "Actual compiled dist/cli.mjs under selected isolated Node and exact root preinstalled iii engine artifact/config/child closure. Pinned CLI start behavior must be patched/reviewed to deny first-run engine installer if missing. --no-engine only intentional liveness mode, never accepted memory functionality. No invented iii pin or @latest package.",
+        "readiness": "agentmemory-ready GET /agentmemory/livez is liveness only; actual remember/search backend proof required before semantic ready. Fixed selected REST3111; additional engine/viewer/stream roles remain separately enrolled exact artifacts/ports, not default broad listener."
+      },
+      "claude-mem": {
+        "operation_ids": [
+          "memory-claude-mem-worker-observation-serve-v1",
+          "memory-claude-mem-server-v1-sqlite-serve-v1",
+          "memory-claude-mem-server-v1-postgres-serve-v1"
+        ],
+        "source": "thedotmack/claude-mem@fa8ab09f06aa05f958c5225cf3756ce52a3ebb96",
+        "launch": "Select exactly one existing backend_variant. Worker recipe requires actual pinned Bun/package worker:start command closure and no autostart hooks/history capture; server variants require exact source-reviewed start/config/runtime and PostgreSQL/Valkey dependencies only when selected. Names identify required recipe records, not executable availability. Root may not guess a generic server or reuse other variant routes.",
+        "readiness": "Existing exact backend variant health route/schema plus actual capture/search/delete capability semantics; liveness never substitutes unsupported SQLite deletion or unselected Postgres ownership."
+      }
+    },
+    "receipt_fields": [
+      "schema",
+      "receipt_handle",
+      "provider",
+      "profile_id",
+      "service_enrollment_id",
+      "service_generation",
+      "service_generation_digest",
+      "process_id",
+      "start_operation_id",
+      "prestart_receipt_handles",
+      "readiness_receipt_handle",
+      "readiness_kind",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "evidence": "SK-T01: actual prestart/no-network/fixed command/selected owner generation/config/backend route; missing dependency lazy bootstrap deny, foreign process restart deny; semantic ready only actual capture/search and private extraction proof."
+  },
+  "whole_turn_capture": {
+    "owner_module": "hermes_installer.authority.native_turn_observation",
+    "registry": "RootNativeTurnObservationRegistry",
+    "source": "https://raw.githubusercontent.com/NousResearch/hermes-agent/7085fbf7753266fc4943c55ac04926186bc90005/agent/turn_facade.py",
+    "native_hook": "Pinned TurnFacadeMixin.run_conversation surrounds conversation_loop.run_conversation and returns final result after logical call finalization. Source-pinned boundary emits finite completion at that actual return; failed/interrupted/early-return path emits failed/cancelled, never captures as completed. Native completion marker alone is not proof: root requires its retained input/request/provider/tool result closures and no pending logical calls.",
+    "begin": "RootNativeTurnObservationRegistry.begin_selected_turn(selected_execution_handle,actual_native_input_receipt_handle)->opaque turn_handle root-only, authenticates actual selected producer/package/PIDFD and root retained delivered source receipt. This is initial execution or authenticated channel/desktop input, independent of HI11 pending pair. Root broker associates each actual request/response/tool/delegate receipt with retained turn handle via current lexical source provenance, never model labels or caller session string.",
+    "finish_RPC": "AuthorityClient.finish_selected_native_turn(turn_handle,final_response_delivery_handle)->RootCompletedNativeTurnPresentation; fixed native.turn.finish request {schema:1,turn_handle,final_response_delivery_handle}, no transcript/classification/profile/source-kind/success fields. Root authenticates actual same peer/PIDFD/package/generation and fixed completion observer role, resolves actual final response delivery and entire current turn request/retry/tool/delegate closure, checks no pending effects/stream truncation/cancel/failure, original lease and one-use finish. Worker return marker cannot upgrade incomplete root observations.",
+    "DTO": "RootCompletedNativeTurn root-private fields schema,receipt_handle,turn_handle,selected_execution_handle,profile_id,process_generation,native_package_generation,service_generation_digest,input_receipt_handle,request_receipt_handles,response_receipt_handles,tool_result_receipt_handles,delegation_receipt_handles,transcript_sha256,transcript_size_bytes,parent_closure_digest,issued_monotonic,expires_monotonic; exact reconstructed transcript retained behind root handle, not worker argument. Presentation only receipt_handle/turn_handle/state/expiry.",
+    "transcript": "Root reconstructs canonical ordered messages from actual root captured native input, final normalized requests, actual provider complete responses and root observed tool/delegated results. No arbitrary local-history scanning or caller transcript. Bound<=1048576 bytes; overflow preserves original private source evidence and marks capture pending bounded selection, never silently truncates and claims whole turn. Sensitive payload not public evidence.",
+    "memory": "RootMemoryCaptureCoordinator.capture_completed_turn(completed_turn_handle,selected_memory_enrollment_id,background_consent_handle)->opaque memory_capture_job_handle root-private; exact current selected profile/owner/service generation/background consent/recipient/private route before bytes. Root observes actual completion and constructs existing protected capture recipe input from retained transcript/source closure, issues fresh memory/extraction/embedding child grants and uses existing compound ledger. Unknown/private inherited; no public label or reused source/parent effect grant. Memory backend result creates existing memory-record provenance only after actual backend observation; no new source kind needed.",
+    "evidence": "SK-T01/HI-T08/HI-T11: actual complete whole turn with tools/retries/aux/delegates, failed/interrupted/truncated/foreign peer/stale generation/no consent/no private model negatives. Tool-only lexical invocation and local fixture strings cannot prove whole-turn capture.",
+    "handle_delivery": {
+      "initial_input": "RootTaskInputCoordinator or selected health/desktop input coordinator calls begin_selected_turn only after root capture and exact selected producer resolution, before queuing authenticated NativeInitialInputDelivery. Add turn_handle to that DTO; pending has no handle. Channel ingress root coordinator does the same before ChannelEventDelivery. Both handles are root-retained opaque presentation references, not authority claims.",
+      "worker_scope": "Patched actual Hermes input take installs the returned turn_handle in the lexical TurnFacadeMixin.run_conversation scope. Concurrent turns cannot share it; cancellation clears scope. Worker cannot create/select a turn from session strings, message kwargs or model body.",
+      "root_request_join": "RootNativeTurnObservationRegistry.resolve_turn_for_source(source_receipt_handle, live_producer_identity) -> retained turn_handle is root-private: verifies actual delivered input receipt ancestry and exact current producer PIDFD/profile/process and package generations, requires unique active turn. NativeBridge.prepare attaches each admitted canonical request to this retained turn; caller has no turn selector.",
+      "response_hook": "RootNativeTurnObservationRegistry.register_brokered_response(turn_handle, root_response_observation_handle) -> final_response_delivery_handle root-private. Actual provider response registry supplies a retained complete-response observation, exact normalized response bytes/digest, consumed request context and retry/stream terminal state. The registry re-resolves request-to-turn join and all current pending tool/delegate invocations before accepting final status. An arbitrary worker opaque string or header alone cannot register a response.",
+      "metadata_delivery": "Existing native.response.take returns ProviderResponseMetadata with turn_handle and final_response_delivery_handle in its authenticated out-of-band DTO, alongside producer_context_handle/tool_call_bindings. Only root-stored actual response observation populates them. Gateway transports only the existing lookup handle header; neither turn nor tool claims enter model-visible body. For a non-final response final_response_delivery_handle is null.",
+      "tool_hook": "Existing root observed invocation/result observers attach their retained exact call/result records to the turn resolved through the root parent context. No new generic source capture RPC; no worker transcript/parent labels. Finish rejects any unresolved request, stream, tool, delegate or failed/cancelled turn.",
+      "finish_consumer": "At actual pinned successful TurnFacadeMixin return, worker passes the lexical delivered turn_handle and matching root final_response_delivery_handle to native.turn.finish. Root rechecks all retained observations; missing handle or mismatch is pending/unavailable, never completion proof."
+    }
+  },
+  "lifecycle_row_placement": "lifecycle_binding is nested in each active service_generations.memory_enrollments row, exact fields from protected_lifecycle_binding; no sibling mutable catalog. A null binding records unavailable startup, not a fabricated recipe; populated binding requires all actual source/runtime/engine/prestart joins. Existing started service cannot claim memory functional proof from readiness/liveness."
 }

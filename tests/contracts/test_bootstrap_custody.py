@@ -39,8 +39,10 @@ class BootstrapCustodyContractTests(unittest.TestCase):
                 return SimpleNamespace(status=200, body=body, receipt_id="artifact-receipt")
 
         client = Client()
+        cancelled = lambda: False
         store_id, receipt = BootstrapCustody(client).fetch_artifact(
-            artifact_id="hermes-installer-fixture", sha256=digest, max_bytes=1024)
+            artifact_id="hermes-installer-fixture", sha256=digest, max_bytes=1024,
+            cancelled=cancelled)
         self.assertEqual(store_id, f"artifact:hermes-installer-fixture:{digest}")
         self.assertEqual(receipt, "artifact-receipt")
         context_call = next(call for call in client.calls if call[0] == "context")
@@ -53,7 +55,9 @@ class BootstrapCustodyContractTests(unittest.TestCase):
             "sha256": digest, "max_bytes": 1024}, sort_keys=True,
             separators=(",", ":"), ensure_ascii=True).encode("ascii")
         self.assertEqual(grant_call[1]["request_digest"], hashlib.sha256(request).hexdigest())
-        self.assertEqual(next(call for call in client.calls if call[0] == "fetch")[1], "one-use-grant")
+        fetch_call = next(call for call in client.calls if call[0] == "fetch")
+        self.assertEqual(fetch_call[1], "one-use-grant")
+        self.assertIs(fetch_call[2]["cancelled"], cancelled)
 
     def test_root_selected_recipe_uses_opaque_handle_controls_and_verified_stop(self):
         class Client:
@@ -177,3 +181,99 @@ class BootstrapCustodyContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class RootSelectedHermesOperationsTests(unittest.TestCase):
+    def receipt(self, *, state="committed", enrollment_ids=("service-enrollment",)):
+        from hermes_installer.authority.bootstrap_enrollment import EnrollmentReceipt
+        import time
+        return EnrollmentReceipt(1, "transaction", "provision-receipt", "generation-7",
+            "a" * 64, None, state, tuple(enrollment_ids), time.monotonic(), time.monotonic() + 60)
+
+    def test_stage_health_operations_are_fixed_and_generation_bound(self):
+        from hermes_installer.bootstrap_custody import RootSelectedHermesOperations
+
+        class Client:
+            def __init__(self):
+                self.started = []
+                self.counter = 0
+            def start_enrolled_process_operation(self, **kwargs):
+                self.counter += 1
+                self.started.append(kwargs)
+                return SimpleNamespace(status=200, body=json.dumps({
+                    "process_id": f"{self.counter:032x}", "generation": "process-gen",
+                    "uid": 1234}).encode(), receipt_id=f"start-{self.counter}")
+            def process_control_operation(self, operation, **kwargs):
+                if operation == "process.status":
+                    return SimpleNamespace(state="exited", result={"exit_code": 0})
+                if operation == "process.read":
+                    return SimpleNamespace(state="exited", result={
+                        "data_bytes": "", "eof": True})
+                if operation == "process.stop":
+                    return SimpleNamespace(state="stopped", result={
+                        "closed": True, "reap_state": "complete"})
+                raise AssertionError(operation)
+
+        client = Client()
+        operations = RootSelectedHermesOperations(BootstrapCustody(client), self.receipt())
+        stage = operations.stage(timeout=10)
+        self.assertTrue(stage.operation_completed)
+        health = operations.health(stage, timeout=10)
+        self.assertTrue(health.operation_completed)
+        self.assertEqual([item["operation_id"] for item in client.started], [
+            "hermes-agent-stage-v1", "hermes-agent-health-v1"])
+        self.assertTrue(all(item["parameters"] == {} for item in client.started))
+        self.assertTrue(all(item["generation"] == "generation-7" for item in client.started))
+        self.assertEqual(health.generation_digest, "a" * 64)
+
+    def test_prepared_enrollment_and_failed_stage_cannot_run_health(self):
+        from hermes_installer.bootstrap_custody import (
+            BootstrapCustodyError, RootSelectedHermesOperations)
+        with self.assertRaises(BootstrapCustodyError):
+            RootSelectedHermesOperations(BootstrapCustody(object()), self.receipt(state="prepared", enrollment_ids=()))
+
+        class FailedClient:
+            def start_enrolled_process_operation(self, **kwargs):
+                return SimpleNamespace(status=200, body=json.dumps({
+                    "process_id": "f" * 32, "generation": "process-gen", "uid": 1234}).encode(),
+                    receipt_id="start-failed")
+            def process_control_operation(self, operation, **kwargs):
+                if operation == "process.status":
+                    return SimpleNamespace(state="exited", result={"exit_code": 1})
+                if operation == "process.read":
+                    return SimpleNamespace(state="exited", result={"data_bytes": "", "eof": True})
+                if operation == "process.stop":
+                    return SimpleNamespace(state="stopped", result={"closed": True, "reap_state": "complete"})
+                raise AssertionError(operation)
+        operations = RootSelectedHermesOperations(BootstrapCustody(FailedClient()), self.receipt())
+        stage = operations.stage(timeout=10)
+        self.assertFalse(stage.operation_completed)
+        with self.assertRaises(BootstrapCustodyError):
+            operations.health(stage, timeout=10)
+
+    def test_async_cancellation_stops_and_verifies_the_selected_child(self):
+        import asyncio
+        from hermes_installer.bootstrap_custody import BootstrapCancelled
+        from hermes_installer.bootstrap_custody import RootSelectedHermesOperations
+
+        class CancelClient:
+            def __init__(self):
+                self.stopped = False
+            def start_enrolled_process_operation(self, **kwargs):
+                return SimpleNamespace(status=200, body=json.dumps({
+                    "process_id": "e" * 32, "generation": "process-gen", "uid": 1234}).encode(),
+                    receipt_id="start-cancel")
+            def process_control_operation(self, operation, **kwargs):
+                if operation == "process.status":
+                    raise asyncio.CancelledError()
+                if operation == "process.stop":
+                    self.stopped = True
+                    return SimpleNamespace(state="stopped", result={
+                        "closed": True, "reap_state": "complete"})
+                raise AssertionError(operation)
+
+        client = CancelClient()
+        operations = RootSelectedHermesOperations(BootstrapCustody(client), self.receipt())
+        with self.assertRaises(BootstrapCancelled) as raised:
+            operations.stage(timeout=10)
+        self.assertTrue(client.stopped)
+        self.assertTrue(raised.exception.cleanup_verified)

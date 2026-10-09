@@ -614,3 +614,28 @@ The installer SHALL retain original source Git link/blob/tree proof and validate
 #### Scenario: Immutable buffer copy
 - **WHEN** root compiles the one reviewed pinned document link from verified immutable target bytes
 - **THEN** it verifies retained source content identities and actual owned destination identity without claiming a source inode observation
+
+### Requirement: Root-local setup and journal provenance
+The installer SHALL authenticate initial provision through its installed root-local setup session and transaction-scoped artifact receipts, and resolve authority state from protected root journal selection.
+
+#### Scenario: Worker fabricates bootstrap actor
+- **WHEN** a worker supplies root labels, another transaction receipt or a writable journal mapping
+- **THEN** root rejects before provision/state effects without requiring or inventing a first active worker context
+
+### Requirement: Root actual EOF and schema source receipts
+The installer SHALL require actual custody write/EOF receipts for task completion and exact root-derived schema receipts for native schema artifacts where applicable.
+
+#### Scenario: Forged or mismatched receipt
+- **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
+- **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+### Requirement: Source-backed memory lifecycle and whole turn
+The installer SHALL start only source-bound selected memory service recipes and derive whole-turn capture from actual completed root-observed native event closure with current consent and private routing.
+
+#### Scenario: Liveness or tool-only capture substituted
+- **WHEN** only a liveness response or one tool invocation exists
+- **THEN** semantic memory readiness or complete whole-turn capture is not asserted
+
+Whole-turn handle delivery v70: `plans/amendments/2026-10-10-whole-turn-authenticated-handle-delivery-v70.md`; existing SK-T01/HI-T08/HI-T11 remain open, authenticated root input/response metadata only, actual whole-turn proof and failure evidence required.
+
+Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.

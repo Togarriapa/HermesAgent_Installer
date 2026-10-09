@@ -54,14 +54,25 @@ selected account and tunnel UUID using the pinned [`cloudflared` 2026.10.0 token
 Cloudflare route activation requires a signed, short-lived
 `RootOriginReadinessReceipt` from the root authority. It binds the active
 gateway and Desktop generations, connector target, policy digest/revision and
-service generation. The receipt is issued only after the process manager
-checks the live PIDFD, start time, pinned executable, cgroup, namespaces, mount,
-configuration and fixed route, followed by bounded loopback checks for
-authorized native app assets and WebSocket pixels and denials for unauthorized,
-shell, arbitrary route and whole-host desktop requests. Missing native or
-kernel evidence leaves the route pending; process metadata or a live PID alone
-does not satisfy readiness. Receipts expire after 30 seconds and must pass root
-signature, selection, digest and expiry checks at the activation boundary.
+service generation, and the opaque handle for one root-registered probe. Root
+checks the gateway and native Desktop PIDFDs, start time, pinned executable,
+cgroup, namespaces and mount. A separate setup transaction binds the current
+setup process, selected tunnel response, dedicated writer role and probe role;
+its one-use origin-probe handle expires within 30 seconds. The root client
+connects only to the active catalog's private AF_UNIX socket, verifies the
+gateway peer PID/UID/GID, and sends three bounded per-action commands, each
+with a fresh immutable child handle: pinned asset GET, pinned asset HEAD, and
+WebSocket attach. The gateway returns measured bytes, status and digests; its
+response cannot set readiness booleans. The root joins those results with
+separately root-observed loopback listener and denial-route facts plus a
+native-window observation bound to the selected Desktop PIDFD and WebSocket
+stream. Missing boundary/window observers, a stale proof, or an unexpected
+route response leaves readiness unavailable. Root registers its own signed
+probe receipt only after all joins pass. Receipts expire within 30 seconds and
+must pass root signature, selection, digest and expiry checks at the activation
+boundary. The isolated loopback/AF_UNIX fixture proves byte-level protocol
+behavior; it does not prove production observers, connector custody, or target
+readiness.
 
 Fixture evidence exercises private file effects, collision refusal, signed
 receipt validation and real isolated loopback socket exchanges. It does not

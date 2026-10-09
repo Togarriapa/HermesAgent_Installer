@@ -4,8 +4,8 @@ Worker input is restricted to one reviewed operation identifier, generation,
 and the empty parameter object. A root composition resolves pinned artifacts
 and invokes its managed build-job launcher. This module validates the terminal
 isolation/exit receipt and atomically publishes a complete digest-checked tree
-to a private CAS. It remains unregistered until a concrete managed build-job
-launcher is present in daemon composition.
+to a private CAS. Runtime composition owns handler registration; `handlers()`
+exposes only fixed target IDs for which a target-fact inspector is qualified.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ import time
 import base64
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol
 
 from .types import AuthorityDenied, EffectAuthorization, HostContext, canonical_digest
@@ -172,6 +173,7 @@ class ResolvedBuildInputs:
     output_root: Path
     output_root_id: str
     output_owner_uid: int
+    output_owner_gid: int
     max_lifetime_seconds: int
 
 
@@ -270,19 +272,75 @@ class BuildOutputFactInspector(Protocol):
     """Root-owned observer of ELF, interpreter ABI and resolved library facts."""
     def inspect(self, profile: Any, spec: Any, path: Path) -> Mapping[str, Any]: ...
 
+    def inspect_build_output(self, profile: Any, spec: Any, path: Path, *,
+                             build_result: ManagedBuildResult, build_inputs: ResolvedBuildInputs,
+                             cancelled: Callable[[], bool]) -> Mapping[str, Any]: ...
+
 
 class RootManagedPythonProbe(Protocol):
     """Executes only the enrolled output interpreter through an isolated root-managed probe."""
-    def inspect_cpython39(self, profile: Any, executable: Path) -> Mapping[str, Any]: ...
+    qualified_for_host: bool
+
+    def inspect_cpython39(self, profile: Any, executable: Path, *,
+                          build_result: ManagedBuildResult, build_inputs: ResolvedBuildInputs,
+                          cancelled: Callable[[], bool]) -> Mapping[str, Any]: ...
+
+
+class ProtectedBuildArtifactRootResolver:
+    """Resolve inspector inputs only from the immutable protected artifact catalog.
+
+    The build runner and inspector intentionally resolve the same pinned source
+    and toolchain independently: the runner binds their verified trees into
+    read-only mounts, while post-exit inspection rechecks catalog membership
+    and bytes before trusting source recipes or shared-library closures.
+    """
+
+    def __init__(self, artifact_catalog: Any, staging_root: Path, *, owner_uid: int = 0):
+        if (not isinstance(staging_root, Path) or not staging_root.is_absolute()
+                or type(owner_uid) is not int or owner_uid < 0
+                or not callable(getattr(artifact_catalog, "resolve", None))
+                or not callable(getattr(artifact_catalog, "materialize_tree", None))
+                or not isinstance(getattr(artifact_catalog, "artifacts", None), Mapping)):
+            raise AuthorityDenied("build.artifact_resolver", "root protected artifact resolver is unavailable")
+        self.artifact_catalog = artifact_catalog
+        self.staging_root = staging_root
+        self.owner_uid = owner_uid
+
+    def _resolve(self, artifact_id: str, digest: str) -> Path:
+        spec = self.artifact_catalog.artifacts.get(artifact_id)
+        if spec is None or spec.sha256 != digest:
+            raise AuthorityDenied("build.artifact", "inspector artifact differs from protected build pins")
+        try:
+            resolved = (self.artifact_catalog.materialize_tree(
+                artifact_id, digest, self.staging_root, expected_uid=self.owner_uid)
+                if spec.tree_files else self.artifact_catalog.resolve(
+                    artifact_id, digest, self.staging_root, expected_uid=self.owner_uid))
+            path = Path(resolved.path)
+            info = path.lstat()
+            if (path != path.resolve(strict=True)
+                    or (spec.tree_files and not stat.S_ISDIR(info.st_mode))
+                    or (not spec.tree_files and not stat.S_ISREG(info.st_mode))
+                    or info.st_uid != self.owner_uid or info.st_mode & 0o222):
+                raise ValueError("artifact root custody")
+            return path
+        except Exception:
+            raise AuthorityDenied("build.artifact", "pinned source or toolchain cannot be re-resolved") from None
+
+    def source_root(self, profile: Any) -> Path:
+        return self._resolve(profile.source_artifact_id, profile.source_sha256)
+
+    def toolchain_root(self, profile: Any) -> Path:
+        return self._resolve(profile.toolchain_artifact_id, profile.toolchain_sha256)
 
 
 class LinuxBuildOutputFactInspector:
     """Read-only ELF/sysconfig and isolated runtime inspector for ARM64 outputs."""
     def __init__(self, *, toolchain_root_resolver: Callable[[Any], Path],
-                 source_root_resolver: Callable[[Any], Path], runtime_probe: RootManagedPythonProbe,
+                 source_root_resolver: Callable[[Any], Path], runtime_probe: RootManagedPythonProbe | None,
                  owner_uid: int = 0):
         if (not callable(toolchain_root_resolver) or not callable(source_root_resolver)
-                or not callable(getattr(runtime_probe, "inspect_cpython39", None))
+                or (runtime_probe is not None
+                    and not callable(getattr(runtime_probe, "inspect_cpython39", None)))
                 or type(owner_uid) is not int):
             raise AuthorityDenied("build.inspector", "root source/toolchain resolvers and managed runtime probe are required")
         self.toolchain_root_resolver = toolchain_root_resolver
@@ -454,6 +512,18 @@ class LinuxBuildOutputFactInspector:
             raise AuthorityDenied("build.target", "native Colibri build requires the enrolled Linux ARM64 host")
 
     def inspect(self, profile: Any, spec: Any, path: Path) -> Mapping[str, Any]:
+        return self._inspect(profile, spec, path, build_result=None, build_inputs=None,
+                             cancelled=lambda: False)
+
+    def inspect_build_output(self, profile: Any, spec: Any, path: Path, *,
+                             build_result: ManagedBuildResult, build_inputs: ResolvedBuildInputs,
+                             cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        return self._inspect(profile, spec, path, build_result=build_result,
+                             build_inputs=build_inputs, cancelled=cancelled)
+
+    def _inspect(self, profile: Any, spec: Any, path: Path, *,
+                 build_result: ManagedBuildResult | None, build_inputs: ResolvedBuildInputs | None,
+                 cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         sysroot = Path(self.toolchain_root_resolver(profile)).resolve(strict=True)
         if spec.relative_path == "c/colibri":
             self._verify_colibri_recipe(profile)
@@ -466,6 +536,10 @@ class LinuxBuildOutputFactInspector:
                     "resolved_dependency_closure": closure,
                     "instruction_policy": "actual target compatible ARM64 flags; no x86 default or unmeasured CPUflags"}
         if spec.relative_path == "runtime/bin/python3.9":
+            if self.runtime_probe is None:
+                raise AuthorityDenied("build.python_probe", "root-managed CPython ABI probe is unavailable")
+            if build_result is None or build_inputs is None:
+                raise AuthorityDenied("build.python_probe", "completed build receipt is required for CPython probing")
             if sys.platform != "linux" or platform.machine().lower() not in {"aarch64", "arm64"}:
                 raise AuthorityDenied("build.target", "CPython output probe requires Linux ARM64")
             facts, needed = self._elf(path)
@@ -475,7 +549,10 @@ class LinuxBuildOutputFactInspector:
                 raise AuthorityDenied("build.python_abi", "built CPython sysconfig ABI is not the enrolled nondebug ABI")
             closure = self._dependency_closure(sysroot, needed)
             try:
-                runtime = self.runtime_probe.inspect_cpython39(profile, path)
+                runtime = self.runtime_probe.inspect_cpython39(
+                    profile, path, build_result=build_result, build_inputs=build_inputs,
+                    cancelled=cancelled,
+                )
             except Exception:
                 raise AuthorityDenied("build.python_abi", "root-managed CPython runtime probe failed") from None
             if (not isinstance(runtime, Mapping) or runtime.get("python_version") != "3.9.25"
@@ -487,6 +564,7 @@ class LinuxBuildOutputFactInspector:
             return {**facts, "python_version": runtime["python_version"], "soabi": runtime["soabi"],
                     "debug": runtime["debug"], "glibc_minimum": "2.34 for selected TFLite wheel",
                     "observed_glibc_version": runtime["glibc_version"],
+                    "probe_execution": runtime["probe_execution"],
                     "resolved_dependency_closure": closure}
         if spec.relative_path == "runtime/lib/python3.9":
             tree = path
@@ -627,10 +705,14 @@ class ContentAddressedBuildStore:
                 process: ManagedBuildResult, fact_inspector: BuildOutputFactInspector,
                 cancelled: Callable[[], bool] = lambda: False,
                 output_root: Path | None = None,
+                build_inputs: ResolvedBuildInputs | None = None,
                 before_activate: Callable[[], None] | None = None) -> BuildAttestation:
         self._require_completed_isolated_process(profile, process)
         observed = self._inspect_complete_output_tree(profile, fact_inspector,
-                                                      output_root=output_root)
+                                                      output_root=output_root,
+                                                      build_result=process,
+                                                      build_inputs=build_inputs,
+                                                      cancelled=cancelled)
         if cancelled():
             raise AuthorityDenied("build.expired", "build authorization expired before output publication")
         self._ensure_store()
@@ -750,7 +832,11 @@ class ContentAddressedBuildStore:
 
     def _inspect_complete_output_tree(self, profile: Any,
                                      inspector: BuildOutputFactInspector,
-                                     *, output_root: Path | None = None) -> dict[str, dict[str, Any]]:
+                                     *, output_root: Path | None = None,
+                                     build_result: ManagedBuildResult | None = None,
+                                     build_inputs: ResolvedBuildInputs | None = None,
+                                     cancelled: Callable[[], bool] = lambda: False
+                                     ) -> dict[str, dict[str, Any]]:
         root = Path(output_root if output_root is not None else profile.output_root)
         self._check_owned_directory(root, profile.output_owner_uid, mode=0o700)
         try:
@@ -834,7 +920,14 @@ class ContentAddressedBuildStore:
             manifest_bytes = _canonical(entries)
             digest = hashlib.sha256(manifest_bytes).hexdigest() if spec.kind == "tree" else entries[0]["sha256"]
             try:
-                observed_facts = inspector.inspect(profile, spec, base)
+                inspect_build_output = getattr(inspector, "inspect_build_output", None)
+                if callable(inspect_build_output) and build_result is not None and build_inputs is not None:
+                    observed_facts = inspect_build_output(
+                        profile, spec, base, build_result=build_result,
+                        build_inputs=build_inputs, cancelled=cancelled,
+                    )
+                else:
+                    observed_facts = inspector.inspect(profile, spec, base)
             except Exception:
                 raise AuthorityDenied("build.target_facts", "root could not verify native output target facts") from None
             if not isinstance(observed_facts, Mapping) or not self._fact_matches(spec.target_facts, observed_facts):
@@ -1313,8 +1406,9 @@ class RootBuildExecutionService:
     """Handler for fixed `process.start` selections; does not expose caller paths."""
     def __init__(self, *, build_catalog: FixedBuildCatalog, artifact_catalog: Any,
                  artifact_staging_root: Path, launcher: FixedBuildJobLauncher,
-                 fact_inspector: BuildOutputFactInspector, authority_key: bytes,
+                 fact_inspector: BuildOutputFactInspector, authority_key: bytes | None = None,
                  service_catalog: Any,
+                 allowed_operation_ids: frozenset[str] | None = None,
                  store: ContentAddressedBuildStore | None = None, expected_uid: int = 0,
                  monotonic: Callable[[], float] = time.monotonic):
         if type(expected_uid) is not int or os.geteuid() != expected_uid:
@@ -1327,11 +1421,37 @@ class RootBuildExecutionService:
         self.artifact_staging_root = artifact_staging_root
         self.launcher = launcher
         self.fact_inspector = fact_inspector
-        self.store = store or ContentAddressedBuildStore.root_store(authority_key=authority_key)
+        runtime_probe = getattr(fact_inspector, "runtime_probe", None)
+        has_cpython_probe = (
+            callable(getattr(runtime_probe, "inspect_cpython39", None))
+            and getattr(runtime_probe, "qualified_for_host", False) is True
+        )
+        default_operations = {"colibri-source-build-v1"}
+        if has_cpython_probe:
+            default_operations.add("coral-cpython39-source-build-v1")
+        selected_operations = default_operations if allowed_operation_ids is None else set(allowed_operation_ids)
+        if (not selected_operations or not selected_operations <= set(OPERATION_TARGETS)
+                or "coral-cpython39-source-build-v1" in selected_operations and not has_cpython_probe):
+            raise AuthorityDenied("build.operation", "build operation registration exceeds verified inspector support")
+        self.allowed_operation_ids = frozenset(selected_operations)
+        if store is None:
+            if not isinstance(authority_key, bytes) or len(authority_key) != 32:
+                raise AuthorityDenied("build.store", "root build signing key is unavailable")
+            store = ContentAddressedBuildStore.root_store(authority_key=authority_key)
+        elif not isinstance(store, ContentAddressedBuildStore):
+            raise AuthorityDenied("build.store", "root content-addressed build store is invalid")
+        self.store = store
         if self.store.owner_uid != expected_uid:
             raise AuthorityDenied("build.store_custody", "build store owner differs from the root executor identity")
         self.expected_uid = expected_uid
         self.monotonic = monotonic
+
+    def handlers(self) -> Mapping[tuple[str, str], Any]:
+        """Return only fixed operation targets supported by this inspector."""
+        return MappingProxyType({
+            ("process.start", OPERATION_TARGETS[operation_id]): self
+            for operation_id in self.allowed_operation_ids
+        })
 
     def __call__(self, *, context: HostContext, authorization: EffectAuthorization,
                  payload: bytes, timeout: float, peer_pid: int, peer_pidfd: int | None,
@@ -1344,6 +1464,8 @@ class RootBuildExecutionService:
                 or not 0 < timeout <= 600 or authorization.request_digest != canonical_digest(payload)):
             raise AuthorityDenied("build.request", "fixed build request is malformed")
         request = self._request(payload)
+        if request["operation_id"] not in self.allowed_operation_ids:
+            raise AuthorityDenied("build.operation", "this build target has no qualified root output inspector")
         target = OPERATION_TARGETS[request["operation_id"]]
         if (authorization.operation != "process.start" or authorization.target != target
                 or context.operation != "process.start"
@@ -1367,7 +1489,8 @@ class RootBuildExecutionService:
             raise AuthorityDenied("build.binding", "root catalog selected another build profile")
         deadline = self.monotonic() + timeout
         self._require_live(cancelled, deadline)
-        inputs = self._resolve_inputs(profile, enrollment_id=request["enrollment_id"],
+        inputs = self._resolve_inputs(profile, output_owner_gid=service_profile.service_gid,
+                                      enrollment_id=request["enrollment_id"],
                                       operation_id=request["operation_id"],
                                       selection_digest=authorization.request_digest)
         self._require_live(cancelled, deadline)
@@ -1385,6 +1508,7 @@ class RootBuildExecutionService:
                                              fact_inspector=self.fact_inspector,
                                              cancelled=lambda: cancelled() or self.monotonic() >= deadline,
                                              output_root=inputs.output_root,
+                                             build_inputs=inputs,
                                              before_activate=lambda: self._remove_job_output_root(
                                                  inputs.output_root, profile.output_owner_uid))
             # The current-index rename in publish is the success linearization point;
@@ -1396,8 +1520,10 @@ class RootBuildExecutionService:
         finally:
             self._remove_job_output_root(inputs.output_root, profile.output_owner_uid)
 
-    def _resolve_inputs(self, profile: Any, *, enrollment_id: str, operation_id: str,
+    def _resolve_inputs(self, profile: Any, *, output_owner_gid: int, enrollment_id: str, operation_id: str,
                         selection_digest: str) -> ResolvedBuildInputs:
+        if type(output_owner_gid) is not int or output_owner_gid <= 0:
+            raise AuthorityDenied("build.service_join", "dedicated build service GID is invalid")
         resolved = []
         for artifact_id, digest in (
             (profile.source_artifact_id, profile.source_sha256),
@@ -1427,13 +1553,20 @@ class RootBuildExecutionService:
         output_parent = Path(profile.output_root)
         ContentAddressedBuildStore._check_owned_directory(
             output_parent, profile.output_owner_uid, mode=0o700)
+        parent_info = output_parent.lstat()
+        if (stat.S_ISLNK(parent_info.st_mode) or parent_info.st_gid != output_owner_gid):
+            raise AuthorityDenied("build.output_custody", "output parent GID differs from the selected build service")
         output_root_id = secrets.token_hex(16)
         output = output_parent / ("job-" + output_root_id)
         try:
             output.mkdir(mode=0o700)
-            if output.stat().st_uid != profile.output_owner_uid:
-                os.chown(output, profile.output_owner_uid, -1, follow_symlinks=False)
+            os.chown(output, profile.output_owner_uid, output_owner_gid, follow_symlinks=False)
             os.chmod(output, 0o700, follow_symlinks=False)
+            output_info = output.lstat()
+            if (not stat.S_ISDIR(output_info.st_mode) or stat.S_ISLNK(output_info.st_mode)
+                    or output_info.st_uid != profile.output_owner_uid
+                    or output_info.st_gid != output_owner_gid):
+                raise OSError("fresh output child does not have the selected UID/GID")
         except OSError:
             try:
                 output.rmdir()
@@ -1441,6 +1574,9 @@ class RootBuildExecutionService:
                 pass
             raise AuthorityDenied("build.output_custody", "fresh private output root could not be created") from None
         ContentAddressedBuildStore._check_owned_directory(output, profile.output_owner_uid, mode=0o700)
+        if output.lstat().st_gid != output_owner_gid:
+            self._remove_job_output_root(output, profile.output_owner_uid)
+            raise AuthorityDenied("build.output_custody", "fresh private output root has the wrong GID")
         output_specs = {}
         try:
             for relative_path, raw in profile.output_specs.items():
@@ -1465,7 +1601,7 @@ class RootBuildExecutionService:
             tuple(toolchain.tree_files), toolchain.tree_manifest_sha256, builder.artifact_id,
             builder.sha256, builder.path, argv_recipe, dict(profile.environment),
             output_specs, output, output_root_id,
-            profile.output_owner_uid, profile.max_lifetime_seconds,
+            profile.output_owner_uid, output_owner_gid, profile.max_lifetime_seconds,
         )
 
     @staticmethod

@@ -1,4 +1,6 @@
 from pathlib import Path
+from dataclasses import replace
+from types import MappingProxyType
 
 import pytest
 
@@ -6,8 +8,12 @@ from hermes_installer.artifacts import ArtifactCatalog
 from hermes_installer.authority.enrollment import ProtectedEnrollment, RootCredentialVault
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.runtime_composition import compose_root_authority_runtime
+from hermes_installer.authority.runtime_composition import _root_resource_job_ledger_path
 from hermes_installer.authority.service import AuthorityService, PrincipalBinding
+from hermes_installer.authority.source_observers import SourceObserverEnrollment
 from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.protected_enrollment import RootJournalSelection
+from hermes_installer.protected_enrollment import EnrollmentDenied
 
 
 def _inputs():
@@ -24,6 +30,8 @@ def _inputs():
         memory_enrollments={}, operation_parameter_schemas=[], source_issuers=(),
         resource_job_records=(), remote_session_records=(),
         resource_backend_enrollment_records=(), resource_body_recipe_records=(),
+        resource_scope_binding_records=(), resource_validator_records=(),
+        root_journal_root_records=(),
     )
     uid = 1001
     binding = PrincipalBinding(
@@ -36,21 +44,23 @@ def _inputs():
     )
     connector = object()
     process_manager = None
+    observer_candidate = object()
     runtime_bindings = RootRuntimeBindings(
         enrollment_catalog=None, build_catalog=None, device_catalog=None,
         process_manager=process_manager, effect_handlers={}, native_bridges={},
         artifact_catalog=artifact_catalog, build_store=None,
         service_connector=connector,
+        source_observer_enrollments=MappingProxyType({"observer-a": observer_candidate}),
     )
     # The test verifies object identity and epoch wiring; it never resolves
     # credentials. The production caller passes the initialized vault made by
     # the protected root loader.
     vault = object.__new__(RootCredentialVault)
-    return service, enrollment, runtime_bindings, artifact_catalog, vault, connector
+    return service, enrollment, runtime_bindings, artifact_catalog, vault, connector, observer_candidate
 
 
 def test_composition_uses_exact_service_bindings_catalog_vault_and_epoch():
-    service, enrollment, bindings, catalog, vault, connector = _inputs()
+    service, enrollment, bindings, catalog, vault, connector, observer_candidate = _inputs()
 
     runtime = compose_root_authority_runtime(
         service=service, enrollment=enrollment, bindings=bindings,
@@ -67,16 +77,183 @@ def test_composition_uses_exact_service_bindings_catalog_vault_and_epoch():
     assert runtime.service_connector is connector
     assert dict(runtime.backend_enrollments) == {}
     assert dict(runtime.body_recipes) == {}
+    assert dict(runtime.scope_bindings) == {}
+    assert dict(runtime.validators) == {}
     assert dict(runtime.job_enrollments) == {}
+    assert runtime.memory_runtime is None
+    assert runtime.build_execution_service is None
+    assert runtime.source_observer_registry is None
+    assert runtime.source_observer_unavailable_reason == (
+        "source-observer candidates are not complete typed protected joins"
+    )
+    assert service.memory_step_effect_authority is None
+    assert not any(operation.startswith("memory.") for operation, _target in service.handlers)
+    assert runtime.source_observer_enrollments["observer-a"] is observer_candidate
+    with pytest.raises(TypeError):
+        runtime.source_observer_enrollments["forged"] = object()
     runtime.prune()
     runtime.close()
 
 
 def test_composition_rejects_stale_artifact_catalog_identity():
-    service, enrollment, bindings, _catalog, vault, _connector = _inputs()
+    service, enrollment, bindings, _catalog, vault, _connector, _candidate = _inputs()
 
     with pytest.raises(AuthorityDenied, match="do not match this service epoch and catalog"):
         compose_root_authority_runtime(
             service=service, enrollment=enrollment, bindings=bindings,
             artifact_catalog=ArtifactCatalog({}, {}), vault=vault,
         )
+
+
+def test_root_journal_resolution_is_bound_to_active_generation_and_protected_catalog():
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
+    runtime = compose_root_authority_runtime(
+        service=service, enrollment=enrollment, bindings=bindings,
+        artifact_catalog=catalog, vault=vault,
+    )
+
+    with pytest.raises(AuthorityDenied, match="outside the active protected generation"):
+        runtime.resolve_root_journal(
+            "state-root", expected_active_generation_digest="b" * 64,
+        )
+    with pytest.raises(EnrollmentDenied, match="protected root journal catalog is unavailable"):
+        runtime.resolve_root_journal(
+            "state-root", expected_active_generation_digest=enrollment.protected_enrollment_digest,
+        )
+
+
+def test_resource_job_ledger_path_comes_only_from_active_journal_selection():
+    _service, enrollment, _bindings, _catalog, _vault, _connector, _candidate = _inputs()
+    selected_root = Path("/private/var/lib/hermes-installer/authority-journal")
+    bindings = type("JournalBindings", (), {
+        "resolve_root_journal": staticmethod(lambda root_id, *, expected_active_generation_digest:
+            RootJournalSelection(root_id, selected_root, 1, 2, "journal-gen",
+                                 expected_active_generation_digest))
+    })()
+
+    assert _root_resource_job_ledger_path(bindings, enrollment) == (
+        selected_root / "resource-jobs.sqlite3"
+    )
+
+    stale_bindings = type("StaleJournalBindings", (), {
+        "resolve_root_journal": staticmethod(lambda root_id, *, expected_active_generation_digest:
+            RootJournalSelection(root_id, selected_root, 1, 2, "journal-gen", "b" * 64))
+    })()
+    with pytest.raises(AuthorityDenied, match="selection is malformed"):
+        _root_resource_job_ledger_path(stale_bindings, enrollment)
+
+
+def test_runtime_closes_attached_observation_stores():
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
+    closed = []
+
+    class LoaderObservationStore:
+        def close(self):
+            closed.append(True)
+
+    loader_store = LoaderObservationStore()
+    gateway_observer = LoaderObservationStore()
+    native_window_observer = LoaderObservationStore()
+    service.native_loader_observation_store = loader_store
+    service.gateway_boundary_observer = gateway_observer
+    service.native_window_observer = native_window_observer
+    task_observer = LoaderObservationStore()
+    invocation_registry = LoaderObservationStore()
+    bridge_broker = LoaderObservationStore()
+    mcp_dispatcher = LoaderObservationStore()
+    service.task_native_observations = task_observer
+    service.native_invocation_registry = invocation_registry
+    service.native_bridge_broker = bridge_broker
+    service.native_mcp_dispatcher = mcp_dispatcher
+    runtime = compose_root_authority_runtime(
+        service=service, enrollment=enrollment, bindings=bindings,
+        artifact_catalog=catalog, vault=vault,
+    )
+    assert runtime.native_loader_observation_store is loader_store
+    assert runtime.gateway_boundary_observer is gateway_observer
+    assert runtime.native_window_observer is native_window_observer
+    assert runtime.task_native_observations is task_observer
+    assert runtime.native_invocation_registry is invocation_registry
+    assert runtime.native_bridge_broker is bridge_broker
+    assert runtime.native_mcp_dispatcher is mcp_dispatcher
+    runtime.close()
+    assert closed == [True] * 7
+
+
+def test_runtime_closes_remaining_stores_when_one_observer_close_fails():
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
+    closed = []
+
+    class CloseFailure:
+        def close(self):
+            closed.append("registry")
+            raise RuntimeError("fixture close failure")
+
+    class CloseStore:
+        def close(self):
+            closed.append("store")
+
+    service.source_observer_registry = CloseFailure()
+    service.native_loader_observation_store = CloseStore()
+    service.native_bridge_broker = CloseStore()
+    runtime = compose_root_authority_runtime(
+        service=service, enrollment=enrollment, bindings=bindings,
+        artifact_catalog=catalog, vault=vault,
+    )
+    with pytest.raises(RuntimeError, match="fixture close failure"):
+        runtime.close()
+    assert closed == ["store", "registry", "store"]
+
+
+def test_source_metadata_stays_unavailable_without_real_manager_and_pair_joins():
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
+    observer = SourceObserverEnrollment(
+        observer_enrollment_id="observer.a",
+        source_kind="native-input",
+        origin_id="hermes.primary",
+        profile_id="producer.profile",
+        principal_id="producer.principal",
+        namespace_id="producer.namespace",
+        enrollment_id="producer.enrollment",
+        generation="a" * 64,
+        producer_uid=1001,
+        producer_executable_sha256="b" * 64,
+        package_id="package.a",
+        package_sha256="c" * 64,
+        role_id="adapter.a",
+        role_artifact_id="adapter.artifact",
+        role_sha256="d" * 64,
+        channel_id="chat.request",
+        capture_schema_id="request.schema",
+        source_action_id="chat.request",
+        target_id="provider.target",
+        recipient="provider.recipient",
+        allowed_parent_source_kinds=frozenset({"native-input"}),
+    )
+    bindings = replace(
+        bindings,
+        source_observer_enrollments=MappingProxyType({observer.observer_enrollment_id: observer}),
+    )
+    runtime = compose_root_authority_runtime(
+        service=service, enrollment=enrollment, bindings=bindings,
+        artifact_catalog=catalog, vault=vault,
+    )
+    assert runtime.source_observer_registry is None
+    assert runtime.native_loader_observation_store is None
+    assert runtime.source_observer_unavailable_reason == (
+        "root process manager lacks the registered native loader OpenFile custody hooks"
+    )
+
+
+def test_memory_rows_do_not_fall_back_when_protected_service_catalog_is_missing():
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
+    active = replace(enrollment, memory_enrollments={("service-one", "generation-one"): object()})
+
+    with pytest.raises(AuthorityDenied, match="active memory enrollments require the protected service catalog"):
+        compose_root_authority_runtime(
+            service=service, enrollment=active, bindings=bindings,
+            artifact_catalog=catalog, vault=vault,
+        )
+
+    assert not any(operation.startswith("memory.") for operation, _target in service.handlers)
+    assert service.memory_step_effect_authority is None

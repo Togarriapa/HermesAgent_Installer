@@ -211,7 +211,7 @@ class BuildCustodyLinuxTests(unittest.TestCase):
                          {"literal": "-c"}, {"literal": code_arg}),
             environment={"LANG": "C", "LC_ALL": "C"}, output_specs={},
             output_root=self.output, output_root_id="output-" + self.token,
-            output_owner_uid=self.uid, max_lifetime_seconds=30,
+            output_owner_uid=self.uid, output_owner_gid=self.gid, max_lifetime_seconds=30,
         )
 
     def _claims(self):
@@ -264,7 +264,11 @@ class BuildCustodyLinuxTests(unittest.TestCase):
         self.assertTrue(result.terminal_success_record_id)
         self.assertEqual(len(result.process_identity_digest), 64)
         self.assertEqual(len(result.bounded_log_digest), 64)
-        self.assertEqual(result.log_bytes, len(b"build-fixture-complete\n"))
+        # The root hash covers the bounded systemd-run transcript as well as
+        # the child line; require that the child produced output without
+        # assuming manager status chatter is absent.
+        self.assertGreaterEqual(result.log_bytes, len(b"build-fixture-complete\n"))
+        self.assertLess(result.log_bytes, 1024 * 1024)
         self.assertEqual(result.kernel_limits, {
             "PrivateNetwork": "yes", "IPAddressDeny": "0.0.0.0/0 ::/0",
             "NoNewPrivileges": "yes", "ProtectSystem": "strict",

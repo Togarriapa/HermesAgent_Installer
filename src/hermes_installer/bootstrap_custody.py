@@ -7,6 +7,7 @@ one-use grant for each download, launch, read, status, and stop effect.
 from __future__ import annotations
 
 import base64
+import asyncio
 import hashlib
 import json
 import math
@@ -54,6 +55,98 @@ class ManagedCommandResult:
     uid: int
 
 
+@dataclass(frozen=True, slots=True)
+class SelectedHermesRun:
+    """Custody-validated run bound to one committed service generation.
+
+    This records completion of an enrolled operation recipe only. In
+    particular, a successful ``hermes-agent-health-v1`` process is not itself
+    native Agent functional-health evidence; that requires the separate
+    HI08/HI11 observed registration/request/result receipt.
+    """
+
+    operation_id: str
+    enrollment_id: str
+    generation_id: str
+    generation_digest: str
+    result: ManagedCommandResult
+
+    @property
+    def operation_completed(self) -> bool:
+        return (self.result.exit_code == 0 and not self.result.timed_out
+                and self.result.cleanup_verified is True)
+
+
+class RootSelectedHermesOperations:
+    """Run only the two protected parameter-free Hermes recipes.
+
+    The enrollment receipt is supplied by the root-local bootstrap setup
+    transport. The custody adapter performs authenticated process.start and
+    control calls; this wrapper accepts no executable, argv, path or
+    environment. A prepared receipt without a selected service enrollment is
+    intentionally insufficient.
+    """
+
+    def __init__(self, custody: "BootstrapCustody", enrollment_receipt: Any):
+        from .authority.bootstrap_enrollment import EnrollmentReceipt
+
+        if type(custody) is not BootstrapCustody or type(enrollment_receipt) is not EnrollmentReceipt:
+            raise TypeError("root-selected custody and typed enrollment receipt are required")
+        if (enrollment_receipt.schema != 1 or enrollment_receipt.state != "committed"
+                or len(enrollment_receipt.enrollment_ids) != 1
+                or not enrollment_receipt.generation_id
+                or not re.fullmatch(r"[0-9a-f]{64}", enrollment_receipt.generation_digest)
+                or enrollment_receipt.expires_monotonic <= time.monotonic()):
+            raise BootstrapCustodyError("Root enrollment is not a current committed service generation")
+        self._custody = custody
+        self._enrollment_id = enrollment_receipt.enrollment_ids[0]
+        self._generation_id = enrollment_receipt.generation_id
+        self._generation_digest = enrollment_receipt.generation_digest
+        self._stage: SelectedHermesRun | None = None
+
+    @property
+    def generation_id(self) -> str:
+        return self._generation_id
+
+    @property
+    def generation_digest(self) -> str:
+        return self._generation_digest
+
+    def _run(self, operation_id: str, *, timeout: float,
+             cancelled: Callable[[], bool] | None = None) -> SelectedHermesRun:
+        result = self._custody.run_selected_operation(
+            enrollment_id=self._enrollment_id,
+            generation=self._generation_id,
+            operation_id=operation_id,
+            timeout=timeout,
+            cancelled=cancelled,
+        )
+        if (type(result) is not ManagedCommandResult or not result.receipt_id
+                or not result.process_id or not result.generation
+                or result.uid <= 0 or not result.cleanup_verified):
+            raise BootstrapCustodyError("Root-selected Hermes operation lacks a clean custody receipt",
+                cleanup_verified=False)
+        return SelectedHermesRun(operation_id, self._enrollment_id,
+            self._generation_id, self._generation_digest, result)
+
+    def stage(self, *, timeout: float = 600.0,
+              cancelled: Callable[[], bool] | None = None) -> SelectedHermesRun:
+        if self._stage is not None:
+            raise BootstrapCustodyError("This setup session already consumed its Hermes stage attempt")
+        self._stage = self._run("hermes-agent-stage-v1", timeout=timeout, cancelled=cancelled)
+        return self._stage
+
+    def health(self, stage: SelectedHermesRun, *, timeout: float = 600.0,
+               cancelled: Callable[[], bool] | None = None) -> SelectedHermesRun:
+        if (stage is not self._stage or stage.operation_id != "hermes-agent-stage-v1"
+                or stage.enrollment_id != self._enrollment_id
+                or stage.generation_id != self._generation_id
+                or stage.generation_digest != self._generation_digest
+                or not stage.operation_completed):
+            raise BootstrapCustodyError("Hermes health requires this generation's successful stage receipt")
+        return self._run("hermes-agent-health-v1", timeout=timeout, cancelled=cancelled)
+
+
 def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
 
@@ -98,7 +191,8 @@ class BootstrapCustody:
         return self.client
 
     def fetch_artifact(self, *, artifact_id: str, sha256: str,
-                       max_bytes: int, timeout: float = 30.0) -> tuple[str, str]:
+                       max_bytes: int, timeout: float = 30.0,
+                       cancelled=None) -> tuple[str, str]:
         client = self._required_client()
         target = f"artifact:{artifact_id}:{sha256}"
         payload = {"schema": 1, "artifact_id": artifact_id, "sha256": sha256,
@@ -110,7 +204,7 @@ class BootstrapCustody:
         grant = client.authorize_effect(context, capability="installer-bootstrap",
             target=target, recipient=None, request_digest=digest)
         response = client.fetch_artifact(grant, target=target, artifact_id=artifact_id,
-            sha256=sha256, max_bytes=max_bytes, timeout=timeout)
+            sha256=sha256, max_bytes=max_bytes, timeout=timeout, cancelled=cancelled)
         self._record_receipt("artifact.fetch", target, response)
         if response.status != 200:
             raise BootstrapCustodyError("Pinned host artifact fetch was denied")
@@ -267,7 +361,7 @@ class BootstrapCustody:
                     cleanup_verified=False, receipt_id=receipt_id)
             return ManagedCommandResult(124, bytes(stdout), bytes(diagnostic), True,
                 True, receipt_id, process_id, process_generation, uid)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
             try:
                 cleanup_verified = stop("cancel")
             except Exception:

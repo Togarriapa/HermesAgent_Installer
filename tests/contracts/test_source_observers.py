@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import threading
 import unittest
+import os
+from types import SimpleNamespace
 from dataclasses import dataclass, replace
 from unittest.mock import patch
 
 from hermes_installer.authority.source_observers import (
+    LiveSourceProducer,
     SourceObserverEnrollment,
     SourceObserverRegistry,
     SourceReceiptHandle,
@@ -145,7 +148,10 @@ class _Service:
             receipt_id=f"receipt-{self._issued}", issuer_id="host-authority",
             source_kind=observation.source_kind, principal_id=observation.principal_id,
             profile_id=observation.profile_id, namespace_id=observation.namespace_id,
-            uid=observation.producer_uid, origin_id=observation.origin_id,
+            uid=observation.producer_uid,
+            # The observer proof carries the event-derived origin and the
+            # authority preserves that signed value without re-appending it.
+            origin_id=observation.origin_id,
             process_generation=observation.generation,
             payload_digest=observation.payload_sha256, sensitivity=Sensitivity.PRIVATE,
             parent_lineage_hash=observation.parent_context.lineage_hash,
@@ -310,13 +316,72 @@ class SourceObserverContracts(unittest.TestCase):
         self.assertEqual(observation.target_peer_generation, "gen-8")
         self.assertEqual(observation.parent_receipts, ())
         self.assertEqual(self.proof_peers, [(733, 901), (733, 1001)])
-        self.assertEqual(set(self.closed), {1001, 1501})
+        self.assertEqual(set(self.closed), {1001, 1401, 1501})
         delivered = self.registry.take_source_receipt(
             str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
         self.assertEqual(delivered, result)
+        current_handle = self.registry.resolve_delivered_source_receipt(
+            str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        self.assertEqual(current_handle, result)
         with self.assertRaises(AuthorityDenied):
             self.registry.take_source_receipt(
                 str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        with self.assertRaises(AuthorityDenied):
+            self.registry.resolve_delivered_source_receipt(
+                str(result), peer_uid=2003, peer_pid=844, peer_pidfd=1501)
+
+    def test_atomic_root_ingress_capture_does_not_expose_generated_event_id(self):
+        result = self.registry.capture_observed_ingress(
+            self.enrollment.observer_enrollment_id,
+            payload_bytes=b"captured request",
+            parent_context=_context(self.service, b"captured request"),
+            peer_pid=733, peer_pidfd=901,
+        )
+        self.assertIsInstance(result, SourceReceiptHandle)
+        self.assertEqual(self.registry._pending, {})
+        self.assertNotIn("event_record_id", str(result))
+        self.assertEqual(self.registry._capsule_bytes, len(b"captured request"))
+
+    def test_selected_native_input_capture_uses_root_issued_task_target_without_hi11_pair(self):
+        self.registry.target_peer_resolver = None
+        selected = SimpleNamespace(
+            observer_enrollment_id=self.enrollment.observer_enrollment_id,
+            profile_id=self.enrollment.profile_id,
+            generation="process-gen-4",
+            native_package_id=self.enrollment.package_id,
+            native_package_generation=self.enrollment.generation,
+        )
+        target = SimpleNamespace(
+            process_id="managed-task-process", profile_id=self.identity.profile_id,
+            generation=self.identity.generation, peer_pid=733, peer_pidfd=901,
+            uid=self.identity.kernel_uid, live_peer_identity=self.identity,
+            loaded_package_proof=self.registry.loaded_package_proof_resolver(
+                self.identity, self.enrollment, peer_pid=733, peer_pidfd=901),
+            service_generation_digest=_digest("2"),
+            expires_monotonic=39.0,
+        )
+
+        class _Selection:
+            def resolve_current_execution(self, candidate):
+                if candidate is not selected:
+                    raise AuthorityDenied("resource.native_selection", "forged selection")
+                return candidate
+
+            def consume_selected_native_input_target(self, candidate, received):
+                if candidate is not selected or received is not target:
+                    raise AuthorityDenied("resource.native_target", "forged target")
+                return received
+
+        result = self.registry.capture_selected_native_ingress(
+            self.enrollment.observer_enrollment_id, payload_bytes=b"exact stdin prompt",
+            parent_context=_context(self.service, b"exact stdin prompt"),
+            selected_execution=selected, target=target,
+            selection_registry=_Selection(),
+        )
+        self.assertIsInstance(result, SourceReceiptHandle)
+        self.assertEqual(self.registry._pending, {})
+        self.assertEqual(self.registry._capsule_bytes, len(b"exact stdin prompt"))
+        self.assertIn((733, 901), self.proof_peers)
 
     def test_root_recipe_capsule_is_resolved_from_signed_receipt_and_consumed_once(self):
         event_id = self.record()
@@ -343,6 +408,34 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.registry.consume_source_payload_capsule(
                 lookup, signed_context=context, peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+
+    def test_live_source_producer_resolution_is_peer_bound_one_use_and_lease_limited(self):
+        event_id = self.record()
+        handle = self.registry.capture_observed_source(
+            self.enrollment.observer_enrollment_id, event_id, b"captured request")
+        receipt = self.service._source_receipt_handles[handle]
+        args = dict(
+            receipt_id=receipt.receipt_id, profile_id=receipt.profile_id,
+            generation=receipt.process_generation,
+            native_process_identity=receipt.native_process_identity,
+            expires_monotonic=receipt.monotonic_expires_at,
+        )
+        with self.assertRaises(AuthorityDenied):
+            self.registry.resolve_live_source_producer(**{**args, "generation": "stale"})
+        producer = self.registry.resolve_live_source_producer(**args)
+        self.assertIsInstance(producer, LiveSourceProducer)
+        self.assertEqual(producer.pid, 733)
+        self.assertEqual(producer.pidfd, 1201)
+        self.assertEqual(producer.identity, self.identity)
+        self.assertEqual(producer.observer_enrollment_id, self.enrollment.observer_enrollment_id)
+        self.assertEqual(producer.source_action_id, self.enrollment.source_action_id)
+        self.assertEqual(producer.channel_id, self.enrollment.channel_id)
+        self.assertEqual(producer.loaded_package_proof,
+                         self.service.observations[-1].loaded_package_proof)
+        self.assertEqual(producer.authority_epoch, self.service.authority_epoch)
+        os.close(producer.pidfd)
+        with self.assertRaises(AuthorityDenied):
+            self.registry.resolve_live_source_producer(**args)
 
     def test_capsule_wrong_profile_or_forged_receipt_context_denied_and_scrubbed(self):
         event_id = self.record()
@@ -497,7 +590,7 @@ class SourceObserverContracts(unittest.TestCase):
             self.registry.capture_observed_source(
                 self.enrollment.observer_enrollment_id, event_id, b"forged payload")
         self.assertEqual(self.registry._pending, {})
-        self.assertEqual(set(self.closed), {1001, 1501})
+        self.assertEqual(set(self.closed), {1001, 1401, 1501})
 
     def test_parent_closure_requires_registered_handle_and_same_live_process_generation(self):
         first_event = self.record()
@@ -534,7 +627,7 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.registry.capture_observed_source(
                 self.enrollment.observer_enrollment_id, event_id, b"captured request")
-        self.assertEqual(set(self.closed), {1001, 1501})
+        self.assertEqual(set(self.closed), {1001, 1401, 1501})
 
     def test_package_or_adapter_replacement_after_event_capture_denies(self):
         event_id = self.record()
