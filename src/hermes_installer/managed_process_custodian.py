@@ -3019,6 +3019,19 @@ class ManagedBuildJobRunner:
                     missing_proof.append("capture_" + capture_rejection)
                 if exit_code is not None:
                     missing_proof.append("exit_code_" + str(exit_code))
+                output = bytes(log).decode("utf-8", "replace").casefold()
+                for needle, category in (
+                    ("mount namespacing", "mount_namespace_setup"),
+                    ("network namespacing", "network_namespace_setup"),
+                    ("failed to set up namespace", "namespace_setup"),
+                    ("failed to set up mount", "mount_setup"),
+                    ("failed to set up network", "network_setup"),
+                    ("permission denied", "permission_denied"),
+                    ("no such file", "missing_runtime_input"),
+                ):
+                    if needle in output:
+                        missing_proof.append("systemd_" + category)
+                        break
                 raise AuthorityDenied("build.cleanup", "terminal proof is incomplete: " + ",".join(missing_proof))
             finished = manager.monotonic()
             proc_id = job_id
