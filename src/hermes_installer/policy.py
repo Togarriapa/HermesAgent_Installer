@@ -334,6 +334,8 @@ class Dispatcher:
     def __init__(self, policy: DispatchPolicy, ledger: BudgetLedger, transport: Transport, *,
                  context_authorizer: ContextAuthorizer | None = None,
                  clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep):
+        if not callable(clock) or not callable(sleep):
+            raise TypeError("dispatcher clock and sleeper must be callable")
         self.policy, self.ledger, self.transport = policy, ledger, transport
         # Missing host authorization intentionally makes this dispatcher unusable.
         # Test fixtures must inject an explicit synthetic authorizer.
@@ -342,12 +344,16 @@ class Dispatcher:
         self._lock = threading.Lock()
         self._active: set[str] = set()
 
+    def _now(self) -> float:
+        value = self.clock()
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise PolicyDenied("authorization.clock", "Host monotonic clock is invalid")
+        return float(value)
+
     def _authorize(self, context: DispatchContext, capability: str, intent_id: str,
                    deadline: float) -> DispatchAuthorization:
         authorizer = self.context_authorizer
-        now = self.clock()
-        if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
-            raise PolicyDenied("authorization.clock", "Host monotonic clock is invalid")
+        now = self._now()
         if authorizer is None:
             raise PolicyDenied("authorization.unavailable", "Trusted host provider authorization is unavailable")
         if context.cancelled():
@@ -356,7 +362,7 @@ class Dispatcher:
         if remaining <= 0:
             raise PolicyDenied("dispatch.deadline", "Request deadline elapsed before provider authorization")
         def authorization_cancelled() -> bool:
-            return context.cancelled() or self.clock() >= deadline
+            return context.cancelled() or self._now() >= deadline
         try:
             # The injected host adapter must implement bounded, cancellable reads
             # and join any helper it starts before returning or raising.
@@ -364,12 +370,10 @@ class Dispatcher:
         except Exception:
             if context.cancelled():
                 raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider authorization") from None
-            if self.clock() >= deadline:
+            if self._now() >= deadline:
                 raise PolicyDenied("dispatch.deadline", "Provider authorization exceeded the request deadline") from None
             raise PolicyDenied("authorization.failed", "Trusted host provider authorization failed") from None
-        finished = self.clock()
-        if isinstance(finished, bool) or not isinstance(finished, (int, float)) or not math.isfinite(finished):
-            raise PolicyDenied("authorization.clock", "Host monotonic clock is invalid")
+        finished = self._now()
         if context.cancelled():
             raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider authorization")
         if finished >= deadline:
