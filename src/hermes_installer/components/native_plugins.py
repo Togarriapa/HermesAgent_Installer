@@ -102,6 +102,10 @@ def create_native_plugin_handler(adapter_id: str, runtime_context: NativePluginR
     contract = resolve_native_plugin_adapter(adapter_id)
     if runtime_context is None or not hasattr(runtime_context, "selected_adapters"):
         raise NativePluginUnavailable(f"{adapter_id}: trusted selected-adapter registry is unavailable")
+    identity = getattr(runtime_context, "identity", None)
+    if (identity is None or getattr(identity, "kind", None) != "plugins"
+            or getattr(identity, "resource_id", None) != adapter_id):
+        raise NativePluginUnavailable(f"{adapter_id}: trusted context does not match the selected Plugin identity")
     implementation = runtime_context.selected_adapters.resolve_plugin_adapter(adapter_id)
     if implementation is None:
         raise NativePluginUnavailable(
@@ -224,3 +228,13 @@ class ResourceOverlayStoreImplementation:
 
 
 RESOURCE_OVERLAY_STORE_IMPLEMENTATION = ResourceOverlayStoreImplementation()
+
+
+def resolve_native_plugin_implementation(adapter_id: str) -> NativePluginImplementation | None:
+    """Return the actual implementation, never the metadata crosswalk record."""
+    contract = resolve_native_plugin_adapter(adapter_id)
+    if not contract.handler_available:
+        return None
+    if adapter_id == "resource-overlay-store":
+        return RESOURCE_OVERLAY_STORE_IMPLEMENTATION
+    return None

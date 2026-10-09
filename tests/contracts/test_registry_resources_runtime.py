@@ -5,10 +5,12 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+import base64
 
 from hermes_installer.registry.resources_runtime import (
     FixedResourceEffect,
     NativePluginRuntimeContext,
+    ReviewedPluginAdapterRegistry,
     PluginAdapterUnavailable,
     ResourceIdentity,
     ResourceOverlayStore,
@@ -182,6 +184,49 @@ class ResourcesRuntimeTests(unittest.TestCase):
             self.assertIsNone(view.read("record-1"))
             self.assertEqual(set(view.history("record-1")), {first, tombstone})
             self.assertEqual((owned.root / "resource-overlays/hermes/record-1/current.json").stat().st_mode & 0o077, 0)
+
+    def test_reviewed_plugin_registry_runs_overlay_tools_against_scoped_store(self):
+        """Prove the resolver returns an executable adapter over the real CAS store."""
+        from hermes_installer.components.native_plugins import create_native_plugin_handler
+
+        with tempfile.TemporaryDirectory() as temp:
+            owned = OwnedRoot(Path(temp) / "installer")
+            owned.ensure()
+            store = ResourceOverlayStore(owned, Journal(owned.path("state.sqlite3")))
+            identity = ResourceIdentity(
+                "resource-overlay-store", "plugins", "1.0.0", "plugins/resource-overlay-store.yaml",
+                "a" * 40, "b" * 64,
+            )
+            context = NativePluginRuntimeContext(
+                identity=identity, declared_capabilities=(), authority=object(),
+                invocation_contexts=lambda **_: (),
+                selected_adapters=ReviewedPluginAdapterRegistry(),
+                local_overlay_store=store.for_profile("hermes"),
+            )
+
+            class PluginContext:
+                def __init__(self):
+                    self.tools = {}
+
+                def register_tool(self, *, name, toolset, schema, handler, **kwargs):
+                    self.tools[name] = handler
+
+            plugin = PluginContext()
+            create_native_plugin_handler("resource-overlay-store", context)(plugin)
+            self.assertEqual(set(plugin.tools), {
+                "resource_overlay_read", "resource_overlay_write",
+                "resource_overlay_history", "resource_overlay_delete",
+            })
+            first = plugin.tools["resource_overlay_write"]({
+                "record_id": "source-proof", "value_base64": base64.b64encode(b"durable").decode(),
+            })
+            self.assertTrue(plugin.tools["resource_overlay_read"]({"record_id": "source-proof"})["found"])
+            with self.assertRaisesRegex(ResourceRuntimeError, "compare-and-swap"):
+                plugin.tools["resource_overlay_write"]({
+                    "record_id": "source-proof", "value_base64": base64.b64encode(b"stale").decode(),
+                    "expected_revision": "0" * 64,
+                })
+            self.assertEqual(plugin.tools["resource_overlay_history"]({"record_id": "source-proof"})["revisions"], [first["revision"]])
 
 
 if __name__ == "__main__":

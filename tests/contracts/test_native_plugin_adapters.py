@@ -3,6 +3,7 @@ import unittest
 from dataclasses import dataclass
 import base64
 import hashlib
+from types import SimpleNamespace
 
 from hermes_installer.components.native_plugins import (
     NATIVE_PLUGIN_ADAPTERS,
@@ -11,6 +12,7 @@ from hermes_installer.components.native_plugins import (
     resolve_native_plugin_adapter,
     RESOURCE_OVERLAY_STORE_IMPLEMENTATION,
     native_plugin_handler_available,
+    resolve_native_plugin_implementation,
 )
 
 
@@ -25,8 +27,9 @@ class _Registry:
 
 
 class _Context:
-    def __init__(self, implementation=None):
+    def __init__(self, implementation=None, plugin_id="financial-execution-gateway"):
         self.selected_adapters = _Registry(implementation)
+        self.identity = SimpleNamespace(kind="plugins", resource_id=plugin_id)
 
 
 class NativePluginAdapterTests(unittest.TestCase):
@@ -38,6 +41,9 @@ class NativePluginAdapterTests(unittest.TestCase):
             self.assertEqual(resolve_native_plugin_adapter(plugin_id).resource_id, plugin_id)
         self.assertTrue(native_plugin_handler_available("resource-overlay-store"))
         self.assertFalse(native_plugin_handler_available("agent-live-wallet"))
+        self.assertIs(RESOURCE_OVERLAY_STORE_IMPLEMENTATION,
+                      resolve_native_plugin_implementation("resource-overlay-store"))
+        self.assertIsNone(resolve_native_plugin_implementation("agent-live-wallet"))
 
     def test_missing_handler_fails_closed_before_activation(self):
         ctx = _Context()
@@ -52,11 +58,17 @@ class NativePluginAdapterTests(unittest.TestCase):
             def register(self, native_ctx, runtime_context):
                 events.append((native_ctx, runtime_context))
 
-        runtime = _Context(Implementation())
+        runtime = _Context(Implementation(), plugin_id="resource-overlay-store")
         register = create_native_plugin_handler("resource-overlay-store", runtime)
         native_ctx = object()
         self.assertIsNone(register(native_ctx))
         self.assertEqual(events, [(native_ctx, runtime)])
+
+    def test_handler_rejects_context_from_another_plugin_before_registry_lookup(self):
+        context = _Context(plugin_id="github")
+        with self.assertRaisesRegex(NativePluginUnavailable, "selected Plugin identity"):
+            create_native_plugin_handler("resource-overlay-store", context)
+        self.assertEqual([], context.selected_adapters.lookups)
 
     def test_unknown_plugin_id_is_not_accepted_as_alias(self):
         with self.assertRaisesRegex(KeyError, "unknown native Plugin"):

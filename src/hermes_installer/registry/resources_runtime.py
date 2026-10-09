@@ -138,9 +138,11 @@ class ReviewedPluginAdapterRegistry:
     """Lazy bridge to the source-reviewed native plugin adapter table."""
 
     def resolve_plugin_adapter(self, adapter_id: str) -> NativePluginImplementation | None:
-        from hermes_installer.components.native_plugins import resolve_native_plugin_adapter
+        # Metadata is not an implementation: return only the reviewed class
+        # that actually implements register(ctx, runtime_context).
+        from hermes_installer.components.native_plugins import resolve_native_plugin_implementation
 
-        return resolve_native_plugin_adapter(adapter_id)
+        return resolve_native_plugin_implementation(adapter_id)
 
 
 class PluginAdapterUnavailable(ResourceRuntimeError):
