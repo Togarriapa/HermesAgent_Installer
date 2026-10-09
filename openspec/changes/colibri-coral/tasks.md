@@ -6,7 +6,7 @@ Dependencies: installer-bootstrap-desktop, providers-credentials-budgets-privacy
 
 - [ ] 1.1 `HW-F01` Implement Colibri ARM64 source build, GLM-5.2 artifact selector, storage estimator/resumable integrity downloader and loopback bounded server; verify architecture/model identity/ENOSPC/cancel fixtures; document experimental route. Evidence: `tests/contracts/test_colibri.py`.
 - [ ] 1.2 `HW-F02` Implement configurable cold/warm GLM performance and responsiveness verifier; verify threshold classification fixture and generate executable physical-Pi measurement workflow; document measurements. Evidence: `tests/contracts/test_glm_evidence.py`.
-- [ ] 1.3 `HW-F03` Implement USB/PCIe Coral driver/environment adapter and official delegate-used inference verifier; verify driver choice/CPU-fallback rejection fixtures and executable hardware workflow; document isolated runtime. Evidence: `tests/contracts/test_coral.py`.
+- [ ] 1.3 `HW-F03` Implement USB/PCIe Coral driver/environment adapter and official delegate-used inference verifier; verify driver choice/CPU-fallback rejection fixtures and executable hardware workflow; document isolated runtime. Verify pinned sample identity from `planning/coral-sample-artifact-metadata.json` and actual delegated operations; synthetic zero-input output proves execution only, not accuracy. Evidence: `tests/contracts/test_coral.py`.
 
 ## 2. Traceable individual obligations with verification
 

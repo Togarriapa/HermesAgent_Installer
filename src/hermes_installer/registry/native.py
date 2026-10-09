@@ -43,7 +43,7 @@ def _declared_roots(catalog: Mapping[str, Any]) -> dict[str, str]:
         raise RegistryError("Catalog has no native discovery contract")
     if (
         discovery.get("mode") != "manifest-roots"
-        or discovery.get("canonicality") != "metadata"
+        or discovery.get("canonicalIdentity") != "metadata"
         or discovery.get("manifestPattern") != "*.yaml"
         or discovery.get("recursive") is not False
     ):
