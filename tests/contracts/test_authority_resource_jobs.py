@@ -179,3 +179,32 @@ def test_protected_resource_job_index_requires_exact_active_source_backend_and_r
         scope_bindings=scopes, validators=validators,
         source_issuers={"source-channel": issuer}, source_observers={"observer-1": wrong_observer},
     )
+
+
+def test_root_process_receipt_binds_task_attempt_and_full_lineage():
+    import pytest
+
+    from hermes_installer.authority.resource_jobs import (
+        RootResourceProcessReceipt, parse_resource_backend_records,
+    )
+    from hermes_installer.authority.types import AuthorityDenied
+
+    _, raw_backend, *_ = _fixture()
+    backend = parse_resource_backend_records([raw_backend])["backend-1"]
+    payload = b'{"prompt":"perform the selected action"}'
+    closure = hashlib.sha256(b"complete-parent-closure").hexdigest()
+    wire = {
+        "schema": 1, "job_id": "job-1", "node_id": "node-1",
+        "backend_enrollment_id": "backend-1", "process_id": "process-1",
+        "process_generation": "process-generation",
+        "native_package_generation": "service-generation",
+        "task_payload_sha256": hashlib.sha256(payload).hexdigest(),
+        "parent_closure_digest": closure, "terminal_receipt_handle": "terminal-1",
+        "result_capsule_handle": "result-1", "expires_monotonic": 40.0,
+    }
+    receipt = RootResourceProcessReceipt.from_wire(wire)
+    receipt.assert_bound(job_id="job-1", node_id="node-1", backend=backend, payload=payload,
+                         parent_closure_digest=closure, now=10.0, job_expires_monotonic=50.0)
+    with pytest.raises(AuthorityDenied, match="does not bind this selected task"):
+        receipt.assert_bound(job_id="job-1", node_id="other-node", backend=backend, payload=payload,
+                             parent_closure_digest=closure, now=10.0, job_expires_monotonic=50.0)

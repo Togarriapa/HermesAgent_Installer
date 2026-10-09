@@ -9,7 +9,9 @@ enrollment. Every child is dispatched through the service's exact protected
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import math
 import os
 import secrets
 from dataclasses import dataclass, replace
@@ -406,6 +408,70 @@ class _JobEvent:
     source_receipt_ids: tuple[str, ...]
     sensitivity: Sensitivity
     lineage_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class RootResourceProcessReceipt:
+    """Validated wire receipt from the root-only profile task launcher.
+
+    This DTO does not prove a task completed. The terminal and result-capsule
+    handles must still be resolved by the root-owned process/result services.
+    """
+
+    job_id: str
+    node_id: str
+    backend_enrollment_id: str
+    process_id: str
+    process_generation: str
+    native_package_generation: str
+    task_payload_sha256: str
+    parent_closure_digest: str
+    terminal_receipt_handle: str
+    result_capsule_handle: str
+    expires_monotonic: float
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "RootResourceProcessReceipt":
+        fields = {
+            "schema", "job_id", "node_id", "backend_enrollment_id", "process_id",
+            "process_generation", "native_package_generation", "task_payload_sha256",
+            "parent_closure_digest", "terminal_receipt_handle", "result_capsule_handle",
+            "expires_monotonic",
+        }
+        if (not isinstance(value, Mapping) or set(value) != fields
+                or type(value["schema"]) is not int or value["schema"] != 1):
+            raise AuthorityDenied("resource.process_receipt", "root process receipt fields are invalid")
+        try:
+            receipt = cls(**{key: value[key] for key in fields - {"schema"}})
+        except (TypeError, ValueError):
+            raise AuthorityDenied("resource.process_receipt", "root process receipt is malformed") from None
+        for name in ("job_id", "node_id", "backend_enrollment_id", "process_id",
+                     "process_generation", "native_package_generation",
+                     "terminal_receipt_handle", "result_capsule_handle"):
+            if not isinstance(getattr(receipt, name), str) or not getattr(receipt, name):
+                raise AuthorityDenied("resource.process_receipt", "root process receipt identity is invalid")
+        for name in ("task_payload_sha256", "parent_closure_digest"):
+            digest = getattr(receipt, name)
+            if not isinstance(digest, str) or len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+                raise AuthorityDenied("resource.process_receipt", "root process receipt digest is invalid")
+        if (isinstance(receipt.expires_monotonic, bool)
+                or not isinstance(receipt.expires_monotonic, (int, float))
+                or not math.isfinite(receipt.expires_monotonic)):
+            raise AuthorityDenied("resource.process_receipt", "root process receipt expiry is invalid")
+        return receipt
+
+    def assert_bound(self, *, job_id: str, node_id: str, backend: ResourceBackendEnrollment,
+                     payload: bytes, parent_closure_digest: str, now: float,
+                     job_expires_monotonic: float) -> None:
+        if (self.job_id != job_id or self.node_id != node_id
+                or self.backend_enrollment_id != backend.backend_id
+                or backend.execution_binding is None
+                or self.process_generation != backend.execution_binding["process_generation"]
+                or self.native_package_generation != backend.native_package_generation
+                or self.task_payload_sha256 != hashlib.sha256(payload).hexdigest()
+                or self.parent_closure_digest != parent_closure_digest
+                or not now < self.expires_monotonic <= job_expires_monotonic):
+            raise AuthorityDenied("resource.process_receipt", "root process receipt does not bind this selected task")
 
 
 class ResourceJobAuthority:
