@@ -52,3 +52,7 @@ Use planning/protected-lifecycle-control-contract.json native_health_receipt for
 ### v21 installed bootstrap policy source
 
 Use installed_selection_catalog.bootstrap_policy_artifact explicit selected policy/template/receipt joins. Prepared records empty until actual runtime/health receipts; existing BD/LC/HI tasks remain pending.
+
+### v22 runnable and health ordering
+
+Use bootstrap_policy_artifact.activation_order: verified runnable custody publication precedes health observation, functional enablement follows actual passed current-generation health only. Existing acceptance remains pending.

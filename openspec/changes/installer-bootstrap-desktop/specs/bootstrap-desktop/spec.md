@@ -292,3 +292,11 @@ The root factory SHALL resolve the exact installed reviewed bootstrap policy and
 #### Scenario: Missing executable receipt
 - **WHEN** an active template binding lacks an actual verified runnable artifact receipt
 - **THEN** no active service record is synthesized from defaults or source archive identity.
+
+### Requirement: Non-circular functional health activation
+
+Runnable authority publication SHALL require actual artifact receipts; functional enablement SHALL separately require actual passed health against that committed generation.
+
+#### Scenario: Runnable record without functional health
+- **WHEN** runnable custody exists but health has not passed
+- **THEN** functional enablement and installation acceptance remain pending.
