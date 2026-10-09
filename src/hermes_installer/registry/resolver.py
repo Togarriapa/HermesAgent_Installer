@@ -146,7 +146,7 @@ class RegistryResolver:
             or not isinstance(metadata,Mapping) or metadata.get("name")!=raw.identity or metadata.get("version")!=raw.version
             or not isinstance(spec,Mapping)):
             raise RegistryError(f"manifest envelope/root/filename identity mismatch: {raw.identity}")
-        refs=self._references(spec,kind)
+        self._references(spec,kind)
         extends = spec.get("extends", [])
         if isinstance(extends, str): extends = [extends]
         inherited = tuple(f"{kind.value}/{identity}@{expr}" for identity, expr in (self._selector(x) for x in extends))

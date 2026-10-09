@@ -171,5 +171,6 @@ class BundledRegistrySource:
         for name in sorted(files):
             path=name.encode(); blob=bytes.fromhex(_git_blob(files[name]))
             framed.update(len(path).to_bytes(4,"big")+path+len(blob).to_bytes(2,"big")+blob)
+        file_modes = {path: modes[path] for path in files}
         return VerifiedSource(self.pin.repository,self.pin.commit,self.pin.git_tree,self.pin.catalog_version,
-                              files,modes,framed.hexdigest())
+                              files,file_modes,framed.hexdigest())
