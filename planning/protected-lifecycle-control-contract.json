@@ -444,7 +444,29 @@
       ],
       "roles": "resources-source-bundle|native-compiled-closure|native-entrypoint-manifest|native-action-resolver|native-boundary-overlay; each exact fixed role admits one output per transaction, duplicate/crossrole conflict denied. source_receipt_handles includes distinct actual Hermes and Resources proofs as applicable. output_kind source-archive|compiled-closure|entrypoint-json|resolver-json|boundary-overlay, compatible exact role only.",
       "catalog": "Root registry resolve actual held immutable CAS object via current session verified artifact catalog/materialized-output catalog with actual compiled bytes/SHA/size/tree/owner/mode. Newly compiled artifact records published only by pinned reviewed root compiler and exact finite output manifest, no worker arbitrary artifact enrollment or sourceSHA as compiledSHA. Caller native receipt handle is lookup-only one-use session binding.",
-      "native_candidate_index_role": "Additive native-candidate-index exact separate compiled closure member/manifest pin per native-package-binding-contract protected_pre_discovery.index_delivery; no digest-domain conflation. Root materialization registry returns actual one-use CAS receipt same prepared transaction before activation."
+      "native_candidate_index_role": "Additive native-candidate-index exact separate compiled closure member/manifest pin per native-package-binding-contract protected_pre_discovery.index_delivery; no digest-domain conflation. Root materialization registry returns actual one-use CAS receipt same prepared transaction before activation.",
+      "output_cas_selection": {
+        "generated_artifact_id": "native-output:<artifact_role>:<package_id>:<generation>; role exact enum below, package/generation validated rootselection components<=64chars each; actual outputSHA separate. No role string alone/caller ID authority.",
+        "roles": [
+          "native-compiled-closure",
+          "native-entrypoint-manifest",
+          "native-action-resolver",
+          "native-boundary-overlay",
+          "native-candidate-index"
+        ],
+        "role_members": {
+          "native-compiled-closure": "exact compiler selected package closure tree + canonical member hash/size/mode manifest",
+          "native-entrypoint-manifest": "manifest.json exact entrypoint document",
+          "native-action-resolver": "resolver/resolver exact resolver document",
+          "native-boundary-overlay": "selected source-pinned Hermes overlay package/member manifest",
+          "native-candidate-index": "catalog/native-candidates.json exact pinned index"
+        },
+        "limits": "Complete compiled closure<=512MiB uncompressed<=50000 regular members; archive<=128MiB if used, no symlinks/special/hardlinks/outside selected source/action closure. Entry/resolver/index docs<=2MiB each, individual schema<=256KiB. Preserve actual requested full source/resources bytes and mode tree; bounds not excuses to omit. No modelweights/unselected binaries/lazy downloads. Output tree manifest exact sorted {relative_path,sha256,size_bytes,mode}, canonical UTF8 JSON, no extra synthetic accepted evidence.",
+        "compiler_identity": "compiler_artifact_id+SHA from actual selected installed root native materializer module/closure role artifact verified deployment receipt, no planning template/sourcearchivehash substituted. Actual root compiler observed generation manifest and source/overlay/resolver byte receipts verified before CAS writes; source and compiled digests distinct.",
+        "source_call": "RootMaterializationReceiptRegistry.mint_packaged_resources_source(prepared_setup_receipt_handle,verified_installer_release_receipt)->opaque source_receipt_handle",
+        "source": "Resolve exact selected Resources packaged archive artifact resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83 and295368byte/SHA b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1 through actual held installerrelease packagedartifact/catalog entry. Root CAS import validates entire739file/692declaration source pin/tree, no upstream network/sourcegovernance import. Return role resources-source-bundle RootRuntimeArtifactReceipt with fixed source ID, not generatednative-outputprefix.",
+        "handles": "Every source/materialization/output receipt handle scoped actual setupsession/transaction/plan/preparedgeneration/ownedroot/lease/issuerregistry; activation consumes each intended role handle exactlyonce. Same immutable verified CAS bytes may be audit-retained/referenced across explicitownedresume with fresh current transaction authorization, never re-mint caller bytes as proof. Actual compiler source receipt tuple includes Resources and pinnedHermes/overlaydependencies as needed; none conflated."
+      }
     },
     "resources_source": {
       "artifact_id": "resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83",

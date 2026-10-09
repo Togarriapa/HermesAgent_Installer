@@ -338,3 +338,10 @@ The implementation SHALL distinguish v50 draft/bound identity selection and evid
 #### Scenario: Source is queued but not delivered
 - **WHEN** root validates initial input receipt
 - **THEN** queued source alone cannot permit stdin and actual producer delivery/current binding is required
+
+### Requirement: Actual native materialization output CAS
+The implementation SHALL apply v51 exact source and compiled artifact role/closure joins.
+
+#### Scenario: Compiler produces a source and compiled digest
+- **WHEN** importing actual generated output into root CAS
+- **THEN** distinct byte/tree domains and transaction roles remain verified without substituting planning or source hashes for executable output
