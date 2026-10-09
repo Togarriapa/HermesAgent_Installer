@@ -593,7 +593,7 @@ class ManagedProcessEffectHandler:
             os.close(parent_fd)
             if artifact_mount_dir is not None:
                 _remove_artifact_mount(artifact_mount_dir)
-            raise AuthorityDenied("process.start", "root process manager could not start the enrolled service") from None
+            raise AuthorityDenied("process.launcher_start", "root process manager could not start the enrolled service") from None
         started = self.monotonic()
         deadline = min(launch_deadline, started + 10.0)
         child_fd = None
@@ -636,10 +636,10 @@ class ManagedProcessEffectHandler:
                 if identity:
                     break
                 if launcher.poll() is not None:
-                    raise AuthorityDenied("process.start", "service exited before admission")
+                    raise AuthorityDenied("process.launcher_early_exit", "service exited before admission")
                 time.sleep(.025)
             if identity is None:
-                raise AuthorityDenied("process.start", "service did not become ready before its deadline")
+                raise AuthorityDenied("process.admission_deadline", "service did not become ready before its deadline")
             pid, ticks, dev, ino = identity
             if Path(cgroup).name != unit or ".." in Path(cgroup).parts:
                 raise AuthorityDenied("process.cgroup", "service did not receive its exact cgroup")
