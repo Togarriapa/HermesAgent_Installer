@@ -66,7 +66,18 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
 
         data_value = os.environ.get("HERMES_INSTALLER_DATA_ROOT", "")
         if not data_value:
-            self.skipTest("set HERMES_INSTALLER_DATA_ROOT to the existing installer-owned data root")
+            # Hermes' dependency bootstrap may sanitize custom environment keys
+            # before re-executing this test. Derive the expected data root only
+            # from the exact pinned source checkout, then verify its ownership
+            # marker before any managed-profile write.
+            data_root_candidate = source.parents[1]
+            marker = data_root_candidate / ".hermes-installer-owned"
+            if (data_root_candidate.name != "data" or marker.is_symlink()
+                    or not marker.is_file() or marker.read_bytes() != b"schema=1\n"
+                    or data_root_candidate.stat().st_uid != os.geteuid()
+                    or data_root_candidate.stat().st_mode & 0o077):
+                self.skipTest("pinned source has no validated installer-owned data root")
+            data_value = str(data_root_candidate)
         original_environment = os.environ.copy()
         inserted = False
         agent = None
