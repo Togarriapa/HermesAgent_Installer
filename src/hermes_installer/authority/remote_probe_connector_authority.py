@@ -22,6 +22,8 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from .remote_connector_authority import AuthorityServiceHI12Adapter
+from .remote_sessions import _validate_asset_fetch_request
+from ..remote.client_assets import canonical_asset
 from .types import AuthorityDenied
 
 _OPS = {"connector.open", "connector.read", "connector.write", "connector.close"}
@@ -30,6 +32,7 @@ _ID = re.compile(r"[A-Za-z0-9_.:@/-]{1,128}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_PAYLOAD = 1_500_000
 _MAX_FRAME = 1024 * 1024
+_ASSET_ID_PREFIX = b"hermes-client-asset-v1\0"
 
 
 def _deny(code: str, message: str) -> AuthorityDenied:
@@ -73,6 +76,7 @@ class RootSetupProbeBinding:
     selected_action: str
     selected_asset_id: str | None
     session_id: str
+    connector_handle: str | None
     next_sequence: int
     policy_revision: str
     policy_config_digest: str
@@ -115,12 +119,16 @@ class RootSetupProbeBinding:
                 or (self.selected_asset_id is not None
                     and self.selected_asset_id not in self.asset_ids)
                 or self.enrollment_id != self.native_enrollment_id
+                or (self.connector_handle is not None
+                    and not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.connector_handle))
                 or not math.isfinite(self.issued_monotonic)
                 or not math.isfinite(self.expires_monotonic)
                 or not math.isfinite(self.frame_deadline_monotonic)
                 or type(self.next_sequence) is not int or self.next_sequence < 0
                 or self.issued_monotonic < 0
                 or self.expires_monotonic <= self.issued_monotonic
+                or self.expires_monotonic - self.issued_monotonic > 60.0
+                or not self.issued_monotonic < self.frame_deadline_monotonic <= self.expires_monotonic
                 or self.frame_deadline_monotonic <= 0
                 or not callable(self.cancelled)):
             raise ValueError("root setup probe binding is invalid")
@@ -156,6 +164,7 @@ class InternalProbeConnectorAuthorization:
     connector_target_id: str
     selected_action: str
     selected_asset_id: str | None
+    connector_handle: str | None
     route_id: str
     session_id: str
     next_sequence: int
@@ -193,6 +202,8 @@ class InternalProbeConnectorAuthorization:
                     self.policy_revision, self.principal_id))
                 or self.target_id != "xpra-native" or self.connector_target_id != self.target_id
                 or self.enrollment_id != self.native_enrollment_id
+                or (self.connector_handle is not None
+                    and not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.connector_handle))
                 or not self.asset_ids or any(not _DIGEST.fullmatch(value) for value in self.asset_ids)
                 or type(self.next_sequence) is not int or self.next_sequence < 0
                 or type(self.sequence) is not int or self.sequence < 0
@@ -274,6 +285,7 @@ class SetupProbeConnectorAuthority:
             connector_target_id=binding.connector_target_id,
             selected_action=binding.selected_action,
             selected_asset_id=binding.selected_asset_id,
+            connector_handle=binding.connector_handle,
             native_enrollment_id=binding.native_enrollment_id,
             route_id=route_id, session_id=binding.session_id,
             next_sequence=binding.next_sequence, operation=operation,
@@ -334,14 +346,16 @@ class SetupProbeConnectorAuthority:
         """CAS the root probe state after a complete successful socket effect.
 
         The connector backend calls this only after the full syscall effect
-        completes. The callback must atomically bind the handle on open, require
-        the same handle thereafter, and advance expected_sequence exactly once.
+        completes. Open binds the handle while frame sequence remains zero;
+        read/write advance after completion, and close marks the child closed.
         On effect failure or CAS failure, the caller must cancel/close the probe.
         """
         binding = self._current(root_probe_handle, peer_uid, peer_pid, peer_pidfd)
         if (operation not in _OPS or type(expected_sequence) is not int
-                or expected_sequence != binding.next_sequence
                 or (operation == "connector.open" and expected_sequence != 0)
+                or (operation != "connector.open" and expected_sequence != binding.next_sequence)
+                or (operation == "connector.open" and binding.connector_handle is not None)
+                or (operation != "connector.open" and connector_handle != binding.connector_handle)
                 or not isinstance(connector_handle, str)
                 or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", connector_handle)):
             raise _deny("remote.probe-sequence", "probe connector sequence or handle is stale")
@@ -402,7 +416,7 @@ class SetupProbeConnectorAuthority:
             route = expected["approved_route_id"]
             expected_route = ("xpra-websocket" if binding.selected_action == "websocket-attach"
                               else "xpra-http")
-            if (sequence != binding.next_sequence
+            if (sequence != 0 or binding.next_sequence != 0 or binding.connector_handle is not None
                     or set(body) != set(expected) or body != expected or route not in binding.approved_route_ids
                     or route != expected_route
                 or sequence != 0):
@@ -423,6 +437,7 @@ class SetupProbeConnectorAuthority:
                     or route != ("xpra-websocket" if binding.selected_action == "websocket-attach"
                                  else "xpra-http")
                     or not isinstance(body.get("connector_id"), str)
+                    or body.get("connector_id") != binding.connector_handle
                     or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", body["connector_id"])):
                 raise _deny("remote.probe-payload", "probe frame differs from the root connector binding")
             if operation == "connector.read" and (type(body["max_bytes"]) is not int or not 1 <= body["max_bytes"] <= _MAX_FRAME):
@@ -434,6 +449,19 @@ class SetupProbeConnectorAuthority:
                     raise _deny("remote.probe-payload", "probe write frame is invalid") from None
                 if len(data) > _MAX_FRAME:
                     raise _deny("remote.probe-payload", "probe write exceeds frame limit")
+                if binding.selected_action in {"asset-get", "asset-head"}:
+                    _validate_asset_fetch_request(data)
+                    try:
+                        request_line = data.split(b"\r\n", 1)[0].decode("ascii")
+                        method, raw_path, version = request_line.split(" ")
+                        asset_path = canonical_asset(raw_path)
+                    except Exception:
+                        raise _deny("remote.probe-asset", "setup asset request is malformed") from None
+                    expected_method = "GET" if binding.selected_action == "asset-get" else "HEAD"
+                    expected_asset = hashlib.sha256(_ASSET_ID_PREFIX + asset_path.encode("ascii")).hexdigest()
+                    if (method != expected_method or version != "HTTP/1.1"
+                            or expected_asset != binding.selected_asset_id):
+                        raise _deny("remote.probe-asset", "asset request differs from the root-selected asset ID")
             deadline = binding.frame_deadline_monotonic
         if not math.isfinite(deadline):
             raise _deny("remote.probe-expired", "probe deadline is invalid")
@@ -473,7 +501,7 @@ class SetupProbeConnectorAuthority:
                 binding.target_id, binding.approved_route_ids, binding.session_id,
                 binding.next_sequence,
                 binding.connector_target_id, binding.asset_ids,
-                binding.selected_action, binding.selected_asset_id,
+                binding.selected_action, binding.selected_asset_id, binding.connector_handle,
                 binding.policy_revision, binding.policy_config_digest,
                 binding.service_generation_digest, binding.expires_monotonic,
                 binding.frame_deadline_monotonic)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import unittest
@@ -53,7 +54,7 @@ class SetupProbeConnectorAuthorityContracts(unittest.TestCase):
             approved_route_ids=("xpra-http", "xpra-websocket"), session_id="setup-probe:nonce",
             asset_ids=("f" * 64,),
             selected_action="asset-get", selected_asset_id="f" * 64,
-            next_sequence=0,
+            connector_handle=None, next_sequence=0,
             policy_revision="policy-r1", policy_config_digest="d" * 64,
             service_generation_digest="e" * 64, principal_id="setup-actor",
             issued_monotonic=5.0, expires_monotonic=40.0, frame_deadline_monotonic=20.0,
@@ -75,7 +76,10 @@ class SetupProbeConnectorAuthorityContracts(unittest.TestCase):
         if (handle != self.handle or (uid, pid, pidfd) != (1001, 200, 8)
                 or expected != self.current[0].next_sequence):
             return False
-        self.current[0] = replace(self.current[0], next_sequence=expected + 1)
+        if operation == "connector.open":
+            self.current[0] = replace(self.current[0], connector_handle=connector_id)
+        elif operation in {"connector.read", "connector.write"}:
+            self.current[0] = replace(self.current[0], next_sequence=expected + 1)
         return True
 
     def _open_payload(self, route="xpra-http"):
@@ -102,7 +106,8 @@ class SetupProbeConnectorAuthorityContracts(unittest.TestCase):
         self.assertTrue(self.authority.advance_probe_connector_sequence(
             self.handle, 0, "connector.open", "c" * 32,
             peer_uid=1001, peer_pid=200, peer_pidfd=8))
-        self.assertEqual(self.current[0].next_sequence, 1)
+        self.assertEqual(self.current[0].next_sequence, 0)
+        self.assertEqual(self.current[0].connector_handle, "c" * 32)
         with self.assertRaises(AuthorityDenied):
             self.authority.consume_probe_connector_effect(
                 auth, self.handle, "connector.open", payload, 0,
@@ -145,7 +150,8 @@ class SetupProbeConnectorAuthorityContracts(unittest.TestCase):
         self.current[0] = replace(self.binding, cancelled=lambda: True)
         with self.assertRaises(AuthorityDenied):
             self._issue()
-        self.current[0] = replace(self.binding, expires_monotonic=9.0)
+        self.current[0] = replace(self.binding, expires_monotonic=9.0,
+                                  frame_deadline_monotonic=8.0)
         with self.assertRaises(AuthorityDenied):
             self._issue()
         self.assertEqual(self.hi12.issued, [])
@@ -153,7 +159,8 @@ class SetupProbeConnectorAuthorityContracts(unittest.TestCase):
     def test_websocket_frame_uses_fixed_route_sequence_and_one_use_grant(self):
         import base64
         self.current[0] = replace(self.binding, selected_action="websocket-attach",
-                                  selected_asset_id=None, next_sequence=1)
+                                  selected_asset_id=None, connector_handle="c" * 32,
+                                  next_sequence=1)
         payload = canonical({"schema": 1, "target_id": "xpra-native",
                              "route_id": "xpra-websocket", "connector_id": "c" * 32,
                              "session_id": self.binding.session_id,
@@ -176,6 +183,34 @@ class SetupProbeConnectorAuthorityContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self._issue(self._open_payload("xpra-http"))
         self.assertEqual(self.hi12.issued, [])
+
+    def test_asset_probe_write_is_root_selected_static_asset_only(self):
+        asset_id = hashlib.sha256(
+            b"hermes-client-asset-v1\0/client/index.html").hexdigest()
+        self.current[0] = replace(self.binding, asset_ids=(asset_id,),
+                                  selected_asset_id=asset_id, connector_handle="c" * 32,
+                                  next_sequence=0)
+        request = b"GET /client/index.html HTTP/1.1\r\nAccept: */*\r\n\r\n"
+        body = canonical({"schema": 1, "target_id": "xpra-native",
+                          "route_id": "xpra-http", "connector_id": "c" * 32,
+                          "session_id": self.binding.session_id,
+                          "generation": self.binding.native_generation,
+                          "deadline": self.binding.frame_deadline_monotonic,
+                          "sequence": 0,
+                          "data_b64": base64.b64encode(request).decode("ascii")})
+        auth = self.authority.issue_probe_connector_effect(
+            self.handle, "connector.write", body, 0,
+            peer_uid=1001, peer_pid=200, peer_pidfd=8)
+        self.assertTrue(self.authority.consume_probe_connector_effect(
+            auth, self.handle, "connector.write", body, 0,
+            peer_uid=1001, peer_pid=200, peer_pidfd=8))
+
+        self.current[0] = replace(self.current[0], asset_ids=("0" * 64,),
+                                  selected_asset_id="0" * 64)
+        with self.assertRaises(AuthorityDenied):
+            self.authority.issue_probe_connector_effect(
+                self.handle, "connector.write", body, 0,
+                peer_uid=1001, peer_pid=200, peer_pidfd=8)
 
 
 if __name__ == "__main__":
