@@ -1263,11 +1263,19 @@ class ManagedProcessEffectHandler:
     def _pids(cgroup: str) -> tuple[int, ...]:
         if not cgroup.startswith("/") or ".." in Path(cgroup).parts:
             raise AuthorityDenied("process.cgroup", "invalid cgroup identity")
+        root = Path("/sys/fs/cgroup") / cgroup.lstrip("/")
         try:
-            return tuple(int(value) for value in (Path("/sys/fs/cgroup") / cgroup.lstrip("/") / "cgroup.procs").read_text().split())
-        except FileNotFoundError:
+            return tuple(int(value) for value in (root / "cgroup.procs").read_text().split())
+        except (FileNotFoundError, NotADirectoryError):
             return ()
         except (OSError, ValueError):
+            # A systemd transient unit can be collected between the cgroup
+            # read and error handling. Treat only a vanished exact leaf as
+            # empty; an extant but unreadable cgroup remains a hard denial.
+            try:
+                root.lstat()
+            except (FileNotFoundError, NotADirectoryError):
+                return ()
             raise AuthorityDenied("process.cgroup", "cgroup membership is unavailable") from None
 
     @staticmethod
