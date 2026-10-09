@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: cross-border-legal-analysis
+  version: 1.0.1
+  description: "Analyze cross-border legal questions by separating jurisdictions, conflicts rules, applicable instruments, enforcement, and temporal validity."
+  tags: [law, cross-border, jurisdiction, research]
+spec:
+  purpose: "Compare interacting legal regimes without collapsing distinct jurisdictions into one generalized answer."
+  procedure:
+    - "Identify the people, entities, assets, conduct, jurisdictions, relevant dates, and precise cross-border question."
+    - "Determine potentially applicable choice-of-law, jurisdiction, treaty, supranational, local implementing, and enforcement rules from current primary sources."
+    - "Analyze each jurisdiction separately before reconciling conflicts, recognition, enforcement, procedural, tax, privacy, or regulatory interactions that are actually in scope."
+    - "State unresolved conflicts, territorial and temporal limits, and where qualified local counsel or authoritative institutional interpretation is required."
+  verification:
+    - each-jurisdiction-and-applicable-date-is-explicit
+    - primary-authorities-and-conflicts-rules-are-traceable
+    - unresolved-local-law-questions-are-not-presented-as-settled
+  sideEffects: none

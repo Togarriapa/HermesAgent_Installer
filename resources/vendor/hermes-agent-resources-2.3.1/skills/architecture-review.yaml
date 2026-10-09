@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: architecture-review
+  version: 1.0.0
+  description: Review technical architectures for fitness, complexity, resilience, security, maintainability, and operability.
+  tags: [architecture, review]
+spec:
+  workflow:
+    - Restate requirements and constraints before judging the design.
+    - Trace critical data and control paths.
+    - Inspect single points of failure, trust boundaries, coupling, and operational burden.
+    - Rank findings by impact and recommend the smallest effective improvement.

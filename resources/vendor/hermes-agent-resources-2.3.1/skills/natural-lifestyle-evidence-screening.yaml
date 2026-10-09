@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: natural-lifestyle-evidence-screening
+  version: 1.0.1
+  description: Screen claims about natural, traditional, lifestyle, wellness, and household practices for evidence quality, plausibility, risk, interactions, and appropriate uncertainty.
+  tags: [wellness, evidence, lifestyle, safety]
+spec:
+  purpose: Separate low-risk lifestyle ideas from unsupported or hazardous health claims without equating naturalness with safety or efficacy.
+  procedure:
+    - Define the exact intervention, claimed outcome, target population, dose or intensity, duration, comparator, and whether the claim is preventive, therapeutic, performance-related, or general wellbeing.
+    - Search for systematic reviews, guidelines, controlled studies, observational evidence, mechanistic evidence, safety surveillance, and credible traditional-use documentation and grade them by relevance and quality.
+    - Evaluate absolute effect size, uncertainty, confounding, publication bias, biological plausibility, product variability, contamination, dose dependence, contraindications, and interactions with medicines or conditions.
+    - Classify the claim as supported, promising but uncertain, unsupported, misleading, or hazardous and distinguish low-risk lifestyle experimentation from interventions requiring clinician involvement.
+    - Communicate practical evidence limits, known risks, safer alternatives, and what new evidence would change the assessment without diagnosing or replacing individualized medical care.
+  verification:
+    - Safety conclusions must consider dose, population, interactions, and product quality rather than the label natural or traditional.
+    - Therapeutic claims must not exceed the strength of clinical evidence and must identify important uncertainty.

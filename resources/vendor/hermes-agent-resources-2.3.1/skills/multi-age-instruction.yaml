@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: multi-age-instruction
+  version: 1.0.1
+  description: "Plan instruction for mixed-age or mixed-attainment groups using shared themes, differentiated objectives, independent work, and developmentally appropriate expectations."
+  tags: [education, pedagogy, multi-age, instruction]
+spec:
+  purpose: "Teach heterogeneous groups efficiently without pretending that all learners need the same task, pace, or autonomy."
+  procedure:
+    - "Map each learner or subgroup by prerequisite knowledge, target outcomes, independence, support needs, and safeguarding considerations."
+    - "Choose shared content or routines where useful, then define differentiated objectives, scaffolds, practice, and products for materially different readiness levels."
+    - "Design rotations, peer or independent work, teacher contact, and transitions so unattended learners have safe purposeful tasks rather than waiting."
+    - "Use subgroup and individual evidence to regroup, adjust pacing and challenge, and verify that quieter or more independent learners are not being overlooked."
+  verification:
+    - objectives-match-readiness-not-age-alone
+    - teacher-attention-and-independent-work-are-feasible
+    - each-learner-has-observable-progress-evidence
+  sideEffects: none

@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: practice-design
+  version: 1.0.0
+  description: Design deliberate music practice using focused goals, slow work, feedback, spacing, and performance integration.
+  tags: [music, practice]
+spec:
+  workflow:
+    - Define the exact technical or musical problem.
+    - Reduce tempo or complexity until accurate control is possible.
+    - Repeat short focused units with feedback and variation.
+    - Reintegrate the skill into musical context and test retention later.

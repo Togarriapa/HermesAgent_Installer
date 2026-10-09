@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: prenatal-postpartum-exercise
+  version: 1.0.0
+  description: Plan conservative prenatal and postpartum exercise with symptom monitoring, individual progression, and clinician restrictions as hard constraints.
+  tags: [fitness, pregnancy, postpartum, maternal-health]
+spec:
+  principles: [medical-restrictions-override-program, symptom-led-modification, postpartum-return-is-individual]
+  procedure: [identify-stage-training-history-and-restrictions, screen-red-flags, choose-scaled-strength-aerobic-mobility, manage-pressure-fatigue-balance-temperature, monitor-symptoms, progress-conservatively]
+  safety:
+    diagnosePelvicFloorOrObstetricCondition: deny
+    overrideClinicianRestriction: deny

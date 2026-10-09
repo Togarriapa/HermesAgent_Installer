@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: decision-recording
+  version: 1.0.0
+  description: Create durable decision records capturing context, options, evidence, dissent, decision, owner, and review triggers.
+spec:
+  procedure:
+    - Record the decision question, date, context, contributors, options, and criteria.
+    - Preserve material dissent and why the selected option prevailed.
+    - Capture assumptions, permissions, follow-up actions, and reconsideration triggers.

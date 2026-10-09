@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: api-contract-design
+  version: 1.0.0
+  description: Design stable service contracts with explicit resources, validation, errors, authorization, pagination, idempotency, and compatibility.
+  tags: [backend, api, contracts]
+spec:
+  procedure:
+    - Define consumers, operations, resource semantics, invariants, and authorization boundaries.
+    - Specify inputs, outputs, status/error behavior, pagination, concurrency, and idempotency where relevant.
+    - Separate contract stability from internal implementation details.
+    - Version incompatible changes and provide migration paths where practical.

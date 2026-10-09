@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: user-experience-research
+  version: 1.0.0
+  description: Frame product questions and gather user evidence through appropriate qualitative and quantitative UX research methods.
+  tags: [ux, research, product]
+spec:
+  procedure:
+    - Define the decision, target users, assumptions, and evidence needed before selecting a method.
+    - Choose interviews, observation, surveys, analytics, diary studies, or other methods according to the question.
+    - Avoid leading prompts and distinguish observed behavior from interpretation.
+    - Synthesize patterns, exceptions, uncertainty, and product implications without overstating small samples.

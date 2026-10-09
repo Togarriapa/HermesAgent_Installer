@@ -1,0 +1,34 @@
+apiVersion: hermes.togarriapa/v1
+kind: Cron
+metadata:
+  name: homelab-health-review
+  version: 1.1.0
+  description: Periodic read-only cross-service health review for Hermes, Nextcloud, and Cloudflare that emits infrastructure alarms only to current Authentik System members.
+  tags: [cron, homelab, infrastructure, health, alarms]
+spec:
+  requires:
+    profiles:
+      - homelab-infrastructure-operator@^1.0.0
+  schedule: "*/15 * * * *"
+  timezone: Europe/Lisbon
+  action:
+    type: profile-run
+    profile: homelab-infrastructure-operator@^1.0.0
+    mode: read-only-health-review
+  runtime:
+    scope: control-agent
+    required: true
+    engine: hermes-cron
+    profileSelection: registry-action-profile
+    delivery: local
+  policy:
+    authorityFromSchedule: deny
+    remediationFromSchedule: deny
+    readOnlyDiagnostics: true
+    infrastructureAlarmRecipientSource: authentik-effective-group
+    infrastructureAlarmRequiredGroup: System
+    resolveRecipientsAtDelivery: true
+    staticRecipientListAsAuthority: deny
+    failClosedOnRecipientAuthorizationFailure: true
+    deduplicateIncidents: true
+    notifyOnlyOnActionableIncidentOrMaterialRecovery: true

@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: learned-overlay-preservation
+  version: 1.0.1
+  description: "Preserve local experience and private user-learned overlays across registry evolution without leaking private state or allowing overlays to expand capability."
+  tags: [registry, overlays, learning, privacy, evolution]
+spec:
+  purpose: "Carry forward compatible learned state while keeping canonical manifests, private learning, and authority boundaries separate."
+  procedure:
+    - "Identify the canonical resource generations, local-experience overlay, private user-learned overlay, schema versions, provenance, and host authorization ceiling involved in the transition."
+    - "Classify overlay entries by source, sensitivity, target path, compatibility, and whether they constrain behavior, personalize behavior, or would improperly create capability or authority."
+    - "Rebase compatible entries onto the new effective resource, reject authority-expanding or schema-invalid entries, and preserve unresolved conflicts for explicit review rather than silently dropping them."
+    - "Materialize and compare the resulting effective contract, verify private data remains private, record migration provenance, and retain rollback to the prior compatible generation."
+  verification:
+    - private-and-local-overlays-remain-separate-from-canonical-git
+    - overlay-rebase-cannot-expand-capability-or-authority
+    - conflicts-and-rollback-provenance-are-preserved
+  sideEffects: none

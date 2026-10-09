@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: smart-home-architecture
+  version: 1.0.0
+  description: Architect smart-home systems for local-first control, clear ownership, graceful degradation, recoverability, protocol interoperability, and maintainable automation.
+  tags: [smart-home, architecture, iot]
+spec:
+  procedure:
+    - Inventory devices, protocols, hubs, networks, clouds, automations, critical functions, user interfaces, and failure dependencies.
+    - Define local versus cloud control, authoritative state, fallback behavior, backup, restore, naming, and lifecycle ownership.
+    - Avoid unnecessary bridges and single points of failure; isolate critical functions from convenience automation where practical.
+    - Document topology and recovery steps so the home remains operable when an integration or cloud service fails.

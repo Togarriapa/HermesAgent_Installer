@@ -1,0 +1,42 @@
+apiVersion: hermes.togarriapa/v1
+kind: MCP
+metadata:
+  name: github
+  version: 1.1.1
+  description: GitHub's official MCP server pinned to a reviewed release with runtime credentials and an explicit toolset allow-list.
+  tags: [mcp, github, official]
+spec:
+  transport: stdio
+  command: docker
+  args:
+    - run
+    - --rm
+    - -i
+    - --read-only
+    - --security-opt
+    - no-new-privileges:true
+    - -e
+    - GITHUB_PERSONAL_ACCESS_TOKEN
+    - -e
+    - GITHUB_TOOLSETS
+    - ghcr.io/github/github-mcp-server:v1.0.5
+  environment:
+    GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN}
+    GITHUB_TOOLSETS: context,repos,issues,pull_requests,actions
+  capabilities:
+    toolsets: [context, repos, issues, pull_requests, actions]
+    unlistedToolsets: deny
+  policy:
+    credentials: runtime-only
+    imageVersionPolicy: pinned-release
+    containerRootFilesystem: read-only
+    noNewPrivileges: true
+    networkAccess: github-api-only-intent
+    writes: explicit-per-task-with-token-scope
+    destructiveOrAdministrativeWrites: explicit-confirmation
+    authorityFromMcpConnection: deny
+  provenance:
+    provider: GitHub
+    repository: github/github-mcp-server
+    release: v1.0.5
+    official: true

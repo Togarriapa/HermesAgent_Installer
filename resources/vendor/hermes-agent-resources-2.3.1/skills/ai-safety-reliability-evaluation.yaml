@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: ai-safety-reliability-evaluation
+  version: 1.0.1
+  description: Evaluate AI systems for safety, reliability, robustness, misuse resistance, failure recovery, and release readiness using repeatable evidence.
+  tags: [ai, safety, reliability, evaluation]
+spec:
+  purpose: Produce evidence-based safety and reliability findings that distinguish observed failures from speculative risk.
+  procedure:
+    - Define the system boundary, intended users, critical assets, unacceptable outcomes, operating assumptions, and measurable safety and reliability objectives before testing.
+    - Build representative normal, edge-case, adversarial, malformed-input, tool-failure, timeout, permission-denial, and recovery scenarios with expected outcomes and explicit pass criteria.
+    - Execute controlled evaluations, capture reproducible evidence, classify failures by severity, likelihood, detectability, blast radius, and whether safeguards failed open or failed closed.
+    - Trace material failures to prompts, models, tools, permissions, data, orchestration, infrastructure, or human-process causes and separate root causes from correlated symptoms.
+    - Re-test mitigations against the original failure corpus plus regression cases, then recommend release, restricted release, remediation, or rollback with residual risk stated explicitly.
+  verification:
+    - Every material finding must reference a reproducible test case, observed evidence, and stated expected behavior.
+    - Release recommendations must include unresolved high-severity risks, coverage gaps, and regression status.

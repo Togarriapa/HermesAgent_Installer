@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: macroeconomic-analysis
+  version: 1.0.1
+  description: Analyze growth, inflation, labor, monetary/fiscal policy, liquidity, currencies, rates, and economic regimes.
+  tags: [macro, economics, markets]
+spec:
+  purpose: Build scenario-based macro views and distinguish data from interpretation and forecast uncertainty.
+  procedure:
+    - Define the economy, currency area, horizon, data vintage, and current policy regime before comparing indicators.
+    - Analyze growth, inflation, labor, credit, fiscal, monetary, external-balance, liquidity, rate, and currency evidence with attention to revisions and lags.
+    - Separate coincident data, leading indicators, policy reaction functions, structural trends, and market-implied expectations.
+    - Build multiple regime scenarios and trace their implications through rates, currencies, credit, equities, commodities, and liquidity without assuming deterministic transmission.
+    - State forecast uncertainty, data limitations, and specific evidence that would change the macro view.
+  verification:
+    - data-vintage-and-jurisdiction-are-explicit
+    - scenarios-distinguish-data-from-interpretation
+    - policy-and-market-transmission-assumptions-are-visible

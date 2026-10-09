@@ -1,0 +1,29 @@
+apiVersion: hermes.togarriapa/v1
+kind: Plugin
+metadata:
+  name: composio
+  version: 1.0.0
+  description: Scoped Composio integration provider with explicit per-profile toolkit allowlists and user-isolated connections.
+  tags: [composio, integrations, oauth, tools]
+spec:
+  provider: composio
+  auth:
+    mode: api-key
+    credentialRef: COMPOSIO_API_KEY
+  sessions:
+    userIsolation: true
+    requireToolkitAllowlist: true
+    defaultToolkits: []
+    versionPolicy: pinned-in-production
+  policy:
+    denyUnlistedToolkits: true
+    connectionCreation: user-authorized
+    externalWrites: delegated-only
+    destructiveTools: confirm
+    remoteWorkbench: deny
+    remoteBash: deny
+    arbitraryProxy: deny
+    credentials: runtime-only
+  provenance:
+    officialDocs: https://docs.composio.dev/
+    catalog: https://docs.composio.dev/toolkits

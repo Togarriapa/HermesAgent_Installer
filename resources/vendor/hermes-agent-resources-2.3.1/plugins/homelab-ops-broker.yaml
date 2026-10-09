@@ -1,0 +1,59 @@
+apiVersion: hermes.togarriapa/v1
+kind: Plugin
+metadata:
+  name: homelab-ops-broker
+  version: 1.0.0
+  description: Host-managed bounded operations broker for approved Hermes and Nextcloud hosts, exposing diagnostics, service maintenance, backups, recovery, and constrained Nextcloud administration without raw shell.
+  tags: [homelab, infrastructure, operations, nextcloud, linux]
+spec:
+  provider: host-managed-homelab-ops-broker
+  endpoint: ${HOMELAB_OPS_BROKER_URL}
+  authentication:
+    type: bearer
+    credentialRef: ${HOMELAB_OPS_BROKER_TOKEN}
+  runtime:
+    targets:
+      hermesHost: ${HERMES_HOST_TARGET_ID}
+      nextcloudHost: ${NEXTCLOUD_HOST_TARGET_ID}
+    authorizationProvider: authentik-authorization@^1.0.0
+    requiredEffectiveGroupForWrites: System
+  capabilities:
+    reads:
+      - host-health
+      - cpu-memory-temperature-and-disk
+      - approved-service-status
+      - approved-container-status
+      - bounded-service-logs
+      - installed-runtime-and-container-versions
+      - backup-status-and-integrity-metadata
+      - nextcloud-status
+      - nextcloud-background-job-status
+      - nextcloud-maintenance-state
+    writes:
+      - restart-approved-service
+      - restart-approved-container
+      - update-approved-service-or-container
+      - rollback-approved-service-or-container
+      - run-approved-backup
+      - run-approved-restore
+      - enter-or-exit-nextcloud-maintenance-mode
+      - run-approved-nextcloud-repair
+      - run-approved-nextcloud-background-job-operation
+      - bounded-approved-cleanup
+  policy:
+    arbitraryShell: deny
+    rawSsh: deny
+    arbitraryCommand: deny
+    arbitraryOccCommand: deny
+    arbitraryDockerCommand: deny
+    arbitrarySystemdUnit: deny
+    arbitraryFilesystemPath: deny
+    credentialReadback: deny
+    writesRequireFreshAuthentikSystemMembership: true
+    destructiveWritesRequireExplicitConfirmation: true
+    targetAllowlistOnly: true
+    operationAllowlistOnly: true
+    credentials: runtime-only
+  observability:
+    auditTargetOperationPrincipalAuthorizationAndResult: true
+    redactSecrets: true

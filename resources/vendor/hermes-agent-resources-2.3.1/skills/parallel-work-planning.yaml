@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: parallel-work-planning
+  version: 1.0.1
+  description: "Plan parallel agent or human work through dependency graphs, bounded work packages, shared-state rules, resource limits, synchronization, and reconciliation."
+  tags: [orchestration, parallelism, planning, dependencies]
+spec:
+  purpose: "Gain safe concurrency only where work is sufficiently independent and the coordination cost is justified."
+  procedure:
+    - "Decompose the objective into work packages with inputs, outputs, dependencies, required evidence, authority, mutable state, and acceptance criteria."
+    - "Build a dependency graph and identify tasks that can truly run concurrently versus tasks requiring ordering, shared decisions, or serialized state changes."
+    - "Assign isolated workspaces or ownership boundaries, resource and rate-limit budgets, synchronization points, and rules for shared artifacts or canonical state."
+    - "Reconcile results in dependency order, detect conflicting edits or assumptions, verify acceptance criteria, and stop excess parallelism when contention or duplicate work outweighs benefit."
+  verification:
+    - parallel-tasks-have-explicit-independence-and-boundaries
+    - shared-state-and-resource-contention-are-controlled
+    - reconciliation-covers-conflicts-and-dependent-results
+  sideEffects: none

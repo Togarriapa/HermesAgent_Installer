@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: crypto-asset-analysis
+  version: 1.0.1
+  description: Analyze crypto assets using protocol economics, token supply, adoption, market structure, custody, liquidity, governance, and regulatory risk.
+  tags: [crypto, digital-assets]
+spec:
+  purpose: Treat digital assets as high-volatility/high-operational-risk investments and avoid unsupported certainty.
+  procedure:
+    - Define the asset, network, token rights, supply schedule, issuance/burn mechanics, utility, governance role, and major holders or concentration risks.
+    - Evaluate protocol usage and adoption using relevant activity, fee, security-budget, developer, ecosystem, and dependency evidence without treating one metric as proof of value.
+    - Assess liquidity, venue concentration, leverage, market structure, custody, smart-contract, bridge, governance, counterparty, and regulatory risks.
+    - Compare valuation or scenario frameworks against dilution, token unlocks, competitive substitutes, and adverse protocol or market regimes.
+    - Present bull/base/bear cases with explicit probability uncertainty and no implication of guaranteed returns.
+  verification:
+    - token-economics-and-dilution-are-accounted-for
+    - operational-and-custody-risks-are-separate-from-market-risk
+    - scenario-assumptions-and-source-provenance-are-visible

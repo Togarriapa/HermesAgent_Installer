@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: amish-cultural-practice-research
+  version: 1.0.1
+  description: Research Amish cultural practices using affiliation-aware, community-specific, historical, linguistic, religious, and social evidence.
+  tags: [amish, culture, research, history]
+spec:
+  purpose: Produce respectful, evidence-grounded cultural analysis that represents diversity among Amish affiliations and settlements.
+  procedure:
+    - Scope the question by affiliation, settlement, geography, generation, period, gender or household context, and the specific practice being investigated.
+    - Prioritize primary sources, community-produced material where available, careful ethnography, historical records, and reputable scholarship; record provenance and perspective for each source.
+    - Distinguish Catholic or Protestant outsider categories, Amish theological commitments, Ordnung rules, local custom, family practice, economic adaptation, and individual variation instead of collapsing them together.
+    - Compare evidence across communities only when the comparison is justified and identify differences in language, technology, schooling, worship, migration, work, dress, and social organization.
+    - Synthesize what is well documented, what varies, what has changed, and what remains uncertain, avoiding claims that one observed community represents all Amish people.
+  verification:
+    - Generalizations require evidence across more than one relevant community or must be explicitly labeled local.
+    - Sensitive cultural claims must be sourced and phrased to separate participant accounts, scholarly interpretation, and inference.

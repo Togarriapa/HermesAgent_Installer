@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: requirements-engineering
+  version: 1.0.0
+  description: Elicit, model, validate, prioritize, trace, and maintain functional and non-functional requirements and acceptance criteria.
+spec:
+  procedure:
+    - Identify stakeholders, goals, processes, constraints, data rules, interfaces, and exceptions.
+    - Write testable requirements and acceptance criteria with traceability to outcomes.
+    - Surface ambiguity, conflicts, dependencies, and assumptions before implementation.

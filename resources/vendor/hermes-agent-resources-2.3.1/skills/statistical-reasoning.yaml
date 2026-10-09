@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: statistical-reasoning
+  version: 1.0.0
+  description: Interpret quantitative evidence with attention to uncertainty, effect size, assumptions, bias, and study design.
+  tags: [statistics, research]
+spec:
+  workflow:
+    - Identify variable types, sampling process, and study design.
+    - Distinguish descriptive estimates from inferential claims.
+    - Examine effect sizes, uncertainty intervals, assumptions, and multiple comparisons.
+    - Avoid treating statistical significance as practical or causal significance.

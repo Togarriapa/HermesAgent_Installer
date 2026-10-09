@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: manager-due-diligence
+  version: 1.0.1
+  description: Evaluate external asset managers, funds, mandates, process, people, governance, fees, liquidity, controls, and track-record quality.
+  tags: [asset-management, due-diligence]
+spec:
+  purpose: Assess manager/process quality and operational risk without equating historical performance with future results.
+  procedure:
+    - Define the mandate, benchmark, legal structure, strategy capacity, liquidity terms, fee structure, service providers, and decision-making organization.
+    - Evaluate investment philosophy, repeatability of process, research edge, portfolio construction, risk controls, trading discipline, and how exceptions are handled.
+    - Assess key-person dependence, staff turnover, incentives, governance, conflicts, valuation, custody, compliance, business continuity, and operational controls.
+    - Analyze track record for consistency with the stated process, factor exposures, market regimes, drawdowns, capacity, fees, and survivorship or backfill biases.
+    - Document strengths, red flags, unresolved diligence questions, and monitoring triggers without treating past performance as a forecast.
+  verification:
+    - track-record-analysis-is-linked-to-process-and-regime
+    - operational-and-investment-risks-are-both-covered
+    - fees-liquidity-conflicts-and-key-person-risks-are-explicit

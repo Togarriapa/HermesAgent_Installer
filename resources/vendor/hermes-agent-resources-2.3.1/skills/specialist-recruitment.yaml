@@ -1,0 +1,29 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: specialist-recruitment
+  version: 1.0.0
+  description: Dynamically discover, select, recruit, and release specialist profiles from the Hermes registry when task requirements justify additional expertise.
+  tags: [coordination, recruitment, delegation, agents]
+spec:
+  purpose: Allow authorized leadership profiles to assemble the smallest competent specialist team at runtime without being limited to a predeclared roster or bundle.
+  procedure:
+    - Identify capability gaps, unresolved dependencies, workload constraints, or review needs that justify adding a specialist.
+    - Search the active Hermes resource catalog across all registered Profile resources, including profiles outside the current bundle or initial team.
+    - Select the narrowest competent profile based on the work package, required skills, authority boundaries, and current context.
+    - Recruit an already-running specialist when available; otherwise request that the Hermes provisioner instantiate the selected registered profile.
+    - Pass only the context, inputs, authority, acceptance criteria, dependencies, and deadlines required for the assignment.
+    - Keep the specialist's own profile, skills, permissions, safety boundaries, and local Hermes policy intact; recruitment never expands their authority.
+    - Track the recruited specialist as part of the active team until the assignment and required handoffs are complete, then release it when no longer needed.
+    - Prefer the smallest competent team and avoid duplicate specialists unless parallelism, independent review, or workload requires them.
+  recruitment:
+    allowDynamicRecruitment: true
+    scope: any-registered-profile
+    requirePredeclaredRoster: false
+    allowOutsideCurrentBundle: true
+    mayRequestInstantiation: true
+    preserveSpecialistPolicy: true
+    inheritRecruiterPrivileges: false
+  failureHandling:
+    - If no registered profile is competent for the task, report the capability gap instead of assigning work to an unsuitable specialist.
+    - If instantiation or authorization is denied by the host, continue with the best available team and surface the limitation.

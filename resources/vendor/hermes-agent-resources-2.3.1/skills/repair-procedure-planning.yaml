@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: repair-procedure-planning
+  version: 1.0.1
+  description: "Plan repair procedures from verified diagnosis, authoritative instructions, hazards, isolation, tools, parts, sequencing, stop conditions, and functional verification."
+  tags: [repair, maintenance, planning, safety]
+spec:
+  purpose: "Turn a supported diagnosis into a safe, reversible repair plan without extending into hazardous or licensed work beyond scope."
+  procedure:
+    - "Confirm asset identity, diagnosis evidence, manufacturer guidance, applicable codes, hazards, required competence, parts, tools, access, and current service state."
+    - "Define shutdown, isolation, lockout, containment, data protection, or make-safe prerequisites before any disassembly or state change."
+    - "Sequence the least invasive repair with checkpoints, torque or calibration values where authoritative, contamination controls, replacement criteria, and explicit stop or escalation conditions."
+    - "Specify reassembly, restoration, leak or safety checks, functional tests, observation period, documentation, and rollback or specialist escalation if verification fails."
+  verification:
+    - diagnosis-and-procedure-source-are-traceable
+    - hazards-isolation-and-stop-conditions-are-explicit
+    - functional-and-safety-verification-is-defined
+  sideEffects: none

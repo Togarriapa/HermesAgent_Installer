@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: risk-management
+  version: 1.0.0
+  description: Identify, assess, mitigate, monitor, and assign ownership for project and operational risks.
+  tags: [risk, projects]
+spec:
+  workflow:
+    - State each risk as cause, uncertain event, and impact.
+    - Estimate likelihood and impact proportionately.
+    - Assign mitigation, contingency, owner, and trigger.
+    - Review changes in exposure at defined project checkpoints.

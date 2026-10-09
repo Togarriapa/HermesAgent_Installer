@@ -1,0 +1,55 @@
+apiVersion: hermes.togarriapa/v1
+kind: Plugin
+metadata:
+  name: agent-sandbox-wallet
+  version: 1.0.0
+  description: Agent-controlled local cryptocurrency wallet restricted to public test networks and faucet/test assets for safe experimentation, simulations, and protocol learning.
+  tags: [crypto, wallet, sandbox, testnet, experimentation]
+spec:
+  provider: hermes-local-sandbox-wallet
+  ownership: hermes-agent-sandbox
+  networks:
+    allow:
+      - ethereum-sepolia
+      - solana-devnet
+    mainnet: deny
+    unknownNetworks: deny
+  assets:
+    realValueAssets: deny
+    fiatOnRamp: deny
+    centralizedExchangeFunding: deny
+    crossChainBridgeToMainnet: deny
+    expectedSource:
+      - official-or-reviewed-testnet-faucet
+      - locally-deployed-test-token
+  keyManagement:
+    generation: local
+    storage: host-encrypted-secret-store
+    exportPrivateKey: deny
+    exportSeedPhrase: deny
+    logSecretMaterial: deny
+    reuseUserWalletMaterial: deny
+    importUserPrivateKey: deny
+    importLedgerSeedOrPrivateMaterial: deny
+    resettable: true
+  capabilities:
+    - create-testnet-account
+    - read-testnet-balances
+    - sign-testnet-transactions
+    - send-testnet-assets
+    - deploy-test-contracts
+    - interact-with-reviewed-testnet-dapps
+    - simulate-transactions
+    - inspect-receipts-and-events
+  guards:
+    rejectMainnetChainIds: true
+    rejectRealAssetDeposits: true
+    rejectMainnetRpcEndpoints: true
+    rejectProductionWalletConnections: true
+    requireNetworkAssertionBeforeSigning: true
+    requireBalanceAndGasSimulationBeforeSigning: true
+  policy:
+    userFunds: deny
+    productionCustody: deny
+    financialExecutionAuthority: none
+    userVisibleDeliveryViaHermesOnly: true

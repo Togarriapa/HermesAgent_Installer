@@ -1,0 +1,22 @@
+apiVersion: hermes.togarriapa/v1
+kind: Plugin
+metadata:
+  name: mcp-registry
+  version: 1.0.0
+  description: Read-only discovery access to the official Model Context Protocol Registry for integration vetting.
+  tags: [mcp, registry, discovery]
+spec:
+  provider: http
+  baseUrl: https://registry.modelcontextprotocol.io
+  capabilities:
+    - discover-servers
+    - inspect-server-metadata
+    - inspect-versions
+  policy:
+    readOnly: true
+    publishing: deny
+    installation: deny
+    execution: deny
+    credentials: none
+  provenance:
+    officialRegistry: true

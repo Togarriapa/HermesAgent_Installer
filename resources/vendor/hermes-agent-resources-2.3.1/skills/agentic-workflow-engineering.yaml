@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: agentic-workflow-engineering
+  version: 1.0.1
+  description: Design multi-agent workflows with decomposition, routing, scoped context, concurrency, reconciliation, and bounded authority.
+  tags: [ai, agents, orchestration, workflow]
+spec:
+  principles: [parallelize-independent-work, single-owner-shared-state, delegation-does-not-expand-authority]
+  procedure:
+    - Translate the objective into a dependency graph of independently verifiable work items, identifying shared state, ordering constraints, decision points, and tasks that can safely execute in parallel.
+    - Assign each work item to the narrowest competent Profile with only the context, tools, data, and authority required for that item; record explicit inputs, outputs, acceptance criteria, and escalation conditions.
+    - Execute independent branches concurrently while enforcing a single owner for mutable shared state and preventing child agents from widening permissions, changing task scope, or treating delegated instructions as new authority.
+    - Reconcile branch outputs by checking interface assumptions, duplicated work, contradictory evidence, unresolved dependencies, and integration conflicts before composing a candidate result or plan.
+    - Run end-to-end verification against the original objective, preserve material dissent and failed branches in the evidence record, and retry or recruit additional specialists only when the failure analysis identifies a bounded gap.
+  verification:
+    - Every spawned task has explicit dependencies, owner, bounded authority, and measurable completion criteria.
+    - Parallel branches do not mutate the same shared state without a declared serialization or merge mechanism.
+    - Final synthesis traces accepted conclusions to verified branch outputs and records unresolved conflicts rather than hiding them.

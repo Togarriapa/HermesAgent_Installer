@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: research-agent
+  version: 1.0.0
+  description: Curated resource set for evidence-first research agents.
+  tags: [bundle, research]
+spec:
+  imports:
+    profiles:
+      - researcher@^1.0.0
+    plugins:
+      - web@^1.0.0
+      - github@^1.0.0
+    mcps:
+      - filesystem@^1.0.0
+    crons:
+      - resource-sync@^1.0.0

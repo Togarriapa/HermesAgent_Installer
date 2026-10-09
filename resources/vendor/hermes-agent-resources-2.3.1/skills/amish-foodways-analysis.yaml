@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: amish-foodways-analysis
+  version: 1.0.1
+  description: Analyze Amish foodways through household, agricultural, regional, religious, economic, preservation, and historical context.
+  tags: [amish, foodways, culture, history]
+spec:
+  purpose: Explain food practices as changing household and regional systems rather than a fixed stereotyped cuisine.
+  procedure:
+    - Scope the analysis to settlement, affiliation, period, household context, season, and whether the focus is production, preservation, cooking, hospitality, ritual, or market exchange.
+    - Gather recipes, household accounts, oral histories, agricultural evidence, community publications, ethnography, and regional culinary history and record source provenance.
+    - Distinguish foods tied to local agriculture and regional Germanic or American traditions from practices specifically shaped by Amish religious or community norms.
+    - Analyze ingredient access, seasonality, preservation, labor, equipment, meal structure, communal events, commercialization, and change across generations.
+    - Present documented continuities and variations, noting modern adaptations and avoiding health, authenticity, or universality claims not supported by evidence.
+  verification:
+    - Foodway claims must identify whether evidence is household-specific, regional, affiliation-specific, or broadly documented.
+    - Historical recipes and preservation methods must not be converted into current food-safety advice without modern safety evidence.

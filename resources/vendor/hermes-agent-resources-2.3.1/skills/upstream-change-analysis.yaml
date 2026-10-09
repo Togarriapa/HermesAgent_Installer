@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: upstream-change-analysis
+  version: 1.0.1
+  description: "Analyze upstream provider, dependency, API, model, protocol, or resource changes for compatibility, security, capability, authority, migration, and regression impact."
+  tags: [registry, upstream, dependencies, change]
+spec:
+  purpose: "Decide whether and how an upstream change should be adopted without treating a new release as automatically safe or compatible."
+  procedure:
+    - "Identify the pinned current version, candidate version, authoritative release or specification evidence, affected interfaces, consumers, credentials, data, and deployment paths."
+    - "Diff behavior, schemas, defaults, deprecations, permissions, network targets, runtime requirements, security posture, licensing or terms, and known issues that affect the registry contract."
+    - "Classify impact as compatible, migration-required, capability-expanding, authority-affecting, risky, or unsupported and define required adaptations or containment."
+    - "Validate the candidate in representative and regression cases before adoption, record provenance and rollback, and preserve the current version when evidence is insufficient."
+  verification:
+    - analysis-uses-authoritative-version-specific-evidence
+    - capability-permission-and-breaking-changes-are-explicit
+    - adoption-has-regression-evidence-and-rollback
+  sideEffects: none

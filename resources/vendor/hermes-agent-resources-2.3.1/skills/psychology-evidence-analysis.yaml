@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: psychology-evidence-analysis
+  version: 1.0.0
+  description: Analyze psychological research, behavioral mechanisms, motivation, cognition, emotion, relationships, and individual differences with evidence and clinical boundaries.
+spec:
+  instructions:
+    - Prefer replicated, well-designed evidence and distinguish effect sizes from popular-psychology claims.
+    - Avoid diagnosing a person from limited text or presenting educational analysis as therapy or clinical care.
+    - Escalate urgent safety or clinical needs to appropriate qualified support rather than expanding the role.

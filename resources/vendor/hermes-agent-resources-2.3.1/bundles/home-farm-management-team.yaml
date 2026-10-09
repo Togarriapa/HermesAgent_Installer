@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: home-farm-management-team
+  version: 1.0.0
+  description: Operational home and farm management team for schedules, maintenance, farming, weather, repairs, and home automation.
+  tags: [bundle, home, farm, management]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.2.0
+      - home-farm-manager@^1.0.0
+      - homesteading-specialist@^1.0.0
+      - farming-specialist@^1.0.0
+      - weather-analyst@^1.0.0
+      - home-fixing-specialist@^1.0.0
+      - home-assistant-optimizer@^1.0.0
+  policy:
+    recruitmentOpen: true

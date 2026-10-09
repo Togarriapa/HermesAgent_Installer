@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: status-reporting
+  version: 1.0.0
+  description: Produce evidence-based project status covering progress, milestones, blockers, risks, decisions, and next actions.
+  tags: [projects, status]
+spec:
+  workflow:
+    - Report outcomes completed since the last checkpoint.
+    - Compare current milestone state to the agreed plan.
+    - Surface blockers, risks, and decisions needed with owners.
+    - List the next highest-value actions and expected dates.

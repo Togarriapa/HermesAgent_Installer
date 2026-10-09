@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: exploratory-data-analysis
+  version: 1.0.0
+  description: Inspect datasets systematically before modeling through schema, distribution, missingness, anomaly, relationship, and provenance analysis.
+  tags: [data, analysis, eda]
+spec:
+  procedure:
+    - Establish unit of observation, data provenance, collection process, schema, and target question.
+    - Profile types, ranges, missingness, duplicates, cardinality, distributions, and suspicious values.
+    - Examine relationships and subgroup behavior without confusing exploration with confirmatory inference.
+    - Record transformations, exclusions, assumptions, and data-quality limitations for reproducibility.

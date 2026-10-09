@@ -1,0 +1,30 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: hermes-runtime
+  version: 1.1.0
+  description: Canonical Hermes runtime with sole Hermes entry point, parallel/hierarchical Orchestrator, text/WhatsApp/voice channels, and daily resource reconciliation.
+  tags: [bundle, hermes, gateway, orchestration, voice, whatsapp]
+spec:
+  imports:
+    profiles:
+      - hermes@^1.1.0
+      - orchestrator@^1.3.0
+    channels:
+      - web@^1.1.0
+      - telegram@^1.1.0
+      - discord@^1.1.0
+      - whatsapp@^1.0.0
+      - voice@^1.0.0
+    crons:
+      - daily-resource-reconcile@^1.0.0
+  topology:
+    userEntryPoint: hermes
+    internalCoordinator: orchestrator
+    allowDirectProfileSelection: false
+    allowSpecialistUserContact: false
+  orchestration:
+    parallel: true
+    hierarchical: true
+    elasticInstances: true
+    perEpicKanban: true

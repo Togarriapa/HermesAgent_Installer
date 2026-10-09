@@ -1,0 +1,22 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: infrastructure-alarm-triage
+  version: 1.0.0
+  description: Classify infrastructure incidents and route actionable alarms exclusively to currently verified effective members of Authentik System.
+  tags: [homelab, alarms, authentik, infrastructure, incident]
+spec:
+  principles: [signal-over-noise, current-recipient-authorization, no-static-privilege-list, no-remediation-authority-from-alert]
+  procedure:
+    - classify-severity-scope-user-impact-and-evidence-confidence
+    - suppress-duplicate-or-non-actionable-events-with-bounded-deduplication
+    - resolve-current-effective-System-members-through-authentik-at-delivery-time
+    - deliver-infrastructure-alarm-only-to-verified-System-recipients-through-Hermes
+    - record-delivery-authorization-and-result-without-sensitive-content
+    - keep-remediation-as-a-separate-explicitly-authorized-step
+  policy:
+    recipientGroup: System
+    staticRecipientListAsAuthority: deny
+    nonSystemRecipients: deny
+    authentikVerificationFailure: fail-closed
+    alarmCreatesMutationAuthority: deny

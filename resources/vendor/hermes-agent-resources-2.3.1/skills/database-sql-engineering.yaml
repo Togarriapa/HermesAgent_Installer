@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: database-sql-engineering
+  version: 1.0.0
+  description: Engineer SQL and database workloads with correctness, performance, transaction, indexing, migration, and least-privilege considerations.
+  tags: [database, sql, data-engineering]
+spec:
+  procedure:
+    - Establish database engine, workload, data volume, concurrency, consistency, and recovery constraints.
+    - Write deterministic queries with explicit join, null, aggregation, and transaction semantics.
+    - Diagnose performance using plans and measurements before changing indexes or schema.
+    - Make migrations reversible where practical and protect production mutation behind explicit authorization and backups.

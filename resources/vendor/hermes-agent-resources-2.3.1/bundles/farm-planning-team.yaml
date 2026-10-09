@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: farm-planning-team
+  version: 1.0.0
+  description: Integrated farm master-planning team for layout, enterprises, agronomy, horticulture, livestock, water, weather, infrastructure, and financial staging.
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.3.0
+      - farm-planner@^1.0.0
+      - home-farm-manager@^1.0.0
+      - farming-specialist@^1.0.0
+      - agricultural-specialist@^1.0.0
+      - horticulture-orchard-specialist@^1.0.0
+      - livestock-health-navigator@^1.0.0
+      - water-wastewater-specialist@^1.0.0
+      - weather-analyst@^1.0.0
+  recruitment: {open: true, allowOutsideBundle: true}

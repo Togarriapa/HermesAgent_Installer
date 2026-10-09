@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: perspective-integration
+  version: 1.0.0
+  description: Integrate psychological, sociological, anthropological, cultural, philosophical, economic, and practical perspectives without collapsing their levels of explanation.
+spec:
+  instructions:
+    - Label which level of explanation each claim belongs to.
+    - Identify complementary versus competing explanations.
+    - Avoid using one discipline to answer a question that belongs primarily to another without justification.

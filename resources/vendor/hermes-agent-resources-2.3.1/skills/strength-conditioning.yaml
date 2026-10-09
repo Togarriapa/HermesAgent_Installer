@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: strength-conditioning
+  version: 1.0.1
+  description: Design strength and conditioning using needs analysis, exercise selection, load, volume, progression, power, work capacity, recovery, and performance monitoring.
+  tags: [fitness, strength, conditioning, training]
+spec:
+  purpose: Create measurable, recoverable physical training that matches the trainee's goals, experience, equipment, and movement tolerance.
+  procedure:
+    - Establish sport or life demands, training history, current strength and work-capacity baseline, schedule, equipment, recovery factors, injury history, and relevant movement limitations.
+    - Select primary movement patterns and assistance exercises for force, hypertrophy, power, resilience, and conditioning according to the needs analysis rather than exercise novelty.
+    - Program frequency, sets, repetitions, load or RPE, velocity intent, rest, conditioning dose, and weekly distribution so hard sessions and tissue stress remain recoverable.
+    - Progress load, repetitions, range, density, complexity, or total volume gradually, use technique and performance thresholds, and deload or regress when fatigue or pain disrupts expected execution.
+    - Track performance, session RPE, soreness, sleep, readiness, and repeated field tests and adjust the program from longitudinal trends and goal progress.
+  verification:
+    - Each major exercise must have a clear training purpose, progression rule, and technique or tolerance criterion.
+    - Concerning pain, neurologic symptoms, syncope, chest symptoms, or unexplained functional decline require appropriate medical evaluation rather than load escalation.

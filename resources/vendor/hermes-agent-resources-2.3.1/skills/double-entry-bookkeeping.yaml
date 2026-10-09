@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: double-entry-bookkeeping
+  version: 1.0.0
+  description: Analyze and record transactions using double-entry principles, account classification, period cut-off, and audit-trail discipline.
+  tags: [accounting, bookkeeping, ledger]
+spec:
+  procedure:
+    - Identify the economic event, reporting entity, period, supporting evidence, and affected accounts.
+    - Determine debit and credit entries using the applicable chart of accounts and accounting framework.
+    - Check cut-off, accrual, matching, classification, and documentation requirements.
+    - Preserve a traceable rationale from source evidence to ledger entry and subsequent adjustment.

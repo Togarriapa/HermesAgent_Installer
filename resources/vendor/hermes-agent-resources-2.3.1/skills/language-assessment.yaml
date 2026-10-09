@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: language-assessment
+  version: 1.0.1
+  description: "Assess language proficiency across relevant receptive and productive domains using representative tasks, explicit descriptors, and uncertainty-aware interpretation."
+  tags: [education, language, assessment, proficiency]
+spec:
+  purpose: "Estimate functional language ability for a defined purpose without overgeneralizing from a single task, accent, or test score."
+  procedure:
+    - "Define target language, learner background, intended use, reference framework if any, and the receptive and productive domains that matter."
+    - "Collect representative listening, reading, spoken interaction or production, and writing samples using tasks matched to the intended context."
+    - "Score against explicit descriptors, noting fluency, comprehension, accuracy, range, interaction, pronunciation where relevant, and effects of task familiarity."
+    - "Triangulate results across samples, report uncertainty and uneven profiles, and identify the next evidence or instruction needed rather than assigning false precision."
+  verification:
+    - multiple-relevant-language-domains-are-sampled
+    - scoring-descriptors-and-evidence-are-traceable
+    - uncertainty-and-uneven-proficiency-are-reported
+  sideEffects: none

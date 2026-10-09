@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: materials-selection
+  version: 1.0.0
+  description: Select materials by mechanical, thermal, corrosion, wear, environment, fabrication, compatibility, cost, and lifecycle requirements.
+  tags: [materials, mechanical, engineering]
+spec:
+  procedure:
+    - Define required strength, stiffness, toughness, fatigue, temperature, corrosion, wear, mass, manufacturability, and service life.
+    - Screen candidate material families and identify relevant property variability and standards.
+    - Check galvanic, chemical, thermal-expansion, UV, moisture, fire, and food-contact compatibility where relevant.
+    - Document tradeoffs and required verification or certification for safety-critical use.

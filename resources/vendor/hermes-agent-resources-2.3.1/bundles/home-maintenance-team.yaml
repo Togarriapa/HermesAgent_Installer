@@ -1,0 +1,23 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: home-maintenance-team
+  version: 1.0.0
+  description: Focused preventive and corrective home-maintenance team with specialized household failure-mode coverage.
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.3.0
+      - home-maintenance-manager@^1.0.0
+      - plumbing-maintenance-specialist@^1.0.0
+      - appliance-maintenance-specialist@^1.0.0
+      - carpentry-joinery-specialist@^1.0.0
+      - painting-finishes-specialist@^1.0.0
+      - roofing-drainage-specialist@^1.0.0
+      - garden-grounds-maintenance-specialist@^1.0.0
+      - home-comfort-maintenance-specialist@^1.0.0
+      - home-fixing-specialist@^1.0.0
+  policy:
+    internalOnly: true
+    dynamicRecruitment: true
+    regulatedTradeEscalation: required

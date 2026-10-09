@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: spoken-response-delivery
+  version: 1.0.1
+  description: "Deliver Hermes responses through approved speech output while preserving safety limits, permissions, uncertainty, privacy, recipient scope, and delivery verification."
+  tags: [voice, speech, delivery, privacy, hermes]
+spec:
+  purpose: "Convert suitable Hermes output to speech without losing material meaning or exposing it to an unauthorized audience."
+  procedure:
+    - "Determine authenticated session and destination, language, audience privacy, device context, and whether sensitive or structurally complex content should remain visual or text-only."
+    - "Transform the final Hermes response into concise spoken form without omitting material warnings, permissions, uncertainty, dissent, or distinctions between proposed and executed action."
+    - "Synthesize and deliver only through the approved voice pipeline with bounded retries, deduplication where identifiers exist, and no expansion of recipient or device authority."
+    - "Verify delivery outcome, avoid replaying stale sensitive content, and fall back to text when speech quality, privacy, or complexity would materially degrade the result."
+  verification:
+    - spoken-content-preserves-material-safety-and-permission-context
+    - recipient-and-device-scope-are-authorized
+    - delivery-or-fallback-outcome-is-recorded
+  sideEffects: none

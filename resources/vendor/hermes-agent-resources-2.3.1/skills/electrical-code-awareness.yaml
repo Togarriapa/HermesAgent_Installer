@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: electrical-code-awareness
+  version: 1.0.0
+  description: Identify when electrical design or installation depends on jurisdiction-specific codes, standards, inspection, certification, or licensed work and verify current requirements.
+  tags: [electrical, code, standards]
+spec:
+  procedure:
+    - Establish jurisdiction, installation type, voltage, occupancy, environment, and whether the work is new, modified, temporary, or repair.
+    - Identify likely governing code families and verify current editions or local amendments from authoritative sources.
+    - Separate engineering principles from prescriptive code requirements and inspection practice.
+    - Flag items requiring licensed installation, certification, permits, or authority-having-jurisdiction interpretation.

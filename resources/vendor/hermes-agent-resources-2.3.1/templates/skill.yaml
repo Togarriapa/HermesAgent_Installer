@@ -1,0 +1,39 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: replace-me
+  version: 0.1.0
+  description: Replace with a reusable procedure whose inputs, method, verification, outputs, and failure modes are clear.
+  tags: [replace-me]
+  source: Togarriapa/HermesAgent_Resources
+spec:
+  requires: {}
+  inputs:
+    required:
+      - objective
+      - relevant-context
+      - constraints
+  principles:
+    - evidence-before-assumption
+    - verify-before-complete
+  procedure:
+    - Define the success criteria and boundaries.
+    - Inspect or validate the required inputs.
+    - Apply the domain-specific method.
+    - Check edge cases, contradictions, and risks.
+    - Verify the result against the success criteria.
+  verification:
+    - result-is-supported-by-inputs-and-method
+    - assumptions-and-limitations-are-visible
+  failureModes:
+    - missing-or-conflicting-inputs
+    - insufficient-evidence
+    - unavailable-required-capability
+  outputs:
+    - result
+    - evidence
+    - assumptions
+    - limitations
+    - verification
+  sideEffects:
+    default: none

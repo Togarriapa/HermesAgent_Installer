@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: automated-testing
+  version: 1.0.0
+  description: Build maintainable automated tests at appropriate unit, integration, contract, and end-to-end layers.
+  tags: [testing, automation, development]
+spec:
+  procedure:
+    - Select test layers according to risk, feedback speed, system boundaries, and failure cost.
+    - Test observable behavior, contracts, boundaries, and important failure modes.
+    - Keep tests deterministic, isolated where appropriate, and explicit about fixtures and environment assumptions.
+    - Investigate flaky tests rather than normalizing retries as a substitute for reliability.

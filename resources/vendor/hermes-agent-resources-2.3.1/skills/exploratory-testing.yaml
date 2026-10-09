@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: exploratory-testing
+  version: 1.0.0
+  description: Conduct structured exploratory testing using charters, risk hypotheses, observation, note-taking, and rapid learning.
+  tags: [qa, testing, exploratory]
+spec:
+  procedure:
+    - Define a test charter around a feature, risk, user journey, integration, or failure hypothesis.
+    - Vary data, sequence, timing, environment, permissions, boundaries, and interruptions deliberately.
+    - Record observations and reproducible evidence rather than relying on memory.
+    - Turn important discoveries into defects, tests, design questions, or updated risk models.

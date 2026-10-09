@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: instrumentation-measurement
+  version: 1.0.0
+  description: Plan trustworthy measurements using appropriate instruments, range, accuracy, bandwidth, calibration, loading, isolation, uncertainty, and safe connection methods.
+  tags: [measurement, instrumentation, engineering]
+spec:
+  procedure:
+    - Define measurand, expected range, required uncertainty, bandwidth, environment, reference, and safety category.
+    - Select an instrument and connection method that will not materially alter or endanger the system.
+    - Account for calibration, probe or sensor error, loading, grounding, common-mode limits, sampling, filtering, and repeatability.
+    - Record conditions and uncertainty so measurements can be reproduced and compared.

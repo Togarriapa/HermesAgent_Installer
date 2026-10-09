@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: people-career-team
+  version: 1.0.0
+  description: People, hiring, career, psychology, remote-work, and employment-law team for employee and career questions.
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.3.0
+      - people-operations-hr-specialist@^1.0.0
+      - recruiter-talent-acquisition-specialist@^1.0.0
+      - career-advisor@^1.0.0
+      - career-development-specialist@^1.0.0
+      - psychology-expert@^1.0.0
+      - remote-work-manager@^1.0.0
+      - employment-law-portugal-eu-specialist@^1.0.0
+  recruitment: {open: true, allowOutsideBundle: true}

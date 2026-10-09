@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: interaction-design
+  version: 1.0.0
+  description: Design understandable user flows, interaction states, feedback, navigation, and error recovery.
+  tags: [ux, interaction, product]
+spec:
+  procedure:
+    - Map user goals, entry points, primary paths, alternate paths, errors, and recovery.
+    - Minimize unnecessary decisions and preserve system-status visibility.
+    - Specify empty, loading, success, validation, permission, and failure states.
+    - Validate critical flows against realistic user tasks before visual polish.

@@ -1,0 +1,16 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: integration-review-team
+  version: 1.0.0
+  description: Internal review team for safely evaluating third-party skills, MCP servers, plugins, and tool providers before registry adoption.
+  tags: [bundle, team, integrations, security]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.1.0
+      - integration-curator@^1.0.0
+      - cybersecurity-analyst@^1.0.0
+      - systems-architect@^1.0.0
+    crons:
+      - resource-sync@^1.0.0

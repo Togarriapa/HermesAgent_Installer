@@ -1,0 +1,28 @@
+apiVersion: hermes.togarriapa/v1
+kind: Plugin
+metadata:
+  name: replace-me
+  version: 0.1.0
+  description: Replace with the bounded external or runtime capability this Plugin exposes.
+  tags: [plugin, replace-me]
+  source: Togarriapa/HermesAgent_Resources
+spec:
+  provider: replace-me
+  auth:
+    mode: runtime
+    credentialRef: REPLACE_ME_CREDENTIAL
+  capabilities:
+    allowed:
+      - replace-me-read-operation
+    deniedByDefault: true
+  policy:
+    credentials: runtime-only
+    leastPrivilege: true
+    externalWrites: deny-unless-explicitly-declared
+    destructiveActions: explicit-confirmation
+  failureHandling:
+    authenticationFailure: fail-closed
+    authorizationFailure: fail-closed
+  provenance:
+    provider: replace-me
+    documentation: replace-with-official-source

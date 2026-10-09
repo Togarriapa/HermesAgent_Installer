@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: versioned-skill-evolution
+  version: 1.0.1
+  description: "Evolve Skills with stable identity, semantic versioning, evidence-backed changes, compatibility review, regression tests, overlay preservation, and rollback."
+  tags: [registry, skills, versioning, evolution]
+spec:
+  purpose: "Improve Skills over time while making behavioral and compatibility change explicit and reversible."
+  procedure:
+    - "Identify current Skill version, consumers, dependencies, learned overlays, usage or failure evidence, and the exact behavior or responsibility proposed to change."
+    - "Classify the change as patch, minor, or major from its effect on method, outputs, dependencies, capability, selectors, integration permissions, and compatibility."
+    - "Implement the smallest coherent revision, document migration implications, preserve previous immutable versions or generation rollback, and never use versioning to smuggle authority expansion."
+    - "Run direct and effective quality checks, dependency resolution, representative regressions, overlay rebase, and consumer compatibility before release."
+  verification:
+    - semver-matches-behavioral-compatibility-impact
+    - prior-generation-and-migration-path-are-preserved
+    - new-version-passes-quality-and-regression-checks
+  sideEffects: none

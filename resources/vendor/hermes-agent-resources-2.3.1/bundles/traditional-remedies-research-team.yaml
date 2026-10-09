@@ -1,0 +1,20 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: traditional-remedies-research-team
+  version: 1.0.0
+  description: Internal evidence-aware team for traditional remedies, herbalism, materia medica, natural lifestyle practices, and traditional foodways.
+  tags: [bundle, traditional-remedies, health, research]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.3.0
+      - traditional-remedies-researcher@^1.0.0
+      - herbalism-ethnobotany-researcher@^1.0.0
+      - historical-materia-medica-researcher@^1.0.0
+      - natural-lifestyle-health-educator@^1.0.0
+      - traditional-foodways-health-researcher@^1.0.0
+  policy:
+    diagnosis: deny
+    prescribing: deny
+    replaceMedicalCare: deny

@@ -1,0 +1,26 @@
+apiVersion: hermes.togarriapa/v1
+kind: Channel
+metadata:
+  name: replace-me
+  version: 0.1.0
+  description: Replace with the authenticated user communication channel routed exclusively through Hermes.
+  tags: [channel, hermes, replace-me]
+  source: Togarriapa/HermesAgent_Resources
+spec:
+  adapter: replace-me
+  routing:
+    inboundProfile: hermes
+    outboundProfile: hermes
+    allowDirectProfileSelection: false
+    allowedUserFacingProfiles: [hermes]
+  admission:
+    authentication: required
+    unknownSenders: deny
+  limits:
+    rateLimitPerMinute: 60
+    maxMessageBytes: 1048576
+    attachments: explicit-policy
+  policy:
+    requireHermesGateway: true
+    rejectNonHermesProfileTarget: true
+    redactLogs: true

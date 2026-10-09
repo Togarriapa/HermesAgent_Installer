@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: maintenance-scheduling
+  version: 1.0.1
+  description: "Schedule preventive and condition-based maintenance from criticality, manufacturer guidance, usage, condition, access, dependencies, safety, and downtime constraints."
+  tags: [maintenance, scheduling, operations, reliability]
+spec:
+  purpose: "Place maintenance at the right interval and window without treating a schedule as authority to perform privileged or hazardous work."
+  procedure:
+    - "Inventory maintainable assets, criticality, manufacturer or regulatory intervals, usage, condition indicators, history, dependencies, required competence, and downtime constraints."
+    - "Classify work as preventive, inspection, condition-based, statutory, calibration, cleaning, lubrication, replacement, or corrective and identify prerequisite parts, tools, isolation, and access."
+    - "Build a schedule that groups compatible work, respects dependency and safety windows, avoids avoidable service concentration, and records responsible owner and authorization requirements."
+    - "Review completion quality, failures between intervals, condition trends, missed work, and manufacturer updates; adjust intervals from evidence rather than calendar habit alone."
+  verification:
+    - schedule-reflects-criticality-usage-and-authoritative-guidance
+    - dependencies-isolation-and-competence-requirements-are-visible
+    - schedule-itself-does-not-create-execution-authority
+  sideEffects: none

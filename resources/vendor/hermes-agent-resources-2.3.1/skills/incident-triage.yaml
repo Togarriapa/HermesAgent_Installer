@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: incident-triage
+  version: 1.0.0
+  description: Triage defensive security incidents by preserving evidence, establishing scope, containing risk, and tracking hypotheses.
+  tags: [security, incident-response]
+spec:
+  workflow:
+    - Establish timeline, affected assets, identities, and known indicators.
+    - Preserve relevant logs and evidence before destructive remediation where feasible.
+    - Separate confirmed facts from hypotheses and unknowns.
+    - Contain the highest-risk exposure, then eradicate, recover, and document lessons.

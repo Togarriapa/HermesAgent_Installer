@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: farm-reliability-team
+  version: 1.0.0
+  description: Farm reliability team for planning, crops, livestock health navigation, machinery, weather, water, and agricultural operations.
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.3.0
+      - home-farm-manager@^1.0.0
+      - farm-planner@^1.0.0
+      - horticulture-orchard-specialist@^1.0.0
+      - livestock-health-navigator@^1.0.0
+      - farm-machinery-maintenance-specialist@^1.0.0
+      - weather-analyst@^1.0.0
+      - agricultural-specialist@^1.0.0
+      - water-wastewater-specialist@^1.0.0
+  recruitment: {open: true, allowOutsideBundle: true}

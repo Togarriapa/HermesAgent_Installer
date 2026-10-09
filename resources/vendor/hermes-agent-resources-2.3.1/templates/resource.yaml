@@ -1,0 +1,27 @@
+# Legacy compatibility stub.
+# Prefer the kind-specific templates in this directory; see templates/README.md.
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: replace-me
+  version: 0.1.0
+  description: Replace with a substantive reusable capability description.
+  tags: [replace-me]
+  source: Togarriapa/HermesAgent_Resources
+spec:
+  requires: {}
+  principles:
+    - evidence-before-assumption
+    - verify-before-complete
+  procedure:
+    - Define objective and success criteria.
+    - Validate inputs and constraints.
+    - Apply the domain-specific method.
+    - Check edge cases and verify the result.
+  verification:
+    - result-meets-declared-success-criteria
+  outputs:
+    - result
+    - assumptions
+    - evidence
+    - verification

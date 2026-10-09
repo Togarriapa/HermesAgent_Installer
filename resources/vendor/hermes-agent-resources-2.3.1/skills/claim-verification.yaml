@@ -1,0 +1,12 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: claim-verification
+  version: 1.0.0
+  description: Verify factual claims through provenance, primary sources, corroboration, date/context checks, and calibrated uncertainty.
+spec:
+  procedure:
+    - Decompose compound claims into independently testable propositions.
+    - Prefer primary and authoritative sources; preserve publication and event dates.
+    - Corroborate consequential claims and distinguish absence of evidence from evidence of absence.
+    - Report unresolved uncertainty, conflicts, and source limitations.

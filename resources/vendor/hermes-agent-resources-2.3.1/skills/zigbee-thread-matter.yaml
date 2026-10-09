@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: zigbee-thread-matter
+  version: 1.0.0
+  description: Design and troubleshoot Zigbee, Thread, and Matter deployments using radio topology, coordinators or border routers, commissioning, routing, interference, and ecosystem boundaries.
+  tags: [zigbee, thread, matter, smart-home]
+spec:
+  procedure:
+    - Identify protocol, coordinator or controller, border routers, powered routers, sleepy end devices, commissioning path, channels, and physical layout.
+    - Separate radio reachability, mesh routing, IP reachability, application commissioning, and platform integration during diagnosis.
+    - Account for 2.4 GHz interference, coordinator placement, powered-router density, firmware, and network credentials.
+    - Preserve recovery material and avoid unnecessary network rebuilds when targeted repair is possible.

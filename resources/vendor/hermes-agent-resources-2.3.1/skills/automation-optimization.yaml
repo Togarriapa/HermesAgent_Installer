@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: automation-optimization
+  version: 1.0.0
+  description: Improve automation reliability and maintainability through explicit triggers, conditions, state models, idempotency, observability, and failure handling.
+  tags: [automation, reliability, home-assistant]
+spec:
+  procedure:
+    - Define intended behavior, trigger conditions, invariants, exceptions, manual overrides, and safe-state behavior.
+    - Remove duplicated logic and use reusable helpers, scripts, blueprints, or native abstractions when they simplify behavior.
+    - Handle restart, unavailable-device, race, duplicate-trigger, and partial-failure conditions explicitly.
+    - Add observability and test normal, edge, and recovery paths before enabling unattended operation.

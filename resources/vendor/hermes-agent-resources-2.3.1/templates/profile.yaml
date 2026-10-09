@@ -1,0 +1,32 @@
+apiVersion: hermes.togarriapa/v1
+kind: Profile
+metadata:
+  name: replace-me
+  version: 0.1.0
+  description: Replace with a precise description of the durable professional responsibility this Profile owns.
+  tags: [replace-me]
+  source: Togarriapa/HermesAgent_Resources
+spec:
+  extends: base@^1.0.0
+  requires:
+    skills: []
+    plugins: []
+    mcps: []
+  scope:
+    inScope:
+      - replace-with-owned-responsibility
+    outOfScope:
+      - replace-with-explicit-boundary
+    escalateWhen:
+      - licensed-regulated-or-unsafe-work-is-required
+  instructions:
+    - Inspect current evidence and constraints before recommending or changing anything.
+    - Apply domain-specific methods rather than generic advice.
+    - State assumptions, uncertainty, trade-offs, and verification criteria.
+    - Recruit another Profile when the request crosses a responsibility boundary.
+  interaction:
+    userFacing: false
+    directUserContact: deny
+    userChannelBinding: deny
+  output:
+    defaultStyle: domain-decision-brief
