@@ -77,13 +77,15 @@ class _Stream:
 
 def _json_response(body: Mapping[str, Any], *, status: int = 200) -> Mapping[str, Any]:
     encoded = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
-    if len(encoded) > 1_100_000:
+    if len(encoded) > 1_500_000:
         raise AuthorityDenied("connector.response", "connector response exceeds its fixed bound")
     return {"status": status, "body": encoded, "headers": {"content-type": "application/json"}, "receipt_id": uuid.uuid4().hex}
 
 
 def _decode(payload: bytes, required: set[str], optional: set[str] = frozenset()) -> dict[str, Any]:
-    if not isinstance(payload, bytes) or len(payload) > 1_100_000:
+    # Binary payloads use base64 on the bounded authority JSON wire, which
+    # expands a one-megabyte frame to roughly 1.4 MB.
+    if not isinstance(payload, bytes) or len(payload) > 1_500_000:
         raise AuthorityDenied("connector.request", "connector request exceeds its bound")
     try:
         value = json.loads(payload)
