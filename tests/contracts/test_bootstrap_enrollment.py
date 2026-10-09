@@ -98,6 +98,60 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
         with self.assertRaises(BootstrapEnrollmentError):
             operation.handle(payload, peer_uid=501, peer_gid=501)
 
+    def test_root_source_provider_runs_after_admission_and_only_handle_reaches_transaction(self):
+        receipt = EnrollmentReceipt(1, "transaction:root-issued", "receipt:root-issued",
+                                    "generation-1", "a" * 64, None, "prepared",
+                                    ("enrollment-1",), time.monotonic(), time.monotonic() + 30.0)
+
+        class Transaction:
+            def enroll(self, request, *, setup_authorization):
+                self.request = request
+                self.proof = setup_authorization
+                return receipt
+
+        class SetupAuthorizer:
+            def authorize(self, *, peer_uid, peer_gid, request):
+                return VerifiedRootSetupAuthorization(
+                    "service-generation:bootstrap:install", "setup-session-1",
+                    "b" * 64, 501, request.operation_intent)
+
+        calls = []
+        def source_provider(proof):
+            calls.append(proof)
+            return "opaque-source-receipt-handle-0123456789"
+
+        transaction = Transaction()
+        operation = RootBootstrapProvisionOperation(transaction, SetupAuthorizer(),
+                                                   source_receipt_provider=source_provider)
+        response = operation.handle({"schema": 1, "artifact_receipt_handles": [],
+                                     "operation_intent": "transaction:root-issued"},
+                                    peer_uid=0, peer_gid=0)
+        self.assertEqual(response["state"], "prepared")
+        self.assertEqual(len(calls), 1)
+        self.assertIs(transaction.proof, calls[0])
+        self.assertEqual(transaction.request.artifact_receipt_handles,
+                         ("opaque-source-receipt-handle-0123456789",))
+        self.assertNotIn("source", transaction.request.__dataclass_fields__)
+
+    def test_root_source_provider_is_not_called_before_setup_admission(self):
+        class Transaction:
+            def enroll(self, *_args, **_kwargs):
+                raise AssertionError("must not reach transaction")
+
+        class SetupAuthorizer:
+            def authorize(self, **_kwargs):
+                raise BootstrapEnrollmentError("setup admission denied")
+
+        def source_provider(_proof):
+            raise AssertionError("must not fetch before setup admission")
+
+        operation = RootBootstrapProvisionOperation(Transaction(), SetupAuthorizer(),
+                                                   source_receipt_provider=source_provider)
+        with self.assertRaises(BootstrapEnrollmentError):
+            operation.handle({"schema": 1, "artifact_receipt_handles": [],
+                              "operation_intent": "transaction:root-issued"},
+                             peer_uid=0, peer_gid=0)
+
     def test_root_provision_rejects_caller_selected_paths_and_unissued_intent(self):
         class Transaction:
             def enroll(self, *_args, **_kwargs):
