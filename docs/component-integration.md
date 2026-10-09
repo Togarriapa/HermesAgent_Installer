@@ -61,3 +61,36 @@ The five integration fixtures use synthetic source maps carrying the exact sourc
 ### Preserved native Plugin resources
 
 `components.native_plugins` records the 18 preserved resource Plugin IDs as distinct adapter identities and exposes `create_native_plugin_handler(adapter_id, runtime_context) -> register(ctx)`. `ReviewedPluginAdapterRegistry` resolves actual implementations through `resolve_native_plugin_implementation`; the metadata crosswalk is not executable. The factory checks the trusted selected Plugin identity and resolves only from the installer-owned typed registry; imported manifests cannot supply handler callables, endpoints, or credentials. `resource-overlay-store` registers fixed profile-view read/write/history/soft-delete tools with one-MiB payload limits and compare-and-swap revisions; it exposes no profile path or ID argument. Its implementation is source-backed; contract fixtures exercise the installer-owned CAS store. The `mcp-registry` and `agent37-discovery` adapters provide fixed read-only public search/metadata inspection through the root `registry.read` effect: service IDs, origins, capabilities and HTTP GET routes are compiled in the installer; requests contain only canonical bounded query/page fields; redirects, retries, private-classified contexts and oversized/non-JSON responses fail closed. Requests are capped at 256 canonical query bytes, 30 entries per page and three pages (90 entries maximum), with a two-MiB response cap and nine-second whole-operation deadline. MCP Registry paths follow its [official API reference](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/official-registry-api.md) and [OpenAPI specification](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/openapi.yaml): list search/page uses `/v0.1/servers`, while named version routes have no pagination parameters. Agent37 search/detail paths are fixed to `www.agent37.com/api/skills/search` and `/api/skills/{id}`; search results' instruction content is stripped, detail IDs must be returned 32-hex identifiers, and retained fields are scalar metadata only. All registry results are labeled untrusted public source data. These handlers do not import or install registry entries, create enrollments, or activate accounts. The root authority must separately enroll the exact effects. Encrypted overlay backup remains unavailable pending the lifecycle backup API. All Plugin native module paths remain absent until an installer-owned loader can inject the protected runtime context; handler resolvability is not native discovery or invocation. The other 15 Plugin handlers remain source-specific and pending; each adapter crosswalk entry now states its concrete missing runtime/account capability and next enrollment or implementation step. Plugin IDs: `agent-live-wallet`, `agent-sandbox-wallet`, `agent37-discovery`, `authentik-authorization`, `cloudflare-homelab`, `codex`, `composio`, `ebook-toolchain`, `epic-kanban`, `financial-data-hub`, `financial-execution-gateway`, `github`, `homelab-ops-broker`, `kobo-bridge`, `mcp-registry`, `resource-overlay-store`, `voice-pipeline`, and `web`.
+
+## Jarvis (`adewaskar/jarvis`, R0067)
+
+Jarvis stays a separately selected, on-demand voice application; it does not
+replace Hermes as the coordinator. The inspected source is pinned to
+`1c4016afdf86f7043efc6882ceffef84ad0d8783` (MIT). Its pinned README SHA-256 is
+`adb82caba1f6c000b502e08620b6b67a89e866eeab7538303e9847287f86c385`. The
+pinned package requires Node.js 20 or newer and the Claude Agent SDK. The
+upstream bridge uses the authenticated Claude Code login; Chrome or Edge is
+needed for microphone access. ElevenLabs is optional. The upstream source
+requires review for Pi ARM64 before installation.
+
+The adapter sends requests through Hermes' shared `Dispatcher`, so the normal
+sensitivity, route, retry, cancellation, and metered-budget checks still apply.
+Its deterministic WAV/text fixture uses an in-process recording transport and
+a local fixture route; it does not open a socket, access a microphone, or
+contact a model provider.
+
+Voice service activation is denied unless Jarvis was explicitly selected, the
+Claude Code account is confirmed eligible, and the Claude Agent SDK, Node.js,
+browser, and isolated runtime prerequisites are verified. Unknown account
+eligibility also denies activation. The pinned upstream expects Claude Code
+login; use its official sign-in flow on an enrolled target to verify that
+requirement. If that account is unavailable, keep automatic voice inference
+disabled. An API-backed replacement needs separate compatibility review.
+Never extract browser cookies, scrape login sessions, impersonate an identity,
+or use an unofficial web-to-API bridge.
+
+The fixture proves only the local dispatcher and activation gate. It does not
+prove source installation, voice/audio dependencies, Claude Code
+authentication, provider reachability, ARM64 support, or operation on a Pi.
+Those states remain pending under `B-ACCOUNTS` and `B-TARGET`; Jarvis remains
+disabled until they are verified.
