@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import ctypes
 import hashlib
 import hmac
 import json
@@ -19,6 +20,7 @@ import select
 import shutil
 import stat
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -817,6 +819,7 @@ class ManagedProcessEffectHandler:
             else:
                 self._write_native_file(destination / source.name, source.read_bytes(), 0o444)
         self._make_native_tree_readonly(stage)
+        self._protect_native_staging_mount(stage)
         parent = target.parent
         self._ensure_root_runtime_directory(parent, 0o711)
         try:
@@ -828,6 +831,57 @@ class ManagedProcessEffectHandler:
             if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022):
                 raise AuthorityDenied("native.mount", "derived native mountpoint has unsafe custody")
         return stage
+
+    @staticmethod
+    def _mount_call(source: Path, target: Path, flags: int) -> None:
+        """Apply a Linux mount operation to one root-owned staging path."""
+        libc = ctypes.CDLL(None, use_errno=True)
+        mount = libc.mount
+        mount.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+                          ctypes.c_ulong, ctypes.c_char_p)
+        mount.restype = ctypes.c_int
+        result = mount(os.fsencode(source), os.fsencode(target), None, flags, None)
+        if result != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error), str(target))
+
+    @classmethod
+    def _protect_native_staging_mount(cls, stage: Path) -> None:
+        """Give the immutable staging tree its own private restricted mount.
+
+        systemd's BindReadOnlyPaths has no syntax for per-bind nosuid/nodev
+        mount options. Prepare those flags on a self-bind before handing the
+        source to systemd; the service then gets a second read-only bind.
+        """
+        if not sys.platform.startswith("linux"):
+            raise AuthorityDenied("native.mount", "native package mounts require Linux mount namespaces")
+        info = stage.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222:
+            raise AuthorityDenied("native.mount", "native staging directory is not sealed")
+        ms_bind, ms_rec = 4096, 16384
+        ms_private = 1 << 18
+        ms_remount, ms_readonly, ms_nosuid, ms_nodev, ms_noexec = 32, 1, 2, 4, 8
+        cls._mount_call(stage, stage, ms_bind | ms_rec)
+        try:
+            cls._mount_call(stage, stage, ms_private | ms_rec)
+            cls._mount_call(stage, stage, ms_bind | ms_remount | ms_readonly |
+                            ms_nosuid | ms_nodev | ms_noexec)
+        except BaseException:
+            try:
+                cls._umount_native_staging(stage)
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _umount_native_staging(stage: Path) -> None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        umount2 = libc.umount2
+        umount2.argtypes = (ctypes.c_char_p, ctypes.c_int)
+        umount2.restype = ctypes.c_int
+        if umount2(os.fsencode(stage), 0) != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error), str(stage))
 
     @staticmethod
     def _ensure_root_runtime_directory(path: Path, mode: int) -> None:
@@ -941,6 +995,7 @@ class ManagedProcessEffectHandler:
         info = stage.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
             raise AuthorityDenied("native.cleanup", "native staging tree custody changed")
+        ManagedProcessEffectHandler._umount_native_staging(stage)
         for current, dirs, files in os.walk(stage, topdown=False, followlinks=False):
             base = Path(current)
             for name in files:
@@ -1547,7 +1602,6 @@ class ManagedProcessEffectHandler:
                 # the other mount restrictions through its dedicated namespace
                 # properties so mountinfo reflects kernel-enforced flags.
                 properties.append("--property=PrivateMounts=yes")
-                properties.append("--property=NoSuidSgid=" + native_mount_receipt.mount_path)
                 properties.append("--property=NoExecPaths=" + native_mount_receipt.mount_path)
         except BaseException:
             os.close(parent_fd)
