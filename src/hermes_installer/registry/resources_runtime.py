@@ -112,6 +112,14 @@ class SelectedHermesProfileResolver(Protocol):
     def resolve_profile(self, profile_id: str) -> HermesProfileExecutionTarget | None: ...
 
 
+class PluginEffectsFacade(Protocol):
+    """Root-selected per-action effect dispatcher injected by trusted loader."""
+
+    def invoke(self, adapter_id: str, action_id: str, arguments: Mapping[str, Any],
+               idempotency_key: str | None = None,
+               opaque_confirmation_attestation_id: str | None = None) -> Mapping[str, Any]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class NativePluginRuntimeContext:
     """Only the trusted installer may construct this context for a plugin.
@@ -130,6 +138,7 @@ class NativePluginRuntimeContext:
     provider_dispatcher: object | None = None
     local_overlay_store: "ProfileOverlayView | None" = None
     profile_targets: SelectedHermesProfileResolver | None = None
+    plugin_effects: PluginEffectsFacade | None = None
 
 
 class HostContext(Protocol):
@@ -151,8 +160,9 @@ class BrokeredEffectResponse(Protocol):
 
 
 class AuthorityClient(Protocol):
-    def context(self, *, purpose: str, intent: str,
+    def context(self, *, purpose: str, intent: str, operation: str,
                 source_contexts: Sequence[HostContext] = (),
+                final_payload_digest: str | None = None,
                 trace_id: str | None = None, lease_seconds: float = 30.0,
                 cancelled: Callable[[], bool] | None = None) -> HostContext: ...
 
