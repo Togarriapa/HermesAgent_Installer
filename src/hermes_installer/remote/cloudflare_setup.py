@@ -1,7 +1,7 @@
 """Guarded, preflighted Cloudflare provisioning; public route is always last."""
 from __future__ import annotations
 import hashlib,re
-from dataclasses import dataclass,field
+from dataclasses import dataclass
 from typing import Any,Callable,Mapping
 from .cloudflare import CloudflareClient,CloudflareError
 from .config import RemoteSetup
@@ -16,13 +16,12 @@ class ProvisionedRemote:
     access_app_id:str
     identity_provider_id:str
     dns_record_id:str
-    runtime_token:str=field(repr=False,compare=False)
 
 class RemoteCloudflareProvisioner:
     """Only the caller-owned checkpoint callback persists state under process_lock."""
-    def __init__(self,client:CloudflareClient,setup:RemoteSetup,journal:RemoteJournal,*,checkpoint:Callable[[RemoteJournal],None],origin_ready:Callable[[],bool],gateway_port:int=8765):
+    def __init__(self,client:CloudflareClient,setup:RemoteSetup,journal:RemoteJournal,*,checkpoint:Callable[[RemoteJournal],None],origin_ready:Callable[[],bool],policy_read_check:Callable[[RemoteJournal],Any]|None=None,gateway_port:int=8765):
         self.client,self.setup,self.journal=client,setup,journal
-        self.checkpoint,self.origin_ready,self.gateway_port=checkpoint,origin_ready,gateway_port
+        self.checkpoint,self.origin_ready,self.policy_read_check,self.gateway_port=checkpoint,origin_ready,policy_read_check,gateway_port
         self.account,self.zone=setup.zone.account_id,setup.zone.zone_id
         self.marker="HermesInstaller:"+journal.operation_id
         self.tunnel_name="hermes-installer-"+hashlib.sha256((journal.operation_id+setup.hostname).encode()).hexdigest()[:20]
@@ -178,7 +177,9 @@ class RemoteCloudflareProvisioner:
             row=self._create(path,payload,lambda x:x.get("name")==host and x.get("comment")==payload["comment"],"DNS record","dns")
             rid=self._id(row); created=True
         self._save("dns","dns",rid,created); return rid
-    def provision(self):
+    def provision_protected(self, *, runtime_token_writer: Callable[[str], None] | None = None):
+        if not callable(runtime_token_writer):
+            raise CloudflareError("A protected tunnel-token file writer is required before tunnel or DNS activation")
         self._preflight() # no resource mutation before exact hostname conflicts are checked
         from .lifecycle import RemotePhase
         try:
@@ -189,20 +190,43 @@ class RemoteCloudflareProvisioner:
                 self.journal.phase=RemotePhase.ACCESS_READY
                 self.journal.completed.add("access_ready")
                 self.checkpoint(self.journal)
-            if not self.setup.policy_read_token_ref:
+            if not self.setup.policy_read_token_ref or not callable(self.policy_read_check):
                 self.journal.phase=RemotePhase.ACCESS_READY
                 self.journal.error_code="POLICY_READ_REFERENCE_REQUIRED"
                 self.journal.completed.add("resume:policy_read_token_ref")
                 self.checkpoint(self.journal)
                 raise PolicyReadReferenceRequired(
-                    "Owned Access setup is checkpointed; configure remote_desktop.policy_read_token_ref and resume before tunnel activation"
+                    "Owned Access setup is checkpointed; configure remote_desktop.policy_read_token_ref and its separate verifier before tunnel activation"
                 )
+            # Reverify the exact journal-owned app, complete policies and
+            # identity provider on each activation attempt. Setup-time discovery
+            # alone is not authority to publish the origin.
+            try:
+                if self.policy_read_check(self.journal) is not True:
+                    raise CloudflareError("Fresh protected Access policy verification did not approve activation")
+            except Exception:
+                self.journal.phase=RemotePhase.ACCESS_READY
+                self.journal.error_code="POLICY_READ_NOT_VERIFIED"
+                self.checkpoint(self.journal)
+                raise CloudflareError("Fresh protected Access policy verification failed; hostname remains unpublished") from None
+            self.journal.completed.add("policy_read_verified")
+            self.checkpoint(self.journal)
             if not self.origin_ready():raise CloudflareError("Loopback gateway is not ready; hostname remains unpublished")
             if self.journal.phase.value not in {RemotePhase.ORIGIN_READY.value,RemotePhase.TUNNEL_READY.value,RemotePhase.ACTIVE.value}:
                 self.journal.phase=RemotePhase.ORIGIN_READY
                 self.journal.completed.add("origin_ready")
                 self.checkpoint(self.journal)
             tunnel,token=self.ensure_tunnel()
+            try:
+                runtime_token_writer(token)
+            except Exception:
+                # Never include the token, callback exception, or path in the
+                # journal/error surface. Public routing has not been activated.
+                token = ""
+                raise CloudflareError("Protected tunnel-token storage failed; public hostname remains unpublished") from None
+            token = ""
+            self.journal.completed.add("runtime_token_stored")
+            self.checkpoint(self.journal)
             if self.journal.phase.value not in {RemotePhase.TUNNEL_READY.value,RemotePhase.ACTIVE.value}:
                 self.journal.phase=RemotePhase.TUNNEL_READY
                 self.journal.completed.add("tunnel_ready")
@@ -212,7 +236,7 @@ class RemoteCloudflareProvisioner:
             self.journal.error_code=None
             self.journal.completed.add("active")
             self.checkpoint(self.journal)
-            return ProvisionedRemote(tunnel,app,idp,dns,token)
+            return ProvisionedRemote(tunnel,app,idp,dns)
         except PolicyReadReferenceRequired:
             # Preserve the exact journal-owned Access checkpoint so the setup
             # can resume when the separate verifier token reference is supplied.
@@ -223,6 +247,10 @@ class RemoteCloudflareProvisioner:
             try:self.rollback()
             except Exception:pass
             raise
+
+    def provision(self, *, runtime_token_writer: Callable[[str], None] | None = None):
+        """Compatibility name; protected verification and token storage are mandatory."""
+        return self.provision_protected(runtime_token_writer=runtime_token_writer)
     def rollback(self):
         """Delete only journal-created, marker-matching resources in reverse order."""
         from .lifecycle import RemotePhase
