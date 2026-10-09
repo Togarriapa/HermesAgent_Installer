@@ -53,12 +53,21 @@ def receipt(operation: str, *, generation: str = "service-gen-4") -> dict:
                 "tree_file_manifest_sha256": "e" * 64},
         ]
     value = {"schema": 1, "receipt_id": "build-receipt-1", "build_target_id": target,
-        "build_generation": generation, "service_generation_digest": "f" * 64,
+        "enrollment_id": "enroll-1", "build_generation": generation, "operation_id": operation,
+        "service_generation_digest": "f" * 64,
         "recipe_digest": "1" * 64, "source_artifact_id": source_id, "source_sha256": source_sha,
         "toolchain_artifact_id": "toolchain-arm64", "toolchain_sha256": "2" * 64,
         "builder_artifact_id": "builder-fixed", "builder_sha256": "3" * 64,
         "process_identity_digest": "4" * 64, "terminal_success_record_id": "terminal-1",
-        "output_records": outputs, "issued_monotonic": 100.0, "expires_monotonic": 110.0,
+        "output_records": outputs,
+        "execution": {"process_id": "process-1", "uid": 1002, "pid": 456,
+            "start_ticks": 123456, "exit_code": 0, "cleanup_verified": True,
+            "started_monotonic": 99.0, "finished_monotonic": 99.5,
+            "kernel_limits": {"PrivateNetwork": "yes", "ProtectSystem": "strict"},
+            "cgroup_id": "unit-1", "mount_namespace_inode": 321,
+            "network_namespace_inode": 654, "bounded_log_digest": "9" * 64,
+            "log_bytes": 128},
+        "issued_monotonic": 100.0, "expires_monotonic": 110.0,
         "receipt_digest": "0" * 64, "root_signature": "fixture-only-not-a-signature"}
     unsigned = {key: item for key, item in value.items()
         if key not in {"receipt_digest", "root_signature"}}
@@ -103,6 +112,20 @@ class ModelBuildPipelineTests(unittest.TestCase):
                 with self.assertRaisesRegex(AuthorityDenied, message):
                     parse_native_build_receipt(response, operation_id=COLIBRI_BUILD,
                         enrollment_id="enroll-1", generation="service-gen-4", now=lambda: 101.0)
+
+    def test_build_receipt_requires_terminal_success_and_verified_cleanup(self) -> None:
+        for field, value in (("exit_code", 1), ("cleanup_verified", False)):
+            body = receipt(COLIBRI_BUILD)
+            body["execution"][field] = value
+            unsigned = {key: item for key, item in body.items()
+                if key not in {"receipt_digest", "root_signature"}}
+            body["receipt_digest"] = hashlib.sha256(json.dumps(unsigned, sort_keys=True,
+                separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+            response = BrokeredEffectResponse(200, json.dumps(body).encode(),
+                {"content-type": "application/json"}, "build-receipt-1")
+            with self.subTest(field=field), self.assertRaisesRegex(AuthorityDenied, "terminal process evidence|bounded custody"):
+                parse_native_build_receipt(response, operation_id=COLIBRI_BUILD,
+                    enrollment_id="enroll-1", generation="service-gen-4", now=lambda: 101.0)
 
     def test_build_client_never_dispatches_unknown_recipe_or_cancellation(self) -> None:
         class Client:

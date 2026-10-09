@@ -29,11 +29,11 @@ _BUILD_TARGETS = {
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9_.:-]{1,256}\Z")
 _RECEIPT_FIELDS = {
-    "schema", "receipt_id", "build_target_id", "build_generation",
+    "schema", "receipt_id", "build_target_id", "enrollment_id", "build_generation", "operation_id",
     "service_generation_digest", "recipe_digest", "source_artifact_id",
     "source_sha256", "toolchain_artifact_id", "toolchain_sha256",
     "builder_artifact_id", "builder_sha256", "process_identity_digest",
-    "terminal_success_record_id", "output_records", "issued_monotonic",
+    "terminal_success_record_id", "output_records", "execution", "issued_monotonic",
     "expires_monotonic", "receipt_digest", "root_signature",
 }
 
@@ -179,11 +179,35 @@ def parse_native_build_receipt(response: BrokeredEffectResponse, *, operation_id
         raise AuthorityDenied("model-build.receipt", "root build receipt fields are incomplete or unexpected")
     source_id, source_sha = _BUILD_SOURCE_PINS[operation_id]
     target = _BUILD_TARGETS[operation_id]
-    if (value.get("build_target_id") != target or value.get("build_generation") != generation
+    if (value.get("build_target_id") != target or value.get("enrollment_id") != enrollment_id
+            or value.get("build_generation") != generation or value.get("operation_id") != operation_id
             or value.get("source_artifact_id") != source_id or value.get("source_sha256") != source_sha
             or value.get("receipt_id") != response.receipt_id
             or not isinstance(response.receipt_id, str) or not response.receipt_id):
         raise AuthorityDenied("model-build.binding", "build receipt does not match the selected pinned source and generation")
+    execution = value.get("execution")
+    execution_fields = {"process_id", "uid", "pid", "start_ticks", "exit_code", "cleanup_verified",
+        "started_monotonic", "finished_monotonic", "kernel_limits", "cgroup_id",
+        "mount_namespace_inode", "network_namespace_inode", "bounded_log_digest", "log_bytes"}
+    if not isinstance(execution, dict) or set(execution) != execution_fields:
+        raise AuthorityDenied("model-build.execution", "root build receipt lacks exact terminal process evidence")
+    if (not isinstance(execution["process_id"], str) or not execution["process_id"]
+            or type(execution["uid"]) is not int or execution["uid"] < 0
+            or type(execution["pid"]) is not int or execution["pid"] <= 0
+            or type(execution["start_ticks"]) is not int or execution["start_ticks"] <= 0
+            or execution["exit_code"] != 0 or type(execution["exit_code"]) is not int
+            or execution["cleanup_verified"] is not True
+            or type(execution["started_monotonic"]) not in (int, float)
+            or type(execution["finished_monotonic"]) not in (int, float)
+            or not 0 < execution["started_monotonic"] < execution["finished_monotonic"]
+            or not isinstance(execution["kernel_limits"], dict)
+            or not isinstance(execution["cgroup_id"], str) or not execution["cgroup_id"]
+            or type(execution["mount_namespace_inode"]) is not int or execution["mount_namespace_inode"] <= 0
+            or type(execution["network_namespace_inode"]) is not int or execution["network_namespace_inode"] <= 0
+            or type(execution["log_bytes"]) is not int or execution["log_bytes"] < 0):
+        raise AuthorityDenied("model-build.execution", "build did not exit successfully under verified bounded custody")
+    _digest(execution["bounded_log_digest"], "bounded build log")
+    finished = execution["finished_monotonic"]
     for key in ("service_generation_digest", "recipe_digest", "source_sha256", "toolchain_sha256",
                 "builder_sha256", "process_identity_digest", "receipt_digest"):
         _digest(value.get(key), key)
@@ -194,7 +218,7 @@ def parse_native_build_receipt(response: BrokeredEffectResponse, *, operation_id
     issued, expires = value.get("issued_monotonic"), value.get("expires_monotonic")
     current = now()
     if (type(issued) not in (int, float) or type(expires) not in (int, float)
-            or not 0 < issued <= current < expires or expires - issued > 600):
+            or not 0 < finished <= issued <= current < expires or expires - issued > 600):
         raise AuthorityDenied("model-build.expired", "root build receipt is expired or outside its bounded lease")
     records = value.get("output_records")
     expected = _expected_outputs(operation_id)
