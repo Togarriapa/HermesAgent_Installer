@@ -540,26 +540,15 @@ class ManagedProcessHandle:
             await self.stop("bounded lifetime expired", timeout=5.0)
 
     def _control_sync(self, operation: str, fields: Mapping[str, object], timeout: float) -> dict[str, object]:
-        payload = json.dumps({"schema": 1, "process_id": self.identity.process_id,
-                              "generation": self.generation, **fields},
-                             sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
-        context = self.authority.context(
-            purpose="managed-process-control", intent=f"{operation}:{self.identity.pid}:{self.generation}",
-            source_contexts=(self.spec.authority_context,) if self.spec.authority_context else (),
-            trace_id=self.spec.authority_context.trace_id if self.spec.authority_context else None,
-            lease_seconds=min(5.0, max(.1, timeout)),
-            final_payload_digest=canonical_digest(payload), operation=operation)
-        verb = operation.removeprefix("process.")
-        if verb not in {"status", "read", "write", "stop"}:
-            raise ManagedProcessError("process control verb is not fixed")
-        target = (f"hermes-profile-control:{self.spec.profile_id}:"
-                  f"{Path(self.spec.data_root).resolve(strict=True)}:{verb}")
-        grant = self.authority.authorize_effect(
-            context, capability="hermes-process-control", target=target,
-            request_digest=canonical_digest(payload), retry_index=0)
-        response = self.authority.process_control(
-            grant, operation=operation, target=target, payload=payload,
-            timeout=min(5.0, max(.1, timeout)))
+        from .authority.process_controls import process_control_operation
+
+        response = process_control_operation(
+            self.authority, operation,
+            process_id=self.identity.process_id,
+            generation=self.generation,
+            fields=fields,
+            timeout=min(30.0, max(.1, timeout)),
+        )
         if response.status != 200:
             raise ManagedProcessError("root process control denied the operation")
         try:
