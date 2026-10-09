@@ -229,14 +229,18 @@ class RemoteConnectorEffectAuthorityContracts(unittest.TestCase):
         binding = PrincipalBinding(
             profile_uid, "native-principal", "native-desktop", "native-namespace",
             frozenset({"hermes-service-connect"}))
-        rule = EffectRule("hermes-service-connect", "connector.open", "xpra-native")
+        operations = ("connector.open", "connector.read", "connector.write", "connector.close")
+        rules = {("hermes-service-connect", operation, "xpra-native"):
+                 EffectRule("hermes-service-connect", operation, "xpra-native")
+                 for operation in operations}
         handler = lambda **_: {"status": 200, "body": b"", "headers": {}, "receipt_id": "fixture"}
         generation_digest = ["f" * 64]
         service = AuthorityService(
             signing_key=b"k" * 32, key_id="native-service-authority",
             bindings_by_uid={profile_uid: binding},
-            rules={(rule.capability, rule.operation, rule.target): rule},
-            handlers={(rule.operation, rule.target): handler}, policy=_HI12Policy(),
+            rules=rules,
+            handlers={(operation, "xpra-native"): handler for operation in operations},
+            policy=_HI12Policy(),
             profile_generations={"native-desktop": "desktop-generation-1"})
         hi12 = AuthorityServiceHI12Adapter(
             service, boot_epoch=lambda: "boot-epoch-1",
@@ -254,15 +258,29 @@ class RemoteConnectorEffectAuthorityContracts(unittest.TestCase):
                 auth, self.binding, "connector.open", self._open_payload(), 0,
                 peer_uid=1002, peer_pid=200, peer_pidfd=8)
 
-        fresh = authority.issue_remote_connector_effect(
-            self.binding, "connector.open", self._open_payload(), 0,
+        import base64
+        frame_binding = replace(self.binding, next_sequence=4,
+                                frame_deadline_monotonic=self.now + 4)
+        self.current_binding = frame_binding
+        frame_body = {"schema": 1, "target_id": frame_binding.target_id,
+                      "route_id": frame_binding.route_id,
+                      "connector_id": frame_binding.connector_handle,
+                      "session_id": frame_binding.session_id,
+                      "generation": frame_binding.native_generation,
+                      "deadline": frame_binding.frame_deadline_monotonic,
+                      "sequence": 4, "data_b64": base64.b64encode(b"abc").decode()}
+        frame_payload = canonical_bytes(frame_body)
+        frame_auth = authority.issue_remote_connector_effect(
+            frame_binding, "connector.write", frame_payload, 4, 3,
             peer_uid=1002, peer_pid=200, peer_pidfd=8)
-        generation_digest[0] = "0" * 64
-        with self.assertRaises(AuthorityDenied):
-            authority.consume_remote_connector_effect(
-                fresh, self.binding, "connector.open", self._open_payload(), 0,
-                peer_uid=1002, peer_pid=200, peer_pidfd=8)
-        self.assertEqual(len(service._nonces), 1)
+        self.assertTrue(authority.consume_remote_connector_effect(
+            frame_auth, frame_binding, "connector.write", frame_payload, 4,
+            peer_uid=1002, peer_pid=200, peer_pidfd=8))
+        self.assertEqual(len(service._nonces), 2)
+
+        # Both socket open and a framed write must cross HI12, and each
+        # accepted one-use HI12 grant is spent exactly once.
+        self.assertEqual(len(service._nonces), 2)
 
     def _authority_for_hi12(self, hi12):
         return RemoteConnectorEffectAuthority(

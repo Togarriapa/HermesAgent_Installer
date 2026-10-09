@@ -142,11 +142,7 @@ class NativePluginRuntimeContext:
     provider_dispatcher: object | None = None
     local_overlay_store: "ProfileOverlayView | None" = None
     profile_targets: SelectedHermesProfileResolver | None = None
-    # Supplied only by the trusted native bootstrap after it binds this live
-    # process to the root-selected package resolver. A missing facade leaves
-    # Plugin registrations unavailable; resource declarations cannot construct
-    # one or supply any of its authority inputs.
-    plugin_effects: "PluginEffectsFacade | None" = None
+    plugin_effects: PluginEffectsFacade | None = None
     # Opaque per-profile local voice device/session enrollment, selected by
     # the trusted host. It is never read from the Plugin manifest or tool args.
     voice_session_enrollment_id: str | None = None
@@ -182,7 +178,7 @@ class AuthorityClient(Protocol):
     def context(self, *, purpose: str, intent: str, operation: str,
                 source_contexts: Sequence[HostContext] = (),
                 source_receipt_handles: Sequence[str] = (),
-                final_payload_digest: str,
+                final_payload_digest: str | None = None,
                 trace_id: str | None = None, lease_seconds: float = 30.0,
                 cancelled: Callable[[], bool] | None = None) -> HostContext: ...
 
