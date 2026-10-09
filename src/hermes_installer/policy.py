@@ -171,6 +171,8 @@ def normalize_chat_request(payload: bytes, model: str, output_token_limit: int) 
         raise PolicyDenied("request.tools", "Tool choice must select an ordinary function tool")
     if "n" in value and (not isinstance(value["n"], int) or value["n"] < 1):
         raise PolicyDenied("request.bounds", "Completion count must be a positive integer")
+    if value.get("plugins") not in (None, []):
+        raise PolicyDenied("request.plugins", "Caller-selected provider plugins are disabled")
     value["n"] = 1
     value["model"] = model
     value.pop("max_completion_tokens", None)

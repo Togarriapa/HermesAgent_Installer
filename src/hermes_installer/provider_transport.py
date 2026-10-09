@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from .credentials import CredentialError, resolve_secret
 from .network import BoundedNetwork, NetworkError
-from .policy import PolicyDenied, ProviderResponse, Route
+from .policy import PolicyDenied, ProviderResponse, Route, normalize_chat_request
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1"
 ALLOWED_MODELS = frozenset({"nvidia/nemotron-3-ultra-550b-a55b:free"})
@@ -58,24 +58,7 @@ class OpenRouterTransport:
             raise PolicyDenied("route.model", "Model is not approved for the public OpenRouter route")
         if not 0 <= output_limit <= 65_536:
             raise PolicyDenied("request.bounds", "Output token limit is outside the supported range")
-        try:
-            value = json.loads(payload)
-        except (ValueError, UnicodeDecodeError):
-            raise PolicyDenied("request.format", "Provider request must be valid JSON") from None
-        if not isinstance(value, dict) or not isinstance(value.get("messages"), list):
-            raise PolicyDenied("request.format", "Provider request must contain a messages array")
-        # Never trust caller-selected model/output fields from serialized JSON.
-        value["model"] = model
-        value.pop("max_completion_tokens", None)
-        value.pop("max_output_tokens", None)
-        value["max_tokens"] = output_limit
-        try:
-            encoded = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        except (TypeError, ValueError, UnicodeEncodeError):
-            raise PolicyDenied("request.format", "Provider request could not be serialized safely") from None
-        if len(encoded) > MAX_REQUEST_BYTES:
-            raise PolicyDenied("request.bounds", "Normalized provider request exceeds its byte limit")
-        return encoded
+        return normalize_chat_request(payload, model, output_limit)
 
     def __call__(self, route: Route, model: str, payload: bytes, *, output_token_limit: int, timeout: float, trace_id: str) -> ProviderResponse:
         if route.name != "openrouter-nemotron-free" or route.endpoint.rstrip("/") != OPENROUTER_ENDPOINT:
