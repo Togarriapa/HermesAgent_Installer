@@ -1385,15 +1385,27 @@ def _run_fixed(argv: list[str], *, cwd: Path, timeout: float,
     # The only commands built by this module are an enrolled interpreter and its venv/pip verbs.
     if not Path(argv[0]).is_absolute():
         raise AuthorityDenied("package.argv", "package interpreter path is not canonical")
+    network_drop_uid: int | None = None
+    network_drop_gid: int | None = None
     if network_isolated:
         if os.name != "posix" or not hasattr(os, "geteuid") or os.geteuid() != 0:
             raise AuthorityDenied("package.network-isolation", "offline package effects require root network-namespace custody")
+        if (type(run_as_uid) is not int or run_as_uid < 1
+                or type(run_as_gid) is not int or run_as_gid < 0):
+            raise AuthorityDenied("package.identity", "network-isolated package process requires an enrolled service identity")
         unshare = next((Path(candidate) for candidate in ("/usr/bin/unshare", "/bin/unshare")
                         if Path(candidate).exists()), None)
-        if unshare is None:
-            raise AuthorityDenied("package.network-isolation", "required Linux network namespace utility is unavailable")
+        setpriv = next((Path(candidate) for candidate in ("/usr/bin/setpriv", "/bin/setpriv")
+                        if Path(candidate).exists()), None)
+        if unshare is None or setpriv is None:
+            raise AuthorityDenied("package.network-isolation", "required Linux namespace or privilege-drop utility is unavailable")
         _secure_executable(unshare, 0)
-        argv = [str(unshare), "--net", "--", *argv]
+        _secure_executable(setpriv, 0)
+        network_drop_uid, network_drop_gid = run_as_uid, run_as_gid
+        argv = [str(unshare), "--net", "--", str(setpriv),
+                "--reuid", str(run_as_uid), "--regid", str(run_as_gid), "--clear-groups",
+                "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all",
+                "--bounding-set=-all", "--", *argv]
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
         raise AuthorityDenied("package.timeout", "fixed package operation has no live time budget")
     command_deadline = min(time.monotonic() + timeout, deadline if deadline is not None else float("inf"))
@@ -1405,7 +1417,7 @@ def _run_fixed(argv: list[str], *, cwd: Path, timeout: float,
     if remaining <= 0:
         raise AuthorityDenied("grant.stale", "fixed package operation lease expired before process start")
     identity: dict[str, Any] = {}
-    if run_as_uid is not None:
+    if run_as_uid is not None and network_drop_uid is None:
         if type(run_as_uid) is not int or run_as_uid < 1 or type(run_as_gid) is not int or run_as_gid < 0:
             raise AuthorityDenied("package.identity", "package subprocess identity is invalid")
         if not hasattr(os, "geteuid") or os.geteuid() != expected_uid or expected_uid != 0:
