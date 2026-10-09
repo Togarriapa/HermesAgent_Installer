@@ -78,8 +78,8 @@ def test_codex_adapter_passes_only_enrolled_workspace_and_prompt_to_managed_runn
         toolchain_lock_sha256 = "a" * 64
         architecture = "arm64"
 
-        def run_managed(self, *, workspace, prompt, timeout, cancelled):
-            self.seen = (workspace, prompt, timeout)
+        def run_managed(self, *, workspace, prompt, idempotency_key, timeout, cancelled):
+            self.seen = (workspace, prompt, idempotency_key, timeout)
             return {"exit_code": 0, "summary": "done"}
 
     runner = Runner()
@@ -89,14 +89,14 @@ def test_codex_adapter_passes_only_enrolled_workspace_and_prompt_to_managed_runn
     enrollment = SimpleNamespace(codex_workspaces={"assigned": binding}, profile_id="profile")
     result = adapter.invoke(enrollment=enrollment, action=SimpleNamespace(action_id="run"),
         arguments={"workspace_id": "assigned", "prompt": "inspect tests"}, credential=None,
-        idempotency_key=None, timeout=5, cancelled=lambda: False)
+        idempotency_key="run-1", timeout=5, cancelled=lambda: False)
     assert result["exit_code"] == 0
-    assert runner.seen == (binding, "inspect tests", 5)
+    assert runner.seen == (binding, "inspect tests", "run-1", 5)
 
     with pytest.raises(PluginEffectDenied):
         adapter.invoke(enrollment=enrollment, action=SimpleNamespace(action_id="run"),
             arguments={"workspace_id": "../../etc", "prompt": "inspect"}, credential=None,
-            idempotency_key=None, timeout=5, cancelled=lambda: False)
+            idempotency_key="run-1", timeout=5, cancelled=lambda: False)
 
 
 def test_codex_refuses_unpinned_or_non_arm64_runner():

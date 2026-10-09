@@ -47,9 +47,11 @@ connection creation is not implemented by this executor.
 
 The Codex adapter accepts a bounded prompt and a workspace ID that resolves to
 a root-selected workspace binding. It does not accept argv or caller paths and
-requires a root process broker that advertises the pinned ARM64 toolchain lock.
-The broker must provide host-attested workspace-result verification before a
-write can be marked committed; a textual success field is not sufficient.
+requires write authority and an idempotency key because execution can change
+workspace files. It also requires a root process broker that advertises the
+pinned ARM64 toolchain lock. The broker must provide host-attested
+workspace-result verification before a write can be marked committed; a
+textual success field is not sufficient.
 
 These implementations are not yet enabled in `AuthorityService`: root-owned
 account/secret enrollments, per-action schemas and verifiers, Codex managed

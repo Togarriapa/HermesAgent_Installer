@@ -100,6 +100,8 @@ class PluginActionEnrollment:
                 raise ValueError(f"plugin action {name} is invalid")
         if self.operation not in _OPERATIONS[self.adapter_id]:
             raise ValueError("plugin action operation is outside the adapter's fixed verbs")
+        if self.adapter_id == "codex" and not self.mutating:
+            raise ValueError("Codex execution can change its assigned workspace and must use write authority")
         if self.capability != f"plugin:{self.adapter_id}":
             raise ValueError("plugin action capability must be exact and adapter-scoped")
         if (type(self.request_bytes_limit) is not int or not 1 <= self.request_bytes_limit <= MAX_PLUGIN_REQUEST
@@ -231,7 +233,7 @@ class CodexManagedRunner(Protocol):
     toolchain_lock_sha256: str
     architecture: str
 
-    def run_managed(self, *, workspace: CodexWorkspaceBinding, prompt: str,
+    def run_managed(self, *, workspace: CodexWorkspaceBinding, prompt: str, idempotency_key: str,
                     timeout: float, cancelled: Callable[[], bool]) -> Mapping[str, Any]: ...
 
 
@@ -397,7 +399,7 @@ class CodexManagedRunnerAdapter:
 
     def invoke(self, *, enrollment, action, arguments, credential, idempotency_key,
                timeout, cancelled):
-        if credential is not None or idempotency_key is not None or action.action_id != "run":
+        if credential is not None or not isinstance(idempotency_key, str) or action.action_id != "run":
             raise PluginEffectDenied("codex.binding", "Codex runner accepts only host-managed task execution")
         workspace_id, prompt = arguments.get("workspace_id"), arguments.get("prompt")
         workspace = enrollment.codex_workspaces.get(workspace_id)
@@ -405,7 +407,7 @@ class CodexManagedRunnerAdapter:
                 or not isinstance(prompt, str) or not prompt.strip() or len(prompt.encode()) > 32_768):
             raise PluginEffectDenied("codex.workspace", "Codex task lacks an enrolled workspace or bounded prompt")
         try:
-            result = self.runner.run_managed(workspace=workspace, prompt=prompt,
+            result = self.runner.run_managed(workspace=workspace, prompt=prompt, idempotency_key=idempotency_key,
                                              timeout=timeout, cancelled=cancelled)
         except Exception:
             raise PluginEffectDenied("codex.failed", "managed Codex task runner failed") from None
