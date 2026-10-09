@@ -125,6 +125,38 @@
       "unsupported-field-reject"
     ],
     "semantics": "Root selected canonicalizer applies exact same protected policy before prepare digest and gateway effect. No independent late gateway mutation. Any policy revision invalidates old prepared handles. Ceiling is selected per compatible route, not inferred globally;4096 is permitted only as explicitly enrolled compatible-route bound. SIWC unsupported max_output_tokens stays rejected; never inject it. Caller values cannot widen protected limit.",
-    "evidence": "At/below/above ceiling producer and gateway byte equality, absent/altered policy or route schema denies, changed policy invalidates pending bridge; unsupported SIWC fields reject before bytes."
+    "evidence": "At/below/above ceiling producer and gateway byte equality, absent/altered policy or route schema denies, changed policy invalidates pending bridge; unsupported SIWC fields reject before bytes.",
+    "protected_records": {
+      "file": "/etc/hermes-installer/authority.json",
+      "top_level_key": "normalization_policies",
+      "record_fields": [
+        "id",
+        "revision",
+        "route_schema_id",
+        "output_limit_mode",
+        "output_limit_ceiling",
+        "canonicalizer_artifact_id",
+        "canonicalizer_sha256",
+        "normalization_policy_sha256"
+      ],
+      "digest": "normalization_policy_sha256 is SHA256 of canonical sorted compact JSON of preceding record fields EXCLUDING normalization_policy_sha256; canonicalizer_sha256 separately hashes exact installed reviewed canonicalizer bytes. Do not silently conflate module hash and policy hash.",
+      "selected_records": [
+        {
+          "id": "provider-output-reject-4096-v1",
+          "revision": 1,
+          "route_schema_id": "provider-chat-compatible-v1",
+          "output_limit_mode": "reject-over-ceiling",
+          "output_limit_ceiling": 4096
+        },
+        {
+          "id": "siwc-output-unsupported-v1",
+          "revision": 1,
+          "route_schema_id": "siwc-responses-preview-v1",
+          "output_limit_mode": "unsupported-field-reject",
+          "output_limit_ceiling": null
+        }
+      ],
+      "binding": "native_bridges join exact normalization policy ID/revision/hash and installed canonicalizer identity; policy missing route support/actual full artifact SHA unavailable. Same module can serve both records only if reviewed code implements both exact schemas. No planning partial digest is actual artifact pin."
+    }
   }
 }

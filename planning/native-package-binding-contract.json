@@ -146,5 +146,18 @@
       "parameters"
     ],
     "constraints": "Root resolves executable/cwd/child artifacts from protected catalog and opaque roots, verifies actual pins. argv_recipe finite literals and typed parameter placeholders only; no caller shell/argv/path/env/URL/executable/substitution. cwd_subpath protected enrollment literal validated containment/no symlinks. environment root finite sanitized literals/ref bindings, never caller env or secret argv. stdin_mode closed|bounded-typed-bytes per schema, max lifetime<=600s unless separately reviewed existing operation cap. Parameters exact schema extra fields forbidden, argument output bounds required. Operation recipe selection not independent authorization: fixed process.start effect target and exact operation_id/parameters digest in grant. Missing recipe/pin/build dependencies unavailable."
+  },
+  "protected_file_schema": {
+    "file": "/etc/hermes-installer/native-packages.json",
+    "owner_mode": "root-owned regular file0600, no symlink; parent root-owned no worker writes",
+    "top_level_fields": [
+      "schema=1",
+      "native_packages",
+      "source_issuers"
+    ],
+    "native_packages": "list exact package_record_fields above; adapter_records is list exact adapter_record_fields; unknown/duplicate keys or IDs denied. All package/adapter generations opaque strings. Resolve artifact IDs/root mount IDs only against existing protected enrollment catalogs.",
+    "source_issuers": "list records exactly issuer_channel_id,producer_profile_id,producer_role_artifact_id,producer_role_sha256,capture_schema_id,allowed_parent_channels,generation,observer_enrollment_id,source_action_ids",
+    "source_action_ids": "finite root-selected actions per channel; native-input=authenticated-input; tool-result=registered-tool-result; memory-result=registered-memory-result; effect-result=registered-effect-result; delegated-child=registered-child-result; schedule-event=root-timer-event. These are observer contract IDs, not caller selectable source kinds.",
+    "joins": "source observer_enrollment_id joins actual root registered ingress/backend result/job observer; channel/actions must match captured actual event/action. Package profile/generation joins root process_profiles/principals; adapter effect_enrollment_id joins selected_plugin_effects finite operation/schema/recipient. Missing actual observer/mount/closure identity remains unavailable; file presence not execution proof."
   }
 }
