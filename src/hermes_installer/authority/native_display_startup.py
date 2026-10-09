@@ -434,7 +434,7 @@ class XauthorityStartupRegistry:
             "executable_inode": lease.executable_inode,
             "executable_sha256": lease.executable_sha256,
             "process_uid": lease.uid, "process_gid": lease.gid,
-            "xauthority_path": str(prepared.path),
+            "xauthority_path": prepared.path,
             "xauthority_device": prepared.device, "xauthority_inode": prepared.inode,
             "xauthority_uid": prepared.owner_uid, "xauthority_gid": prepared.owner_gid,
             "xauthority_mode": prepared.mode, "xauthority_sha256": prepared.content_sha256,
@@ -582,6 +582,45 @@ class XauthorityStartupRegistry:
                 os.close(directory)
         except OSError:
             return
+
+    def revoke(self, receipt_handle: str) -> bool:
+        """Invalidate one sealed startup receipt and remove its exact cookie file."""
+        if not isinstance(receipt_handle, str) or not _OPAQUE.fullmatch(receipt_handle):
+            return False
+        with self._lock:
+            receipt = self._receipts.pop(receipt_handle, None)
+            pidfd = self._pidfds.pop(receipt_handle, None)
+        if pidfd is not None:
+            try:
+                os.close(pidfd)
+            except OSError:
+                pass
+        if receipt is None:
+            return False
+        try:
+            directory = os.open(receipt.xauthority_path.parent,
+                                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+            try:
+                fd = os.open(receipt.xauthority_path.name,
+                             os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                             | getattr(os, "O_CLOEXEC", 0), dir_fd=directory)
+                try:
+                    info = os.fstat(fd)
+                    if ((info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                         stat.S_IMODE(info.st_mode), self._hash_fd(fd))
+                            == (receipt.xauthority_device, receipt.xauthority_inode,
+                                receipt.xauthority_uid, receipt.xauthority_gid,
+                                receipt.xauthority_mode, receipt.xauthority_sha256)):
+                        os.unlink(receipt.xauthority_path.name, dir_fd=directory)
+                        os.fsync(directory)
+                finally:
+                    os.close(fd)
+            finally:
+                os.close(directory)
+        except OSError:
+            pass
+        return True
 
     def _open_and_check(self, prepared: PreparedXauthority | XauthorityStartupReceipt) -> int:
         path = prepared.path if isinstance(prepared, PreparedXauthority) else prepared.xauthority_path

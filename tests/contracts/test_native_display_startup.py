@@ -132,6 +132,18 @@ class XauthorityPreparationTests(unittest.TestCase):
             self.assertGreaterEqual(selected.pidfd, 0)
         finally:
             selected.close()
+        self.assertTrue(self.registry.revoke(receipt.receipt_handle))
+        self.assertFalse(prepared.path.exists())
+        with self.assertRaises(NativeDisplayStartupDenied):
+            self.registry.resolve_selected(
+                receipt.receipt_handle,
+                remote_enrollment_id=self.selection.remote_enrollment_id,
+                native_profile_id=self.selection.native_profile_id,
+                native_generation=self.selection.native_generation,
+                display_profile_id=self.selection.display_profile_id,
+                display_generation=self.selection.display_generation,
+                display_name=self.selection.display_name,
+            )
 
     def test_receipt_rejects_process_identity_drift(self):
         identity = {
