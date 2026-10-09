@@ -35,6 +35,25 @@ class TargetWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "does not include"):
             runner.run("AC02", target(), "a" * 40, "/tmp/evidence")
 
+    def test_directly_constructed_target_is_validated_before_authorizer_or_probe(self):
+        called = []
+        forged = AuthorizedTarget(
+            target_id="..",
+            platform="unsupported",
+            owner="",
+            authorization_reference="",
+            expires_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            allowed_acceptance=("AC01",),
+            manifest_sha256="invalid",
+        )
+        runner = TargetWorkflowRunner(
+            {"AC01": lambda *_: called.append("probe")},
+            authorize=lambda _: called.append("authorize") or True,
+        )
+        with self.assertRaisesRegex(ValueError, "target_id"):
+            runner.run("AC01", forged, "a" * 40, "/tmp/evidence")
+        self.assertEqual(called, [])
+
     def test_target_expiring_after_parse_is_rejected_before_authorizer_or_probe(self):
         called = []
         runner = TargetWorkflowRunner(

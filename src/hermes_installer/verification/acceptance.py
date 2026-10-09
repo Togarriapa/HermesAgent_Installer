@@ -23,12 +23,31 @@ class AuthorizedTarget:
 
     def ensure_current(self) -> None:
         """Recheck the signed enrollment expiry at each point of use."""
+        if not isinstance(self.expires_at, str):
+            raise ValueError("target authorization expiry is invalid")
         try:
             expiry = datetime.fromisoformat(self.expires_at.replace("Z", "+00:00"))
         except ValueError as exc:
             raise ValueError("target authorization expiry is invalid") from exc
         if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
             raise PermissionError("target authorization is expired or has no timezone")
+
+    def validate(self) -> None:
+        """Validate even directly constructed objects before authorization or effects."""
+        if not isinstance(self.target_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{2,127}", self.target_id):
+            raise ValueError("target_id must identify an enrolled target")
+        if self.platform not in {"fixture-x86_64", "linux-arm64", "raspberry-pi-5-arm64"}:
+            raise ValueError("target platform is not supported by the acceptance runner")
+        if not isinstance(self.owner, str) or not self.owner.strip() or not isinstance(self.authorization_reference, str) or not self.authorization_reference.strip():
+            raise ValueError("owner and authorization_reference are required")
+        if not isinstance(self.manifest_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", self.manifest_sha256):
+            raise ValueError("target manifest digest is required")
+        if not isinstance(self.allowed_acceptance, tuple) or not self.allowed_acceptance or any(
+            not isinstance(item, str) or not re.fullmatch(r"AC\d{2}", item)
+            for item in self.allowed_acceptance
+        ):
+            raise ValueError("explicit acceptance scope is required")
+        self.ensure_current()
 
     @classmethod
     def parse(cls, value: Mapping[str, object], *, manifest_sha256: str) -> "AuthorizedTarget":
@@ -74,7 +93,7 @@ class TargetWorkflowRunner:
         self._authorize = authorize
 
     def run(self, acceptance_id: str, target: AuthorizedTarget, candidate_sha: str, output_dir: str) -> WorkflowResult:
-        target.ensure_current()
+        target.validate()
         if not self._authorize(target):
             raise PermissionError("target enrollment or owner authorization could not be verified")
         # Authorization callbacks may perform bounded remote checks. Recheck
