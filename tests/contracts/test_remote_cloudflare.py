@@ -39,7 +39,9 @@ class RemoteProvisionerTests(unittest.TestCase):
    return ProtectedTunnelTokenReceipt(*[getattr(receipt,f) for f in ("schema","receipt_id","tunnel_enrollment_id","tunnel_id","generation","sink_id","file_device","file_inode","owner_uid","mode","issued_monotonic","expires_monotonic")],signer.sign(receipt.payload()))
   return signer,origin,writer
  def activation(self,p,writer=None,origin=None,signer=None):
-  signer,origin,stored_writer=self.receipts() if signer is None else (signer,origin,writer)
+  default_signer,default_origin,stored_writer=self.receipts()
+  signer=signer or default_signer
+  origin=origin or default_origin
   return p.provision_protected(runtime_token_writer=writer or stored_writer,
       tunnel_enrollment_id="tunnel-enrollment",tunnel_generation="cloudflared-generation",
       remote_enrollment_id="remote-enrollment",origin_receipt=origin,receipt_signer=signer)
