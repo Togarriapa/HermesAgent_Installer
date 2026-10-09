@@ -950,8 +950,10 @@ class AgentSandboxWalletImplementation(_PluginImplementation):
                 payload, confirmation = dict(args), None
             action = _bounded_action(payload["action"])
             # Refuse mainnet bridges in the adapter as well as at the root.
-            if write and (action.get("test_asset") is not True or action.get("mainnet_bridge") is not False):
-                raise FinanceDenied("sandbox writes must identify a test asset and deny mainnet bridge")
+            if write and action.get("mainnet_bridge") is not False:
+                raise FinanceDenied("sandbox writes must explicitly deny mainnet bridge")
+            if operation in {"sign-test-transaction", "send-test-asset", "deploy-test-contract", "reviewed-testnet-dapp"} and action.get("test_asset") is not True:
+                raise FinanceDenied("sandbox transaction, asset and deployment writes must identify test assets")
             return _effect(runtime_context, adapter_id=self.resource_id,
                 action_id="plugin.agent-sandbox-wallet.execute" if write else "plugin.agent-sandbox-wallet.read",
                 arguments={"network": network, "operation": operation, "action": action},

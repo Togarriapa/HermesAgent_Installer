@@ -400,6 +400,11 @@ class PluginFinanceTests(unittest.TestCase):
             sandbox_tool["handler"]({"network": "ethereum-sepolia", "operation": "send-test-asset",
                 "action": {"test_asset": True, "mainnet_bridge": True},
                 "opaque_confirmation_attestation_id": "attestation_handle_123456"})
+        with self.assertRaises(FinanceDenied):
+            sandbox_tool["handler"]({"network": "ethereum-sepolia", "operation": "create-account",
+                "action": {}, "opaque_confirmation_attestation_id": "attestation_handle_123456"})
+        sandbox_tool["handler"]({"network": "ethereum-sepolia", "operation": "create-account",
+            "action": {"mainnet_bridge": False}, "opaque_confirmation_attestation_id": "attestation_handle_123456"})
         sandbox_tool["handler"]({"network": "ethereum-sepolia", "operation": "send-test-asset",
             "action": {"test_asset": True, "mainnet_bridge": False},
             "opaque_confirmation_attestation_id": "attestation_handle_123456"})
