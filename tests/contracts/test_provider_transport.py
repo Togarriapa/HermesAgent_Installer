@@ -97,14 +97,19 @@ class ProviderTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyDenied, "credential"):
             fixture_gate.verify_credential("rotated-secret")
 
-        resolved, requests = [], []
+        resolved, networks = [], []
+        def network_factory(**kwargs):
+            network = RecordingNetwork(**kwargs)
+            networks.append(network)
+            return network
         transport = OpenRouterTransport(ref, secret_reader=lambda value: resolved.append(value) or "rotated-secret",
-            network_factory=lambda **kwargs: requests.append(kwargs), eligibility=fixture_gate)
+            network_factory=network_factory, eligibility=fixture_gate)
         with self.assertRaisesRegex(PolicyDenied, "credential"):
             transport(default_public_route(), MODEL, b'{"messages":[{"role":"user","content":"hi"}]}',
                 output_token_limit=8, timeout=2, trace_id="bound-key")
         self.assertEqual(resolved, [ref])
-        self.assertEqual(requests, [])
+        self.assertEqual(len(networks), 1)
+        self.assertEqual(networks[0].calls, [])
 
     def test_fixed_endpoint_secret_and_response_usage(self):
         transport,networks=self.make()
