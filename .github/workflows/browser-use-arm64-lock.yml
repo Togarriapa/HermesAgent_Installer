@@ -34,8 +34,15 @@ jobs:
           test "$(git -C "$source_dir" rev-parse HEAD)" = "$SOURCE_REVISION"
           cd "$source_dir"
           uv --version
-          uv lock --python "$TARGET_PYTHON" --python-platform "$TARGET_PLATFORM"
-          uv lock --locked --python "$TARGET_PYTHON" --python-platform "$TARGET_PLATFORM"
+          upstream_pyproject_sha256="$(git -C "$source_dir" show "$SOURCE_REVISION:pyproject.toml" | sha256sum | cut -d' ' -f1)"
+          printf 'UPSTREAM_PYPROJECT_SHA256=%s\n' "$upstream_pyproject_sha256" >> "$GITHUB_ENV"
+          cat >> pyproject.toml <<'TOML'
+          [tool.uv]
+          environments = ["sys_platform == 'linux' and platform_machine == 'aarch64' and python_version == '3.14'"]
+          required-environments = ["sys_platform == 'linux' and platform_machine == 'aarch64' and python_version == '3.14'"]
+          TOML
+          uv lock --python "$TARGET_PYTHON"
+          uv lock --locked --python "$TARGET_PYTHON"
           mkdir -m 0700 -p "$output_dir"
           cp pyproject.toml uv.lock "$output_dir/"
           python - <<'PY'
@@ -48,7 +55,7 @@ jobs:
               "python": os.environ["TARGET_PYTHON"],
               "platform": os.environ["TARGET_PLATFORM"],
               "uv_version": subprocess.check_output(["uv", "--version"], text=True).strip(),
-              "pyproject_sha256": hashlib.sha256((source / "pyproject.toml").read_bytes()).hexdigest(),
+              "pyproject_sha256": os.environ["UPSTREAM_PYPROJECT_SHA256"],
               "uv_lock_sha256": hashlib.sha256((source / "uv.lock").read_bytes()).hexdigest(),
               "generated_in_ci": True,
               "installed_dependencies": False,
