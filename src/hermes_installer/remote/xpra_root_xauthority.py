@@ -94,9 +94,8 @@ def _tree_sha256(root: Path) -> str:
     return _sha256(body)
 
 
-def _deterministic_archive_sha256(root: Path) -> str:
-    import io
-
+def deterministic_xpra_overlay_archive(root: Path) -> bytes:
+    """Return the exact bounded deterministic archive bytes for root CAS publication."""
     root = root.resolve(strict=True)
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode="w", format=tarfile.GNU_FORMAT) as archive:
@@ -125,7 +124,13 @@ def _deterministic_archive_sha256(root: Path) -> str:
                     raise XpraOverlayDenied("Xpra tree contains a special artifact member")
                 with path.open("rb") if stat.S_ISREG(info.st_mode) else _null_context() as source:
                     archive.addfile(item, source if stat.S_ISREG(info.st_mode) else None)
-    return _sha256(stream.getvalue())
+                if stream.tell() > 128 * 1024 * 1024:
+                    raise XpraOverlayDenied("transformed Xpra archive exceeds its bound")
+    return stream.getvalue()
+
+
+def _deterministic_archive_sha256(root: Path) -> str:
+    return _sha256(deterministic_xpra_overlay_archive(root))
 
 
 class _null_context:
