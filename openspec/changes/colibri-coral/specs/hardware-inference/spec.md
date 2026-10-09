@@ -222,3 +222,21 @@ Coral dependencies SHALL install only from a protected fixed package-set manifes
 
 - **WHEN** Coral installation selects the protected package set for its attested isolated runtime
 - **THEN** root installs only both exact fixed wheels offline or rejects incompatible/stale/tampered inputs before effects while preserving host, Hermes and prior component generation
+
+### Requirement: Exact selected Coral device custody (HW02)
+
+Coral inference SHALL bind a root-selected attested USB or PCIe device identity and current generation, expose only its exact device node under kernel isolation and bind delegate evidence to that same selection. Caller device selectors, wildcard permissions, ambiguous replacement and stale hotplug identity SHALL deny.
+
+#### Scenario: Changed or caller-selected protected input
+
+- **WHEN** caller supplies a device/build path or protected generation/source identity changes
+- **THEN** root denies before execution or device access and preserves prior owned generation; no native or hardware acceptance is inferred
+
+### Requirement: Fixed bounded source build profiles (HW03)
+
+Required native source builds SHALL use protected fixed build profiles over exact source/toolchain artifacts and reviewed immutable recipes, with isolated unprivileged bounded execution and attested outputs. Caller shell, flags, scripts, paths or URLs SHALL not select build authority; unavailable prerequisites SHALL remain incomplete.
+
+#### Scenario: Changed or caller-selected protected input
+
+- **WHEN** caller supplies a device/build path or protected generation/source identity changes
+- **THEN** root denies before execution or device access and preserves prior owned generation; no native or hardware acceptance is inferred

@@ -238,3 +238,12 @@ The supported ChatGPT-plan inference adapter SHALL follow the current documented
 
 - **WHEN** selected ChatGPT-plan inference returns partial events or lacks granted plan permission
 - **THEN** route reports incomplete/unavailable and does not claim successful inference, entitlement or use a paid fallback
+
+### Requirement: Pinned isolated OmniRoute runtime (PR02)
+
+OmniRoute SHALL run with an isolated protected Node runtime satisfying its pinned source engine contract and verified artifact/ABI/dependency lock. Caller/global Node paths or semver-only checks SHALL not establish native readiness. Build and service enrollment SHALL preserve original source/privacy/budget dispatch policy and keep unsupported runtime/dependencies incomplete.
+
+#### Scenario: Ineligible host Node
+
+- **WHEN** host Node version or writable module path is incompatible with the pinned source contract
+- **THEN** root uses only verified selected isolated runtime or reports incomplete; host/Hermes runtime and original privacy/budget policy remain preserved

@@ -1,0 +1,11 @@
+# One-use native producer gateway bridge v1
+
+Sol additive implementation/schema refinement of original R0054/R0058/R0109/R0111/R0130, HI08/HI09 and provider final payload policy. Add HI11/HI-T11/EV-HI11; prerequisites HI-T08/09. Frozen baseline/tag and original18AC unchanged.
+
+## Two-process native source bridge (HI11)
+
+Use planning/native-cross-process-bridge-contract.json. Actual topology has separate enrolled Hermes producer and gateway; source.capture receipts bound to producer SO_PEERCRED cannot simply become gateway context inputs. Producer prepare_native_event/native.event.prepare accepts only schema1/source receipt handles/purpose/intent/trace/retry. Root authenticates actual producer, observes complete captured bytes/closure and derives normalized final body with protected canonicalizer; selected gateway enrollment comes solely from root profile policy. Caller cannot select role/destination/PID or public sensitivity.
+
+Root retains opaque handle state bound to both current PIDFD/starttime/exe digest/enrollment/profile/generation identities, exact normalized digest/canonicalizer, complete receipts, fixed operation/target/recipient/retry and original minimum lease. Gateway dispatch_native_request/native.request.dispatch supplies only schema1/opaque handle/normalized payload/retry. Single root RPC authenticates gateway peer, atomically reserves one use, revalidates all bindings/current policy/account/budget, internally issues context+one-use grant and invokes the fixed provider.dispatch handler. Header conveys only opaque lookup reference; no portable effect grant, credential or worker classification. No worker-selected network destination.
+
+Replay/concurrent use, PID/generation/executable change, digest/canonicalizer mismatch, dropped private parent and expired/revoked state deny before bytes. Failed effect never restores a consumed admission. Retry needs newly prepared bridge/fresh authorization with original complete provenance; retained ancestry is not repeat effect permission. Watchdog cancels active output/egress at original lease/revocation. Primary/aux/title/tools/memory/background/schedules/children remain mandatory coverage; two-process positive native flow and hostile negatives are separate from fixtures. Existing HI08 private/unknown defaults and all original provider/18AC scope stay unchanged/open.
