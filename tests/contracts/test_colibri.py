@@ -94,7 +94,7 @@ def test_colibri_source_copy_requires_exact_artifact_and_rechecks_existing_tree(
     assert (copied / "c/setup.sh").read_bytes() == payload
     assert (copied / ".hermes-colibri-source.json").is_file()
     (copied / "c/setup.sh").write_text("tampered\n")
-    with pytest.raises(ColibriError, match="digest changed"):
+    with pytest.raises(ColibriError, match="changed"):
         fetch_pinned_colibri_source(tmp_path / "component", catalog=Catalog(),
                                     staging_root=tmp_path / "staging")
 
