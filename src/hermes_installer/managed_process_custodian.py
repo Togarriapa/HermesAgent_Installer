@@ -24,7 +24,7 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -225,6 +225,107 @@ class _Handle:
     # The immutable profile registered by the root daemon. ``profile`` may be a
     # derived record selecting one exact enrolled operation executable.
     registered_profile: ManagedProfileCustody | None = None
+    task_owned: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RootAdmittedTask:
+    """Root-only snapshot minted after consuming a resource child admission.
+
+    This DTO is never accepted from an authority RPC payload. The root task
+    executor creates it from its consumed admission handle and supplies it
+    directly to ``start_selected_task``.
+    """
+
+    handle_id: str
+    job_id: str
+    node_id: str
+    child_admission_id: str
+    attempt_index: int
+    backend_enrollment_id: str
+    resource_generation: str
+    profile_id: str
+    profile_generation: str
+    native_package_id: str
+    native_package_generation: str
+    process_enrollment_id: str
+    process_generation: str
+    operation_id: str
+    child_target_id: str
+    child_capability: str
+    task_body_recipe_id: str
+    task_request_schema_id: str
+    task_payload: bytes
+    task_payload_sha256: str
+    parent_closure_digest: str
+    expires_monotonic: float
+    stdin_sha256: str
+    stdin_size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedTaskHandle:
+    """Opaque root-only reference to a started task process; never put on wire."""
+
+    handle_id: str
+    generation: str
+
+
+@dataclass(frozen=True, slots=True)
+class RootTaskTerminalReceipt:
+    """Root-observed bounded task completion and cleanup facts."""
+
+    handle_id: str
+    task_handle_id: str
+    terminal_receipt_id: str
+    job_id: str
+    node_id: str
+    child_admission_id: str
+    attempt_index: int
+    backend_enrollment_id: str
+    resource_generation: str
+    profile_id: str
+    profile_generation: str
+    process_id: str
+    exit_code: int | None
+    timed_out: bool
+    cancelled: bool
+    started_monotonic: float
+    finished_monotonic: float
+    cgroup_identity: str
+    cgroup_empty: bool
+    main_pidfd_gone: bool
+    descendants_gone: bool
+    launcher_reaped: bool
+    cleanup_verified: bool
+    stdout: bytes
+    stderr: bytes
+    stdout_sha256: str
+    stderr_sha256: str
+    output_complete: bool
+    schema: int
+    state: str
+    observed_monotonic: float
+    stdout_size_bytes: int
+    stderr_size_bytes: int
+    parent_closure_digest: str
+
+
+@dataclass(slots=True)
+class _ManagedTaskState:
+    handle: _Handle
+    admission: RootAdmittedTask
+    deadline: float
+    stdin_deadline: float
+    cancelled: Callable[[], bool]
+    input_closed: bool = False
+    stdout: bytearray = field(default_factory=bytearray)
+    stderr: bytearray = field(default_factory=bytearray)
+    stdout_eof: bool = False
+    stderr_eof: bool = False
+    output_overflow: bool = False
+    consumed: bool = False
+    lock: threading.RLock = field(default_factory=threading.RLock)
 
 
 _LAUNCH_FIELDS = {
@@ -606,6 +707,7 @@ class ManagedProcessEffectHandler:
                  systemctl: Path = Path("/usr/bin/systemctl"),
                  artifact_resolver: Callable[[str, str], Any] | None = None,
                  native_package_resolver: Callable[[str, str], ManagedNativePackageMount | None] | None = None,
+                 task_admission_current: Callable[[RootAdmittedTask], bool] | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if not profiles or any(key != item.profile_id for key, item in profiles.items()):
             raise ValueError("root process custody requires an explicit profile registry")
@@ -615,7 +717,9 @@ class ManagedProcessEffectHandler:
         self.monotonic = monotonic
         self.artifact_resolver = artifact_resolver
         self.native_package_resolver = native_package_resolver
+        self.task_admission_current = task_admission_current
         self._handles: dict[str, _Handle] = {}
+        self._task_handles: dict[str, _ManagedTaskState] = {}
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
         self._lock = threading.RLock()
@@ -1198,7 +1302,8 @@ class ManagedProcessEffectHandler:
     def _start(self, profile: ManagedProfileCustody, context: HostContext,
                authorization: EffectAuthorization, payload: bytes, timeout: float,
                peer_pid: int, peer_pidfd: int | None,
-               cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+               cancelled: Callable[[], bool], *,
+               start_guard: Callable[[], bool] | None = None) -> Mapping[str, Any]:
         with self._lock:
             if (profile.profile_id in self._starting
                     or any(item.profile.profile_id == profile.profile_id for item in self._handles.values())):
@@ -1209,9 +1314,10 @@ class ManagedProcessEffectHandler:
                 return self.start_selected_operation(
                     profile, context, authorization, payload, timeout=timeout,
                     peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
+                    _start_guard=start_guard,
                 )
             return self._start_reserved(profile, context, authorization, payload, timeout,
-                                        peer_pid, peer_pidfd, cancelled)
+                                        peer_pid, peer_pidfd, cancelled, start_guard=start_guard)
         finally:
             with self._lock:
                 self._starting.discard(profile.profile_id)
@@ -1219,7 +1325,8 @@ class ManagedProcessEffectHandler:
     def start_selected_operation(self, profile: ManagedProfileCustody, context: HostContext,
                                  authorization: EffectAuthorization, payload: bytes, *,
                                  timeout: float, peer_pid: int, peer_pidfd: int | None,
-                                 cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+                                 cancelled: Callable[[], bool],
+                                 _start_guard: Callable[[], bool] | None = None) -> Mapping[str, Any]:
         """Resolve a selection-only worker request to one immutable root recipe.
 
         This method is called only after dispatch has checked the consumed
@@ -1323,7 +1430,316 @@ class ManagedProcessEffectHandler:
         }
         launch_bytes = json.dumps(launch, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
         return self._start_reserved(derived, context, authorization, launch_bytes, timeout,
-                                   peer_pid, peer_pidfd, cancelled, registered_profile=profile)
+                                   peer_pid, peer_pidfd, cancelled, registered_profile=profile,
+                                   start_guard=_start_guard)
+
+    def start_selected_task(self, profile: ManagedProfileCustody, context: HostContext,
+                            authorization: EffectAuthorization, selection_payload: bytes, *,
+                            task_admission: RootAdmittedTask, exact_stdin: bytes,
+                            expected_stdin_sha256: str, peer_pid: int,
+                            peer_pidfd: int, timeout: float,
+                            cancelled: Callable[[], bool]) -> ManagedTaskHandle:
+        """Start one admitted task and write/EOF its prompt before returning.
+
+        This is an internal root call, not a worker RPC. The resource ledger
+        must mint ``RootAdmittedTask`` only after consuming the one-use child
+        admission. The request carries only a selected recipe id; executable,
+        argv, environment and roots are resolved from the protected profile.
+        """
+        if (not isinstance(task_admission, RootAdmittedTask)
+                or not isinstance(exact_stdin, bytes) or len(exact_stdin) > 262144
+                or not isinstance(expected_stdin_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", expected_stdin_sha256)
+                or hashlib.sha256(exact_stdin).hexdigest() != expected_stdin_sha256
+                or task_admission.stdin_sha256 != expected_stdin_sha256
+                or task_admission.stdin_size_bytes != len(exact_stdin)
+                or not isinstance(task_admission.task_payload, bytes)
+                or len(task_admission.task_payload) > 262144
+                or hashlib.sha256(task_admission.task_payload).hexdigest()
+                   != task_admission.task_payload_sha256
+                or self.task_admission_current is None
+                or not self.task_admission_current(task_admission)):
+            raise AuthorityDenied("resource.task_admission", "root task admission or prompt digest is invalid")
+        if (profile.profile_id != task_admission.profile_id
+                or profile.generation != task_admission.profile_generation
+                or profile.enrollment_id != task_admission.process_enrollment_id
+                or profile.generation != task_admission.process_generation
+                or self.profiles.get(profile.profile_id) is not profile
+                or not isinstance(profile.operation_recipes, Mapping)
+                or task_admission.task_body_recipe_id not in profile.operation_recipes
+                or task_admission.expires_monotonic <= self.monotonic()
+                or task_admission.operation_id != authorization.operation
+                or task_admission.child_target_id != authorization.target
+                or task_admission.child_capability != authorization.capability
+                or context.profile_id != profile.profile_id
+                or context.enrollment_id != profile.enrollment_id
+                or context.generation != profile.generation
+                or context.operation != authorization.operation
+                or authorization.profile_id != profile.profile_id
+                or authorization.enrollment_id != profile.enrollment_id
+                or authorization.generation != profile.generation
+                or authorization.request_digest != canonical_digest(selection_payload)
+                or context.final_payload_digest != authorization.request_digest
+                or authorization.final_payload_digest != authorization.request_digest
+                or context.principal_id != authorization.principal_id
+                or context.namespace_id != authorization.namespace_id
+                or context.trace_id != authorization.trace_id
+                or context.intent_id != authorization.intent_id
+                or context.purpose != authorization.purpose
+                or context.sensitivity != authorization.sensitivity
+                or context.lineage_hash != authorization.lineage_hash
+                or context.policy_revision != authorization.policy_revision
+                or context.uid != authorization.uid
+                or peer_pid <= 0 or peer_pidfd < 0 or _pidfd_exited(peer_pidfd)
+                or self._pidfd_target(peer_pidfd) != peer_pid
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= 600):
+            raise AuthorityDenied("resource.task_binding", "selected task, grant, profile or parent is stale")
+        identifier_fields = ("handle_id", "job_id", "node_id", "child_admission_id",
+            "backend_enrollment_id", "resource_generation", "profile_id", "profile_generation",
+            "native_package_id", "native_package_generation", "process_enrollment_id",
+            "process_generation", "operation_id", "child_target_id", "child_capability",
+            "task_body_recipe_id", "task_request_schema_id")
+        if (any(not isinstance(getattr(task_admission, name), str)
+                    or not getattr(task_admission, name)
+                    or len(getattr(task_admission, name)) > 256
+                    or any(ord(char) < 32 or ord(char) == 127 for char in getattr(task_admission, name))
+                    for name in identifier_fields)
+                or type(task_admission.attempt_index) is not int or task_admission.attempt_index < 0
+                or not re.fullmatch(r"[0-9a-f]{64}", task_admission.parent_closure_digest)
+                or not math.isfinite(task_admission.expires_monotonic)):
+            raise AuthorityDenied("resource.task_admission", "root task admission fields are malformed")
+        try:
+            if len(task_admission.task_payload) > 262144:
+                raise ValueError("task body exceeds its bound")
+            task_request = json.loads(task_admission.task_payload.decode("ascii"))
+            if json.dumps(task_request, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=True, allow_nan=False).encode("ascii") != task_admission.task_payload:
+                raise ValueError("task body is not canonical JSON")
+            prompt_value = task_request.get("prompt")
+            if (set(task_request) != {"prompt"} or not isinstance(prompt_value, str)
+                    or prompt_value.encode("utf-8") != exact_stdin):
+                raise ValueError("task body does not resolve to the exact stdin bytes")
+        except (AuthorityDenied, UnicodeError, ValueError):
+            raise AuthorityDenied("resource.task_payload", "admitted task prompt is malformed or mismatched") from None
+        selection = self._json(selection_payload)
+        if (set(selection) != {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
+                or selection.get("schema") != 1
+                or selection.get("enrollment_id") != profile.enrollment_id
+                or selection.get("generation") != profile.generation
+                or selection.get("operation_id") != task_admission.task_body_recipe_id
+                or selection.get("parameters") != {}):
+            raise AuthorityDenied("resource.task_selection", "task recipe selection is not the admitted fixed operation")
+        recipe = profile.operation_recipes[task_admission.task_body_recipe_id]
+        if not isinstance(recipe, Mapping) or recipe.get("stdin_mode") != "bounded-typed-bytes":
+            raise AuthorityDenied("resource.task_stdin", "selected recipe does not admit one bounded stdin frame")
+        launch_deadline = min(float(task_admission.expires_monotonic),
+                              float(authorization.monotonic_expires_at), self.monotonic() + timeout)
+        if launch_deadline <= self.monotonic() or cancelled():
+            raise AuthorityDenied("resource.task_expired", "task expired before process admission")
+        response = self._start(profile, context, authorization, selection_payload,
+                               launch_deadline - self.monotonic(),
+                               peer_pid, peer_pidfd, cancelled,
+                               start_guard=lambda: bool(self.task_admission_current
+                                   and self.task_admission_current(task_admission)
+                                   and self.monotonic() < task_admission.expires_monotonic
+                                   and not cancelled()))
+        try:
+            body = json.loads(response["body"].decode("ascii"))
+            process_id = body["process_id"]
+            with self._lock:
+                handle = self._handles.get(process_id)
+            if (handle is None or handle.profile.profile_id != profile.profile_id
+                    or handle.profile.generation != profile.generation or handle.stopped):
+                raise AuthorityDenied("resource.task_start", "selected process did not remain registered")
+            handle.task_owned = True
+            task_deadline = min(float(task_admission.expires_monotonic),
+                                self.monotonic() + timeout, handle.expires)
+            state = _ManagedTaskState(handle, task_admission, task_deadline,
+                                      min(task_deadline, float(authorization.monotonic_expires_at)),
+                                      cancelled)
+            opaque_id = uuid.uuid4().hex
+            with self._lock:
+                self._task_handles[opaque_id] = state
+            root_handle = ManagedTaskHandle(opaque_id, profile.generation)
+            self.write_initial_task_stdin_and_close(root_handle, exact_stdin)
+            if (not self.task_admission_current(task_admission)
+                    or self.monotonic() >= state.deadline or cancelled()):
+                raise AuthorityDenied("resource.task_expired", "task admission expired while receiving stdin")
+            return root_handle
+        except BaseException:
+            if "opaque_id" in locals():
+                with self._lock:
+                    self._task_handles.pop(opaque_id, None)
+            if "handle" in locals() and handle is not None:
+                with contextlib.suppress(Exception):
+                    self._stop(handle, timeout=5.0)
+            raise
+
+    def write_initial_task_stdin_and_close(self, task_handle: ManagedTaskHandle,
+                                           exact_bytes: bytes) -> int:
+        """Write one complete bounded frame and close stdin within the start effect."""
+        state = self._resolve_task_handle(task_handle)
+        handle = state.handle
+        if (not isinstance(exact_bytes, bytes) or len(exact_bytes) > 262144
+                or hashlib.sha256(exact_bytes).hexdigest() != state.admission.stdin_sha256
+                or len(exact_bytes) != state.admission.stdin_size_bytes):
+            raise AuthorityDenied("resource.task_stdin", "stdin differs from the consumed admission")
+        with state.lock:
+            if state.input_closed or handle.launcher.stdin is None or handle.stopped:
+                raise AuthorityDenied("resource.task_stdin", "task stdin is already closed or unavailable")
+            fd = handle.launcher.stdin.fileno()
+            offset = 0
+            while offset < len(exact_bytes):
+                if (state.cancelled() or self.monotonic() >= state.stdin_deadline
+                        or _pidfd_exited(handle.parent_pidfd)
+                        or _pidfd_exited(handle.child_pidfd)
+                        or not self.task_admission_current
+                        or not self.task_admission_current(state.admission)):
+                    raise AuthorityDenied("resource.task_expired", "task admission expired during stdin delivery")
+                writable = []
+                reads = [stream.fileno() for stream, eof in (
+                    (handle.launcher.stdout, state.stdout_eof),
+                    (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof]
+                _, writable, _ = select.select(reads, [fd], [], min(.1, max(.001, state.stdin_deadline - self.monotonic())))
+                self._drain_task_streams(state, reads, timeout=0)
+                if fd in writable:
+                    try:
+                        count = os.write(fd, exact_bytes[offset:offset + 65536])
+                    except BlockingIOError:
+                        count = 0
+                    except OSError:
+                        raise AuthorityDenied("resource.task_stdin", "task closed stdin before receiving its frame") from None
+                    if count <= 0:
+                        continue
+                    offset += count
+                if state.output_overflow:
+                    raise AuthorityDenied("resource.task_output", "task exceeded its bounded output before stdin EOF")
+            handle.launcher.stdin.close()
+            state.input_closed = True
+            return offset
+
+    def wait_owned_task_terminal(self, task_handle: ManagedTaskHandle, *,
+                                 deadline_monotonic: float,
+                                 cancelled: Callable[[], bool]) -> RootTaskTerminalReceipt:
+        """Wait for one root-owned task and return truthful bounded cleanup proof."""
+        state = self._resolve_task_handle(task_handle)
+        if not state.input_closed:
+            raise AuthorityDenied("resource.task_stdin", "task has not received its one stdin frame and EOF")
+        if (isinstance(deadline_monotonic, bool) or not isinstance(deadline_monotonic, (int, float))
+                or not math.isfinite(deadline_monotonic)):
+            raise AuthorityDenied("resource.task_deadline", "task wait deadline is invalid")
+        # The root may pass the original task deadline even when the manager
+        # imposed a tighter per-operation cap. Intersect them; never extend.
+        state.deadline = min(state.deadline, float(deadline_monotonic))
+        handle, admission = state.handle, state.admission
+        timed_out = False
+        was_cancelled = False
+        with state.lock:
+            if state.consumed:
+                raise AuthorityDenied("resource.task_handle", "task terminal handle is already consumed")
+            try:
+                while True:
+                    current = bool(self.task_admission_current and self.task_admission_current(admission))
+                    if cancelled() or _pidfd_exited(handle.parent_pidfd) or not current:
+                        was_cancelled = True
+                        break
+                    if self.monotonic() >= state.deadline:
+                        timed_out = True
+                        break
+                    self._drain_task_streams(state, [stream.fileno() for stream, eof in (
+                        (handle.launcher.stdout, state.stdout_eof),
+                        (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof], timeout=.05)
+                    if state.output_overflow:
+                        break
+                    if (handle.launcher.poll() is not None and state.stdout_eof and state.stderr_eof):
+                        break
+                # Drain already buffered bytes after natural exit, without
+                # allowing an unbounded child or exceeding the root cap.
+                for _ in range(16):
+                    fds = [stream.fileno() for stream, eof in (
+                        (handle.launcher.stdout, state.stdout_eof),
+                        (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof]
+                    if not fds:
+                        break
+                    self._drain_task_streams(state, fds, timeout=.01)
+                    if handle.launcher.poll() is None:
+                        break
+                proof = self._stop(handle, timeout=5.0)
+                exit_code = handle.launcher.returncode
+                clean = bool(proof.cleanup_verified and proof.cgroup_empty
+                             and proof.main_pidfd_gone and proof.launcher_reaped
+                             and not self._pids(handle.cgroup))
+                result = RootTaskTerminalReceipt(
+                    handle_id=admission.handle_id, task_handle_id=task_handle.handle_id,
+                    terminal_receipt_id=uuid.uuid4().hex,
+                    job_id=admission.job_id,
+                    node_id=admission.node_id, child_admission_id=admission.child_admission_id,
+                    attempt_index=admission.attempt_index,
+                    backend_enrollment_id=admission.backend_enrollment_id,
+                    resource_generation=admission.resource_generation,
+                    profile_id=admission.profile_id, profile_generation=admission.profile_generation,
+                    process_id=handle.process_id, exit_code=exit_code,
+                    timed_out=timed_out, cancelled=was_cancelled,
+                    started_monotonic=handle.started, finished_monotonic=self.monotonic(),
+                    cgroup_identity=handle.cgroup, cgroup_empty=proof.cgroup_empty,
+                    main_pidfd_gone=proof.main_pidfd_gone, descendants_gone=proof.cgroup_empty,
+                    launcher_reaped=proof.launcher_reaped, cleanup_verified=clean,
+                    stdout=bytes(state.stdout), stderr=bytes(state.stderr),
+                    stdout_sha256=hashlib.sha256(state.stdout).hexdigest(),
+                    stderr_sha256=hashlib.sha256(state.stderr).hexdigest(),
+                    output_complete=(not state.output_overflow and state.stdout_eof and state.stderr_eof),
+                    schema=1,
+                    state=("cancelled" if was_cancelled else
+                           "failed" if timed_out or exit_code != 0 or state.output_overflow else "completed"),
+                    observed_monotonic=self.monotonic(),
+                    stdout_size_bytes=len(state.stdout), stderr_size_bytes=len(state.stderr),
+                    parent_closure_digest=admission.parent_closure_digest)
+                if not clean:
+                    raise AuthorityDenied("resource.task_cleanup", "task terminal cleanup was not proven")
+                state.consumed = True
+                with self._lock:
+                    self._task_handles.pop(task_handle.handle_id, None)
+                return result
+            except BaseException:
+                raise
+
+    def _resolve_task_handle(self, task_handle: ManagedTaskHandle) -> _ManagedTaskState:
+        if not isinstance(task_handle, ManagedTaskHandle):
+            raise AuthorityDenied("resource.task_handle", "root task handle has the wrong type")
+        with self._lock:
+            state = self._task_handles.get(task_handle.handle_id)
+        if (state is None or state.consumed or task_handle.generation != state.admission.profile_generation
+                or state.handle.process_id not in self._handles
+                or state.handle.stopped):
+            raise AuthorityDenied("resource.task_handle", "root task handle is stale or consumed")
+        return state
+
+    def _drain_task_streams(self, state: _ManagedTaskState, fds: list[int], *, timeout: float) -> None:
+        if not fds:
+            return
+        try:
+            ready, _, _ = select.select(fds, [], [], max(0.0, timeout))
+        except (OSError, ValueError):
+            raise AuthorityDenied("resource.task_output", "task output stream became invalid") from None
+        for fd in ready:
+            stream_name = "stdout" if state.handle.launcher.stdout and fd == state.handle.launcher.stdout.fileno() else "stderr"
+            try:
+                chunk = os.read(fd, 65536)
+            except BlockingIOError:
+                continue
+            except OSError:
+                chunk = b""
+            if not chunk:
+                setattr(state, stream_name + "_eof", True)
+                continue
+            target = getattr(state, stream_name)
+            if len(state.stdout) + len(state.stderr) + len(chunk) > state.handle.output_cap:
+                state.output_overflow = True
+                remaining = max(0, state.handle.output_cap - len(state.stdout) - len(state.stderr))
+                target.extend(chunk[:remaining])
+            else:
+                target.extend(chunk)
 
     @staticmethod
     def _validate_operation_parameters(parameters: Mapping[str, Any], schema: Mapping[str, Any]) -> dict[str, Any]:
@@ -1379,13 +1795,15 @@ class ManagedProcessEffectHandler:
                         authorization: EffectAuthorization, payload: bytes, timeout: float,
                         peer_pid: int, peer_pidfd: int | None,
                         cancelled: Callable[[], bool], *,
-                        registered_profile: ManagedProfileCustody | None = None) -> Mapping[str, Any]:
+                        registered_profile: ManagedProfileCustody | None = None,
+                        start_guard: Callable[[], bool] | None = None) -> Mapping[str, Any]:
         launch_deadline = min(self.monotonic() + max(0.0, timeout),
                               authorization.monotonic_expires_at)
 
         def require_live_start(parent_fd: int | None = None) -> None:
             if (cancelled() or self.monotonic() >= launch_deadline
                     or self.profiles.get(profile.profile_id) is not (registered_profile or profile)
+                    or (start_guard is not None and not start_guard())
                     or (parent_fd is not None and _pidfd_exited(parent_fd))):
                 raise AuthorityDenied("process.start_expired", "start grant, profile enrollment or caller expired before launch")
 
@@ -2145,6 +2563,24 @@ class ManagedProcessEffectHandler:
         except (OSError, ValueError, StopIteration):
             return None
 
+    def is_owned_active_process_handle(self, handle: _Handle) -> bool:
+        """Check exact object membership and current kernel liveness in this manager."""
+        if not isinstance(handle, _Handle):
+            return False
+        with self._lock:
+            current = self._handles.get(handle.process_id)
+            if (current is not handle or handle.stopped
+                    or handle.registered_profile is not self.profiles.get(handle.profile.profile_id)
+                    or handle.profile.generation != handle.registered_profile.generation
+                    or handle.expires <= self.monotonic()):
+                return False
+        try:
+            pid = self._pidfd_target(handle.child_pidfd)
+            return (pid == handle.pid and not _pidfd_exited(handle.child_pidfd)
+                    and pid in self._pids(handle.cgroup))
+        except (OSError, AuthorityDenied, ValueError):
+            return False
+
     def inspect_enrolled_process(self, profile_id: str,
                                  generation: str) -> RemoteOriginKernelProof | None:
         """Inspect exactly one root-registered live process for an enrolled profile.
@@ -2385,6 +2821,8 @@ class ManagedProcessEffectHandler:
                                                or self.monotonic() >= handle.expires):
             self._stop(handle, timeout=min(timeout, 5.0))
             raise AuthorityDenied("process.expired", "parent, lease or service lifetime ended")
+        if handle.task_owned:
+            raise AuthorityDenied("process.task_owned", "resource task streams are root-owned")
         if operation == "process.status":
             code = handle.launcher.poll()
             # Control status is deliberately non-identifying. Detailed host

@@ -784,6 +784,152 @@ class RootResourceJobAdmissionHandle:
 
 
 @dataclass(frozen=True, slots=True)
+class RootAdmittedTask:
+    """Neutral immutable task snapshot from the protected RB-T08 contract.
+
+    It is metadata, never a bearer grant. ``source_context_handle`` resolves
+    only in the issuing root authority's private registry.
+    """
+
+    schema: int
+    admission_id: str
+    job_id: str
+    node_id: str
+    backend_enrollment_id: str
+    resource_generation: str
+    process_enrollment_id: str
+    process_generation: str
+    native_package_id: str
+    native_package_generation: str
+    operation_id: str
+    task_body_recipe_id: str
+    task_request_schema_id: str
+    task_payload_sha256: str
+    task_payload_bytes: bytes = field(repr=False)
+    stdin_sha256: str
+    stdin_size_bytes: int
+    parent_closure_digest: str
+    deadline_monotonic: float
+    source_context_handle: str
+
+    def __post_init__(self) -> None:
+        if type(self.schema) is not int or self.schema != 1:
+            raise ResourceJobDenied("root admitted task schema is invalid")
+        for name in ("admission_id", "job_id", "node_id", "backend_enrollment_id",
+                     "resource_generation", "process_enrollment_id", "process_generation",
+                     "native_package_id", "native_package_generation", "operation_id",
+                     "task_body_recipe_id", "task_request_schema_id", "source_context_handle"):
+            _ident(getattr(self, name), f"root admitted task {name}")
+        for name in ("task_payload_sha256", "stdin_sha256", "parent_closure_digest"):
+            if not isinstance(getattr(self, name), str) or not _DIGEST.fullmatch(getattr(self, name)):
+                raise ResourceJobDenied("root admitted task digest is invalid")
+        if (type(self.stdin_size_bytes) is not int or not 1 <= self.stdin_size_bytes <= 262_144
+                or isinstance(self.deadline_monotonic, bool)
+                or not isinstance(self.deadline_monotonic, (int, float))
+                or not __import__("math").isfinite(self.deadline_monotonic)):
+            raise ResourceJobDenied("root admitted task bounds are invalid")
+        if (not isinstance(self.task_payload_bytes, bytes)
+                or not 1 <= len(self.task_payload_bytes) <= 262_144
+                or hashlib.sha256(self.task_payload_bytes).hexdigest() != self.task_payload_sha256):
+            raise ResourceJobDenied("root admitted task payload digest is invalid")
+        try:
+            value = json.loads(self.task_payload_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ResourceJobDenied("root admitted task payload is malformed") from None
+        if (not isinstance(value, dict) or set(value) != {"prompt"}
+                or not isinstance(value["prompt"], str) or not value["prompt"]
+                or _canonical(value) != self.task_payload_bytes
+                or hashlib.sha256(value["prompt"].encode("utf-8")).hexdigest() != self.stdin_sha256
+                or len(value["prompt"].encode("utf-8")) != self.stdin_size_bytes):
+            raise ResourceJobDenied("root admitted task payload does not match its selected stdin")
+
+
+@dataclass(frozen=True, slots=True)
+class RootAdmittedTaskSource:
+    """Neutral DTO for a root-verified source closure; never a worker grant."""
+
+    source_context_handle: str
+    verified_source_receipt_handles: tuple[str, ...]
+    signed_receipt_wires: tuple[bytes, ...] = field(repr=False)
+    sensitivity: Any = field(repr=False)
+    lineage_hash: str
+    recipient_ceiling: tuple[str, ...]
+    principal_id: str
+    profile_id: str
+    namespace_id: str
+    parent_closure_digest: str
+    controller_binding_handle: str
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        for name in ("source_context_handle", "principal_id", "profile_id", "namespace_id",
+                     "controller_binding_handle"):
+            _ident(getattr(self, name), f"root admitted source {name}")
+        for name in ("lineage_hash", "parent_closure_digest"):
+            if not _DIGEST.fullmatch(getattr(self, name)):
+                raise ResourceJobDenied("root admitted source digest is invalid")
+        if (not isinstance(self.verified_source_receipt_handles, tuple)
+                or not self.verified_source_receipt_handles
+                or any(not isinstance(value, str) or not 32 <= len(value) <= 128
+                       for value in self.verified_source_receipt_handles)
+                or not isinstance(self.signed_receipt_wires, tuple)
+                or len(self.verified_source_receipt_handles) != len(self.signed_receipt_wires)
+                or any(not isinstance(value, bytes) or not value for value in self.signed_receipt_wires)
+                or getattr(self.sensitivity, "value", None) not in {"public", "private", "unknown"}
+                or not isinstance(self.recipient_ceiling, tuple)
+                or any(not isinstance(value, str) or not value for value in self.recipient_ceiling)
+                or isinstance(self.expires_monotonic, bool)
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not __import__("math").isfinite(self.expires_monotonic)):
+            raise ResourceJobDenied("root admitted source closure fields are invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class RootTaskController:
+    """Root-created, non-wire controller proof with a caller-owned PIDFD."""
+
+    schema: int
+    controller_handle: str
+    controller_kind: str
+    controller_role_artifact_id: str
+    controller_role_sha256: str
+    pid: int
+    pidfd: int
+    uid: int
+    identity: Any = field(repr=False, compare=False)
+    controller_profile_id: str | None
+    controller_generation: str
+    source_receipt_id: str | None
+    subject_principal_id: str
+    subject_profile_id: str
+    subject_namespace_id: str
+    service_generation_digest: str
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if type(self.schema) is not int or self.schema != 1:
+            raise ResourceJobDenied("root task controller schema is invalid")
+        for name in ("controller_handle", "controller_role_artifact_id", "controller_generation",
+                     "subject_principal_id", "subject_profile_id", "subject_namespace_id"):
+            _ident(getattr(self, name), f"root task controller {name}")
+        if (self.controller_kind not in {"worker", "root-scheduler", "root-webhook", "root-channel"}
+                or not isinstance(self.controller_role_sha256, str)
+                or not _DIGEST.fullmatch(self.controller_role_sha256)
+                or type(self.pid) is not int or self.pid <= 0
+                or type(self.pidfd) is not int or self.pidfd < 0
+                or type(self.uid) is not int or self.uid < 0
+                or self.controller_profile_id is not None
+                   and (not isinstance(self.controller_profile_id, str) or not self.controller_profile_id)
+                or self.source_receipt_id is not None
+                   and (not isinstance(self.source_receipt_id, str) or not self.source_receipt_id)
+                or not _DIGEST.fullmatch(self.service_generation_digest)
+                or isinstance(self.expires_monotonic, bool)
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not __import__("math").isfinite(self.expires_monotonic)):
+            raise ResourceJobDenied("root task controller identity is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceChildAdmission:
     """Single-use bounded claim; it is not itself a HostContext or effect grant."""
 

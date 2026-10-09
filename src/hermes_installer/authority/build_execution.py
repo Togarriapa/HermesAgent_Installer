@@ -4,8 +4,8 @@ Worker input is restricted to one reviewed operation identifier, generation,
 and the empty parameter object. A root composition resolves pinned artifacts
 and invokes its managed build-job launcher. This module validates the terminal
 isolation/exit receipt and atomically publishes a complete digest-checked tree
-to a private CAS. It remains unregistered until a concrete managed build-job
-launcher is present in daemon composition.
+to a private CAS. Runtime composition owns handler registration; `handlers()`
+exposes only fixed target IDs for which a target-fact inspector is qualified.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ import time
 import base64
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol
 
 from .types import AuthorityDenied, EffectAuthorization, HostContext, canonical_digest
@@ -276,13 +277,61 @@ class RootManagedPythonProbe(Protocol):
     def inspect_cpython39(self, profile: Any, executable: Path) -> Mapping[str, Any]: ...
 
 
+class ProtectedBuildArtifactRootResolver:
+    """Resolve inspector inputs only from the immutable protected artifact catalog.
+
+    The build runner and inspector intentionally resolve the same pinned source
+    and toolchain independently: the runner binds their verified trees into
+    read-only mounts, while post-exit inspection rechecks catalog membership
+    and bytes before trusting source recipes or shared-library closures.
+    """
+
+    def __init__(self, artifact_catalog: Any, staging_root: Path, *, owner_uid: int = 0):
+        if (not isinstance(staging_root, Path) or not staging_root.is_absolute()
+                or type(owner_uid) is not int or owner_uid < 0
+                or not callable(getattr(artifact_catalog, "resolve", None))
+                or not callable(getattr(artifact_catalog, "materialize_tree", None))
+                or not isinstance(getattr(artifact_catalog, "artifacts", None), Mapping)):
+            raise AuthorityDenied("build.artifact_resolver", "root protected artifact resolver is unavailable")
+        self.artifact_catalog = artifact_catalog
+        self.staging_root = staging_root
+        self.owner_uid = owner_uid
+
+    def _resolve(self, artifact_id: str, digest: str) -> Path:
+        spec = self.artifact_catalog.artifacts.get(artifact_id)
+        if spec is None or spec.sha256 != digest:
+            raise AuthorityDenied("build.artifact", "inspector artifact differs from protected build pins")
+        try:
+            resolved = (self.artifact_catalog.materialize_tree(
+                artifact_id, digest, self.staging_root, expected_uid=self.owner_uid)
+                if spec.tree_files else self.artifact_catalog.resolve(
+                    artifact_id, digest, self.staging_root, expected_uid=self.owner_uid))
+            path = Path(resolved.path)
+            info = path.lstat()
+            if (path != path.resolve(strict=True)
+                    or (spec.tree_files and not stat.S_ISDIR(info.st_mode))
+                    or (not spec.tree_files and not stat.S_ISREG(info.st_mode))
+                    or info.st_uid != self.owner_uid or info.st_mode & 0o222):
+                raise ValueError("artifact root custody")
+            return path
+        except Exception:
+            raise AuthorityDenied("build.artifact", "pinned source or toolchain cannot be re-resolved") from None
+
+    def source_root(self, profile: Any) -> Path:
+        return self._resolve(profile.source_artifact_id, profile.source_sha256)
+
+    def toolchain_root(self, profile: Any) -> Path:
+        return self._resolve(profile.toolchain_artifact_id, profile.toolchain_sha256)
+
+
 class LinuxBuildOutputFactInspector:
     """Read-only ELF/sysconfig and isolated runtime inspector for ARM64 outputs."""
     def __init__(self, *, toolchain_root_resolver: Callable[[Any], Path],
-                 source_root_resolver: Callable[[Any], Path], runtime_probe: RootManagedPythonProbe,
+                 source_root_resolver: Callable[[Any], Path], runtime_probe: RootManagedPythonProbe | None,
                  owner_uid: int = 0):
         if (not callable(toolchain_root_resolver) or not callable(source_root_resolver)
-                or not callable(getattr(runtime_probe, "inspect_cpython39", None))
+                or (runtime_probe is not None
+                    and not callable(getattr(runtime_probe, "inspect_cpython39", None)))
                 or type(owner_uid) is not int):
             raise AuthorityDenied("build.inspector", "root source/toolchain resolvers and managed runtime probe are required")
         self.toolchain_root_resolver = toolchain_root_resolver
@@ -466,6 +515,8 @@ class LinuxBuildOutputFactInspector:
                     "resolved_dependency_closure": closure,
                     "instruction_policy": "actual target compatible ARM64 flags; no x86 default or unmeasured CPUflags"}
         if spec.relative_path == "runtime/bin/python3.9":
+            if self.runtime_probe is None:
+                raise AuthorityDenied("build.python_probe", "root-managed CPython ABI probe is unavailable")
             if sys.platform != "linux" or platform.machine().lower() not in {"aarch64", "arm64"}:
                 raise AuthorityDenied("build.target", "CPython output probe requires Linux ARM64")
             facts, needed = self._elf(path)
@@ -1313,8 +1364,9 @@ class RootBuildExecutionService:
     """Handler for fixed `process.start` selections; does not expose caller paths."""
     def __init__(self, *, build_catalog: FixedBuildCatalog, artifact_catalog: Any,
                  artifact_staging_root: Path, launcher: FixedBuildJobLauncher,
-                 fact_inspector: BuildOutputFactInspector, authority_key: bytes,
+                 fact_inspector: BuildOutputFactInspector, authority_key: bytes | None = None,
                  service_catalog: Any,
+                 allowed_operation_ids: frozenset[str] | None = None,
                  store: ContentAddressedBuildStore | None = None, expected_uid: int = 0,
                  monotonic: Callable[[], float] = time.monotonic):
         if type(expected_uid) is not int or os.geteuid() != expected_uid:
@@ -1327,11 +1379,34 @@ class RootBuildExecutionService:
         self.artifact_staging_root = artifact_staging_root
         self.launcher = launcher
         self.fact_inspector = fact_inspector
-        self.store = store or ContentAddressedBuildStore.root_store(authority_key=authority_key)
+        has_cpython_probe = callable(getattr(
+            getattr(fact_inspector, "runtime_probe", None), "inspect_cpython39", None))
+        default_operations = {"colibri-source-build-v1"}
+        if has_cpython_probe:
+            default_operations.add("coral-cpython39-source-build-v1")
+        selected_operations = default_operations if allowed_operation_ids is None else set(allowed_operation_ids)
+        if (not selected_operations or not selected_operations <= set(OPERATION_TARGETS)
+                or "coral-cpython39-source-build-v1" in selected_operations and not has_cpython_probe):
+            raise AuthorityDenied("build.operation", "build operation registration exceeds verified inspector support")
+        self.allowed_operation_ids = frozenset(selected_operations)
+        if store is None:
+            if not isinstance(authority_key, bytes) or len(authority_key) != 32:
+                raise AuthorityDenied("build.store", "root build signing key is unavailable")
+            store = ContentAddressedBuildStore.root_store(authority_key=authority_key)
+        elif not isinstance(store, ContentAddressedBuildStore):
+            raise AuthorityDenied("build.store", "root content-addressed build store is invalid")
+        self.store = store
         if self.store.owner_uid != expected_uid:
             raise AuthorityDenied("build.store_custody", "build store owner differs from the root executor identity")
         self.expected_uid = expected_uid
         self.monotonic = monotonic
+
+    def handlers(self) -> Mapping[tuple[str, str], Any]:
+        """Return only fixed operation targets supported by this inspector."""
+        return MappingProxyType({
+            ("process.start", OPERATION_TARGETS[operation_id]): self
+            for operation_id in self.allowed_operation_ids
+        })
 
     def __call__(self, *, context: HostContext, authorization: EffectAuthorization,
                  payload: bytes, timeout: float, peer_pid: int, peer_pidfd: int | None,
@@ -1344,6 +1419,8 @@ class RootBuildExecutionService:
                 or not 0 < timeout <= 600 or authorization.request_digest != canonical_digest(payload)):
             raise AuthorityDenied("build.request", "fixed build request is malformed")
         request = self._request(payload)
+        if request["operation_id"] not in self.allowed_operation_ids:
+            raise AuthorityDenied("build.operation", "this build target has no qualified root output inspector")
         target = OPERATION_TARGETS[request["operation_id"]]
         if (authorization.operation != "process.start" or authorization.target != target
                 or context.operation != "process.start"
