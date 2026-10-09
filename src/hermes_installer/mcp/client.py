@@ -261,6 +261,13 @@ class MCPClient:
             if "result" not in response:
                 raise MCPError(f"{method} returned no result")
             return response["result"]
+        if self.authority_client is None:
+            # First-party transports can only reach real network/managed child
+            # resources through the host's fixed-target effect broker. Generic
+            # synthetic fixtures remain useful for protocol contract tests.
+            from .transports import StdioTransport, StreamableHTTPTransport
+            if type(self.transport) in (StdioTransport, StreamableHTTPTransport):
+                raise MCPError("first-party MCP I/O requires host-issued fixed-target authority")
         async with self._semaphore:
             grant = self._authorize(operation, deadline, tool=tool, args=args)
             remaining = min(self.timeout, deadline - self.monotonic(),
