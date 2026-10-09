@@ -2775,6 +2775,7 @@ class ManagedBuildJobRunner:
                  identity_digest: Callable[..., str], mount_targets: Mapping[str, str]):
         manager = self.manager
         job_id = uuid.uuid4().hex
+        service_generation = profile.generation
         unit = f"hermes-installer-build-{job_id}.service"
         cgroup = f"/system.slice/{unit}"
         # Authorization is checked again at the launch effect point below.
