@@ -111,7 +111,7 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 sensitivity=Sensitivity.PUBLIC,
                 model=MODEL, port=int(plugin["port"]),
             )
-            worker = Path(__file__).with_name("hermes_dispatch_worker.py")
+            worker = Path(__file__)
             env = {
                 "HOME": str(Path(scratch)),
                 "HERMES_HOME": str(profile_home),
@@ -124,7 +124,7 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
             try:
                 gateway.start()
                 result = subprocess.run(
-                    [*command_prefix, str(worker), "--source-root=" + str(source),
+                    [*command_prefix, str(worker), "--native-worker", "--source-root=" + str(source),
                      "--home=" + str(profile_home), "--expected-sha=" + HERMES_PIN,
                      "--model=" + MODEL],
                     env=env, cwd=str(source), capture_output=True, text=True, timeout=75,
@@ -147,5 +147,66 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 shutil.rmtree(profile_home)
 
 
+def _run_native_worker():
+    def arg(name):
+        prefix = "--" + name + "="
+        for item in sys.argv[1:]:
+            if item.startswith(prefix):
+                return item[len(prefix):]
+        raise SystemExit("missing worker argument " + name)
+
+    source = Path(arg("source-root")).resolve(strict=True)
+    home = Path(arg("home")).resolve(strict=True)
+    expected = arg("expected-sha")
+    model = arg("model")
+    actual = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], cwd=source, check=True,
+        capture_output=True, text=True, timeout=3,
+        env={"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1",
+             "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_OPTIONAL_LOCKS": "0"},
+    ).stdout.strip()
+    if actual != expected:
+        raise SystemExit("pinned Hermes source identity mismatch")
+    os.environ["HERMES_HOME"] = str(home)
+    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+    sys.dont_write_bytecode = True
+
+    from providers import get_provider_profile
+    provider_name = "hermes-installer-dispatch"
+    profile = get_provider_profile(provider_name)
+    if profile is None or profile.default_aux_model != model:
+        raise SystemExit("managed Hermes provider profile was not discovered")
+    from run_agent import AIAgent
+    agent = None
+    try:
+        agent = AIAgent(
+            quiet_mode=True, enabled_toolsets=[], skip_context_files=True,
+            load_soul_identity=False, skip_memory=True, skip_background_review=True,
+        )
+        if agent.provider != provider_name or agent.model != model:
+            raise SystemExit("Hermes native config did not select the managed provider")
+        primary = agent.client.chat.completions.create(
+            model=model, messages=[{"role": "user", "content": "native primary fixture"}],
+            max_tokens=24,
+        )
+        if primary.choices[0].message.content != "native fixture response":
+            raise SystemExit("primary route response mismatch")
+        from agent.auxiliary_client import call_llm
+        auxiliary = call_llm(
+            task="title_generation", main_runtime=None,
+            messages=[{"role": "user", "content": "native auxiliary fixture"}],
+            max_tokens=24, timeout=5,
+        )
+        if "native fixture response" not in str(auxiliary):
+            raise SystemExit("auxiliary route response mismatch")
+        print("NATIVE_DISPATCH_OK")
+    finally:
+        if agent is not None:
+            agent.close()
+
+
 if __name__ == "__main__":
-    unittest.main()
+    if "--native-worker" in sys.argv:
+        _run_native_worker()
+    else:
+        unittest.main()
