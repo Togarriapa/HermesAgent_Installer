@@ -108,5 +108,52 @@
     "lineage": "all source and prior node result receipts inherited; private/unknown cannot become public, recipient scope only narrows",
     "failure": "cancel descendants and owned work at original deadline; independent already terminal result receipts preserved; generation/revoke invalidates pending/running child grants"
   },
-  "evidence": "actual native/backend selected cron/webhook/channel/bundle positive invocation in authorized isolated environment; recording fixtures not external test messaging; signature/replay/unselected/crossaccount/private/reuse/cycle/concurrency/revoke negatives before effects"
+  "evidence": "actual native/backend selected cron/webhook/channel/bundle positive invocation in authorized isolated environment; recording fixtures not external test messaging; signature/replay/unselected/crossaccount/private/reuse/cycle/concurrency/revoke negatives before effects",
+  "active_storage": {
+    "file": "/etc/hermes-installer/authority.json",
+    "field": "service_generations.resource_jobs",
+    "row_fields": [
+      "resource_id",
+      "kind",
+      "selected_enabled",
+      "profile_id",
+      "principal_id",
+      "generation",
+      "consent_revision",
+      "approved_action_ids",
+      "fixed_target_ids",
+      "credential_reference_ids",
+      "recipient_scope",
+      "source_policy",
+      "schedule_or_route_id",
+      "max_children",
+      "max_concurrency",
+      "max_runtime_seconds",
+      "max_payload_bytes",
+      "max_replay_entries",
+      "enrollment_id",
+      "source_issuer_channel_id",
+      "observer_enrollment_id",
+      "backend_enrollment_id",
+      "approved_dag"
+    ],
+    "dag_fields": [
+      "dag_sha256",
+      "nodes"
+    ],
+    "node_fields": [
+      "node_id",
+      "resource_id",
+      "action_id",
+      "operation",
+      "target_id",
+      "recipient",
+      "request_schema_id",
+      "body_recipe_id",
+      "depends_on",
+      "maximum_attempts"
+    ],
+    "digest": "dag_sha256 canonical full nodes list sorted node_id, same UTF8sortedcompact rules; root validates finite bounds/acyclicdeps, all entire rows included activegeneration_digest. No mutable caller DAG.",
+    "joins": "resource_id pinned nativecrosswalk/profile/package/action generation, backend_enrollment_id fixed selected protectedhandler/account scope, observer/sourcechannel actual root currentevent; credentials opaque vault refs, recipients narrow. Generation currentselectedsnapshot plusownresourcegen, consentcurrentnotclaimed. Exact source_issuers active9fieldrows and observerregistry joins before anyevent/child effect; unselected records cannot autorun."
+  }
 }
