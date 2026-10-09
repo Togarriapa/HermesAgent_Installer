@@ -523,6 +523,130 @@
     "native_hook": "Installer-owned pinned PluginManager/ToolRegistry pre-discovery adapter consumes this verified index once before ordinary candidate enumeration; exact schema bytes canonical digest, collision behavior and selected package closure verified. Worker index is presentation only; root re-resolves every actual invocation. MCP candidate routes to fixed protected dispatch under existing lexical observed invocation; direct owned transport remains suppressed, unowned configuration preserved.",
     "first_input_resolver": "Root initial input observer resolves actual selected producer independently of HI11 pending pairs: resolve_selected_native_input_target(selected_execution_handle)->LiveNativeInputTarget. selected_execution_handle is actual root admitted task/current health control/selected constrained Desktop session registry handle. DTO fields schema,process_id,profile_id,generation,peer_pid,peer_pidfd,live_peer_identity,loaded_package_proof,service_generation_digest,expires_monotonic. Resolver validates actual custody process handle/current kernel PIDFD/starttime/cgroup/executable and root loader proof for selected profile/generation. Caller cannot supply target PID/profile/path. Resolver owns retained PIDFD and returns duplicated FD; input observer owns/closes duplicate.",
     "input_effect": "Only root observed exact admitted stdin/health fixture/authenticated Desktop input bytes and parent receipt closure are captured by selected initial-input observer. Root delivers opaque context to that actual producer before request prepare. Unknown/private remains default; no prompt classification/public upgrade. Initial input needs no pending provider bridge; later prepare creates the pair.",
-    "ownership": "Runtime composition constructs registries and publishes verified index to native worker factory; custody/source observer resolves actual target; native boundary implements pinned pre-discovery seam. All native/MCP/health/acceptance tasks remain open until actual dispatch proof."
+    "ownership": "Runtime composition constructs registries and publishes verified index to native worker factory; custody/source observer resolves actual target; native boundary implements pinned pre-discovery seam. All native/MCP/health/acceptance tasks remain open until actual dispatch proof.",
+    "index_delivery": {
+      "artifact_role": "native-candidate-index",
+      "artifact_id": "native-candidate-index:<package_id>:<generation> root compiled output ID",
+      "closure_member": "catalog/native-candidates.json under selected fixed readonly native package mount; never configurable path",
+      "entrypoint_manifest_join": "Pinned native entrypoint manifest adds strict candidate_index {artifact_id,relative_path,sha256,size_bytes}; relative_path exactly catalog/native-candidates.json, size<=2MiB. Whole manifest SHA equals binder entrypoint_sha256; candidate member actual hash/size verified from held readonly mount and whole closure membership before JSON parse. Old resolver document remains unchanged; its existing digest preimage/adapters do not gain index fields.",
+      "document_fields": [
+        "schema",
+        "package_id",
+        "profile_id",
+        "generation",
+        "resolver_sha256",
+        "candidates"
+      ],
+      "candidate_fields": [
+        "native_tool_name",
+        "adapter_id",
+        "action_id",
+        "argument_schema",
+        "result_schema",
+        "native_schema_sha256",
+        "observer_enrollment_ids",
+        "native_server_name",
+        "description"
+      ],
+      "encoding": "schema1 canonical UTF8 JSON sorted keys/compact separators/ensure_ascii=false/no newline/duplicate or unknown keys denied;<=1024 candidates,unique native_tool_name and adapter/action pair. Embedded argument/result schemas finite reviewed JSON schemas from compiled selected action catalog; native_schema_sha256 hashes canonical argument_schema exact bytes. Index document SHA is manifest candidate_index.sha256, separate resolver/entrypoint/source digest domains.",
+      "compiler": "Root native materializer creates exact index from active selected package/action/MCP/observer joins, records separate CAS output receipt role native-candidate-index and closure manifest member; session.resolve_materialization_receipt returns this additional role for activation. Root pinned adapter/schema bytes must be verified, no inferred schema/cache or arbitrary JSON refs/imports.",
+      "loader": "read_native_candidate_index(binding) root-selected fixed mount reader verifies binder closure/entrypoint/resolver pins, candidate manifest member and index profile/package/generation/resolver match. Presentation only; every effect still re-resolved root. Missing member yields precise native pre-discovery pending, not fallback discovery.",
+      "hermes_envelope": "Root MCP native_server_name is exact selected native_mcp_tool_bindings.native_server_name; other installer compiled candidates use fixed hermes-installer toolset owner. Never parse it from native_tool_name. description bounded <=4096 characters from actual selected reviewed action/schema artifact; if no description supplied use literal Protected installer action. Hermes envelope is {name:native_tool_name,description,parameters:argument_schema}; native_schema_sha256 remains SHA256 canonical argument_schema only, not envelope or result schema. Exact trusted index includes server/description so worker does not query ambient config/cache."
+    },
+    "schema_artifact_catalog": {
+      "active_key": "service_generations.native_schema_artifacts",
+      "row_fields": [
+        "id",
+        "artifact_id",
+        "sha256",
+        "schema_kind",
+        "native_package_id",
+        "native_package_generation",
+        "adapter_id",
+        "action_id",
+        "source_receipt_handle"
+      ],
+      "schema_kind": "arguments|result",
+      "artifact": "Root immutable CAS artifact exact canonical JSON schema bytes <=256KiB; strict finite supported JSON-schema subset object/array/string/integer/number/boolean/null, properties/required/additionalProperties/items/enum/minimum/maximum/minLength/maxLength/minItems/maxItems; no external references/ref resolution/imports/evaluation. Existing selected action validators remain required, schema alone is not effect authority.",
+      "resolve_call": "resolve_native_schema(schema_id,native_package_id,native_package_generation,adapter_id,action_id,schema_kind)->verified schema mapping",
+      "joins": "id equals action argument_schema_id/result_schema_id, or MCP binding request_schema_id/result_schema_id, for exact selected package/action. Root resolves row current active generation, actual ArtifactCatalog bytes/sha/source receipt/package selection; native_schema_sha256 equals canonical arguments schema SHA, not schema ID. Every required argument/result schema must resolve; no tool-name/service-label inference. Row source receipt is actual packaged selected action schema artifact or root selected authenticated MCP tools/list discovery schema receipt with current service/tool selection. Discovery unselected or changed schema cannot be silently enabled.",
+      "compiler": "Native materializer copies exact verified schema bodies into candidate index and pins resulting index artifact/manifest; no generation from cache/model comments/default labels. MCP result schema is actual selected static root bounded MCP result envelope contract, or supported selected output schema if explicitly enrolled; do not fabricate an upstream output schema. Missing approved result artifact remains pending with exact selection step."
+    },
+    "initial_execution_selection": {
+      "owner_module": "hermes_installer.authority.source_observers",
+      "dto": "RootSelectedNativeExecution",
+      "dto_fields": [
+        "schema",
+        "selection_handle",
+        "kind",
+        "execution_handle",
+        "process_handle",
+        "profile_id",
+        "generation",
+        "native_package_id",
+        "native_package_generation",
+        "observer_enrollment_id",
+        "source_action_id",
+        "service_generation_digest",
+        "expires_monotonic"
+      ],
+      "kind_enum": "resource-task|native-health|desktop-input",
+      "constructors": "RootNativeExecutionSelectionRegistry.select_resource_task(admission_handle:RootResourceJobAdmissionHandle,node_id,managed_task_handle:ManagedTaskHandle)->RootSelectedNativeExecution; select_health(root_health_control_handle,current_managed_process_handle); select_desktop(root_verified_desktop_session_handle,current_managed_process_handle). All root-private exact registry objects/handles, no worker selectors.",
+      "task_join": "Admission handle alone has no actual process; ManagedTaskHandle alone has no admitted source selection. Root joins both through current running-task registry after selected start, same node/task/profile/service generations/payload hashes/lease/actual custody process ID. observer_enrollment_id/source_action_id derived exact active source_issuers and selected package adapter observer joins for native-input admitted task/health/Desktop channel; not caller ID or generic first observer.",
+      "resolver": "resolve_selected_native_input_target(selected_execution:RootSelectedNativeExecution)->LiveNativeInputTarget, retaining v33 output fields and FD ownership. Root registry resolves selection_handle against exact stored join/current custody PIDFD/kernel/loader proof; does not accept fabricated DTO as proof.",
+      "ordering": "For resource task, root launch establishes managed process then waits bounded actual loader readiness, captures/delivers admitted exact stdin source context to selected producer and writes/drains/closes stdin once within the original selected launch operation. Root owned internal phase bookkeeping only; no reused grant or caller callbacks. Cancellation/expiry/failure before readiness/input delivery closes whole owned cgroup and prevents stdin/effect. Task selection is retained only original deadline. Native health/desktop analogously require actual producer launch/session before source delivery; neither needs a pending HI11 pair."
+    },
+    "native_registration_dispatch": "Index includes MCP and other selected compiled actions. MCP adapter hermes-installer.native-mcp-dispatch.v1 uses pinned _register_candidates(native_server_name,...) native mcp-<server> grouping, handler calls fixed AuthorityClient.dispatch_native_mcp with actual current lexical root invocation handle and exact canonical arguments. Other compiled actions use pinned PluginContext/ToolRegistry register_tool under fixed hermes-installer toolset and selected compiled entrypoint mapping; never feed them through MCP grouping. install_native_candidate_index(verified_index,root_bound_runtime_context) is the installer-owned finite registration adapter, maps explicit adapter/action from selected readonly closure and existing root facade, not native_tool_name parsing/dynamic fallback. Exact schemas/collision checks and current root effect re-resolution unchanged.",
+    "initial_input_delivery_rpc": {
+      "owner_module": "hermes_installer.authority.source_observers",
+      "registry": "RootNativeInputDeliveryRegistry",
+      "constructor": "from_root_runtime(source_observer_registry,selected_native_execution_registry,process_custody_registry)",
+      "operation": "native.input.take",
+      "client_call": "AuthorityClient.take_selected_native_input() -> NativeInitialInputDelivery|pending",
+      "request": "{schema:1} only, no receipt/PID/profile/execution/channel/source kind/classification selectors",
+      "response_fields": [
+        "schema",
+        "source_receipt_handle",
+        "selected_execution_handle",
+        "input_sha256",
+        "input_size_bytes",
+        "expires_monotonic"
+      ],
+      "response": "NativeInitialInputDelivery root current peer-bound exactSourceReceiptHandle presentation only; source actualrootcapture/selectedtaskhealthDesktop eventbytes. Server authenticates SO_PEERCRED/currentPIDFD/starttime/exe/cgroup/enrolledpackage/profilegen and unique RootSelectedNativeExecution pendinginputqueue before resolving capture receipt and invoking actual SourceObserverRegistry.take_source_receipt. This producer RPC consumption marks actualdelivery, not queued/rootcallback flag. No HostContext/publicclearance minted from workerlabels.",
+      "queue": "Root coordinator/initial observer registers exact captured input+retained source handle+targetidentity/proof/execution lease before native stdin. Registry resolves only current matching pending input for actual peer; queue<=1initial input per selected execution, oneuse delivery/replaydeny, deadline minoriginal<=30s. No activepair requirement. Pending response contains schema/state=pending only; rootselected task/nativehealth wrapper waits boundedcurrentphase, not arbitraryunboundedpoll.",
+      "native_hook": "Source-pinned startup adapter emits/records actual loader ready, then calls take_selected_native_input before consuming --query-file stdin; verifies source handle from actual protected endpoint, SHA/size match exact later stdin, stores opaque ancestry for first native request prepare. Root coordinator waits actual registrydelivery thenwrite/drainEOF; no receiptID transport in prompt/env/argv, no model-visible metadata. Wrongbytes deny/fail before effect. Desktop actualauthenticatedinput similarly uses selected execution queue; ordinarychannel events use distinct v48 channel.event.take endpoint.",
+      "custody": "Producer endpoint per selected native service profile/UID protectedAF_UNIX, verified loadedpackage/action/runtime closure. Delivered handle may populate v50 source+delivery joins, rootretains lease/peerproof andaudits exactconsume. Expiry/workerexit/profilegen/selectionchange cancels both queue and launch, wiping pending payload/provenance.",
+      "source_only": "Operation is finite source delivery lookup, not generic capture/HTTP/effect grant; no worker arbitraryinput accepted. Unknown/private sensitivity and fullreceiptclosure preserved. Native health/task results still require separate actualrequest/result/tool/terminal proof."
+    },
+    "schema_derivation_receipt": {
+      "owner_module": "hermes_installer.authority.artifacts",
+      "registry": "RootSchemaDerivationReceiptRegistry",
+      "constructor": "from_root_runtime(protected_artifact_catalog,artifact_receipt_registry,native_package_registry,mcp_discovery_registry,root_journal)",
+      "dto": "RootSchemaDerivationReceipt",
+      "fields": {
+        "schema": "literal1",
+        "receipt_handle": "opaque str",
+        "artifact_id": "opaque selected schema artifact ID",
+        "artifact_sha256": "lowercase SHA256 of canonical schema bytes",
+        "size_bytes": "int1..262144",
+        "schema_kind": "arguments|result",
+        "package_id": "opaque str",
+        "package_generation": "opaque str",
+        "adapter_id": "opaque str",
+        "action_id": "opaque str",
+        "source_kind": "packaged-schema|mcp-tools-list",
+        "parent_receipt_handles": "tuple1..8 opaque handles",
+        "source_observation_handle": "opaque retained root observation",
+        "source_member_path": "verified relative package member or null for tools/list",
+        "service_generation_digest": "lowercase SHA256",
+        "issued_monotonic": "finite float",
+        "expires_monotonic": "finite float"
+      },
+      "mint": "mint_schema_artifact(verified_schema_observation)->opaque receipt handle; root-private registry-produced observation only. Canonical JSON UTF8 ensure_ascii=False sort_keys=True separators=(comma,colon), no NaN, duplicate keys or external refs. Exact child artifact ID/hash/size must equal native_schema_artifacts row. Generic fetched source archive handle cannot substitute.",
+      "packaged": "Observation resolves actual immutable selected package parent receipt, verified source member/tree and selected package/action/schema mapping; derives exact schema body bytes from that member or reviewed pinned compiler artifact. Parent member/hash and compiler artifact remain recorded and checked. No caller schema dictionary or path is authority.",
+      "discovery": "Observation resolves actual authenticated root MCP tools/list request and response receipt for exact selected service/tool/current generation; records request/response digest and selected tool argument schema extraction. Result schema is selected packaged wrapper schema unless actual selected discovery supplies a reviewed result schema. A generic fetch receipt or tool label is insufficient.",
+      "resolve": "resolve_schema_derivation(handle,*,artifact_id,artifact_sha256,size_bytes,service_generation_digest)->RootSchemaDerivationReceipt; same retained registry instance checks actual observation, all parent receipts, package/action/kind/current service joins, lease and canonical child bytes. Source receipt handle is this typed derivation handle, not a raw archive receipt.",
+      "evidence": "HI-T08/HI-T09 and MC-F01: exact parent membership/authenticated discovery and child schema digest; mismatched server/tool/package/action/hash/member, stale generation, caller DTO and generic fetch substitution deny. Fixture evidence does not establish native acceptance."
+    }
   }
 }
