@@ -364,9 +364,16 @@ def _run_native_worker():
             raise SystemExit("Hermes native config selection mismatch: provider="
                              + str(agent.provider) + ", model=" + str(agent.model))
         tool_names = sorted(getattr(agent, "valid_tool_names", set()))
+        from hermes_cli.plugins import get_plugin_manager
+        plugin_rows = get_plugin_manager().list_plugins()
+        fixture_plugins = [{
+            key: row.get(key) for key in ("name", "enabled", "status", "source", "tools")
+            if key in row
+        } for row in plugin_rows if "native-fixture" in str(row.get("name", ""))]
         print("NATIVE_TOOL_AVAILABILITY=" + json.dumps({
             "fixture_echo": "fixture_echo" in tool_names,
             "count": len(tool_names),
+            "fixture_plugin_rows": fixture_plugins,
         }, sort_keys=True))
         cycle = agent.run_conversation("Use fixture_echo once and report its returned result.")
         if cycle.get("completed") is not True or "private fixture tool result received" not in str(cycle.get("final_response", "")):
