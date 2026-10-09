@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import stat
 import tarfile
 import tempfile
@@ -26,6 +25,7 @@ from .artifacts import (
     _fsync_dir,
     _freeze_tree,
     _mkdir_chain,
+    _remove_private_tree,
     _safe_relative,
     _secure_directory,
 )
@@ -246,10 +246,10 @@ def _materialize_source_tree(archive: ResolvedArtifact, catalog: ArtifactCatalog
         os.rename(temporary, destination)
         _fsync_dir(base)
     except (OSError, tarfile.TarError, EOFError, ValueError, KeyError, UnicodeError):
-        shutil.rmtree(temporary, ignore_errors=True)
+        _remove_private_tree(temporary)
         raise AuthorityDenied("source.tree", "Hermes source archive failed bounded tree import and Git identity checks") from None
     except BaseException:
-        shutil.rmtree(temporary, ignore_errors=True)
+        _remove_private_tree(temporary)
         raise
     return ResolvedArtifact(spec.artifact_id, spec.version, destination, archive.sha256,
         sum(row.size_bytes for row in spec.tree_files), spec.tree_files,
@@ -258,7 +258,12 @@ def _materialize_source_tree(archive: ResolvedArtifact, catalog: ArtifactCatalog
 
 def _verify_existing_source_tree(destination: Path, spec: Any, expected_uid: int,
                                  cancelled: Callable[[], bool], deadline: float) -> None:
-    if destination.is_symlink() or not destination.is_dir():
+    try:
+        root_info = destination.lstat()
+    except OSError:
+        root_info = None
+    if (root_info is None or not stat.S_ISDIR(root_info.st_mode)
+            or root_info.st_uid != expected_uid or root_info.st_mode & 0o222):
         raise AuthorityDenied("source.tree-custody", "materialized Hermes source tree path is unsafe")
     observed: dict[str, tuple[str, int, bool]] = {}
     total = 0
