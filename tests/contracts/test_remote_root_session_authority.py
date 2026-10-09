@@ -81,8 +81,10 @@ class _Backend:
             raise RuntimeError("cancelled")
         return len(data_bytes)
 
-    def close(self, binding, connector_handle, *, authorization, cleanup):
-        self.closed.append((binding, connector_handle, authorization, cleanup))
+    def close(self, binding, connector_handle, *, authorization, cleanup,
+              peer_uid=None, peer_pid=None, peer_pidfd=None):
+        self.closed.append((binding, connector_handle, authorization, cleanup,
+                            peer_uid, peer_pid, peer_pidfd))
 
 
 class RemoteRootSessionAuthorityTests(unittest.TestCase):
