@@ -26,6 +26,8 @@ class ResolvedResource:
     resource: Resource
     dependencies: tuple[str, ...]
     provenance_verified: bool = True
+    effective_spec: Mapping[str, Any] | None = None
+    applied_overlays: tuple[str, ...] = ()
 
 @dataclass(frozen=True, slots=True)
 class AuthorizationLease:
@@ -113,10 +115,35 @@ def satisfies(version: str, expression: str) -> bool:
             if cmp<0 or _compare(version,upper)>=0: return False
     return True
 
+def _merge_policy_values(low: Any, high: Any) -> Any:
+    """Match pinned registry merge semantics: recursive mappings, stable list union."""
+    if isinstance(low,dict) and isinstance(high,Mapping):
+        out=dict(low)
+        for key,value in high.items():
+            out[key]=_merge_policy_values(out[key],value) if key in out else value
+        return out
+    if isinstance(low,list) and isinstance(high,(list,tuple)):
+        out=list(low)
+        for value in high:
+            if value not in out: out.append(value)
+        return out
+    if isinstance(high,Mapping): return dict(high)
+    if isinstance(high,(list,tuple)): return list(high)
+    return high
+
+def _policy_overlay_matches(name: str, tags: set[str], match: Mapping[str,Any]) -> bool:
+    contains=match.get("nameContains") or []
+    tags_any=set(match.get("tagsAny") or [])
+    if not isinstance(contains,(list,tuple)) or any(not isinstance(x,str) for x in contains): return False
+    if not isinstance(match.get("tagsAny") or [],(list,tuple)): return False
+    return any(fragment in name for fragment in contains) or bool(tags & tags_any)
+
 class RegistryResolver:
     def __init__(self, resources: Mapping[str,RawResource], *,
-                 source_verifier: Callable[[str,str],bool] | None = None, now: Callable[[],float] = time.time):
+                 source_verifier: Callable[[str,str],bool] | None = None, now: Callable[[],float] = time.time,
+                 quality_policy: Mapping[str, Any] | None = None):
         self.raw=dict(resources); self.source_verifier=source_verifier; self.now=now
+        self.quality_policy=dict(quality_policy or {})
 
     @staticmethod
     def document_digest(document: Mapping[str,Any]) -> str:
@@ -174,6 +201,13 @@ class RegistryResolver:
             if kind is None: raise RegistryError(f"unknown dependency root: {root}")
             if not isinstance(selectors,(tuple,list)): raise RegistryError(f"requires.{root} must be a list")
             for selector in selectors: refs.append((kind,*RegistryResolver._selector(selector)))
+        imports=spec.get("imports",{})
+        if not isinstance(imports,Mapping): raise RegistryError("spec.imports must map catalog roots to selectors")
+        for root,selectors in imports.items():
+            kind=_KINDS.get(root)
+            if kind is None: raise RegistryError(f"unknown import root: {root}")
+            if not isinstance(selectors,(tuple,list)): raise RegistryError(f"imports.{root} must be a list")
+            for selector in selectors: refs.append((kind,*RegistryResolver._selector(selector)))
         return tuple(refs)
 
     @staticmethod
@@ -189,7 +223,7 @@ class RegistryResolver:
         for raw in self.raw.values():
             item=self._parse(raw); catalog.setdefault((item.kind,item.id),[]).append(item)
         for items in catalog.values(): items.sort(key=cmp_to_key(lambda a,b:_compare(a.version,b.version)),reverse=True)
-        ordered=[]; visited=set(); active=set()
+        ordered=[]; visited=set(); active=set(); effective_cache={}
         def select(kind,identity,expr):
             candidates=[item for item in catalog.get((kind,identity),()) if satisfies(item.version,expr)]
             if not candidates: raise RegistryError(f"no compatible resource: {kind.value}/{identity}@{expr}")
@@ -204,8 +238,41 @@ class RegistryResolver:
                 dependencies.append(f"{dep_kind.value}/{dep.id}@{dep.version}")
                 visit(dep_kind,dep_id,dep_expr)
             active.remove(node); visited.add(node)
-            # retain compatibility projections while typed references remain canonical in dependency_ids.
-            ordered.append(ResolvedResource(item, tuple(dependencies), True))
+            # Resolve spec.extends recursively, then apply source QUALITY_POLICY in its
+            # documented order. Keep Resource.capabilities as the raw manifest list;
+            # policy capabilities are a separate effective field and never enter it.
+            def inherit(current, stack=()):
+                key=(current.kind,current.id,current.version)
+                if key in stack: raise RegistryError(f"inheritance cycle at {current.kind.value}/{current.id}@{current.version}")
+                cached=effective_cache.get(key)
+                if cached is not None: return dict(cached)
+                result={}
+                extends=current.body.get("extends",[])
+                if isinstance(extends,str): extends=[extends]
+                for parent_id,parent_expr in (self._selector(value) for value in extends):
+                    parent=select(current.kind,parent_id,parent_expr)
+                    result=_merge_policy_values(result,inherit(parent,stack+(key,)))
+                result=_merge_policy_values(result,current.body)
+                effective_cache[key]=dict(result)
+                return result
+            raw=self.raw.get(f"{item.kind.value}/{item.id}@{item.version}")
+            tags=set()
+            if raw is not None:
+                metadata=raw.document.get("metadata",{})
+                if isinstance(metadata,Mapping) and isinstance(metadata.get("tags",[]),(tuple,list)):
+                    tags={tag for tag in metadata.get("tags",[]) if isinstance(tag,str)}
+            policy=self.quality_policy
+            effective=dict(policy.get("universal") or {})
+            defaults=policy.get("defaults") or {}
+            if isinstance(defaults,Mapping): effective=_merge_policy_values(effective,defaults.get(item.kind.value) or {})
+            overlays=[]
+            for overlay in policy.get("domainOverlays") or []:
+                if isinstance(overlay,Mapping) and _policy_overlay_matches(item.id,tags,overlay.get("match") or {}):
+                    effective=_merge_policy_values(effective,overlay.get("apply") or {})
+                    overlays.append(str(overlay.get("name", "unnamed")))
+            effective=_merge_policy_values(effective,inherit(item))
+            # Retain dependency order and raw Resource compatibility projections.
+            ordered.append(ResolvedResource(item, tuple(dependencies), True, effective, tuple(overlays)))
         for selector in selectors:
             if not isinstance(selector,str) or not selector: raise RegistryError("root selector must be kind/name[@semver]")
             first,slash,tail=selector.partition("/")

@@ -7,7 +7,7 @@ name = "hermes-agent-installer"
 version = "0.1.0"
 description = "Recoverable installer and verification tooling for Hermes on Raspberry Pi"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["PyYAML>=6.0.2,<7"]
 
 [project.scripts]
 hermes-installer = "hermes_installer.cli:main"
