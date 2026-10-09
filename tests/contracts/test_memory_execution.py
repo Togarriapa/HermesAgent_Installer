@@ -12,6 +12,7 @@ from hermes_installer.authority.memory_execution import (
     MemoryCompoundLedger,
     MemoryExecutionDenied,
     MemoryRecipeUnavailable,
+    RootMemoryStepEffectAuthority,
 )
 from hermes_installer.memory.compound import MemoryRouteRecipe, MemoryRouteStep
 from hermes_installer.memory.broker import DurableMemoryQueue
@@ -20,6 +21,7 @@ from hermes_installer.authority.types import (
     EffectAuthorization, HostContext, Sensitivity, canonical_digest,
 )
 from hermes_installer.memory.compound import canonical_json
+from hermes_installer.authority.service import AuthorityService, EffectRule, PrincipalBinding
 
 
 def enrolled():
@@ -105,6 +107,95 @@ def admit(ledger, enrollment, recipe, body, *, consent=None):
 
 
 class MemoryCompoundLedgerTests(unittest.TestCase):
+    def test_fresh_hi12_connector_effect_consumes_exact_step_grant(self):
+        """Exercise the real AuthorityService dispatch around a local service fixture."""
+        uid = __import__("os").getuid()
+        enrollment, recipe = enrolled()
+        binding = PrincipalBinding(
+            uid, enrollment.principal_id, enrollment.profile_id,
+            enrollment.namespace_identity,
+            frozenset({"memory-retrieval", "hermes-service-connect"}),
+        )
+        outer = EffectRule("memory-retrieval", "memory.search", "memory:agentmemory:search")
+        connector = EffectRule("hermes-service-connect", "connector.open", enrollment.target_id)
+
+        class PrivatePolicy:
+            revision = "memory-fixture-policy"
+
+            def classify(self, *, purpose, intent, source_contexts, binding):
+                if source_contexts:
+                    return source_contexts[0].sensitivity, canonical_digest(
+                        [item.lineage_hash for item in source_contexts])
+                return Sensitivity.PRIVATE, canonical_digest({"purpose": purpose, "intent": intent})
+
+            def allow_effect(self, *, context, rule, request_digest, retry_index):
+                return context.sensitivity is Sensitivity.PRIVATE and retry_index == 0
+
+        service = AuthorityService(
+            signing_key=b"m" * 32, key_id="memory-step-fixture",
+            bindings_by_uid={uid: binding},
+            rules={(rule.capability, rule.operation, rule.target): rule
+                   for rule in (outer, connector)},
+            handlers={(outer.operation, outer.target): lambda **_kwargs: {
+                "status": 200, "body": b"unused", "headers": {}, "receipt_id": "outer"}},
+            policy=PrivatePolicy(),
+        )
+        # This is a non-privileged macOS fixture: production Linux peer PID
+        # identity is deliberately unavailable here, so pin the test process
+        # identity at the boundary while leaving signature/grant dispatch real.
+        service._native_process_identity = lambda *_args: "linux-proc:memory-test"
+        request_body = {"query": "synthetic after restart", "limit": 3}
+        parent_payload = canonical_json({"schema": 1, **request_body})
+        digest = canonical_digest(parent_payload)
+        source = HostContext.from_wire(service._issue_context(uid, {
+            "purpose": "memory-search", "intent": "synthetic-retrieval",
+            "trace_id": "trace-memory-fixture", "lease_seconds": 30,
+            "source_contexts": [], "final_payload_digest": digest,
+            "operation": "memory.search",
+        }, peer_pid=__import__("os").getpid()))
+        parent = EffectAuthorization.from_wire(service._authorize_effect(uid, {
+            "context": source.to_wire(), "capability": outer.capability,
+            "target": outer.target, "recipient": None,
+            "request_digest": digest, "retry_index": 0,
+        }, peer_pid=__import__("os").getpid()))
+
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = MemoryCompoundLedger(Path(directory) / "authority-memory")
+
+            class ProcessManager:
+                def resolve_namespace_lease(self, _binding):
+                    raise AssertionError("fixture transport must not attempt namespace entry")
+
+            class Vault:
+                def resolve_reference(self, *_args, **_kwargs):
+                    return "fixture-secret"
+
+            step_authority = RootMemoryStepEffectAuthority(
+                service=service,
+                enrollment_resolver=lambda _profile, _generation: enrollment,
+                ledger_resolver=lambda _profile: ledger,
+                service_catalog=object(), process_manager=ProcessManager(), vault=Vault(),
+                owner_state=lambda _profile: ("agentmemory", 3),
+                consent_active=lambda _consent: False,
+                ledger_profiles=(enrollment.profile_id,),
+            )
+            self.assertEqual(step_authority.register(), (enrollment.target_id,))
+            service.attach_memory_step_effect_authority(step_authority)
+
+            # The transport fixture replaces only the final local namespace
+            # exchange. Context, grant issuance, exact body digest, nonce
+            # consumption, handler lookup, result bounds and recipe validator
+            # all run through production AuthorityService code.
+            from hermes_installer.memory.namespace_connector import MemoryHTTPResult
+            step_authority.namespace_transport.request = lambda **_kwargs: MemoryHTTPResult(
+                200, b'{"mode":"compact","results":[]}')
+            result = MemoryCompoundExecutor(
+                ledger, service.perform_memory_connector_step).execute(
+                    enrollment=enrollment, recipe=recipe, body=request_body,
+                    source_context_wire=source.to_wire(), parent_authorization=parent,
+                    parent_request_payload=parent_payload)
+            self.assertEqual(result["status"], "ok")
+
     def test_step_is_reserved_once_and_completion_erases_source_payload(self):
         with tempfile.TemporaryDirectory() as directory:
             ledger = MemoryCompoundLedger(Path(directory) / "owned")

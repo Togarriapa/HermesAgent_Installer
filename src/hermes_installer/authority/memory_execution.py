@@ -437,6 +437,7 @@ class MemoryCompoundLedger:
                 if changed != 1:
                     raise MemoryExecutionDenied("memory effect reservation was concurrently consumed")
                 result = {
+                    "job_handle": handle,
                     "profile_id": row[0], "namespace_id": row[1], "provider": row[2],
                     "service_generation": row[3], "owner_generation": row[4],
                     "route_id": row[5], "sequence": row[7], "deadline_monotonic": row[8],
@@ -477,6 +478,7 @@ class MemoryCompoundLedger:
                 or row[15] != service_request_sha256 or time.monotonic() >= row[8]):
             raise MemoryExecutionDenied("consumed memory effect binding changed or expired")
         return {
+            "job_handle": handle,
             "profile_id": row[0], "namespace_id": row[1], "provider": row[2],
             "service_generation": row[3], "owner_generation": row[4],
             "route_id": row[5], "sequence": row[7], "deadline_monotonic": row[8],
@@ -712,3 +714,386 @@ class MemoryCompoundExecutor:
                     "namespace_id": job.namespace_id}
         except (MemoryRecipeUnavailable, MemoryExecutionUnavailable):
             raise
+
+
+class RootMemoryStepEffectAuthority:
+    """Root-only HI12 issuer/handler for one fixed memory recipe step.
+
+    The outer memory grant is retained only as audit metadata in the durable
+    ledger. This adapter reconstructs and validates the exact service request,
+    issues a new ``connector.open`` context/grant from the signed source
+    lineage, and dispatches through AuthorityService's normal one-use effect
+    path. Its registered connector handler accepts only a consumed ledger
+    reservation; it never accepts worker-supplied HTTP.
+    """
+
+    def __init__(self, *, service: Any,
+                 enrollment_resolver: Callable[[str, str], MemoryServiceEnrollment],
+                 ledger_resolver: Callable[[str], MemoryCompoundLedger],
+                 service_catalog: Any, process_manager: Any, vault: Any,
+                 owner_state: Callable[[str], tuple[str | None, int]],
+                 consent_active: Callable[[str], bool],
+                 ledger_profiles: tuple[str, ...] = (),
+                 monotonic: Callable[[], float] = time.monotonic):
+        if not all(callable(value) for value in (
+                enrollment_resolver, ledger_resolver, owner_state, consent_active, monotonic)):
+            raise ValueError("memory step authority requires root-owned active-state resolvers")
+        if (not callable(getattr(service, "_issue_context", None))
+                or not callable(getattr(service, "_authorize_effect", None))
+                or not callable(getattr(service, "_perform_effect", None))
+                or not callable(getattr(process_manager, "resolve_namespace_lease", None))
+                or not callable(getattr(vault, "resolve_reference", None))):
+            raise ValueError("memory step authority requires the protected HI12 and namespace services")
+        self.service = service
+        self.enrollment_resolver = enrollment_resolver
+        self.ledger_resolver = ledger_resolver
+        self.service_catalog = service_catalog
+        self.process_manager = process_manager
+        self.vault = vault
+        self.owner_state = owner_state
+        self.consent_active = consent_active
+        if any(not isinstance(profile, str) or not profile for profile in ledger_profiles):
+            raise ValueError("memory ledger profile IDs are malformed")
+        self.profiles = tuple(sorted(set(ledger_profiles)))
+        self.monotonic = monotonic
+        self._registered: set[str] = set()
+        from hermes_installer.memory.namespace_connector import MemoryNamespaceConnector
+        self.namespace_transport = MemoryNamespaceConnector(
+            catalog=service_catalog, process_manager=process_manager, vault=vault)
+
+    def register(self) -> tuple[str, ...]:
+        """Install only connector.open handlers backed by existing protected rules."""
+        handlers = self.service.handlers
+        if not isinstance(handlers, dict):
+            raise MemoryExecutionUnavailable("AuthorityService handler table is not root mutable")
+        targets = sorted({rule.target for rule in self.service.rules.values()
+                          if rule.operation == "connector.open"
+                          and rule.capability == "hermes-service-connect"
+                          and isinstance(rule.target, str)
+                          and rule.target.startswith("memory-")})
+        registered: list[str] = []
+        for target in targets:
+            rules = [rule for rule in self.service.rules.values()
+                     if rule.operation == "connector.open" and rule.target == target
+                     and rule.capability == "hermes-service-connect"]
+            if len(rules) != 1:
+                continue
+            key = ("connector.open", target)
+            existing = handlers.get(key)
+            if existing is not None and existing != self.handle_connector_open:
+                continue
+            handlers[key] = self.handle_connector_open
+            self._registered.add(target)
+            registered.append(target)
+        return tuple(registered)
+
+    def perform_step(self, reservation_handle: str,
+                     canonical_connector_payload_bytes: bytes,
+                     serialized_service_request_sha256: str, *,
+                     timeout: float,
+                     cancelled: Callable[[], bool]) -> tuple[int, bytes]:
+        """Resolve a consumed reservation, then issue a fresh one-use HI12 grant."""
+        if (not isinstance(reservation_handle, str) or not isinstance(canonical_connector_payload_bytes, bytes)
+                or not re.fullmatch(r"[0-9a-f]{64}", serialized_service_request_sha256)
+                or not callable(cancelled) or isinstance(timeout, bool)
+                or not isinstance(timeout, (int, float)) or not 0 < timeout <= 60):
+            raise MemoryExecutionDenied("memory step effect arguments are malformed")
+        ledger_hint = None
+        # The profile is resolved from the durable reservation only. Search
+        # configured ledgers by root-selected profile; never trust envelope IDs.
+        for resolver_key in self._ledger_profiles():
+            try:
+                candidate = self.ledger_resolver(resolver_key)
+                binding = candidate.get_consumed_step_effect(
+                    reservation_handle, canonical_connector_payload_bytes,
+                    serialized_service_request_sha256)
+            except (MemoryExecutionDenied, KeyError, ValueError):
+                continue
+            ledger_hint = candidate
+            break
+        if ledger_hint is None or binding is None:
+            raise MemoryExecutionDenied("no root-owned consumed memory step reservation matches")
+        enrollment, recipe, step, request, job, source, consent = self._revalidate_step(
+            binding, canonical_connector_payload_bytes, serialized_service_request_sha256,
+            cancelled=cancelled)
+        if enrollment.target_id not in self._registered:
+            raise MemoryExecutionUnavailable("no protected HI12 connector.open rule is installed for memory")
+        remaining = min(float(timeout), binding["deadline_monotonic"] - self.monotonic(),
+                        enrollment.limits["operation_timeout_seconds"])
+        if remaining <= 0:
+            raise MemoryExecutionDenied("memory step deadline expired before HI12 grant")
+        child_payload = canonical_json({
+            "schema": 1, "job_handle": reservation_handle,
+            "target_id": enrollment.target_id,
+            "compound_envelope": __import__("base64").b64encode(
+                canonical_connector_payload_bytes).decode("ascii"),
+            "compound_payload_sha256": binding["compound_payload_sha256"],
+            "service_request_sha256": serialized_service_request_sha256,
+            "route_id": recipe.approved_route_id, "step_id": step.step_id,
+            "sequence": binding["sequence"],
+            "service_generation": enrollment.service_generation,
+            "owner_generation": enrollment.memory_owner_generation,
+        }, min(4 * 1024 * 1024, enrollment.limits["request_bytes"] + 32_768))
+        payload_digest = canonical_digest(child_payload)
+        context_wire = self.service._issue_context(source.uid, {
+            "purpose": "memory-service-connector",
+            "intent": f"{reservation_handle}:{step.step_id}:{binding['sequence']}",
+            "trace_id": source.trace_id,
+            "lease_seconds": min(remaining, 30.0),
+            "source_contexts": [source.to_wire()],
+            "final_payload_digest": payload_digest,
+            "operation": "connector.open",
+        }, allow_expired_sources=True,
+           inherited_process_identity=source.native_process_identity)
+        context = HostContext.from_wire(context_wire)
+        rule = self._connector_rule(enrollment.target_id)
+        authorization_wire = self.service._authorize_effect(source.uid, {
+            "context": context.to_wire(), "capability": rule.capability,
+            "target": enrollment.target_id, "recipient": rule.recipient,
+            "request_digest": payload_digest, "retry_index": 0,
+        })
+        authorization = EffectAuthorization.from_wire(authorization_wire)
+        if (authorization.operation != "connector.open"
+                or authorization.target != enrollment.target_id
+                or authorization.request_digest != payload_digest
+                or authorization.final_payload_digest != payload_digest
+                or authorization.context_digest != canonical_digest(
+                    {**context.claims(), "signature": context.signature})
+                or authorization.monotonic_expires_at > binding["deadline_monotonic"]):
+            raise MemoryExecutionDenied("AuthorityService returned a differently bound memory HI12 grant")
+        result = self.service._perform_effect(source.uid, os.getpid(), {
+            "authorization": authorization.to_wire(), "operation": "connector.open",
+            "payload": __import__("base64").b64encode(child_payload).decode("ascii"),
+            "timeout": remaining,
+        }, cancelled=lambda: cancelled() or self.monotonic() >= binding["deadline_monotonic"],
+            enforce_peer_identity=False)
+        try:
+            return result["status"], __import__("base64").b64decode(result["body"], validate=True)
+        except (KeyError, TypeError, ValueError):
+            raise MemoryExecutionUnavailable("root memory connector returned a malformed receipt") from None
+
+    def perform_memory_connector_step(self, reservation_handle: str,
+                     canonical_connector_payload_bytes: bytes,
+                     serialized_service_request_sha256: str, *,
+                     timeout: float, cancelled: Callable[[], bool]) -> tuple[int, bytes]:
+        """AuthorityService's narrow root-only callback spelling."""
+        return self.perform_step(reservation_handle, canonical_connector_payload_bytes,
+            serialized_service_request_sha256, timeout=timeout, cancelled=cancelled)
+
+    def handle_connector_open(self, *, context: HostContext,
+                              authorization: EffectAuthorization, payload: bytes,
+                              timeout: float, peer_pid: int, peer_pidfd: int | None,
+                              cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """One-use internal connector handler, dispatchable only for a ledger step."""
+        import base64
+        try:
+            value = json.loads(payload.decode("utf-8"))
+            if (not isinstance(value, dict) or canonical_json(value) != payload
+                    or set(value) != {"schema", "job_handle", "compound_envelope", "target_id",
+                        "compound_payload_sha256", "service_request_sha256", "route_id",
+                        "step_id", "sequence", "service_generation", "owner_generation"}
+                    or type(value["schema"]) is not int or value["schema"] != 1):
+                raise ValueError
+            envelope = base64.b64decode(value["compound_envelope"], validate=True)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError, KeyError):
+            raise MemoryExecutionDenied("internal memory HI12 payload is malformed") from None
+        ledger = self.ledger_resolver(context.profile_id)
+        binding = ledger.get_consumed_step_effect(
+            value["job_handle"], envelope, value["service_request_sha256"])
+        if (context.operation != "connector.open"
+                or authorization.operation != "connector.open"
+                or authorization.target != value["target_id"]
+                or binding["job_handle"] != value["job_handle"]
+                or binding["profile_id"] != context.profile_id
+                or binding["namespace_id"] != context.namespace_id
+                or binding["compound_payload_sha256"] != value["compound_payload_sha256"]
+                or value["route_id"] != binding["route_id"]
+                or value["step_id"] != binding["step_id"]
+                or value["sequence"] != binding["sequence"]
+                or value["service_generation"] != binding["service_generation"]
+                or value["owner_generation"] != binding["owner_generation"]):
+            raise MemoryExecutionDenied("internal memory HI12 effect differs from consumed reservation")
+        enrollment, recipe, step, request, job, source, consent = self._revalidate_step(
+            binding, envelope, value["service_request_sha256"], cancelled=cancelled)
+        if (authorization.target != enrollment.target_id
+                or authorization.capability != "hermes-service-connect"
+                or context.profile_id != enrollment.profile_id
+                or context.namespace_id != enrollment.namespace_identity):
+            raise MemoryExecutionDenied("memory HI12 grant differs from selected service route")
+        digest = canonical_digest({
+            "method": request.method, "path": request.path,
+            "headers": list(request.headers),
+            "body_sha256": __import__("hashlib").sha256(request.body).hexdigest(),
+        })
+        if digest != value["service_request_sha256"]:
+            raise MemoryExecutionDenied("reconstructed memory service request digest changed")
+        from hermes_installer.memory.namespace_connector import MemoryNamespaceConnector
+        connector = getattr(self, "namespace_transport", None)
+        if not isinstance(connector, MemoryNamespaceConnector):
+            raise MemoryExecutionUnavailable("root memory namespace connector is unavailable")
+        def before_connect(frame_sha256: str) -> None:
+            # The outer HI12 grant was consumed by _perform_effect immediately
+            # before entering this registered handler. Recheck freshness and
+            # owner/consent immediately before the socket connect.
+            self._revalidate_step(binding, envelope, value["service_request_sha256"],
+                                  cancelled=cancelled)
+            if not re.fullmatch(r"[0-9a-f]{64}", frame_sha256):
+                raise MemoryExecutionDenied("memory connector frame digest is malformed")
+            self.service._verify_grant_signature(authorization)
+            current = self.service._binding(context.uid)
+            self.service._assert_current_context(context, current, context.uid)
+            self.service._assert_grant_current(authorization, current, context.uid)
+            rule = self._connector_rule(enrollment.target_id)
+            if not self.service.policy.allow_effect(
+                    context=context, rule=rule, request_digest=authorization.request_digest,
+                    retry_index=authorization.retry_index):
+                raise MemoryExecutionDenied("memory HI12 policy was revoked before namespace connect")
+        response = connector.request(enrollment=enrollment, route_id=recipe.approved_route_id,
+            request=request, before_connect=before_connect,
+            timeout=min(timeout, enrollment.limits["operation_timeout_seconds"]),
+            deadline=binding["deadline_monotonic"], cancelled=cancelled)
+        if not isinstance(response.body, bytes):
+            raise MemoryExecutionUnavailable("memory namespace connector returned invalid bytes")
+        return {"status": response.status, "body": response.body,
+                "headers": {"content-type": "application/json"},
+                "receipt_id": secrets.token_urlsafe(18)}
+
+    def _connector_rule(self, target: str) -> Any:
+        rules = [rule for rule in self.service.rules.values()
+                 if rule.operation == "connector.open" and rule.target == target
+                 and rule.capability == "hermes-service-connect"]
+        if len(rules) != 1:
+            raise MemoryExecutionUnavailable("exact protected HI12 connector.open rule is not enrolled")
+        return rules[0]
+
+    def _ledger_profiles(self) -> tuple[str, ...]:
+        if self.profiles:
+            return self.profiles
+        return tuple(sorted({principal.profile_id
+                             for principal in self.service.bindings_by_uid.values()}))
+
+    def _revalidate_step(self, binding: Mapping[str, Any], envelope_wire: bytes,
+                         service_request_sha256: str, *,
+                         cancelled: Callable[[], bool]) -> tuple[Any, Any, Any, Any, Any, HostContext, Any]:
+        if cancelled() or self.monotonic() >= binding["deadline_monotonic"]:
+            raise MemoryExecutionDenied("memory step was cancelled or expired")
+        profile = binding["profile_id"]
+        enrollment = self.enrollment_resolver(profile, binding["service_generation"])
+        if (not isinstance(enrollment, MemoryServiceEnrollment)
+                or enrollment.profile_id != profile
+                or enrollment.namespace_identity != binding["namespace_id"]
+                or enrollment.provider != binding["provider"]
+                or enrollment.service_generation != binding["service_generation"]
+                or enrollment.memory_owner_generation != binding["owner_generation"]
+                or enrollment.target_id != binding["target_id"]):
+            raise MemoryExecutionDenied("current protected memory service differs from consumed ledger")
+        if self.owner_state(profile) != (enrollment.provider, enrollment.memory_owner_generation):
+            raise MemoryExecutionDenied("memory owner generation changed before connector effect")
+        try:
+            source_value = json.loads(binding["source_context_wire"].decode("utf-8"))
+            source = HostContext.from_wire(source_value)
+            self.service._verify_context_signature(source)
+        except Exception:
+            raise MemoryExecutionDenied("signed memory source lineage is no longer valid") from None
+        principal = self.service._binding(source.uid)
+        if (source.profile_id != profile or source.namespace_id != enrollment.namespace_identity
+                or source.principal_id != enrollment.principal_id
+                or principal.profile_id != profile or principal.namespace_id != enrollment.namespace_identity
+                or source.policy_revision != self.service._policy_revision()
+                or not source.native_process_identity):
+            raise MemoryExecutionDenied("source lineage no longer matches active host identity")
+        consent = binding["consent_wire"]
+        consent_value = None
+        if consent is not None:
+            try:
+                consent_value = json.loads(consent.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise MemoryExecutionDenied("persisted memory consent is malformed") from None
+            expected_consent_fields = {
+                "kind", "consent_id", "source_context_digest", "principal_id", "profile_id",
+                "namespace_id", "uid", "provider_id", "owner_generation", "policy_revision",
+                "allowed_actions", "issued_at_unix", "expires_at_unix", "signature",
+            }
+            if not isinstance(consent_value, dict) or set(consent_value) != expected_consent_fields:
+                raise MemoryExecutionDenied("persisted memory consent schema is invalid")
+            consent_id = consent_value.get("consent_id") if isinstance(consent_value, dict) else None
+            signature = consent_value.pop("signature", None) if isinstance(consent_value, dict) else None
+            try:
+                if not isinstance(signature, str):
+                    raise ValueError
+                self.service._verify_signature(consent_value, signature)
+            except Exception:
+                raise MemoryExecutionDenied("persisted memory consent signature is invalid") from None
+            now_wall = self.service.wall_clock()
+            source_digest = canonical_digest({**source.claims(), "signature": source.signature})
+            if (not isinstance(consent_id, str) or self.consent_active(consent_id) is not True
+                    or consent_value.get("kind") != "memory-background-consent-v1"
+                    or consent_value.get("source_context_digest") != source_digest
+                    or consent_value.get("principal_id") != enrollment.principal_id
+                    or consent_value.get("uid") != source.uid
+                    or consent_value.get("profile_id") != profile
+                    or consent_value.get("namespace_id") != binding["namespace_id"]
+                    or consent_value.get("provider_id") != binding["provider"]
+                    or consent_value.get("owner_generation") != binding["owner_generation"]
+                    or consent_value.get("policy_revision") != self.service._policy_revision()
+                    or type(consent_value.get("issued_at_unix")) not in (int, float)
+                    or consent_value.get("issued_at_unix", 0) > now_wall
+                    or consent_value.get("expires_at_unix", 0) <= now_wall
+                    or consent_value.get("expires_at_unix", 0) - consent_value.get("issued_at_unix", 0) > 86_400
+                    or not isinstance(consent_value.get("allowed_actions"), list)
+                    or len(consent_value.get("allowed_actions", [])) != len(set(consent_value.get("allowed_actions", [])))
+                    or "capture" not in consent_value.get("allowed_actions", ())):
+                raise MemoryExecutionDenied("memory background consent is revoked")
+            consent_value["signature"] = signature
+        recipe = enrollment.fixed_route_map.get(binding["route_id"])
+        if not isinstance(recipe, MemoryRouteRecipe) or binding["recipe_sha256"] != _recipe_digest(recipe):
+            raise MemoryExecutionDenied("active memory recipe differs from reserved digest")
+        try:
+            envelope = json.loads(envelope_wire.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise MemoryExecutionDenied("reserved memory compound envelope is malformed") from None
+        if (not isinstance(envelope, dict) or set(envelope) != {
+                "schema", "handle_id", "generation", "sequence",
+                "compound_job_handle", "step_id", "body"}
+                or type(envelope["schema"]) is not int or envelope["schema"] != 1
+                or envelope["handle_id"] != envelope["compound_job_handle"]
+                or envelope["compound_job_handle"] != binding["job_handle"]
+                or envelope["generation"] != enrollment.service_generation
+                or envelope["sequence"] != binding["sequence"]
+                or envelope["step_id"] != binding["step_id"]
+                or canonical_json(envelope, recipe.maximum_bytes) != envelope_wire):
+            raise MemoryExecutionDenied("memory compound envelope differs from reservation")
+        handle = binding.get("job_handle")
+        # get_consumed_step_effect intentionally returns no caller-supplied
+        # identity. Re-read by the opaque job handle in the exact envelope.
+        handle = envelope["compound_job_handle"]
+        if envelope["handle_id"] != handle:
+            raise MemoryExecutionDenied("memory compound job handle mismatch")
+        ledger = self.ledger_resolver(profile)
+        job = ledger.get(handle)
+        step = recipe.steps[job.next_step] if 0 <= job.next_step < len(recipe.steps) else None
+        if (step is None or step.step_id != binding["step_id"]
+                or job.state != "active" or job.sequence != binding["sequence"]
+                or job.profile_id != profile or job.namespace_id != enrollment.namespace_identity):
+            raise MemoryExecutionDenied("current memory step does not match durable job order")
+        body = envelope["body"]
+        expected_body: Mapping[str, Any] = (job.request_body if step.step_id == "find"
+            or len(recipe.steps) == 1 else {"content": job.request_body.get("content")}
+            if step.step_id == "append" else {})
+        if body != expected_body:
+            raise MemoryExecutionDenied("worker step body differs from the root-selected job payload")
+        protected_recipe = {"credential_reference_id": recipe.credential_reference_id,
+                            "scope_bindings": dict(recipe.scope_bindings)}
+        protected_step = {"method": step.method, "path_template": step.path_template,
+                          "body_recipe_id": step.body_recipe_id}
+        request = build_memory_request(provider=enrollment.provider,
+            route_id=recipe.approved_route_id, recipe=protected_recipe,
+            step=protected_step, body=body, scope_bindings=recipe.scope_bindings,
+            captures=job.captures, trusted_event=None,
+            maximum_bytes=recipe.maximum_bytes)
+        actual_digest = canonical_digest({"method": request.method, "path": request.path,
+            "headers": list(request.headers),
+            "body_sha256": __import__("hashlib").sha256(request.body).hexdigest()})
+        if actual_digest != service_request_sha256 or actual_digest != binding["service_request_sha256"]:
+            raise MemoryExecutionDenied("fixed service serializer differs from consumed request digest")
+        return enrollment, recipe, step, request, job, source, consent_value

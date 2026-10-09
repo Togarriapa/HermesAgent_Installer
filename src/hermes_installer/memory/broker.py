@@ -883,14 +883,14 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
 def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTarget | MemoryServiceEnrollment],
         authority_service: Any, *, root_journal_resolver: Callable[..., Any] | None = None,
         expected_active_generation_digest: str | None = None,
-        vault: Any = None, connector_factory: RootConnectorFactory | None = None) -> dict[str, Any]:
+        vault: Any = None, connector_factory: RootConnectorFactory | None = None,
+        service_catalog: Any = None, process_manager: Any = None,
+        enrollment_resolver: Callable[[str, str], MemoryServiceEnrollment] | None = None) -> dict[str, Any]:
     """Assemble the root memory runtime from protected enrollment only.
 
-    Fixed compound execution is available only when AuthorityService provides
-    the root-owned per-step effect callback. The callback must resolve the
-    protected service/route and issue a new HI12 grant for each network step.
-    Without that callback, no service bytes are sent. This builder never starts
-    or lazily installs provider processes or models.
+    Fixed compound execution is composed only with the current root service
+    catalog, managed process namespace, and credential vault. The builder installs no service process/model and
+    does not enable event capture or private external extraction.
     """
     targets: dict[tuple[str, str, str], MemoryTarget] = {}
     for key, item in protected_targets.items():
@@ -1022,13 +1022,38 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
     step_effect = getattr(authority_service, "perform_memory_connector_step", None)
     compound_ledgers = {profile: MemoryCompoundLedger(directory)
                         for profile, directory in state_directories.items()}
+    step_authority = None
+    if (service_catalog is not None and process_manager is not None and vault is not None):
+        from hermes_installer.authority.memory_execution import RootMemoryStepEffectAuthority
+        if enrollment_resolver is None:
+            enrollment_by_key = {
+                (enrollment.profile_id, enrollment.service_generation): enrollment
+                for enrollment in enrollments.values()
+            }
+            enrollment_resolver = lambda profile, generation: enrollment_by_key[(profile, generation)]
+        step_authority = RootMemoryStepEffectAuthority(
+            service=authority_service, enrollment_resolver=enrollment_resolver,
+            ledger_resolver=lambda profile: compound_ledgers[profile],
+            service_catalog=service_catalog,
+            process_manager=process_manager, vault=vault, owner_state=owner_state,
+            consent_active=consent_active, ledger_profiles=tuple(compound_ledgers))
+        registered = step_authority.register()
+        if registered:
+            # This is an in-process root callback, never a worker RPC verb.
+            # It is called only by the already registered memory effect handler.
+            attach = getattr(authority_service, "attach_memory_step_effect_authority", None)
+            if not callable(attach):
+                raise MemoryExecutionUnavailable("root AuthorityService memory effect attachment is unavailable")
+            attach(step_authority)
     class ProfiledCompoundExecutor:
         def execute(self, *, enrollment: MemoryServiceEnrollment, **kwargs: Any) -> Mapping[str, Any]:
             ledger_for_profile = compound_ledgers.get(enrollment.profile_id)
             if ledger_for_profile is None:
                 raise MemoryExecutionUnavailable("profile memory compound ledger is unavailable")
             return MemoryCompoundExecutor(
-                ledger_for_profile, step_effect if callable(step_effect) else None
+                ledger_for_profile,
+                getattr(authority_service, "perform_memory_connector_step", None)
+                if step_authority is not None else None
             ).execute(enrollment=enrollment, **kwargs)
     compound_ledger = compound_ledgers
     compound_executor = ProfiledCompoundExecutor()
@@ -1046,6 +1071,7 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         "consent_active": consent_active,
         "consent_ready": consent_ready,
         "background_effect": effect_runner if callable(effect_runner) else None,
+        "step_authority": step_authority,
         "state_directories": state_directories, "state_root_ready": True,
     }
 

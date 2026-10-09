@@ -75,6 +75,7 @@ def record(provider="agentmemory", variant="default", port=3111):
         "service_generation": "service-gen-7", "namespace_identity": "namespace-one",
         "literal_loopback_port": port, "fixed_route_map": fixed_routes,
         "data_root_id": f"memory-data-{provider}-one", "auth_reference_id": f"memory-auth-{provider}-one",
+        "authority_state_root_id": "installer-authority-journal-v1",
         "fixed_project_account_user_scope": {"project_id": "project-one", "account_id": "account-one", "user_id": "profile-one"},
         "memory_owner_generation": 4,
         "private_extraction_embedding_routes": {"extract": "private-extract-route-one", "embed": "private-embed-route-one"},
