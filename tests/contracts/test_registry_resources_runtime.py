@@ -34,7 +34,9 @@ from hermes_installer.registry.resources_runtime import (
     invoke_scheduled_profile_run,
     invoke_webhook_delivery,
     materialize_runtime_resource,
+    _verified_installed_resource_bundle,
 )
+from hermes_installer.registry.source import load_bundled_source
 from hermes_installer.state import Journal, OwnedRoot
 
 
@@ -279,7 +281,16 @@ class ResourcesRuntimeTests(unittest.TestCase):
             root = Path(temp)
             bundle = root / "resources/vendor/hermes-agent-resources-2.3.1"
             bundle.mkdir(parents=True)
-            revision = "a" * 40
+            # Stage the exact package-data snapshot into the selected immutable
+            # artifact root. The runtime must not read the source checkout tree.
+            with patch("urllib.request.urlopen", side_effect=AssertionError("network access")):
+                pinned = load_bundled_source()
+            for relative, content in pinned.files.items():
+                path = bundle / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+                path.chmod(pinned.file_modes[relative])
+            revision = pinned.revision
             identity = ResourceIdentity("daily-review", "crons", "1.0.0", "crons/daily-review.yaml", revision, "b" * 64)
             spec = {
                 "schedule": "0 1 * * *", "timezone": "UTC",
@@ -382,7 +393,40 @@ class ResourcesRuntimeTests(unittest.TestCase):
             self.assertEqual(launch["target"], "profile:hermes")
             self.assertEqual(launch["argv"][:3], [str(executable.resolve()), "-p", "hermes"])
             self.assertIn("Assess only the installer-owned", launch["argv"][4])
+            self.assertIn(str(bundle.resolve()), launch["argv"][4])
             self.assertEqual(launch["child_artifact_refs"], target.child_artifact_refs)
+            self.assertEqual(service.call[1]["peer_pid"], 123)
+            self.assertLessEqual(service.call[1]["timeout"], 600.0)
+
+            spoofed = {"profile_id": "other", "scheduled_for": "2026-10-10T01:00:00Z"}
+            spoofed_bytes = json.dumps(spoofed, sort_keys=True, separators=(",", ":")).encode()
+            spoofed_authorization = type("Authorization", (), {
+                "target": selected.target, "capability": selected.capability,
+                "recipient": None, "request_digest": hashlib.sha256(spoofed_bytes).hexdigest(),
+            })()
+            with self.assertRaisesRegex(ResourceRuntimeError, "differs from root selection"):
+                handler(context=object(), authorization=spoofed_authorization, payload=spoofed_bytes,
+                        timeout=60.0, peer_pid=123, cancelled=lambda: False)
+            self.assertEqual(json.loads(service.call[1]["payload"]), launch)
+
+    def test_candidate_assessment_rejects_partial_or_unpinned_bundle_artifact(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle = root / "resources/vendor/hermes-agent-resources-2.3.1"
+            bundle.mkdir(parents=True)
+            target = HermesProfileExecutionTarget(
+                profile_id="hermes", executable=root / "hermes",
+                artifact_sha256="d" * 64, artifact_root=root, cwd=root,
+                data_root=root / "profiles/hermes", env_allowlist={"PATH": "/usr/bin"},
+            )
+            pinned = load_bundled_source()
+            source = {
+                "catalogVersion": pinned.catalog_version,
+                "revision": pinned.revision,
+                "path": "resources/vendor/hermes-agent-resources-" + pinned.catalog_version,
+            }
+            with self.assertRaisesRegex(ResourceRuntimeError, "complete pinned Resources snapshot"):
+                _verified_installed_resource_bundle(target, source)
 
     def test_selected_cron_without_reviewed_action_has_exact_pending_reason(self):
         identity = ResourceIdentity("sync", "crons", "1.0.0", "crons/sync.yaml", "a" * 40, "b" * 64)
@@ -403,19 +447,51 @@ class ResourcesRuntimeTests(unittest.TestCase):
                       selected_resource_effect_blockers(registry)[key])
         with self.assertRaisesRegex(ValueError, "active generation"):
             SelectedResourceRegistry((selected,), expected_generation_digest="d" * 64)
-            self.assertEqual(service.call[1]["peer_pid"], 123)
-            self.assertLessEqual(service.call[1]["timeout"], 600.0)
 
-            spoofed = {"profile_id": "other", "scheduled_for": "2026-10-10T01:00:00Z"}
-            spoofed_bytes = json.dumps(spoofed, sort_keys=True, separators=(",", ":")).encode()
-            spoofed_authorization = type("Authorization", (), {
-                "target": selected.target, "capability": selected.capability,
-                "recipient": None, "request_digest": hashlib.sha256(spoofed_bytes).hexdigest(),
-            })()
-            with self.assertRaisesRegex(ResourceRuntimeError, "differs from root selection"):
-                handler(context=object(), authorization=spoofed_authorization, payload=spoofed_bytes,
-                        timeout=60.0, peer_pid=123, cancelled=lambda: False)
-            self.assertEqual(json.loads(service.call[1]["payload"]), launch)
+    def test_candidate_assessment_blocker_names_missing_full_packaged_source_tree(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle = root / "resources/vendor/hermes-agent-resources-2.3.1"
+            bundle.mkdir(parents=True)
+            pinned = load_bundled_source()
+            target = HermesProfileExecutionTarget(
+                profile_id="hermes", executable=root / "venv/bin/hermes",
+                artifact_sha256="d" * 64, artifact_root=root, cwd=root,
+                data_root=root / "profiles/hermes", env_allowlist={"PATH": "/usr/bin"},
+            )
+            class Profiles:
+                def resolve_profile(self, profile_id):
+                    return target if profile_id == "hermes" else None
+
+            identity = ResourceIdentity(
+                "resource-sync", "crons", "1.0.0", "crons/resource-sync.yaml",
+                pinned.revision, "b" * 64,
+            )
+            selected = SelectedResourceExecution(
+                identity=identity, generation_digest="c" * 64,
+                effective_spec={
+                    "schedule": "0 1 * * *", "timezone": "UTC",
+                    "action": {
+                        "type": "installer-resource-candidate-assessment",
+                        "mode": "candidate-assessment", "profile": "hermes",
+                        "source": {
+                            "kind": "installer-bundle", "path": "resources/vendor/hermes-agent-resources-2.3.1",
+                            "catalogVersion": pinned.catalog_version, "revision": pinned.revision,
+                        },
+                    },
+                    "requires": {"profiles": ["hermes"]},
+                    "runtime": {"engine": "hermes-cron", "profileSelection": "registry-action-profile"},
+                    "policy": {"authorityFromSchedule": "deny", "staticRecipientListAsAuthority": "deny"},
+                },
+                capability="resource.cron.run", target="resource:crons/resource-sync@1.0.0",
+                operation="resource.cron.run", recipient=None, delegation_id="cron-to-profile",
+                profile_id="hermes", enabled=True,
+            )
+            reason = selected_resource_effect_blockers(
+                SelectedResourceRegistry((selected,)), profile_targets=Profiles(),
+            )[(selected.operation, selected.target)]
+            self.assertIn("complete pinned Resources snapshot", reason)
+            self.assertIn("stage the verified package-data bundle", reason)
 
     def test_profile_overlay_is_private_cas_and_soft_delete(self):
         with tempfile.TemporaryDirectory() as temp:
