@@ -104,10 +104,16 @@ def _spawn_private_namespace_responder(service_uid: int, service_gid: int,
                 if not headers.startswith(
                         b"POST /agentmemory/smart-search HTTP/1.1\r\nHost: 127.0.0.1:3111\r\n"):
                     framing_errors.append("method-path-host")
-                if b"Authorization: Bearer fake-memory-key-for-loopback-test\r\n" not in headers:
-                    names = [line.split(b":", 1)[0].decode("ascii", "replace")
-                             for line in headers.split(b"\r\n")[1:] if b":" in line]
-                    framing_errors.append("authorization:" + ",".join(names))
+                authorization_line = next((line for line in headers.split(b"\r\n")
+                                           if line.lower().startswith(b"authorization:")), None)
+                if authorization_line != b"Authorization: Bearer fake-memory-key-for-loopback-test":
+                    if authorization_line is None:
+                        framing_errors.append("authorization-absent")
+                    elif not authorization_line.startswith(b"Authorization: Bearer "):
+                        framing_errors.append("authorization-scheme")
+                    else:
+                        framing_errors.append("authorization-value-length:" + str(
+                            len(authorization_line.partition(b"Bearer ")[2])))
                 if b"Transfer-Encoding:" in headers:
                     framing_errors.append("transfer-encoding")
                 if framing_errors:
