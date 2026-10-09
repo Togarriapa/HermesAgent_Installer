@@ -17,7 +17,7 @@ class FakeRunner:
     def __init__(self, fail_once=None, partial_repository=False): self.calls=[]; self.fail_once=fail_once; self.partial_repository=partial_repository
     def __call__(self,args,*,timeout,capture=False):
         self.calls.append((args,timeout,capture))
-        if capture:
+        if capture and "--manifest" in args:
             return 0,json.dumps({"protocol_version":1,"stages":[{"name":n} for n in EXPECTED_STAGES]}).encode()
         if "--stage" in args:
             stage=args[args.index("--stage")+1]
@@ -51,12 +51,20 @@ class FakeRunner:
 
 def fake_desktop(data):
     def build(*, timeout):
-        dist=data.path("generations/hermes-agent-"+HERMES_COMMIT[:12]+"/apps/desktop/dist")
+        desktop=data.path("generations/hermes-agent-"+HERMES_COMMIT[:12]+"/apps/desktop")
+        dist=desktop/"dist"
         dist.mkdir(parents=True,exist_ok=True); (dist/"index.html").write_text("<html>"+"x"*200+"</html>")
+        package=desktop/"release/linux-arm64-unpacked"
+        (package/"resources").mkdir(parents=True,exist_ok=True)
+        (package/"resources/app.asar").write_bytes(b"x"*2048)
+        executable=package/"Hermes"
+        executable.write_text("#!/bin/sh\nexit 0\n"); executable.chmod(0o755)
+        (package/"chrome-sandbox").write_bytes(b"sandbox fixture")
         return 0,b""
     return build
 
 class BootstrapTests(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os, "waitid"), "process custody probe requires Linux child inspection")
     def test_actual_agent_version_probe_requires_pinned_head_and_successful_entrypoint(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
@@ -103,6 +111,72 @@ class BootstrapTests(unittest.TestCase):
             self.assertTrue(report.agent_ready)
             second=[call[0][call[0].index("--stage")+1] for call in runner.calls[prior:] if "--stage" in call[0]]
             self.assertEqual(second,["products","products","setup","gateway","complete"])
+
+    def test_failed_stage_records_scrubbed_diagnostics_and_effects(self):
+        with tempfile.TemporaryDirectory() as td:
+            data=OwnedRoot(Path(td)/"data"); data.ensure()
+            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
+            journal=Journal(state_root.path("journal.sqlite3"))
+            class DiagnosticRunner(FakeRunner):
+                def __call__(self,args,*,timeout,capture=False):
+                    if "--stage" in args and args[args.index("--stage")+1] == "products":
+                        stage = args[args.index("--stage")+1]
+                        if self.fail_once == stage:
+                            self.fail_once = None
+                            diagnostic = data.path(f"runtime/logs/hermes-agent-{HERMES_COMMIT[:12]}/{stage}.log")
+                            diagnostic.parent.mkdir(parents=True,exist_ok=True)
+                            diagnostic.write_text("[stderr] build failed token=secret-value\n[stderr] npm ERR! exit 1\n")
+                            return 1,b""
+                    return super().__call__(args,timeout=timeout,capture=capture)
+            runner=DiagnosticRunner(fail_once="products")
+            boot=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
+            with self.assertRaisesRegex(BootstrapError,"diagnostics: runtime/logs"):
+                boot.install()
+            log=data.path(f"runtime/logs/hermes-agent-{HERMES_COMMIT[:12]}/products.log")
+            boot._persist_diagnostic(f"runtime/logs/hermes-agent-{HERMES_COMMIT[:12]}/products.log", bytearray(b"token=secret-value\n"), False)
+            self.assertNotIn("secret-value",log.read_text())
+            operation=journal.operation("hermes-agent:"+HERMES_COMMIT)
+            self.assertEqual(operation["status"],"failed:products")
+            self.assertEqual(operation["payload"]["exit_code"],1)
+            events=journal.events("hermes-agent:"+HERMES_COMMIT)
+            failed=[event for event in events if event["step"]=="products" and event["event"]=="failed"]
+            self.assertEqual(len(failed),1)
+            self.assertEqual(failed[0]["details"]["exit_code"],1)
+            self.assertIn("effects_after",failed[0]["details"])
+
+    def test_interrupted_operation_is_durable_and_resumable_after_power_loss(self):
+        with tempfile.TemporaryDirectory() as td:
+            data=OwnedRoot(Path(td)/"data"); data.ensure()
+            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
+            journal=Journal(state_root.path("journal.sqlite3"))
+            runner=FakeRunner()
+            boot=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
+            boot.prepare()
+            journal.checkpoint(boot.operation,"running:products",{"stage":"products","commit":HERMES_COMMIT})
+            journal.event(boot.operation,"products","started",{"generation":str(boot.install_dir)})
+            # Reopen the journal as a new process would after power was lost.
+            recovered=Journal(state_root.path("journal.sqlite3"))
+            self.assertEqual(recovered.operation(boot.operation)["status"],"running:products")
+            report=HermesBootstrap(data,recovered,network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT)).install(include_desktop=False)
+            self.assertTrue(report.agent_ready)
+            self.assertEqual(recovered.operation(boot.operation)["status"],"complete")
+
+    def test_cancellation_records_safe_resume_and_preserves_private_overlay(self):
+        with tempfile.TemporaryDirectory() as td:
+            data=OwnedRoot(Path(td)/"data"); data.ensure()
+            overlay=data.path("profiles/default/SOUL.md")
+            overlay.parent.mkdir(parents=True); overlay.write_text("user overlay")
+            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
+            journal=Journal(state_root.path("journal.sqlite3"))
+            class CancelRunner(FakeRunner):
+                def __call__(self,args,*,timeout,capture=False):
+                    if "--stage" in args and args[args.index("--stage")+1] == "repository":
+                        raise KeyboardInterrupt()
+                    return super().__call__(args,timeout=timeout,capture=capture)
+            boot=HermesBootstrap(data,journal,network=FakeNetwork(),runner=CancelRunner(),desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
+            with self.assertRaises(KeyboardInterrupt): boot.install(include_desktop=False)
+            self.assertEqual(journal.operation(boot.operation)["status"],"cancelled:repository")
+            self.assertEqual(overlay.read_text(),"user overlay")
     def test_repository_failures_before_and_during_clone_resume(self):
         for partial in (False, True):
             with self.subTest(partial=partial), tempfile.TemporaryDirectory() as td:
@@ -136,6 +210,21 @@ class BootstrapTests(unittest.TestCase):
             boot.install(include_desktop=True)
             self.assertTrue(boot.status()["complete"])
             self.assertEqual(len(desktop_calls),1)
+
+    def test_partial_desktop_dist_is_not_reported_as_built(self):
+        with tempfile.TemporaryDirectory() as td:
+            data=OwnedRoot(Path(td)/"data"); data.ensure()
+            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
+            runner=FakeRunner()
+            def partial(*,timeout):
+                dist=data.path("generations/hermes-agent-"+HERMES_COMMIT[:12]+"/apps/desktop/dist")
+                dist.mkdir(parents=True,exist_ok=True)
+                (dist/"index.html").write_text("<html>"+"x"*200+"</html>")
+                return 1,b"packaging failed"
+            boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=runner,desktop_builder=partial,agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
+            with self.assertRaisesRegex(BootstrapError,"partial dist files do not establish a build"):
+                boot.install(include_desktop=True)
+            self.assertEqual(boot.status()["operation"]["status"],"failed:desktop-product-build")
     def test_manifest_change_stops_before_any_stage(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data");data.ensure()
@@ -156,6 +245,7 @@ class BootstrapTests(unittest.TestCase):
             with self.assertRaisesRegex(BootstrapError,"object identity"): boot.prepare()
             self.assertFalse(boot.script_path.exists())
 
+    @unittest.skipUnless(hasattr(os, "waitid"), "process custody probe requires Linux child inspection")
     def test_manifest_capture_stops_at_the_output_bound(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data"); data.ensure()
@@ -168,6 +258,7 @@ class BootstrapTests(unittest.TestCase):
                 boot._run_process(["--manifest"],timeout=5,capture=True)
             self.assertLess(time.monotonic()-started,3)
 
+    @unittest.skipUnless(hasattr(os, "waitid"), "process custody probe requires Linux child inspection")
     def test_manifest_capture_checks_overflow_after_fast_child_exit(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data"); data.ensure()
@@ -197,6 +288,7 @@ class BootstrapTests(unittest.TestCase):
             returncode=None
             def __init__(self):
                 self.stdout=BlockingStream()
+                self.stderr=BlockingStream()
         proc=FakeProc()
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data"); data.ensure()
@@ -215,6 +307,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertFalse(proc.stdout.closed)
             release.set()
 
+    @unittest.skipUnless(hasattr(os, "waitid"), "process custody probe requires Linux child inspection")
     def test_stop_group_cleans_only_its_owned_descendants(self):
         with tempfile.TemporaryDirectory() as td:
             pid_file=Path(td)/"child.pid"
@@ -242,6 +335,7 @@ class BootstrapTests(unittest.TestCase):
                 if running: time.sleep(0.02)
             self.assertFalse(running,"owned descendant remained executable after group cleanup")
 
+    @unittest.skipUnless(hasattr(os, "waitid"), "process custody probe requires Linux child inspection")
     def test_lost_child_custody_never_authorizes_group_signal(self):
         from types import SimpleNamespace
         from unittest.mock import patch

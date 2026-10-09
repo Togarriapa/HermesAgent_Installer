@@ -1,6 +1,6 @@
 """Pinned official Hermes installer stages, isolated in an installer-owned generation."""
 from __future__ import annotations
-import hashlib, json, os, signal, stat, subprocess, time, uuid
+import hashlib, json, os, signal, stat, subprocess, time, uuid, re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -12,6 +12,17 @@ HERMES_REPOSITORY = "https://github.com/NousResearch/hermes-agent.git"
 HERMES_COMMIT = "7085fbf7753266fc4943c55ac04926186bc90005"
 INSTALL_SCRIPT_BLOB = "055c725f114db694db751f34fd312e70f5ed90d8"
 INSTALL_SCRIPT_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/7085fbf7753266fc4943c55ac04926186bc90005/scripts/install.sh"
+_DIAGNOSTIC_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*"),
+    re.compile(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)\s*[:=]\s*)[^\s,;]+"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"(?i)([?&](?:token|key|secret|password)=)[^&\s]+"),
+)
+
+def redact_diagnostic(text: str) -> str:
+    for pattern in _DIAGNOSTIC_PATTERNS:
+        text = pattern.sub(lambda match: (match.group(1) if match.lastindex else "") + "[REDACTED]", text)
+    return text
 EXPECTED_STAGES = ("prerequisites", "repository", "venv", "python-deps", "config", "products", "setup", "gateway", "complete")
 
 class BootstrapError(RuntimeError):
@@ -22,6 +33,7 @@ class StageStatus:
     name: str
     state: str
     exit_code: int | None = None
+    diagnostic_path: str | None = None
 
 @dataclass(frozen=True)
 class BootstrapReport:
@@ -136,6 +148,8 @@ class HermesBootstrap:
         self.private_home = data_root.path("runtime/bootstrap-home")
         self.script_path = data_root.path("cache/hermes-install-" + HERMES_COMMIT[:12] + ".sh")
         self.operation = "hermes-agent:" + HERMES_COMMIT
+        self._active_diagnostic: str | None = None
+        self._upstream_log_offset: int | None = None
 
     def _script_bytes(self) -> bytes:
         try:
@@ -177,52 +191,77 @@ class HermesBootstrap:
     def _base_args(self) -> list[str]:
         return ["--commit", HERMES_COMMIT, "--dir", str(self.install_dir), "--hermes-home", str(self.hermes_home)]
 
-    def _run_process(self, args: list[str], *, timeout: float, capture: bool = False) -> tuple[int, bytes]:
+    def _run_process(self, args: list[str], *, timeout: float, capture: bool = False, diagnostic_path: str | None = None) -> tuple[int, bytes]:
         bash = Path("/bin/bash").resolve(strict=True)
         if bash != Path("/usr/bin/bash").resolve(strict=False) and not bash.is_file():
             raise BootstrapError("Reviewed system Bash was not found")
         cmd = [str(bash), str(self.script_path), *args]
+        upstream_log = self.hermes_home / "logs" / "install.log"
+        self._upstream_log_offset = 0
+        try:
+            if upstream_log.is_symlink() or not upstream_log.is_file():
+                raise OSError
+            self._upstream_log_offset = upstream_log.stat().st_size
+        except OSError:
+            pass
+        # Installer stages emit progress and their useful failure details on both
+        # streams. Always drain both so verbose builders cannot block on a full
+        # pipe; retain only a bounded, scrubbed tail in the owned data root.
         proc = subprocess.Popen(cmd, cwd=self.data_root.root, env=self._environment(), stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, shell=False, close_fds=True, start_new_session=True, bufsize=0)
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
+                                close_fds=True, start_new_session=True, bufsize=0)
         proc._hermes_cleanup_lock = threading.Lock()
-        if not capture:
-            try:
-                return proc.wait(timeout=timeout), b""
-            except subprocess.TimeoutExpired:
-                if not _stop_group(proc):
-                    raise BootstrapError("Installer timeout could not safely confirm process-group ownership") from None
-                return 124, b""
-            except BaseException:
-                _stop_group(proc)
-                raise
-
-        assert proc.stdout is not None
+        assert proc.stdout is not None and proc.stderr is not None
         output = bytearray()
-        overflow = threading.Event()
-        eof = threading.Event()
+        diagnostic = bytearray()
+        diagnostic_limit = 96 * 1024
+        diagnostic_truncated = threading.Event()
+        capture_lock = threading.Lock()
+        eof = {"stdout": threading.Event(), "stderr": threading.Event()}
 
-        def drain() -> None:
-            while True:
-                block = proc.stdout.read(8192)
-                if not block:
-                    eof.set()
-                    return
-                if len(output) + len(block) > 64 * 1024:
-                    overflow.set()
-                elif not overflow.is_set():
-                    output.extend(block)
+        def scrub(text: str) -> str:
+            return redact_diagnostic(text)
 
-        reader = threading.Thread(target=drain, name="hermes-manifest-reader", daemon=True)
-        reader.start()
+        def consume(stream_name: str, stream) -> None:
+            pending = bytearray()
+            try:
+                while True:
+                    block = stream.read(4096)
+                    if not block:
+                        break
+                    pending.extend(block)
+                    # Keep only one bounded line in memory. A pathological
+                    # unterminated line is replaced with a marker, never saved.
+                    if len(pending) > 16 * 1024 and b"\n" not in pending:
+                        pending.clear()
+                        line = "[oversized output line omitted]\n"
+                        self._append_captured(line, diagnostic, diagnostic_limit, capture_lock, diagnostic_truncated)
+                    while b"\n" in pending:
+                        raw, _, rest = pending.partition(b"\n")
+                        pending = bytearray(rest)
+                        line = scrub(raw.decode("utf-8", errors="replace")[:8192]) + "\n"
+                        rendered = ("[stdout] " if stream_name == "stdout" else "[stderr] ") + line
+                        self._append_captured(rendered, diagnostic, diagnostic_limit, capture_lock, diagnostic_truncated)
+                        if capture and stream_name == "stdout":
+                            with capture_lock:
+                                output.extend(line.encode("utf-8", errors="replace")[:max(0, 64 * 1024 - len(output))])
+                if pending:
+                    line = scrub(pending.decode("utf-8", errors="replace")[:8192])
+                    rendered = ("[stdout] " if stream_name == "stdout" else "[stderr] ") + line + "\n"
+                    self._append_captured(rendered, diagnostic, diagnostic_limit, capture_lock, diagnostic_truncated)
+                    if capture and stream_name == "stdout":
+                        with capture_lock:
+                            output.extend(line.encode("utf-8", errors="replace")[:max(0, 64 * 1024 - len(output))])
+            finally:
+                eof[stream_name].set()
+
+        readers = [threading.Thread(target=consume, args=("stdout", proc.stdout), daemon=True),
+                   threading.Thread(target=consume, args=("stderr", proc.stderr), daemon=True)]
+        for reader in readers:
+            reader.start()
         deadline = time.monotonic() + timeout
         try:
             while True:
-                if overflow.is_set():
-                    if not _stop_group(proc):
-                        raise BootstrapError("Manifest output exceeded its bound and child ownership was unavailable") from None
-                    reader.join(timeout=1)
-                    raise BootstrapError("Official installer manifest exceeded its output bound")
                 state = _child_state(proc)
                 if state == "lost":
                     raise BootstrapError("Installer child custody was lost; refusing to signal a process group")
@@ -231,38 +270,88 @@ class HermesBootstrap:
                 if state == "reaped":
                     raise BootstrapError("Installer child was reaped outside the bounded runner")
                 if state == "exited":
-                    reader.join(timeout=1)
-                    if reader.is_alive() or not eof.is_set():
-                        if not _stop_group(proc):
-                            raise BootstrapError("Manifest child left an unowned output descendant") from None
+                    for reader in readers:
                         reader.join(timeout=1)
-                        raise BootstrapError("Manifest child left an output descendant")
-                    # A child may exit before the reader has drained the final
-                    # pipe bytes. eof is set only after recording the last block,
-                    # but make the output-bound decision adjacent to success too.
-                    if overflow.is_set() or len(output) > 64 * 1024:
-                        raise BootstrapError("Official installer manifest exceeded its output bound")
+                    if any(reader.is_alive() for reader in readers) or not all(e.is_set() for e in eof.values()):
+                        if not _stop_group(proc):
+                            raise BootstrapError("Installer child left an output descendant without verified custody") from None
+                        raise BootstrapError("Installer child left an output descendant")
                     code = proc.wait()
-                    if overflow.is_set():
-                        raise BootstrapError("Official installer manifest exceeded its output bound")
-                    return code, bytes(output)
+                    self._append_upstream_install_log(diagnostic, diagnostic_limit, capture_lock, diagnostic_truncated)
+                    self._persist_diagnostic(diagnostic_path or self._active_diagnostic, diagnostic, diagnostic_truncated.is_set())
+                    return code, bytes(output) if capture else b""
                 if time.monotonic() >= deadline:
                     if not _stop_group(proc):
                         raise BootstrapError("Installer timeout could not safely confirm process-group ownership") from None
-                    reader.join(timeout=1)
+                    for reader in readers:
+                        reader.join(timeout=1)
+                    self._append_upstream_install_log(diagnostic, diagnostic_limit, capture_lock, diagnostic_truncated)
+                    self._persist_diagnostic(diagnostic_path or self._active_diagnostic, diagnostic, diagnostic_truncated.is_set())
                     return 124, b""
                 time.sleep(0.025)
         except BaseException:
             if proc.returncode is None:
                 _stop_group(proc)
-            reader.join(timeout=0.5)
+            for reader in readers:
+                reader.join(timeout=0.1)
             raise
         finally:
             # A raw unbuffered pipe read may outlive lost child custody if an
             # unrelated writer inherited stdout. Never block interpreter shutdown
             # waiting for a BufferedReader lock held by that daemon reader.
-            if not reader.is_alive():
-                proc.stdout.close()
+            for reader, stream in zip(readers, (proc.stdout, proc.stderr)):
+                if not reader.is_alive():
+                    stream.close()
+
+    def _append_captured(self, line: str, diagnostic: bytearray, limit: int,
+                         lock: threading.Lock, truncated: threading.Event) -> None:
+        encoded = line.encode("utf-8", errors="replace")
+        with lock:
+            if len(encoded) > limit:
+                encoded = encoded[-limit:]
+                truncated.set()
+            if len(diagnostic) + len(encoded) > limit:
+                del diagnostic[:len(diagnostic) + len(encoded) - limit]
+                truncated.set()
+            diagnostic.extend(encoded)
+
+    def _persist_diagnostic(self, relative: str | None, content: bytearray, truncated: bool) -> None:
+        if not relative:
+            return
+        path = self.data_root.path(relative)
+        safe_content = redact_diagnostic(bytes(content).decode("utf-8", errors="replace")).encode("utf-8")
+        suffix = b"\n[diagnostic capture truncated at 96 KiB]\n" if truncated else b""
+        _write_private(path, safe_content + suffix, 0o600)
+
+    def _append_upstream_install_log(self, diagnostic: bytearray, limit: int, lock: threading.Lock,
+                                     truncated: threading.Event) -> None:
+        """Collect only this stage's bounded tail from the upstream JSON log sink."""
+        if self._upstream_log_offset is None:
+            return
+        path = self.hermes_home / "logs" / "install.log"
+        try:
+            info = path.lstat()
+            if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                return
+            with path.open("rb") as stream:
+                stream.seek(min(self._upstream_log_offset, info.st_size))
+                length = info.st_size - stream.tell()
+                if length > limit:
+                    stream.seek(info.st_size - limit)
+                    truncated.set()
+                raw = stream.read(limit + 1)
+        except OSError:
+            return
+        text = redact_diagnostic(raw.decode("utf-8", errors="replace"))
+        rendered = ("[upstream-install-log]\n" + text.rstrip() + "\n").encode("utf-8")
+        with lock:
+            if len(rendered) > limit:
+                rendered = rendered[-limit:]
+                truncated.set()
+            if len(diagnostic) + len(rendered) > limit:
+                del diagnostic[:len(diagnostic) + len(rendered) - limit]
+                truncated.set()
+            diagnostic.extend(rendered)
 
     def _manifest(self) -> None:
         code, raw = self.runner(["--manifest", "--json", *self._base_args()], timeout=30, capture=True)
@@ -444,9 +533,9 @@ class HermesBootstrap:
             if proc.stdout is not None:
                 proc.stdout.close()
 
-    def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 7200) -> BootstrapReport:
-        if not 60 <= timeout_per_stage <= 14_400:
-            raise ValueError("Stage timeout is outside the supported bound")
+    def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 900) -> BootstrapReport:
+        if not 30 <= timeout_per_stage <= 3_600:
+            raise ValueError("Stage timeout must be between 30 seconds and one hour")
         self.prepare()
         self._manifest()
         previous = self.state.operation(self.operation)
@@ -465,28 +554,57 @@ class HermesBootstrap:
                     statuses.append(StageStatus(stage, done[stage]))
                     continue
             extra: list[str] = []
+            relative_diagnostic = f"runtime/logs/hermes-agent-{HERMES_COMMIT[:12]}/{stage}.log"
+            self.data_root.path(relative_diagnostic).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            before_effects = self._effect_snapshot()
             self.state.checkpoint(self.operation, "running:" + stage, {
                 "commit": HERMES_COMMIT, "stage": stage, "generation": str(self.install_dir),
                 "hermes_home": str(self.hermes_home), "desktop_requested": bool(include_desktop),
             })
+            self.state.event(self.operation, stage, "started", {"generation": str(self.install_dir),
+                "diagnostic": relative_diagnostic, "timeout_seconds": timeout_per_stage,
+                "effects_before": before_effects})
             args = ["--stage", stage, "--json", "--non-interactive", *self._base_args(), *extra]
             # Skip optional integrations during base installation; their adapters
             # configure them only after explicit component selection.
             args += ["--skip-browser", "--skip-computer-use"]
-            code, _ = self.runner(args, timeout=timeout_per_stage, capture=False)
+            self._active_diagnostic = relative_diagnostic
+            try:
+                code, _ = self.runner(args, timeout=timeout_per_stage, capture=True)
+            except BaseException as exc:
+                self.state.checkpoint(self.operation, "cancelled:" + stage if isinstance(exc, KeyboardInterrupt) else "failed:" + stage, {
+                    "commit": HERMES_COMMIT, "stage": stage, "generation": str(self.install_dir),
+                    "diagnostic": relative_diagnostic, "error": type(exc).__name__,
+                    "resume": "hermes-installer resume",
+                })
+                self.state.event(self.operation, stage, "cancelled" if isinstance(exc, KeyboardInterrupt) else "runner_error", {
+                    "error_type": type(exc).__name__, "diagnostic": relative_diagnostic,
+                    "effects_after": self._effect_snapshot()})
+                raise
+            finally:
+                self._active_diagnostic = None
             if code != 0:
                 self.state.checkpoint(self.operation, "failed:" + stage, {
                     "commit": HERMES_COMMIT, "stage": stage, "exit_code": code,
-                    "generation": str(self.install_dir), "resume": "hermes-installer resume",
+                    "generation": str(self.install_dir), "diagnostic": relative_diagnostic,
+                    "error_summary": self._diagnostic_summary(relative_diagnostic),
+                    "resume": "hermes-installer resume",
                 })
-                raise BootstrapError(f"Hermes stage {stage} did not complete (exit {code}); use hermes-installer resume")
+                self.state.event(self.operation, stage, "failed", {"exit_code": code,
+                    "diagnostic": relative_diagnostic, "error_summary": self._diagnostic_summary(relative_diagnostic),
+                    "effects_before": before_effects, "effects_after": self._effect_snapshot(),
+                    "resume": "hermes-installer resume"})
+                raise BootstrapError(f"Hermes stage {stage} did not complete (exit {code}); diagnostics: {relative_diagnostic}; use hermes-installer resume")
             state = "skipped" if stage in skipped else "complete"
             self.state.record_owned("hermes-stage", HERMES_COMMIT + ":" + stage, state)
             self.state.checkpoint(self.operation, "stage:" + stage, {
                 "commit": HERMES_COMMIT, "stage": stage, "state": state,
                 "generation": str(self.install_dir), "hermes_home": str(self.hermes_home),
             })
-            statuses.append(StageStatus(stage, state, code))
+            self.state.event(self.operation, stage, "completed", {"exit_code": code,
+                "diagnostic": relative_diagnostic, "effects_before": before_effects,
+                "effects_after": self._effect_snapshot()})
+            statuses.append(StageStatus(stage, state, code, relative_diagnostic))
         completion = self.install_dir / ".hermes-bootstrap-complete"
         try:
             complete = json.loads(completion.read_text(encoding="utf-8"))
@@ -497,9 +615,26 @@ class HermesBootstrap:
         desktop_dir = self.install_dir / "apps" / "desktop"
         desktop_built = False
         if include_desktop:
+            desktop_diag = f"runtime/logs/hermes-agent-{HERMES_COMMIT[:12]}/desktop-product-build.log"
+            self.state.checkpoint(self.operation, "running:desktop-product-build", {
+                "commit": HERMES_COMMIT, "stage": "desktop-product-build", "generation": str(self.install_dir),
+            })
+            self.state.event(self.operation, "desktop-product-build", "started", {"diagnostic": desktop_diag})
             code, _ = self.desktop_builder(timeout=timeout_per_stage)
-            dist_index = desktop_dir / "dist" / "index.html"
-            desktop_built = code == 0 and dist_index.is_file() and not dist_index.is_symlink() and dist_index.stat().st_size > 100
+            if _:
+                self._persist_diagnostic(desktop_diag, bytearray(_), False)
+            desktop_built = code == 0 and self._desktop_package_present(desktop_dir)
+            if not desktop_built:
+                self.state.checkpoint(self.operation, "failed:desktop-product-build", {
+                    "commit": HERMES_COMMIT, "stage": "desktop-product-build", "exit_code": code,
+                    "generation": str(self.install_dir), "diagnostic": desktop_diag,
+                    "error_summary": self._diagnostic_summary(desktop_diag), "resume": "hermes-installer resume",
+                })
+                self.state.event(self.operation, "desktop-product-build", "failed", {
+                    "exit_code": code, "diagnostic": desktop_diag,
+                    "effects_after": self._effect_snapshot(), "resume": "hermes-installer resume"})
+                raise BootstrapError(f"Hermes Desktop package was not produced (exit {code}); partial dist files do not establish a build; diagnostics: {desktop_diag}; use hermes-installer resume")
+            self.state.event(self.operation, "desktop-product-build", "completed", {"exit_code": code, "package": "present"})
         self.state.checkpoint(self.operation, "complete", {
             "commit": HERMES_COMMIT, "generation": str(self.install_dir), "desktop_built": desktop_built,
             "configuration_state": "pending: provider and gateway setup were safely skipped",
@@ -509,7 +644,51 @@ class HermesBootstrap:
             "hermes-installer resume")
 
     def status(self) -> dict[str, object]:
+        current = self.state.operation(self.operation)
         return {"commit": HERMES_COMMIT, "generation": str(self.install_dir),
                 "hermes_home": str(self.hermes_home), "stages": self._completed_stages(),
                 "source_present": self.install_dir.is_dir(),
-                "complete": (self.install_dir / ".hermes-bootstrap-complete").is_file()}
+                "complete": (self.install_dir / ".hermes-bootstrap-complete").is_file(),
+                "operation": current, "events": self.state.events(self.operation)}
+
+    def _diagnostic_summary(self, relative: str) -> list[str]:
+        try:
+            lines = self.data_root.path(relative).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ["diagnostic file could not be read"]
+        matches = [line[:500] for line in lines if re.search(r"(?i)error|failed|failure|exception|fatal|timed out", line)]
+        return matches[-8:] or [line[:500] for line in lines[-4:]]
+
+    def _effect_snapshot(self) -> dict[str, object]:
+        result: dict[str, object] = {"generation_exists": self.install_dir.exists(),
+            "source_head": self._source_head(), "desktop_dist_exists": False, "top_level": []}
+        try:
+            if self.install_dir.is_dir() and not self.install_dir.is_symlink():
+                result["top_level"] = sorted(p.name for p in self.install_dir.iterdir())[:200]
+                index = self.install_dir / "apps/desktop/dist/index.html"
+                result["desktop_dist_exists"] = index.is_file() and not index.is_symlink()
+                if result["desktop_dist_exists"]:
+                    result["desktop_index_bytes"] = min(index.stat().st_size, 10**9)
+        except OSError:
+            result["snapshot_error"] = "generation changed or is unreadable"
+        return result
+
+    @staticmethod
+    def _desktop_package_present(desktop_dir: Path) -> bool:
+        """A renderer `dist/index.html` is only one input, not a native product."""
+        index = desktop_dir / "dist" / "index.html"
+        if index.is_symlink() or not index.is_file() or index.stat().st_size <= 100:
+            return False
+        release = desktop_dir / "release"
+        if release.is_symlink() or not release.is_dir():
+            return False
+        candidates = [release / name for name in ("linux-arm64-unpacked", "linux-unpacked")]
+        for package in candidates:
+            if package.is_symlink() or not package.is_dir():
+                continue
+            app = package / "resources" / "app.asar"
+            sandbox = package / "chrome-sandbox"
+            executables = [item for item in package.iterdir() if item.is_file() and not item.is_symlink() and os.access(item, os.X_OK)]
+            if app.is_file() and not app.is_symlink() and app.stat().st_size > 1024 and executables and sandbox.is_file() and not sandbox.is_symlink():
+                return True
+        return False
