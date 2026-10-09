@@ -325,7 +325,6 @@ def test_initial_source_proof_is_producer_bound_opaque_and_one_use():
         producer, source_kind="schedule-event",
         observer_enrollment_id="observer-schedule",
         validate_provenance=lambda value: value is provenance and value.accepted is True,
-        resolve_controller=lambda *_args: None,
     )
     proof = issuer.mint_source_proof(
         capability, event_id="e" + secrets.token_urlsafe(32), resource_id="demo",
@@ -336,6 +335,6 @@ def test_initial_source_proof_is_producer_bound_opaque_and_one_use():
     assert "message-9" not in repr(proof) and "timer-fire" not in repr(proof)
     issuer.controller_registry.job_enrollments = {}
     with pytest.raises(AuthorityDenied, match="not currently selected"):
-        issuer.issue_source_event(proof, issuer._registry_capability)
+        issuer.capture_selected_ingress(SimpleNamespace(), proof, issuer._registry_capability)
     with pytest.raises(AuthorityDenied, match="stale or already consumed"):
-        issuer.issue_source_event(proof, issuer._registry_capability)
+        issuer.capture_selected_ingress(SimpleNamespace(), proof, issuer._registry_capability)
