@@ -38,10 +38,79 @@ CORAL_RUNTIME_STORE_IDS = {
     "tensorflow/tflite-runtime": "coral-tflite-runtime-cp39-arm64",
     "numpy/numpy": "coral-numpy-cp39-arm64",
 }
+CORAL_PACKAGE_SET_ID = "coral-cp39-runtime-v1"
+CORAL_TFLITE_WHEEL_SHA256 = "be198b7dc4401204be54a15884d9e336389790eb707439524540f5a9329fdd02"
+CORAL_NUMPY_WHEEL_SHA256 = "d5241e0a80d808d70546c697135da2c613f30e28251ff8307eb72ba696945764"
 
 
 class CoralError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class CoralPackageSetReceipt:
+    package_set_id: str
+    manifest_sha256: str
+    enrollment_id: str
+    generation: str
+    runtime_build_attestation_digest: str
+    wheel_sha256: tuple[str, ...]
+    installed_tree_sha256: str
+    status: str
+    receipt_id: str
+
+
+def install_coral_runtime_package_set(authority_client, authorization, *,
+                                      enrollment_id: str, generation: str,
+                                      manifest_sha256: str, timeout: float = 600) -> CoralPackageSetReceipt:
+    """Ask root custody to install only the enrolled CPython39 package set.
+
+    The caller provides no paths, interpreter, wheel IDs, requirements or pip
+    options. The response must be the authenticated host receipt for these exact
+    pinned wheels and the selected enrollment generation.
+    """
+    if (not enrollment_id or not generation
+            or not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256)
+            or isinstance(timeout, bool) or not 0 < timeout <= 600):
+        raise ValueError("Coral package-set enrollment, generation, manifest digest and bounded timeout are required")
+    method = getattr(authority_client, "install_package_set", None)
+    if not callable(method):
+        raise CoralError("Coral runtime remains unavailable: the host authority has no package-set client")
+    target = f"package-set:{CORAL_PACKAGE_SET_ID}:{manifest_sha256}"
+    response = method(authorization, target=target, package_set_id=CORAL_PACKAGE_SET_ID,
+        manifest_sha256=manifest_sha256, enrollment_id=enrollment_id, generation=generation,
+        timeout=timeout)
+    if getattr(response, "status", None) != 200:
+        raise CoralError("root package-set effect did not return a successful authenticated receipt")
+    receipt_id = getattr(response, "receipt_id", None)
+    body = getattr(response, "body", None)
+    if (not isinstance(receipt_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", receipt_id)
+            or not isinstance(body, bytes) or len(body) > 64 * 1024):
+        raise CoralError("root package-set response lacks a bounded opaque receipt")
+    try:
+        raw = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise CoralError("root package-set response is not valid JSON") from None
+    fields = {"package_set_id", "manifest_sha256", "enrollment_id", "generation",
+              "runtime_build_attestation_digest", "wheel_sha256", "installed_tree_sha256", "status"}
+    if not isinstance(raw, dict) or set(raw) != fields:
+        raise CoralError("root package-set response has an unexpected receipt schema")
+    wheel_digests = raw.get("wheel_sha256")
+    expected_wheels = (CORAL_TFLITE_WHEEL_SHA256, CORAL_NUMPY_WHEEL_SHA256)
+    valid_wheels = (isinstance(wheel_digests, list) and len(wheel_digests) == 2
+                    and all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+                            for value in wheel_digests)
+                    and tuple(wheel_digests) == expected_wheels)
+    if (raw["package_set_id"] != CORAL_PACKAGE_SET_ID
+            or raw["manifest_sha256"] != manifest_sha256
+            or raw["enrollment_id"] != enrollment_id or raw["generation"] != generation
+            or raw["status"] != "installed" or not valid_wheels
+            or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+                   for value in (raw["runtime_build_attestation_digest"], raw["installed_tree_sha256"]))):
+        raise CoralError("root package-set receipt does not bind the selected generation and exact Coral wheels")
+    return CoralPackageSetReceipt(CORAL_PACKAGE_SET_ID, manifest_sha256, enrollment_id, generation,
+        raw["runtime_build_attestation_digest"], tuple(wheel_digests),
+        raw["installed_tree_sha256"], "installed", receipt_id)
 
 
 @dataclass(frozen=True, slots=True)

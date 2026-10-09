@@ -105,6 +105,49 @@ def test_coral_package_set_blocker_names_missing_host_effect_not_missing_spec(tm
             catalog=object(), staging_root=tmp_path / "catalog")
 
 
+def test_coral_package_set_caller_sends_only_fixed_enrollment_and_checks_root_receipt() -> None:
+    import json
+    payload = {"package_set_id": coral.CORAL_PACKAGE_SET_ID, "manifest_sha256": "a" * 64,
+        "enrollment_id": "enroll-1", "generation": "generation-2",
+        "runtime_build_attestation_digest": "b" * 64,
+        "wheel_sha256": [coral.CORAL_TFLITE_WHEEL_SHA256, coral.CORAL_NUMPY_WHEEL_SHA256],
+        "installed_tree_sha256": "c" * 64, "status": "installed"}
+    response = SimpleNamespace(status=200, receipt_id="receipt_1234567890",
+                               body=json.dumps(payload).encode())
+    seen = []
+
+    class Client:
+        def install_package_set(self, authorization, **request):
+            seen.append((authorization, request))
+            return response
+
+    authorization = object()
+    receipt = coral.install_coral_runtime_package_set(Client(), authorization,
+        enrollment_id="enroll-1", generation="generation-2", manifest_sha256="a" * 64)
+    assert receipt.status == "installed" and receipt.receipt_id == "receipt_1234567890"
+    assert receipt.wheel_sha256 == (coral.CORAL_TFLITE_WHEEL_SHA256, coral.CORAL_NUMPY_WHEEL_SHA256)
+    assert seen[0][0] is authorization
+    assert seen[0][1] == {"target": f"package-set:{coral.CORAL_PACKAGE_SET_ID}:" + "a" * 64,
+        "package_set_id": coral.CORAL_PACKAGE_SET_ID, "manifest_sha256": "a" * 64,
+        "enrollment_id": "enroll-1", "generation": "generation-2", "timeout": 600}
+    payload["generation"] = "old-generation"
+    response.body = json.dumps(payload).encode()
+    with pytest.raises(CoralError, match="selected generation and exact Coral wheels"):
+        coral.install_coral_runtime_package_set(Client(), authorization,
+            enrollment_id="enroll-1", generation="generation-2", manifest_sha256="a" * 64)
+    payload["generation"] = "generation-2"
+    payload["wheel_sha256"] = list(reversed(payload["wheel_sha256"]))
+    with pytest.raises(CoralError, match="selected generation and exact Coral wheels"):
+        coral.install_coral_runtime_package_set(Client(), authorization,
+            enrollment_id="enroll-1", generation="generation-2", manifest_sha256="a" * 64)
+
+
+def test_coral_package_set_caller_fails_closed_without_published_host_client() -> None:
+    with pytest.raises(CoralError, match="no package-set client"):
+        coral.install_coral_runtime_package_set(object(), object(), enrollment_id="e",
+            generation="g", manifest_sha256="a" * 64)
+
+
 def test_sample_selection_reads_exact_official_manifest_pin() -> None:
     artifact = coral.load_coral_sample_artifact()
     assert artifact.name == "mobilenet_v2_1.0_224_quant_edgetpu.tflite"
