@@ -232,3 +232,11 @@ Root materialization SHALL occur under verified prepared transaction and exact f
 #### Scenario: Source or role substitution
 - **WHEN** a native output receipt substitutes another source or role
 - **THEN** active record publication is denied.
+
+### Requirement: Actual task native and credential closure
+
+Successful task completion SHALL bind actual native execution receipts and distinct service/resource epochs. Webhook verification SHALL use explicit protected placeholder-to-vault-role mapping.
+
+#### Scenario: Native or credential mapping absence
+- **WHEN** the current exact native or scoped credential join is missing
+- **THEN** no successful task capsule or authenticated webhook event is fabricated.

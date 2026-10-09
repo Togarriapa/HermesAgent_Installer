@@ -421,3 +421,11 @@ Installer-owned MCP calls SHALL retain exact protected server/tool/schema and sa
 #### Scenario: Configured direct transport bypass
 - **WHEN** an installer-owned entry attempts direct worker effects instead of the selected broker
 - **THEN** no MCP bytes or credentials are forwarded.
+
+### Requirement: Actual task native and credential closure
+
+Successful task completion SHALL bind actual native execution receipts and distinct service/resource epochs. Webhook verification SHALL use explicit protected placeholder-to-vault-role mapping.
+
+#### Scenario: Native or credential mapping absence
+- **WHEN** the current exact native or scoped credential join is missing
+- **THEN** no successful task capsule or authenticated webhook event is fabricated.

@@ -95,3 +95,7 @@ Use active resource_controller_roles and root_controller_role_catalog exact actu
 ### v27 prepared native receipts and Hermes home
 
 Use first_stage_policy_compiler exact home/prepared order/runtime artifact roles/independent Resources source and receipt_binding_rules_schema. Existing BD/LC/HI/RB tasks remain pending.
+
+### v29 native task and credential joins
+
+Use separate result generation_api domains, task_runner_protocol.native_execution_receipt and backend_enrollments.credential_bindings exact active joins. Existing HI/RB tasks remain pending.

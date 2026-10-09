@@ -169,3 +169,7 @@ MC-F01/MC-F02 and HI-T04/08/09 use native-package-binding-contract.json native_m
 ### v25 MCP lexical/config mapping
 
 Use native_mcp_dispatch row_types/invocation_mapping/native_config exact records, same one-use lexical binding and root-backed native candidate registration. MC/HI acceptance remains pending.
+
+### v29 native task and credential joins
+
+Use separate result generation_api domains, task_runner_protocol.native_execution_receipt and backend_enrollments.credential_bindings exact active joins. Existing HI/RB tasks remain pending.
