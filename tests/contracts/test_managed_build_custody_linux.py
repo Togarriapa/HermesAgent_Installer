@@ -126,7 +126,9 @@ class BuildCustodyLinuxTests(unittest.TestCase):
             systemd_run=self.systemd_run, systemctl=self.systemctl)
         self.runner = ManagedBuildJobRunner(self.manager,
             process_profile_resolver=lambda target, generation: self.profile
-                if target == self.target and generation == "build-" + self.token else None)
+                if target == self.target and generation == "build-" + self.token else None,
+            diagnostic_observer=lambda value: print("BUILD_CUSTODY_FIXTURE_DIAGNOSTIC", repr(value),
+                                                    file=sys.stderr))
         self.inputs = self._inputs()
         self.context, self.authorization = self._claims()
 

@@ -2657,11 +2657,15 @@ class ManagedBuildJobRunner:
     }
 
     def __init__(self, manager: ManagedProcessEffectHandler, *,
-                 process_profile_resolver: Callable[[str, str], ManagedProfileCustody]):
+                 process_profile_resolver: Callable[[str, str], ManagedProfileCustody],
+                 diagnostic_observer: Callable[[bytes], None] | None = None):
         if not isinstance(manager, ManagedProcessEffectHandler) or not callable(process_profile_resolver):
             raise ValueError("build runner requires the root process manager and protected profile resolver")
+        if diagnostic_observer is not None and not callable(diagnostic_observer):
+            raise ValueError("build diagnostic observer must be callable")
         self.manager = manager
         self.process_profile_resolver = process_profile_resolver
+        self._diagnostic_observer = diagnostic_observer
         self._active: set[tuple[str, str]] = set()
         self._records: dict[str, Mapping[str, Any]] = {}
         self._lock = threading.RLock()
@@ -2910,7 +2914,7 @@ class ManagedBuildJobRunner:
             # effect point, after mounts and unit properties are prepared.
             self._verify_inputs(inputs)
             command = [str(manager.systemd_run), "--system", "--unit=" + unit,
-                "--service-type=exec", "--wait", "--collect", "--pipe", "--quiet",
+                "--service-type=exec", "--wait", "--collect", "--pipe",
                 "--working-directory=" + mount_targets["work"], *properties, *env_args, *argv]
             require_active()
             if manager.monotonic() >= authorization.monotonic_expires_at:
@@ -3020,18 +3024,38 @@ class ManagedBuildJobRunner:
                 if exit_code is not None:
                     missing_proof.append("exit_code_" + str(exit_code))
                 output = bytes(log).decode("utf-8", "replace").casefold()
+                diagnostic_sources = [output]
+                if exit_code == 226:
+                    try:
+                        journal = subprocess.run(["/usr/bin/journalctl", "--no-pager", "-n", "12",
+                            "-o", "cat", "--unit=" + unit], stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                            timeout=.75, check=False)
+                        if journal.returncode == 0 and len(journal.stdout) <= 16384:
+                            diagnostic_sources.append(journal.stdout.decode("utf-8", "replace").casefold())
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
                 for needle, category in (
                     ("mount namespacing", "mount_namespace_setup"),
                     ("network namespacing", "network_namespace_setup"),
                     ("failed to set up namespace", "namespace_setup"),
                     ("failed to set up mount", "mount_setup"),
                     ("failed to set up network", "network_setup"),
+                    ("failed at step namespace", "namespace_setup"),
+                    ("failed at step mount", "mount_setup"),
+                    ("failed at step setgroups", "group_setup"),
                     ("permission denied", "permission_denied"),
                     ("no such file", "missing_runtime_input"),
                 ):
-                    if needle in output:
+                    if any(needle in source for source in diagnostic_sources):
                         missing_proof.append("systemd_" + category)
                         break
+                if self._diagnostic_observer is not None:
+                    # Root-only injected diagnostic sink for isolated fixture
+                    # tests; normal production assembly leaves this unset.
+                    with contextlib.suppress(Exception):
+                        self._diagnostic_observer(bytes(log))
                 raise AuthorityDenied("build.cleanup", "terminal proof is incomplete: " + ",".join(missing_proof))
             finished = manager.monotonic()
             proc_id = job_id
