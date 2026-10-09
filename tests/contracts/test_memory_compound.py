@@ -178,6 +178,13 @@ class MemoryCompoundTests(unittest.TestCase):
                 validate_step_outcome(route_id="agentmemory-capture", step_id="capture",
                                       status=201, value=value)
 
+    def test_openviking_find_arbitrary_json_is_not_a_semantic_result(self):
+        from hermes_installer.memory.compound import validate_step_outcome
+        with self.assertRaises(MemoryRecipeUnavailable):
+            validate_step_outcome(
+                route_id="openviking-find", step_id="find", status=200,
+                value={"status": "ok", "result": {"anything": "accepted"}})
+
     def test_openviking_find_needs_a_protected_uri_resolver(self):
         with self.assertRaises(MemoryRecipeUnavailable):
             build_memory_request(
