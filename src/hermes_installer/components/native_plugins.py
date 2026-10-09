@@ -117,7 +117,7 @@ def create_native_plugin_handler(adapter_id: str, runtime_context: NativePluginR
 # Resource-overlay-store has a native, profile-scoped local implementation.
 # Its backup capability intentionally has no registration until lifecycle's
 # encrypted-backup API is available.
-_RECORD_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_RECORD_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,95}$")
 _MAX_OVERLAY_BYTES = 1_048_576
 
 

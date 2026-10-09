@@ -115,15 +115,15 @@ class NativePluginAdapterTests(unittest.TestCase):
         read = plugin.tools["resource_overlay_read"][2]
         history = plugin.tools["resource_overlay_history"][2]
         delete = plugin.tools["resource_overlay_delete"][2]
-        first = write({"record_id": "lesson:1", "value_base64": base64.b64encode(b"learned").decode()})
-        self.assertEqual(read({"record_id": "lesson:1"})["value_base64"], base64.b64encode(b"learned").decode())
-        second = write({"record_id": "lesson:1", "value_base64": base64.b64encode(b"updated").decode(), "expected_revision": first["revision"]})
-        self.assertEqual(len(history({"record_id": "lesson:1"})["revisions"]), 2)
+        first = write({"record_id": "lesson-1", "value_base64": base64.b64encode(b"learned").decode()})
+        self.assertEqual(read({"record_id": "lesson-1"})["value_base64"], base64.b64encode(b"learned").decode())
+        second = write({"record_id": "lesson-1", "value_base64": base64.b64encode(b"updated").decode(), "expected_revision": first["revision"]})
+        self.assertEqual(len(history({"record_id": "lesson-1"})["revisions"]), 2)
         self.assertNotEqual(first["revision"], second["revision"])
         with self.assertRaisesRegex(RuntimeError, "conflict"):
-            delete({"record_id": "lesson:1", "expected_revision": first["revision"]})
-        deletion = delete({"record_id": "lesson:1", "expected_revision": second["revision"]})
-        self.assertEqual(read({"record_id": "lesson:1"}), {"found": False, "record_id": "lesson:1"})
+            delete({"record_id": "lesson-1", "expected_revision": first["revision"]})
+        deletion = delete({"record_id": "lesson-1", "expected_revision": second["revision"]})
+        self.assertEqual(read({"record_id": "lesson-1"}), {"found": False, "record_id": "lesson-1"})
         self.assertEqual(len(deletion["deleted_revision"]), 64)
 
 
