@@ -20,8 +20,8 @@ class AuthorityFixture:
         return SimpleNamespace(profile_id="profile-a", namespace_id="namespace-a",
                                purpose=purpose, trace_id=intent)
 
-    def authorize_effect(self, context, *, capability, target, recipient=None):
-        grant = {"capability": capability, "target": target, "context": context}
+    def authorize_effect(self, context, *, capability, target, request_digest, recipient=None):
+        grant = {"capability": capability, "target": target, "context": context, "request_digest": request_digest}
         self.grants.append(grant)
         return grant
 
@@ -45,6 +45,7 @@ class AuthorityFixture:
         assert grant["target"] == target
         assert digest == hashlib.sha256(payload).hexdigest()
         assert "://" not in target
+        assert grant["request_digest"] == digest
         assert 0 < timeout <= 2
 
 

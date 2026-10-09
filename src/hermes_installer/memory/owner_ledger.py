@@ -67,6 +67,8 @@ class SQLiteOwnerLedger:
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM transitions WHERE profile=? AND state='prepared'", (profile,)).fetchone():
+                    raise OwnerTransitionError("cannot change owner during a prepared transition")
                 db.execute("INSERT INTO owners(profile,provider) VALUES(?,?) ON CONFLICT(profile) DO UPDATE SET provider=excluded.provider", (profile, name))
                 db.commit()
             finally:
@@ -83,6 +85,10 @@ class SQLiteOwnerLedger:
                 pending = db.execute("SELECT 1 FROM transitions WHERE profile=? AND state='prepared'", (profile,)).fetchone()
                 if pending:
                     raise OwnerTransitionError("an earlier owner transition requires recovery")
+                owner = db.execute("SELECT provider FROM owners WHERE profile=?", (profile,)).fetchone()
+                current = owner[0] if owner else None
+                if current != old:
+                    raise OwnerTransitionError("requested old owner does not match durable owner")
                 db.execute("INSERT INTO transitions(id,profile,old_provider,new_provider,state) VALUES(?,?,?,?, 'prepared')",
                            (transition_id, profile, old, new))
                 db.commit()
@@ -96,10 +102,14 @@ class SQLiteOwnerLedger:
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
-                row = db.execute("SELECT new_provider,state FROM transitions WHERE id=? AND profile=?",
+                row = db.execute("SELECT old_provider,new_provider,state FROM transitions WHERE id=? AND profile=?",
                                  (transition_id, profile)).fetchone()
-                if not row or row != (name, "prepared"):
+                if not row or row[1:] != (name, "prepared"):
                     raise OwnerTransitionError("owner transition journal mismatch")
+                owner = db.execute("SELECT provider FROM owners WHERE profile=?", (profile,)).fetchone()
+                current = owner[0] if owner else None
+                if current != row[0]:
+                    raise OwnerTransitionError("durable owner changed during transition")
                 db.execute("INSERT INTO owners(profile,provider) VALUES(?,?) ON CONFLICT(profile) DO UPDATE SET provider=excluded.provider", (profile, name))
                 db.execute("UPDATE transitions SET state='committed' WHERE id=?", (transition_id,))
                 db.commit()

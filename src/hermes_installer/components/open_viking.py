@@ -14,7 +14,9 @@ class OpenVikingEvidence:
     capture_owner: str | None
     profile: str
     namespace: str
-    restart_performed: bool
+    restart_callback_invoked: bool
+    native_restart_receipt: None
+    target_acceptance: str
     retrieved_record_id: str | None
 
 
@@ -38,7 +40,7 @@ class OpenVikingComponent:
     def search(self, namespace: str, query: str, context: Any, limit: int = 10) -> list[MemoryRecord]:
         return self.manager.search(self.provider.name, namespace, query, limit, context=context)
 
-    def prove_restart_retrieval(self, record: MemoryRecord, *, initial_context: Any,
+    def exercise_restart_retrieval_fixture(self, record: MemoryRecord, *, initial_context: Any,
                                 new_context: Callable[[], Any],
                                 restart_service: Callable[[], None]) -> OpenVikingEvidence:
         if record.profile != getattr(initial_context, "profile_id", None):
@@ -52,4 +54,5 @@ class OpenVikingComponent:
         status = self.doctor(context)
         match = next((item.id for item in found if item.id == record.id), None)
         return OpenVikingEvidence(status, self.manager.owner_ledger.get_owner(record.profile),
-                                  record.profile, record.namespace, True, match)
+                                  record.profile, record.namespace, True, None,
+                                  "pending_supervised_restart_and_native_session_evidence", match)

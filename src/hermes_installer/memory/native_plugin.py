@@ -99,7 +99,7 @@ class HermesMemoryProvider(MemoryProvider):
         client, context = self._context(purpose, f"hermes-memory-{action}")
         target = f"memory:{self.name}:{action}"
         body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        grant = client.authorize_effect(context, capability=capability, target=target)
+        grant = client.authorize_effect(context, capability=capability, target=target, request_digest=hashlib.sha256(body).hexdigest())
         response = client.memory_request(grant, target=target,
             request_digest=hashlib.sha256(body).hexdigest(), payload=body, timeout=timeout)
         result = self._decode(response, action)
@@ -122,7 +122,7 @@ class HermesMemoryProvider(MemoryProvider):
         if len(body) > _MAX_EVENT:
             raise ValueError("memory event exceeds bounded queue size")
         target = f"memory:{self.name}:enqueue"
-        grant = client.authorize_effect(context, capability="memory-capture", target=target)
+        grant = client.authorize_effect(context, capability="memory-capture", target=target, request_digest=hashlib.sha256(body).hexdigest())
         result = client.memory_enqueue(grant, target=target,
             request_digest=hashlib.sha256(body).hexdigest(), payload=body, timeout=0.5)
         self._decode(result, "enqueue")

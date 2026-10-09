@@ -98,6 +98,10 @@ class MemoryBrokerTests(unittest.TestCase):
             self.assertIsNone(ledger.get_owner("profile-a"))
             initial = ledger.begin_transition("profile-a", None, "openviking")
             with self.assertRaises(OwnerTransitionError):
+                ledger.set_owner("profile-a", "claude-mem")
+            with self.assertRaises(OwnerTransitionError):
+                ledger.begin_transition("profile-a", "claude-mem", "openviking")
+            with self.assertRaises(OwnerTransitionError):
                 ledger.get_owner("profile-a")
             ledger.commit_transition("profile-a", initial, "openviking")
             self.assertEqual(ledger.get_owner("profile-a"), "openviking")
@@ -106,6 +110,25 @@ class MemoryBrokerTests(unittest.TestCase):
                 ledger.get_owner("profile-a")
             ledger.abort_transition("profile-a", interrupted)
             self.assertEqual(ledger.get_owner("profile-a"), "openviking")
+
+    def test_grant_binds_exact_payload_and_caller_scope_cannot_expand(self):
+        provider = AgentMemoryProvider(self.broker)
+        original = b'{"schema":1,"namespace":"namespace-a","query":"x","limit":1}'
+        altered = b'{"schema":1,"namespace":"namespace-b","query":"x","limit":1}'
+        digest = hashlib.sha256(original).hexdigest()
+        target = "memory:agentmemory:search"
+        grant = self.broker.authorize_effect(self.ctx, capability="memory-retrieval",
+                                             target=target, request_digest=digest)
+        with self.assertRaises(AssertionError):
+            self.broker.memory_request(grant, target=target,
+                request_digest=hashlib.sha256(altered).hexdigest(), payload=altered,
+                timeout=1.0)
+        self.assertFalse(any(call[0] == "request" for call in self.broker.calls))
+        mismatched = MemoryRecord("r2", "namespace-b", "profile-b", "user", "sibling")
+        with self.assertRaises(PermissionError):
+            provider.capture(mismatched, context=self.ctx)
+        with self.assertRaises(PermissionError):
+            provider.search("namespace-b", "q", 1, context=self.ctx)
 
     def test_missing_context_recursion_and_service_failure_have_no_unmediated_effect(self):
         provider = OpenVikingProvider(self.broker)

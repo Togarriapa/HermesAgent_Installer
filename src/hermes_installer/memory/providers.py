@@ -15,7 +15,7 @@ class MemoryProviderError(RuntimeError):
 
 class MemoryBroker(Protocol):
     def context(self, *, purpose: str, intent: str, source_contexts: tuple[Any, ...] = (), trace_id: str | None = None, lease_seconds: int = 30) -> Any: ...
-    def authorize_effect(self, context: Any, *, capability: str, target: str, recipient: str | None = None) -> Any: ...
+    def authorize_effect(self, context: Any, *, capability: str, target: str, request_digest: str, recipient: str | None = None) -> Any: ...
     def memory_request(self, grant: Any, *, target: str, request_digest: str, payload: bytes, timeout: float, cancelled: Callable[[], bool] | None = None) -> Any: ...
 
 
@@ -52,7 +52,7 @@ class BrokerMemoryProvider:
             raise PermissionError("fresh host-issued memory context is required")
         target = f"memory:{self.name}:{operation}"
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        grant = self.broker.authorize_effect(context, capability=capability, target=target)
+        grant = self.broker.authorize_effect(context, capability=capability, target=target, request_digest=hashlib.sha256(raw).hexdigest())
         response = self.broker.memory_request(grant, target=target,
             request_digest=hashlib.sha256(raw).hexdigest(), payload=raw,
             timeout=self.timeout, cancelled=self.cancelled)
@@ -77,6 +77,8 @@ class BrokerMemoryProvider:
     def capture(self, record: MemoryRecord, *, context: Any = None) -> None:
         if context is None:
             raise PermissionError("fresh host-issued capture context is required")
+        if getattr(context, "profile_id", None) != record.profile or getattr(context, "namespace_id", getattr(context, "namespace", None)) != record.namespace:
+            raise PermissionError("record scope does not match signed host context")
         if record.source.startswith("memory:"):
             raise PermissionError("generated memory output cannot be captured recursively")
         record_data = {"id": record.id, "namespace": record.namespace, "profile": record.profile,
@@ -100,17 +102,23 @@ class BrokerMemoryProvider:
     def search(self, namespace: str, query: str, limit: int, *, context: Any = None) -> list[MemoryRecord]:
         if not 1 <= limit <= 100:
             raise ValueError("limit outside 1..100")
+        if context is None or getattr(context, "namespace_id", getattr(context, "namespace", None)) != namespace:
+            raise PermissionError("search namespace does not match signed host context")
         result = self._call("search", "memory-retrieval",
             {"schema": 1, "namespace": namespace, "query": query, "limit": limit},
             self._context("memory-retrieval", context))
         return self._records(result.get("records"), namespace, context)
 
     def export(self, namespace: str, *, context: Any = None) -> list[MemoryRecord]:
+        if context is None or getattr(context, "namespace_id", getattr(context, "namespace", None)) != namespace:
+            raise PermissionError("export namespace does not match signed host context")
         result = self._call("export", "memory-export", {"schema": 1, "namespace": namespace},
                             self._context("memory-export", context))
         return self._records(result.get("records"), namespace, context)
 
     def remove(self, namespace: str, record_id: str, *, context: Any = None) -> bool:
+        if context is None or getattr(context, "namespace_id", getattr(context, "namespace", None)) != namespace:
+            raise PermissionError("delete namespace does not match signed host context")
         result = self._call("delete", "memory-delete",
             {"schema": 1, "namespace": namespace, "record_id": record_id},
             self._context("memory-delete", context))
