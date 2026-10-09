@@ -45,6 +45,33 @@ class ProviderPolicyTests(unittest.TestCase):
         policy = DispatchPolicy(routes, "public", private_name, metered_budget_usd=budget)
         return Dispatcher(policy, BudgetLedger(self.ledger_root(root)), provider, context_authorizer=synthetic_authorizer, sleep=sleep or (lambda _delay: None))
 
+    def test_missing_host_authorizer_denies_before_transport(self):
+        with tempfile.TemporaryDirectory() as td:
+            provider = RecordingProvider()
+            dispatcher = Dispatcher(DispatchPolicy({"public": default_public_route()}, "public"),
+                BudgetLedger(self.ledger_root(Path(td))), provider)
+            with self.assertRaisesRegex(PolicyDenied, "Trusted host provider authorization is unavailable"):
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC),
+                    MODEL, b'{"messages":[{"role":"user","content":"hi"}]}',
+                    input_tokens=2, output_token_limit=8)
+            self.assertEqual(provider.calls, [])
+
+    def test_host_classification_overrides_caller_public_label(self):
+        with tempfile.TemporaryDirectory() as td:
+            provider = RecordingProvider()
+            def private_host_policy(context, capability, now):
+                return DispatchAuthorization("real-principal", context.profile_id, "private-home",
+                    context.trace_id, frozenset({capability}), Sensitivity.PRIVATE,
+                    "host-policy-7", "fresh-grant", now + 30)
+            dispatcher = Dispatcher(DispatchPolicy({"public": default_public_route()}, "public"),
+                BudgetLedger(self.ledger_root(Path(td))), provider,
+                context_authorizer=private_host_policy)
+            with self.assertRaisesRegex(PolicyDenied, "No private-capable route"):
+                dispatcher.dispatch(DispatchContext("claimed-public", "chat", Sensitivity.PUBLIC),
+                    MODEL, b'{"messages":[{"role":"user","content":"private"}]}',
+                    input_tokens=2, output_token_limit=8)
+            self.assertEqual(provider.calls, [])
+
     def test_public_nemotron_tool_call_hits_only_exact_free_route(self):
         with tempfile.TemporaryDirectory() as td:
             provider = RecordingProvider()
