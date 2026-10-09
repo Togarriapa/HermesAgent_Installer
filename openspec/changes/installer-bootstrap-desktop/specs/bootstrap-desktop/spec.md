@@ -429,3 +429,10 @@ The implementation SHALL apply v51 exact source and compiled artifact role/closu
 #### Scenario: Compiler produces a source and compiled digest
 - **WHEN** importing actual generated output into root CAS
 - **THEN** distinct byte/tree domains and transaction roles remain verified without substituting planning or source hashes for executable output
+
+### Requirement: Actual producer initial source take
+The implementation SHALL use v52 fixed peer-authenticated no-selector source delivery before selected task stdin.
+
+#### Scenario: Initial peer does not know a receipt identifier
+- **WHEN** actual rootselected initial input has been captured
+- **THEN** protected endpoint resolves the unique matching execution input for that peer without exposing metadata in the prompt or requiring a pending provider pair
