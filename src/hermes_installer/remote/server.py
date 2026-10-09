@@ -97,6 +97,7 @@ def create_app(runtime:GatewayRuntime):
             return web.Response(status=response.status,body=data,headers=headers)
     async def stream(request):
         p=runtime.principal(request,"GET","/client/")
+        if request.headers.get("Sec-WebSocket-Protocol")!="binary":raise GatewayDenied("unexpected Xpra WebSocket protocol")
         websocket_target("/stream",principal=p,host=request.headers.get("Host",""),origin=request.headers.get("Origin"),policy=runtime.policy)
         if set(request.query)!={"lease","profile"} or request.query["profile"]!=runtime.profile_id:raise GatewayDenied("socket profile/lease binding required")
         key=request.query["lease"];lease=runtime.leases.get(key)
@@ -104,8 +105,8 @@ def create_app(runtime:GatewayRuntime):
         lease.authorize_frame(now=runtime.monotonic())
         from yarl import URL
         up=urlsplit(runtime.upstream);wsurl=URL.build(scheme="ws",host=up.hostname,port=up.port or 80,path="/")
-        async with request.app["client"].ws_connect(wsurl,max_msg_size=1048576,autoping=False,autoclose=False) as upstream:
-            downstream=web.WebSocketResponse(max_msg_size=1048576,autoping=False,autoclose=False,compress=False)
+        async with request.app["client"].ws_connect(wsurl,protocols=("binary",),max_msg_size=1048576,autoping=False,autoclose=False) as upstream:
+            downstream=web.WebSocketResponse(protocols=("binary",),max_msg_size=1048576,autoping=False,autoclose=False,compress=False)
             await downstream.prepare(request)
             async def watchdog():
                 while not downstream.closed:
