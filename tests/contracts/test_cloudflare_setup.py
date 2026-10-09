@@ -10,6 +10,8 @@ def recorded_request(url, method, headers, body, socket_timeout, max_bytes):
         {"id":"zone-a","name":"example.uk","status":"active","account":{"id":"account-a"}},
         {"id":"zone-b","name":"notexample.uk","status":"active","account":{"id":"account-b"}},
         {"id":"zone-c","name":"example.uk","status":"pending","account":{"id":"account-c"}}]}).encode())
+def organization_request(url, method, headers, body, socket_timeout, max_bytes):
+    return HTTPResult(200, {}, json.dumps({"success": True, "result": {"auth_domain": "team.example.cloudflareaccess.com"}}).encode())
 def slow_request(*args):
     time.sleep(2)
     return HTTPResult(200, {}, b"{}")
@@ -35,6 +37,9 @@ class CloudflareClientTests(unittest.TestCase):
         c=CloudflareClient("fixture-secret",network=BoundedNetwork(requester=recorded_request,deadline_seconds=1))
         with self.assertRaises(ValueError): c.request("GET","//attacker.example/path")
         with self.assertRaises(NetworkError): c.network.request("http://127.0.0.1/")
+    def test_organization_endpoint_uses_documented_object_result(self):
+        c=CloudflareClient("fixture-secret",network=BoundedNetwork(requester=organization_request,deadline_seconds=1))
+        self.assertEqual(c.organization("account-a")["auth_domain"],"team.example.cloudflareaccess.com")
     def test_secret_is_header_not_url(self):
         c=CloudflareClient("fixture-secret",network=BoundedNetwork(requester=recorded_request,deadline_seconds=1))
         self.assertEqual(len(c.discover_zones("example.uk")),1)

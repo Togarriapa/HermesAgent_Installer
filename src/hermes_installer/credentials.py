@@ -54,12 +54,18 @@ def resolve_secret(reference: str, *, environ: Mapping[str, str] | None = None,
         key = reference[10:]
         if not key or len(key) > 512 or keyring_lookup is None:
             raise CredentialError("Keyring secret reference is unavailable")
-        value = keyring_lookup(key)
+        try:
+            value = keyring_lookup(key)
+        except Exception:
+            raise CredentialError("Keyring secret lookup failed") from None
     elif reference.startswith("secret://"):
         key = reference[9:]
         if not key or len(key) > 512 or secret_lookup is None:
             raise CredentialError("Secret-store reference is unavailable")
-        value = secret_lookup(key)
+        try:
+            value = secret_lookup(key)
+        except Exception:
+            raise CredentialError("Secret-store lookup failed") from None
     else:
         raise CredentialError("Use keyring://, secret://, file:// or env:// reference")
     if not _valid_token(value):

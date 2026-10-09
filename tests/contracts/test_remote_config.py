@@ -30,6 +30,14 @@ class RemoteConfigTests(unittest.TestCase):
         self.assertEqual(result.zone.zone_id,"z1")
         self.assertEqual(result.auth_domain,"team.example.cloudflareaccess.com")
         self.assertEqual(result.management_token,"memory-only")
+    def test_result_repr_does_not_expose_token_and_missing_zone_is_actionable(self):
+        from hermes_installer.remote.config import RemoteSetup
+        setup=RemoteSetup("home.example.uk",("a@example.uk",),CloudflareZone("z1","example.uk","a1","active"),"team.example.cloudflareaccess.com","sensitive")
+        self.assertNotIn("sensitive",repr(setup))
+        class NoMatch(FakeClient):
+            def discover_zones(self, hostname): return ()
+        with self.assertRaisesRegex(RemoteConfigError,"No accessible active Cloudflare zone"):
+            collect_remote_setup(interactive=True,input_fn=lambda _: "home.example.uk",hidden_reader=lambda _: "t",client_factory=NoMatch)
     def test_noninteractive_requires_secure_reference(self):
         with self.assertRaises(RemoteConfigError):
             collect_remote_setup(interactive=False,config={"hostname":"home.example.uk","allowed_emails":["a@example.uk"],"management_token":"inline"},client_factory=FakeClient)

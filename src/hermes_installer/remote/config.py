@@ -1,6 +1,6 @@
 """Remote setup prompts and explicit noninteractive inputs."""
 from __future__ import annotations
-import re
+import getpass, re
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 from ..credentials import CredentialError, read_hidden_token, resolve_secret
@@ -34,7 +34,7 @@ def validate_emails(values: Iterable[str]) -> tuple[str, ...]:
     return items
 
 def collect_remote_setup(*, interactive: bool, config: dict | None = None,
-        input_fn: Callable[[str], str] = input, hidden_reader: Callable[[str], str] = read_hidden_token,
+        input_fn: Callable[[str], str] = input, hidden_reader: Callable[[str], str] = getpass.getpass,
         environ=None, keyring_lookup=None, secret_lookup=None,
         client_factory=CloudflareClient) -> RemoteSetup:
     data = config or {}
