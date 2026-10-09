@@ -352,6 +352,55 @@
         "baseline": "all paths under plans/2026-10-09-v1 roles exactly [baseline], actual frozen full tree",
         "amendment": "all selected reviewed files under plans/amendments roles exactly [amendment], actual receipt plan amendment manifest",
         "bootstrap-policy": "generated artifact installer-bootstrap-policy-v1 relative plans/bootstrap-policy-v1.json belongs immutable policy generation below; NOT required base deployment closure role before compiler and NOT a source module/plan role"
+      },
+      "release_build_input": {
+        "owner_module": "hermes_installer.authority.setup_policy_publication",
+        "build_class": "RootInstalledReleaseBuilder",
+        "build_call": "build_selected(verified_installer_distribution_receipt_handle,verified_installer_interpreter_receipt_handle)->opaque release_build_receipt_handle",
+        "input_trust": "Actual root operator-authorized installer distribution from fixed Togarriapa/HermesAgent_Installer and exact selected candidateGitSHA, complete source/tree/byte closure verified via TLS/source acquisition registry, frozen tag/tree checks, actual reviewed isolated installer interpreter artifact receipt. No active worker/policy session needed and no arbitrary caller path/manifest/dict. Root distribution verifier in authority.installer_release creates retained typed receipt from actual verified source CAS/current installed bootstrap actor; caller labels/UID0 alone insufficient. Root administrator can bypass controls; receipts do not claim to prevent that.",
+        "receipt_fields": [
+          "schema",
+          "receipt_handle",
+          "candidate_git_sha",
+          "distribution_receipt_handle",
+          "interpreter_receipt_handle",
+          "source_tree_sha256",
+          "baseline_tree_sha256",
+          "amendment_manifest_sha256",
+          "source_catalog_sha256",
+          "role_closure_manifest_sha256",
+          "root_setup_plan_sha256",
+          "build_output_store_id",
+          "build_output_receipt_handle",
+          "builder_artifact_id",
+          "builder_artifact_sha256",
+          "issued_monotonic",
+          "expires_monotonic"
+        ],
+        "producer": "Builder stages fixed v36 role layout from verified current candidate source and actual interpreter. Closed source/template/catalog rows only; builds exact role manifest and rendered plan below, rechecks actual held output bytes/modes/tree/knownloader/module names. Registry root-owned oneuse build receipt retains actual source/tool/build output closure. Never sourcearchiveSHA as installedexe or caller manifest authority.",
+        "publish_call": "RootInstalledStagePublisher.publish_installed_stage(release_build_receipt_handle)->VerifiedInstallerReleaseReceipt; verifies actual retained build receipt/outputstore/actor/target/currentcandidate then copies only verified fixedroleclosure to /usr/lib/hermes-installer/releases/<candidateSHA>, seals/fsyncs and publishes /var/lib/hermes-installer/deployments/current.json CAS. Existingowned/unownedconflict preserved; no arbitrary path or supplied file-role map.",
+        "plan_template": {
+          "artifact_id": "installer-root-setup-plan-template-v1",
+          "source_path": "plans/amendments/2026-10-09-release-plan-active-compiler-v53/root-setup-plan-template-v1.json",
+          "installed_relative_path": "templates/root-setup-plan-template-v1.json",
+          "sha256": "9f96befca8dba54a8251df80ccbed236809e9affbf1116efed42e06a7b92ac31",
+          "size_bytes": 767
+        },
+        "deployed_plan_fields": [
+          "schema",
+          "id",
+          "candidate_git_sha",
+          "baseline_tag",
+          "baseline_tag_object",
+          "baseline_commit",
+          "baseline_tree_sha256",
+          "amendment_manifest_sha256",
+          "allowed_artifact_ids",
+          "bootstrap_policy_artifact_id",
+          "template_artifact_ids",
+          "initial_acceptance_ids"
+        ],
+        "plan_generation": "RootInstalledReleaseBuilder generates plans/root-setup-plan-v1.json actualcanonicalbytes from exact verified template; id installer-root-setup-plan-v1, candidateGitactualverifieddistribution. amendment_manifest_sha256 = SHA256 canonical sortedcompact path->actualSHA map of selected source plans/amendments files (including template) BEFORE rendered output; no selfreference. allowed_artifact_ids sortedunique exact nonnullhash reviewed ArtifactCatalog record IDs in actualverifiedrelease catalog, not caller list. Generated nativeoutputroles are separately rootreceipt-bound dynamicoutputs, not unconstrained source allowlist. Reverify sourcecatalog/modulebuilderclosure and entire rendered plan before receipt. Actualdeployed planSHA comes buildreceipt, not fake fixedsourcehash. Fields strict, IDs/digests bounded existinggrammar, <=4096artifactIDs/<=128templates/18exactAC list."
       }
     }
   },
@@ -643,6 +692,34 @@
         "actor_verifier": "Existing InstalledRootSetupActorVerifier.verify_current(plan:VerifiedRootSetupPlan)->Mapping[str,Any] actual current executable/interpreter/imported module closure verifier. RootInitialCompilationRegistry constructs exact verified setup plan from installed deployment plan role + launcher/interpreter/module manifest rows before root-setup-selection/policy publication. No active policy prerequisite; no caller raw plan object. Same actual verifier later normal session checks. Stage0 stores verified plan privately and resolve_actor_plan(stage0_session_handle)->VerifiedRootSetupPlan returns current verified object to intake; no worker path.",
         "selection_phases": "select_authentik_policy first mints immutable draft nonsecret selection with actor_credential_ref=null; draft permits only fixed masked credential intake. collect_authentik_actor_credential stores actual vault receipt and atomically creates bound revision in same root registry/handle with actual ref/new canonical selection_sha256; observer only resolves typed bound state/current digest. Draft cannot identity observe or publish principal. No credential prerequisite for creating draft, no credential-copy handoff. Root registry retains draft->bound transition/nonce/currentstage0; old draft digest not accepted as currentboundproof."
       }
+    },
+    "active_compilation": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "class": "RootActivePolicyCompilationRegistry",
+      "constructor": "from_root_setup(setup_session_store,verified_policy_template_resolver,runtime_receipt_registry,materialization_receipt_registry,root_journal)",
+      "call": "compile_active_policy(setup_session_handle,prepared_enrollment_receipt_handle,runtime_receipt_handles,materialization_receipt_handles)->opaque publication_handle",
+      "claim_fields": [
+        "schema",
+        "publication_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_sha256",
+        "prepared_generation_id",
+        "expected_selection_catalog_sha256",
+        "expected_service_generation_digest",
+        "policy_template_artifact_id",
+        "policy_template_sha256",
+        "principal_selection_receipt_handle",
+        "runtime_receipt_handles",
+        "materialization_receipt_handles",
+        "compiled_policy_sha256",
+        "compiled_artifact_catalog_sha256",
+        "compiled_selection_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "verify": "Root normal session actualcurrentactor/currentplan/ownedpreparedtransaction/heldroots/NSS plus exact runtime/compiledclosure/source receipts and fresh principal identity/policy. Render same strict closed templates from actualreceipt fields, no caller rows. Store immutable actualclaim/compiledbytes in rootpublicationregistry; activepublisher resolves explicittypedactiveclaim/currentpredecessor and validates whole loader schema. Initialstage0 cannot stand in activeclaim. Healthnotprerequisiteforrunnableprofile; laterfunctionalhealthseparateactualreceipt.",
+      "identity_adoption": "Verified stage0handoff preserves SAME rootvaultref/nonsecret origin/groups through retainedreceipt linkage, not secret copy/repeatedchoice. RootSetupSessionStore.resolve_adopted_identity_policy(normal_session)->fresh boundpolicyselection with newnormallease/currentactor, renews only exactauthorizedref metadata. Fixedidentityobserver re-observes actualsameAuthentiksubject/principal/currentpolicy/Systemgroups; expired30sstage0identitycannotauthorizeactivation. Changedsubject/revokedcredentialdenies/pending; no automaticprincipalchange."
     }
   },
   "official_pm_runtime": {

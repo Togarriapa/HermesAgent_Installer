@@ -436,3 +436,10 @@ The implementation SHALL use v52 fixed peer-authenticated no-selector source del
 #### Scenario: Initial peer does not know a receipt identifier
 - **WHEN** actual rootselected initial input has been captured
 - **THEN** protected endpoint resolves the unique matching execution input for that peer without exposing metadata in the prompt or requiring a pending provider pair
+
+### Requirement: Verified release plan and active compilation
+The implementation SHALL apply v53 exact source template/deployed plan and active receipt compilation joins.
+
+#### Scenario: Runtime outputs become available after preparation
+- **WHEN** publishing runnable active policy
+- **THEN** root active compiler verifies actual current runtime/materialization/identity receipts rather than using an initial-only claim or caller authority rows
