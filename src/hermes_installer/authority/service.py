@@ -229,6 +229,7 @@ class AuthorityService:
         self.native_runtime_observer = native_runtime_observer
         self.native_invocation_registry = native_invocation_registry
         self.native_input_delivery_registry = None
+        self.native_turn_observation_registry = None
         self.native_mcp_dispatcher = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
@@ -371,6 +372,28 @@ class AuthorityService:
                 or not callable(getattr(registry, "take_selected_native_input", None))):
             raise AuthorityDenied("native.input.take", "root selected input delivery registry is invalid")
         self.native_input_delivery_registry = registry
+
+    def attach_native_turn_observation_registry(self, registry: Any) -> None:
+        """Attach the exact root-native turn observer once during assembly."""
+        from .native_turn_observation import RootNativeTurnObservationRegistry
+
+        if (self.native_turn_observation_registry is not None
+                or type(registry) is not RootNativeTurnObservationRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "finish_selected_native_turn", None))):
+            raise AuthorityDenied("native.turn.finish", "root native turn registry binding is invalid")
+        self.native_turn_observation_registry = registry
+
+    def attach_native_turn_observation_registry(self, registry: Any) -> None:
+        """Attach the root-native whole-turn observation registry exactly once."""
+        from .native_turn_observation import RootNativeTurnObservationRegistry
+
+        if (self.native_turn_observation_registry is not None
+                or type(registry) is not RootNativeTurnObservationRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "finish_selected_native_turn", None))):
+            raise AuthorityDenied("native.turn.finish", "root native turn registry binding is invalid")
+        self.native_turn_observation_registry = registry
 
     def attach_memory_step_effect_authority(self, authority: Any) -> None:
         """Attach the root-only memory compound step issuer exactly once."""
@@ -1276,6 +1299,10 @@ class AuthorityService:
             return self._dispatch_native_input_take(
                 uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
             )
+        if operation == "native.turn.finish":
+            return self._dispatch_native_turn_finish(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
         if operation == "native.response.take":
             registry = self.native_invocation_registry
             if registry is None or peer_pidfd is None:
@@ -1305,12 +1332,20 @@ class AuthorityService:
                     "producer_context_handle": result.producer_context_handle,
                     "tool_call_bindings": list(result.tool_call_bindings),
                 }
-            fields = {"producer_context_handle", "tool_call_bindings"}
+            fields = {"producer_context_handle", "tool_call_bindings", "turn_handle",
+                      "final_response_delivery_handle"}
             if (not isinstance(result, Mapping) or set(result) != fields
                     or not isinstance(result["producer_context_handle"], str)
                     or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["producer_context_handle"])
                     or not isinstance(result["tool_call_bindings"], (list, tuple))
-                    or len(result["tool_call_bindings"]) > 128):
+                    or len(result["tool_call_bindings"]) > 128
+                    or result["turn_handle"] is not None
+                       and (not isinstance(result["turn_handle"], str)
+                            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["turn_handle"]))
+                    or result["final_response_delivery_handle"] is not None
+                       and (not isinstance(result["final_response_delivery_handle"], str)
+                            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}",
+                                                result["final_response_delivery_handle"]))):
                 raise AuthorityDenied("native.response.take", "root provider response metadata is invalid")
             from .types import NativeToolCallBinding
             calls = tuple(item if isinstance(item, NativeToolCallBinding)
@@ -1324,7 +1359,9 @@ class AuthorityService:
                                                  "provider_tool_call_id": item.provider_tool_call_id,
                                                  "tool_name": item.tool_name,
                                                  "arguments_sha256": item.arguments_sha256}
-                                           for item in calls]}
+                                           for item in calls],
+                    "turn_handle": result["turn_handle"],
+                    "final_response_delivery_handle": result["final_response_delivery_handle"]}
         if operation == "native.mcp.dispatch":
             return self._dispatch_native_mcp(uid, peer_pid, peer_pidfd, payload, cancelled=cancelled)
         if operation == "source.receipt.take":
@@ -2210,6 +2247,40 @@ class AuthorityService:
             # live peer before the opaque reference enters the response.
             result["source_receipt_handle"] = handle
         return result
+
+    def _dispatch_native_turn_finish(self, peer_uid: int, peer_pid: int,
+                                     peer_pidfd: int | None, payload: Any, *,
+                                     cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Return only the opaque presentation from the authenticated turn registry."""
+        from .types import RootCompletedNativeTurnPresentation
+
+        registry = self.native_turn_observation_registry
+        fields = {"schema", "turn_handle", "final_response_delivery_handle"}
+        if (registry is None or peer_pidfd is None
+                or not isinstance(payload, dict) or set(payload) != fields
+                or type(payload.get("schema")) is not int or payload["schema"] != 1
+                or not isinstance(payload.get("turn_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["turn_handle"])
+                or not isinstance(payload.get("final_response_delivery_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["final_response_delivery_handle"])):
+            raise AuthorityDenied("native.turn.finish", "native turn finish request is malformed or unavailable")
+        if cancelled():
+            raise AuthorityDenied("native.turn.finish", "native turn finish request was cancelled")
+        try:
+            presentation = registry.finish_selected_native_turn(
+                peer_uid, peer_pid, peer_pidfd, payload["turn_handle"],
+                payload["final_response_delivery_handle"],
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.turn.finish", "root native turn verification failed") from None
+        if (type(presentation) is not RootCompletedNativeTurnPresentation
+                or presentation.turn_handle != payload["turn_handle"]
+                or presentation.state != "completed"
+                or presentation.expires_monotonic <= self.monotonic()):
+            raise AuthorityDenied("native.turn.finish", "root native turn presentation is invalid or expired")
+        return presentation.to_wire()
 
     def _parse_effect_request(self, uid: int, payload: Any, *, peer_pid: int | None = None
                               ) -> tuple[EffectAuthorization, HostContext, EffectRule]:
