@@ -998,7 +998,19 @@ class RootMemoryStepEffectAuthority:
         try:
             source_value = json.loads(binding["source_context_wire"].decode("utf-8"))
             source = HostContext.from_wire(source_value)
-            self.service._verify_context_signature(source)
+            if source.signature == "verified-in-service":
+                # The outer fixed-effect broker already verified and consumed
+                # the signed parent grant before invoking this root-only
+                # handler. It reconstructs HostContext with this sentinel, so
+                # only the protected compound ledger can persist it. Admission
+                # bound its complete claims to the consumed grant; do not treat
+                # this internal receipt marker as a client signature.
+                if (not binding.get("parent_grant_id")
+                        or not binding.get("parent_context_digest")
+                        or not binding.get("parent_request_digest")):
+                    raise ValueError("verified parent binding is absent")
+            else:
+                self.service._verify_context_signature(source)
         except Exception:
             raise MemoryExecutionDenied("signed memory source lineage is no longer valid") from None
         principal = self.service._binding(source.uid)
