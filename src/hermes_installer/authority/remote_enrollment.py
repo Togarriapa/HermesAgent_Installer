@@ -26,6 +26,7 @@ _REMOTE_FIELDS = frozenset({
     "policy_verifier_enrollment_id", "policy_config_digest",
     "maximum_lease_seconds", "watchdog_interval_seconds", "policy_revision",
     "principal_bindings_by_subject", "access_policy_binding", "tunnel_runtime_binding",
+    "setup_writer_binding",
 })
 _ACCESS_FIELDS = frozenset({
     "verifier_enrollment_id", "account_id", "application_id", "policy_id",
@@ -35,6 +36,12 @@ _ACCESS_FIELDS = frozenset({
 _TUNNEL_FIELDS = frozenset({
     "tunnel_enrollment_id", "tunnel_id", "cloudflared_profile_id",
     "tunnel_token_reference_id", "token_sink_id", "origin_readiness_policy_id",
+})
+_SETUP_WRITER_FIELDS = frozenset({
+    "setup_profile_id", "setup_generation", "setup_role_artifact_id",
+    "setup_role_sha256", "setup_enrollment_id", "setup_transaction_policy_id",
+    "allowed_tunnel_enrollment_ids", "token_writer_enrollment_id",
+    "origin_probe_enrollment_id",
 })
 
 
@@ -89,13 +96,28 @@ class RemoteTunnelRuntimeBinding:
     tunnel_token_reference_id: str
     token_sink_id: str
     origin_readiness_policy_id: str
+    cloudflared_generation: str = ""
 
     def __post_init__(self) -> None:
         if not all(_ID.fullmatch(x) for x in (
                 self.tunnel_enrollment_id, self.tunnel_id, self.cloudflared_profile_id,
                 self.tunnel_token_reference_id, self.token_sink_id,
-                self.origin_readiness_policy_id)):
+                self.origin_readiness_policy_id)) or (self.cloudflared_generation
+                and not _ID.fullmatch(self.cloudflared_generation)):
             raise ValueError("protected tunnel runtime binding is malformed")
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteSetupWriterBinding:
+    setup_profile_id: str
+    setup_generation: str
+    setup_role_artifact_id: str
+    setup_role_sha256: str
+    setup_enrollment_id: str
+    setup_transaction_policy_id: str
+    allowed_tunnel_enrollment_ids: tuple[str, ...]
+    token_writer_enrollment_id: str
+    origin_probe_enrollment_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +127,7 @@ class EnrolledRemoteSession:
     session: RemoteSessionEnrollment
     access_policy: RemoteAccessPolicyBinding
     tunnel_runtime: RemoteTunnelRuntimeBinding
+    setup_writer: RemoteSetupWriterBinding
 
 
 def parse_remote_session_enrollments(
@@ -221,6 +244,41 @@ def parse_remote_session_enrollments(
         cloudflared = profiles_by_id.get(tunnel.cloudflared_profile_id)
         if cloudflared is None or cloudflared.owner_uid <= 0:
             raise _deny("tunnel runtime profile is absent from active custody")
+        setup_raw = _exact(row["setup_writer_binding"], _SETUP_WRITER_FIELDS,
+                           "remote setup-writer binding")
+        setup_profile_id = _id(setup_raw["setup_profile_id"], "setup profile ID")
+        setup_profile = profiles_by_id.get(setup_profile_id)
+        setup_generation = _id(setup_raw["setup_generation"], "setup generation")
+        setup_role_artifact_id = _id(setup_raw["setup_role_artifact_id"], "setup role artifact ID")
+        setup_role_sha256 = _digest(setup_raw["setup_role_sha256"], "setup role digest")
+        if (setup_profile is None or setup_profile.generation != setup_generation
+                or setup_profile.owner_uid <= 0
+                or role_artifacts.get(setup_role_artifact_id) != setup_role_sha256
+                or len({setup_profile_id, gateway_profile_id, native_profile_id,
+                        tunnel.cloudflared_profile_id}) != 4):
+            raise _deny("dedicated setup profile or role artifact does not join active custody")
+        allowed_tunnels_raw = setup_raw["allowed_tunnel_enrollment_ids"]
+        if (not isinstance(allowed_tunnels_raw, list) or not allowed_tunnels_raw
+                or len(allowed_tunnels_raw) > 16
+                or any(not isinstance(value, str) for value in allowed_tunnels_raw)
+                or len(allowed_tunnels_raw) != len(set(allowed_tunnels_raw))):
+            raise _deny("setup writer tunnel allowlist is malformed")
+        allowed_tunnels = tuple(_id(value, "allowed tunnel enrollment ID")
+                                for value in allowed_tunnels_raw)
+        if tunnel.tunnel_enrollment_id not in allowed_tunnels:
+            raise _deny("selected tunnel is outside the setup writer enrollment")
+        setup_writer = RemoteSetupWriterBinding(
+            setup_profile_id=setup_profile_id, setup_generation=setup_generation,
+            setup_role_artifact_id=setup_role_artifact_id,
+            setup_role_sha256=setup_role_sha256,
+            setup_enrollment_id=_id(setup_raw["setup_enrollment_id"], "setup enrollment ID"),
+            setup_transaction_policy_id=_id(setup_raw["setup_transaction_policy_id"], "setup transaction policy ID"),
+            allowed_tunnel_enrollment_ids=allowed_tunnels,
+            token_writer_enrollment_id=_id(setup_raw["token_writer_enrollment_id"], "token writer enrollment ID"),
+            origin_probe_enrollment_id=_id(setup_raw["origin_probe_enrollment_id"], "origin probe enrollment ID"),
+        )
+        tunnel = RemoteTunnelRuntimeBinding(**dict(tunnel_raw),
+                                            cloudflared_generation=cloudflared.generation)
 
         try:
             session = RemoteSessionEnrollment(
@@ -247,5 +305,5 @@ def parse_remote_session_enrollments(
             )
         except (TypeError, ValueError, KeyError):
             raise _deny("remote session enrollment failed strict validation") from None
-        result[enrollment_id] = EnrolledRemoteSession(session, access, tunnel)
+        result[enrollment_id] = EnrolledRemoteSession(session, access, tunnel, setup_writer)
     return MappingProxyType(result)

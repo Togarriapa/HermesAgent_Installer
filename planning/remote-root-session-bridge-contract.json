@@ -323,7 +323,8 @@
         "approved_route_ids",
         "session_id",
         "expires_monotonic",
-        "service_generation_digest"
+        "service_generation_digest",
+        "principal_id"
       ],
       "selection": "Root resolves exact current root-setup transaction plus setup_writer_binding.origin_probe_enrollment_id and actual protected probe role/peer PIDFD; independently verifies current actual gateway role proof and native custody/mount/sandbox/profile generation. target_id fixed xpra-native, approved routes xpra-http/xpra-websocket only. session_id root issued unique setup-probe:<random nonce>, no public Access session reuse.",
       "issuer_signature": "issue_probe_connector_effect(root_probe_handle,operation,canonical_payload_bytes,sequence) -> InternalProbeConnectorAuthorization; root-private instance method only, no AuthorityClient/worker RPC.",
@@ -364,7 +365,60 @@
       "consumer_checks": "Before connect/read/write bytes, root revalidates current actual setup/probe/gateway/native PIDFD/generation/catalog/role/route and atomically consumes exact operation/target/full digest/sequence nonce. Retained shutdown closes both directions on any mismatch/cancel/expiry. Existing RemoteConnectorEffectAuthority accepts only real RemoteSessionBinding and must reject this type; separate setup consumer validates InternalProbeConnectorAuthorization and does not relax ordinary worker/public auth.",
       "gateway_probe_transport": "Private root-created inherited AF_UNIX control channel authenticates exact root probe and gateway role. Fixed command schema {schema:1,probe_handle,action,asset_id}, action asset-get|asset-head|websocket-attach; asset_id only pinned asset catalog opaque ID for HTTP, null for WS. Root/private gateway resolves exact GET/HEAD client path or binary app WS; no URL/port/headers/callerprofile. Commands not exposed by public HTTP. Separate actual public/loopback unauthenticated request checks remain denied before app bytes.",
       "cleanup": "Root-only close_owned_probe_stream(probe_handle,stream_handle) resolves owner and closes/wipes after expired lease without new grant; cannot affect other probe/public sessions. Terminal probe receipt includes actual bounded operations/results/digests and eight proof keys; booleans alone notproof.",
-      "evidence": "Actual app-only private gateway/connector positive and public unauthenticated denial, wrong setup/probe/gateway/profile/payload/nonce/route/generation/replay/expiry/sibling negatives. This setup probe never proves actual external AccessJWT/OTP policy/lease AC."
+      "evidence": "Actual app-only private gateway/connector positive and public unauthenticated denial, wrong setup/probe/gateway/profile/payload/nonce/route/generation/replay/expiry/sibling negatives. This setup probe never proves actual external AccessJWT/OTP policy/lease AC.",
+      "principal_join": "principal_id is resolved only through current protected PrincipalBinding whose profile_id equals selected native_profile_id and uid equals current selected native service profile UID. Require exactly one current binding, expected namespace and current catalog digest; do not derive ID text from enrollment/profile or use gateway principal. resolve_selected_native_principal(native_profile_id,native_generation,service_generation_digest)->existing PrincipalBinding is root-private catalog accessor.",
+      "sequence_domains": "Separate effect_sequence monotonic per child probe authorization from connector frame sequence. Open consumes effect_sequence0 but has no frame sequence and leaves first read/write/close frame sequence0 as existing HI07. Each subsequent authorization increments effect_sequence independently; signed authorization.sequence is effect_sequence, canonical frame payload.sequence is current connector frame sequence. Registry pins both and checks each exactly; do not require them equal or modify public connector sequencing.",
+      "per_action_probe": "issue_selected_origin_probe returns aggregate parent handle only. Root-private mint_probe_action(parent_probe_handle,action,asset_id)->child_probe_handle validates current parent/setup/peers/catalog, exact finite action and pinned asset ID/null WS, and stores immutable action/asset/route plus fresh child sequence state and original parent deadline. AF_UNIX command uses child handle. Each child executes one selected action; cannot switch asset/action after mint, expiry cannot extend parent. Root aggregates actual child receipts into eight-key readiness map; no aggregate caller wire.",
+      "gateway_probe_response": {
+        "common_fields": [
+          "schema=1",
+          "probe_handle",
+          "action",
+          "asset_id"
+        ],
+        "asset_fields": [
+          "status",
+          "headers",
+          "body_b64",
+          "body_sha256",
+          "eof"
+        ],
+        "asset": "Exact asset-get/head response common+asset_fields only; childhandle/action/asset match current admitted private command. status integerHTTP100..599 actualparsedupstream; headers strict map Content-Type/Content-Length only, no cookie/token/location/authorization. body_b64 exact actualboundeddecodedbytes, SHA verifies, eof true onlyactualHTTPcompletion; HEAD bodyempty, contentlength actualheaddeclared. Parent/selectedassetbounds<=32MiB aggregate/currentoriginal<=30s deadline enforced; redirects or malformed/truncated failed.",
+        "websocket_fields": [
+          "opened",
+          "stream_observation_handle",
+          "binary_frame_count",
+          "byte_sha256"
+        ],
+        "websocket": "Exact websocket common+fields only, asset_id null; opened actual selected binary protocol handshake not callerbool; root registry stream_observation_handle resolves actual current scoped connector read/write/close receipts, binaryframecountboundedinteger and byteSHA actual observed ordered binarybytes. No native-window field in gateway response; root independently custody-observes official Desktop window/currentrenderer/sandbox.",
+        "denials": "Unauthenticated/arbitrary/shell/fullhost denial observations come separate actual root finite probes of selected loopback gateway rejection paths before app bytes, not this authorized asset/WS response and not claimed booleans. Their exact request/result bytes/status/current root probe registry bind final readiness receipt. No caller-chosen deny path, external host, arbitrary route or fakeAccess session.",
+        "validation": "SetupProbeExecutor validates exact strict response fields/echo/digests/limits against actual root child action registry and connector observation receipts; frame booleans/hashes alone cannot create origin readiness. Aggregate eight observation map root only. Cancellation/EOF/expiry closesownedstreams."
+      }
     }
+  },
+  "selected_observation_catalog": {
+    "task_ids": [
+      "HI-T10",
+      "HI-T13",
+      "RT-F03"
+    ],
+    "active_key": "service_generations.remote_observation_enrollments",
+    "row_fields": [
+      "id",
+      "remote_enrollment_id",
+      "gateway_listener_port",
+      "native_window_enrollment_id",
+      "display_server_profile_id",
+      "display_server_generation",
+      "display_name",
+      "xauthority_receipt_handle"
+    ],
+    "types": "IDs/generations/display_name are bounded opaque strings; gateway_listener_port integer1..65535 selected private loopback listener. display_name is protected startup selection, never caller/environment inference. xauthority_receipt_handle root-private current display-server startup artifact receipt, not a supplied filesystem path.",
+    "static_join": "Exactly one row per remote enrollment; current remote_session_enrollments selects gateway/native profile generations, hostname, policy_config_digest and policy_revision. Display profile/generation joins selected protected service record. Complete row is in active service_generations canonical digest; no mutable sidecar fallback.",
+    "gateway_accessor": "selected_gateway_boundary(remote_enrollment_id) -> SelectedGatewayBoundary(remote_enrollment_id,gateway_profile_id,gateway_generation,gateway_identity_digest,hostname,listener_port,policy_config_digest,policy_revision)",
+    "gateway_facts": "Listener port is row.gateway_listener_port; observed_gateway_identity_digest is actual current gateway_role_binding role proof verified by custody/kernel PIDFD and exact gateway generation, not static catalog hash. Hostname/policy values come exact HI13 row. Root verifies actual selected listening socket/namespace; no port-open-only readiness.",
+    "window_accessor": "selected_native_window(remote_enrollment_id) -> SelectedNativeWindow(remote_enrollment_id,native_profile_id,native_generation,native_uid,native_cgroup_id,allowed_executable_sha256s,display_server_profile_id,display_server_generation,display_name,xauthority_path,xauthority_device,xauthority_inode,xauthority_uid)",
+    "window_facts": "native_uid from current selected native HostServiceProfile; cgroup from actual selected process custody receipt; executable set from exact selected HI10 renderer/main/child artifact pins. Xauthority path/device/inode/uid from root-private startup receipt resolved with nofollow/current inode+digest/owner checks, scoped only selected display service, never host-wide ambient DISPLAY/XAUTHORITY. Accessor returns root-private DTO; no worker-visible paths. Missing actual startup/role/cgroup proof leaves exact observation pending; static enrollment alone is not window evidence.",
+    "ownership": "Host enrollment parses active row and validates foreign keys; custody supplies current live observations. Runtime composition exposes typed root-private getters to remote observation adapter. No new public desktop/profile selection, all existing confinement and AC13..15 pending."
   }
 }

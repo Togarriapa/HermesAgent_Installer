@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 import base64
+import pwd
+import sys
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -14,14 +16,15 @@ import pytest
 
 from hermes_installer.authority.build_execution import (
     BuildOutputSpec, ContentAddressedBuildStore, LinuxBuildOutputFactInspector,
-    ManagedBuildResult, RootBuildExecutionService, managed_process_identity_digest,
+    ManagedBuildResult, ProtectedBuildArtifactRootResolver, RootBuildExecutionService,
+    managed_process_identity_digest,
 )
 from hermes_installer.authority.types import (
     AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
 )
 
 
-def _test_temp_parent():
+def _test_temp_parent() -> str:
     # Darwin exposes its root-owned sticky temp directory at /private/tmp; Linux
     # uses /tmp. Never make Linux tests depend on a Darwin-only alias.
     return "/private/tmp" if sys.platform == "darwin" else "/tmp"
@@ -34,6 +37,20 @@ def test_temp_parent_uses_only_the_platform_specific_sticky_root(monkeypatch, pl
     assert _test_temp_parent() == expected
 
 
+def _test_builder_uid() -> int:
+    # Root-run Linux custody CI must still model the dedicated unprivileged
+    # builder identity used by production.
+    return 65534 if os.geteuid() == 0 else os.getuid()
+
+
+def _owned_output_root(path: Path) -> Path:
+    path.mkdir(mode=0o700, exist_ok=True)
+    owner_uid = _test_builder_uid()
+    owner_gid = pwd.getpwuid(owner_uid).pw_gid
+    if (path.stat().st_uid, path.stat().st_gid) != (owner_uid, owner_gid):
+        os.chown(path, owner_uid, owner_gid)
+    path.chmod(0o700)
+    return path
 def constraints():
     return {
         "bin/colibri": BuildOutputSpec(
@@ -66,7 +83,8 @@ class Profile:
     environment = {"LANG": "C"}
     max_lifetime_seconds = 600
     output_root_id = "build-output"
-    output_owner_uid = os.getuid()
+    output_owner_uid = _test_builder_uid()
+    output_owner_gid = pwd.getpwuid(output_owner_uid).pw_gid
     output_specs = constraints()
 
     def __init__(self, output_root: Path):
@@ -91,7 +109,7 @@ class FixtureInspector:
 def completed(**changes):
     now = time.monotonic()
     row = {
-        "process_id": "managed-build-1", "generation": "generation-1", "uid": os.getuid(),
+        "process_id": "managed-build-1", "generation": "generation-1", "uid": _test_builder_uid(),
         "pid": 12345, "start_ticks": 55, "exit_code": 0, "timed_out": False,
         "cancelled": False, "cleanup_verified": True, "started_monotonic": now - .25,
         "finished_monotonic": now - .05,
@@ -114,8 +132,15 @@ def completed(**changes):
 def write_file(root: Path, name: str, data: bytes, executable=False):
     path = root / name
     path.parent.mkdir(parents=True, exist_ok=True)
+    parent = path.parent
+    while parent != root:
+        if parent.stat().st_uid != _test_builder_uid():
+            os.chown(parent, _test_builder_uid(), -1)
+        parent = parent.parent
     path.write_bytes(data)
     path.chmod(0o700 if executable else 0o600)
+    if path.stat().st_uid != _test_builder_uid():
+        os.chown(path, _test_builder_uid(), -1)
     return path
 
 
@@ -127,7 +152,7 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
     with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
-        output_root.mkdir(mode=0o700)
+        _owned_output_root(output_root)
         source = base / "source"
         toolchain = base / "toolchain"
         builder = base / "builder"
@@ -161,7 +186,7 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
                 return profile, SimpleNamespace(
                     enrollment_id=profile.build_service_enrollment_id,
                     generation=profile.build_service_generation,
-                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
+                    service_uid=profile.output_owner_uid, service_gid=profile.output_owner_gid)
 
         class Launcher:
             seen = False
@@ -208,6 +233,7 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
             launcher=launcher, fact_inspector=FixtureInspector(), authority_key=b"k" * 32,
             service_catalog=service_catalog,
             store=make_store(base / "cas"), expected_uid=os.getuid())
+        assert set(service.handlers()) == {("process.start", profile.target_id)}
         response = service(context=context, authorization=authorization, payload=payload,
                            timeout=60, peer_pid=42, peer_pidfd=7, cancelled=lambda: False)
 
@@ -224,7 +250,7 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
     with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
-        output_root.mkdir(mode=0o700)
+        _owned_output_root(output_root)
         profile = Profile(output_root)
         source, toolchain = base / "source", base / "toolchain"
         source.mkdir(mode=0o700)
@@ -311,8 +337,42 @@ def test_output_cleanup_rejects_replaced_job_root_instead_of_succeeding():
         assert replaced.is_symlink()
 
 
+def test_inspector_roots_are_resolved_from_exact_protected_artifact_pins():
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
+        base = Path(temp)
+        source = base / "source"
+        sysroot = base / "sysroot"
+        source.mkdir(mode=0o700)
+        sysroot.mkdir(mode=0o700)
+        source.chmod(0o500)
+        sysroot.chmod(0o500)
+        profile = Profile(base)
+        expected_uid = os.getuid()
+        specs = {
+            profile.source_artifact_id: SimpleNamespace(sha256=profile.source_sha256, tree_files=(object(),)),
+            profile.toolchain_artifact_id: SimpleNamespace(sha256=profile.toolchain_sha256, tree_files=(object(),)),
+        }
+        roots = {profile.source_artifact_id: source, profile.toolchain_artifact_id: sysroot}
+
+        class ArtifactCatalog:
+            artifacts = specs
+
+            def resolve(self, *_args, **_kwargs):
+                raise AssertionError("tree artifacts must be materialized through their protected manifest")
+
+            def materialize_tree(self, artifact_id, digest, staging_root, *, expected_uid):
+                assert artifact_id in roots and specs[artifact_id].sha256 == digest
+                assert staging_root == base and expected_uid == expected_uid_outer
+                return SimpleNamespace(path=roots[artifact_id])
+
+        expected_uid_outer = expected_uid
+        resolver = ProtectedBuildArtifactRootResolver(ArtifactCatalog(), base, owner_uid=expected_uid)
+        assert resolver.source_root(profile) == source
+        assert resolver.toolchain_root(profile) == sysroot
+
+
 def filled_output(root):
-    root.mkdir(mode=0o700, exist_ok=True)
+    _owned_output_root(root)
     write_file(root, "bin/colibri", b"fixture ARM64 executable", executable=True)
     write_file(root, "runtime/lib/python3.9/os.py", b"stdlib fixture")
     write_file(root, "runtime/lib/python3.9/lib-dynload/_test.so", b"extension fixture")

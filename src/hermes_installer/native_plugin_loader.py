@@ -10,14 +10,18 @@ from __future__ import annotations
 
 import hashlib
 import contextlib
+import functools
 import importlib.util
 import inspect
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
 import site
+import socket
 import stat
+import struct
 import sys
 from types import MappingProxyType, ModuleType
 from typing import Any
@@ -36,10 +40,338 @@ _MODULE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z", r
 _MAX_ENTRYPOINT_BYTES = 32 * 1024 * 1024
 _MAX_CLOSURE_FILES = 200_000
 _MAX_CLOSURE_BYTES = 4 * 1024 * 1024 * 1024
+_MAX_PLUGIN_RESULT_BYTES = 2 * 1024 * 1024
+_MAX_PLUGIN_RESULT_NODES = 50_000
+_MAX_PLUGIN_RESULT_DEPTH = 64
+_UNSAFE_PLUGIN_RESULT = (
+    '{"error":"Native plugin result could not be represented safely.",'
+    '"error_type":"native_plugin_result_contract"}'
+)
+_LISTEN_FD_BASE = 3
+_LOADER_PROGRESS_FD_NAME = "hermes-loader-progress"
+_LOADER_PROGRESS_MAX_BYTES = 65_536
+_LOADER_PROGRESS_PHASES = (
+    "entrypoint-imported", "actions-registered", "ready",
+)
+_LOADER_NONCE = re.compile(r"[A-Za-z0-9_-]{43}\Z", re.ASCII)
 
 
 class NativePluginLoadUnavailable(PermissionError):
     """Selected package mount, manifest, or adapter source is unavailable."""
+
+
+class _NativeLoaderProgressWriter:
+    """Root-challenged sender for systemd's named native-loader activation FD."""
+
+    __slots__ = ("_channel", "_selection", "_nonce", "_sequence", "_actions", "_closed")
+
+    def __init__(self, channel: socket.socket, selection: object, nonce: str) -> None:
+        self._channel = channel
+        self._selection = selection
+        self._nonce = nonce
+        self._sequence = 0
+        self._actions: tuple[str, ...] = ()
+        self._closed = False
+
+    @classmethod
+    def from_systemd_activation(cls, selection: object) -> "_NativeLoaderProgressWriter":
+        """Take only systemd's root-configured named FD; never accept a path or nonce input."""
+        names = ("LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES")
+        values = {name: os.environ.pop(name, None) for name in names}
+        if all(value is None for value in values.values()):
+            raise NativePluginLoadUnavailable("root native loader activation channel is unavailable")
+        count = values["LISTEN_FDS"]
+        closeable_count = 0
+        if (isinstance(count, str) and len(count) <= 3
+                and re.fullmatch(r"[0-9]{1,3}", count, re.ASCII)):
+            closeable_count = min(int(count), 64)
+        if (not isinstance(values["LISTEN_PID"], str)
+                or not 1 <= len(values["LISTEN_PID"]) <= 20
+                or not values["LISTEN_PID"].isascii()
+                or not values["LISTEN_PID"].isdecimal()
+                or int(values["LISTEN_PID"]) != os.getpid()
+                or closeable_count < 1 or closeable_count > 64
+                or closeable_count != int(count)):
+            cls._close_activation_range(closeable_count)
+            raise NativePluginLoadUnavailable("root native loader activation descriptor is malformed")
+        raw_names = values["LISTEN_FDNAMES"]
+        fd_names = raw_names.split(":") if isinstance(raw_names, str) else []
+        if (len(fd_names) != closeable_count or any(not name for name in fd_names)
+                or fd_names.count(_LOADER_PROGRESS_FD_NAME) != 1):
+            cls._close_activation_range(closeable_count)
+            raise NativePluginLoadUnavailable("named root native loader descriptor is unavailable")
+        selected_fd = _LISTEN_FD_BASE + fd_names.index(_LOADER_PROGRESS_FD_NAME)
+        for offset in range(closeable_count):
+            descriptor = _LISTEN_FD_BASE + offset
+            if descriptor != selected_fd:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+        try:
+            channel = socket.socket(fileno=selected_fd)
+            if (channel.family != socket.AF_UNIX
+                    or channel.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_STREAM):
+                raise OSError("activation descriptor is not an AF_UNIX stream")
+            channel.getpeername()  # Require systemd to have connected the named OpenFile endpoint.
+            channel.settimeout(10.0)
+            nonce = cls._read_challenge(channel)
+            if not _LOADER_NONCE.fullmatch(nonce):
+                raise OSError("root native loader challenge is malformed")
+            return cls(channel, selection, nonce)
+        except (OSError, ValueError):
+            try:
+                channel.close()
+            except (OSError, UnboundLocalError):
+                try:
+                    os.close(selected_fd)
+                except OSError:
+                    pass
+            raise NativePluginLoadUnavailable("root native loader channel challenge failed") from None
+
+    @staticmethod
+    def _close_activation_range(count: int) -> None:
+        for descriptor in range(_LISTEN_FD_BASE, _LISTEN_FD_BASE + count):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _read_challenge(channel: socket.socket) -> str:
+        data = bytearray()
+        while len(data) < 43:
+            chunk = channel.recv(43 - len(data))
+            if not chunk:
+                raise OSError("root native loader challenge ended early")
+            data.extend(chunk)
+        try:
+            return data.decode("ascii")
+        except UnicodeError:
+            raise OSError("root native loader challenge is not ASCII") from None
+
+    def emit(self, *, sequence: int, phase: str,
+             registered_action_ids: tuple[str, ...] | list[str]) -> None:
+        if self._closed or sequence != self._sequence or sequence >= len(_LOADER_PROGRESS_PHASES):
+            raise NativePluginLoadUnavailable("native loader progress sequence is unavailable")
+        if phase != _LOADER_PROGRESS_PHASES[sequence]:
+            self.close()
+            raise NativePluginLoadUnavailable("native loader progress phase is invalid")
+        if sequence == 0:
+            if registered_action_ids != () and registered_action_ids != []:
+                self.close()
+                raise NativePluginLoadUnavailable("native loader import event has unexpected actions")
+            actions: tuple[str, ...] = ()
+        else:
+            actions = tuple(registered_action_ids)
+            if (not actions or len(actions) > 256
+                    or tuple(sorted(set(actions))) != actions
+                    or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in actions)
+                    or (sequence == 2 and actions != self._actions)):
+                self.close()
+                raise NativePluginLoadUnavailable("native loader action event does not match its selected closure")
+
+        binding = getattr(self._selection, "_binding", None)
+        required = {
+            "package_id": getattr(self._selection, "package_id", None),
+            "generation": getattr(self._selection, "generation", None),
+            "entrypoint_sha256": getattr(binding, "entrypoint_sha256", None),
+            "resolver_sha256": getattr(binding, "resolver_digest", None),
+        }
+        if (any(not isinstance(value, str) or not value for value in required.values())
+                or any(not _SHA256.fullmatch(required[field]) for field in (
+                    "entrypoint_sha256", "resolver_sha256"))):
+            self.close()
+            raise NativePluginLoadUnavailable("native loader selection is incomplete")
+        record = {
+            "schema": 1, "launch_nonce": self._nonce,
+            "sequence": sequence, "phase": phase, **required,
+            "registered_action_ids": list(actions),
+        }
+        try:
+            payload = json.dumps(record, ensure_ascii=False, sort_keys=True,
+                                 separators=(",", ":"), allow_nan=False).encode("utf-8")
+            if not payload or len(payload) > _LOADER_PROGRESS_MAX_BYTES:
+                raise ValueError("progress frame exceeds its bound")
+            self._channel.sendall(struct.pack("!I", len(payload)) + payload)
+        except (OSError, TypeError, ValueError, UnicodeError):
+            self.close()
+            raise NativePluginLoadUnavailable("root native loader progress could not be recorded") from None
+        self._sequence += 1
+        if sequence == 1:
+            self._actions = actions
+        if sequence == 2:
+            self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._channel.close()
+        except OSError:
+            pass
+
+
+def _validate_plugin_result_tree(value: Any) -> None:
+    """Bound and validate JSON results before adapting them to Hermes' tool contract."""
+    nodes = 0
+    encoded_size = 0
+    active: set[int] = set()
+
+    def account(amount: int) -> None:
+        nonlocal encoded_size
+        encoded_size += amount
+        if encoded_size > _MAX_PLUGIN_RESULT_BYTES:
+            raise ValueError("result exceeds its serialized size bound")
+
+    def quoted_string_size(text: str) -> int:
+        if len(text) > _MAX_PLUGIN_RESULT_BYTES:
+            raise ValueError("result string exceeds its bound")
+        size = 2  # JSON quotes
+        for char in text:
+            codepoint = ord(char)
+            if char in {'"', "\\"}:
+                size += 2
+            elif codepoint < 0x20:
+                size += 6  # conservative JSON unicode escape bound
+            else:
+                size += len(char.encode("utf-8"))
+            if size > _MAX_PLUGIN_RESULT_BYTES:
+                raise ValueError("result string exceeds its serialized size bound")
+        return size
+
+    def visit(item: Any, depth: int) -> None:
+        nonlocal nodes
+        nodes += 1
+        if nodes > _MAX_PLUGIN_RESULT_NODES or depth > _MAX_PLUGIN_RESULT_DEPTH:
+            raise ValueError("result structure exceeds its bound")
+        if item is None:
+            account(4)
+            return
+        if type(item) is bool:
+            account(4 if item else 5)
+            return
+        if type(item) is str:
+            account(quoted_string_size(item))
+            return
+        if type(item) is int:
+            if item.bit_length() > _MAX_PLUGIN_RESULT_BYTES * 4:
+                raise ValueError("result integer exceeds its bound")
+            account(len(str(item)))
+            return
+        if type(item) is float:
+            if not math.isfinite(item):
+                raise ValueError("result float is not finite")
+            account(len(json.dumps(item, allow_nan=False)))
+            return
+        if type(item) not in {dict, list}:
+            raise ValueError("result contains an unsupported value")
+
+        identity = id(item)
+        if identity in active:
+            raise ValueError("result contains a cycle")
+        active.add(identity)
+        try:
+            if type(item) is dict:
+                account(2)  # braces
+                for index, (key, child) in enumerate(item.items()):
+                    if index:
+                        account(1)
+                    if type(key) is not str:
+                        raise ValueError("result object key is not text")
+                    account(quoted_string_size(key) + 1)  # key and colon
+                    visit(child, depth + 1)
+            else:
+                account(2)  # brackets
+                for index, child in enumerate(item):
+                    if index:
+                        account(1)
+                    visit(child, depth + 1)
+        finally:
+            active.remove(identity)
+
+    visit(value, 0)
+
+
+def _plugin_tool_result(value: Any) -> Any:
+    """Map reviewed structured adapter output to Hermes' bounded string contract."""
+    if isinstance(value, str):
+        return value
+    if type(value) not in {dict, list, int, float, bool, type(None)}:
+        return _UNSAFE_PLUGIN_RESULT
+    if type(value) is dict and value.get("_multimodal") is True and isinstance(value.get("content"), list):
+        try:
+            _validate_plugin_result_tree(value)
+            encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                 separators=(",", ":"), allow_nan=False).encode("utf-8")
+            if len(encoded) > _MAX_PLUGIN_RESULT_BYTES:
+                return _UNSAFE_PLUGIN_RESULT
+        except (TypeError, ValueError, UnicodeError, RecursionError):
+            return _UNSAFE_PLUGIN_RESULT
+        # Hermes recognizes this exact envelope and passes its typed content
+        # through to multimodal handling; do not flatten it to ordinary text.
+        return value
+    try:
+        _validate_plugin_result_tree(value)
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode("utf-8")
+        if len(encoded) > _MAX_PLUGIN_RESULT_BYTES:
+            return _UNSAFE_PLUGIN_RESULT
+        return encoded.decode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        # Do not include handler values or serializer exceptions in the tool
+        # result; they may contain credentials or private effect output.
+        return _UNSAFE_PLUGIN_RESULT
+
+
+class _NativePluginContextResultAdapter:
+    """Preserve PluginContext APIs while enforcing Hermes' supported tool result types."""
+
+    __slots__ = ("__context", "__registered_tool_names")
+
+    def __init__(self, context: object) -> None:
+        object.__setattr__(self, "_NativePluginContextResultAdapter__context", context)
+        object.__setattr__(self, "_NativePluginContextResultAdapter__registered_tool_names", [])
+
+    @property
+    def registered_tool_names(self) -> tuple[str, ...]:
+        return tuple(object.__getattribute__(self, "_NativePluginContextResultAdapter__registered_tool_names"))
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(object.__getattribute__(self, "_NativePluginContextResultAdapter__context"), name)
+
+    def register_tool(self, name: str, toolset: str, schema: dict, handler: Any,
+                      check_fn: Any = None, requires_env: Any = None, is_async: bool = False,
+                      description: str = "", emoji: str = "", override: bool = False) -> Any:
+        if not callable(handler):
+            raise NativePluginLoadUnavailable("selected native tool handler is unavailable")
+        if is_async:
+            @functools.wraps(handler)
+            async def bounded_handler(*args: Any, **kwargs: Any) -> Any:
+                return _plugin_tool_result(await handler(*args, **kwargs))
+        else:
+            @functools.wraps(handler)
+            def bounded_handler(*args: Any, **kwargs: Any) -> Any:
+                result = handler(*args, **kwargs)
+                if inspect.isawaitable(result):
+                    close = getattr(result, "close", None)
+                    if callable(close):
+                        close()
+                    return _UNSAFE_PLUGIN_RESULT
+                return _plugin_tool_result(result)
+
+        context = object.__getattribute__(self, "_NativePluginContextResultAdapter__context")
+        registration = context.register_tool(
+            name=name, toolset=toolset, schema=schema, handler=bounded_handler,
+            check_fn=check_fn, requires_env=requires_env, is_async=is_async,
+            description=description, emoji=emoji, override=override,
+        )
+        if registration is not None:
+            object.__getattribute__(self, "_NativePluginContextResultAdapter__registered_tool_names").append(name)
+        return registration
 
 
 def selected_mount_target(package_id: str, profile_id: str, generation: str,
@@ -353,14 +685,16 @@ class SelectedNativeAdapter:
 class SelectedNativePackage:
     """Verified read-only mount plus the exact currently selected adapter modules."""
 
-    __slots__ = ("_selection", "mount_target", "entrypoint_sha256", "_adapters")
+    __slots__ = ("_selection", "mount_target", "entrypoint_sha256", "_adapters", "_progress_writer")
 
     def __init__(self, selection: RootSelectedPluginEffects, mount_target: Path,
-                 entrypoint_sha256: str, adapters: MappingProxyType) -> None:
+                 entrypoint_sha256: str, adapters: MappingProxyType,
+                 progress_writer: _NativeLoaderProgressWriter | None = None) -> None:
         self._selection = selection
         self.mount_target = mount_target
         self.entrypoint_sha256 = entrypoint_sha256
         self._adapters = adapters
+        self._progress_writer = progress_writer
 
     @property
     def package_id(self) -> str:
@@ -401,6 +735,14 @@ class SelectedNativePackage:
     def adapter_ids(self) -> tuple[str, ...]:
         self._selection._require_live()
         return tuple(self._adapters)
+
+    @property
+    def registered_action_ids(self) -> tuple[str, ...]:
+        self._selection._require_live()
+        return tuple(sorted({
+            action_id for adapter in self._adapters.values()
+            for action_id in adapter.action_ids
+        }))
 
 
 def predeclare_selected_native_package(plugin_manager: object, package: SelectedNativePackage,
@@ -445,7 +787,21 @@ def predeclare_selected_native_package(plugin_manager: object, package: Selected
                 setattr(ctx, "plugin_effects", runtime_context.plugin_effects)
             except Exception:
                 raise NativePluginLoadUnavailable("pinned Hermes PluginContext cannot accept the trusted facade") from None
-            _adapter.register(ctx, runtime_context)
+            result_context = _NativePluginContextResultAdapter(ctx)
+            _adapter.register(result_context, runtime_context)
+            progress_writer = getattr(package, "_progress_writer", None)
+            if progress_writer is not None and not result_context.registered_tool_names:
+                raise NativePluginLoadUnavailable("selected adapter registered no Hermes tools")
+            registered = getattr(plugin_manager, "_hermes_installer_native_registered_adapters", None)
+            if not isinstance(registered, set):
+                registered = set()
+                setattr(plugin_manager, "_hermes_installer_native_registered_adapters", registered)
+            registered.add(_adapter_id)
+            if progress_writer is not None and registered == set(package.adapter_ids):
+                progress_writer.emit(
+                    sequence=1, phase="actions-registered",
+                    registered_action_ids=package.registered_action_ids,
+                )
 
         module.register = register
         prepared[adapter_id] = module
@@ -454,7 +810,38 @@ def predeclare_selected_native_package(plugin_manager: object, package: Selected
         raise NativePluginLoadUnavailable("selected native plugin key collided during loader preparation")
     predeclared.update(prepared)
     setattr(plugin_manager, "_hermes_installer_native_plugin_keys", frozenset(prepared))
+    setattr(plugin_manager, "_hermes_installer_native_plugin_package", package)
     return tuple(prepared)
+
+
+def finish_selected_native_plugin_discovery(plugin_manager: object) -> bool:
+    """Record READY only after the official PluginManager completes registration."""
+    package = getattr(plugin_manager, "_hermes_installer_native_plugin_package", None)
+    if not isinstance(package, SelectedNativePackage):
+        return False
+    writer = package._progress_writer
+    if writer is None:
+        return False
+    try:
+        registered = getattr(plugin_manager, "_hermes_installer_native_registered_adapters", None)
+        if not isinstance(registered, set) or registered != set(package.adapter_ids):
+            raise NativePluginLoadUnavailable("selected adapter registration sweep was incomplete")
+        plugins = getattr(plugin_manager, "_plugins", None)
+        if not isinstance(plugins, dict):
+            raise NativePluginLoadUnavailable("pinned Hermes plugin state is unavailable")
+        for adapter_id in package.adapter_ids:
+            plugin = plugins.get(adapter_id)
+            if (plugin is None or getattr(plugin, "enabled", False) is not True
+                    or getattr(plugin, "error", None) is not None
+                    or getattr(plugin, "deferred", False) is True
+                    or not getattr(plugin, "tools_registered", ())):
+                raise NativePluginLoadUnavailable("selected Hermes plugin did not finish registration")
+        writer.emit(sequence=2, phase="ready",
+                    registered_action_ids=package.registered_action_ids)
+        return True
+    except NativePluginLoadUnavailable:
+        writer.close()
+        raise
 
 
 def _selected_runtime_context_factory(authority: object, package: SelectedNativePackage):
@@ -592,6 +979,8 @@ def bind_current_native_plugin_package(authority: object) -> SelectedNativePacka
     selection = bind_selected_plugin_effects(authority)
     target = selected_mount_target(selection.package_id, selection.profile_id,
                                    selection.generation, selection.compiled_closure_sha256)
+    progress_writer: _NativeLoaderProgressWriter | None = None
+    imported_modules: list[str] = []
     try:
         _require_private_readonly_mount(target, Path("/proc/self/mountinfo").read_text(encoding="utf-8"))
         root = target.resolve(strict=True)
@@ -608,6 +997,10 @@ def bind_current_native_plugin_package(authority: object) -> SelectedNativePacka
             raise NativePluginLoadUnavailable("mounted native resolver is not canonical JSON")
         _require_protected_import_environment()
         modules = _verify_closure(root, manifest)
+        # The named activation descriptor is provisioned by root custody via
+        # systemd OpenFile. Resolve it before importing selected code so the
+        # package remains unavailable if loaded-code proof cannot be reported.
+        progress_writer = _NativeLoaderProgressWriter.from_systemd_activation(selection)
         loaded: dict[str, SelectedNativeAdapter] = {}
         for row in manifest["adapters"]:
             adapter_id = row["adapter_id"]
@@ -627,6 +1020,7 @@ def bind_current_native_plugin_package(authority: object) -> SelectedNativePacka
                     raise NativePluginLoadUnavailable("native adapter module cannot be loaded from its pinned path")
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[module_name] = module
+                imported_modules.append(module_name)
                 try:
                     spec.loader.exec_module(module)
                 except Exception:
@@ -639,11 +1033,30 @@ def bind_current_native_plugin_package(authority: object) -> SelectedNativePacka
                 adapter_id, module, row["entrypoint_symbol"], tuple(row["action_ids"]),
                 selection.manifest_digest_for_adapter(adapter_id) or "", entrypoint,
             )
+        progress_writer.emit(sequence=0, phase="entrypoint-imported", registered_action_ids=())
         return SelectedNativePackage(selection, target, selection.entrypoint_sha256,
-                                     MappingProxyType(loaded))
+                                     MappingProxyType(loaded), progress_writer)
     except NativePluginBindingUnavailable as exc:
+        if progress_writer is not None:
+            progress_writer.close()
+        for module_name in imported_modules:
+            sys.modules.pop(module_name, None)
         raise NativePluginLoadUnavailable("root native package binding is unavailable") from None
     except NativePluginLoadUnavailable:
+        if progress_writer is not None:
+            progress_writer.close()
+        for module_name in imported_modules:
+            sys.modules.pop(module_name, None)
         raise
     except OSError:
+        if progress_writer is not None:
+            progress_writer.close()
+        for module_name in imported_modules:
+            sys.modules.pop(module_name, None)
         raise NativePluginLoadUnavailable("root native package mount is unavailable") from None
+    except BaseException:
+        if progress_writer is not None:
+            progress_writer.close()
+        for module_name in imported_modules:
+            sys.modules.pop(module_name, None)
+        raise

@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import socket
+import struct
 import sys
 import tempfile
 import time
@@ -117,6 +119,91 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0):
 
 
 class NativePluginLoaderTests(unittest.TestCase):
+    def test_progress_writer_requires_root_named_activation_fd(self):
+        from hermes_installer.native_plugin_loader import _NativeLoaderProgressWriter
+
+        selection = types.SimpleNamespace(
+            package_id="package-fixture", generation="generation-fixture",
+            _binding=types.SimpleNamespace(entrypoint_sha256="e" * 64, resolver_digest="d" * 64),
+        )
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(NativePluginLoadUnavailable):
+                _NativeLoaderProgressWriter.from_systemd_activation(selection)
+        with patch.dict(os.environ, {
+            "LISTEN_PID": "1" * 5000, "LISTEN_FDS": "1" * 5000,
+            "LISTEN_FDNAMES": "hermes-loader-progress",
+        }, clear=True):
+            with self.assertRaises(NativePluginLoadUnavailable):
+                _NativeLoaderProgressWriter.from_systemd_activation(selection)
+
+    def test_named_progress_fd_challenge_and_three_ordered_frames(self):
+        from hermes_installer.native_plugin_loader import _NativeLoaderProgressWriter
+
+        selection = types.SimpleNamespace(
+            package_id="package-fixture", generation="generation-fixture",
+            _binding=types.SimpleNamespace(entrypoint_sha256="e" * 64, resolver_digest="d" * 64),
+        )
+        saved_fd = None
+        try:
+            saved_fd = os.dup(3)
+        except OSError:
+            saved_fd = None
+        receiver, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            receiver_fd = os.dup(receiver.fileno())
+            receiver.close()
+            receiver = socket.socket(fileno=receiver_fd)
+            os.dup2(child.fileno(), 3)
+            child.close()
+            receiver.sendall(b"N" * 43)
+            with patch.dict(os.environ, {
+                "LISTEN_PID": str(os.getpid()), "LISTEN_FDS": "1",
+                "LISTEN_FDNAMES": "hermes-loader-progress",
+            }):
+                writer = _NativeLoaderProgressWriter.from_systemd_activation(selection)
+                writer.emit(sequence=0, phase="entrypoint-imported", registered_action_ids=())
+                actions = ("plugin.lookup", "plugin.write")
+                writer.emit(sequence=1, phase="actions-registered", registered_action_ids=actions)
+                writer.emit(sequence=2, phase="ready", registered_action_ids=actions)
+            self.assertTrue(writer._closed)
+
+            records, payloads = [], []
+            for _ in range(3):
+                header = receiver.recv(4)
+                self.assertEqual(len(header), 4)
+                size = struct.unpack("!I", header)[0]
+                self.assertGreater(size, 0)
+                self.assertLessEqual(size, 65_536)
+                payload = bytearray()
+                while len(payload) < size:
+                    part = receiver.recv(size - len(payload))
+                    self.assertTrue(part)
+                    payload.extend(part)
+                payloads.append(bytes(payload))
+                records.append(json.loads(payload.decode("utf-8")))
+            self.assertEqual([record["sequence"] for record in records], [0, 1, 2])
+            self.assertEqual([record["phase"] for record in records], [
+                "entrypoint-imported", "actions-registered", "ready",
+            ])
+            self.assertEqual(records[0]["registered_action_ids"], [])
+            self.assertEqual(records[1]["registered_action_ids"], list(actions))
+            self.assertEqual(records[2]["registered_action_ids"], list(actions))
+            self.assertTrue(all(record["launch_nonce"] == "N" * 43 for record in records))
+            for record, payload in zip(records, payloads):
+                self.assertEqual(payload, json.dumps(
+                    record, ensure_ascii=False, sort_keys=True,
+                    separators=(",", ":"), allow_nan=False,
+                ).encode("utf-8"))
+        finally:
+            receiver.close()
+            try:
+                os.close(3)
+            except OSError:
+                pass
+            if saved_fd is not None:
+                os.dup2(saved_fd, 3)
+                os.close(saved_fd)
+
     def test_mount_target_is_deterministically_bound_to_all_selected_identity_fields(self):
         target = selected_mount_target("package", "profile", "generation", "a" * 64)
         self.assertEqual(str(target), "/run/hermes-installer/native/" + hashlib.sha256(
@@ -221,6 +308,13 @@ class NativePluginLoaderTests(unittest.TestCase):
             from hermes_installer import native_plugin_loader
             original_read_text = Path.read_text
 
+            class ProgressFixture:
+                def __init__(self): self.frames, self.closed = [], False
+                def emit(self, **frame): self.frames.append(frame)
+                def close(self): self.closed = True
+
+            progress = ProgressFixture()
+
             def read_text(path, *args, **kwargs):
                 if path == Path("/proc/self/mountinfo"):
                     return f"1 0 0:1 / {target} ro,nosuid,nodev,noexec - tmpfs tmpfs ro,nosuid,nodev,noexec\n"
@@ -228,6 +322,8 @@ class NativePluginLoaderTests(unittest.TestCase):
 
             with patch.object(native_plugin_loader, "selected_mount_target", return_value=target), \
                     patch.object(native_plugin_loader, "_require_protected_import_environment"), \
+                    patch.object(native_plugin_loader._NativeLoaderProgressWriter,
+                                 "from_systemd_activation", return_value=progress), \
                     patch.object(Path, "read_text", read_text):
                 package = bind_current_native_plugin_package(authority)
             try:
@@ -235,7 +331,10 @@ class NativePluginLoaderTests(unittest.TestCase):
                 self.assertEqual(package.manifest_digest_for_adapter("fixture-plugin"), "a" * 64)
                 self.assertIsNotNone(package.resolve("fixture-plugin", "fixture.read"))
                 self.assertIsNotNone(package.resolve_adapter("fixture-plugin"))
+                self.assertEqual([frame["phase"] for frame in progress.frames], ["entrypoint-imported"])
+                self.assertEqual(progress.frames[0]["registered_action_ids"], ())
             finally:
+                package._progress_writer.close()
                 sys.modules.pop("hermes_fixture_native_plugin", None)
 
     def test_bound_loader_rejects_mounted_resolver_digest_drift(self):
