@@ -101,6 +101,17 @@ def _replace_once(data: bytes, old: bytes, new: bytes, label: str) -> bytes:
     return data.replace(old, new, 1)
 
 
+def _replace_method_region(data: bytes, start: bytes, end: bytes,
+                           replacement: bytes, label: str) -> bytes:
+    if data.count(start) != 1 or data.count(end) != 1:
+        raise XpraOverlayDenied(f"pinned Xpra method boundary mismatch: {label}")
+    begin = data.index(start)
+    finish = data.index(end)
+    if finish <= begin:
+        raise XpraOverlayDenied(f"pinned Xpra method order mismatch: {label}")
+    return data[:begin] + replacement + data[finish:]
+
+
 def _patch_sources(root: Path) -> dict[str, bytes]:
     sources: dict[str, bytes] = {}
     for relative, expected in _PINNED_INPUTS.items():
@@ -117,9 +128,8 @@ def _patch_sources(root: Path) -> dict[str, bytes]:
     server = _replace_once(
         server,
         b"    xauth_data: str = get_hex_uuid() if start_vfb else \"\"\n",
-        b"    # Root-selected remote display supplies its Xauthority file; never mint a second cookie.\n"
-        b"    _hermes_root_xauth = os.environ.get(\"XAUTHORITY\") == \"/run/hermes-installer/display/Xauthority\"\n"
-        b"    xauth_data: str = \"\" if _hermes_root_xauth else (get_hex_uuid() if start_vfb else \"\")\n",
+        b"    # Dedicated installer overlay: never mint a second display cookie.\n"
+        b"    xauth_data: str = \"\"\n",
         "server-cookie-generation",
     )
     sources["xpra/scripts/server.py"] = server
@@ -135,15 +145,18 @@ def _patch_sources(root: Path) -> dict[str, bytes]:
         xvfb,
         b"        self.xvfb_cmd = xvfb_command(opts.xvfb, self.pixel_depth, opts.dpi)\n",
         b"        self.xvfb_cmd = xvfb_command(opts.xvfb, self.pixel_depth, opts.dpi)\n"
-        b"        if os.environ.get(\"XAUTHORITY\") == \"/run/hermes-installer/display/Xauthority\":\n"
-        b"            if \"-auth\" in self.xvfb_cmd:\n"
-        b"                _hermes_auth_index = self.xvfb_cmd.index(\"-auth\")\n"
-        b"                if (_hermes_auth_index + 1 >= len(self.xvfb_cmd)\n"
-        b"                        or self.xvfb_cmd[_hermes_auth_index + 1] != \"/run/hermes-installer/display/Xauthority\"\n"
-        b"                        or self.xvfb_cmd.count(\"-auth\") != 1):\n"
-        b"                    raise InitExit(ExitCode.NO_DISPLAY, \"selected Xvfb auth path differs\")\n"
-        b"            else:\n"
-        b"                self.xvfb_cmd.extend((\"-auth\", \"/run/hermes-installer/display/Xauthority\"))\n",
+        b"        if os.environ.get(\"XAUTHORITY\") != \"/run/hermes-installer/display/Xauthority\":\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"root Xauthority mount is required\")\n"
+        b"        if self.displayfd:\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"selected Xvfb must use the enrolled fixed display name\")\n"
+        b"        if \"-auth\" in self.xvfb_cmd:\n"
+        b"            _hermes_auth_index = self.xvfb_cmd.index(\"-auth\")\n"
+        b"            if (_hermes_auth_index + 1 >= len(self.xvfb_cmd)\n"
+        b"                    or self.xvfb_cmd[_hermes_auth_index + 1] != \"/run/hermes-installer/display/Xauthority\"\n"
+        b"                    or self.xvfb_cmd.count(\"-auth\") != 1):\n"
+        b"                raise InitExit(ExitCode.NO_DISPLAY, \"selected Xvfb auth path differs\")\n"
+        b"        else:\n"
+        b"            self.xvfb_cmd.extend((\"-auth\", \"/run/hermes-installer/display/Xauthority\"))\n",
         "xvfb-fixed-auth-argument",
     )
     xvfb = _replace_once(
@@ -152,52 +165,58 @@ def _patch_sources(root: Path) -> dict[str, bytes]:
         b"        from xpra.x11.vfb_util import get_xauthority_path, valid_xauth\n",
         b"    def setup_xauthority(self, display_name: str, shadowing: bool, writable: bool = True) -> str:\n"
         b"        from xpra.x11.vfb_util import get_xauthority_path, valid_xauth\n"
-        b"        if os.environ.get(\"XAUTHORITY\") == \"/run/hermes-installer/display/Xauthority\":\n"
-        b"            _hermes_path = \"/run/hermes-installer/display/Xauthority\"\n"
-        b"            _hermes_fd = os.open(_hermes_path, os.O_RDONLY | getattr(os, \"O_NOFOLLOW\", 0))\n"
-        b"            try:\n"
-        b"                _hermes_stat = os.fstat(_hermes_fd)\n"
-        b"                if (not stat.S_ISREG(_hermes_stat.st_mode) or _hermes_stat.st_uid != 0\n"
-        b"                        or stat.S_IMODE(_hermes_stat.st_mode) != 0o640):\n"
-        b"                    raise InitExit(ExitCode.NO_DISPLAY, \"root Xauthority mount is not protected\")\n"
-        b"            finally:\n"
-        b"                os.close(_hermes_fd)\n"
-        b"            session_files = self.get_subsystem(\"session-files\")\n"
-        b"            assert session_files\n"
-        b"            session_files.write_session_file(\"xauthority\", _hermes_path)\n"
-        b"            return _hermes_path\n",
+        b"        if os.environ.get(\"XAUTHORITY\") != \"/run/hermes-installer/display/Xauthority\":\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"root Xauthority mount is required\")\n"
+        b"        _hermes_path = \"/run/hermes-installer/display/Xauthority\"\n"
+        b"        _hermes_fd = os.open(_hermes_path, os.O_RDONLY | getattr(os, \"O_NOFOLLOW\", 0))\n"
+        b"        try:\n"
+        b"            _hermes_stat = os.fstat(_hermes_fd)\n"
+        b"            if (not stat.S_ISREG(_hermes_stat.st_mode) or _hermes_stat.st_uid != 0\n"
+        b"                    or stat.S_IMODE(_hermes_stat.st_mode) != 0o640):\n"
+        b"                raise InitExit(ExitCode.NO_DISPLAY, \"root Xauthority mount is not protected\")\n"
+        b"        finally:\n"
+        b"            os.close(_hermes_fd)\n"
+        b"        session_files = self.get_subsystem(\"session-files\")\n"
+        b"        assert session_files\n"
+        b"        session_files.write_session_file(\"xauthority\", _hermes_path)\n"
+        b"        return _hermes_path\n",
         "xvfb-root-xauthority-selection",
     )
     xvfb = _replace_once(
         xvfb,
-        b"        if (use_display is not None and not upgrading) or proxying or encoder:\n",
-        b"        if os.environ.get(\"XAUTHORITY\") == \"/run/hermes-installer/display/Xauthority\":\n"
-        b"            if not display_name.startswith(\":\"):\n"
-        b"                raise InitExit(ExitCode.NO_DISPLAY, \"root-selected display name is invalid\")\n"
-        b"            if verify_display(None, display_name, log_errors=False, timeout=1):\n"
-        b"                raise InitExit(ExitCode.NO_DISPLAY, \"selected display is already active\")\n"
-        b"            _hermes_socket = os.path.join(X11_SOCKET_DIR, \"X\" + display_name[1:])\n"
-        b"            if stat_display_socket(_hermes_socket):\n"
-        b"                raise InitExit(ExitCode.NO_DISPLAY, \"selected display socket already exists\")\n"
-        b"            # Never repair, replace, or add credentials to a selected readonly authority file.\n"
-        b"            return start_vfb, \"\", use_display\n"
-        b"        if (use_display is not None and not upgrading) or proxying or encoder:\n",
+        b"        if (use_display is not None and not upgrading) or proxying or encoder:\n"
+        b"            return start_vfb, xauth_data, use_display\n",
+        b"        if os.environ.get(\"XAUTHORITY\") != \"/run/hermes-installer/display/Xauthority\":\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"root Xauthority mount is required\")\n"
+        b"        if not display_name.startswith(\":\"):\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"root-selected display name is invalid\")\n"
+        b"        if verify_display(None, display_name, log_errors=False, timeout=1):\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"selected display is already active\")\n"
+        b"        _hermes_socket = os.path.join(X11_SOCKET_DIR, \"X\" + display_name[1:])\n"
+        b"        if stat_display_socket(_hermes_socket):\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"selected display socket already exists\")\n"
+        b"        # Never repair, replace, or add credentials to a selected readonly authority file.\n"
+        b"        return start_vfb, \"\", use_display\n",
         "xvfb-no-cookie-repair",
     )
     xvfb = _replace_once(
         xvfb,
         b"            assert not proxying and self.xauth_data\n",
-        b"            assert not proxying and (self.xauth_data or xauthority == \"/run/hermes-installer/display/Xauthority\")\n",
+        b"            assert not proxying and not self.xauth_data and xauthority == \"/run/hermes-installer/display/Xauthority\"\n",
         "xvfb-root-cookie-validity",
     )
     xvfb = _replace_once(
         xvfb,
         b"            assert xauthority\n"
         b"            xauth_add(xauthority, display_name, self.xauth_data, self.uid, self.gid)\n",
-        b"            assert xauthority\n"
-        b"            if xauthority != \"/run/hermes-installer/display/Xauthority\":\n"
-        b"                xauth_add(xauthority, display_name, self.xauth_data, self.uid, self.gid)\n",
+        b"            assert xauthority == \"/run/hermes-installer/display/Xauthority\"\n",
         "xvfb-no-xauth-add",
+    )
+    xvfb = _replace_once(
+        xvfb,
+        b"            from xpra.x11.vfb_util import start_Xvfb, xauth_add\n",
+        b"            from xpra.x11.vfb_util import start_Xvfb\n",
+        "xvfb-no-xauth-writer-import",
     )
     sources["xpra/server/subsystem/xvfb.py"] = xvfb
 
@@ -207,10 +226,63 @@ def _patch_sources(root: Path) -> dict[str, bytes]:
         b"def xauth_add(filename: str, display_name: str, xauth_data: str, uid: int, gid: int) -> None:\n"
         b"    xauth_args = [\"-f\", filename, \"add\", display_name, \"MIT-MAGIC-COOKIE-1\", xauth_data]\n",
         b"def xauth_add(filename: str, display_name: str, xauth_data: str, uid: int, gid: int) -> None:\n"
-        b"    if filename == \"/run/hermes-installer/display/Xauthority\":\n"
-        b"        raise PermissionError(\"root-selected Xauthority is readonly and cannot be modified\")\n"
+        b"    raise PermissionError(\"Xauthority writes are disabled in the installer selected-display overlay\")\n"
         b"    xauth_args = [\"-f\", filename, \"add\", display_name, \"MIT-MAGIC-COOKIE-1\", xauth_data]\n",
         "vfb-no-xauth-add-root-file",
+    )
+    sources["xpra/x11/vfb_util.py"] = vfb
+
+    xvfb = _replace_method_region(
+        xvfb,
+        b"    def setup_xauthority(self, display_name: str, shadowing: bool, writable: bool = True) -> str:\n",
+        b"    def get_info(self, _proto) -> dict[str, Any]:\n",
+        b"    def setup_xauthority(self, display_name: str, shadowing: bool, writable: bool = True) -> str:\n"
+        b"        if os.environ.get(\"XAUTHORITY\") != \"/run/hermes-installer/display/Xauthority\":\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"root Xauthority mount is required\")\n"
+        b"        path = \"/run/hermes-installer/display/Xauthority\"\n"
+        b"        fd = os.open(path, os.O_RDONLY | getattr(os, \"O_NOFOLLOW\", 0))\n"
+        b"        try:\n"
+        b"            info = os.fstat(fd)\n"
+        b"            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o640:\n"
+        b"                raise InitExit(ExitCode.NO_DISPLAY, \"root Xauthority mount is not protected\")\n"
+        b"        finally:\n"
+        b"            os.close(fd)\n"
+        b"        session_files = self.get_subsystem(\"session-files\")\n"
+        b"        assert session_files\n"
+        b"        session_files.write_session_file(\"xauthority\", path)\n"
+        b"        return path\n\n",
+        "xvfb-root-xauthority-method",
+    )
+    xvfb = _replace_method_region(
+        xvfb,
+        b"    def resolve_x11_display(self, display_name: str, xauthority: str, xauth_data: str,\n",
+        b"    def start_server_vfb(self, display_name: str, old_display_name: str, xauthority: str | None,\n",
+        b"    def resolve_x11_display(self, display_name: str, xauthority: str, xauth_data: str,\n"
+        b"                            start_vfb: bool, use_display: bool | None, upgrading: bool,\n"
+        b"                            shadowing: bool, proxying: bool, encoder: bool, pam,\n"
+        b"                            progress: Callable) -> tuple[bool, str, bool | None]:\n"
+        b"        if os.environ.get(\"XAUTHORITY\") != \"/run/hermes-installer/display/Xauthority\":\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"root Xauthority mount is required\")\n"
+        b"        if (not display_name.startswith(\":\") or not start_vfb or use_display is not False\n"
+        b"                or upgrading or shadowing or proxying or encoder):\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"selected display startup mode is not permitted\")\n"
+        b"        if verify_display(None, display_name, log_errors=False, timeout=1):\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"selected display is already active\")\n"
+        b"        socket_path = os.path.join(X11_SOCKET_DIR, \"X\" + display_name[1:])\n"
+        b"        if stat_display_socket(socket_path):\n"
+        b"            raise InitExit(ExitCode.NO_DISPLAY, \"selected display socket already exists\")\n"
+        b"        return True, \"\", False\n\n",
+        "xvfb-fixed-display-method",
+    )
+    sources["xpra/server/subsystem/xvfb.py"] = xvfb
+
+    vfb = _replace_method_region(
+        vfb,
+        b"def xauth_add(filename: str, display_name: str, xauth_data: str, uid: int, gid: int) -> None:\n",
+        b"def check_xvfb_process(xvfb=None, cmd: str = \"Xvfb\", timeout: int = 0, command=()) -> bool:\n",
+        b"def xauth_add(filename: str, display_name: str, xauth_data: str, uid: int, gid: int) -> None:\n"
+        b"    raise PermissionError(\"Xauthority writes are disabled in the installer selected-display overlay\")\n\n",
+        "vfb-disabled-xauth-writer",
     )
     sources["xpra/x11/vfb_util.py"] = vfb
     return sources

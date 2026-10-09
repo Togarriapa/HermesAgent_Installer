@@ -48,14 +48,16 @@ class PinnedXpraRootCookieOverlayTests(unittest.TestCase):
             vfb = (output / "xpra/x11/vfb_util.py").read_text()
             server = (output / "xpra/scripts/server.py").read_text()
             self.assertIn("selected display is already active", xvfb)
-            self.assertIn("if xauthority != \"/run/hermes-installer/display/Xauthority\":", xvfb)
-            self.assertIn("readonly and cannot be modified", vfb)
-            self.assertIn("xauth_data: str = \"\" if _hermes_root_xauth", server)
+            self.assertIn('if os.environ.get("XAUTHORITY") != "/run/hermes-installer/display/Xauthority":', xvfb)
+            self.assertIn("writes are disabled", vfb)
+            self.assertIn('xauth_data: str = ""', server)
             self.assertIn('self.xvfb_cmd.extend(("-auth", "/run/hermes-installer/display/Xauthority"))', xvfb)
-            selected = xvfb.index('if os.environ.get("XAUTHORITY") == "/run/hermes-installer/display/Xauthority":')
-            no_repair = xvfb.index('return start_vfb, "", use_display', selected)
-            repair_generation = xvfb.index("if not xauth_data:", selected)
-            self.assertLess(no_repair, repair_generation)
+            self.assertIn("if self.displayfd:", xvfb)
+            self.assertNotIn("get_hex_uuid()", server)
+            self.assertNotIn("xauth_add(", xvfb)
+            self.assertNotIn("get_xauthority_path", xvfb)
+            self.assertNotIn("xauth_cmd", vfb)
+            self.assertNotIn("xauth_data]", vfb)
 
             patched_module = ast.parse(vfb)
             function = next(node for node in patched_module.body
@@ -63,7 +65,7 @@ class PinnedXpraRootCookieOverlayTests(unittest.TestCase):
             isolated = compile(ast.Module(body=[function], type_ignores=[]), "xpra-vfb-util", "exec")
             namespace = {}
             exec(isolated, namespace)
-            with self.assertRaisesRegex(PermissionError, "readonly") as denied:
+            with self.assertRaisesRegex(PermissionError, "disabled") as denied:
                 namespace["xauth_add"](
                     "/run/hermes-installer/display/Xauthority", ":99", "private-cookie-value", 1000, 1000,
                 )
