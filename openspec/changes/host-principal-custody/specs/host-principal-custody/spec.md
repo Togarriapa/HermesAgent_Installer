@@ -257,3 +257,10 @@ The installer SHALL verify native manifest.json against explicit entrypoint_sha2
 #### Scenario: Source manifest digest substitutes native entrypoint pin
 - **WHEN** loader receives wrong digestdomain or callerselected module path
 - **THEN** deny loader activation before imports and retain exact incomplete closure evidence.
+
+### Requirement: Protected lifecycle provision and control
+The installer SHALL derive enrollment provision and finite process control effects from actual trusted root transaction/peer/owned livehandle state, preserve first-snapshot trust provenance and atomic recoverable generation changes, and SHALL not accept worker bearer targets or ready assertions.
+
+#### Scenario: Forged bootstrap intent or stale process control
+- **WHEN** caller supplies unregistered bootstrap intent, claimed roots/identity or stale/sibling control handle
+- **THEN** reject before effects, preserve prior generation/private state and require actual root target/ownership evidence.
