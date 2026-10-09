@@ -27,7 +27,7 @@ def resolve_secret(reference: str, *, environ: Mapping[str, str] | None = None,
         if parsed.netloc or parsed.query or parsed.fragment or not parsed.path.startswith("/"):
             raise CredentialError("File secret reference must be an absolute local path without query or fragment")
         parts = [unquote(p) for p in parsed.path.split("/") if p]
-        if not parts or any(p in {".", ".."} or "\x00" in p for p in parts):
+        if not parts or any(p in {".", ".."} or chr(0) in p or "/" in p or chr(92) in p for p in parts):
             raise CredentialError("Invalid secret file path")
         flags_dir = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
         current = os.open("/", flags_dir)

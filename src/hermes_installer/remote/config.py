@@ -69,6 +69,7 @@ def collect_remote_setup(*, interactive: bool, config: dict | None = None,
         matches = tuple(z for z in matches if z.zone_id == selected_id)
     if selected_id and not matches:
         raise RemoteConfigError("The explicitly selected zone_id does not match an accessible active zone")
+    if len(matches) > 1:
         if not interactive:
             raise RemoteConfigError("Several equally specific zones match; add explicit zone_id and resume")
         choices = ", ".join(f"{i + 1}) {zone.name} ({zone.account_id})" for i, zone in enumerate(matches))

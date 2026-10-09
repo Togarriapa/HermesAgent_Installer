@@ -23,6 +23,15 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(read_hidden_token(reader=lambda prompt:(seen.append(prompt) or "token-value")),"token-value")
         self.assertIn("hidden",seen[0])
         with self.assertRaises(CredentialError): read_hidden_token(reader=lambda prompt:"")
+    def test_newline_file_preserves_trailing_r_and_n(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"token"; p.write_text("tokenr\n"); p.chmod(0o600)
+            self.assertEqual(resolve_secret("file://"+str(p)),"tokenr")
+            p.write_text("tokenn\r\n"); p.chmod(0o600)
+            self.assertEqual(resolve_secret("file://"+str(p)),"tokenn")
+    def test_encoded_separator_and_nul_are_rejected(self):
+        for reference in ("file:///tmp/%2Fetc%2Fpasswd","file:///tmp/%00"):
+            with self.assertRaises(CredentialError): resolve_secret(reference)
     def test_inline_values_are_not_secret_references(self):
         with self.assertRaises(CredentialError): resolve_secret("plaintext")
 
