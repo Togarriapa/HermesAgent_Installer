@@ -119,6 +119,9 @@ class _Handle:
     stderr_cursor: int = 0
     stopped: bool = False
     lock: threading.RLock | None = None
+    # The immutable profile registered by the root daemon. ``profile`` may be a
+    # derived record selecting one exact enrolled operation executable.
+    registered_profile: ManagedProfileCustody | None = None
 
 
 _LAUNCH_FIELDS = {
@@ -1192,7 +1195,8 @@ class ManagedProcessEffectHandler:
                 started, started + float(lifetime), output_cap, artifact_mount_dir,
                 network_namespace_fd=network_namespace_fd,
                 child_artifact_identities=child_artifact_identities,
-                lock=threading.RLock())
+                lock=threading.RLock(),
+                registered_profile=registered_profile or profile)
             child_fd = None
             network_namespace_fd = None
             with self._lock:
@@ -1248,7 +1252,8 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.inspect", "inspection request is malformed or stale")
         with self._lock:
             handle = self._handles.get(item["process_id"])
-        if (handle is None or handle.profile is not profile or handle.stopped
+        if (handle is None or handle.registered_profile is not profile
+                or self.profiles.get(profile.profile_id) is not profile or handle.stopped
                 or context.principal_id != handle.principal_id
                 or context.namespace_id != handle.authority_namespace_id
                 or cancelled() or self.monotonic() >= handle.expires
@@ -1261,9 +1266,11 @@ class ManagedProcessEffectHandler:
         snapshots: dict[int, dict[str, Any]] = {}
         stable = True
         pinned_child_identities = set(handle.child_artifact_identities)
-        executable_info = profile.executable.stat(follow_symlinks=False)
-        pinned_child_identities.add((profile.artifact_sha256, executable_info.st_dev, executable_info.st_ino))
-        role_pins = dict(profile.process_role_artifact_hashes or {})
+        executed_profile = handle.profile
+        executable_info = executed_profile.executable.stat(follow_symlinks=False)
+        pinned_child_identities.add((executed_profile.artifact_sha256,
+                                     executable_info.st_dev, executable_info.st_ino))
+        role_pins = dict(executed_profile.process_role_artifact_hashes or {})
         for pid in before:
             pidfd = None
             try:
