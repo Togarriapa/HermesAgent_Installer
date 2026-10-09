@@ -14,7 +14,9 @@ from hermes_installer.authority.artifacts import (
     SchemaDerivationDenied,
     SchemaDerivationPending,
 )
+from hermes_installer.authority.bootstrap_enrollment import RootArtifactReceiptRegistry
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+from hermes_installer.protected_enrollment import RootJournalSelection
 
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
@@ -22,6 +24,81 @@ _IDENTITY_FIELDS = frozenset({
     "schema_id", "sha256", "schema_kind", "native_package_id",
     "native_package_generation", "adapter_id", "action_id",
 })
+_AUTHORITY_JOURNAL_ROOT_ID = "installer-authority-journal-v1"
+_BOOTSTRAP_RECEIPTS_ROOT = "bootstrap-receipts"
+
+
+@dataclass(frozen=True, slots=True)
+class RootSourceArtifactReceiptRuntime:
+    """One root-owned, generation-bound schema receipt assembly.
+
+    The artifact receipt registry is reconstructed as a reader over the
+    durable root registry path; the derivation registry and verifier are held
+    together so every schema lookup uses the exact current catalog/bindings.
+    """
+
+    artifact_receipts: RootArtifactReceiptRegistry
+    derivations: RootSchemaDerivationReceiptRegistry
+    verifier: "RootSourceArtifactReceiptVerifier"
+    root_journal: RootJournalSelection
+
+
+def build_root_schema_receipt_runtime(
+    runtime_bindings: RootRuntimeBindings,
+    protected_enrollment: Any,
+    *,
+    mcp_discovery_registry: Any | None = None,
+    expected_uid: int = 0,
+) -> RootSourceArtifactReceiptRuntime:
+    """Hydrate schema verification from the active root catalogs and journal.
+
+    ``protected_enrollment`` is the already signature-verified object returned
+    by the fixed root loader. Its artifact staging path is never accepted from
+    a caller or worker. ``mcp_discovery_registry`` must be a real root-owned
+    authenticated discovery observer; when absent, packaged schemas still
+    resolve while tools/list-derived schemas remain pending.
+    """
+    if (os.geteuid() != expected_uid or expected_uid != 0
+            or not isinstance(runtime_bindings, RootRuntimeBindings)
+            or not isinstance(runtime_bindings.artifact_catalog, ArtifactCatalog)
+            or getattr(protected_enrollment, "protected_enrollment_digest", None)
+                != runtime_bindings.enrollment_catalog.digest
+            or not isinstance(getattr(protected_enrollment, "artifact_staging_directory", None), Path)):
+        raise SourceArtifactReceiptDenied("protected source receipt runtime inputs are unavailable")
+    artifact_root = protected_enrollment.artifact_staging_directory
+    if not artifact_root.is_absolute():
+        raise SourceArtifactReceiptDenied("protected artifact store root is not absolute")
+    try:
+        journal = runtime_bindings.resolve_root_journal(
+            _AUTHORITY_JOURNAL_ROOT_ID,
+            expected_active_generation_digest=runtime_bindings.enrollment_catalog.digest,
+        )
+    except Exception:
+        raise SourceArtifactReceiptDenied("current protected authority journal is unavailable") from None
+    if (not isinstance(journal, RootJournalSelection)
+            or journal.root_id != _AUTHORITY_JOURNAL_ROOT_ID
+            or journal.service_generation_digest != runtime_bindings.enrollment_catalog.digest
+            or not journal.path.is_absolute() or journal.device < 0 or journal.inode <= 0):
+        raise SourceArtifactReceiptDenied("current protected authority journal selection is invalid")
+    receipt_root = journal.path / _BOOTSTRAP_RECEIPTS_ROOT
+    if receipt_root != Path("/var/lib/hermes-installer/authority-journal/bootstrap-receipts"):
+        raise SourceArtifactReceiptDenied("bootstrap receipt store differs from its fixed root journal location")
+    receipt_registry = RootArtifactReceiptRegistry(
+        root=receipt_root,
+        catalog=runtime_bindings.artifact_catalog,
+        artifact_root=artifact_root,
+    )
+    try:
+        derivations = RootSchemaDerivationReceiptRegistry.from_root_runtime(
+            runtime_bindings.artifact_catalog, receipt_registry, runtime_bindings,
+            mcp_discovery_registry, journal, expected_uid=expected_uid,
+        )
+        verifier = RootSourceArtifactReceiptVerifier.from_root_runtime(
+            runtime_bindings, derivations, expected_uid=expected_uid,
+        )
+    except Exception:
+        raise SourceArtifactReceiptDenied("root schema derivation registry could not be assembled") from None
+    return RootSourceArtifactReceiptRuntime(receipt_registry, derivations, verifier, journal)
 
 
 class SourceArtifactReceiptDenied(PermissionError):
@@ -148,4 +225,3 @@ class RootSourceArtifactReceiptVerifier:
         if spec.size_bytes is None or not 1 <= spec.size_bytes <= 256 * 1024:
             raise SourceArtifactReceiptDenied("schema artifact lacks an exact protected byte size")
         return spec.size_bytes
-

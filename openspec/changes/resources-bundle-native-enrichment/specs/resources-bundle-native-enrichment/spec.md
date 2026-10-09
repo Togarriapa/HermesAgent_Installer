@@ -373,3 +373,45 @@ The installer SHALL retain the same frozen task handle while resolving actual st
 #### Scenario: Pre-stdin receipt lookup
 - **WHEN** the coordinator receives the actual task handle before writing input
 - **THEN** no successful write receipt is available until custody observes complete write and EOF
+
+### Requirement: Actual root key and selected catalog authority
+The installer SHALL derive first-publication key identity and authenticated selected catalog reads from actual root custody/session receipts, preserving distinct source producer roles.
+
+#### Scenario: Generic bootstrap authority substituted
+- **WHEN** bootstrap enrollment authorization is presented as Composio catalog or channel effect permission
+- **THEN** the separate selected catalog authority denies the substitution
+
+### Requirement: Non-circular first source bootstrap
+The installer SHALL verify actual selected source, isolated interpreter and current root module actor before first release publication without requiring an existing deployment pointer.
+
+#### Scenario: Raw root identity or source receipt only
+- **WHEN** a bootstrap caller supplies only UID0 or source inventory without actual interpreter/module closure proof
+- **THEN** privileged release publication remains denied
+
+### Requirement: Closed prepared base and reader policy
+The installer SHALL render dormant prepared authority and catalog read policy from exact verified source templates and actual root receipt bindings.
+
+#### Scenario: Prepared authority treated as active
+- **WHEN** a dormant empty prepared policy is used to authorize runtime effects
+- **THEN** authorization denies until actual active compilation and receipts exist
+
+### Requirement: Actual raw event and predecessor result closure
+The installer SHALL authenticate exact original webhook bytes before root canonical event derivation and resolve actual validated prerequisite capsules for each DAG child context.
+
+#### Scenario: Reserialized HMAC or caller results
+- **WHEN** canonicalized body is substituted for raw authentication bytes or caller result dictionaries replace prerequisite capsules
+- **THEN** ingress or downstream child admission denies
+
+### Requirement: Fixed resource capture schemas
+The installer SHALL validate root-derived capture envelopes and selected timer/webhook event data against actual sealed schema artifacts before child admission.
+
+#### Scenario: Unknown protocol mapping
+- **WHEN** ingress cannot resolve its selected source schema or exact authenticated event identity
+- **THEN** it remains unavailable with its precise setup prerequisite rather than using another protocol schema
+
+### Requirement: Actual channel receipt and source selection
+The installer SHALL derive HTTP/audio input provenance from root-retained actual authenticated transport or consented device capture, and verify explicitly selected installer source before effects.
+
+#### Scenario: Caller input or status used as proof
+- **WHEN** worker input labels, microphone permission or read-only launcher status are presented as principal/effect authority
+- **THEN** admission denies the substitution
