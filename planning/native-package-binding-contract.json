@@ -523,6 +523,54 @@
     "native_hook": "Installer-owned pinned PluginManager/ToolRegistry pre-discovery adapter consumes this verified index once before ordinary candidate enumeration; exact schema bytes canonical digest, collision behavior and selected package closure verified. Worker index is presentation only; root re-resolves every actual invocation. MCP candidate routes to fixed protected dispatch under existing lexical observed invocation; direct owned transport remains suppressed, unowned configuration preserved.",
     "first_input_resolver": "Root initial input observer resolves actual selected producer independently of HI11 pending pairs: resolve_selected_native_input_target(selected_execution_handle)->LiveNativeInputTarget. selected_execution_handle is actual root admitted task/current health control/selected constrained Desktop session registry handle. DTO fields schema,process_id,profile_id,generation,peer_pid,peer_pidfd,live_peer_identity,loaded_package_proof,service_generation_digest,expires_monotonic. Resolver validates actual custody process handle/current kernel PIDFD/starttime/cgroup/executable and root loader proof for selected profile/generation. Caller cannot supply target PID/profile/path. Resolver owns retained PIDFD and returns duplicated FD; input observer owns/closes duplicate.",
     "input_effect": "Only root observed exact admitted stdin/health fixture/authenticated Desktop input bytes and parent receipt closure are captured by selected initial-input observer. Root delivers opaque context to that actual producer before request prepare. Unknown/private remains default; no prompt classification/public upgrade. Initial input needs no pending provider bridge; later prepare creates the pair.",
-    "ownership": "Runtime composition constructs registries and publishes verified index to native worker factory; custody/source observer resolves actual target; native boundary implements pinned pre-discovery seam. All native/MCP/health/acceptance tasks remain open until actual dispatch proof."
+    "ownership": "Runtime composition constructs registries and publishes verified index to native worker factory; custody/source observer resolves actual target; native boundary implements pinned pre-discovery seam. All native/MCP/health/acceptance tasks remain open until actual dispatch proof.",
+    "index_delivery": {
+      "artifact_role": "native-candidate-index",
+      "artifact_id": "native-candidate-index:<package_id>:<generation> root compiled output ID",
+      "closure_member": "catalog/native-candidates.json under selected fixed readonly native package mount; never configurable path",
+      "entrypoint_manifest_join": "Pinned native entrypoint manifest adds strict candidate_index {artifact_id,relative_path,sha256,size_bytes}; relative_path exactly catalog/native-candidates.json, size<=2MiB. Whole manifest SHA equals binder entrypoint_sha256; candidate member actual hash/size verified from held readonly mount and whole closure membership before JSON parse. Old resolver document remains unchanged; its existing digest preimage/adapters do not gain index fields.",
+      "document_fields": [
+        "schema",
+        "package_id",
+        "profile_id",
+        "generation",
+        "resolver_sha256",
+        "candidates"
+      ],
+      "candidate_fields": [
+        "native_tool_name",
+        "adapter_id",
+        "action_id",
+        "argument_schema",
+        "result_schema",
+        "native_schema_sha256",
+        "observer_enrollment_ids",
+        "native_server_name",
+        "description"
+      ],
+      "encoding": "schema1 canonical UTF8 JSON sorted keys/compact separators/ensure_ascii=false/no newline/duplicate or unknown keys denied;<=1024 candidates,unique native_tool_name and adapter/action pair. Embedded argument/result schemas finite reviewed JSON schemas from compiled selected action catalog; native_schema_sha256 hashes canonical argument_schema exact bytes. Index document SHA is manifest candidate_index.sha256, separate resolver/entrypoint/source digest domains.",
+      "compiler": "Root native materializer creates exact index from active selected package/action/MCP/observer joins, records separate CAS output receipt role native-candidate-index and closure manifest member; session.resolve_materialization_receipt returns this additional role for activation. Root pinned adapter/schema bytes must be verified, no inferred schema/cache or arbitrary JSON refs/imports.",
+      "loader": "read_native_candidate_index(binding) root-selected fixed mount reader verifies binder closure/entrypoint/resolver pins, candidate manifest member and index profile/package/generation/resolver match. Presentation only; every effect still re-resolved root. Missing member yields precise native pre-discovery pending, not fallback discovery.",
+      "hermes_envelope": "Root MCP native_server_name is exact selected native_mcp_tool_bindings.native_server_name; other installer compiled candidates use fixed hermes-installer toolset owner. Never parse it from native_tool_name. description bounded <=4096 characters from actual selected reviewed action/schema artifact; if no description supplied use literal Protected installer action. Hermes envelope is {name:native_tool_name,description,parameters:argument_schema}; native_schema_sha256 remains SHA256 canonical argument_schema only, not envelope or result schema. Exact trusted index includes server/description so worker does not query ambient config/cache."
+    },
+    "schema_artifact_catalog": {
+      "active_key": "service_generations.native_schema_artifacts",
+      "row_fields": [
+        "id",
+        "artifact_id",
+        "sha256",
+        "schema_kind",
+        "native_package_id",
+        "native_package_generation",
+        "adapter_id",
+        "action_id",
+        "source_receipt_handle"
+      ],
+      "schema_kind": "arguments|result",
+      "artifact": "Root immutable CAS artifact exact canonical JSON schema bytes <=256KiB; strict finite supported JSON-schema subset object/array/string/integer/number/boolean/null, properties/required/additionalProperties/items/enum/minimum/maximum/minLength/maxLength/minItems/maxItems; no external references/ref resolution/imports/evaluation. Existing selected action validators remain required, schema alone is not effect authority.",
+      "resolve_call": "resolve_native_schema(schema_id,native_package_id,native_package_generation,adapter_id,action_id,schema_kind)->verified schema mapping",
+      "joins": "id equals action argument_schema_id/result_schema_id, or MCP binding request_schema_id/result_schema_id, for exact selected package/action. Root resolves row current active generation, actual ArtifactCatalog bytes/sha/source receipt/package selection; native_schema_sha256 equals canonical arguments schema SHA, not schema ID. Every required argument/result schema must resolve; no tool-name/service-label inference. Row source receipt is actual packaged selected action schema artifact or root selected authenticated MCP tools/list discovery schema receipt with current service/tool selection. Discovery unselected or changed schema cannot be silently enabled.",
+      "compiler": "Native materializer copies exact verified schema bodies into candidate index and pins resulting index artifact/manifest; no generation from cache/model comments/default labels. MCP result schema is actual selected static root bounded MCP result envelope contract, or supported selected output schema if explicitly enrolled; do not fabricate an upstream output schema. Missing approved result artifact remains pending with exact selection step."
+    }
   }
 }

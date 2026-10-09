@@ -216,3 +216,24 @@ The implementation SHALL use the applicable exact root release and native assemb
 #### Scenario: First input precedes provider pending pair
 - **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
 - **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Native schema artifact provenance
+The implementation SHALL resolve exact selected argument/result schema artifacts through v39 protected package/action joins.
+
+#### Scenario: Tool name exists without selected schema bytes
+- **WHEN** no verified selected schema artifact resolves
+- **THEN** the candidate remains unavailable without inferring schema from the name or ordinary cache
+
+### Requirement: Explicit protected native toolset owner
+The implementation SHALL obtain native server/toolset ownership and presentation description from the verified candidate index.
+
+#### Scenario: Tool name resembles a different server
+- **WHEN** registering a protected native candidate
+- **THEN** ownership follows the explicit root-selected server field and parameters-only schema digest, without parsing its name

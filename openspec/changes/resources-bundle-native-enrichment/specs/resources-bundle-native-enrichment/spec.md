@@ -261,3 +261,38 @@ The implementation SHALL use exact v35 initial identity and terminal companion j
 #### Scenario: Companion proof follows immutable terminal
 - **WHEN** root custody has issued the actual terminal receipt
 - **THEN** root native registry binds a separate verified companion receipt without fabricating or modifying custody evidence
+
+### Requirement: Noncircular immutable first-stage publication
+The implementation SHALL use the exact applicable v36 release roles, immutable policy publication and pre-event root ingress custody joins.
+
+#### Scenario: First ingress has no source receipt yet
+- **WHEN** root resolves selected ingress controller custody
+- **THEN** actual process/module/selected ingress proof is checked independently before atomically minting the source receipt and event handle
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Native schema artifact provenance
+The implementation SHALL resolve exact selected argument/result schema artifacts through v39 protected package/action joins.
+
+#### Scenario: Tool name exists without selected schema bytes
+- **WHEN** no verified selected schema artifact resolves
+- **THEN** the candidate remains unavailable without inferring schema from the name or ordinary cache
+
+### Requirement: Root observed selected audio and HTTP ingress
+The implementation SHALL use the distinct selected capture/JWT/session provenance schemas of v40 under existing native-input semantics.
+
+#### Scenario: Microphone permission exists
+- **WHEN** actual selected scoped capture is authorized
+- **THEN** input remains UNKNOWN/private and no human identity or public clearance is inferred from device permission
+
+### Requirement: Explicit protected native toolset owner
+The implementation SHALL obtain native server/toolset ownership and presentation description from the verified candidate index.
+
+#### Scenario: Tool name resembles a different server
+- **WHEN** registering a protected native candidate
+- **THEN** ownership follows the explicit root-selected server field and parameters-only schema digest, without parsing its name

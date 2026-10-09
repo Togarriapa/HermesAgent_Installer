@@ -34,3 +34,5 @@ Dependencies: installer-bootstrap-desktop. Full IDs and task edges: planning/dep
 - Review code against every requirement/scenario and actual evidence; do not archive incomplete hardware/account tasks.
 - Run strict pinned OpenSpec validation and coverage; archive only verified completed changes using the installed documented workflow, preserving dated history and canonical specs.
 - Sol must approve refinement via append-only amendment; keep plans/2026-10-09-v1 immutable.
+
+Audio/HTTP native input transport v40: `plans/amendments/2026-10-09-native-input-audio-http-channels-v40.md`; original5 channels retain required pending scope.
