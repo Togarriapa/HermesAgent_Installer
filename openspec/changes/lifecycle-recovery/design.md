@@ -48,3 +48,7 @@ Root setup/journal selection v8: plans/amendments/2026-10-09-root-setup-session-
 ### v14 installed first setup
 
 BD-F01/BD-F03/LC-F03/HI-T01 use root_local_setup_session installed_selection_catalog and first_setup_artifact_fetch in planning/protected-lifecycle-control-contract.json. Root deployment bytes and transaction-scoped CAS receipts are required; original acceptance remains open.
+
+### v15 native health and typed admission
+
+Use planning/protected-lifecycle-control-contract.json native_health_receipt for actual native health and planning/protected-resource-job-contract.json typed_admission/service_methods/recipe_domain for RB-T08. Original tasks/acceptance remain pending.

@@ -204,5 +204,39 @@
       "source": "Hermes full source archive exact80347460 bytes/SHA592ac0b09a7130cf2f8166f039098ba4ed40fb91535c601a6a7e5b1fcf889d01 and tree/normalization limits from protected-artifact-source-catalog.json; installer script034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86 and PM lock49b79259220160f147255078a19af541a5f328d3871c8041cc1eb909d19eb549 unchanged. Other PM payloads only actual pinned lock target rows, no arbitrary downloads.",
       "failure": "Wrong role/actor/session/catalog/receipt transaction, unverified release or source, oversized transfer/hash mismatch/cancel/CAS conflict denies; incomplete first setup stays prepared with exact resume. No active profile before actual runnable artifact receipts."
     }
+  },
+  "native_health_receipt": {
+    "tasks": "BD-F03/LC-F03/HI-T08/HI-T09/HI-T11; original native health and acceptance, no new tasks.",
+    "root_call": "RootNativeHealthObserver.begin_selected_health(control_handle)->opaque health_observation_handle; root resolves committed active enrollment receipt/current profile+generation, fixed hermes-agent-health-v1 recipe and reviewed health fixture artifact. Prepared empty service_records cannot start native health. Actual launch and observation all bound to original transaction/current catalog.",
+    "fixture": "Health adapter uses fixed reviewed local tool request and compatible selected private/zero-budget provider workflow. Fixture artifact/body/expected semantic result and approved finite action IDs are actual root catalog bytes/hash, not worker prompt/schema. No public route inference, account mutation, messages or huge model download. Missing selected model/account/native observer is incomplete with exact resume.",
+    "record": "Root-only observe_health_event(handle,root_event_record) resolves existing trusted observer registry event IDs. Required actual loader ready/current closure, registered Agent request boundary, actual complete provider result (if workflow requires), observed local safe tool invocation and semantic backend result, and terminal process status. No arbitrary worker booleans, stdout-only success, import/version/exit0 substitute.",
+    "finish": "finish_selected_health(handle)->RootNativeHealthReceipt after all required events belong to same actual peer/profile/generation/job and validated selected result schema. Root persists immutable receipt and full parent event closure; no success receipt until terminal success plus native semantic observations.",
+    "receipt_fields": [
+      "schema=1",
+      "health_receipt_handle",
+      "operation_id",
+      "enrollment_id",
+      "profile_id",
+      "process_generation",
+      "service_generation_digest",
+      "bootstrap_transaction_handle",
+      "committed_enrollment_receipt_id",
+      "process_id",
+      "loader_ready_event_id",
+      "native_request_event_id",
+      "provider_result_event_id",
+      "tool_invocation_event_id",
+      "tool_result_event_id",
+      "terminal_receipt_handle",
+      "result_schema_id",
+      "result_sha256",
+      "parent_closure_digest",
+      "status",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "nullable": "provider_result_event_id nullable only when the reviewed fixture explicitly requires no provider. Required loader/request/tool/result/terminal fields never nullable for functional health success. status enum passed|failed|incomplete; failed/incomplete do not activate functional health.",
+    "consume": "consume_selected_health_receipt(handle,committed_enrollment_receipt_id)->typed RootNativeHealthReceipt root registry lookup/current generation/event closure validation. Lifecycle may display typed presentation, but cannot construct/pass status as authority. Receipt is local functional health evidence, not all18AC or actual external account acceptance.",
+    "failure": "Changed profile/catalog/peer/mount/fixture, stale events, unrelated tool response, replay/cancel/expiry or semantic mismatch deny passed. Rollback preserves previous owned generation/data."
   }
 }

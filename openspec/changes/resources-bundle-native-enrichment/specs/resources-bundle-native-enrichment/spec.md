@@ -168,3 +168,11 @@ The implementation SHALL enforce this protocol. RB-T08 / EV-RB07: use the exact 
 #### Scenario: Missing concrete runtime proof
 - **WHEN** the exact protocol or current kernel/native observations are unavailable
 - **THEN** the affected task remains incomplete and no fixture or mount-only evidence establishes acceptance.
+
+### Requirement: Native health and typed task proof
+
+The implementation SHALL enforce the applicable native health receipt and typed task admission contracts. Use planning/protected-lifecycle-control-contract.json native_health_receipt for actual native health and planning/protected-resource-job-contract.json typed_admission/service_methods/recipe_domain for RB-T08. Original tasks/acceptance remain pending.
+
+#### Scenario: Status without native result
+- **WHEN** only source/status/exit evidence is available
+- **THEN** functional health and task result acceptance remain incomplete.

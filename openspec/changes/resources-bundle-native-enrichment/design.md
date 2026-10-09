@@ -77,3 +77,7 @@ Voice immutable workflow artifacts v10: plans/amendments/2026-10-09-voice-workfl
 ### v11 protocol refinement
 
 RB-T08 / EV-RB07: use the exact root task runner protocol in planning/protected-resource-job-contract.json, including one-shot admitted UTF8 stdin plus EOF, actual terminal validation and result-capsule lineage; launch or fixture status cannot establish completion. Existing task IDs and unchecked acceptance states are preserved.
+
+### v15 native health and typed admission
+
+Use planning/protected-lifecycle-control-contract.json native_health_receipt for actual native health and planning/protected-resource-job-contract.json typed_admission/service_methods/recipe_domain for RB-T08. Original tasks/acceptance remain pending.
