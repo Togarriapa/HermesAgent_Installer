@@ -621,5 +621,27 @@
       "EV-R0042"
     ],
     "status": "source bytes/hash verified only; no build/install/inference/native qualification performed"
+  },
+  {
+    "identity": "numpy/numpy",
+    "version": "1.26.4",
+    "url": "https://files.pythonhosted.org/packages/6d/64/c3bcdf822269421d85fe0d64ba972003f9bb4aa9a419da64b86856c9961f/numpy-1.26.4-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+    "artifact_bytes": 14226281,
+    "artifact_sha256": "d5241e0a80d808d70546c697135da2c613f30e28251ff8307eb72ba696945764",
+    "license": "BSD3-Clause; PyPI distribution bundles additional dependency licenses retained in wheel",
+    "abi": "CPython3.9 Linuxaarch64 manylinux2_17",
+    "checked_on": "2026-10-09",
+    "change": "colibri-coral",
+    "requirement_ids": [
+      "R0042"
+    ],
+    "task_ids": [
+      "HW-F03",
+      "HW-R0042"
+    ],
+    "evidence_ids": [
+      "EV-R0042"
+    ],
+    "status": "source bytes/hash verified only; no install/inference/native qualification performed"
   }
 ]
