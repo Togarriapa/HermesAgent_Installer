@@ -166,3 +166,10 @@ The installer SHALL validate only bounded root-selected scalar parameter schemas
 #### Scenario: Caller injects path or extra parameter
 - **WHEN** parameter is untyped, unbounded, extra or outside exact scalar grammar
 - **THEN** reject before launch without shell expansion or alternate recipe fallback.
+
+### Requirement: Selected package and compound memory admission
+The installer SHALL resolve native package from actual enrolled peer and SHALL authorize each fixed compound memory step separately under same bounded root-owned admission and source lineage.
+
+#### Scenario: Caller chooses package or reuses compound grant
+- **WHEN** caller claims alternate package/scope or repeats one consumed authorization across steps
+- **THEN** reject before bytes and retain owned cleanup journal with no sibling deletion.

@@ -61,7 +61,16 @@
       "resolver_digest",
       "expires_monotonic"
     ],
-    "semantics": "Opaque binding resolves fixed in-process immutable loader/resolver only; not bearer authority. Root registry fixes issuer channels and action enrollment. No root access to arbitrary plugin imports from caller paths."
+    "semantics": "Opaque binding resolves fixed in-process immutable loader/resolver only; not bearer authority. Root registry fixes issuer channels and action enrollment. No root access to arbitrary plugin imports from caller paths.",
+    "selected_boot_api": {
+      "signature": "bind_selected_native_package()",
+      "operation": "native.package.bind",
+      "request_fields": [
+        "schema=1"
+      ],
+      "selection": "Root resolves exactly one active package from authenticated live peer/process profile/generation and protected package catalog; zero or ambiguous denies. No caller env/path/profile/package ID supplies authority. Existing explicit bind_native_package(package_id,generation) only optional equality assertion against same root-resolved selection, never choice.",
+      "loader": "Returned opaque binding and read_native_resolver result feed fixed root-installed loader; actual entrypoint imports only root-selected compiled closure verified digest/read-only mount. No user site/plugins/PYTHONPATH/importlib caller path/fallback discovery. Closure module mapping and allowed imports pinned by package artifact, external dependencies root attested catalog only."
+    }
   },
   "plugin_effects": {
     "signature": "invoke(adapter_id, action_id, arguments, idempotency_key=None, opaque_confirmation_attestation_id=None)",
