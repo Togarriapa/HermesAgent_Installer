@@ -125,3 +125,24 @@ The installer SHALL resolve protected resource backend/body recipe/action/source
 #### Scenario: Legacy backend metadata or unobserved gateway role
 - **WHEN** only declared backend/role metadata exists without current root selected effect/actual launch proof
 - **THEN** deny backend/admission before bytes and retain exact incomplete implementation/native evidence.
+
+### Requirement: Exact protected execution joins
+The installer SHALL resolve each effect from its exact selected active node, scope, observer and setup role joins, with fresh bounded authority and immutable result ancestry.
+
+#### Scenario: Mismatched backend or setup identity
+- **WHEN** a node selects a different backend, an event/result lacks root-observed closure, or runtime tunnel identity requests setup writer/probe authority
+- **THEN** root rejects before effects and preserves pending original acceptance; no caller booleans or consumed grants substitute for proof
+
+### Requirement: Root-observed native invocation ancestry
+The installer SHALL bind native tool and memory invocation ancestry to actual root-observed response/event handles and selected loaded actions, with fresh per-effect authority.
+
+#### Scenario: Worker invents current invocation
+- **WHEN** a worker supplies a forged response/call handle or changes observed action arguments
+- **THEN** root rejects before effects and does not mint source or user provenance from caller assertions
+
+### Requirement: Selected native profile task recipe
+The installer SHALL resolve resource profile tasks through selected protected process recipes and native package bindings, and pass root-constructed task data through bounded stdin only.
+
+#### Scenario: Manifest attempts process selection
+- **WHEN** a resource manifest or worker supplies executable, profile path, argv or reusable parent grant as execution authority
+- **THEN** root rejects and resolves only its selected per-node process binding with a fresh exact child grant

@@ -231,3 +231,10 @@ The installer SHALL derive enrollment provision and finite process control effec
 #### Scenario: Forged bootstrap intent or stale process control
 - **WHEN** caller supplies unregistered bootstrap intent, claimed roots/identity or stale/sibling control handle
 - **THEN** reject before effects, preserve prior generation/private state and require actual root target/ownership evidence.
+
+### Requirement: Complete pinned source archive identity
+The installer SHALL verify the complete selected Hermes source archive against exact byte, tree, mode and narrowly enumerated export-normalization evidence before source staging.
+
+#### Scenario: Export identity mismatch
+- **WHEN** an archive has an unknown transformed file, missing member, escaped path or mismatched source/archive identity
+- **THEN** root rejects staging and never substitutes partial source or source-only completion evidence

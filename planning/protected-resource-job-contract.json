@@ -95,7 +95,8 @@
       "atomic durable replay claim before job admission"
     ],
     "replay": "root-owned bounded durable replay ledger survives restart/rotation; full/ambiguous state fails closed; never evict live replay entries to permit repeat",
-    "no_secret_output": true
+    "no_secret_output": true,
+    "source_channel": "webhook-event / authenticated-webhook-event; root ingress observer only after exact HMAC/freshness/replay claim and fixed selected route/account join. Capture schema artifact must define actual pinned protocol event; no generic caller webhook label."
   },
   "channel": {
     "target": "root-selected fixed official Hermes channel/account connector ID; no caller account or destination",
@@ -134,7 +135,6 @@
       "enrollment_id",
       "source_issuer_channel_id",
       "observer_enrollment_id",
-      "backend_enrollment_id",
       "approved_dag"
     ],
     "dag_fields": [
@@ -151,7 +151,10 @@
       "request_schema_id",
       "body_recipe_id",
       "depends_on",
-      "maximum_attempts"
+      "maximum_attempts",
+      "backend_enrollment_id",
+      "result_schema_id",
+      "scope_binding_id"
     ],
     "digest": "dag_sha256 canonical full nodes list sorted node_id, same UTF8sortedcompact rules; root validates finite bounds/acyclicdeps, all entire rows included activegeneration_digest. No mutable caller DAG.",
     "joins": "resource_id pinned nativecrosswalk/profile/package/action generation, backend_enrollment_id fixed selected protectedhandler/account scope, observer/sourcechannel actual root currentevent; credentials opaque vault refs, recipients narrow. Generation currentselectedsnapshot plusownresourcegen, consentcurrentnotclaimed. Exact source_issuers active9fieldrows and observerregistry joins before anyevent/child effect; unselected records cannot autorun."
@@ -182,9 +185,11 @@
       "scope_binding_id",
       "maximum_request_bytes",
       "maximum_response_bytes",
-      "maximum_seconds"
+      "maximum_seconds",
+      "profile_generation",
+      "execution_binding"
     ],
-    "joins": "Jobrowbackend_enrollment_id exactid, DAGnodeaction/operation/target/recipient/schema/bodyrecipe subsetmatchrootbackendrow; currentconsent andsourceissueractualpendingevent/rootobserver; exactnativepackage/loadedclosure/action/profile/principal/gen; actualroot selected handlerartifact/SHA andopaquecredential/scope references. No legacySelectedResourceExecution metadata authorizesbackend.",
+    "joins": "Each DAG node backend_enrollment_id resolves its own exact active backend row. Node resource/action/operation/target/recipient/request+result schema/body recipe/scope binding must equal that selected row; action belongs to approved_action_ids. A job has no singular execution backend. Existing singular job backend field is staging-only legacy input and never execution authority; migration must preserve every node and reject ambiguous mapping.",
     "body_recipe_fields": [
       "id",
       "schema_id",
@@ -200,5 +205,113 @@
     "root_private_signature": "invoke_resource_backend(backend_enrollment_id,node_id,root_job_admission_handle,canonical_payload_bytes) -> bounded typed result plus rootobserved source result receipt",
     "effect": "Root resolvesactualjob/node/currentinstanceadmission, freshchildspecific sourcecontext+oneuse grant andexactpayload/recipe beforeselectedhandler. This rootprivateAPI notworkerbearerproxy. Nativeworkflow tools/provider/plugin/channel sideeffects require their OWN fresh reduced childgrants/currentrecipient/budget/account policy, never resource.run blanketpermission. Root backend invokes actualenrolled nativeaction/connector, notrecordingfakebackend.",
     "bounds": "Jobenrolledlimits tighten backend maxima; maxbytes finite<=256KiBrequest/2MiBresponse default, runtime<=600s/originaljoblease, children/concurrencyfinite. Revoke/gen/currentconsent/failure canceldescendants, no repeatingconsumedparent."
+  },
+  "generation_joins": {
+    "resource_generation": "job.generation and each backend.generation identify resource selection epoch; child node resource may differ and must resolve its own selected resource epoch in active catalog",
+    "profile_generation": "backend adds profile_generation, joined to current protected producer profile and observer/source issuer generation",
+    "native_package_generation": "backend native_package_generation equals selected native package generation; root verifies that package profile generation joins current producer profile; never equate independent resource epoch with process epoch",
+    "catalog_generation": "all rows participate complete service_generations.generation_digest; any catalog change invalidates pending job admissions and child grants"
+  },
+  "closed_resolvers": {
+    "scope_catalog": {
+      "placement": "service_generations.resource_scope_bindings",
+      "row_fields": [
+        "id",
+        "resource_id",
+        "profile_id",
+        "principal_id",
+        "resource_generation",
+        "profile_generation",
+        "backend_enrollment_id",
+        "fixed_fields",
+        "credential_reference_ids",
+        "recipient"
+      ],
+      "fixed_fields": "Strict object of selected destination/body field name to protected typed scalar. No secrets or paths/URLs; account/channel/project identifiers only where exact pinned handler request schema declares them. Names unique and output_fields cannot overwrite them."
+    },
+    "validator_catalog": {
+      "placement": "service_generations.resource_validators",
+      "row_fields": [
+        "id",
+        "kind",
+        "maximum_bytes",
+        "minimum",
+        "maximum",
+        "allowed_values",
+        "schema_artifact_id",
+        "schema_sha256"
+      ],
+      "kinds": [
+        "utf8-string",
+        "opaque-id",
+        "integer",
+        "boolean",
+        "enum",
+        "bounded-json"
+      ],
+      "rules": "IDs are exact opaque catalog IDs, not executable imports. utf8-string max1..262144 bytes; opaque-id ASCII [A-Za-z0-9_.:-],1..128; integer excludes bool and has finite min/max; boolean exact bool; enum finite <=128 typed scalar allowed_values; bounded-json finite bytes/depth<=16 and pinned strict schema artifact (no extra keys). Inapplicable bounds are null; unknown kinds/IDs denied. All schema artifacts resolve actual protected ArtifactCatalog ID/hash and handler schema registration before enrollment."
+    },
+    "scope_bindings_shape": "Body recipe scope_bindings is list of exact {name,scope_binding_id,field,validator_id}; field selects one exact fixed_fields key from the same backend-bound scope row. Root validates value through validator, forces name into final request; event/result/model fields cannot replace it.",
+    "field_values": "observed-event-field value is exact field key in validated event capsule; owned-parent-result-field value is strict {node_id,field} selecting only completed declared predecessor result capsule. literal is protected typed scalar/object checked by selected validator. No JSONPath, dotted traversal, callable/import/template/URL expansion.",
+    "calls": [
+      "resolve_resource_scope(scope_binding_id,root_job_admission_handle,node_id)",
+      "validate_resource_field(validator_id,value,selected_schema_artifact)",
+      "resolve_resource_handler(backend_enrollment_id,root_job_admission_handle,node_id)"
+    ],
+    "handler_resolution": "Root-only calls resolve current snapshot row and registered fixed handler from exact operation,target,handler_artifact_id+SHA. Artifact SHA must match actual loaded root handler closure and selected native package/source schema joins; mere downloaded artifact is not registered executable proof. No caller function/module/argv."
+  },
+  "result_capsules": {
+    "root_private_capture": "record_resource_result(root_job_admission_handle,node_id,actual_backend_result_bytes) -> opaque result_capsule_handle",
+    "fields": [
+      "schema=1",
+      "capsule_id",
+      "job_id",
+      "node_id",
+      "backend_enrollment_id",
+      "resource_generation",
+      "profile_generation",
+      "result_schema_id",
+      "payload_sha256",
+      "source_receipt_handle",
+      "parent_closure_digest",
+      "recipient_ceiling",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "storage": "Root-only immutable bounded canonical result bytes in authority ledger; capsule handle not caller source proof. Strict pinned result schema validated before field extraction; full actual result source receipt + entire parent ancestry remains PRIVATE/UNKNOWN unless separate trusted clearance. Payload hash is UTF8 canonical sorted compact JSON ensure_ascii=false allow_nan=false no newline, no duplicate keys. Root receipt binds actual backend operation result and selected profile/epoch; never accept worker result bytes as backend proof.",
+    "resolution": "Only completed declared dependency node in same job/principal/profile and live lease may supply fields; verify payload hash/schema/source receipt/full closure/current consent/generation. Missing, forged, ambiguous, failed or stale result cannot advance DAG."
+  },
+  "profile_execution_binding": {
+    "source_review": {
+      "repo": "NousResearch/hermes-agent",
+      "revision": "7085fbf7753266fc4943c55ac04926186bc90005",
+      "files": {
+        "hermes_cli/main.py": "a6293934e0ef99849d7a2f3c040256c2466f6fc0382b876bf750f8bd8e6cb912",
+        "hermes_cli/_parser.py": "75fa3070d9cdcbeaa3fc1424e9c3dba06a403b9d43c74aaccc3b82829edf366c"
+      },
+      "facts": "main module entry point and chat parser support --query-file - reading stdin, --oneshot boolean, --quiet; exact pinned source reviewed, runtime untested."
+    },
+    "execution_binding_shape": "null for non-process native backend; profile-run/agent-task backend requires strict {process_enrollment_id,process_generation,operation_id,native_package_id,native_package_generation,child_operation,child_target_id,child_capability,task_body_recipe_id,task_request_schema_id}",
+    "operation_id": "hermes-resource-profile-task-v1",
+    "recipe": "Existing protected service_records operation_recipes resolves exact selected PM-managed Python3.14 executable and immutable Hermes source/native overlay closure. Fixed argv suffix -m hermes_cli.main chat --query-file - --oneshot --quiet, root selected separate service HOME/HERMES_HOME/cwd/env and bounded single-query stdin+EOF. No query/model/profile/path supplied in argv; no shell. Record executable/source/package hashes are actual enrolled artifacts, not invented source review hashes as executable identity.",
+    "request_schema": "hermes-resource-profile-query-v1: strict object {prompt:string}, UTF8 nonempty<=262144 bytes, no extra fields. Root constructs prompt only through exact selected task_body_recipe_id from immutable literal/verified event/predecessor fields and forced scope. Original source declarations select action/mode, root validates capability/recipient/privacy rules before launch; prompt cannot confer permissions.",
+    "root_resolution": "resolve_resource_profile_execution(root_job_admission_handle,node_id) resolves node backend execution_binding then existing ProtectedEnrollmentCatalog service profile/process operation recipe and loaded native package. Creates HermesProfileExecutionTarget only inside root from actual selected custody record; existing physical path DTO is not worker authority and cannot be copied from resource YAML. Backend/profile/namespace/current generation/native package joins must all match.",
+    "delegation": "Root admits exactly one process.start child for this node/attempt using fresh reduced child grant. child_target_id and child_capability must equal existing protected process enrollment operation_targets[process.start] and rule; operation_id selects its fixed recipe. Parent resource job grant is consumed/audit only. No generic perform_delegated_effect with reused parent. Root binds descendant process source channel to original resource event/full result ancestry before provider/tool bytes; all nested effects still separately admitted.",
+    "root_private_call": "launch_resource_profile_task(root_job_admission_handle,node_id) -> bounded RootResourceProcessReceipt; root derives canonical selection-only process.start payload and writes selected query under root-owned stdin protocol. Caller cannot choose profile/task/process delegation.",
+    "receipt_fields": [
+      "schema=1",
+      "job_id",
+      "node_id",
+      "backend_enrollment_id",
+      "process_id",
+      "process_generation",
+      "native_package_generation",
+      "task_payload_sha256",
+      "parent_closure_digest",
+      "terminal_receipt_handle",
+      "result_capsule_handle",
+      "expires_monotonic"
+    ],
+    "terminal": "Root owns bounded terminal wait/read/stop bookkeeping as assembly contract; output/error actual bytes become root observed result capsule after selected result schema validation. Launch success alone is not native task completion. Source/PM/native boundary unavailable leaves this original route incomplete with exact prerequisite."
   }
 }
