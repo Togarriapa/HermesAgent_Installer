@@ -2218,18 +2218,42 @@
     "HI-T04": [
       "HI-T02",
       "HI-T03",
-      "PR-F03"
+      "PR-F03",
+      "HI-T07",
+      "HI-T08",
+      "HI-T09"
     ],
     "HI-T05": [
       "HI-T01",
       "HI-T02",
-      "LC-F04"
+      "LC-F04",
+      "HI-T07",
+      "HI-T08",
+      "HI-T09"
     ],
     "HI-T06": [
       "HI-T02",
       "HI-T03",
       "HI-T04",
-      "HI-T05"
+      "HI-T05",
+      "HI-T07",
+      "HI-T08",
+      "HI-T09"
+    ],
+    "HI-T07": [
+      "HI-T01",
+      "HI-T02",
+      "HI-T03",
+      "HI-T09"
+    ],
+    "HI-T08": [
+      "HI-T01",
+      "HI-T03",
+      "HI-T09"
+    ],
+    "HI-T09": [
+      "HI-T01",
+      "HI-T02"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."
