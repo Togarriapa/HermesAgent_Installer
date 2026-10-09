@@ -18,7 +18,9 @@ class AuthorityFixture:
 
     def context(self, *, purpose, intent, **kwargs):
         return SimpleNamespace(profile_id="profile-a", namespace_id="namespace-a",
-                               purpose=purpose, trace_id=intent)
+                               purpose=purpose, intent=intent, trace_id=intent,
+                               operation=kwargs["operation"],
+                               final_payload_digest=kwargs["final_payload_digest"])
 
     def authorize_effect(self, context, *, capability, target, request_digest, recipient=None):
         grant = {"capability": capability, "target": target, "context": context, "request_digest": request_digest}
@@ -73,7 +75,10 @@ class NativeMemoryPluginTests(unittest.TestCase):
         grant, payload = authority.enqueued[0]
         self.assertEqual(grant["capability"], "memory-capture")
         event = json.loads(payload)
-        self.assertEqual((event["profile"], event["namespace"]), ("profile-a", "namespace-a"))
+        self.assertNotIn("profile", event)
+        self.assertNotIn("namespace", event)
+        self.assertEqual(grant["context"].operation, "memory.enqueue")
+        self.assertEqual(grant["context"].final_payload_digest, hashlib.sha256(payload).hexdigest())
         self.assertEqual(event["user_content"], "synthetic user fact")
         self.assertNotIn("credential", json.dumps(event).lower())
 
@@ -86,6 +91,9 @@ class NativeMemoryPluginTests(unittest.TestCase):
         self.assertEqual(result, "private synthetic")
         self.assertEqual(len(authority.requests), 1)
         self.assertEqual(authority.grants[0]["capability"], "memory-retrieval")
+        self.assertEqual(authority.grants[0]["context"].operation, "memory.search")
+        self.assertEqual(authority.grants[0]["context"].final_payload_digest,
+                         hashlib.sha256(authority.requests[0][1]).hexdigest())
 
     def test_register_uses_native_memory_provider_registration(self):
         captured = []
