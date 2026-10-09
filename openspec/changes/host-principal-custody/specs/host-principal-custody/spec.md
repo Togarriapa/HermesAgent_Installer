@@ -285,3 +285,10 @@ The installer SHALL resolve each effect from its exact selected active node, sco
 #### Scenario: Mismatched backend or setup identity
 - **WHEN** a node selects a different backend, an event/result lacks root-observed closure, or runtime tunnel identity requests setup writer/probe authority
 - **THEN** root rejects before effects and preserves pending original acceptance; no caller booleans or consumed grants substitute for proof
+
+### Requirement: Root-observed native invocation ancestry
+The installer SHALL bind native tool and memory invocation ancestry to actual root-observed response/event handles and selected loaded actions, with fresh per-effect authority.
+
+#### Scenario: Worker invents current invocation
+- **WHEN** a worker supplies a forged response/call handle or changes observed action arguments
+- **THEN** root rejects before effects and does not mint source or user provenance from caller assertions
