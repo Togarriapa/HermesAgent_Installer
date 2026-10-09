@@ -478,3 +478,10 @@ The installer SHALL launch only enrolled official Desktop/display/gateway recipe
 #### Scenario: Ambient display or broad network substitution
 - **WHEN** a worker supplies display credentials, arbitrary port or unenrolled network role
 - **THEN** startup or connection denies before app bytes and remote acceptance remains pending
+
+### Requirement: Actual root key and selected catalog authority
+The installer SHALL derive first-publication key identity and authenticated selected catalog reads from actual root custody/session receipts, preserving distinct source producer roles.
+
+#### Scenario: Generic bootstrap authority substituted
+- **WHEN** bootstrap enrollment authorization is presented as Composio catalog or channel effect permission
+- **THEN** the separate selected catalog authority denies the substitution

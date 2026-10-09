@@ -561,7 +561,8 @@
           "member_modes": "JSON mode integers exactly420 or493 (octal0644/0755), not strings; tar permission bits correspond. Entry point closure_files schema exactly {relative_path:str,sha256:str,size_bytes:int,mode:int}; normalized path relative to closure/, sorted unique complete tree. No mode coercion.",
           "overlay_member_path": "overlay/manifest.json is the sole member row for boundary-overlay JSON role. Exact JSON fields schema=1,source_commit,compiler_artifact_id,compiler_sha256,members; no unknown fields. members use NativeOutputMember path/sha256/size_bytes/mode rows referencing actual closure/... members. Boundary overlay document itself may be included at fixed archive overlay/manifest.json; it is outside compiled closure tree."
         },
-        "candidate_index_identity": "Exception preserving existing native index_delivery: native-candidate-index role artifact_id is exactly native-candidate-index:<package_id>:<generation>, same string in output receipt, ArtifactCatalog and entrypoint candidate_index.artifact_id. Other roles use native-output:<artifact_role>:<package_id>:<generation>. No separate presentation alias/different manifest identity. Components bounded as existing selection, exact receipt bytes/hash required."
+        "candidate_index_identity": "Exception preserving existing native index_delivery: native-candidate-index role artifact_id is exactly native-candidate-index:<package_id>:<generation>, same string in output receipt, ArtifactCatalog and entrypoint candidate_index.artifact_id. Other roles use native-output:<artifact_role>:<package_id>:<generation>. No separate presentation alias/different manifest identity. Components bounded as existing selection, exact receipt bytes/hash required.",
+        "resources_source_producer": "resources-source-bundle output is not compiled. Its exact artifact identity remains existing resources_source archive pin. Source receipt records producer_artifact_id and producer_sha256 from verified installed RootMaterializationReceiptRegistry source-mint module closure, compiler_artifact_id/compiler_sha256 null for this source-only role. Native generated roles require actual compiler artifact identity/hash and producer fields may equal compiler. RootRuntimeArtifactReceipt parser discriminates source-only vs generated role; never pretend source archive SHA is executable/compiler identity."
       }
     },
     "resources_source": {
@@ -768,7 +769,31 @@
       "verify": "Root normal session actualcurrentactor/currentplan/ownedpreparedtransaction/heldroots/NSS plus exact runtime/compiledclosure/source receipts and fresh principal identity/policy. Render same strict closed templates from actualreceipt fields, no caller rows. Store immutable actualclaim/compiledbytes in rootpublicationregistry; activepublisher resolves explicittypedactiveclaim/currentpredecessor and validates whole loader schema. Initialstage0 cannot stand in activeclaim. Healthnotprerequisiteforrunnableprofile; laterfunctionalhealthseparateactualreceipt.",
       "identity_adoption": "Verified stage0handoff preserves SAME rootvaultref/nonsecret origin/groups through retainedreceipt linkage, not secret copy/repeatedchoice. RootSetupSessionStore.resolve_adopted_identity_policy(normal_session)->fresh boundpolicyselection with newnormallease/currentactor, renews only exactauthorizedref metadata. Fixedidentityobserver re-observes actualsameAuthentiksubject/principal/currentpolicy/Systemgroups; expired30sstage0identitycannotauthorizeactivation. Changedsubject/revokedcredentialdenies/pending; no automaticprincipalchange."
     },
-    "service_root_layout": "service_container_root is fixed /var/lib/hermes-installer/services. service_parent_root is selected profile-specific child /var/lib/hermes-installer/services/hermes-agent-native-v1 from closed template, never the container itself. Service home/work/data are direct children of that profile root. Strict loader validates containment and exact template selection, not equality to container; factory appends home/work/data exactly once. HERMES_HOME/HOME equal profile-root/home. Root held nofollow/inode/owner/generation checks and prepared/active semantics unchanged."
+    "service_root_layout": "service_container_root is fixed /var/lib/hermes-installer/services. service_parent_root is selected profile-specific child /var/lib/hermes-installer/services/hermes-agent-native-v1 from closed template, never the container itself. Service home/work/data are direct children of that profile root. Strict loader validates containment and exact template selection, not equality to container; factory appends home/work/data exactly once. HERMES_HOME/HOME equal profile-root/home. Root held nofollow/inode/owner/generation checks and prepared/active semantics unchanged.",
+    "root_key_selection": {
+      "owner_module": "hermes_installer.authority.enrollment",
+      "registry": "RootAuthorityKeySelectionRegistry",
+      "constructor": "from_installed_release(verified_release,installed_actor_verifier,root_journal)",
+      "API": "ensure_selected_key(initial_compilation_session_handle)->RootAuthorityKeyReceipt; resolve_selected_key(receipt_handle,initial_compilation_session_handle)->same retained receipt",
+      "key_path": "/etc/hermes-installer/authority.key existing exact HMAC key path",
+      "selection_path": "/etc/hermes-installer/authority-key-selection.json",
+      "fields": {
+        "schema": "literal1",
+        "receipt_handle": "opaque str",
+        "key_id": "authority-key- plus fresh root random32hex ID",
+        "algorithm": "literal HMAC-SHA256",
+        "key_device": "int",
+        "key_inode": "int",
+        "key_uid": "literal0",
+        "key_mode": "literal384 (0600)",
+        "release_receipt_handle": "opaque actual release receipt",
+        "initial_compilation_session_handle": "opaque actual stage0 session",
+        "issued_monotonic": "finite float",
+        "expires_monotonic": "finite float"
+      },
+      "custody": "Actual current verified root installed actor/session required before issuance. Root creates fresh32byte key once using existing create_authority_signing_key when absent, persists separate random nonsecret key_id selection and private retained receipt binding actual inode/key bytes. Existing key never rotated/overwritten; adoption only actual secure root nofollow file + verified existing active key_id, or explicitly journaled first-install key creation with no active policy. Ambiguous key/selection mismatch denies/resumes. Key hash/bytes never exposed in source/evidence/argv/compiler policy. Held FD actualowner/mode/inode and private key continuity rechecked before issuance/publication. Atomic journal/fsync recovery preserves key on failure.",
+      "compiler": "authority_base.key_id comes only this actual root receipt; the closed template contains a root binding to this source, not a literal guessed ID or credential. Every published authority snapshot and signer resolves same selected key_id; first publication needs no active worker."
+    }
   },
   "official_pm_runtime": {
     "requirements": [
