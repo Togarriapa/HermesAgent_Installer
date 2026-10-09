@@ -10,7 +10,8 @@ import pytest
 from hermes_installer.registry.resource_jobs import (
     ResourceBackendEnrollment, ResourceBodyRecipe, ResourceBodyRecipeField,
     ResourceChildAdmission, ResourceJobDenied, ResourceJobEnrollment,
-    ResourceJobLedger, ResourceJobNode,
+    ResourceJobLedger, ResourceJobNode, ResourceBodyRecipeScope,
+    ResourceScopeBinding, ResourceValidator,
 )
 
 
@@ -236,9 +237,56 @@ def test_backend_and_literal_recipe_freeze_protected_values() -> None:
         (ResourceBodyRecipeField("action", "literal", "run", "enum-run"),), {}, 512,
     )
     assert recipe.render_literals() == b'{"action":"run"}'
-    with pytest.raises(ResourceJobDenied, match="protected root payload"):
+    with pytest.raises(ResourceJobDenied, match="protected event, result, or scope values"):
         ResourceBodyRecipe(
             "event-recipe", "request-schema", "recipe-artifact", digest,
             (ResourceBodyRecipeField("message", "observed-event-field", "message", "bounded-text"),),
             {}, 512,
         ).render_literals()
+
+
+def test_bounded_json_validator_fails_closed_without_loaded_schema_artifact() -> None:
+    validator = ResourceValidator(
+        "schema-validator", "bounded-json", 1024, None, None, None,
+        "artifact-schema", hashlib.sha256(b"schema").hexdigest(),
+    )
+    with pytest.raises(ResourceJobDenied, match="schema artifact validator is unavailable"):
+        validator.validate_scalar({"selected": "value"})
+
+
+def test_recipe_renders_only_exact_event_fields_and_backend_scope() -> None:
+    digest = hashlib.sha256(b"recipe").hexdigest()
+    backend = ResourceBackendEnrollment(
+        "backend", "demo", "profile", "principal", hashlib.sha256(b"g").hexdigest(),
+        "consent", "source", "observer", "package", "pkg-gen", "handler", digest,
+        {"action"}, "resource.cron.run", "resource:demo:action:g", None, set(),
+        "request", "result", "recipe", "scope", 1024, 2048, 20,
+    )
+    scope = ResourceScopeBinding(
+        "scope", "demo", "profile", "principal", backend.generation, "profile-gen",
+        "backend", {"channel": "fixed-channel"}, frozenset(), None,
+    )
+    validators = {
+        "text": ResourceValidator("text", "utf8-string", 128, None, None, None, None, None),
+        "id": ResourceValidator("id", "opaque-id", 128, None, None, None, None, None),
+    }
+    recipe = ResourceBodyRecipe(
+        "recipe", "request", "recipe-artifact", digest,
+        (ResourceBodyRecipeField("message", "observed-event-field", "message", "text"),),
+        (ResourceBodyRecipeScope("channel", "scope", "channel", "id"),), 512,
+    )
+    rendered = recipe.render(
+        backend=backend, scope_bindings={"scope": scope}, validators=validators,
+        event_fields={"message": "hello"}, parent_results={},
+    )
+    assert rendered == b'{"channel":"fixed-channel","message":"hello"}'
+    with pytest.raises(ResourceJobDenied, match="selected event field is absent"):
+        recipe.render(backend=backend, scope_bindings={"scope": scope}, validators=validators,
+                     event_fields={}, parent_results={})
+    other_scope = ResourceScopeBinding(
+        "other-scope", "demo", "profile", "principal", backend.generation, "profile-gen",
+        "backend", {"channel": "attacker"}, frozenset(), None,
+    )
+    with pytest.raises(ResourceJobDenied, match="scope binding or validator"):
+        recipe.render(backend=backend, scope_bindings={"scope": other_scope}, validators=validators,
+                     event_fields={"message": "hello"}, parent_results={})

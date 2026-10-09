@@ -47,16 +47,13 @@ receipt and bind its event body before making the call. Likewise,
 `finish_child` must receive only IDs issued by the root after it validates the
 broker response. These methods are not safe to expose as worker RPCs.
 
-Current state: the SQLite admission/DAG backend and a root handler-factory
-draft are implemented. The authority module now parses typed backend/body
-recipe records, omits jobs without source issuer/observer/backend/recipe joins,
-and provides a one-node `invoke_resource_backend` call point that derives a
-fresh context and grant for each admitted attempt. Registration requires the
-fixed handler to identify its exact backend enrollment, artifact ID, and
-digest. This is still unavailable: the active root catalog has no scope
-binding/result-schema resolver, multi-action DAGs have only one backend ID in
-the current record shape, observed event/result payload capsules are not
-available in this checkout, and no selected resource backend callable is
-currently assembled with the required artifact binding. Dynamic recipes fail
-closed until those root-only resolvers exist. No cron, webhook, channel, or
-bundle effect is established by the ledger fixtures or this draft.
+Current state: the SQLite admission/DAG backend and root handler-factory draft
+are implemented. The parser has been aligned with per-node backend IDs and the
+`execution_binding` process-task record; each fixed process task is specified
+to use a separate root `process.start` grant. The current checkout still does
+not assemble active scope/validator/schema catalogs, a root source observer and
+result-capsule path, the process-task launcher, or a concrete selected native
+backend. Those missing joins keep admission and child effect handlers
+unregistered. Dynamic event/result/scope recipes fail closed. The fixture
+tests establish ledger and parser behavior only; no cron, webhook, channel,
+bundle, or Hermes profile task effect is established.

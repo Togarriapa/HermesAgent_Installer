@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from hermes_installer.protected_enrollment import (
     ProtectedBuildCatalog,
     ProtectedDeviceCatalog,
     ProtectedEnrollmentCatalog,
+    ProtectedRootJournalCatalog,
     _canonical,
     _parse_profile,
 )
@@ -44,13 +46,18 @@ def build_record(target="coral-cpython-build:start"):
     return {
         "target_id": target,
         "generation": "g1",
+        "build_service_enrollment_id": "build-service-a",
+        "build_service_generation": "build-service-generation-a",
         "source_artifact_id": "source-v1",
         "source_sha256": "1" * 64,
         "toolchain_artifact_id": "toolchain-v1",
         "toolchain_sha256": "2" * 64,
         "builder_artifact_id": "builder-v1",
         "builder_sha256": "3" * 64,
-        "argv_recipe": ["/opt/hermes/build-driver", "--profile", "coral-cpython-build"],
+        "argv_recipe": [
+            {"build_path": {"mount_id": "builder", "relative_path": ""}},
+            {"literal": "--profile"}, {"literal": "coral-cpython-build"},
+        ],
         "environment": {"PATH": "/opt/hermes/bin", "LANG": "C.UTF-8"},
         "max_lifetime_seconds": 600,
         "output_root_id": "coral-build-staging",
@@ -130,6 +137,68 @@ def test_build_output_constraints_are_root_reviewed_and_contain_no_preknown_dige
     unreviewed["output_specs"][0]["sha256"] = "f" * 64
     with pytest.raises(EnrollmentDenied, match="output constraint fields"):
         FixedBuildProfile.from_protected_record(unreviewed)
+
+
+def test_fixed_build_argv_accepts_only_tagged_literals_and_fixed_mount_paths():
+    parsed = FixedBuildProfile.from_protected_record(build_record())
+    assert parsed.argv_recipe[0] == {"build_path": {"mount_id": "builder", "relative_path": ""}}
+    assert parsed.argv_recipe[1] == {"literal": "--profile"}
+
+    invalid_recipes = [
+        ["/opt/hermes/build-driver"],  # legacy strings cannot be active authority
+        [{"literal": "builder"}],  # argv[0] must be the exact builder mount
+        [{"build_path": {"mount_id": "etc", "relative_path": "passwd"}}],
+        [{"build_path": {"mount_id": "builder", "relative_path": "../escape"}}],
+        [{"build_path": {"mount_id": "builder", "relative_path": "/tmp/escape"}}],
+        [{"build_path": {"mount_id": "builder", "relative_path": ""}, "literal": "extra"}],
+    ]
+    for recipe in invalid_recipes:
+        item = build_record()
+        item["argv_recipe"] = recipe
+        with pytest.raises(EnrollmentDenied):
+            FixedBuildProfile.from_protected_record(item)
+
+
+def test_fixed_build_profile_binds_dedicated_service_enrollment():
+    profile = FixedBuildProfile.from_protected_record(build_record())
+    assert profile.build_service_enrollment_id == "build-service-a"
+    assert profile.build_service_generation == "build-service-generation-a"
+    unbound = build_record()
+    del unbound["build_service_enrollment_id"]
+    with pytest.raises(EnrollmentDenied):
+        FixedBuildProfile.from_protected_record(unbound)
+
+
+def test_build_catalog_joins_only_exact_selected_process_service_and_owner(monkeypatch):
+    import hermes_installer.protected_enrollment as protected
+
+    build = FixedBuildProfile.from_protected_record(build_record())
+    build_catalog = ProtectedBuildCatalog({(build.target_id, build.generation): build})
+    selected_service = SimpleNamespace(
+        enrollment_id=build.build_service_enrollment_id,
+        generation=build.build_service_generation,
+        operation_targets={"process.start": build.target_id},
+        service_uid=build.output_owner_uid, service_gid=1234, service_user="hermes-build",
+    )
+    monkeypatch.setattr(protected.pwd, "getpwnam",
+                        lambda _name: SimpleNamespace(pw_uid=build.output_owner_uid, pw_gid=1234))
+    monkeypatch.setattr(protected.grp, "getgrgid",
+                        lambda _gid: SimpleNamespace(gr_mem=[]))
+    monkeypatch.setattr(protected.pwd, "getpwall",
+                        lambda: [SimpleNamespace(pw_name="hermes-build", pw_gid=1234)])
+
+    class Services:
+        def resolve(self, enrollment_id, generation):
+            assert enrollment_id == build.build_service_enrollment_id
+            assert generation == build.build_service_generation
+            return selected_service
+
+    resolved, service = build_catalog.resolve_service(build.target_id, build.generation, Services())
+    assert resolved.target_id == build.target_id and service is selected_service
+
+    selected_service.service_uid += 1
+    with pytest.raises(EnrollmentDenied):
+        build_catalog.resolve_service(build.target_id, build.generation, Services())
 
 
 def test_usb_and_pci_selection_stay_opaque_and_generation_bound(monkeypatch):
@@ -266,7 +335,7 @@ def test_native_package_record_is_typed_and_resolved_only_for_current_service_ge
             "action_id": "read", "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
             "effect_enrollment_id": "effect-enrollment", "operation": "plugin.example.read",
             "capability": "example-read", "target_id": "example-target", "recipient": "example-recipient",
-            "generation": profile.generation,
+            "generation": profile.generation, "observer_enrollment_ids": [], "workflow_bindings": [],
         }],
     }
     catalog = ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
@@ -279,6 +348,63 @@ def test_native_package_record_is_typed_and_resolved_only_for_current_service_ge
     assert resolved.adapter_records["adapter-one"].operation == "plugin.example.read"
     with pytest.raises(EnrollmentDenied):
         catalog.resolve_native_package("desktop-native", "stale-generation")
+
+
+def test_native_observer_reference_joins_exact_active_issuer_role():
+    from hermes_installer.authority.enrollment import SourceIssuerRecord
+
+    item = {
+        "enrollment_id": "install-1", "generation": "gen-1", "profile_id": "hermes-main",
+        "principal_id": "owner", "service_uid": 1001, "service_gid": 1001, "service_user": "hermes-owner",
+        "device_enrollment_id": None, "expected_device_generation": None,
+        "executable": "/opt/hermes/bin/hermes", "executable_sha256": "a" * 64,
+        "runtime_artifact_ids": ["hermes-runtime-v1"], "package_runtime_records": {},
+        "roots": {"home_id": "home", "work_id": "work", "data_id": "data",
+                  "home": "/var/lib/hermes/home", "work": "/var/lib/hermes/work", "data": "/var/lib/hermes/data"},
+        "authority_endpoint_id": "owner-socket", "namespace_identity": "hermes-ns", "target_route_ids": ["http-api"],
+        "socket_policy_id": "hermes-sockets", "operation_targets": {"process.start": "start-target"},
+        "operation_recipes": {"hermes-server-start": launch_recipe("data")},
+        "argv_recipe": ["/opt/hermes/bin/hermes", "serve"], "environment": {"HOME": "/var/lib/hermes/home"},
+        "max_lifetime_seconds": 600, "memory_max_bytes": 1000000,
+        "cpu_quota_percent": 100, "io_weight": 100,
+    }
+    profile = _parse_profile(item)
+    package = {
+        "package_id": "desktop-native", "profile_id": profile.profile_id,
+        "generation": profile.generation, "source_revision": "rev-1",
+        "source_tree_sha256": "b" * 64,
+        "compiled_closure_artifact_id": "compiled-closure", "compiled_closure_sha256": "c" * 64,
+        "entrypoint_artifact_id": "plugin-entrypoint", "entrypoint_sha256": "d" * 64,
+        "resolver_artifact_id": "plugin-resolver", "resolver_sha256": "e" * 64,
+        "service_package_root_id": "desktop-package-root", "service_mount_id": "desktop-package-mount",
+        "adapter_records": [{
+            "adapter_id": "adapter-one", "manifest_sha256": "f" * 64,
+            "adapter_artifact_id": "adapter-one-artifact", "adapter_sha256": "0" * 64,
+            "action_id": "read", "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
+            "effect_enrollment_id": "effect-enrollment", "operation": "plugin.example.read",
+            "capability": "example-read", "target_id": "example-target", "recipient": "example-recipient",
+            "generation": profile.generation, "observer_enrollment_ids": ["observer-one"],
+            "workflow_bindings": [],
+        }],
+    }
+    issuer = SourceIssuerRecord(
+        "tool-result", profile.profile_id, "adapter-one-artifact", "0" * 64,
+        "read-result-v1", (), profile.generation, "observer-one", ("registered-tool-result",),
+    )
+    catalog = ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
+                                         native_packages=[package], source_issuers=[issuer])
+    join = catalog.source_observer_joins["observer-one"]
+    assert join.issuer is issuer
+    assert join.package.package_id == "desktop-native"
+    assert join.adapter.adapter_id == "adapter-one"
+
+    with pytest.raises(EnrollmentDenied, match="does not match"):
+        ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
+                                   native_packages=[package], source_issuers=[
+            SourceIssuerRecord("tool-result", profile.profile_id, "different-role", "0" * 64,
+                               "read-result-v1", (), profile.generation, "observer-one",
+                               ("registered-tool-result",))
+        ])
 
 
 def test_memory_connector_route_binds_variant_port_and_exact_route():
@@ -435,3 +561,52 @@ def test_signed_manifest_hash_canonicalization_is_stable():
     unsigned = {"schema": 1, "records": []}
     reversed_order = {"records": [], "schema": 1}
     assert hashlib.sha256(_canonical(unsigned)).digest() == hashlib.sha256(_canonical(reversed_order)).digest()
+
+
+def test_root_journal_resolution_is_digest_bound_and_rechecks_pinned_inode(tmp_path, monkeypatch):
+    import hermes_installer.protected_enrollment as protected
+
+    root = tmp_path / "authority-journal"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    info = root.stat()
+    row = {
+        "root_id": "installer-authority-journal-v1",
+        "absolute_path": str(root), "owner_uid": 0, "owner_gid": 0,
+        "mode": 0o700, "device": info.st_dev, "inode": info.st_ino,
+        "generation": "journal-gen-a", "purpose": "authority-journal",
+    }
+    catalog = ProtectedRootJournalCatalog.from_protected_records(
+        [row], generation_digest="a" * 64)
+
+    def trusted_fixture_path(path, *, uid, directory):
+        assert uid == 0 and directory is True
+        return path
+
+    monkeypatch.setattr(protected, "_owned_path", trusted_fixture_path)
+    original_stat = Path.stat
+
+    def root_owned_stat(path, *args, **kwargs):
+        actual = original_stat(path, *args, **kwargs)
+        if path == root:
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_gid=0,
+                                   st_dev=actual.st_dev, st_ino=actual.st_ino)
+        return actual
+
+    monkeypatch.setattr(Path, "stat", root_owned_stat)
+    with pytest.raises(EnrollmentDenied, match="stale active generation"):
+        catalog.resolve("installer-authority-journal-v1",
+                        expected_active_generation_digest="b" * 64)
+    selected = catalog.resolve("installer-authority-journal-v1",
+                               expected_active_generation_digest="a" * 64)
+    assert selected.path == root
+    assert selected.inode == info.st_ino
+    assert selected.service_generation_digest == "a" * 64
+
+    monkeypatch.setattr(Path, "stat", lambda path, *args, **kwargs:
+                        SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_gid=0,
+                                        st_dev=info.st_dev, st_ino=info.st_ino + 1)
+                        if path == root else original_stat(path, *args, **kwargs))
+    with pytest.raises(EnrollmentDenied, match="identity changed"):
+        catalog.resolve("installer-authority-journal-v1",
+                        expected_active_generation_digest="a" * 64)
