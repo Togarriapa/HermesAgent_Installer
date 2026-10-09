@@ -5,6 +5,7 @@ import io
 import json
 import re
 import tarfile
+from pathlib import Path
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Mapping
@@ -180,3 +181,18 @@ class BundledRegistrySource:
         file_modes = {path: modes[path] for path in files}
         return VerifiedSource(self.pin.repository,self.pin.commit,self.pin.git_tree,self.pin.catalog_version,
                               files,file_modes,framed.hexdigest())
+
+
+def load_bundled_source() -> VerifiedSource:
+    """Load and verify the exact offline bundle shipped with the installer package."""
+    directory = Path(__file__).with_name("bundle_data")
+    pin_path = directory / "hermes-agent-resources.pin.json"
+    archive_path = directory / "hermes-agent-resources-2.3.1.tar.gz"
+    try:
+        pin = PinnedSource.from_mapping(json.loads(pin_path.read_text(encoding="utf-8")))
+        archive = archive_path.read_bytes()
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise RegistrySourceError("packaged Resources bundle is missing or unreadable") from None
+    if pin.archive_size != len(archive):
+        raise RegistrySourceError("packaged Resources archive differs from its pin")
+    return BundledRegistrySource(pin).load(archive)
