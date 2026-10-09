@@ -229,7 +229,8 @@ class ChatGPTPlanAuth:
                  vault: HostCredentialVault,
                  verify_id_token: Callable[[str, str, str], Mapping[str, object]] | None = None,
                  clock: Callable[[], float] = time.time,
-                 monotonic_clock: Callable[[], float] = time.monotonic):
+                 monotonic_clock: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], None] = time.sleep):
         try:
             canonical_host_id = "urn:uuid:" + str(uuid.UUID(host_id.removeprefix("urn:uuid:")))
         except (TypeError, ValueError, AttributeError):
@@ -241,7 +242,9 @@ class ChatGPTPlanAuth:
         self.host_id, self.agent_name = host_id, agent_name
         self.transport, self.vault = transport, vault
         self.verify_id_token = verify_id_token or OpenAIIDTokenVerifier(transport, clock=clock)
-        self.clock, self.monotonic_clock = clock, monotonic_clock
+        if not callable(clock) or not callable(monotonic_clock) or not callable(sleep):
+            raise ValueError("OAuth clocks and sleeper must be callable")
+        self.clock, self.monotonic_clock, self.sleep = clock, monotonic_clock, sleep
         self._locks_guard = threading.Lock()
         self._account_locks: dict[str, threading.Lock] = {}
         self._used_attempts: dict[str, float] = {}
@@ -370,11 +373,25 @@ class ChatGPTPlanAuth:
             if (parsed is None or parsed.scheme != "https" or parsed.hostname != "auth.openai.com"
                     or parsed.path != "/api/accounts/oauth/revoke" or parsed.query or parsed.fragment):
                 raise OAuthAttemptError("OpenAI revocation endpoint is not the issuer endpoint")
-            response = self.transport.post_form(endpoint, {
+            form = {
                 "token": account.refresh_token, "token_type_hint": "refresh_token",
                 "client_id": account.client_id,
-            }, timeout=15)
-            confirmed = response == {} or response.get("status_code") == 200
+            }
+            confirmed = False
+            for attempt in range(3):
+                try:
+                    response = self.transport.post_form(endpoint, form, timeout=15)
+                    status = response.get("status_code", 200) if isinstance(response, Mapping) else 0
+                    if status == 200:
+                        confirmed = True
+                        break
+                    if not isinstance(status, int) or not 500 <= status <= 599:
+                        break
+                except Exception:
+                    if attempt == 2:
+                        break
+                if attempt < 2:
+                    self.sleep((0.1, 0.3)[attempt])
         except Exception:
             confirmed = False
         finally:
