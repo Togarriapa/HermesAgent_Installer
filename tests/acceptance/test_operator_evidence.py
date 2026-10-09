@@ -84,6 +84,62 @@ class OperatorEvidenceTests(unittest.TestCase):
         for acceptance_id, evidence_id in expected_pairs:
             self.assertTrue(profile_for(evidence_id, acceptance_id).assertions)
 
+    def test_supplemental_profiles_are_exact_and_unobserved_claims_stay_pending(self):
+        expected = {
+            ("AC18", "EV-HI10"): {
+                "registered_process_handle_required", "current_cgroup_descendants_attested",
+                "stable_kernel_identity_and_executable_pin_verified", "renderer_lineage_and_sandbox_attested",
+                "caller_pid_path_argv_and_sibling_handles_denied",
+            },
+            ("AC10", "EV-HW01"): {
+                "protected_manifest_runtime_and_generation_bound", "only_exact_pinned_numpy_tflite_wheels_selected",
+                "target_abi_and_attested_runtime_match", "offline_fixed_install_succeeds_without_host_or_hermes_mutation",
+                "caller_paths_urls_pip_args_extra_wheels_rejected",
+                "wrong_hash_runtime_abi_root_network_enospc_cancel_preserve_prior_generation",
+            },
+            ("AC16", "EV-RB07"): {
+                "selected_enabled_generation_and_authenticated_event_verified", "single_bounded_job_admission_consumed",
+                "fresh_reduced_grant_per_child_and_attempt", "source_lineage_sensitivity_and_recipient_bound",
+                "budget_concurrency_runtime_payload_replay_limits_enforced",
+                "unselected_stale_or_replayed_event_denied_before_effect",
+            },
+            ("AC08", "EV-PR01"): {
+                "public_client_pkce_state_nonce_loopback_bound",
+                "id_token_signature_issuer_audience_expiry_nonce_account_checked",
+                "documented_plan_usage_scope_granted", "credential_reference_single_host_custody_and_rotation",
+                "root_only_tls_sse_store_false_stream_true",
+                "response_completed_required_and_failed_partial_or_cancelled_streams_rejected",
+                "unsupported_fields_tools_and_retries_rejected_without_paid_fallback",
+            },
+        }
+        now = datetime.now(timezone.utc)
+        for (acceptance_id, evidence_id), expected_assertions in expected.items():
+            with self.subTest(acceptance_id=acceptance_id, evidence_id=evidence_id):
+                profile = profile_for(evidence_id, acceptance_id)
+                self.assertEqual(expected_assertions, set(profile.assertions))
+                enrolled = AuthorizedTarget.parse({
+                    "target_id": "fixture-target-01", "platform": "fixture-x86_64",
+                    "owner": "owner-42", "authorization_reference": "operator-enrollment-01",
+                    "expires_at": (now + timedelta(minutes=5)).isoformat(),
+                    "allowed_acceptance": [acceptance_id],
+                }, manifest_sha256=hashlib.sha256(b"fixture target manifest").hexdigest())
+                request = build_probe_request(
+                    request_id=str(uuid4()), acceptance_id=acceptance_id, evidence_id=evidence_id,
+                    candidate_sha=SHA, target_id=enrolled.target_id, platform=enrolled.platform,
+                    authorization_reference=enrolled.authorization_reference,
+                    target_manifest_sha256=enrolled.manifest_sha256,
+                    argv=("/usr/bin/hermes-installer", "resources", "status", "--json"),
+                    cwd="/tmp/fixture-target", environment_allowlist=("HOME", "PATH"),
+                    timeout_seconds=30, stdout_limit_bytes=65536, stderr_limit_bytes=32768,
+                ).to_dict()
+                assertions = {name: None for name in profile.assertions}
+                result = result_value(request, enrolled, assertions=assertions)
+                verified = verify_operator_result(request, result, enrolled)
+                self.assertEqual(EvidenceState.PENDING, verified.state)
+                for name in expected_assertions:
+                    self.assertIn(name, verified.blocker)
+                    self.assertIsNone(verified.assertions[name])
+
     def test_exact_candidate_target_command_and_assertions_are_retained_before_record_is_emitted(self):
         enrolled = target()
         request = request_value(enrolled)
