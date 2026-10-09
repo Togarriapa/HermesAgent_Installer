@@ -1,6 +1,7 @@
 """Fresh host-policy gate directly before any specialist side effect."""
 from __future__ import annotations
-import asyncio, time
+import asyncio, math, time
+from numbers import Real
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 from hermes_installer.policy import DispatchContext
@@ -35,6 +36,12 @@ class DispatchBroker:
         if not 0 < timeout <= 600: raise ValueError("broker timeout must be bounded")
         self.authorize, self.now, self.timeout = authorize, now, timeout
 
+    @staticmethod
+    def _finite_time(value, label: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
+            raise BrokerDenied(f"{label} must be a finite timestamp")
+        return float(value)
+
     async def call(self, context: DispatchContext, call: SpecialistCall, operation: Operation):
         # Missing trusted fields fail closed; caller-declared sensitivity is never
         # a substitute for the gateway's effective (including derived) label.
@@ -67,34 +74,41 @@ class DispatchBroker:
         if sensitivity == "CONFIDENTIAL" and "confidential-context" not in call.capabilities:
             raise BrokerDenied("confidential context requires an explicit confidential-context grant")
 
+        current_time = self._finite_time(self.now(), "host clock")
         deadline = getattr(context, "deadline", None)
-        if deadline is not None and deadline <= self.now():
+        if deadline is not None:
+            deadline = self._finite_time(deadline, "request deadline")
+        if deadline is not None and deadline <= current_time:
             raise BrokerDenied("dispatch deadline expired before authorization")
         authorization_timeout = self.timeout
         if deadline is not None:
-            authorization_timeout = min(authorization_timeout, deadline - self.now())
+            authorization_timeout = min(authorization_timeout, deadline - current_time)
         try:
             lease = await asyncio.wait_for(
                 self.authorize(context, call), timeout=authorization_timeout
             )
         except asyncio.TimeoutError as exc:
             raise TimeoutError("host authorization exceeded dispatch deadline") from exc
+        current_time = self._finite_time(self.now(), "host clock")
+        expires_at = self._finite_time(lease.expires_at, "authorization expiry")
         if (
             lease.profile_id != context.profile_id
             or lease.namespace != namespace
             or lease.trace_id != trace_id
             or not lease.policy_revision
             or not lease.grant_id
-            or lease.expires_at <= self.now()
+            or expires_at <= current_time
+            or expires_at - current_time > 3600
             or not call.capabilities.issubset(lease.capabilities)
         ):
             raise BrokerDenied("host authorization lease is stale, mismatched, or insufficient")
         if cancelled():
             raise BrokerDenied("request cancelled before specialist execution")
 
-        wall_budget = min(self.timeout, lease.expires_at - self.now())
+        current_time = self._finite_time(self.now(), "host clock")
+        wall_budget = min(self.timeout, expires_at - current_time)
         if deadline is not None:
-            wall_budget = min(wall_budget, deadline - self.now())
+            wall_budget = min(wall_budget, deadline - current_time)
         if wall_budget <= 0:
             raise BrokerDenied("authorization expired before specialist execution")
         loop = asyncio.get_running_loop()
@@ -107,23 +121,25 @@ class DispatchBroker:
                     await asyncio.gather(task, return_exceptions=True)
                     raise asyncio.CancelledError
                 remaining = monotonic_deadline - loop.time()
-                if remaining <= 0 or self.now() >= lease.expires_at:
+                current_time = self._finite_time(self.now(), "host clock")
+                if remaining <= 0 or current_time >= expires_at:
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
-                    if self.now() >= lease.expires_at:
+                    if current_time >= expires_at:
                         raise BrokerDenied("host authorization expired during dispatch")
                     raise TimeoutError("specialist dispatch exceeded authorization deadline")
                 done, _ = await asyncio.wait({task}, timeout=min(0.05, remaining))
-                if not done and deadline is not None and self.now() >= deadline:
+                if not done and deadline is not None and current_time >= deadline:
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
                     raise TimeoutError("specialist dispatch exceeded request deadline")
             # Recheck trust at the completion boundary before exposing the result.
             if cancelled():
                 raise asyncio.CancelledError
-            if self.now() >= lease.expires_at:
+            current_time = self._finite_time(self.now(), "host clock")
+            if current_time >= expires_at:
                 raise BrokerDenied("host authorization expired before result delivery")
-            if deadline is not None and self.now() >= deadline:
+            if deadline is not None and current_time >= deadline:
                 raise TimeoutError("specialist dispatch exceeded request deadline")
             return task.result()
         except asyncio.CancelledError:

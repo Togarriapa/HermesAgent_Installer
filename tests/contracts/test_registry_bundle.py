@@ -22,8 +22,8 @@ class VendoredRegistryTests(unittest.TestCase):
         self.assertNotIn(".git/config",source.files)
         self.assertEqual(source.content_digest and len(source.content_digest),64)
         profile = source.files["profiles/3d-model-designer.yaml"].splitlines()
-        self.assertIn(b"kind: Profile", profile)
-        self.assertIn(b"name: 3d-model-designer", profile)
+        self.assertTrue(any(line.strip() == b"kind: Profile" for line in profile))
+        self.assertTrue(any(line.strip() == b"name: 3d-model-designer" for line in profile))
     def test_modified_or_truncated_archive_fails_before_materialization(self):
         loader=BundledRegistrySource(self.pin)
         with self.assertRaises(RegistrySourceError): loader.load(self.archive[:-1])

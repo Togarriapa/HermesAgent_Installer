@@ -67,6 +67,24 @@ class TopologyTests(unittest.IsolatedAsyncioTestCase):
             await self.broker(authorize).call(ctx(sensitivity="PUBLIC",effective="PRIVATE"),call,effect)
         self.assertEqual(effects,[])
 
+    async def test_invalid_time_values_are_denied_before_side_effect(self):
+        effects=[]
+        async def authorize(context,call): return self.lease()
+        async def effect(): effects.append(1)
+        call=SpecialistCall("worker","r","c","delegate",frozenset({"delegate"}))
+        gate=self.broker(authorize)
+        for expiry in (float("nan"), float("inf"), True):
+            with self.subTest(expiry=expiry):
+                async def bad_authorize(context,call,expiry=expiry):
+                    return self.lease(expires_at=expiry)
+                with self.assertRaises(BrokerDenied):
+                    await self.broker(bad_authorize).call(ctx(),call,effect)
+        for deadline in (float("nan"), float("inf"), True):
+            with self.subTest(deadline=deadline):
+                with self.assertRaises(BrokerDenied):
+                    await gate.call(types.SimpleNamespace(**vars(ctx()), deadline=deadline),call,effect)
+        self.assertEqual(effects,[])
+
     async def test_unknown_or_untrusted_context_is_denied_before_side_effect(self):
         effects=[]
         async def authorize(context,call): return self.lease()
