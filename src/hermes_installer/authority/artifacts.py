@@ -100,6 +100,7 @@ class VerifiedSchemaObservation:
     _bytes: bytes = field(repr=False)
     _registry_id: str = field(repr=False)
     _seal: object = field(default=None, repr=False, compare=False)
+    source_expires_monotonic: float | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self._seal is not _SEAL:
@@ -364,6 +365,104 @@ class RootSchemaDerivationReceiptRegistry:
             child_bytes, self._instance_id, _SEAL,
         )
 
+    def observe_mcp_tools_list(self, observation: Any) -> VerifiedSchemaObservation:
+        """Seal one currently retained authenticated tools/list schema proof.
+
+        The caller-supplied object is only a lookup key. The MCP registry must
+        re-resolve it from its retained current invocation and exchange receipt;
+        a caller-created dataclass with identical-looking fields is not trusted.
+        """
+        _require_root(self.expected_uid)
+        if (type(observation).__module__ != "hermes_installer.authority.mcp_discovery_registry"
+                or type(observation).__name__ != "MCPDiscoverySchemaObservation"):
+            raise SchemaDerivationDenied("MCP schema observation is not a typed root witness")
+        resolver = getattr(self.mcp_discovery_registry, "resolve_schema_observation", None)
+        if not callable(resolver):
+            raise SchemaDerivationPending("authenticated MCP tools/list observation resolver is unavailable")
+        identity = {
+            "schema": 1,
+            "artifact_id": observation.artifact_id,
+            "artifact_sha256": observation.artifact_sha256,
+            "size_bytes": observation.size_bytes,
+            "schema_kind": observation.schema_kind,
+            "package_id": observation.package_id,
+            "package_generation": observation.package_generation,
+            "adapter_id": observation.adapter_id,
+            "action_id": observation.action_id,
+            "source_kind": "mcp-tools-list",
+            "parent_receipt_handles": list(observation.parent_receipt_handles),
+            "source_observation_handle": observation.source_observation_handle,
+            "source_member_path": None,
+            "service_generation_digest": observation.service_generation_digest,
+        }
+        try:
+            proof = resolver(identity)
+        except Exception:
+            raise SchemaDerivationDenied("MCP tools/list witness is absent, stale, or not selected") from None
+        if (type(proof) is not type(observation)
+                or any(getattr(proof, name) != getattr(observation, name) for name in (
+                    "artifact_id", "artifact_sha256", "size_bytes", "schema_kind",
+                    "package_id", "package_generation", "adapter_id", "action_id",
+                    "service_generation_digest", "schema_bytes", "request_sha256",
+                    "response_sha256", "service_id", "mcp_generation", "mcp_tool_name",
+                    "native_tool_name", "profile_id", "process_generation", "invocation_handle",
+                    "invocation_proof_id", "response_receipt_handle", "parent_receipt_handles",
+                    "source_observation_handle", "expires_monotonic", "capability", "operation",
+                    "target", "selection_sha256"))):
+            raise SchemaDerivationDenied("MCP tools/list resolver returned a different retained witness")
+        if (proof.service_generation_digest != self.root_journal.service_generation_digest
+                or not isinstance(proof.parent_receipt_handles, tuple)
+                or not 1 <= len(proof.parent_receipt_handles) <= 8
+                or proof.response_receipt_handle in proof.parent_receipt_handles
+                or not isinstance(proof.source_observation_handle, str)
+                or not _SHA.fullmatch(proof.source_observation_handle)
+                or not isinstance(proof.expires_monotonic, (int, float))
+                or isinstance(proof.expires_monotonic, bool)
+                or not math.isfinite(proof.expires_monotonic)
+                or time.monotonic() >= proof.expires_monotonic
+                or proof.operation != "mcp.request"
+                or not isinstance(proof.schema_bytes, bytes)
+                or len(proof.schema_bytes) != proof.size_bytes
+                or hashlib.sha256(proof.schema_bytes).hexdigest() != proof.artifact_sha256):
+            raise SchemaDerivationDenied("MCP tools/list witness identity, bytes, or lease is invalid")
+        # Only the selected published source parents may be part of the derived
+        # schema ancestry. The response receipt remains a dynamic witness field.
+        try:
+            publication = PolicyPublicationReceiptResolver.resolve_current()
+        except Exception:
+            raise SchemaDerivationPending("no current selected policy publication receipt") from None
+        if (type(publication) is not RootSetupPublicationReceipt
+                or publication.state not in {"prepared", "active"}
+                or any(parent not in publication.input_receipt_handles
+                       for parent in proof.parent_receipt_handles)):
+            raise SchemaDerivationDenied("MCP source closure is absent from the selected publication")
+        rows = []
+        for candidate in getattr(self.native_package_registry, "native_schema_artifact_records", ()):
+            if (isinstance(candidate, Mapping)
+                    and candidate.get("artifact_id") == proof.artifact_id
+                    and candidate.get("sha256") == proof.artifact_sha256
+                    and candidate.get("schema_kind") == proof.schema_kind
+                    and candidate.get("native_package_id") == proof.package_id
+                    and candidate.get("native_package_generation") == proof.package_generation
+                    and candidate.get("adapter_id") == proof.adapter_id
+                    and candidate.get("action_id") == proof.action_id):
+                rows.append(candidate)
+        if len(rows) != 1:
+            raise SchemaDerivationDenied("MCP schema does not uniquely match a protected selected action row")
+        self._require_selected_schema_row(rows[0])
+        self._verify_child_bytes({
+            "artifact_id": proof.artifact_id, "artifact_sha256": proof.artifact_sha256,
+            "size_bytes": proof.size_bytes,
+        }, proof.schema_bytes)
+        return VerifiedSchemaObservation(
+            proof.artifact_id, proof.artifact_sha256, proof.size_bytes, proof.schema_kind,
+            proof.package_id, proof.package_generation, proof.adapter_id, proof.action_id,
+            "mcp-tools-list", tuple(proof.parent_receipt_handles),
+            proof.source_observation_handle, None, proof.service_generation_digest,
+            proof.schema_bytes, self._instance_id, _SEAL,
+            float(proof.expires_monotonic),
+        )
+
     def mint_schema_artifact(self, verified_schema_observation: VerifiedSchemaObservation,
                              *, ttl_seconds: float = 3600.0) -> str:
         """Persist a receipt only from a live observation made by this instance."""
@@ -378,6 +477,15 @@ class RootSchemaDerivationReceiptRegistry:
                 or len(observation._bytes) != observation.size_bytes):
             raise SchemaDerivationDenied("schema observation is unverified, stale, or outside its lease")
         now = time.monotonic()
+        if (observation.source_expires_monotonic is not None
+                and (not isinstance(observation.source_expires_monotonic, (int, float))
+                     or isinstance(observation.source_expires_monotonic, bool)
+                     or not math.isfinite(observation.source_expires_monotonic)
+                     or now >= observation.source_expires_monotonic)):
+            raise SchemaDerivationDenied("schema source observation lease has expired")
+        expires = now + float(ttl_seconds)
+        if observation.source_expires_monotonic is not None:
+            expires = min(expires, float(observation.source_expires_monotonic))
         handle = secrets.token_urlsafe(32)
         record = {
             "schema": 1, "receipt_handle": handle,
@@ -392,7 +500,7 @@ class RootSchemaDerivationReceiptRegistry:
             "source_observation_handle": observation.source_observation_handle,
             "source_member_path": observation.source_member_path,
             "service_generation_digest": observation.service_generation_digest,
-            "issued_monotonic": now, "expires_monotonic": now + float(ttl_seconds),
+            "issued_monotonic": now, "expires_monotonic": expires,
             "journal_root_device": self.root_journal.device,
             "journal_root_inode": self.root_journal.inode,
         }
@@ -506,8 +614,6 @@ class RootSchemaDerivationReceiptRegistry:
         return MappingProxyType(dict(selected))
 
     def _verify_observation(self, value: Mapping[str, Any]) -> None:
-        if value["source_kind"] != "packaged-schema":
-            return
         path = self._secure_observation_root(create=False) / f"{value['source_observation_handle']}.json"
         expected = {
             "schema": 1, "observation_handle": value["source_observation_handle"],
@@ -537,6 +643,9 @@ class RootSchemaDerivationReceiptRegistry:
             )
             if recomputed != value["source_observation_handle"]:
                 raise SchemaDerivationDenied("retained root schema observation handle is not content-bound")
+        elif value["source_kind"] == "mcp-tools-list":
+            if not _SHA.fullmatch(value["source_observation_handle"]):
+                raise SchemaDerivationDenied("MCP discovery observation handle is malformed")
 
     def _revalidate_packaged_derivation(self, value: Mapping[str, Any]) -> None:
         if not isinstance(value["source_member_path"], str):
@@ -576,8 +685,36 @@ class RootSchemaDerivationReceiptRegistry:
         resolver = getattr(self.mcp_discovery_registry, "resolve_schema_observation", None)
         if not callable(resolver):
             raise SchemaDerivationPending("authenticated MCP tools/list observation resolver is unavailable")
-        raise SchemaDerivationPending(
-            "MCP tools/list observation has no typed current-generation verifier contract yet")
+        try:
+            proof = resolver(value)
+        except Exception:
+            raise SchemaDerivationDenied("authenticated MCP tools/list witness is stale or unavailable") from None
+        if (type(proof).__module__ != "hermes_installer.authority.mcp_discovery_registry"
+                or type(proof).__name__ != "MCPDiscoverySchemaObservation"):
+            raise SchemaDerivationDenied("MCP discovery resolver returned an untyped witness")
+        if (proof.artifact_id != value["artifact_id"]
+                or proof.artifact_sha256 != value["artifact_sha256"]
+                or proof.size_bytes != value["size_bytes"]
+                or proof.schema_kind != value["schema_kind"]
+                or proof.package_id != value["package_id"]
+                or proof.package_generation != value["package_generation"]
+                or proof.adapter_id != value["adapter_id"]
+                or proof.action_id != value["action_id"]
+                or proof.service_generation_digest != value["service_generation_digest"]
+                or tuple(proof.parent_receipt_handles) != tuple(value["parent_receipt_handles"])
+                or proof.source_observation_handle != value["source_observation_handle"]
+                or proof.service_generation_digest != self.root_journal.service_generation_digest
+                or proof.response_receipt_handle in proof.parent_receipt_handles
+                or proof.operation != "mcp.request"
+                or not isinstance(proof.response_sha256, str) or not _SHA.fullmatch(proof.response_sha256)
+                or not isinstance(proof.request_sha256, str) or not _SHA.fullmatch(proof.request_sha256)
+                or not isinstance(proof.expires_monotonic, (int, float))
+                or isinstance(proof.expires_monotonic, bool)
+                or not math.isfinite(proof.expires_monotonic)
+                or time.monotonic() >= proof.expires_monotonic
+                or not isinstance(proof.schema_bytes, bytes)):
+            raise SchemaDerivationDenied("MCP discovery witness differs from the current selected derivation")
+        self._verify_child_bytes(value, proof.schema_bytes)
 
     def _verify_child_bytes(self, value: Mapping[str, Any], body: bytes) -> None:
         if (not isinstance(body, bytes) or len(body) != value["size_bytes"]
