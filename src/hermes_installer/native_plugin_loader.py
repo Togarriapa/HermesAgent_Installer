@@ -940,7 +940,7 @@ class SelectedNativePackage:
     """Verified read-only mount plus the exact currently selected adapter modules."""
 
     __slots__ = ("_selection", "mount_target", "entrypoint_sha256", "_adapters", "_progress_writer",
-                 "candidate_rows", "_authority", "_registered_candidate_actions")
+                 "candidate_rows", "_authority", "_registered_candidate_actions", "_loader_ready")
 
     def __init__(self, selection: RootSelectedPluginEffects, mount_target: Path,
                  entrypoint_sha256: str, adapters: MappingProxyType,
@@ -954,6 +954,7 @@ class SelectedNativePackage:
         self.candidate_rows = candidate_rows
         self._authority = authority
         self._registered_candidate_actions: set[tuple[str, str]] = set()
+        self._loader_ready = False
 
     @property
     def package_id(self) -> str:
@@ -1266,10 +1267,29 @@ def finish_selected_native_plugin_discovery(plugin_manager: object) -> bool:
                     registered_action_ids=package.registered_action_ids)
         writer.emit(sequence=2, phase="ready",
                     registered_action_ids=package.registered_action_ids)
+        package._loader_ready = True
         return True
     except NativePluginLoadUnavailable:
         writer.close()
         raise
+
+
+def ensure_selected_native_plugins_ready() -> SelectedNativePackage:
+    """Force the official pinned discovery sweep and require its completed loader state."""
+    try:
+        from hermes_cli.plugins import discover_plugins, get_plugin_manager
+        discover_plugins()
+        manager = get_plugin_manager()
+        package = getattr(manager, "_hermes_installer_native_plugin_package", None)
+        if (not isinstance(package, SelectedNativePackage) or package._loader_ready is not True
+                or not package.candidate_rows):
+            raise NativePluginLoadUnavailable("selected native package discovery is not ready")
+        package._selection._require_live()
+        return package
+    except NativePluginLoadUnavailable:
+        raise
+    except Exception:
+        raise NativePluginLoadUnavailable("selected native package discovery is unavailable") from None
 
 
 def _selected_runtime_context_factory(authority: object, package: SelectedNativePackage):

@@ -24,12 +24,13 @@ from hermes_installer.native_boundary_patch import (
 
 UPSTREAM = Path("/tmp/hermes-agent-hi08")
 EXPECTED = {
+    "hermes_cli/main.py": "02efa9801f3290d92f653395d5ad51181a3f5cd3bb1025445bf435e1497f8ba1",
     "hermes_cli/__init__.py": "84d0d7f5b6d8340897c4c53947890f88f93de146fcc228d4f4fdd096f2a8d81b",
     "hermes_cli/plugins.py": "11d8e9606b2b274a30f11384233bee36cd44a683abdaca674201c30a9319ca86",
     "agent/__init__.py": "067ee01cbc088b572cbdabbbe4116d9bec0939acc0bd30ac67b287cb5d6743e6",
-    "agent/chat_completion_helpers.py": "0f234b4f9bf3e2fd29c6e2da517b1302de4c1bc3e6780d443080526fb69d9ef9",
-    "agent/auxiliary_client.py": "876a97cc1c81fb1e4bc97d92872e03ceb0b1d8f43680d551d974b4376e8950c6",
-    "agent/tool_executor.py": "289df099d066e296e4dd3a08b8a0bfb0b2cb9b8bc329ac8ffd70fe60f3c86eb0",
+    "agent/chat_completion_helpers.py": "5654fcd9a03243658b87afecc4a2735a111e314e254f08a5eb326980f057e49c",
+    "agent/auxiliary_client.py": "613484e5748c1ab91b0c70ad0c816c1b4cb7c93c3074c9e9f3180697e51a1427",
+    "agent/tool_executor.py": "77d8dcf8abab1d548d8874148b5b972feddf0cf31245f1d8064c3b704d613f2b",
     "tools/__init__.py": "cd92cb5947a7ceeff2cce118857e7e6285eafefb2c32a0a119afdc33865b7ffe",
     "tools/mcp_tool_registration.py": "4e9cbd62da220be24e8a2ec9b140f28914642e7968eb59a92a5127875c43af2a",
     "tools/mcp_tool_discovery.py": "283939251074fc02244f98fb5339f0be8a670653a1f662e0e155f0e3b4f87900",
@@ -53,6 +54,16 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
         self.assertGreater(patched.index("finish_selected_native_plugin_discovery(self)"),
                            patched.index("self._notify_plugin_loaded(loaded_before)"))
         self.assertIn("_predeclared_modules", (UPSTREAM / "hermes_cli/plugins_loader.py").read_text())
+
+    def test_pinned_stdin_seam_takes_root_input_before_reading_exact_bytes(self):
+        if not UPSTREAM.is_dir():
+            self.skipTest("exact official Hermes source checkout is not available")
+        patched = __import__("hermes_installer.native_boundary_patch", fromlist=["_transform"])._transform(
+            "hermes_cli/main.py", (UPSTREAM / "hermes_cli/main.py").read_bytes()).decode("utf-8")
+        self.assertIn("args.query = read_selected_native_input(sys.stdin.buffer)", patched)
+        self.assertNotIn("args.query = sys.stdin.read()", patched)
+        self.assertLess(patched.index("from hermes_installer.native_invocations import read_selected_native_input"),
+                        patched.index("args.query = read_selected_native_input(sys.stdin.buffer)"))
 
     def test_overlay_package_initializers_extend_real_pinned_source_path(self):
         if not UPSTREAM.is_dir():

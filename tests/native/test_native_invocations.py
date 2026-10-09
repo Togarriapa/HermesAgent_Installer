@@ -16,15 +16,35 @@ from hermes_installer.native_invocations import (
     begin_observed_tool_invocation,
     canonical_tool_arguments,
     current_native_invocation_binding,
+    dispatch_native_mcp_tool_call,
+    _CURRENT_BINDING,
+    _CURRENT_MCP_RESULT,
+    _CURRENT_TOOL_CALL_ID,
+    _pending_native_mcp_results,
+    _native_result_lock,
+    _initial_input_lock,
+    _initial_input_messages,
+    _store_pending_native_mcp_result,
+    prepare_native_provider_request,
+    read_selected_native_input,
+    record_native_tool_result,
     install_observed_tool_calls,
     install_provider_response_tool_calls,
     attach_provider_stream_capture,
     finish_provider_stream_response,
-    dispatch_native_mcp_tool_call,
 )
 
 
 class NativeInvocationBoundaryTests(unittest.TestCase):
+    def tearDown(self):
+        import hermes_installer.native_invocations as invocations
+        with invocations._initial_input_lock:
+            invocations._initial_input = None
+            invocations._initial_input_failed = False
+            invocations._initial_input_messages.clear()
+        with invocations._native_result_lock:
+            invocations._pending_native_mcp_results.clear()
+
     def _metadata(self, arguments: dict):
         import hashlib
 
@@ -134,13 +154,18 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
             def __init__(self): self.calls = []
             def dispatch_native_mcp(self, *args):
                 self.calls.append(args)
-                return SimpleNamespace(status=200, body=b'{"content":[{"type":"text","text":"ok"}]}')
+                return SimpleNamespace(status=200, body=b'{"content":[{"type":"text","text":"ok"}]}',
+                                       source_receipt_handle="h" * 40)
 
         authority = Authority()
         token = _CURRENT_BINDING.set(binding)
+        call_token = _CURRENT_TOOL_CALL_ID.set("call-1")
+        result_token = _CURRENT_MCP_RESULT.set(None)
         try:
             result = dispatch_native_mcp_tool_call(authority, registration, arguments)
         finally:
+            _CURRENT_MCP_RESULT.reset(result_token)
+            _CURRENT_TOOL_CALL_ID.reset(call_token)
             _CURRENT_BINDING.reset(token)
         self.assertEqual(result, '{"content":[{"type":"text","text":"ok"}]}')
         self.assertEqual(authority.calls, [("i" * 40, argument_bytes)])
@@ -173,7 +198,7 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
             action_id="mcp.read.selected", arguments_sha256=hashlib.sha256(
                 canonical_tool_arguments(arguments)).hexdigest(),
         )
-        authority = Authority(SimpleNamespace(status=200, body=b"private"))
+        authority = Authority(SimpleNamespace(status=200, body=b"private", source_receipt_handle="h" * 40))
         token = _CURRENT_BINDING.set(wrong_profile)
         try:
             with self.assertRaises(NativeInvocationUnavailable):
@@ -196,7 +221,8 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
         self.assertEqual(authority.calls, [])
 
         binding.arguments_sha256 = hashlib.sha256(canonical_tool_arguments(arguments)).hexdigest()
-        authority = Authority(SimpleNamespace(status=403, body=b"secret backend detail"))
+        authority = Authority(SimpleNamespace(status=403, body=b"secret backend detail",
+                                              source_receipt_handle="h" * 40))
         token = _CURRENT_BINDING.set(binding)
         try:
             with self.assertRaises(NativeInvocationUnavailable) as denied:
@@ -233,15 +259,139 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
             def __init__(self): self.calls = []
             def dispatch_native_mcp(self, *args):
                 self.calls.append(args)
-                return SimpleNamespace(status=200, body=b"ok")
+                return SimpleNamespace(status=200, body=b"ok", source_receipt_handle="h" * 40)
 
         authority = Authority()
         token = _CURRENT_BINDING.set(binding)
+        call_token = _CURRENT_TOOL_CALL_ID.set("call-1")
+        result_token = _CURRENT_MCP_RESULT.set(None)
         try:
             self.assertEqual(dispatch_native_mcp_tool_call(authority, registration, arguments), "ok")
         finally:
+            _CURRENT_MCP_RESULT.reset(result_token)
+            _CURRENT_TOOL_CALL_ID.reset(call_token)
             _CURRENT_BINDING.reset(token)
         self.assertEqual(len(authority.calls), 1)
+
+    def test_root_selected_initial_input_is_taken_after_loader_ready_and_attached_once(self):
+        import io
+        from hermes_installer.authority.client import AuthorityClient
+        from hermes_installer import native_boundary
+        import hermes_installer.native_invocations as invocations
+
+        raw = b"root admitted prompt\n"
+        delivery = SimpleNamespace(
+            schema=1, source_receipt_handle="s" * 40,
+            selected_execution_handle="e" * 40,
+            input_sha256=hashlib.sha256(raw).hexdigest(), input_size_bytes=len(raw),
+            expires_monotonic=time.monotonic() + 20,
+        )
+        calls = []
+        authority = SimpleNamespace(take_selected_native_input=lambda: calls.append("take") or delivery)
+        with invocations._initial_input_lock:
+            invocations._initial_input = None
+            invocations._initial_input_messages.clear()
+        with patch("hermes_installer.native_plugin_loader.ensure_selected_native_plugins_ready",
+                   return_value=SimpleNamespace(_loader_ready=True)) as ready, \
+             patch.object(AuthorityClient, "for_current_process",
+                          new=classmethod(lambda cls, **_kwargs: authority)):
+            self.assertEqual(read_selected_native_input(io.BytesIO(raw)), "root admitted prompt\n")
+            messages = [{"role": "user", "content": "root admitted prompt\n"}]
+            saved = []
+            with patch.object(native_boundary, "_save_receipt", side_effect=lambda rows, handle: saved.append((rows, handle))), \
+                 patch.object(native_boundary, "prepare_provider_request", side_effect=lambda kwargs, *, purpose: dict(kwargs)):
+                result = prepare_native_provider_request({"messages": messages}, purpose="native-primary")
+                prepare_native_provider_request({"messages": messages}, purpose="native-primary")
+        ready.assert_called_once_with()
+        self.assertEqual(calls, ["take"])
+        self.assertIs(result["messages"], messages)
+        self.assertEqual(saved, [(messages, "s" * 40)])
+
+    def test_root_selected_input_mismatch_denies_before_provider_prepare(self):
+        import io
+        from hermes_installer.authority.client import AuthorityClient
+        from hermes_installer import native_boundary
+        import hermes_installer.native_invocations as invocations
+
+        raw = b"expected"
+        delivery = SimpleNamespace(
+            schema=1, source_receipt_handle="s" * 40, selected_execution_handle="e" * 40,
+            input_sha256=hashlib.sha256(raw).hexdigest(), input_size_bytes=len(raw),
+            expires_monotonic=time.monotonic() + 20,
+        )
+        authority = SimpleNamespace(take_selected_native_input=lambda: delivery)
+        with invocations._initial_input_lock:
+            invocations._initial_input = None
+            invocations._initial_input_messages.clear()
+        with patch("hermes_installer.native_plugin_loader.ensure_selected_native_plugins_ready"), \
+             patch.object(AuthorityClient, "for_current_process",
+                          new=classmethod(lambda cls, **_kwargs: authority)):
+            with self.assertRaises(NativeInvocationUnavailable):
+                read_selected_native_input(io.BytesIO(b"tampered"))
+        with patch.object(native_boundary, "prepare_provider_request") as prepare:
+            with self.assertRaises(NativeInvocationUnavailable):
+                prepare_native_provider_request({"messages": [{"role": "user", "content": "tampered"}]},
+                                                purpose="native-primary")
+        prepare.assert_not_called()
+
+    def test_mcp_receipt_is_taken_only_after_exact_tool_message_is_appended(self):
+        import types
+        from hermes_installer.authority.client import AuthorityClient
+        from hermes_installer import native_boundary
+        import hermes_installer.native_invocations as invocations
+
+        body = b'{"content":"private result"}'
+        agent = SimpleNamespace(_tool_result_content_for_active_model=lambda _name, result: result)
+        message = {"role": "tool", "name": "mcp__selected__read", "tool_name": "mcp__selected__read",
+                   "tool_call_id": "call-1", "content": body.decode("utf-8")}
+        messages = [message]
+        with invocations._native_result_lock:
+            invocations._pending_native_mcp_results.clear()
+        invocations._store_pending_native_mcp_result(
+            agent, "call-1", ("mcp__selected__read", body, "h" * 40),
+        )
+        tool_helpers = types.ModuleType("agent.tool_dispatch_helpers")
+        tool_helpers._maybe_append_elision_notice = lambda _name, value: value
+        tool_helpers._maybe_wrap_untrusted = lambda _name, value: value
+        consumed = []
+        authority = SimpleNamespace(take_source_receipt=lambda handle: consumed.append(handle) or handle)
+        saved = []
+        with patch.dict(sys.modules, {"agent.tool_dispatch_helpers": tool_helpers}), \
+             patch.object(AuthorityClient, "for_current_process",
+                          new=classmethod(lambda cls, **_kwargs: authority)), \
+             patch.object(native_boundary, "_save_receipt", side_effect=lambda rows, handle: saved.append((rows, handle))), \
+             patch.object(native_boundary, "_block_conversation") as block:
+            record_native_tool_result(agent, messages, message, body.decode("utf-8"))
+        self.assertEqual(consumed, ["h" * 40])
+        self.assertEqual(saved, [(messages, "h" * 40)])
+        block.assert_not_called()
+
+    def test_mcp_result_mutation_blocks_and_does_not_consume_root_receipt(self):
+        import types
+        from hermes_installer.authority.client import AuthorityClient
+        from hermes_installer import native_boundary
+        import hermes_installer.native_invocations as invocations
+
+        body = b'{"content":"private result"}'
+        agent = SimpleNamespace(_tool_result_content_for_active_model=lambda _name, result: result)
+        message = {"role": "tool", "name": "mcp__selected__read", "tool_name": "mcp__selected__read",
+                   "tool_call_id": "call-2", "content": "changed"}
+        messages = [message]
+        with invocations._native_result_lock:
+            invocations._pending_native_mcp_results.clear()
+        invocations._store_pending_native_mcp_result(
+            agent, "call-2", ("mcp__selected__read", body, "h" * 40),
+        )
+        tool_helpers = types.ModuleType("agent.tool_dispatch_helpers")
+        tool_helpers._maybe_append_elision_notice = lambda _name, value: value
+        tool_helpers._maybe_wrap_untrusted = lambda _name, value: value
+        authority = SimpleNamespace(take_source_receipt=lambda _handle: self.fail("must not consume"))
+        with patch.dict(sys.modules, {"agent.tool_dispatch_helpers": tool_helpers}), \
+             patch.object(AuthorityClient, "for_current_process",
+                          new=classmethod(lambda cls, **_kwargs: authority)), \
+             patch.object(native_boundary, "_block_conversation") as block:
+            record_native_tool_result(agent, messages, message, body.decode("utf-8"))
+        block.assert_called_once_with(messages)
 
     def test_root_response_call_binding_is_single_use_and_action_binding_is_checked(self):
         arguments = {"record": "one"}

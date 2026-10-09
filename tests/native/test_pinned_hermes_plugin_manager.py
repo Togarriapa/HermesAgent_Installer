@@ -159,7 +159,9 @@ class Authority:
     def dispatch_native_mcp(self, invocation_handle, canonical_arguments):
         assert invocation_handle == "i" * 40
         assert canonical_arguments == b'{"resource":"selected"}'
-        return type("Result", (), {"status": 200, "body": b'{"content":"selected"}'})()
+        return type("Result", (), {
+            "status": 200, "body": b'{"content":"selected"}', "source_receipt_handle": "h" * 40,
+        })()
 
 authority = Authority()
 package._authority = authority
@@ -189,6 +191,7 @@ assert "untrusted-fixture" not in manager._plugins
 loaded = manager._plugins.get("native-fixture")
 assert loaded is not None and loaded.enabled and loaded.error is None, repr(loaded)
 assert loaded.tools_registered == ["installer_native_fixture"], repr(loaded)
+assert loader.ensure_selected_native_plugins_ready() is package
 assert [frame["phase"] for frame in progress.frames] == [
     "entrypoint-imported", "actions-registered", "ready",
 ], progress.frames
