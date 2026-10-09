@@ -52,7 +52,7 @@ class HostCredentialVault(Protocol):
     """Root-only credential lookup. Implementations enforce owner and scope."""
 
     def resolve_reference(self, reference: str, *, peer_uid: int,
-                          required_scope: str) -> str: ...
+                          required_scope: str, principal_id: str) -> str: ...
 
 
 class ProviderAdmission(Protocol):
@@ -71,6 +71,7 @@ class ProviderEnrollment:
 
     provider: str
     account_id: str
+    principal_id: str
     target: str
     recipient: str
     credential_ref: str
@@ -84,7 +85,7 @@ class ProviderEnrollment:
             raise ValueError("provider enrollment is not supported")
         if not self.account_id or len(self.account_id) > 256 or not self.principal_id or len(self.principal_id) > 256:
             raise ValueError("an enrolled opaque account ID is required")
-        if not self.credential_reference or len(self.credential_reference) > 2048:
+        if not self.credential_ref or len(self.credential_reference) > 2048:
             raise ValueError("a protected credential reference is required")
         if not self.credential_scope or len(self.credential_scope) > 128:
             raise ValueError("a protected credential scope is required")
