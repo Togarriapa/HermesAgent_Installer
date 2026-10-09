@@ -459,7 +459,16 @@
         ],
         "checks": "Require root actual ready/import/action registry and exact admitted initial-input receipt/full parents, actual native request/completed result events for selected task workflow, and tool results when requested/enrolled workflow requires them. Fixed safe local no-model fixture can omit model events only if separately selected reviewed recipe says so, never general chat substitute. Root finalizes stored observations against actual terminal task/current transaction and observed closure; process exit does not synthesize readiness.",
         "terminal_join": "RootTaskTerminalReceipt adds native_execution_receipt_handle (nullable for failed/incomplete state); successful result validation requires nonnull actual root registry receipt. process.start native_loader_ready_event_id proves readiness only and may supply ready event prerequisite, not complete request/result boundary. Dead process needs no new fake live proof: stored during-live observations plus actual terminal/custody receipts suffice only for same task and original expiry/revocation policy.",
-        "failure": "Missing native observer/code/current package/input/result closure leaves task completion incomplete; exit0 and validtext do not override. No model-output truth or human/public classification from native receipt."
+        "failure": "Missing native observer/code/current package/input/result closure leaves task completion incomplete; exit0 and validtext do not override. No model-output truth or human/public classification from native receipt.",
+        "assembly": {
+          "owner_module": "hermes_installer.authority.source_observers",
+          "class": "RootTaskNativeObservationRegistry",
+          "dto_module": "hermes_installer.registry.resource_jobs",
+          "dto": "RootTaskNativeExecutionReceipt",
+          "composition_attribute": "task_native_observations",
+          "constructor": "RootTaskNativeObservationRegistry(source_observer_registry, native_bridge_broker, admitted_task_registry, process_custody_registry)",
+          "inputs": "All four dependencies are the actual root-composed registries, not worker callbacks. Root observers record actual during-live event receipts keyed admitted task/process/profile generation. Resolve immutable terminal receipt against retained admission and event closure; no source receipt ID inferred from stdout. Runner consumes root_runtime.task_native_observations.resolve_task_execution(task_handle, terminal_receipt). Registry owns retained event handles; caller gets immutable receipt, not authority to mint events."
+        }
       }
     },
     "recipe_domain": "task_body_recipe_id/task_request_schema_id select inner Hermes prompt recipe/schema; node/body_recipe_id and backend/body_recipe_id select outer resource request recipe/schema. Distinct domains, no automatic equality requirement. Both protected/current/source-pinned/forced-scope joins are mandatory; caller cannot choose either."

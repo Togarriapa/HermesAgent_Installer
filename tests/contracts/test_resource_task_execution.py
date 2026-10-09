@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -11,12 +12,16 @@ from hermes_installer.authority.resource_task_execution import (
     _strict_prompt,
 )
 from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.authority.service import AuthorityService
 from hermes_installer.managed_process_custodian import (
     ManagedTaskHandle,
     RootTaskTerminalReceipt,
 )
 from hermes_installer.registry.resource_jobs import (
     RootAdmittedTask,
+    RootAdmittedTaskSource,
+    RootResourceJobAdmissionHandle,
+    RootTaskController,
     ResourceJobDenied,
 )
 
@@ -85,6 +90,80 @@ def test_admitted_task_rejects_mismatched_stdin_hash_and_size():
             parent_closure_digest="a" * 64, deadline_monotonic=10.0,
             source_context_handle="source-context-handle-1234567890123456",
         )
+
+
+def test_service_rejects_changed_parent_closure_before_any_process_start():
+    """Exercise the real fixed start seam's trust join up to its side-effect gate."""
+    from hermes_installer.authority.service import PrincipalBinding
+    from hermes_installer.authority.types import Sensitivity
+    from hermes_installer.registry.resource_backends import SelectedResourceProfileTask
+
+    task = admitted_task()
+    admission = RootResourceJobAdmissionHandle(
+        handle_id="root-admission-handle-1234567890123456", job_id=task.job_id,
+        node_id=task.node_id, child_admission_id=task.admission_id, attempt_index=0,
+        backend_enrollment_id=task.backend_enrollment_id,
+        resource_generation=task.resource_generation, profile_id="profile-1",
+        profile_generation="profile-generation-1", native_package_id=task.native_package_id,
+        native_package_generation=task.native_package_generation,
+        process_enrollment_id=task.process_enrollment_id,
+        process_generation=task.process_generation, operation_id=task.operation_id,
+        child_target_id="process-target-1", child_capability="hermes-profile-invoke",
+        task_body_recipe_id=task.task_body_recipe_id,
+        task_request_schema_id=task.task_request_schema_id,
+        task_payload=task.task_payload_bytes, task_payload_sha256=task.task_payload_sha256,
+        parent_closure_digest=task.parent_closure_digest, expires_monotonic=20.0,
+    )
+    source = RootAdmittedTaskSource(
+        source_context_handle=task.source_context_handle,
+        verified_source_receipt_handles=("r" * 40,), signed_receipt_wires=(b"signed-receipt",),
+        sensitivity=Sensitivity.PRIVATE, lineage_hash="b" * 64, recipient_ceiling=("profile-1",),
+        principal_id="principal:one", profile_id="profile-1", namespace_id="namespace:one",
+        parent_closure_digest="c" * 64, controller_binding_handle="controller-handle-123456789",
+        expires_monotonic=19.0,
+    )
+    controller = RootTaskController(
+        schema=1, controller_handle=source.controller_binding_handle, controller_kind="worker",
+        controller_role_artifact_id="role-artifact", controller_role_sha256="d" * 64,
+        pid=os.getpid(), pidfd=0, uid=os.getuid(), identity="identity",
+        controller_profile_id="profile-1", controller_generation="profile-generation-1",
+        source_receipt_id="receipt-1", subject_principal_id=source.principal_id,
+        subject_profile_id=source.profile_id, subject_namespace_id=source.namespace_id,
+        service_generation_digest="e" * 64, expires_monotonic=18.0,
+    )
+    selection = SelectedResourceProfileTask(
+        resource_backend_id=task.backend_enrollment_id, resource_id="resource-1",
+        resource_generation=task.resource_generation, profile_id="profile-1",
+        principal_id=source.principal_id, profile_generation=admission.profile_generation,
+        process_enrollment_id=task.process_enrollment_id,
+        process_generation=task.process_generation, operation_id=task.operation_id,
+        process_start_target=admission.child_target_id, native_package_id=task.native_package_id,
+        native_package_generation=task.native_package_generation,
+        task_body_recipe_id=task.task_body_recipe_id,
+        task_request_schema_id=task.task_request_schema_id,
+        process_operation=object(), launch_recipe=object(), native_package=object(),
+        task_body_recipe=object(),
+    )
+    starts = []
+    manager = SimpleNamespace(start_selected_task=lambda *args, **kwargs: starts.append((args, kwargs)))
+    service = AuthorityService(
+        signing_key=b"t" * 32, key_id="task-runner-test",
+        bindings_by_uid={os.getuid(): PrincipalBinding(
+            os.getuid(), "principal:one", "profile-1", "namespace:one",
+            frozenset({"hermes-profile-invoke"}),
+        )}, rules={}, handlers={}, process_effect_handler=manager,
+        service_generation_digest="e" * 64,
+    )
+    service.resource_task_runner = object()
+    service.resource_job_authority = object()
+    service.monotonic = lambda: 1.0
+
+    with pytest.raises(AuthorityDenied, match="source or controller binding changed"):
+        service.perform_admitted_resource_process_start(
+            admission, task, source, controller, selection,
+            exact_stdin=_strict_prompt(task), timeout=5.0, cancelled=lambda: False,
+        )
+    assert starts == []
 
 
 @pytest.mark.parametrize("changes", [

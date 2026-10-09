@@ -240,3 +240,10 @@ Successful task completion SHALL bind actual native execution receipts and disti
 #### Scenario: Native or credential mapping absence
 - **WHEN** the current exact native or scoped credential join is missing
 - **THEN** no successful task capsule or authenticated webhook event is fabricated.
+
+### Requirement: Existing observation assembly joins
+The implementation SHALL apply the exact root registry, principal-selection and protected observation joins relevant to this change in `plans/amendments/2026-10-09-final-observation-assembly-v31.md`.
+
+#### Scenario: Static selection lacks actual runtime proof
+- **WHEN** an actual current role, display, source event or terminal execution receipt is absent
+- **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence

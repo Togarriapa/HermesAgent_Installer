@@ -193,6 +193,8 @@ class AuthorityService:
                  native_runtime_observer: Any | None = None,
                  native_invocation_registry: Any | None = None,
                  memory_step_effect_authority: Any | None = None,
+                 resource_task_runner: Any | None = None,
+                 resource_job_authority: Any | None = None,
                  service_generation_digest: str | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
@@ -230,6 +232,8 @@ class AuthorityService:
         self.native_runtime_observer = native_runtime_observer
         self.native_invocation_registry = native_invocation_registry
         self.memory_step_effect_authority = memory_step_effect_authority
+        self.resource_task_runner = resource_task_runner
+        self.resource_job_authority = resource_job_authority
         if (service_generation_digest is not None
                 and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
             raise ValueError("active service generation digest is invalid")
@@ -291,6 +295,289 @@ class AuthorityService:
                 or not callable(getattr(authority, "perform_memory_connector_step", None))):
             raise AuthorityDenied("memory.step", "root memory step authority binding is invalid")
         self.memory_step_effect_authority = authority
+
+    def attach_resource_task_runtime(self, runner: Any, job_authority: Any) -> None:
+        """Attach the reviewed root task runner and its exact admission authority once."""
+        from .resource_jobs import ResourceJobAuthority
+        from .resource_task_execution import RootResourceTaskRunner
+
+        if (self.resource_task_runner is not None or self.resource_job_authority is not None
+                or not isinstance(job_authority, ResourceJobAuthority)
+                or not isinstance(runner, RootResourceTaskRunner)
+                or runner.service is not self or runner.jobs is not job_authority
+                or job_authority.service is not self
+                or getattr(runner, "manager", None) is not self.process_effect_handler):
+            raise AuthorityDenied("resource.task", "root resource task runtime binding is invalid")
+        current_admission = getattr(job_authority, "is_admitted_task_current", None)
+        manager_current = getattr(self.process_effect_handler, "task_admission_current", None)
+        if (not callable(current_admission)
+                or manager_current not in (None, current_admission)):
+            raise AuthorityDenied("resource.task", "root task admission verifier is unavailable")
+        self.process_effect_handler.task_admission_current = current_admission
+        self.resource_task_runner = runner
+        self.resource_job_authority = job_authority
+
+    def launch_resource_profile_task(self, admission_handle: Any, node_id: str) -> Any:
+        """Root-private launch; worker RPC never accepts a task admission handle."""
+        from hermes_installer.registry.resource_jobs import RootResourceJobAdmissionHandle
+
+        runner = self.resource_task_runner
+        if (runner is None or not isinstance(admission_handle, RootResourceJobAdmissionHandle)
+                or not isinstance(node_id, str) or not node_id
+                or node_id != admission_handle.node_id
+                or not self.monotonic() < admission_handle.expires_monotonic):
+            raise AuthorityDenied("resource.task", "selected root task runner is unavailable or admission is stale")
+        return runner.launch_resource_profile_task(admission_handle, node_id)
+
+    def perform_admitted_resource_process_start(
+        self, admission: Any, task: Any, source: Any, controller: Any, selection: Any,
+        *, exact_stdin: bytes, timeout: float, cancelled: Callable[[], bool],
+    ) -> Any:
+        """Mint and consume one reduced process.start grant for a root task.
+
+        This fixed in-process seam is called only by ``RootResourceTaskRunner``.
+        It re-resolves the original signed source context and live controller,
+        derives the selected process target from protected enrollment, and
+        consumes a fresh child grant before custody writes the admitted stdin.
+        Parent receipts remain in the runner's private result lineage; they are
+        not replayed as child-profile bearer receipts.
+        """
+        from hermes_installer.managed_process_custodian import ManagedTaskHandle
+        from hermes_installer.registry.resource_jobs import (
+            RootAdmittedTask, RootAdmittedTaskSource, RootResourceJobAdmissionHandle,
+            RootTaskController,
+        )
+        from hermes_installer.registry.resource_backends import SelectedResourceProfileTask
+
+        jobs = self.resource_job_authority
+        manager = self.process_effect_handler
+        if (jobs is None or self.resource_task_runner is None
+                or not isinstance(admission, RootResourceJobAdmissionHandle)
+                or not isinstance(task, RootAdmittedTask)
+                or not isinstance(source, RootAdmittedTaskSource)
+                or not isinstance(controller, RootTaskController)
+                or not isinstance(selection, SelectedResourceProfileTask)
+                or manager is None or not isinstance(exact_stdin, bytes)
+                or not 1 <= len(exact_stdin) <= 262_144
+                or not callable(cancelled) or cancelled()
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= 600):
+            raise AuthorityDenied("resource.task_start", "root task start binding is unavailable or malformed")
+        if (task.node_id != admission.node_id
+                or task.admission_id != admission.child_admission_id
+                or task.job_id != admission.job_id or task.backend_enrollment_id != admission.backend_enrollment_id
+                or task.resource_generation != admission.resource_generation
+                or task.process_enrollment_id != admission.process_enrollment_id
+                or task.process_generation != admission.process_generation
+                or task.native_package_id != admission.native_package_id
+                or task.native_package_generation != admission.native_package_generation
+                or task.operation_id != admission.operation_id
+                or task.task_body_recipe_id != admission.task_body_recipe_id
+                or task.task_request_schema_id != admission.task_request_schema_id
+                or task.task_payload_sha256 != admission.task_payload_sha256
+                or task.parent_closure_digest != admission.parent_closure_digest
+                or task.source_context_handle != source.source_context_handle
+                or task.parent_closure_digest != source.parent_closure_digest
+                or hashlib.sha256(exact_stdin).hexdigest() != task.stdin_sha256
+                or len(exact_stdin) != task.stdin_size_bytes
+                or source.expires_monotonic <= self.monotonic()
+                or admission.expires_monotonic <= self.monotonic()
+                or task.deadline_monotonic <= self.monotonic()
+                or controller.expires_monotonic <= self.monotonic()
+                or controller.service_generation_digest != self.service_generation_digest
+                or controller.controller_handle != source.controller_binding_handle
+                or controller.subject_profile_id != source.profile_id
+                or controller.subject_principal_id != source.principal_id
+                or controller.subject_namespace_id != source.namespace_id):
+            raise AuthorityDenied("resource.task_start", "admitted task, source or controller binding changed")
+
+        resolve_parent = getattr(jobs, "resolve_admitted_task_parent_context", None)
+        if not callable(resolve_parent):
+            raise AuthorityDenied("resource.task_start", "root source context resolver is unavailable")
+        parent = resolve_parent(admission, admission.node_id, task.source_context_handle)
+        if not isinstance(parent, HostContext):
+            raise AuthorityDenied("resource.task_start", "root source context is invalid")
+        parent_binding = self._binding(parent.uid)
+        self._verify_context_signature(parent)
+        self._assert_current_context(parent, parent_binding, parent.uid)
+        if (parent.profile_id != source.profile_id or parent.principal_id != source.principal_id
+                or parent.namespace_id != source.namespace_id
+                or parent.native_process_identity is None
+                or parent.sensitivity != source.sensitivity
+                or parent.generation != self.profile_generations.get(parent.profile_id)):
+            raise AuthorityDenied("resource.task_start", "original source context no longer matches its root lineage")
+
+        receipts = tuple(SourceReceipt.from_wire(json.loads(raw.decode("ascii")))
+                         for raw in source.signed_receipt_wires)
+        if (not receipts or {item.receipt_id for item in receipts}
+                != {item.receipt_id for item in parent.source_receipts}
+                or len(source.verified_source_receipt_handles) != len(receipts)):
+            raise AuthorityDenied("resource.task_start", "complete signed source receipt closure is unavailable")
+        for receipt in receipts:
+            self._verify_source_receipt(receipt, parent_binding)
+        expected_identity = self._native_process_identity(controller.pid, controller.uid)
+        live_resolver = getattr(manager, "resolve_live_peer", None)
+        if not callable(live_resolver) or controller.controller_profile_id is None:
+            raise AuthorityDenied("resource.task_start", "root controller process resolver is unavailable")
+        live_identity = live_resolver(
+            controller.pid, controller.pidfd, profile_id=controller.controller_profile_id,
+            generation=controller.controller_generation,
+        )
+        if (live_identity is None or live_identity != controller.identity
+                or controller.uid != parent.uid
+                or expected_identity != parent.native_process_identity
+                or any(item.native_process_identity != expected_identity for item in receipts)):
+            raise AuthorityDenied("resource.task_start", "source controller PIDFD identity is stale or mismatched")
+
+        resolve_operation = self.selected_operation_resolver
+        if not callable(resolve_operation):
+            raise AuthorityDenied("resource.task_start", "protected process.start selector is unavailable")
+        try:
+            selected = resolve_operation(
+                admission.process_enrollment_id, admission.process_generation,
+                "process.start", selection.operation_id,
+            )
+        except Exception:
+            raise AuthorityDenied("resource.task_start", "selected process operation is unavailable") from None
+        profile = getattr(manager, "profiles", {}).get(admission.profile_id)
+        child_bindings = [binding for binding in self.bindings_by_uid.values()
+                          if binding.profile_id == selection.profile_id]
+        child_binding = child_bindings[0] if len(child_bindings) == 1 else None
+        if (selected is None or profile is None or child_binding is None
+                or selection.profile_id != admission.profile_id
+                or selection.profile_generation != admission.profile_generation
+                or selection.process_enrollment_id != admission.process_enrollment_id
+                or selection.process_generation != admission.process_generation
+                or selection.process_start_target != admission.child_target_id
+                or selection.principal_id != child_binding.principal_id
+                or getattr(selected, "target", None) != selection.process_start_target
+                or getattr(selected, "profile_id", None) != profile.profile_id
+                or getattr(selected, "principal_id", None) != child_binding.principal_id
+                or getattr(selected, "service_uid", None) != child_binding.uid
+                or getattr(selected, "enrollment_id", None) != profile.enrollment_id
+                or getattr(selected, "generation", None) != profile.generation
+                or profile.profile_id != selection.profile_id
+                or profile.generation != selection.profile_generation
+                or profile.enrollment_id != selection.process_enrollment_id
+                or profile.owner_uid != child_binding.uid
+                or profile.owner_gid != getattr(selected, "service_gid", None)
+                or profile.generation != self.profile_generations.get(profile.profile_id)
+                or profile.operation_targets is None
+                or profile.operation_targets.get("process.start") != selection.process_start_target
+                or admission.child_capability != "hermes-profile-invoke"
+                or "hermes-profile-invoke" not in child_binding.capabilities):
+            raise AuthorityDenied("resource.task_start", "selected process recipe or root profile binding is stale")
+
+        selection_payload = canonical_bytes({
+            "schema": 1, "enrollment_id": profile.enrollment_id,
+            "generation": profile.generation,
+            "operation_id": selection.operation_id, "parameters": {},
+            "admission_handle": admission.handle_id,
+            "node_id": task.node_id,
+            "task_payload_sha256": task.task_payload_sha256,
+            "stdin_sha256": task.stdin_sha256,
+            "stdin_size_bytes": task.stdin_size_bytes,
+        })
+        request_digest = canonical_digest(selection_payload)
+        verify_admission = getattr(jobs, "is_admitted_task_current", None)
+        if (selection.operation_id != admission.operation_id
+                or selection.operation_id != task.operation_id
+                or selection.task_body_recipe_id != task.task_body_recipe_id
+                or selection.task_request_schema_id != task.task_request_schema_id
+                or hashlib.sha256(task.task_payload_bytes).hexdigest() != task.task_payload_sha256
+                or not callable(verify_admission)
+                or not verify_admission(task, selection_payload)):
+            raise AuthorityDenied("resource.task_start", "task recipe selection does not match its admission")
+        now = self.monotonic()
+        expiry = min(float(admission.expires_monotonic), float(task.deadline_monotonic),
+                     float(source.expires_monotonic), now + min(float(timeout), MAX_CONTEXT_LEASE))
+        if expiry <= now or cancelled():
+            raise AuthorityDenied("resource.task_start", "task start lease expired or was cancelled")
+        order = (Sensitivity.PUBLIC, Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN)
+        sensitivity = max((parent.sensitivity, *(item.sensitivity for item in receipts)), key=order.index)
+        if sensitivity is Sensitivity.PUBLIC:
+            raise AuthorityDenied("resource.task_start", "resource task lineage cannot be public")
+        lineage_hash = canonical_digest({
+            "parent_context": _context_digest(parent),
+            "parent_closure_digest": source.parent_closure_digest,
+            "receipt_claims": sorted(canonical_digest(item.claims()) for item in receipts),
+            "controller_identity": expected_identity,
+            "task_payload_sha256": task.task_payload_sha256,
+            "stdin_sha256": task.stdin_sha256,
+            "selection_digest": request_digest,
+        })
+        enrollment_id = canonical_digest({
+            "uid": child_binding.uid, "principal_id": child_binding.principal_id,
+            "profile_id": child_binding.profile_id, "namespace_id": child_binding.namespace_id,
+            "generation": profile.generation, "authority_epoch": self.authority_epoch,
+        })
+        context = HostContext(
+            principal_id=child_binding.principal_id, profile_id=child_binding.profile_id,
+            namespace_id=child_binding.namespace_id, uid=child_binding.uid,
+            purpose="resource-profile-task", intent_id=canonical_digest({
+                "job_id": admission.job_id, "node_id": admission.node_id,
+                "attempt": admission.attempt_index, "task_sha256": task.task_payload_sha256,
+                "selection_digest": request_digest,
+            }), trace_id=parent.trace_id, sensitivity=sensitivity,
+            lineage_hash=lineage_hash, policy_revision=self._policy_revision(),
+            capabilities=child_binding.capabilities, issued_at_monotonic=now,
+            monotonic_expires_at=expiry, nonce=secrets.token_urlsafe(24),
+            grant_id=secrets.token_urlsafe(24), signature="pending",
+            source_receipts=(), final_payload_digest=request_digest,
+            enrollment_id=enrollment_id, generation=profile.generation,
+            operation="process.start", native_process_identity=expected_identity,
+        )
+        context = replace(context, signature=self._sign(context.claims()))
+        auth_wire = self._authorize_effect(child_binding.uid, {
+            "context": context.to_wire(), "capability": "hermes-profile-invoke",
+            "target": selection.process_start_target, "recipient": None,
+            "request_digest": request_digest, "retry_index": 0,
+        })
+        authorization = EffectAuthorization.from_wire(auth_wire)
+        self._verify_grant_signature(authorization)
+        self._assert_grant_current(authorization, child_binding, child_binding.uid)
+        self._assert_current_context(context, child_binding, child_binding.uid)
+        effect_rule = self.rules.get(("hermes-profile-invoke", "process.start", selection.process_start_target))
+        if (effect_rule is None or cancelled() or not self.policy.allow_effect(
+                context=context, rule=effect_rule,
+                request_digest=request_digest, retry_index=0)):
+            raise AuthorityDenied("resource.task_start", "fresh root process.start authorization is no longer active")
+        if not verify_admission(task, selection_payload):
+            raise AuthorityDenied("resource.task_start", "root task admission expired before launch")
+        self._consume(authorization)
+        start = getattr(manager, "start_selected_task", None)
+        if not callable(start):
+            raise AuthorityDenied("resource.task_start", "managed process task start is unavailable")
+        result = start(
+            profile, context, authorization, selection_payload,
+            task_handle=task, exact_stdin=exact_stdin,
+            expected_stdin_sha256=task.stdin_sha256,
+            peer_pid=controller.pid, peer_pidfd=controller.pidfd,
+            timeout=min(float(timeout), max(0.001, expiry - now)), cancelled=cancelled,
+        )
+        if not isinstance(result, ManagedTaskHandle) or cancelled():
+            raise AuthorityDenied("resource.task_start", "managed process task did not start cleanly")
+        return result
+
+    def consume_resource_task_completion(self, receipt: Any, *,
+                                         cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Consume the runner's one-use terminal/result capsule in-process only."""
+        from .resource_jobs import RootResourceProcessReceipt
+
+        runner = self.resource_task_runner
+        if runner is None or not isinstance(receipt, RootResourceProcessReceipt) or not callable(cancelled):
+            raise AuthorityDenied("resource.task_result", "root task result capsule is unavailable")
+        result = runner.consume_resource_task_completion(receipt, cancelled=cancelled)
+        if (not isinstance(result, Mapping)
+                or set(result) != {"status", "body", "headers", "receipt_id", "result_fields"}
+                or type(result["status"]) is not int or not 200 <= result["status"] < 300
+                or not isinstance(result["body"], bytes) or len(result["body"]) > MAX_RESPONSE
+                or not isinstance(result["headers"], Mapping) or len(result["headers"]) > 16
+                or not isinstance(result["receipt_id"], str) or not result["receipt_id"]
+                or not isinstance(result["result_fields"], Mapping)
+                or cancelled()):
+            raise AuthorityDenied("resource.task_result", "root task result capsule is malformed or cancelled")
+        return result
 
     def perform_memory_connector_step(self, reservation_handle: str,
                                      canonical_connector_payload_bytes: bytes,

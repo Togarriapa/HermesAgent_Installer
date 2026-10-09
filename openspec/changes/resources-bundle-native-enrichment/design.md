@@ -113,3 +113,5 @@ Use first_stage_policy_compiler exact home/prepared order/runtime artifact roles
 ### v29 native task and credential joins
 
 Use separate result generation_api domains, task_runner_protocol.native_execution_receipt and backend_enrollments.credential_bindings exact active joins. Existing HI/RB tasks remain pending.
+
+Additive observation assembly v31: `plans/amendments/2026-10-09-final-observation-assembly-v31.md`; preserve existing task IDs and open target gates. Selected root registries/current custody receipts supply actual observations; static catalog or caller claims do not.

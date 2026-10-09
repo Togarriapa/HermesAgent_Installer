@@ -164,7 +164,7 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
             "    _record={'schema':1,'launch_nonce':_nonce.decode('ascii'),'sequence':_seq,"
             "'phase':_phase,'package_id':_package,'generation':_generation,"
             "'entrypoint_sha256':_entrypoint,'resolver_sha256':_resolver,"
-            "'registered_action_ids':['ci-native-action']}\n"
+            "'registered_action_ids':([] if _seq == 0 else ['ci-native-action'])}\n"
             "    _body=json.dumps(_record,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')\n"
             "    _sock.sendall(struct.pack('!I',len(_body))+_body)\n"
             "_sock.close()\n"
