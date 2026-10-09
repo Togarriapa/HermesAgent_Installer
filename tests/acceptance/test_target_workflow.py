@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 from hermes_installer.verification.acceptance import AuthorizedTarget, TargetWorkflowRunner
 from hermes_installer.evidence import EvidenceClass, EvidenceRecord, EvidenceState
+from hermes_installer.verification.profiles import profile_for
 
 
 def target(**changes):
@@ -85,7 +86,7 @@ class TargetWorkflowTests(unittest.TestCase):
         self.assertIsNone(result.record)
 
     def test_registered_workflow_is_invoked_and_candidate_target_binding_is_enforced(self):
-        enrolled = target()
+        enrolled = target(platform="fixture-x86_64")
         calls = []
 
         def pending_probe(observed_target, output_dir):
@@ -96,7 +97,9 @@ class TargetWorkflowTests(unittest.TestCase):
                 platform="fixture-x86_64", target_id=observed_target.target_id,
                 started_at=datetime.now(timezone.utc).isoformat(),
                 finished_at=datetime.now(timezone.utc).isoformat(), command="fixture probe",
-                exit_code=None, assertions={}, blocker="fixture only; target acceptance remains pending",
+                exit_code=None,
+                assertions={name: None for name in profile_for("EV-R0169", "AC01").assertions},
+                blocker="fixture only; target acceptance remains pending",
             )
 
         runner = TargetWorkflowRunner(workflows={"AC01": pending_probe}, authorize=lambda _: True)
@@ -114,6 +117,47 @@ class TargetWorkflowTests(unittest.TestCase):
         wrong_runner = TargetWorkflowRunner(workflows={"AC01": wrong_candidate}, authorize=lambda _: True)
         with self.assertRaisesRegex(ValueError, "not bound"):
             wrong_runner.run("AC01", enrolled, "a" * 40, "/tmp/evidence")
+
+    def test_structural_pass_observation_remains_pending_without_verifier_authentication(self):
+        enrolled = target(platform="fixture-x86_64")
+        profile = profile_for("EV-R0169", "AC01")
+
+        def observed_pass(observed_target, _output_dir):
+            return EvidenceRecord(
+                evidence_id="EV-R0169", candidate_sha="a" * 40,
+                evidence_class=EvidenceClass.FIXTURE, state=EvidenceState.PASS,
+                platform="fixture-x86_64", target_id=observed_target.target_id,
+                started_at=datetime.now(timezone.utc).isoformat(),
+                finished_at=datetime.now(timezone.utc).isoformat(), command="fixture probe",
+                exit_code=0, assertions={name: True for name in profile.assertions},
+                artifact_sha256="a" * 64,
+            )
+
+        result = TargetWorkflowRunner(workflows={"AC01": observed_pass}, authorize=lambda _: True).run(
+            "AC01", enrolled, "a" * 40, "/tmp/evidence"
+        )
+        self.assertEqual(EvidenceState.PENDING, result.state)
+        self.assertEqual(EvidenceState.PASS, result.record.state)
+        self.assertIn("verifier authentication", result.message)
+
+    def test_workflow_cannot_change_evidence_profile_or_target_lane(self):
+        enrolled = target(platform="fixture-x86_64")
+
+        def wrong_profile(observed_target, _output_dir):
+            return EvidenceRecord(
+                evidence_id="EV-R0170", candidate_sha="a" * 40,
+                evidence_class=EvidenceClass.FIXTURE, state=EvidenceState.PENDING,
+                platform="fixture-x86_64", target_id=observed_target.target_id,
+                started_at=datetime.now(timezone.utc).isoformat(),
+                finished_at=datetime.now(timezone.utc).isoformat(), command="fixture probe",
+                exit_code=None,
+                assertions={name: None for name in profile_for("EV-R0170", "AC02").assertions},
+                blocker="not observed",
+            )
+
+        runner = TargetWorkflowRunner(workflows={"AC01": wrong_profile}, authorize=lambda _: True)
+        with self.assertRaisesRegex(ValueError, "no installer-owned"):
+            runner.run("AC01", enrolled, "a" * 40, "/tmp/evidence")
 
 
 if __name__ == "__main__":
