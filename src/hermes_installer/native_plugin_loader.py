@@ -54,27 +54,54 @@ class NativePluginLoadUnavailable(PermissionError):
 def _validate_plugin_result_tree(value: Any) -> None:
     """Bound and validate JSON results before adapting them to Hermes' tool contract."""
     nodes = 0
+    encoded_size = 0
     active: set[int] = set()
+
+    def account(amount: int) -> None:
+        nonlocal encoded_size
+        encoded_size += amount
+        if encoded_size > _MAX_PLUGIN_RESULT_BYTES:
+            raise ValueError("result exceeds its serialized size bound")
+
+    def quoted_string_size(text: str) -> int:
+        if len(text) > _MAX_PLUGIN_RESULT_BYTES:
+            raise ValueError("result string exceeds its bound")
+        size = 2  # JSON quotes
+        for char in text:
+            codepoint = ord(char)
+            if char in {'"', "\\"}:
+                size += 2
+            elif codepoint < 0x20:
+                size += 6  # conservative JSON unicode escape bound
+            else:
+                size += len(char.encode("utf-8"))
+            if size > _MAX_PLUGIN_RESULT_BYTES:
+                raise ValueError("result string exceeds its serialized size bound")
+        return size
 
     def visit(item: Any, depth: int) -> None:
         nonlocal nodes
         nodes += 1
         if nodes > _MAX_PLUGIN_RESULT_NODES or depth > _MAX_PLUGIN_RESULT_DEPTH:
             raise ValueError("result structure exceeds its bound")
-        if item is None or type(item) is bool:
+        if item is None:
+            account(4)
+            return
+        if type(item) is bool:
+            account(4 if item else 5)
             return
         if type(item) is str:
-            if len(item) > _MAX_PLUGIN_RESULT_BYTES:
-                raise ValueError("result string exceeds its bound")
-            item.encode("utf-8")
+            account(quoted_string_size(item))
             return
         if type(item) is int:
             if item.bit_length() > _MAX_PLUGIN_RESULT_BYTES * 4:
                 raise ValueError("result integer exceeds its bound")
+            account(len(str(item)))
             return
         if type(item) is float:
             if not math.isfinite(item):
                 raise ValueError("result float is not finite")
+            account(len(json.dumps(item, allow_nan=False)))
             return
         if type(item) not in {dict, list}:
             raise ValueError("result contains an unsupported value")
@@ -85,15 +112,19 @@ def _validate_plugin_result_tree(value: Any) -> None:
         active.add(identity)
         try:
             if type(item) is dict:
-                for key, child in item.items():
+                account(2)  # braces
+                for index, (key, child) in enumerate(item.items()):
+                    if index:
+                        account(1)
                     if type(key) is not str:
                         raise ValueError("result object key is not text")
-                    if len(key) > _MAX_PLUGIN_RESULT_BYTES:
-                        raise ValueError("result object key exceeds its bound")
-                    key.encode("utf-8")
+                    account(quoted_string_size(key) + 1)  # key and colon
                     visit(child, depth + 1)
             else:
-                for child in item:
+                account(2)  # brackets
+                for index, child in enumerate(item):
+                    if index:
+                        account(1)
                     visit(child, depth + 1)
         finally:
             active.remove(identity)
