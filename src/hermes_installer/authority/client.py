@@ -31,9 +31,9 @@ _OPERATIONS = frozenset({
     "host.write", "alert.deliver", "process.start", "process.status", "process.read",
     "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
-    "resource.orchestrator.recruit",
-    "source.capture", "process.inspect", "connector.open", "connector.read",
-    "connector.write", "connector.close", "native.event.prepare", "native.request.dispatch",
+    "resource.orchestrator.recruit", "process.inspect", "connector.open",
+    "connector.read", "connector.write", "connector.close",
+    "native.event.prepare", "native.request.dispatch",
 })
 
 MAX_REQUEST = 6 * 1024 * 1024 + 16_384
@@ -190,26 +190,12 @@ class AuthorityClient:
     def capture_source(self, payload: bytes, *, parent_receipt_handles: Sequence[str] = (),
                        timeout: float = 5.0,
                        cancelled: Callable[[], bool] | None = None) -> str:
-        """Let the root broker hash exact submitted bytes and return an opaque private receipt handle."""
-        if not isinstance(payload, bytes) or not 1 <= len(payload) <= 1_048_576:
-            raise AuthorityDenied("source.invalid", "source capture exceeds its fixed byte bound")
-        if (len(parent_receipt_handles) > 64
-                or any(not isinstance(item, str) or not item for item in parent_receipt_handles)):
-            raise AuthorityDenied("source.invalid", "parent receipt handles are invalid")
-        if cancelled is not None and cancelled():
-            raise AuthorityDenied("source.cancelled", "source capture was cancelled")
-        import base64
-        result = self._rpc("capture_source", {
-            "schema": 1,
-            "payload": base64.b64encode(payload).decode("ascii"),
-            "parent_receipt_handles": list(parent_receipt_handles),
-        }, timeout=min(self.timeout, timeout), cancelled=cancelled)
-        if not isinstance(result, dict) or set(result) != {"receipt_handle"}:
-            raise AuthorityDenied("source.invalid", "source broker returned an invalid receipt handle")
-        handle = result["receipt_handle"]
-        if not isinstance(handle, str) or not 32 <= len(handle) <= 128:
-            raise AuthorityDenied("source.invalid", "source broker returned an invalid receipt handle")
-        return handle
+        """The old same-peer caller-byte minting endpoint is intentionally retired.
+
+        Native evidence must use the paired producer/gateway event bridge; a
+        generic enrolled worker is not a trusted source issuer.
+        """
+        raise AuthorityDenied("source.issuer", "generic worker source capture is not an enrolled issuer")
 
     def authorize_effect(self, context: HostContext, *, capability: str,
                          target: str, recipient: str | None = None,

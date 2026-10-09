@@ -39,7 +39,6 @@ _AUTHORITY_OPERATIONS = frozenset({
     "connector.close", "native.event.prepare", "native.request.dispatch",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
     "resource.orchestrator.recruit",
-    "source.capture",
 })
 
 

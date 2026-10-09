@@ -48,7 +48,7 @@ _OPERATIONS = frozenset({
     "process.read", "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
     "resource.orchestrator.recruit",
-    "source.capture", "process.inspect", "connector.open", "connector.read",
+    "process.inspect", "connector.open", "connector.read",
     "connector.write", "connector.close", "native.event.prepare", "native.request.dispatch",
 })
 
@@ -357,46 +357,6 @@ class AuthorityService:
         )
         return replace(receipt, signature=self._sign(receipt.claims()))
 
-    def _capture_source(self, uid: int, peer_pid: int, payload: Any) -> dict[str, str]:
-        """Hash exact bytes observed on the protected socket; the host assigns all source claims."""
-        if not isinstance(payload, dict) or set(payload) != {
-                "schema", "payload", "parent_receipt_handles"}:
-            raise AuthorityDenied("source.request", "source capture fields are invalid")
-        handles = payload["parent_receipt_handles"]
-        if (type(payload["schema"]) is not int or payload["schema"] != 1
-                or not isinstance(handles, list) or len(handles) > 64
-                or any(not isinstance(value, str) or not value for value in handles)):
-            raise AuthorityDenied("source.request", "source capture schema or parent handles are invalid")
-        import base64
-        try:
-            source_bytes = base64.b64decode(payload["payload"], validate=True)
-        except Exception:
-            raise AuthorityDenied("source.request", "source capture bytes are malformed") from None
-        if not 1 <= len(source_bytes) <= 1_048_576:
-            raise AuthorityDenied("source.request", "source capture exceeds its fixed byte limit")
-        digest = canonical_digest(source_bytes)
-        parent_context = HostContext.from_wire(self._issue_context(uid, {
-            "purpose": "native-source-capture", "intent": f"native-capture:{digest}",
-            "trace_id": secrets.token_urlsafe(24), "lease_seconds": 60.0,
-            "source_contexts": [], "source_receipt_handles": handles,
-            "final_payload_digest": digest, "operation": "source.capture",
-        }, peer_pid=peer_pid))
-        receipt = self.issue_source_receipt(
-            parent_context, source_kind="native-input",
-            origin_id=f"native-event:{secrets.token_urlsafe(24)}",
-            payload=source_bytes, ttl_seconds=300)
-        handle = secrets.token_urlsafe(40)
-        with self._lock:
-            now = self.monotonic()
-            self._source_receipt_handles = {
-                key: value for key, value in self._source_receipt_handles.items()
-                if value.monotonic_expires_at > now
-            }
-            if len(self._source_receipt_handles) >= 100_000:
-                raise AuthorityDenied("source.capacity", "source handle store is at capacity")
-            self._source_receipt_handles[handle] = receipt
-        return {"receipt_handle": handle}
-
     def revalidate_effect(self, context: HostContext, authorization: EffectAuthorization, *,
                           operation: str, request_digest: str,
                           retry_index: int) -> bool:
@@ -574,8 +534,6 @@ class AuthorityService:
             if isinstance(payload, dict) and "source_receipts" in payload:
                 raise AuthorityDenied("source.handle", "workers must resolve opaque source receipt handles")
             return self._issue_context(uid, payload, peer_pid=peer_pid)
-        if operation == "capture_source":
-            return self._capture_source(uid, peer_pid, payload)
         if operation == "authorize_effect":
             return self._authorize_effect(uid, payload, peer_pid=peer_pid)
         if operation == "verify_effect":
