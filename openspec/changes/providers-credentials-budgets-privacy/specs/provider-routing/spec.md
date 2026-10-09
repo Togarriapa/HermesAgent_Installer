@@ -254,3 +254,10 @@ The installer SHALL bind actual native producer package/adapter closure through 
 #### Scenario: Mutable package or divergent normalization
 - **WHEN** native closure, peer generation, issuer provenance or route-normalized final payload differs from protected enrollment
 - **THEN** deny before effect bytes and retain exact incomplete implementation/native evidence state.
+
+### Requirement: Native protected configuration identities
+The installer SHALL validate strict root-owned package/issuer catalogs and distinct canonical normalization-policy and installed module hashes with actual current enrollment joins.
+
+#### Scenario: Partial hash or unobserved configured issuer
+- **WHEN** policy/module digest is missing or source observer only exists as configuration text
+- **THEN** keep affected native effect unavailable and require actual identity/observer evidence.

@@ -152,3 +152,38 @@ The installer SHALL resolve only protected fixed operation recipes and current r
 #### Scenario: Forged recipe or expired voice session
 - **WHEN** selected operation parameters escape its schema or voice session is stale, sibling-owned or lacks trusted permission
 - **THEN** reject before execution/capture and cancel owned expired resources.
+
+### Requirement: Native protected configuration identities
+The installer SHALL validate strict root-owned package/issuer catalogs and distinct canonical normalization-policy and installed module hashes with actual current enrollment joins.
+
+#### Scenario: Partial hash or unobserved configured issuer
+- **WHEN** policy/module digest is missing or source observer only exists as configuration text
+- **THEN** keep affected native effect unavailable and require actual identity/observer evidence.
+
+### Requirement: Fixed recipe parameter grammar
+The installer SHALL validate only bounded root-selected scalar parameter schemas and exact literal/parameter argv tokens, one element each, with no interpolation or caller physical resource selection.
+
+#### Scenario: Caller injects path or extra parameter
+- **WHEN** parameter is untyped, unbounded, extra or outside exact scalar grammar
+- **THEN** reject before launch without shell expansion or alternate recipe fallback.
+
+### Requirement: Selected package and compound memory admission
+The installer SHALL resolve native package from actual enrolled peer and SHALL authorize each fixed compound memory step separately under same bounded root-owned admission and source lineage.
+
+#### Scenario: Caller chooses package or reuses compound grant
+- **WHEN** caller claims alternate package/scope or repeats one consumed authorization across steps
+- **THEN** reject before bytes and retain owned cleanup journal with no sibling deletion.
+
+### Requirement: Canonical native record digests
+The installer SHALL validate exact canonical resolver/policy document digest preimages, reject duplicate keys and keep module/archive hashes distinct.
+
+#### Scenario: Self hash or wrapper bytes substituted
+- **WHEN** digest uses wrong preimage or archive/module identity in place of canonical document
+- **THEN** reject enrollment before effects; verified presentation does not confer authority.
+
+### Requirement: Fixed memory compound wire
+The installer SHALL enforce canonical typed memory compound write envelopes with root-derived HTTP frames and atomic root current-step state, separate from stream protocols.
+
+#### Scenario: Forged HTTP frame or skipped compound step
+- **WHEN** caller submits arbitrary HTTP bytes, wrong job/step or reused frame grant
+- **THEN** reject before backend bytes with owned failure/cleanup journal and no sibling scope mutation.

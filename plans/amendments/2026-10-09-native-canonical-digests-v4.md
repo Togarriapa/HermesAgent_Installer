@@ -1,0 +1,3 @@
+# Native canonical digests v4
+
+Sol additive exact serialization clarification HI08/HI09/HI11, existing tasks/evidence only. Resolver document preimage excludes self hash, policy record preimage excludes self hash, both exact UTF-8 sorted-key compact JSON ensure_ascii=false/no trailing newline with duplicate-key rejection. Document/module/archive hashes remain distinct unless exact bytes identical. planning/native-package-binding-contract.json and native-cross-process-bridge-contract.json define exact preimage fields. Worker digest verifies presentation, never effect authority. Frozen baseline/tag and target acceptance unchanged.

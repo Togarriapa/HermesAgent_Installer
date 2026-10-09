@@ -61,7 +61,16 @@
       "resolver_digest",
       "expires_monotonic"
     ],
-    "semantics": "Opaque binding resolves fixed in-process immutable loader/resolver only; not bearer authority. Root registry fixes issuer channels and action enrollment. No root access to arbitrary plugin imports from caller paths."
+    "semantics": "Opaque binding resolves fixed in-process immutable loader/resolver only; not bearer authority. Root registry fixes issuer channels and action enrollment. No root access to arbitrary plugin imports from caller paths.",
+    "selected_boot_api": {
+      "signature": "bind_selected_native_package()",
+      "operation": "native.package.bind",
+      "request_fields": [
+        "schema=1"
+      ],
+      "selection": "Root resolves exactly one active package from authenticated live peer/process profile/generation and protected package catalog; zero or ambiguous denies. No caller env/path/profile/package ID supplies authority. Existing explicit bind_native_package(package_id,generation) only optional equality assertion against same root-resolved selection, never choice.",
+      "loader": "Returned opaque binding and read_native_resolver result feed fixed root-installed loader; actual entrypoint imports only root-selected compiled closure verified digest/read-only mount. No user site/plugins/PYTHONPATH/importlib caller path/fallback discovery. Closure module mapping and allowed imports pinned by package artifact, external dependencies root attested catalog only."
+    }
   },
   "plugin_effects": {
     "signature": "invoke(adapter_id, action_id, arguments, idempotency_key=None, opaque_confirmation_attestation_id=None)",
@@ -121,7 +130,8 @@
       "adapters"
     ],
     "adapters": "Finite list of records with adapter_id,manifest_sha256,adapter_sha256,action_id,argument_schema_id,result_schema_id,effect_enrollment_id,operation,capability,target_id,recipient,generation matching package catalog; extra fields forbidden",
-    "semantics": "Root returns canonical bounded immutable resolver document from selected closure after same actual peer/package/generation validation; maximum2MiB and <=692 selected declarations. No request path, FD, module import or caller mount choice. Root selected loader reads only enrolled read-only namespace closure internally. Facade resolver is presentation/routing only: root re-resolves current effect enrollment and all identity/authority/schema/source conditions EVERY effect, never trusts returned record as permission."
+    "semantics": "Root returns canonical bounded immutable resolver document from selected closure after same actual peer/package/generation validation; maximum2MiB and <=692 selected declarations. No request path, FD, module import or caller mount choice. Root selected loader reads only enrolled read-only namespace closure internally. Facade resolver is presentation/routing only: root re-resolves current effect enrollment and all identity/authority/schema/source conditions EVERY effect, never trusts returned record as permission.",
+    "digest": "SHA256 of UTF-8 canonical JSON object {schema,package_id,profile_id,generation,adapters}, excluding resolver_sha256, sorted keys, compact separators comma/colon, ensure_ascii=false, no trailing newline. Reject duplicate JSON keys and unknown fields. Protected resolver artifact stores exact canonical document bytes for same artifact/document SHA; wrapper archive must retain separately named artifact SHA and document SHA, never conflate. Worker verifies presentation digest/bounds, root re-resolves effect authority."
   },
   "operation_recipes": {
     "enrollment_field": "operation_recipes",
@@ -145,6 +155,36 @@
       "operation_id",
       "parameters"
     ],
-    "constraints": "Root resolves executable/cwd/child artifacts from protected catalog and opaque roots, verifies actual pins. argv_recipe finite literals and typed parameter placeholders only; no caller shell/argv/path/env/URL/executable/substitution. cwd_subpath protected enrollment literal validated containment/no symlinks. environment root finite sanitized literals/ref bindings, never caller env or secret argv. stdin_mode closed|bounded-typed-bytes per schema, max lifetime<=600s unless separately reviewed existing operation cap. Parameters exact schema extra fields forbidden, argument output bounds required. Operation recipe selection not independent authorization: fixed process.start effect target and exact operation_id/parameters digest in grant. Missing recipe/pin/build dependencies unavailable."
+    "constraints": "Root resolves executable/cwd/child artifacts from protected catalog and opaque roots, verifies actual pins. argv_recipe finite literals and typed parameter placeholders only; no caller shell/argv/path/env/URL/executable/substitution. cwd_subpath protected enrollment literal validated containment/no symlinks. environment root finite sanitized literals/ref bindings, never caller env or secret argv. stdin_mode closed|bounded-typed-bytes per schema, max lifetime<=600s unless separately reviewed existing operation cap. Parameters exact schema extra fields forbidden, argument output bounds required. Operation recipe selection not independent authorization: fixed process.start effect target and exact operation_id/parameters digest in grant. Missing recipe/pin/build dependencies unavailable.",
+    "typed_parameter_catalog": {
+      "file": "/etc/hermes-installer/operation-parameters.json",
+      "top_level_fields": [
+        "schema=1",
+        "parameter_schemas"
+      ],
+      "parameter_schemas": "list unique exact records {id,fields}; fields list unique {name,type,required,enum,max_length,minimum,maximum}; only applicable bounds populated, unknown keys forbidden",
+      "types": [
+        "string",
+        "integer",
+        "boolean"
+      ],
+      "constraints": "Finite fields, exact required/optional keys; extra parameters forbidden. Every string requires max_length<=4096 and either finite enum or reviewed plain-text validator, reject NUL/newline and all control chars; no path/URL/shell/secret fields. Every integer explicit inclusive min/max (not bool). Boolean exact JSON true/false. Structured arrays/maps disallowed in argv parameters. Opaque resource selections resolved by root enrollment before recipe, never substituted caller path. Missing required bounds/validator unavailable.",
+      "argv_recipe": "list token objects, each EXACTLY {literal:string} or {parameter:string}; parameter names refer to schema fields. No concatenation/interpolation/conditional/default/shell expansion. Each token yields exactly one argv element; literals protected exact strings; strings preserved, integers canonical base10, booleans literal true or false. Optional absent parameter cannot occur in argv recipe; choose separately enrolled recipe instead. First executable not an argv token, fixed enrolled executable.",
+      "operation_id": "Opaque finite recipe ID, distinct from effect operation process.start. operation_targets maps process.start exact admission target; selected recipe ID+parameters+enrollment/generation all part of canonical effect request digest. Reject unsupported recipe before custody launch.",
+      "device_join": "Root-selected HW02 device enrollment joins selected process profile/generation via opaque device_enrollment_id in protected profile, never RPC parameter. Build HW03 recipes normally have no TPU device access. Inference worker exact selected device identity only; no all-device defaults."
+    }
+  },
+  "protected_file_schema": {
+    "file": "/etc/hermes-installer/native-packages.json",
+    "owner_mode": "root-owned regular file0600, no symlink; parent root-owned no worker writes",
+    "top_level_fields": [
+      "schema=1",
+      "native_packages",
+      "source_issuers"
+    ],
+    "native_packages": "list exact package_record_fields above; adapter_records is list exact adapter_record_fields; unknown/duplicate keys or IDs denied. All package/adapter generations opaque strings. Resolve artifact IDs/root mount IDs only against existing protected enrollment catalogs.",
+    "source_issuers": "list records exactly issuer_channel_id,producer_profile_id,producer_role_artifact_id,producer_role_sha256,capture_schema_id,allowed_parent_channels,generation,observer_enrollment_id,source_action_ids",
+    "source_action_ids": "finite root-selected actions per channel; native-input=authenticated-input; tool-result=registered-tool-result; memory-result=registered-memory-result; effect-result=registered-effect-result; delegated-child=registered-child-result; schedule-event=root-timer-event. These are observer contract IDs, not caller selectable source kinds.",
+    "joins": "source observer_enrollment_id joins actual root registered ingress/backend result/job observer; channel/actions must match captured actual event/action. Package profile/generation joins root process_profiles/principals; adapter effect_enrollment_id joins selected_plugin_effects finite operation/schema/recipient. Missing actual observer/mount/closure identity remains unavailable; file presence not execution proof."
   }
 }

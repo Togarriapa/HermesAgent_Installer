@@ -565,3 +565,17 @@ The installer SHALL bind distinct outer memory effect and profile connector targ
 #### Scenario: Wrong backend route or sibling target
 - **WHEN** a caller substitutes another profile, backend variant or unsupported delete/health route
 - **THEN** reject before service bytes and preserve the exact incomplete requirement.
+
+### Requirement: Selected package and compound memory admission
+The installer SHALL resolve native package from actual enrolled peer and SHALL authorize each fixed compound memory step separately under same bounded root-owned admission and source lineage.
+
+#### Scenario: Caller chooses package or reuses compound grant
+- **WHEN** caller claims alternate package/scope or repeats one consumed authorization across steps
+- **THEN** reject before bytes and retain owned cleanup journal with no sibling deletion.
+
+### Requirement: Fixed memory compound wire
+The installer SHALL enforce canonical typed memory compound write envelopes with root-derived HTTP frames and atomic root current-step state, separate from stream protocols.
+
+#### Scenario: Forged HTTP frame or skipped compound step
+- **WHEN** caller submits arbitrary HTTP bytes, wrong job/step or reused frame grant
+- **THEN** reject before backend bytes with owned failure/cleanup journal and no sibling scope mutation.
