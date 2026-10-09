@@ -10,9 +10,11 @@ import unittest
 from pathlib import Path
 
 from hermes_installer.remote.xpra_root_xauthority import (
+    OVERLAY_ARTIFACT_ID,
     XPRA_SOURCE_COMMIT,
     XpraOverlayDenied,
     build_pinned_xpra_root_xauthority_overlay,
+    verify_pinned_xpra_overlay,
 )
 
 
@@ -24,6 +26,10 @@ class PinnedXpraRootCookieOverlayTests(unittest.TestCase):
             output = Path(temp) / "xpra-overlay"
             receipt = build_pinned_xpra_root_xauthority_overlay(source, output)
             self.assertEqual(receipt.source_commit, XPRA_SOURCE_COMMIT)
+            self.assertTrue(verify_pinned_xpra_overlay(
+                receipt, artifact_id=OVERLAY_ARTIFACT_ID,
+                expected_overlay_sha256=receipt.overlay_sha256,
+            ))
             self.assertEqual(set(receipt.output_sha256), {
                 "xpra/scripts/server.py", "xpra/server/subsystem/xvfb.py",
                 "xpra/x11/vfb_util.py",
@@ -62,6 +68,15 @@ class PinnedXpraRootCookieOverlayTests(unittest.TestCase):
                     "/run/hermes-installer/display/Xauthority", ":99", "private-cookie-value", 1000, 1000,
                 )
             self.assertNotIn("private-cookie-value", str(denied.exception))
+
+            changed_file = output / "xpra/x11/vfb_util.py"
+            changed_file.chmod(0o644)
+            changed_file.write_text(changed_file.read_text() + "\n# changed\n")
+            with self.assertRaises(XpraOverlayDenied):
+                verify_pinned_xpra_overlay(
+                    receipt, artifact_id=OVERLAY_ARTIFACT_ID,
+                    expected_overlay_sha256=receipt.overlay_sha256,
+                )
 
     def test_wrong_pin_or_existing_destination_fails_without_source_edits(self):
         source = Path(os.environ["XPRA_SOURCE_ROOT"]).resolve(strict=True)
