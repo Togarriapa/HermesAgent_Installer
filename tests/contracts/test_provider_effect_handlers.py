@@ -28,8 +28,8 @@ class Vault:
     def __init__(self):
         self.calls = []
 
-    def resolve_reference(self, reference, *, peer_uid, required_scope):
-        self.calls.append((reference, peer_uid, required_scope))
+    def resolve_reference(self, reference, *, peer_uid, required_scope, principal_id):
+        self.calls.append((reference, peer_uid, required_scope, principal_id))
         return "opaque-token-fixture"
 
 
@@ -112,7 +112,7 @@ class ProviderEffectHandlerTests(unittest.TestCase):
         self.assertNotIn("Set-Cookie", response["headers"])
         self.assertEqual(self.admission.calls[0]["additional_metered_fee_usd"], 0)
         self.assertEqual(self.vault.calls, [(
-            "vault://openrouter/account", 1001, "provider:openrouter:inference")])
+            "vault://openrouter/account", 1001, "provider:openrouter:inference", "principal-test")])
 
     def test_wrong_digest_capability_retry_and_target_fail_before_network(self):
         context = _context()
@@ -177,7 +177,7 @@ class ProviderEffectHandlerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ProviderEnrollment(
                 provider="codex", account_id="opaque-account", principal_id="principal-test", target="https://attacker.invalid",
-                recipient=CODEX_RECIPIENT, credential_reference="vault://codex",
+                recipient=CODEX_RECIPIENT, credential_ref="vault://codex",
                 credential_scope="openai:codex:responses",
                 models=frozenset({"gpt-test"}), allowed_sensitivities=frozenset({"public"}),
             )
@@ -186,7 +186,7 @@ class ProviderEffectHandlerTests(unittest.TestCase):
         enrollment = ProviderEnrollment(
             provider="codex", account_id="opaque-codex-account", principal_id="principal-test",
             target=CODEX_TARGET, recipient=CODEX_RECIPIENT,
-            credential_reference="vault://codex/account",
+            credential_ref="vault://codex/account",
             credential_scope="openai:codex:responses",
             models=frozenset({"gpt-test"}),
             allowed_sensitivities=frozenset({"public"}),
