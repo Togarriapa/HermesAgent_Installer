@@ -27,3 +27,7 @@ Planned modules: src/hermes_installer/providers/, src/hermes_installer/credentia
 ## Documented ChatGPT-plan protocol refinement
 
 PR01/PR-T01/EV-PR01 refines existing R0124/R0125/R0126 supported Codex auth/inference against dated official SIWC contract. No new provider scope, paid fallback or account-success claim.
+
+## OmniRoute isolated runtime refinement
+
+PR02/PR-T02/EV-PR02 binds existing selected OmniRoute source engine range to exact protected component Node source pin; no global runtime mutation or native readiness claim.

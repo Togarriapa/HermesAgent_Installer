@@ -83,8 +83,16 @@
         "write",
         "close"
       ],
-      "constraints": "peer/context/session-bound opaque handle; sequence/replay checks; approved protocol frames only; root deadlines/byte limits and retained bidirectional shutdown; no caller URL/socket/descriptor authority"
-    }
+      "constraints": "peer/context/session-bound opaque handle; sequence/replay checks; approved protocol frames only; root deadlines/byte limits and retained bidirectional shutdown; no caller URL/socket/descriptor authority",
+      "grant_binding": "each explicit operation uses fresh one-use effect grant keyed exact capability+operation+canonical target_id; frame grants also bind connector_id/generation/session/sequence/route/readlimit or payloadhash/bytes/deadline; original stream admission expiry never extended",
+      "cleanup": "root watchdog/revoke/expiry always closes owned stream without awaiting fresh caller grant; authenticated owner cancellation cannot be blocked by expired authorization. Normal grant-bound close cannot target sibling handle."
+    },
+    "authority_operations": [
+      "connector.open",
+      "connector.read",
+      "connector.write",
+      "connector.close"
+    ]
   },
   "source_receipt": {
     "issuer": "trusted host broker only",
@@ -173,6 +181,67 @@
       "sandbox_attestation"
     ],
     "failure": "incomplete/changed generation/identity, inaccessible process, relaunch or renderer lineage unknown cannot authorize remote exposure; no merely mainPID-only success",
-    "sensitive_output": "no environment/secrets/raw unrestricted argv; fixed sandbox evidence fields and bounded process count"
-  }
+    "sensitive_output": "no environment/secrets/raw unrestricted argv; fixed sandbox evidence fields and bounded process count",
+    "protected_desktop_enrollment": {
+      "fields": [
+        "desktop_application_artifact_id",
+        "desktop_application_manifest_sha256",
+        "renderer_artifacts",
+        "sandbox_policy",
+        "relaunch_monitor_artifact_id",
+        "relaunch_monitor_sha256",
+        "window_denial_patch_artifact_id",
+        "window_denial_patch_sha256",
+        "native_generation"
+      ],
+      "renderer_artifacts_fields": [
+        "artifact_id",
+        "role",
+        "executable_path_id",
+        "exe_sha256",
+        "tree_manifest_sha256"
+      ],
+      "sandbox_policy": {
+        "required_mode": "reviewed actual Electron renderer kernel namespace/seccomp sandbox",
+        "forbidden_flags": [
+          "--no-sandbox",
+          "--disable-setuid-sandbox"
+        ],
+        "flags_source": "root-inspected actual descendants, never caller argv",
+        "role_constraints": "protected pinned role-specific expectations for browser/renderer/helper; do not infer main-process-only seccomp proves renderer sandbox"
+      },
+      "digest_values": "actual installed immutable artifact SHA256 required before enrollment; planning defines field names but supplies no invented renderer/monitor/patch digest. Missing value means incomplete."
+    },
+    "sandbox_attestation_schema": {
+      "schema": 1,
+      "fields": [
+        "verified",
+        "role",
+        "artifact_verified",
+        "parent_chain_verified",
+        "kernel_uid",
+        "cgroup_identity",
+        "namespace_identity",
+        "seccomp_mode",
+        "no_new_privs",
+        "forbidden_flags_present",
+        "relaunch_monitor_verified",
+        "window_denial_verified",
+        "policy_manifest_sha256",
+        "native_generation",
+        "observation_monotonic",
+        "expires_monotonic",
+        "evidence_refs"
+      ],
+      "issuer": "root inspector from actual kernel process identity + immutable enrolled artifact/policy + authenticated native control observations; no caller booleans",
+      "verified_rule": "only complete fresh protected role policy and actual native renderer/process/relaunch/window control evidence; absent/inaccessible/mismatched checks incomplete",
+      "invalidations": "new/reparented/relaunched member/exe/cgroup/generation/monitor/patch changes invalidate prior attestation and remote exposure until rechecked"
+    }
+  },
+  "operation_rule_key": [
+    "capability",
+    "operation",
+    "target"
+  ],
+  "operation_rule_migration": "protected rule explicitly states one operation; duplicate/ambiguous keys and implicit wildcard/pair fallback deny. Re-enroll exact singleton legacy operation before activation, invalidate old policy revision/grants."
 }
