@@ -7,8 +7,11 @@ discovers or guesses a loopback port and never accepts caller-supplied routes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 import re
 from typing import Any, Mapping
+
+from .compound import MemoryRecipeDenied, MemoryRecipeUnavailable, MemoryRouteRecipe
 
 
 SOURCE_PINS = {
@@ -106,7 +109,7 @@ class MemoryServiceEnrollment:
     service_generation: str
     namespace_identity: str
     literal_loopback_port: int
-    fixed_route_map: Mapping[str, RouteStep]
+    fixed_route_map: Mapping[str, MemoryRouteRecipe]
     data_root_id: str
     auth_reference_id: str
     fixed_project_account_user_scope: Mapping[str, str]
@@ -146,20 +149,29 @@ class MemoryServiceEnrollment:
             raise MemoryEnrollmentError("service listener port differs from the reviewed provider configuration")
 
         raw_routes = record["fixed_route_map"]
-        if not isinstance(raw_routes, Mapping):
-            raise MemoryEnrollmentError("protected fixed route map is required")
-        catalog = ROUTES[provider][variant]
-        routes: dict[str, RouteStep] = {}
+        if not isinstance(raw_routes, Mapping) or not raw_routes:
+            raise MemoryEnrollmentError("protected compound fixed route map is required")
+        if any(not isinstance(route_id, str) or route_id not in ROUTES[provider][variant]
+               for route_id in raw_routes):
+            raise MemoryEnrollmentError("enrolled route is outside the pinned provider/variant catalog")
+        limits = record["limits"]
+        if not isinstance(limits, Mapping):
+            raise MemoryEnrollmentError("route bounds are required before parsing compound recipes")
+        routes: dict[str, MemoryRouteRecipe] = {}
         for route_id, raw in raw_routes.items():
-            if route_id not in catalog or not isinstance(raw, Mapping) or set(raw) != {"method", "path", "body"}:
-                raise MemoryEnrollmentError("enrolled route is outside the pinned provider/variant catalog")
-            expected = catalog[route_id]
-            if (raw["method"], raw["path"], raw["body"]) != (
-                    expected.method, expected.path, expected.body):
-                raise MemoryEnrollmentError("enrolled route method/path/body differs from pinned source")
-            routes[route_id] = expected
-        if not routes:
-            raise MemoryEnrollmentError("at least one exact approved route is required")
+            try:
+                parsed = MemoryRouteRecipe.from_protected_record(
+                    route_id, raw, backend_variant=variant, limits=limits)
+            except (MemoryRecipeDenied, MemoryRecipeUnavailable, ValueError) as exc:
+                raise MemoryEnrollmentError(
+                    f"route {route_id} lacks a complete pinned compound serializer/validator: {exc}") from None
+            route_scope = parsed.scope_bindings
+            if (route_scope["profile_id"] != profile
+                    or route_scope["service_generation"] != generation
+                    or route_scope["memory_owner_generation"] != record["memory_owner_generation"]
+                    or route_scope["credential_reference_id"] != record["auth_reference_id"]):
+                raise MemoryEnrollmentError("route scope differs from the protected service enrollment")
+            routes[route_id] = parsed
 
         scope = record["fixed_project_account_user_scope"]
         if not isinstance(scope, Mapping) or set(scope) != {"project_id", "account_id", "user_id"}:
@@ -173,7 +185,6 @@ class MemoryServiceEnrollment:
             raise MemoryEnrollmentError("both private extraction and embedding route identities are required")
         private_route_values = {key: _id(value, f"private {key} route") for key, value in private_routes.items()}
 
-        limits = record["limits"]
         expected_limits = {"request_bytes", "response_bytes", "result_limit",
                            "operation_timeout_seconds", "whole_compound_timeout_seconds"}
         if not isinstance(limits, Mapping) or set(limits) != expected_limits:
