@@ -3002,10 +3002,17 @@ class ManagedBuildJobRunner:
             if launcher.poll() is None:
                 launcher.wait(timeout=1.0)
             launcher_reaped = launcher.returncode is not None
-            if (not cgroup_empty or not pidfd_gone or not launcher_reaped
-                    or not observed_cgroup or not main_pid or not start_ticks or not mount_ns or not network_ns
-                    or not kernel_limits):
-                raise AuthorityDenied("build.cleanup", "terminal build cleanup or process identity proof is incomplete")
+            missing_proof = [name for name, valid in (
+                ("cgroup_empty", cgroup_empty), ("pidfd_gone", pidfd_gone),
+                ("launcher_reaped", launcher_reaped), ("cgroup_identity", bool(observed_cgroup)),
+                ("main_pid", bool(main_pid)), ("start_ticks", bool(start_ticks)),
+                ("mount_namespace", bool(mount_ns)), ("network_namespace", bool(network_ns)),
+                ("kernel_limits", bool(kernel_limits)),
+            ) if not valid]
+            if missing_proof:
+                # Only stable field names leave the root handler; no host path,
+                # PID, cgroup path, command output, or environment is included.
+                raise AuthorityDenied("build.cleanup", "terminal proof is incomplete: " + ",".join(missing_proof))
             finished = manager.monotonic()
             proc_id = job_id
             identity = identity_digest(process_id=proc_id, generation=inputs.generation,
