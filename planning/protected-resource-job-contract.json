@@ -461,6 +461,36 @@
       "parent_closure_digest"
     ],
     "capsule": "Only validated canonical payload bytes become existing root result capsule, signed/registry peer-job-node-generation bound full source closure/recipient ceiling. result_fields exact schema whitelist, not generic stdout projection. Consume once via existing consume_resource_task_completion; failure never advances DAG.",
-    "tests": "Actual selected Hermes stdout+EOF+nativeboundary positive; invalidUTF8/truncation/empty/stderr-only/exitfailure/forgedschema/duplicateJSON/extra outputfields/changedartifact/currentgeneration/sourceclosure negatives. Fixtures separated from real target proof."
+    "tests": "Actual selected Hermes stdout+EOF+nativeboundary positive; invalidUTF8/truncation/empty/stderr-only/exitfailure/forgedschema/duplicateJSON/extra outputfields/changedartifact/currentgeneration/sourceclosure negatives. Fixtures separated from real target proof.",
+    "effective_cap": "Existing ResourceValidator.maximum_bytes <=262144 remains stricter effective cap. Actual runtime output payload must satisfy min(selected schema max_bytes, current validator maximum_bytes, custody max_output_bytes); no cap increase or weak schema bypass intended. Fixed schema1048576 is outer maximum only, not requirement to permit all bytes."
+  },
+  "root_controller_role_catalog": {
+    "placement": "Active service_generations.resource_controller_roles bounded list<=64, included entire generation_digest; no mutable sidecar/default role inference.",
+    "row_fields": [
+      "id",
+      "controller_kind",
+      "daemon_unit_id",
+      "daemon_executable_artifact_id",
+      "daemon_executable_sha256",
+      "role_module_artifact_id",
+      "role_module_sha256",
+      "controller_generation",
+      "source_observer_enrollment_ids",
+      "allowed_backend_enrollment_ids",
+      "allowed_operations",
+      "max_lease_seconds"
+    ],
+    "kinds": "root-scheduler|root-webhook|root-channel only; worker controller remains actual live source producer resolver.",
+    "joins": "daemon_unit_id root-selected actual system daemon unit, not caller service name. Root custody resolves its current MainPID/PIDFD/starttime/cgroup/executable pin and root-owned loader/module closure. UID0 actual root dispatcher required. role_module artifact verified actual loaded immutable module, not inferred from job artifact/receipt labels. Each source_observer ID joins exact active source_issuer/current observer role and capture schema; allowed backend IDs join active resource backend rows/current resource/profile generation.",
+    "resolver": "RootResourceControllerRegistry.resolve_for_event(root_event_handle,node_id)->RootTaskController; root event handle created only by concrete selected timer/HMAC+replay/channel ingress root observer, retains full immutable event closure/consent/body/current policy. Resolve role row by exact observer ID+kind and backend ID unique match; verify daemon kernel identity/actual module pins/current snapshot, duplicate its owned PIDFD for runner. No synthetic source process or caller self-enrollment.",
+    "issuer": "issue_resource_job_context(root_event_handle,node_id,operation,canonical_payload_sha256) root-private registry: operation must equal exact selected node/backend operation and row allowed_operations, payload digest must equal root-rendered canonical body from protected body recipe/forced scope/full source closure. Root event registration stores actual action/body bindings. Fresh child grant selects only enrolled reduced process.start target/recipe, no caller operation/digest accepted as truth. Missing event/role/module/current peer denies.",
+    "ownership": "Source observer owner implements authority/resource_source_controllers.py actual role/event resolver and root issuer integration; authority owner consumes typed current controller and emits fresh reduced effect. Runtime task adapter consumes these APIs, never substitutes callbacks/worker claims."
+  },
+  "profile_handler_artifact": {
+    "artifact_id": "hermes-installer.resource-profile-task.v1",
+    "source_commit": "4ed8ea424641db9b0f89898a72e827ed027a6b87",
+    "source_path": "src/hermes_installer/registry/resource_backends.py",
+    "sha256": "d06e5b13444a690ce19f36698e5b3c244ba1e09950cdf3c03815c70577d541cd",
+    "evidence": "Sol independently hashed actual module at source owner checkout; includes fixed handler plus RootArtifactValidator. Actual deployed protected row must match bytes/current catalog; source pin not functional acceptance."
   }
 }
