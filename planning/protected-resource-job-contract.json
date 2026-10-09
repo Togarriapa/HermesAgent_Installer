@@ -911,6 +911,48 @@
     "DTO": "RootResourceNodeResultClosure in hermes_installer.registry.resource_jobs has schema,closure_handle,event_handle,admission_handle,node_id,job_handle,resource_generation,service_generation_digest,prerequisite_node_ids,result_capsule_handles,result_capsule_sha256s,parent_closure_digest,issued_monotonic,expires_monotonic. Registry-issued object/opaque handle only; capsule values privately retained behind exact handles, no caller dictionary as authority.",
     "context_API": "RootResourceControllerRegistry.issue_resource_job_context(event_handle,node_id,operation,final_payload_digest,*,node_result_closure_handle=None) verifies actual retained admitted-job selection and exact backend operation/target/recipe; nodes with prerequisites require exact closure resolver handle, initial nodes use empty root prerequisite set only. Root injects actual result closure source receipts/lineage/sensitivity/recipient ceiling with original event; operation and digest must match independently root-serialized selected child bytes. Empty parent_results cannot authorize downstream node. Separate fresh per-child grant, no parent grant loop/reuse.",
     "assembly": "RootResourceControllerRegistry attaches same ResourceJobAuthority node_result_closure_resolver at root composition after both registries constructed. bind_admitted_job(event_handle,admission_handle) checks both actual registries, once exact current event/job pair; no caller job ID binding. Result lookup rechecks active root job ledger and current validated immutable capsules immediately before effect.",
-    "evidence": "Actual webhook whitespace/noncanonical body valid HMAC accepted then source/schema validation; altered rawbody/replay/header/schema mismatch deny. DAG downstream sees exact predecessor capsule values and full inherited closure; missing/foreign/stale/caller result dictionary deny. Fixtures remain implementation only."
+    "evidence": "Actual webhook whitespace/noncanonical body valid HMAC accepted then source/schema validation; altered rawbody/replay/header/schema mismatch deny. DAG downstream sees exact predecessor capsule values and full inherited closure; missing/foreign/stale/caller result dictionary deny. Fixtures remain implementation only.",
+    "schema_artifacts": {
+      "resource-ingress-capture-v1": {
+        "artifact_id": "resource-ingress-capture-v1",
+        "path": "plans/amendments/2026-10-10-resource-capture-schema-artifacts-v67/resource-ingress-capture-v1.json",
+        "sha256": "0a0c8d71b58cbc04d65309003a65701b0dfb1e57a9931c5a96356f5c647609b1",
+        "size_bytes": 926,
+        "installed_relative_path": "schemas/resource-ingress-capture-v1.json"
+      },
+      "resource-cron-tick-v1": {
+        "artifact_id": "resource-cron-tick-v1",
+        "path": "plans/amendments/2026-10-10-resource-capture-schema-artifacts-v67/resource-cron-tick-v1.json",
+        "sha256": "7b7292435e8f3cd8010e1be3d678b0eabe6199b4a047782221e91073b02be53a",
+        "size_bytes": 611,
+        "installed_relative_path": "schemas/resource-cron-tick-v1.json"
+      },
+      "resource-github-push-v1": {
+        "artifact_id": "resource-github-push-v1",
+        "path": "plans/amendments/2026-10-10-resource-capture-schema-artifacts-v67/resource-github-push-v1.json",
+        "sha256": "3b27135572adf4392f85b0f37a8dcce0e18dbac2aba811462416807c5e4733c8",
+        "size_bytes": 443,
+        "installed_relative_path": "schemas/resource-github-push-v1.json"
+      },
+      "resource-registry-update-notice-v1": {
+        "artifact_id": "resource-registry-update-notice-v1",
+        "path": "plans/amendments/2026-10-10-resource-capture-schema-artifacts-v67/resource-registry-update-notice-v1.json",
+        "sha256": "01bdc4055a7675038feb5d61bbf36e345315543e3008d22e0e1c4815edb2c278",
+        "size_bytes": 246,
+        "installed_relative_path": "schemas/resource-registry-update-notice-v1.json"
+      }
+    },
+    "capture_schema_binding": "source_issuers.capture_schema_id exactly resource-ingress-capture-v1 for these resource root observers. Root validator checks actual sealed schema artifact ID/hash/size then envelope exact fields; event_data validated separately selected protocol schema, root observed proof kind/source/resource joins required. Protocol schema row rootselected from exact resource identity, never caller. SourceReceipt hashes canonical envelope and retains original raw protocol observation ancestry.",
+    "cron_mapping": "event_data uses resource-cron-tick-v1: schedule_enrollment_id actual selected timer; scheduled_time_unix==due_time_unix scheduled occurrence, fired_time_unix actual root observed wall time, event_id root unique actual tick ID, occurrence_sequence durable monotonic counter, action_graph_sha256 SHA256 canonical current protected selected DAG. None supplied from callback args. Root validates schedule/current generation, due bound and never duplicate occurrence before context.",
+    "github_mapping": "github-push@1.0.1 event_data is exact parsed application/json push body validated resource-github-push-v1 and global size/depth/key bounds. Signature X-Hub-Signature-256 sha256 HMAC exactraw; X-GitHub-Event literalpush; X-GitHub-Delivery valid bounded unique delivery ID and selected repo.id/full_name match root account/repo enrollment. ref/before/after retained actual values; zero SHA allowed create/delete as protocol fact, never permission. sender is metadata, not principal. Replay root deliveryID plus source resource/generation. No URL-encoded fallback unless separately reviewed selected schema.",
+    "registry_mapping": "registry-update-notice@1.0.0 root-defined narrow selected protocol body resource-registry-update-notice-v1 {repository,branch:main,commit:40hex}; repository exact protected Resources upstream URL from selected source lock, no caller URL fetch. X-Hermes-Event literalregistry-update-available, X-Hermes-Delivery bounded unique, X-Hermes-Signature-256 sha256HMAC exactraw current secret. Commit is notice only; root separately verifies referenced main-branch source/proposal before assessment, never activation/update authority. This explicit body schema refines previously unspecified custom protocol and must be configured at actual sender/setup before positive acceptance.",
+    "cloudflare": "cloudflare-alert remains original required selected provider. Exact actual Cloudflare alert identity payload/schema and protected bearer credential/recipient current System authorization must be supplied from selected real alert source setup; no GitHub/custom registry schema reuse or guessed event ID. Same envelope applies after source validator actual proof. Unknown provider payload identity cannot be admitted as ready.",
+    "limits": "Envelope+event_data UTF8 canonical<=1048576 bytes, raw ingress<=1048576; JSON depth<=32/total keys<=4096/no duplicate keys/NaN/invalidUTF8. HMAC checked exact bytes before parse; schema artifacts/validator code from sealed source closure. Oversize rejects with exact source bound, not silent truncation.",
+    "sources": [
+      "resources/vendor/hermes-agent-resources-2.3.1/webhooks/github-push.yaml",
+      "resources/vendor/hermes-agent-resources-2.3.1/webhooks/registry-update-notice.yaml",
+      "resources/vendor/hermes-agent-resources-2.3.1/webhooks/cloudflare-alert.yaml",
+      "https://docs.github.com/en/webhooks/webhook-events-and-payloads#push"
+    ]
   }
 }

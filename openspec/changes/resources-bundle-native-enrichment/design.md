@@ -159,3 +159,5 @@ First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-boot
 Prepared base/reader/release manifest v63: `plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63.md`; existing gates remain open.
 
 Raw resource event/result closure v66: `plans/amendments/2026-10-10-resource-raw-event-result-closure-v66.md`; existing RB task gates open.
+
+Resource capture schemas v67: `plans/amendments/2026-10-10-resource-capture-schema-artifacts-v67.md`; existing task/acceptance gates open.

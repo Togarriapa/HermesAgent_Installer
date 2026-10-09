@@ -401,3 +401,10 @@ The installer SHALL authenticate exact original webhook bytes before root canoni
 #### Scenario: Reserialized HMAC or caller results
 - **WHEN** canonicalized body is substituted for raw authentication bytes or caller result dictionaries replace prerequisite capsules
 - **THEN** ingress or downstream child admission denies
+
+### Requirement: Fixed resource capture schemas
+The installer SHALL validate root-derived capture envelopes and selected timer/webhook event data against actual sealed schema artifacts before child admission.
+
+#### Scenario: Unknown protocol mapping
+- **WHEN** ingress cannot resolve its selected source schema or exact authenticated event identity
+- **THEN** it remains unavailable with its precise setup prerequisite rather than using another protocol schema
