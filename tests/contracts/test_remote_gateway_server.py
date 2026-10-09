@@ -128,7 +128,7 @@ class FixtureRootAuthority:
             raise GatewayDenied("root fresh Access/policy denied")
         session_id, _route, _action = self.records[handle]
         now = time.monotonic()
-        return types.SimpleNamespace(schema=1, session_id=session_id,
+        return types.SimpleNamespace(schema=1, remote_session_handle=handle, session_id=session_id,
                                      lease_expires_monotonic=now + 30,
                                      jwt_expires_monotonic=now + 60,
                                      policy_verified_monotonic=now)

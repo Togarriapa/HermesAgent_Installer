@@ -58,6 +58,7 @@ class FakeAuthority:
     def renew_remote_session(self, handle, token, nonce):
         self.calls.append(("renew", handle, token, nonce))
         return types.SimpleNamespace(schema=1, session_id="root-session-1",
+                                     remote_session_handle=handle,
                                      lease_expires_monotonic=35.0,
                                      jwt_expires_monotonic=50.0,
                                      policy_verified_monotonic=12.0)
@@ -108,6 +109,21 @@ class RootSessionAdapterTests(unittest.TestCase):
         self.assertEqual(self.authority.calls[2], ("renew", admitted.handle, b"renewed.jwt", "N" * 43))
         self.client.close(admitted.handle, session_id=admitted.session_id)
         self.assertEqual(self.authority.calls[3], ("close", admitted.handle))
+
+    def test_renewal_cannot_substitute_a_different_root_session_handle(self):
+        class WrongHandle(FakeAuthority):
+            def renew_remote_session(self, handle, token, nonce):
+                answer = super().renew_remote_session(handle, token, nonce)
+                return types.SimpleNamespace(**{**vars(answer), "remote_session_handle": "B" * 43})
+
+        authority = WrongHandle()
+        client = RootRemoteSessionClient(authority, "desk.example.net", "https://desk.example.net",
+                                         frozenset({"xpra-http"}), "xpra-websocket", monotonic=lambda: 12.0)
+        admitted = client.admit(access_jwt="first.jwt", action="websocket-attach", route_id="xpra-websocket")
+        challenge = client.challenge(admitted.handle)
+        with self.assertRaises(RootSessionDenied):
+            client.renew(handle=admitted.handle, session_id=admitted.session_id,
+                         access_jwt="renewed.jwt", renewal_nonce=challenge.renewal_nonce)
 
     def test_invalid_root_response_is_denied(self):
         class Bad(FakeAuthority):

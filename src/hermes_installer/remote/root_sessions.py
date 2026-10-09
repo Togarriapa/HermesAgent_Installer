@@ -173,7 +173,8 @@ class RootRemoteSessionClient:
         except Exception:
             raise RootSessionDenied("fresh root policy/session renewal was denied") from None
         if (getattr(response, "schema", None) != 1 or
-                getattr(response, "session_id", None) != session_id):
+                getattr(response, "session_id", None) != session_id or
+                getattr(response, "remote_session_handle", None) != handle):
             raise RootSessionDenied("renewal response is not bound to the existing root session")
         expiry = _finite(getattr(response, "lease_expires_monotonic", None), "renewed lease expiry")
         jwt_expiry = _finite(getattr(response, "jwt_expires_monotonic", None), "renewed JWT expiry")
