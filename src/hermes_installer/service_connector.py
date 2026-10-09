@@ -753,8 +753,7 @@ class RemoteServiceConnectorBackend:
         self._handles: dict[str, tuple[str, str]] = {}
         self._lock = threading.RLock()
 
-    @staticmethod
-    def _authorized_call(binding: Any, authorization: Any, operation: str,
+    def _authorized_call(self, binding: Any, authorization: Any, operation: str,
                          payload: bytes, peer_uid: int, peer_pid: int,
                          peer_pidfd: int | None, timeout: float,
                          cancelled: Callable[[], bool], *,
