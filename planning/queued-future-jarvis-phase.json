@@ -96,10 +96,21 @@
       "transcript_reviewed": false,
       "analyzed": false,
       "feature_claims": []
+    },
+    {
+      "url": "https://www.murphmaxxing.com/vault/saved-reels-to-claude-skill",
+      "kind": "webpage",
+      "provenance": "User supplied this page with tracking query; canonical destination recorded without tracking parameters.",
+      "read": false,
+      "reviewed": false,
+      "analyzed": false,
+      "license_verified": false,
+      "access_verified": false,
+      "feature_claims": []
     }
   ],
   "next_steps_after_gate": [
-    "Sol reviews actual videos and transcript/source evidence with timestamps and truthful access limitations.",
+    "Sol reviews actual videos/transcripts and the user-supplied webpage with source/timestamp evidence and truthful access/license limitations.",
     "Sol creates new append-only immutable amendment and evidence-based OpenSpec proposal/delta specifications/design/task graph preserving original scope.",
     "Luna implements only from that validated specification handoff, with meaningful failure tests and separate target acceptance."
   ],
@@ -107,6 +118,8 @@
     "Do not start Jarvis runtime or expand initial installer scope before full entry gate.",
     "Do not infer video contents/features from URL, title, thumbnail or hearsay.",
     "Keep existing Jarvis/component baseline obligations active; this queue neither removes them nor adds early runtime scope.",
-    "No new spending, accounts, services or target enrollment is authorized by this metadata."
+    "No new spending, accounts, services or target enrollment is authorized by this metadata.",
+    "Future adaptation targets Hermes; page naming does not automatically authorize or require a Claude dependency.",
+    "Do not infer webpage contents, licensing or functions before actual later access verification; no purchase or spend for paywall access."
   ]
 }
