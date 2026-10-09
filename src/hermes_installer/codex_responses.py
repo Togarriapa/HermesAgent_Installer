@@ -368,6 +368,20 @@ class CodexResponsesTransport:
         if isinstance(content_type, str) and content_type.split(";", 1)[0].strip().casefold() in {
                 "application/json", "text/event-stream"}:
             safe_headers["Content-Type"] = content_type
+        response_refs = [value for key, value in headers.items()
+                         if isinstance(key, str)
+                         and key.casefold() == "x-hermes-native-response-ref"]
+        if len(response_refs) > 1:
+            raise PolicyDenied("response.metadata", "Host broker returned an ambiguous response reference")
+        if response_refs:
+            response_ref = response_refs[0]
+            if (not isinstance(response_ref, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", response_ref)):
+                raise PolicyDenied("response.metadata", "Host broker returned an invalid response reference")
+            safe_headers["X-Hermes-Native-Response-Ref"] = response_ref
+        elif 200 <= status < 300:
+            raise PolicyDenied("response.metadata_unavailable",
+                               "Root response metadata delivery is unavailable")
         retry_after = headers.get("Retry-After")
         if retry_after is not None:
             try:
