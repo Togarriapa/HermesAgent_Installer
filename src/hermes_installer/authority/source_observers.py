@@ -283,7 +283,7 @@ class SourceObserverRegistry:
     def __init__(self, *, service: Any, observers: Mapping[str, SourceObserverEnrollment],
                  process_resolver: Callable[..., Any], package_resolver: Callable[[str, str], Any],
                  target_peer_resolver: Callable[[SourceObserverEnrollment, HostContext], Any] | None = None,
-                 loaded_package_proof_resolver: Callable[[Any, SourceObserverEnrollment], Any] | None = None,
+                 loaded_package_proof_resolver: Callable[..., Any] | None = None,
                  max_pending_events: int = MAX_PENDING_EVENTS,
                  max_pending_bytes: int = MAX_PENDING_BYTES):
         if (not observers or any(not isinstance(value, SourceObserverEnrollment)
@@ -309,6 +309,8 @@ class SourceObserverRegistry:
         self._receipt_process_bindings: dict[str, _ReceiptProcessBinding] = {}
         self._receipt_delivery_bindings: dict[str, _ReceiptProcessBinding] = {}
         self._payload_capsules: dict[str, tuple[SourceReceipt, RootSourcePayloadCapsule, bytearray, str]] = {}
+        self._invocation_receipt_handles: dict[str, set[str]] = {}
+        self._handle_invocations: dict[str, str] = {}
         self._capsule_bytes = 0
         self._capsule_slots_reserved = 0
         self._capsule_bytes_reserved = 0
@@ -364,7 +366,8 @@ class SourceObserverRegistry:
         package, adapter = self._resolve_package_role(observer)
         if not callable(self.loaded_package_proof_resolver):
             raise AuthorityDenied("source.package", "root loaded-package custody proof is unavailable")
-        loaded_package_proof = self._resolve_loaded_package_proof(identity, observer, package, now)
+        loaded_package_proof = self._resolve_loaded_package_proof(
+            identity, observer, package, now, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
         if not callable(self.target_peer_resolver):
             raise AuthorityDenied("source.target", "root-selected target peer channel is unavailable")
         selected_target = self.target_peer_resolver(observer, parent_context)
@@ -464,7 +467,8 @@ class SourceObserverRegistry:
             if package != event.selected_package or adapter != event.selected_adapter:
                 raise AuthorityDenied("source.package", "selected immutable package or adapter binding changed")
             current_loaded_proof = self._resolve_loaded_package_proof(
-                identity, observer, package, now)
+                identity, observer, package, now,
+                peer_pid=event.producer_pid, peer_pidfd=event.producer_pidfd)
             if current_loaded_proof != event.loaded_package_proof:
                 raise AuthorityDenied("source.package", "loaded package mount proof changed after event capture")
             target_identity = self.process_resolver(
@@ -621,6 +625,8 @@ class SourceObserverRegistry:
                     self._receipt_delivery_bindings[str(result)] = delivery_binding
                     self._payload_capsules[str(result)] = (
                         receipt, capsule, bytearray(event.payload), event.authority_epoch)
+                    self._invocation_receipt_handles.setdefault(event.invocation_id, set()).add(str(result))
+                    self._handle_invocations[str(result)] = event.invocation_id
                     self._capsule_bytes += len(event.payload)
                     receipt_fd = -1
                     delivery_fd = -1
@@ -779,30 +785,54 @@ class SourceObserverRegistry:
             payload[:] = b"\x00" * len(payload)
 
     def cancel_source_payload_capsule(self, handle: SourceReceiptHandle) -> bool:
-        """Scrub a retained payload during root-side invocation cancellation."""
+        """Revoke a not-yet-consumed receipt handle and scrub its payload."""
         if not isinstance(handle, SourceReceiptHandle):
             raise AuthorityDenied("source.capsule", "root capsule cancellation key is invalid")
         with self._lock:
-            row = self._payload_capsules.pop(str(handle), None)
-            if row is None:
-                return False
-            self._capsule_bytes -= len(row[2])
-            row[2][:] = b"\x00" * len(row[2])
-            return True
+            return self._revoke_source_handle_locked(str(handle))
 
     def cancel_invocation_payload_capsules(self, invocation_id: str) -> int:
         """Scrub every retained payload from a cancelled root invocation."""
         if not isinstance(invocation_id, str) or not invocation_id:
             raise AuthorityDenied("source.capsule", "root invocation cancellation ID is invalid")
         with self._lock:
-            handles = [handle for handle, (_receipt, capsule, _payload, _epoch)
-                       in self._payload_capsules.items()
-                       if capsule.invocation_id == invocation_id]
+            handles = self._invocation_receipt_handles.pop(invocation_id, set())
             for handle in handles:
-                row = self._payload_capsules.pop(handle)
-                self._capsule_bytes -= len(row[2])
-                row[2][:] = b"\x00" * len(row[2])
+                self._revoke_source_handle_locked(handle)
             return len(handles)
+
+    def _revoke_source_handle_locked(self, handle: str) -> bool:
+        """Remove authority lookup and peer-delivery state for one receipt."""
+        self._forget_invocation_handle_locked(handle)
+        row = self._payload_capsules.pop(handle, None)
+        if row is not None:
+            self._capsule_bytes -= len(row[2])
+            row[2][:] = b"\x00" * len(row[2])
+            receipt_id = row[0].receipt_id
+        else:
+            delivery = self._receipt_delivery_bindings.get(handle)
+            receipt_id = delivery.receipt_id if delivery is not None else None
+        if receipt_id is None:
+            return False
+        delivery = self._receipt_delivery_bindings.pop(handle, None)
+        if delivery is not None:
+            os.close(delivery.pidfd)
+        process = self._receipt_process_bindings.pop(receipt_id, None)
+        if process is not None:
+            os.close(process.pidfd)
+        with self.service._lock:
+            stored = self.service._source_receipt_handles.pop(handle, None)
+        return row is not None or delivery is not None or process is not None or stored is not None
+
+    def _forget_invocation_handle_locked(self, handle: str) -> None:
+        invocation_id = self._handle_invocations.pop(handle, None)
+        if invocation_id is None:
+            return
+        handles = self._invocation_receipt_handles.get(invocation_id)
+        if handles is not None:
+            handles.discard(handle)
+            if not handles:
+                self._invocation_receipt_handles.pop(invocation_id, None)
 
     def consume_observation_proof(self, observation: VerifiedSourceObservation) -> bool:
         """Consume a one-use instance capability before AuthorityService signs.
@@ -938,11 +968,16 @@ class SourceObserverRegistry:
 
     def _resolve_loaded_package_proof(self, identity: Any,
                                       observer: SourceObserverEnrollment,
-                                      package: Any, now: float) -> Any:
+                                      package: Any, now: float, *,
+                                      peer_pid: int, peer_pidfd: int) -> Any:
         if not callable(self.loaded_package_proof_resolver):
             raise AuthorityDenied("source.package", "root loaded-package custody proof is unavailable")
         try:
-            proof = self.loaded_package_proof_resolver(identity, observer)
+            if (type(peer_pid) is not int or peer_pid <= 0
+                    or type(peer_pidfd) is not int or peer_pidfd < 0):
+                raise ValueError("producer peer identity is malformed")
+            proof = self.loaded_package_proof_resolver(
+                identity, observer, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
         except Exception:
             proof = None
         required = (
@@ -1016,6 +1051,7 @@ class SourceObserverRegistry:
             if binding.expires <= now:
                 self._receipt_delivery_bindings.pop(handle, None)
                 os.close(binding.pidfd)
+                self._forget_invocation_handle_locked(handle)
         self._prune_capsules_locked(now)
 
     def _prune_capsules_locked(self, now: float) -> None:
@@ -1046,6 +1082,8 @@ class SourceObserverRegistry:
             for _receipt, _capsule, payload, _epoch in self._payload_capsules.values():
                 payload[:] = b"\x00" * len(payload)
             self._payload_capsules.clear()
+            self._invocation_receipt_handles.clear()
+            self._handle_invocations.clear()
             self._capsule_bytes = 0
             self._capsule_bytes_reserved = 0
             self._capsule_slots_reserved = 0
