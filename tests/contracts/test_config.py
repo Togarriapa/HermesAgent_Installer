@@ -64,5 +64,29 @@ class ConfigContractTests(unittest.TestCase):
             validate_config({"schema_version": 1, "remote_desktop": {"policy_read_token_ref": "inline-secret"}})
 
 
+    def test_remote_access_policy_read_reference_is_separate_and_protected(self) -> None:
+        base = {
+            "schema_version": 1,
+            "components": {"remote_desktop": True},
+            "remote_desktop": {
+                "hostname": "desktop.example.org",
+                "allowed_emails": ["owner@example.org"],
+                "management_token_ref": "keyring://hermes/cloudflare/manage",
+                "policy_read_token_ref": "secret://hermes/cloudflare/access-read",
+            },
+        }
+        parsed = validate_config(base)
+        self.assertEqual(parsed.remote_desktop["policy_read_token_ref"], "secret://hermes/cloudflare/access-read")
+        for invalid in ("env://CLOUDFLARE_TOKEN", "keyring://", "file://", "inline-token", "https://example.org"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ConfigError, "separate secure"):
+                validate_config({**base, "remote_desktop": {**base["remote_desktop"], "policy_read_token_ref": invalid}})
+        without_read_ref = {**base, "remote_desktop": dict(base["remote_desktop"])}
+        without_read_ref["remote_desktop"].pop("policy_read_token_ref")
+        with self.assertRaisesRegex(ConfigError, "separate protected reference"):
+            validate_config(without_read_ref)
+        with self.assertRaisesRegex(ConfigError, "must not reuse"):
+            validate_config({**base, "remote_desktop": {**base["remote_desktop"],
+                "policy_read_token_ref": base["remote_desktop"]["management_token_ref"]}})
+
 if __name__ == "__main__":
     unittest.main()
