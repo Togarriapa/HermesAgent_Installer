@@ -82,6 +82,13 @@ def test_coral_python_provisioning_refuses_unselected_or_unenrolled_package_sets
         coral.provision_coral_python(tmp_path / "component", selected=True)
 
 
+def test_coral_package_set_blocker_names_missing_host_effect_not_missing_spec(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(coral, "resolve_coral_runtime_artifacts", lambda *args, **kwargs: {})
+    with pytest.raises(CoralError, match="host API has no published package-set effect client"):
+        coral.provision_coral_python(tmp_path / "component", selected=True,
+            catalog=object(), staging_root=tmp_path / "catalog")
+
+
 def test_sample_selection_reads_exact_official_manifest_pin() -> None:
     artifact = coral.load_coral_sample_artifact()
     assert artifact.name == "mobilenet_v2_1.0_224_quant_edgetpu.tflite"

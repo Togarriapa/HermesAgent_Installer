@@ -354,16 +354,16 @@ def _run_managed_command(run_command: Callable[..., object], argv: Sequence[str]
 
 def provision_coral_python(component_root: Path, *, selected: bool, catalog=None,
                            staging_root: Path | None = None, expected_uid: int = 0) -> Path:
-    """Fail closed until a reviewed package-set install target exists for both exact wheels."""
+    """Fail closed until the enrolled protected package-set effect is callable."""
     if not selected:
         raise PermissionError("the isolated Coral runtime must be selected before provisioning")
     if catalog is None or staging_root is None:
         raise CoralError("Coral runtime provisioning requires its protected artifact-catalog receipts")
     resolve_coral_runtime_artifacts(catalog, staging_root, expected_uid=expected_uid)
     raise CoralError(
-        "Coral activation remains unavailable: host package.install accepts one enrolled ZIP wheelhouse, "
-        "but the reviewed NumPy and TFLite artifacts are separate official wheels; obtain a Sol-approved "
-        "package-set target bound to the isolated CPython 3.9 runtime before building or installing"
+        "Coral activation remains unavailable: the reviewed coral-cp39-runtime-v1 package-set contract "
+        "exists, but this host API has no published package-set effect client or enrolled CPython 3.9 "
+        "build attestation/runtime generation; no package install was attempted"
     )
 
 def download_official_sample(destination: Path, *, selected: bool = False, cancel=None, catalog=None,
