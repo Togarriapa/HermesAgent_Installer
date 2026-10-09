@@ -308,6 +308,9 @@ class RootTaskNativeObservationRegistry:
                 raise AuthorityDenied("resource.native_stdin", "successful terminal lacks an actual stdin write receipt")
             write_receipt = self.process_custody.resolve_task_stdin_write(
                 task_handle, write_handle)
+            if self.process_custody.resolve_task_stdin_write(
+                    task_handle, write_handle) is not write_receipt:
+                raise AuthorityDenied("resource.native_stdin", "custody returned a reconstructed stdin write receipt")
             self._validate_stdin_write_receipt(run, terminal, write_handle, write_receipt, now)
         except Exception:
             self._discard_run(task_handle.handle_id, run)
@@ -897,6 +900,7 @@ class RootTaskNativeObservationRegistry:
         if (type(receipt) is not RootTaskStdinWriteReceipt
                 or not _opaque(receipt_handle)
                 or getattr(terminal, "stdin_write_receipt_handle", None) != receipt_handle
+                or getattr(run.task_handle, "stdin_write_receipt_handle", None) != receipt_handle
                 or receipt.receipt_handle != receipt_handle
                 or receipt.task_handle != run.task_handle.handle_id
                 or receipt.process_id != run.task_handle.process_id

@@ -124,7 +124,8 @@ def test_stdin_write_receipt_must_join_exact_initial_input_and_terminal():
     registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
     task = SimpleNamespace(process_generation="profile-generation-a", stdin_sha256="a" * 64,
                            stdin_size_bytes=3)
-    handle = SimpleNamespace(handle_id="t" * 40, process_id="p" * 40)
+    handle = SimpleNamespace(handle_id="t" * 40, process_id="p" * 40,
+                             stdin_write_receipt_handle="w" * 40)
     initial = SimpleNamespace(receipt_handle="i" * 40, issued_monotonic=4.0,
                               expires_monotonic=20.0)
     run = SimpleNamespace(admitted_task=task, initial_input_receipt=initial,
