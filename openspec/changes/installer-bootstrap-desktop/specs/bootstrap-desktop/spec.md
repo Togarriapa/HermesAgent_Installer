@@ -506,3 +506,18 @@ The installer SHALL use actual root source CAS/predecessor proofs and finite sel
 #### Scenario: Unbound startup or deployment predecessor
 - **WHEN** caller state substitutes root startup admission or ignores an existing deployment pointer
 - **THEN** startup/publication denies without overwriting unowned or mismatched state
+
+### Requirement: Actual channel receipt and source selection
+The installer SHALL derive HTTP/audio input provenance from root-retained actual authenticated transport or consented device capture, and verify explicitly selected installer source before effects.
+
+#### Scenario: Caller input or status used as proof
+- **WHEN** worker input labels, microphone permission or read-only launcher status are presented as principal/effect authority
+- **THEN** admission denies the substitution
+
+Literal bootstrap receipt binding source v72: `plans/amendments/2026-10-10-literal-bootstrap-receipt-bindings-v72.md`; existing BD/HI lifecycle gates open; actual typed root receipts required.
+
+Prepared unresolved receipt rendering v74: `plans/amendments/2026-10-10-prepared-unresolved-receipt-rule-rendering-v74.md`; empty output identities remain dormant and actual active receipts required under existing BD/HI tasks.
+
+Bootstrap source projection/store correction v75: `plans/amendments/2026-10-10-bootstrap-binding-projection-store-correction-v75.md`; existing BD/HI tasks remain open.
+
+First-bootstrap pinned interpreter v76: `plans/amendments/2026-10-10-first-bootstrap-isolated-pinned-interpreter-v76.md`; existing BD/HI tasks remain open, actual isolated Linux runtime/actor proof required.
