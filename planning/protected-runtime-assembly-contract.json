@@ -321,7 +321,16 @@
     "cwd": "/run/hermes-installer/build/work; reviewed recipe may select a validated fixed subdirectory here only",
     "source_processing": "Original source remains read-only. Builder copies verified source into work before modifications; outputs are collected only below output. Colibri output relative c/colibri and CPython runtime/bin/python3.9 plus runtime/lib/python3.9 constraints remain unchanged.",
     "proof": "Root records actual mount namespace, source identities/digests, resolved fixed argv digest, service UID, work/output identities, terminal status and post-exit output constraints. No predicted compiled SHA; no launch/source-only acceptance.",
-    "argv_recipe_record": "protected_build_records[*].argv_recipe is a nonempty list of strict tagged objects: {literal:string} OR {build_path:{mount_id:string,relative_path:string}}. No bare strings in canonical active format; staging old fixed literals migrate to literal nodes. Exactly one tag, no extra keys. Builder/source/toolchain/work/output are the only mount_id values. Root validates grammar before generation publication; worker payload contains none of these nodes."
+    "argv_recipe_record": "protected_build_records[*].argv_recipe is a nonempty list of strict tagged objects: {literal:string} OR {build_path:{mount_id:string,relative_path:string}}. No bare strings in canonical active format; staging old fixed literals migrate to literal nodes. Exactly one tag, no extra keys. Builder/source/toolchain/work/output are the only mount_id values. Root validates grammar before generation publication; worker payload contains none of these nodes.",
+    "service_identity_join": {
+      "protected_build_fields": [
+        "build_service_enrollment_id",
+        "build_service_generation",
+        "output_owner_uid"
+      ],
+      "semantics": "Root resolves exact current protected service_records row using build_service_enrollment_id+build_service_generation. output_owner_uid must equal selected dedicated service UID, nonzero and distinct from controller/caller and other profile service UIDs. Root passwd primary GID/name and exclusive dedicated group must match protected service identity. UID alone or output path ownership cannot select authority. All fields and profile resource/namespace/root selections included active generation digest.",
+      "launch": "Use selected dedicated UID/GID for build process and fresh work/output0700, root immutable source/toolchain/builder mounts. Apply current selected profile finite memory/CPU/IO/process/output/lifetime restrictions; no user account or shared profile substitution. Missing actual account/exclusive group/profile join denies launch."
+    }
   },
   "build_internal_bookkeeping": {
     "mode": "Root custody internal bookkeeping for already admitted build child; NOT worker effect RPC or re-use of consumed process.start authorization.",
