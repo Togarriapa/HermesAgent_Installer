@@ -835,7 +835,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
         except BrokerUnavailable as exc:
             return _reply({"error":str(exc)},503)
         except Exception:
-            return _reply({"error":"memory operation failed"},502)
+            raise
     return handle
 
 
