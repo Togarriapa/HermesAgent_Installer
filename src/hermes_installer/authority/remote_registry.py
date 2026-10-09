@@ -8,7 +8,8 @@ authority that minted it. It never interprets or trusts a caller identity.
 from __future__ import annotations
 
 import threading
-from typing import Any, Mapping
+import time
+from typing import Any, Callable, Mapping
 
 from .remote_sessions import RemoteAdmissionRequest, RemoteSessionAuthority
 from .types import AuthorityDenied
@@ -17,7 +18,10 @@ from .types import AuthorityDenied
 class RemoteSessionAuthorityRegistry:
     """One daemon-facing HI13 service assembled from active root enrollments."""
 
-    def __init__(self, authorities: Mapping[str, RemoteSessionAuthority]):
+    def __init__(self, authorities: Mapping[str, RemoteSessionAuthority], *,
+                 monotonic: Callable[[], float] = time.monotonic):
+        if not callable(monotonic):
+            raise ValueError("remote registry monotonic clock is required")
         if not isinstance(authorities, Mapping) or len(authorities) > 128:
             raise ValueError("protected remote authority map is invalid")
         by_hostname: dict[str, RemoteSessionAuthority] = {}
@@ -32,7 +36,8 @@ class RemoteSessionAuthorityRegistry:
             by_hostname[hostname] = authority
         self._by_hostname = by_hostname
         self._by_id = dict(authorities)
-        self._handles: dict[str, RemoteSessionAuthority] = {}
+        self._monotonic = monotonic
+        self._handles: dict[str, tuple[RemoteSessionAuthority, float]] = {}
         self._lock = threading.RLock()
 
     def admit_remote_session(self, access_jwt: bytes, request: RemoteAdmissionRequest,
@@ -46,19 +51,32 @@ class RemoteSessionAuthorityRegistry:
             access_jwt, request, peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
         handle = str(response.remote_session_handle)
         with self._lock:
+            self._prune_locked()
             if handle in self._handles:
                 authority.close_remote_session(handle, peer_uid=peer_uid,
                                                peer_pid=peer_pid, peer_pidfd=peer_pidfd)
                 raise AuthorityDenied("remote.handle", "root generated a duplicate session handle")
-            self._handles[handle] = authority
+            if len(self._handles) >= 4096:
+                authority.close_remote_session(handle, peer_uid=peer_uid,
+                                               peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+                raise AuthorityDenied("remote.capacity", "root remote session router is at capacity")
+            self._handles[handle] = (authority, response.lease_expires_monotonic)
         return response
+
+    def _prune_locked(self) -> None:
+        now = self._monotonic()
+        self._handles = {handle: entry for handle, entry in self._handles.items()
+                         if entry[1] > now}
 
     def _for_handle(self, handle: str) -> RemoteSessionAuthority:
         with self._lock:
-            authority = self._handles.get(handle)
-        if authority is None:
+            entry = self._handles.get(handle)
+            if entry is not None and entry[1] <= self._monotonic():
+                self._handles.pop(handle, None)
+                entry = None
+        if entry is None:
             raise AuthorityDenied("remote.handle", "remote session is unavailable")
-        return authority
+        return entry[0]
 
     def challenge_remote_session(self, remote_session_handle: str, *,
                                  peer_uid: int, peer_pid: int, peer_pidfd: int) -> Any:
@@ -68,9 +86,14 @@ class RemoteSessionAuthorityRegistry:
     def renew_remote_session(self, remote_session_handle: str, access_jwt: bytes,
                              renewal_nonce: str, *, peer_uid: int, peer_pid: int,
                              peer_pidfd: int) -> Any:
-        return self._for_handle(remote_session_handle).renew_remote_session(
+        response = self._for_handle(remote_session_handle).renew_remote_session(
             remote_session_handle, access_jwt, renewal_nonce,
             peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+        with self._lock:
+            if remote_session_handle in self._handles:
+                self._handles[remote_session_handle] = (
+                    self._handles[remote_session_handle][0], response.lease_expires_monotonic)
+        return response
 
     def close_remote_session(self, remote_session_handle: str, *,
                              peer_uid: int, peer_pid: int, peer_pidfd: int) -> Any:
@@ -109,4 +132,3 @@ class RemoteSessionAuthorityRegistry:
     def stop_watchdog(self) -> None:
         for authority in self._by_id.values():
             authority.stop_watchdog()
-
