@@ -9,6 +9,7 @@ from hermes_installer.root_setup import (
     RootSetupAction,
     RootSetupResult,
     RootSetupState,
+    launcher_status,
     main,
     run_root_setup_action,
 )
@@ -34,13 +35,25 @@ class RootSetupBoundaryTests(unittest.TestCase):
             "The owned checkpoint is valid; runtime receipt recovery and continuation are not yet connected.",
             "sudo -- hermes-installer-root-setup resume",
             4,
+            "RUNTIME_HANDLERS_UNAVAILABLE",
+            RootSetupAction.RESUME,
         )
         self.assertEqual(result.resume_command, "sudo -- hermes-installer-root-setup resume")
         with self.assertRaises(ValueError):
             RootSetupResult(
                 RootSetupAction.RESUME, RootSetupState.PENDING, "runtime", "pending",
                 "sudo -- hermes-installer-root-setup resume --path /tmp/state", 4,
+                "RUNTIME_HANDLERS_UNAVAILABLE", RootSetupAction.RESUME,
             )
+
+    def test_user_mode_launcher_status_never_claims_root_attestation(self) -> None:
+        with patch("hermes_installer.root_setup.os.getuid", return_value=501), \
+             patch("hermes_installer.root_setup.os.geteuid", return_value=501), \
+             patch("hermes_installer.root_setup.sys.platform", "darwin"):
+            status = launcher_status()
+        self.assertEqual(status.state, "unverified")
+        self.assertEqual(status.blocker_code, "ROOT_ATTESTATION_REQUIRED")
+        self.assertNotIn("sudo", status.message)
 
     def test_non_linux_host_is_rejected_before_any_release_access(self) -> None:
         with patch("hermes_installer.root_setup.sys.platform", "darwin"), \
