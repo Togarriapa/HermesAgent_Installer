@@ -271,6 +271,9 @@ class RootComposioCatalogTransport:
                 body=None, timeout_seconds=request_budget, max_response_bytes=max_response_bytes)
         except Exception:
             raise ComposioCatalogTransportDenied("authenticated Composio catalog request failed") from None
+        finally:
+            # Drop the local reference immediately after the bounded request.
+            del credential
         status, body = getattr(response, "status", None), getattr(response, "body", None)
         if type(status) is not int or not isinstance(body, bytes) or len(body) > max_response_bytes:
             raise ComposioCatalogTransportDenied("Composio catalog response exceeded its bound")
