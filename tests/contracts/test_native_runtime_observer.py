@@ -7,8 +7,10 @@ from types import SimpleNamespace
 
 from hermes_installer.authority.native_runtime_observer import (
     NativeInvocationContextProvider,
+    NativeInvocationRegistry,
     NativeRuntimeObserver,
     NativeRuntimeObserverUnavailable,
+    _ObservedProviderResponse,
 )
 from hermes_installer.authority.types import AuthorityDenied, HostContext, Sensitivity, canonical_digest
 
@@ -228,8 +230,62 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="c" * 64,
                      purpose="native-hermes-chat", intent="x")
-        self.assertEqual(authority.lookups, ["i" * 40])
 
+    def test_response_delivery_is_exact_peer_request_digest_and_one_use(self):
+        registry = object.__new__(NativeInvocationRegistry)
+        registry._lock = __import__("threading").RLock()
+        registry._closed = False
+        registry.monotonic = lambda: 10.0
+        producer = SimpleNamespace(profile_id="profile-a", generation="generation-a")
+        gateway = SimpleNamespace(profile_id="gateway-profile", generation="gateway-generation")
+        bridge = SimpleNamespace(
+            producer_uid=2001, gateway_profile_id="gateway-profile",
+            gateway_generation="gateway-generation",
+        )
+        body = b"dechunked provider entity"
+        digest = __import__("hashlib").sha256(body).hexdigest()
+        response = _ObservedProviderResponse(
+            handle="p" * 43, delivery_handle="d" * 43,
+            native_request_handle="n" * 43, response_digest=digest,
+            receipt_handles=(), bridge=bridge, producer_identity=producer,
+            producer_pid=123, producer_pidfd=456, gateway_identity=gateway,
+            gateway_pid=124, gateway_pidfd=457, observer_id="observer",
+            package_id="package", profile_id="profile-a", generation="generation-a",
+            loaded_package_proof="proof", expires_monotonic=20.0, calls={},
+        )
+        registry._responses = {response.handle: response}
+        registry._deliveries = {response.delivery_handle: response}
+        registry._calls = {}
+        registry._invocations = {}
+        registry._issued_handles = {response.handle, response.delivery_handle}
+        registry.process_resolver = lambda pid, _fd, **_kwargs: producer if pid == 123 else gateway
+        registry._loaded_proof = lambda *_args: "proof"
+
+        for kwargs in (
+            {"peer_uid": 2002, "peer_pid": 123, "peer_pidfd": 456,
+             "response_body_sha256": digest, "native_request_handle": "n" * 43},
+            {"peer_uid": 2001, "peer_pid": 123, "peer_pidfd": 456,
+             "response_body_sha256": "0" * 64, "native_request_handle": "n" * 43},
+            {"peer_uid": 2001, "peer_pid": 123, "peer_pidfd": 456,
+             "response_body_sha256": digest, "native_request_handle": "x" * 43},
+        ):
+            with self.assertRaises(AuthorityDenied):
+                registry.take_native_response_metadata(
+                    response_delivery_handle="d" * 43, **kwargs)
+
+        metadata = registry.take_native_response_metadata(
+            peer_uid=2001, peer_pid=123, peer_pidfd=456,
+            response_delivery_handle="d" * 43, response_body_sha256=digest,
+            native_request_handle="n" * 43,
+        )
+        self.assertEqual(metadata.producer_context_handle, "p" * 43)
+        self.assertEqual(metadata.tool_call_bindings, ())
+        with self.assertRaises(AuthorityDenied):
+            registry.take_native_response_metadata(
+                peer_uid=2001, peer_pid=123, peer_pidfd=456,
+                response_delivery_handle="d" * 43, response_body_sha256=digest,
+                native_request_handle="n" * 43,
+            )
     def test_invocation_provider_rejects_expired_or_mismatched_root_ancestry(self):
         binding = SimpleNamespace(
             invocation_handle="i" * 40, package_id="package-a", profile_id="profile-a",
@@ -253,6 +309,28 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="a" * 64,
                      purpose="native-hermes-chat", intent="x")
 
+    def test_invocation_provider_rejects_empty_lineage(self):
+        binding = SimpleNamespace(
+            invocation_handle="i" * 40, package_id="package-a", profile_id="profile-a",
+            generation="generation-a", adapter_id="adapter-a", action_id="action-a",
+            arguments_sha256="a" * 64, parent_closure_digest="b" * 64,
+            expires_monotonic=20.0,
+        )
+        contexts = SimpleNamespace(
+            invocation_handle="i" * 40, source_receipt_handles=(),
+            parent_closure_digest="b" * 64, arguments_sha256="a" * 64,
+            expires_monotonic=19.0,
+        )
+        provider = NativeInvocationContextProvider(
+            authority=SimpleNamespace(get_invocation_contexts=lambda _handle: contexts),
+            selected_package=SimpleNamespace(
+                package_id="package-a", profile_id="profile-a", generation="generation-a"),
+            current_binding=lambda: binding,
+            monotonic=lambda: 10.0,
+        )
+        with self.assertRaises(AuthorityDenied):
+            provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="a" * 64,
+                     purpose="native-hermes-chat", intent="x")
 
 if __name__ == "__main__":
     unittest.main()

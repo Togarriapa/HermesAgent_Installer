@@ -80,7 +80,7 @@ ROOT_MEMORY_FIELDS = frozenset({
     "target_id", "provider", "backend_variant", "profile_id", "principal_id",
     "service_enrollment_id", "source_revision", "service_generation",
     "namespace_identity", "literal_loopback_port", "fixed_route_map",
-    "data_root_id", "auth_reference_id", "fixed_project_account_user_scope",
+    "data_root_id", "authority_state_root_id", "auth_reference_id", "fixed_project_account_user_scope",
     "memory_owner_generation", "private_extraction_embedding_routes",
     "background_consent_revision", "limits",
 })
@@ -113,6 +113,7 @@ class MemoryServiceEnrollment:
     data_root_id: str
     auth_reference_id: str
     fixed_project_account_user_scope: Mapping[str, str]
+    authority_state_root_id: str
     memory_owner_generation: int
     private_extraction_embedding_routes: Mapping[str, str]
     background_consent_revision: str
@@ -134,7 +135,8 @@ class MemoryServiceEnrollment:
         if record["source_revision"] != SOURCE_PINS[provider]:
             raise MemoryEnrollmentError("memory source revision differs from the reviewed pin")
         for field in ("principal_id", "service_enrollment_id", "namespace_identity",
-                      "data_root_id", "auth_reference_id", "background_consent_revision"):
+                      "data_root_id", "authority_state_root_id", "auth_reference_id",
+                      "background_consent_revision"):
             _id(record[field], field)
         generation = record["service_generation"]
         if not isinstance(generation, str) or not _ID.fullmatch(generation):
@@ -212,8 +214,10 @@ class MemoryServiceEnrollment:
             service_generation=generation,
             namespace_identity=record["namespace_identity"],
             literal_loopback_port=port, fixed_route_map=routes,
-            data_root_id=record["data_root_id"], auth_reference_id=record["auth_reference_id"],
+             data_root_id=record["data_root_id"],
+             auth_reference_id=record["auth_reference_id"],
             fixed_project_account_user_scope=scope_values,
+            authority_state_root_id=record["authority_state_root_id"],
             memory_owner_generation=record["memory_owner_generation"],
             private_extraction_embedding_routes=private_route_values,
             background_consent_revision=record["background_consent_revision"],

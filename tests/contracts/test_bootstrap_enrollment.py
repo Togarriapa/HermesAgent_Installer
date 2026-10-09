@@ -63,7 +63,8 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             "operation_parameter_schemas", "source_issuers", "resource_jobs",
             "remote_session_enrollments", "resource_backend_enrollments",
             "resource_body_recipes", "resource_scope_bindings", "resource_validators",
-            "root_journal_roots", "generation_digest",
+            "root_journal_roots",
+            "generation_digest",
         })
         expected = hashlib.sha256(json.dumps(
             {key: value for key, value in snapshot.items() if key != "generation_digest"},
@@ -588,7 +589,8 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
                 "operation_parameter_schemas", "source_issuers", "resource_jobs",
                 "remote_session_enrollments", "resource_backend_enrollments",
                 "resource_body_recipes", "resource_scope_bindings", "resource_validators",
-                "root_journal_roots", "generation_digest",
+                "root_journal_roots",
+                "generation_digest",
             })
             for root in roots:
                 info = root.lstat()

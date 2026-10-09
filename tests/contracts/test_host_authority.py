@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import socket
+import stat
 import tempfile
 import threading
 import time
@@ -21,7 +22,8 @@ from hermes_installer.authority.service import (
     AuthorityService, ChildDelegationRule, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
-    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle, Sensitivity,
+    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle,
+    NativeResponseMetadata, NativeToolCallBinding, Sensitivity,
     canonical_bytes, canonical_digest,
 )
 
@@ -452,6 +454,10 @@ class HostAuthorityIPCContracts(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
+        # The production client requires root-owned endpoint parents to be
+        # searchable by enrolled clients; keep the test fixture's parent
+        # private for non-root runs and searchable-but-not-writable as root.
+        os.chmod(root, 0o711 if os.getuid() == 0 else 0o700)
         self.socket_path = root / "authority.sock"
         self.effects = []
         self.binding = PrincipalBinding(os.getuid(), "principal:alice", "profile:one", "namespace:one", frozenset({"memory-capture"}))
@@ -483,9 +489,29 @@ class HostAuthorityIPCContracts(unittest.TestCase):
                 self.server_error.append(exc)
         self.acceptor = threading.Thread(target=serve, daemon=True)
         self.acceptor.start()
+        # bind() publishes the socket pathname before serve_unix applies the
+        # enrolled owner, group, and mode. Wait for the complete protected
+        # endpoint contract instead of racing AuthorityClient's strict check.
         deadline = time.monotonic() + 2
-        while not self.socket_path.exists() and time.monotonic() < deadline:
+        ready = False
+        while time.monotonic() < deadline:
+            if self.server_error:
+                self.fail(f"authority fixture failed to start: {self.server_error[0]!r}")
+            try:
+                endpoint = self.socket_path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                ready = (
+                    stat.S_ISSOCK(endpoint.st_mode)
+                    and endpoint.st_uid == os.getuid()
+                    and endpoint.st_gid == os.getgid()
+                    and stat.S_IMODE(endpoint.st_mode) == 0o660
+                )
+                if ready:
+                    break
             time.sleep(0.01)
+        self.assertTrue(ready, "authority fixture did not publish a protected socket")
         self.client = AuthorityClient(self.socket_path, server_uid=os.getuid(), timeout=2)
 
     def tearDown(self):
@@ -729,6 +755,59 @@ class NativeEventClientContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             client.begin_native_invocation("p" * 40, "c" * 40, b"{}")
 
+    def test_native_response_metadata_take_is_peer_bound_and_one_use_at_registry(self):
+        binding = PrincipalBinding(1234, "principal:native", "profile:native", "namespace:native",
+                                   frozenset({"native.request.dispatch"}))
+        calls = []
+
+        class Registry:
+            def take_native_response_metadata(self, *args):
+                calls.append(args)
+                return NativeResponseMetadata("p" * 40, (NativeToolCallBinding(
+                    observed_call_handle="c" * 40, provider_tool_call_id="call_1",
+                    tool_name="selected_tool", arguments_sha256="a" * 64,
+                ),))
+
+        service = AuthorityService(
+            signing_key=b"n" * 32, key_id="native-response-take-fixture",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={}, policy=FixturePolicy(),
+            native_invocation_registry=Registry(),
+        )
+        request = {"schema": 1, "delivery_handle": "d" * 43,
+                   "response_body_sha256": "b" * 64, "native_request_handle": "r" * 40}
+        result = service._dispatch(binding.uid, 123, 8, "native.response.take", request,
+                                   cancelled=lambda: False)
+        self.assertEqual(set(result), {"producer_context_handle", "tool_call_bindings"})
+        self.assertEqual(calls, [(binding.uid, 123, 8, "d" * 43, "b" * 64, "r" * 40)])
+        client = AuthorityClient(Path("/unused"), server_uid=0)
+        requests = []
+        client._rpc = lambda operation, payload, **_kwargs: requests.append((operation, payload)) or result
+        metadata = client.take_native_response_metadata("d" * 43, "b" * 64, "r" * 40)
+        self.assertEqual(metadata.producer_context_handle, "p" * 40)
+        self.assertEqual(metadata.tool_call_bindings[0].tool_name, "selected_tool")
+        self.assertEqual(requests, [("native.response.take", request)])
+        with self.assertRaises(AuthorityDenied):
+            service._dispatch(binding.uid, 123, 8, "native.response.take",
+                              {**request, "delivery_handle": "bad"}, cancelled=lambda: False)
+
+    def test_partial_native_registry_cannot_be_attached(self):
+        binding = PrincipalBinding(1234, "principal:native", "profile:native", "namespace:native",
+                                   frozenset({"native.request.dispatch"}))
+
+        class PartialRegistry:
+            def begin_native_invocation(self, **_kwargs):
+                return {}
+
+            def get_invocation_contexts(self, **_kwargs):
+                return {}
+
+        service = AuthorityService(
+            signing_key=b"n" * 32, key_id="native-registry-attachment-fixture",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={}, policy=FixturePolicy(),
+        )
+        with self.assertRaises(AuthorityDenied):
+            service.attach_native_invocation_registry(PartialRegistry())
+
     def test_authority_wire_rejects_duplicate_keys_at_nested_depth(self):
         wire = b'{"outer":{"schema":1,"schema":2}}\n'
 
@@ -750,6 +829,37 @@ class NativeEventClientContracts(unittest.TestCase):
         client = AuthorityClient(Path("/unused"), server_uid=0)
         with self.assertRaises(AuthorityDenied):
             client._exchange(ByteSocket(), {"hello": 1}, time.monotonic() + 1)
+
+
+class RootMemoryStepAuthorityContracts(unittest.TestCase):
+    def test_internal_step_callback_is_typed_one_shot_attachment_not_rpc(self):
+        binding = PrincipalBinding(1234, "principal:memory", "profile:memory", "namespace:memory",
+                                   frozenset({"memory.search"}))
+        calls = []
+
+        class StepAuthority:
+            def perform_memory_connector_step(self, *args, **kwargs):
+                calls.append((args, kwargs))
+                return 200, b'{"ok":true}'
+
+        service = AuthorityService(
+            signing_key=b"m" * 32, key_id="memory-step-fixture",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={}, policy=FixturePolicy(),
+        )
+        service.attach_memory_step_effect_authority(StepAuthority())
+        self.assertEqual(service.perform_memory_connector_step(
+            "r" * 40, b'{"schema":1}', "a" * 64, timeout=5,
+            cancelled=lambda: False,
+        ), (200, b'{"ok":true}'))
+        self.assertEqual(calls[0][0], ("r" * 40, b'{"schema":1}', "a" * 64))
+        with self.assertRaises(AuthorityDenied):
+            service._dispatch(binding.uid, 100, 4, "perform_memory_connector_step", {},
+                              cancelled=lambda: False)
+        with self.assertRaises(AuthorityDenied):
+            service.perform_memory_connector_step(
+                "bad", b'{"schema":1}', "a" * 64, timeout=5,
+                cancelled=lambda: False,
+            )
 
 
 class RootResolvedProcessControlContracts(unittest.TestCase):

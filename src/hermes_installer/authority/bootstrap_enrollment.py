@@ -1888,7 +1888,8 @@ def _validate_prepared_policy(policy: EnrollmentPolicy) -> None:
     catalog_names = ("protected_devices", "protected_build_records", "native_packages",
                      "memory_enrollments", "operation_parameter_schemas", "source_issuers",
                      "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
-                     "resource_body_recipes", "resource_scope_bindings", "resource_validators")
+                     "resource_body_recipes", "resource_scope_bindings", "resource_validators",
+                     "root_journal_roots")
     if any(getattr(policy, name) for name in catalog_names):
         raise BootstrapEnrollmentError("prepared generation cannot activate dependent catalogs")
 
