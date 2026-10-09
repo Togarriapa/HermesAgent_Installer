@@ -185,6 +185,15 @@ class AuthenticatedHttpIngressProducer(_Producer):
     def observer_enrollment_id(self) -> str:
         return self.selection.source_issuer_id
 
+    @property
+    def protected_selection_handle(self) -> object:
+        """Opaque host selection handle for root-side selected listeners only."""
+        return self.selection_handle
+
+    def proof_claims(self, proof: object) -> Mapping[str, Any]:
+        """Return strictly validated root claims; intended for host adapters."""
+        return self._validate(proof)
+
     def observe(self, root_request_record: object) -> ObservedChannelIngress:
         proof = self.observer.observe_selected_http_ingress(self.selection_handle, root_request_record)
         claims = self._validate(proof)
@@ -253,6 +262,15 @@ class SelectedAudioIngressProducer(_Producer):
     @property
     def observer_enrollment_id(self) -> str:
         return self.selection.source_issuer_id
+
+    @property
+    def protected_selection_handle(self) -> object:
+        """Opaque host selection handle for root-side selected capture only."""
+        return self.selection_handle
+
+    def proof_claims(self, proof: object) -> Mapping[str, Any]:
+        """Return strictly validated root claims; intended for host adapters."""
+        return self._validate(proof)
 
     def observe(self, root_capture_record: object) -> ObservedChannelIngress:
         proof = self.observer.observe_selected_audio_ingress(self.selection_handle, root_capture_record)

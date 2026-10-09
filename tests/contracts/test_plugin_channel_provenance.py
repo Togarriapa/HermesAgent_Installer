@@ -199,3 +199,68 @@ def test_selection_bounds_reject_unknown_unbounded_runtime_enrollment():
         audio_selection(max_capture_seconds=31)
     with pytest.raises(ChannelIngressDenied, match="digest"):
         audio_selection(capture_backend_sha256="not-a-pin")
+
+
+def test_concrete_root_http_observer_binds_listener_jwt_current_session_and_body():
+    from hermes_installer.authority.channel_provenance import (
+        AuthenticatedHttpRequest, AuthenticatedSubjectReceipt, RootSelectedHttpIngressObserver,
+    )
+    clock = FakeClock()
+    body = b'{"message":"selected"}'
+    request = AuthenticatedHttpRequest("listener-001", "http-selection", "POST", "ingress-event",
+        "application/json", "session-id-001", b"synthetic-jwt", body, "request-receipt-001")
+    class Listener:
+        def take_authenticated_request(self, handle, record):
+            assert handle is selection_handle and record is selected_request
+            return request
+    subject = AuthenticatedSubjectReceipt("subject-receipt-001", "session-handle-001", "e"*64,
+                                         130.0, "jwt-verifier-001")
+    class Verifier:
+        current = True
+        def verify_selected_jwt(self, selection, token, session_id):
+            assert selection is selected and token == b"synthetic-jwt" and session_id == "session-id-001"
+            return subject
+        def current_selected_subject(self, selection, receipt):
+            if not self.current or receipt is not subject: raise PermissionError("revoked")
+            return subject
+    selected = http_selection()
+    selection_handle, selected_request = object(), object()
+    observer = RootSelectedHttpIngressObserver(selected, selection_handle, Listener(), Verifier(),
+        controller_identity_digest="a"*64, service_generation_digest="b"*64,
+        route_id="ingress-event", body_schema_validator=lambda schema, payload: schema == selected.body_schema_id
+        and json.loads(payload) == {"message":"selected"}, monotonic=clock)
+    producer = AuthenticatedHttpIngressProducer(selected, selection_handle, observer, clock=clock)
+    ingress = producer.observe(selected_request)
+    assert ingress.payload == body
+    assert producer.validate_claims(ingress.proof)
+    observer.consume(ingress.proof)
+    assert not producer.validate_claims(ingress.proof)
+
+
+def test_concrete_root_audio_observer_requires_current_device_consent_receipt():
+    from hermes_installer.authority.channel_provenance import (
+        RootSelectedAudioIngressObserver, SelectedAudioCaptureReceipt,
+    )
+    clock = FakeClock()
+    selected = audio_selection()
+    selection_handle, root_capture = object(), object()
+    receipt = SelectedAudioCaptureReceipt(selected.id, selected.device_enrollment_id,
+        selected.capture_backend_artifact_id, selected.capture_backend_sha256,
+        "audio-session-001", "consent-receipt-001", "capture-receipt-001", "artifact-001",
+        "c"*64, 8192, selected.sample_format_schema_id, 130.0)
+    class CaptureAuthority:
+        current = True
+        def take_selected_capture(self, handle, record):
+            assert handle is selection_handle and record is root_capture
+            return receipt
+        def current_selected_capture(self, handle, observed):
+            if not self.current or observed is not receipt: raise PermissionError("consent revoked")
+            return receipt
+    root = RootSelectedAudioIngressObserver(selected, selection_handle, CaptureAuthority(),
+        controller_identity_digest="a"*64, service_generation_digest="b"*64, monotonic=clock)
+    producer = SelectedAudioIngressProducer(selected, selection_handle, root, clock=clock)
+    ingress = producer.observe(root_capture)
+    assert json.loads(ingress.payload)["audio_artifact_id"] == "artifact-001"
+    assert producer.validate_claims(ingress.proof)
+    root.consume(ingress.proof)
+    assert not producer.validate_claims(ingress.proof)
