@@ -223,10 +223,15 @@ class MCPClient:
                 raise MCPError("MCP authorization or request deadline expired")
             payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": dict(params or {})}
             try:
-                response = await asyncio.wait_for(self.transport.request(payload), remaining)
+                request = self.transport.request
+                if getattr(self.transport, "requires_dispatch_grant", False):
+                    pending = request(payload, dispatch_context=self.context, dispatch_authorization=grant)
+                else:
+                    pending = request(payload)
+                response = await asyncio.wait_for(pending, remaining)
             except asyncio.TimeoutError:
                 self._last_error = f"{method}: deadline"
-                await self._cancel(rid)
+                await self._cancel(rid, grant)
                 raise MCPError(f"{method} exceeded its bounded deadline") from None
             except asyncio.CancelledError:
                 await self._cancel(rid)
@@ -248,11 +253,15 @@ class MCPClient:
             raise MCPError(f"{method} returned no result")
         return response["result"]
 
-    async def _cancel(self, rid: int) -> None:
+    async def _cancel(self, rid: int, grant: DispatchAuthorization) -> None:
         cancel = getattr(self.transport, "cancel_request", None)
         if cancel is not None:
             try:
-                await asyncio.wait_for(cancel(rid), 2.0)
+                if getattr(self.transport, "requires_dispatch_grant", False):
+                    pending = cancel(rid, dispatch_context=self.context, dispatch_authorization=grant)
+                else:
+                    pending = cancel(rid)
+                await asyncio.wait_for(pending, 2.0)
             except Exception:
                 pass
 
@@ -275,11 +284,14 @@ class MCPClient:
                 "serverInfo": {k: result["serverInfo"].get(k) for k in ("name", "version")}}
 
     async def _notify_initialized(self, deadline: float) -> None:
-        self._authorize("connect", deadline)
+        grant = self._authorize("connect", deadline)
         try:
-            await asyncio.wait_for(self.transport.request(
-                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
-            ), min(2.0, max(0.01, deadline - self.monotonic())))
+            payload = {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+            if getattr(self.transport, "requires_dispatch_grant", False):
+                pending = self.transport.request(payload, dispatch_context=self.context, dispatch_authorization=grant)
+            else:
+                pending = self.transport.request(payload)
+            await asyncio.wait_for(pending, min(2.0, max(0.01, deadline - self.monotonic())))
         except Exception:
             raise MCPError("MCP initialized notification failed") from None
 
