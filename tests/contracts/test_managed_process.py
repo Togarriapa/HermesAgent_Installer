@@ -59,6 +59,7 @@ class ManagedProcessAdmissionTests(unittest.TestCase):
             journal_operation="test-operation",
             journal=self.journal,
             service_identity="contract-test",
+            service_user="hermes-test",
             startup_deadline_monotonic=time.monotonic() + 5,
             max_lifetime_seconds=lifetime,
         )
@@ -186,7 +187,7 @@ def _make_pipe_spec(parent: unittest.TestCase) -> ManagedProcessSpec:
         artifact_sha256=hashlib.sha256(executable.read_bytes()).hexdigest(),
         artifact_root=artifacts, owned_root=owned, cwd=data / "work", data_root=data,
         env_allowlist={"HOME": "/hermes"}, journal_operation="pipe-test", journal=journal,
-        service_identity="pipe-fixture", startup_deadline_monotonic=time.monotonic()+5,
+        service_identity="pipe-fixture", service_user="hermes-test", startup_deadline_monotonic=time.monotonic()+5,
         max_lifetime_seconds=30,
     )
 
