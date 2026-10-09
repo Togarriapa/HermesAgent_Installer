@@ -237,3 +237,24 @@ The implementation SHALL apply the exact root registry, principal-selection and 
 #### Scenario: Static selection lacks actual runtime proof
 - **WHEN** an actual current role, display, source event or terminal execution receipt is absent
 - **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence
+
+### Requirement: Fixed selected display and loopback startup
+The installer SHALL launch only enrolled official Desktop/display/gateway recipes with exact Xauthority mount and private loopback role/port bindings.
+
+#### Scenario: Ambient display or broad network substitution
+- **WHEN** a worker supplies display credentials, arbitrary port or unenrolled network role
+- **THEN** startup or connection denies before app bytes and remote acceptance remains pending
+
+### Requirement: Root selected startup and predecessor custody
+The installer SHALL use actual root source CAS/predecessor proofs and finite selected startup admission with fresh role-specific child grants.
+
+#### Scenario: Unbound startup or deployment predecessor
+- **WHEN** caller state substitutes root startup admission or ignores an existing deployment pointer
+- **THEN** startup/publication denies without overwriting unowned or mismatched state
+
+### Requirement: Actual selected Xpra root credential
+The installer SHALL prevent selected Xpra from regenerating or exposing root display cookie and verify the fixed readonly root credential is used by its owned virtual X server and official Desktop.
+
+#### Scenario: Writable cookie or secret argv fallback
+- **WHEN** selected startup falls back to a generated cookie or passes secret cookie values in argv/logs
+- **THEN** startup fails closed and remote readiness is not asserted
