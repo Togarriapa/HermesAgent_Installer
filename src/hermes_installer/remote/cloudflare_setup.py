@@ -247,6 +247,10 @@ class RemoteCloudflareProvisioner:
             self.checkpoint(self.journal)
             if not verify_origin_receipt(origin_receipt, receipt_signer,
                                          selected_enrollment_id=remote_enrollment_id):
+                self.journal.phase=RemotePhase.ACCESS_READY
+                self.journal.error_code="ORIGIN_READINESS_NOT_VERIFIED"
+                self.journal.completed.discard("origin_ready")
+                self.checkpoint(self.journal)
                 raise CloudflareError("Root origin readiness receipt is absent, stale or invalid; hostname remains unpublished")
             if self.journal.phase.value not in {RemotePhase.ORIGIN_READY.value,RemotePhase.TUNNEL_READY.value,RemotePhase.ACTIVE.value}:
                 self.journal.phase=RemotePhase.ORIGIN_READY
