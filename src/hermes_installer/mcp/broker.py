@@ -176,8 +176,12 @@ class _Handler:
         self._tools: dict[tuple[int, str, str], dict[str, Mapping[str, Any]]] = {}
 
     def __call__(self, *, context: HostContext, authorization: EffectAuthorization,
-                 payload: bytes, timeout: float, peer_pid: int,
+                 payload: bytes, timeout: float, peer_pid: int | None = None,
+                 peer_pidfd: int | None = None,
                  cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        # The authority owns this borrowed pidfd and closes it after dispatch.
+        # MCP itself never uses a numeric PID as process ownership evidence.
+        del peer_pid, peer_pidfd
         envelope = _parse_envelope(payload)
         service = self.service
         target = f"mcp:{service.service_id}:{service.channel}"
