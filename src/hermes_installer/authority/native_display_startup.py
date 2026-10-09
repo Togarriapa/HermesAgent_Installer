@@ -47,6 +47,7 @@ class SelectedDisplayStartup:
     receipt_handle: str
     display_uid: int
     display_gid: int
+    xauthority_reader_gid: int
 
     def __post_init__(self) -> None:
         ids = (self.remote_enrollment_id, self.native_profile_id,
@@ -57,7 +58,8 @@ class SelectedDisplayStartup:
                 or not isinstance(self.display_name, str)
                 or not re.fullmatch(r":[0-9]{1,3}(?:\.[0-9]{1,2})?", self.display_name)
                 or type(self.display_uid) is not int or self.display_uid <= 0
-                or type(self.display_gid) is not int or self.display_gid <= 0):
+                or type(self.display_gid) is not int or self.display_gid <= 0
+                or type(self.xauthority_reader_gid) is not int or self.xauthority_reader_gid <= 0):
             raise ValueError("root-selected display startup identity is malformed")
 
 
@@ -73,6 +75,7 @@ class PreparedXauthority:
     receipt_handle: str
     display_uid: int
     display_gid: int
+    xauthority_reader_gid: int
     path: Path = field(repr=False)
     device: int
     inode: int
@@ -349,7 +352,7 @@ class XauthorityStartupRegistry:
         if not isinstance(selected, SelectedDisplayStartup):
             raise NativeDisplayStartupDenied("root-selected display enrollment is required")
         directory_fd, directory_path = _safe_profile_dir(
-            self.root, selected.display_profile_id, selected.display_gid,
+            self.root, selected.display_profile_id, selected.xauthority_reader_gid,
             writer_uid=self.writer_uid)
         cookie = bytearray(os.urandom(_COOKIE_BYTES))
         content = encode_xauthority(selected.display_name, bytes(cookie))
@@ -362,7 +365,7 @@ class XauthorityStartupRegistry:
         try:
             fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
             created = True
-            os.fchown(fd, self.writer_uid, selected.display_gid)
+            os.fchown(fd, self.writer_uid, selected.xauthority_reader_gid)
             os.fchmod(fd, 0o440)
             view = memoryview(content)
             while view:
@@ -373,7 +376,7 @@ class XauthorityStartupRegistry:
             os.fsync(fd)
             info = os.fstat(fd)
             digest = hashlib.sha256(content).hexdigest()
-            if (info.st_uid != self.writer_uid or info.st_gid != selected.display_gid
+            if (info.st_uid != self.writer_uid or info.st_gid != selected.xauthority_reader_gid
                     or stat.S_IMODE(info.st_mode) != 0o440
                     or info.st_size != len(content)):
                 raise NativeDisplayStartupDenied("Xauthority file metadata is not protected")
@@ -383,6 +386,7 @@ class XauthorityStartupRegistry:
                 selected.native_generation, selected.display_profile_id,
                 selected.display_generation, selected.display_name,
                 selected.receipt_handle, selected.display_uid, selected.display_gid,
+                selected.xauthority_reader_gid,
                 directory_path / name,
                 info.st_dev, info.st_ino, info.st_uid, info.st_gid,
                 stat.S_IMODE(info.st_mode), digest)

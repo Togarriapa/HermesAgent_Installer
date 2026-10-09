@@ -62,7 +62,8 @@ class XauthorityPreparationTests(unittest.TestCase):
             remote_enrollment_id="remote-enrollment", native_profile_id="hermes-desktop",
             native_generation="native-gen-1", display_profile_id="hermes-display",
             display_generation="display-gen-1", display_name=":98",
-            receipt_handle="r" * 43, display_uid=self.uid, display_gid=self.gid)
+            receipt_handle="r" * 43, display_uid=self.uid, display_gid=self.gid,
+            xauthority_reader_gid=self.gid)
         self.registry = XauthorityStartupRegistry(
             root=self.root, signer=HMACReceiptSigner(b"s" * 32),
             custody=_Custody(), writer_uid=self.uid)
