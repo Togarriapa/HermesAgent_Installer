@@ -1,8 +1,12 @@
 # Skill, memory and application integration
 
-Each component retains its source revision, license, aliases and provenance. Import copies the complete tree, scripts, assets and relative references to pristine sources; native discovery/configuration is separate. Hooks require a reviewed invocation fixture. Instruction-only sources remain instruction-only. Unknown identities require an explicit source override.
+Each component retains its pinned source revision, license, aliases and provenance. The installer imports complete trees, including helper scripts, assets and shared root references. Native discovery, configuration, authentication, functional use and target acceptance remain separate evidence states. Hooks require a reviewed invocation fixture. Instruction-only sources remain instruction-only. Unknown identities require an explicit source override.
 
-Applications use isolated feature environments and on-demand scheduling. A catalog record does not start workers, replace Hermes as coordinator or prove ARM64 support. Missing dependencies or license review leave that item unavailable with a precise reason.
+The `R0063` through `R0096` non-MCP source contracts live in `hermes_installer.components.adapters`. They preserve the 34 explicit source selections and verification contracts. The five MCP identities, aliases and links remain in `planning/component-contracts.json` and are handled by the protocol adapters. Source pins are provenance only; they do not establish installation or functionality. License review is recorded separately from a private source import and remains required before any redistribution.
+
+Before import, the skill-tree reference audit follows local Markdown links from every `SKILL.md` transitively. It checks shared-root documents, helper files and assets, rejects missing paths, symlink traversal and paths outside the pinned source tree, and never executes upstream code. A broken reference aborts before the managed root is changed. The copied source manifest and digest still do not prove native discovery or hook invocation.
+
+Applications use isolated feature environments and on-demand scheduling. A catalog record does not start workers, replace Hermes as coordinator or prove ARM64 support. Missing dependencies or account eligibility leave that item pending with an actionable reason.
 
 Memory has one automatic capture owner per profile and separate user/profile namespaces. Extraction and embedding recheck privacy, capability and budget policy. Generated memory cannot recursively enter capture. Retrieval filters again by namespace. Provider-specific export and removal preserve other namespaces.
 
