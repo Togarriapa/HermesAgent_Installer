@@ -393,8 +393,10 @@ class MCPClient:
                 raise
             except AuthorityDenied as exc:
                 cancellation.set()
-                reason = "authentication denied or revoked" if getattr(exc, "code", "").startswith(("auth.", "account.")) else "host authority denied MCP request"
-                raise MCPError(reason) from None
+                code = getattr(exc, "code", "authority.denied")
+                reason = "authentication denied or revoked" if code.startswith(("auth.", "account.")) else "host authority denied MCP request"
+                self._last_error = f"authority:{code}"
+                raise MCPError(f"{reason} ({code})") from None
             except Exception:
                 cancellation.set()
                 raise MCPError("protected MCP broker is unavailable or denied the request") from None
