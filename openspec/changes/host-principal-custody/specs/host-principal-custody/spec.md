@@ -138,3 +138,17 @@ The installer SHALL bind actual native producer package/adapter closure through 
 #### Scenario: Mutable package or divergent normalization
 - **WHEN** native closure, peer generation, issuer provenance or route-normalized final payload differs from protected enrollment
 - **THEN** deny before effect bytes and retain exact incomplete implementation/native evidence state.
+
+### Requirement: Protected resolver reader
+The installer SHALL expose only peer-bound selected immutable resolver records via path-free native.resolver.read and SHALL re-resolve current protected effect enrollment on every dispatch.
+
+#### Scenario: Caller reuses stale resolver as permission
+- **WHEN** profile generation, handler, scope or policy changed after reading resolver
+- **THEN** deny affected effect before bytes; presentation records confer no authority.
+
+### Requirement: Fixed operation and voice session selection
+The installer SHALL resolve only protected fixed operation recipes and current root-authorized device/session handles; caller inputs SHALL not select physical executable, path, environment or device. Raw captured voice SHALL be bounded ephemeral memory only.
+
+#### Scenario: Forged recipe or expired voice session
+- **WHEN** selected operation parameters escape its schema or voice session is stale, sibling-owned or lacks trusted permission
+- **THEN** reject before execution/capture and cancel owned expired resources.

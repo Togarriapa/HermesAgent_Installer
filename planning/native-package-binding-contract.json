@@ -104,5 +104,47 @@
       "expires_monotonic"
     ],
     "read": "Opaque owned artifact ID with separate typed bounded root reads; no filesystem path/URL in response and no cross-profile receipt transfer"
+  },
+  "resolver_reader": {
+    "method": "read_native_resolver(binding_handle)",
+    "operation": "native.resolver.read",
+    "request_fields": [
+      "schema=1",
+      "opaque_binding_handle"
+    ],
+    "response_fields": [
+      "schema=1",
+      "package_id",
+      "profile_id",
+      "generation",
+      "resolver_sha256",
+      "adapters"
+    ],
+    "adapters": "Finite list of records with adapter_id,manifest_sha256,adapter_sha256,action_id,argument_schema_id,result_schema_id,effect_enrollment_id,operation,capability,target_id,recipient,generation matching package catalog; extra fields forbidden",
+    "semantics": "Root returns canonical bounded immutable resolver document from selected closure after same actual peer/package/generation validation; maximum2MiB and <=692 selected declarations. No request path, FD, module import or caller mount choice. Root selected loader reads only enrolled read-only namespace closure internally. Facade resolver is presentation/routing only: root re-resolves current effect enrollment and all identity/authority/schema/source conditions EVERY effect, never trusts returned record as permission."
+  },
+  "operation_recipes": {
+    "enrollment_field": "operation_recipes",
+    "key": "fixed root-reviewed operation_id; unique exact per selected profile/generation",
+    "record_fields": [
+      "executable_artifact_id",
+      "executable_sha256",
+      "argv_recipe",
+      "cwd_root_id",
+      "cwd_subpath",
+      "environment",
+      "child_artifact_refs",
+      "max_lifetime_seconds",
+      "max_output_bytes",
+      "stdin_mode",
+      "parameter_schema_id"
+    ],
+    "worker_request_fields": [
+      "enrollment_id",
+      "generation",
+      "operation_id",
+      "parameters"
+    ],
+    "constraints": "Root resolves executable/cwd/child artifacts from protected catalog and opaque roots, verifies actual pins. argv_recipe finite literals and typed parameter placeholders only; no caller shell/argv/path/env/URL/executable/substitution. cwd_subpath protected enrollment literal validated containment/no symlinks. environment root finite sanitized literals/ref bindings, never caller env or secret argv. stdin_mode closed|bounded-typed-bytes per schema, max lifetime<=600s unless separately reviewed existing operation cap. Parameters exact schema extra fields forbidden, argument output bounds required. Operation recipe selection not independent authorization: fixed process.start effect target and exact operation_id/parameters digest in grant. Missing recipe/pin/build dependencies unavailable."
   }
 }
