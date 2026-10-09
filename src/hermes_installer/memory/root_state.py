@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 import re
 import stat
-from typing import Iterator, Mapping
+from typing import Iterator, Protocol
 
 
 class MemoryStateDenied(PermissionError):
@@ -43,10 +43,16 @@ class RootJournalSelection:
             raise ValueError("root journal path must be an absolute protected selection")
 
 
+class RootJournalResolver(Protocol):
+    def __call__(self, root_id: str, *,
+                 expected_active_generation_digest: str) -> RootJournalSelection: ...
+
+
 def resolve_memory_state_directory(enrollment: object,
-                                   root_journal_roots: Mapping[str, RootJournalSelection],
-                                   *, expected_uid: int = 0) -> "MemoryAuthorityStateDirectory":
-    """Resolve only the state root ID carried by a validated memory enrollment."""
+        root_journal_resolver: RootJournalResolver, *,
+        expected_active_generation_digest: str,
+        expected_uid: int = 0) -> "MemoryAuthorityStateDirectory":
+    """Resolve the protected row against the currently active generation."""
     state_id = getattr(enrollment, "authority_state_root_id", None)
     profile_id = getattr(enrollment, "profile_id", None)
     if (not isinstance(state_id, str) or not _ID.fullmatch(state_id)
@@ -55,7 +61,15 @@ def resolve_memory_state_directory(enrollment: object,
     data_root_id = getattr(enrollment, "data_root_id", None)
     if not isinstance(data_root_id, str) or state_id == data_root_id:
         raise MemoryStateDenied("authority state root cannot alias service-writable data root")
-    selection = root_journal_roots.get(state_id)
+    if (not callable(root_journal_resolver)
+            or not isinstance(expected_active_generation_digest, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", expected_active_generation_digest)):
+        raise MemoryStateDenied("active root journal catalog verifier is unavailable")
+    try:
+        selection = root_journal_resolver(
+            state_id, expected_active_generation_digest=expected_active_generation_digest)
+    except Exception:
+        raise MemoryStateDenied("active root journal catalog did not resolve the selected ID") from None
     if (not isinstance(selection, RootJournalSelection)
             or selection.root_id != state_id):
         raise MemoryStateDenied("authority state-root ID is not in the protected root journal catalog")

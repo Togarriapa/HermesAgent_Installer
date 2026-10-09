@@ -22,6 +22,14 @@ class MemoryRootStateTests(unittest.TestCase):
         # do not weaken the production no-symlink walk.
         return RootJournalSelection("authority-journal-main", root.resolve())
 
+    @staticmethod
+    def _resolver(selection):
+        def resolve(root_id, *, expected_active_generation_digest):
+            if expected_active_generation_digest != "a" * 64 or root_id != selection.root_id:
+                raise KeyError("not in active digest-bound catalog")
+            return selection
+        return resolve
+
     def test_only_protected_state_root_id_resolves_to_profile_hash_directory(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as temporary:
             root = self._selection(Path(temporary) / "journal")
@@ -29,7 +37,9 @@ class MemoryRootStateTests(unittest.TestCase):
                 authority_state_root_id=root.root_id, profile_id="profile-a",
                 data_root_id="service-data-a")
             state = resolve_memory_state_directory(
-                enrollment, {root.root_id: root}, expected_uid=os.geteuid())
+                enrollment, self._resolver(root),
+                expected_active_generation_digest="a" * 64,
+                expected_uid=os.geteuid())
             try:
                 expected = hashlib.sha256(b"profile-a").hexdigest()
                 self.assertEqual(state.profile_key, expected)
@@ -51,12 +61,14 @@ class MemoryRootStateTests(unittest.TestCase):
             good = SimpleNamespace(authority_state_root_id=root.root_id,
                                    profile_id="profile-a", data_root_id="data-a")
             with self.assertRaises(MemoryStateDenied):
-                resolve_memory_state_directory(good, {}, expected_uid=os.geteuid())
+                resolve_memory_state_directory(good, self._resolver(root),
+                    expected_active_generation_digest="b" * 64,
+                    expected_uid=os.geteuid())
             aliased = SimpleNamespace(authority_state_root_id="same-id",
                                       profile_id="profile-a", data_root_id="same-id")
             with self.assertRaises(MemoryStateDenied):
-                resolve_memory_state_directory(aliased,
-                    {"same-id": RootJournalSelection("same-id", root.path)},
+                resolve_memory_state_directory(aliased, self._resolver(root),
+                    expected_active_generation_digest="a" * 64,
                     expected_uid=os.geteuid())
 
             linked_root = Path(temporary) / "linked"
@@ -65,8 +77,8 @@ class MemoryRootStateTests(unittest.TestCase):
             with self.assertRaises(MemoryStateDenied):
                 MemoryAuthorityStateDirectory(linked, "profile-a", expected_uid=os.geteuid())
 
-            state = resolve_memory_state_directory(good, {root.root_id: root},
-                                                   expected_uid=os.geteuid())
+            state = resolve_memory_state_directory(good, self._resolver(root),
+                expected_active_generation_digest="a" * 64, expected_uid=os.geteuid())
             try:
                 state.root.chmod(0o750)
                 with self.assertRaises(MemoryStateDenied):

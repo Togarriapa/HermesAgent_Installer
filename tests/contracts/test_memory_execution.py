@@ -117,10 +117,9 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
             with self.assertRaises(MemoryExecutionDenied):
                 ledger.begin_step(job.handle, expected_sequence=1,
                     step_id="search", expected_step_id="search")
-            complete = ledger.commit_step(job.handle, step_id="search", sequence=1,
-                step_index=0, captures={}, final=True)
-            self.assertEqual(complete.state, "complete")
-            self.assertEqual(dict(complete.request_body), {})
+            with self.assertRaises(MemoryExecutionDenied):
+                ledger.commit_step(job.handle, step_id="search", sequence=1,
+                    step_index=0, captures={}, final=True)
             with self.assertRaises(MemoryExecutionDenied):
                 ledger.begin_step(job.handle, expected_sequence=2,
                     step_id="search", expected_step_id="search")
@@ -170,17 +169,23 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             enrollment, recipe = enrolled()
             observed = {}
+            ledger = MemoryCompoundLedger(Path(directory) / "owned")
 
             def effect(reservation_handle, canonical_connector_payload_bytes,
                        serialized_service_request_sha256, *, timeout, cancelled):
+                observed["claimed"] = ledger.get_consumed_step_effect(
+                    reservation_handle, canonical_connector_payload_bytes,
+                    serialized_service_request_sha256)
+                with self.assertRaises(MemoryExecutionDenied):
+                    ledger.consume_step_effect(reservation_handle,
+                        canonical_connector_payload_bytes, serialized_service_request_sha256)
                 observed.update({"reservation_handle": reservation_handle,
                     "canonical_connector_payload_bytes": canonical_connector_payload_bytes,
                     "serialized_service_request_sha256": serialized_service_request_sha256,
                     "timeout": timeout, "cancelled": cancelled})
                 return 200, b'{"mode":"compact","results":[]}'
 
-            executor = MemoryCompoundExecutor(
-                MemoryCompoundLedger(Path(directory) / "owned"), effect)
+            executor = MemoryCompoundExecutor(ledger, effect)
             body = {"query": "private fact", "limit": 5}
             context, grant, payload = parent_effect(enrollment, recipe.approved_route_id, body)
             result = executor.execute(enrollment=enrollment, recipe=recipe,
@@ -193,6 +198,8 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
             self.assertEqual(envelope["sequence"], 1)
             self.assertEqual(envelope["step_id"], "search")
             self.assertEqual(envelope["body"], body)
+            self.assertEqual(observed["claimed"]["step_id"], "search")
+            self.assertEqual(observed["claimed"]["profile_id"], enrollment.profile_id)
             self.assertEqual(len(observed["serialized_service_request_sha256"]), 64)
             self.assertGreater(observed["timeout"], 0)
             with sqlite3.connect(Path(directory) / "owned" / "memory-queue.sqlite3") as db:

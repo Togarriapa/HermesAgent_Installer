@@ -505,6 +505,7 @@ class DurableMemoryQueue:
                 if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='compound_jobs'").fetchone():
                     db.execute("UPDATE compound_jobs SET state='revoked',source_context=X'',consent=NULL,"
                         "request_body=X'7b7d',captures=X'7b7d',inflight_step=NULL,inflight_sequence=NULL "
+                        ",effect_consumed=0,compound_payload_sha256=NULL,service_request_sha256=NULL "
                         "WHERE profile=? AND provider=? AND owner_generation=? AND state='active'",
                         (profile_id, provider_id, owner_generation))
                 db.commit()
@@ -531,6 +532,7 @@ class DurableMemoryQueue:
                 if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='compound_jobs'").fetchone():
                     db.execute("UPDATE compound_jobs SET state='revoked',source_context=X'',consent=NULL,"
                         "request_body=X'7b7d',captures=X'7b7d',inflight_step=NULL,inflight_sequence=NULL "
+                        ",effect_consumed=0,compound_payload_sha256=NULL,service_request_sha256=NULL "
                         "WHERE profile=? AND state='active'", (profile_id,))
                 db.commit()
                 return int(changed)
@@ -873,7 +875,8 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
     return result
 
 def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTarget | MemoryServiceEnrollment],
-        authority_service: Any, *, root_journal_roots: Mapping[str, Any] | None = None,
+        authority_service: Any, *, root_journal_resolver: Callable[..., Any] | None = None,
+        expected_active_generation_digest: str | None = None,
         vault: Any = None, connector_factory: RootConnectorFactory | None = None) -> dict[str, Any]:
     """Assemble the root memory runtime from protected enrollment only.
 
@@ -892,7 +895,7 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         targets[key] = target
     if connector_factory is not None:
         raise ValueError("raw memory HTTP connector factories are not supported")
-    if not root_journal_roots:
+    if not callable(root_journal_resolver) or not expected_active_generation_digest:
         # A service enrollment is not authority to choose its own state path.
         # Until the protected root-journal catalog is supplied, expose no
         # mutable memory runtime (handlers report an unavailable state root).
@@ -918,7 +921,10 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
             raise ValueError("profile memory enrollments disagree on protected authority state root")
         enrollments[target.profile_id] = target.enrollment
     state_directories = {
-        profile: resolve_memory_state_directory(enrollment, root_journal_roots, expected_uid=0)
+        profile: resolve_memory_state_directory(
+            enrollment, root_journal_resolver,
+            expected_active_generation_digest=expected_active_generation_digest,
+            expected_uid=0)
         for profile, enrollment in enrollments.items()
     }
     owner_ledgers = {profile: SQLiteOwnerLedger(directory)

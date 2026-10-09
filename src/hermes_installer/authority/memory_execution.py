@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -192,7 +193,9 @@ class MemoryCompoundLedger:
                         next_step INTEGER NOT NULL, sequence INTEGER NOT NULL,
                         deadline REAL NOT NULL, source_context BLOB NOT NULL,
                         consent BLOB, request_body BLOB NOT NULL, captures BLOB NOT NULL,
-                        inflight_step TEXT, inflight_sequence INTEGER
+                        inflight_step TEXT, inflight_sequence INTEGER,
+                        effect_consumed INTEGER NOT NULL DEFAULT 0,
+                        compound_payload_sha256 TEXT, service_request_sha256 TEXT
                     );
                     CREATE INDEX IF NOT EXISTS compound_jobs_owner
                       ON compound_jobs(profile, provider, owner_generation, state);
@@ -205,9 +208,18 @@ class MemoryCompoundLedger:
                 """)
                 # Monotonic deadlines are not meaningful after process restart.
                 # Interrupted network effects are ambiguous and must never replay.
+                columns = {row[1] for row in db.execute("PRAGMA table_info(compound_jobs)")}
+                for name, declaration in (
+                    ("effect_consumed", "INTEGER NOT NULL DEFAULT 0"),
+                    ("compound_payload_sha256", "TEXT"),
+                    ("service_request_sha256", "TEXT"),
+                ):
+                    if name not in columns:
+                        db.execute(f"ALTER TABLE compound_jobs ADD COLUMN {name} {declaration}")
                 db.execute("UPDATE compound_jobs SET state='ambiguous',source_context=X'',consent=NULL,"
                            "request_body=X'7b7d',captures=X'7b7d',inflight_step=NULL,"
-                           "inflight_sequence=NULL WHERE state='active'")
+                           "inflight_sequence=NULL,effect_consumed=0,compound_payload_sha256=NULL,"
+                           "service_request_sha256=NULL WHERE state='active'")
                 db.commit()
             finally:
                 db.close()
@@ -249,7 +261,10 @@ class MemoryCompoundLedger:
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
-                db.execute("INSERT INTO compound_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                db.execute("INSERT INTO compound_jobs(handle,profile,namespace,provider,service_generation,"
+                    "owner_generation,route_id,state,next_step,sequence,deadline,source_context,consent,"
+                    "request_body,captures,inflight_step,inflight_sequence) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (handle, enrollment.profile_id, enrollment.namespace_identity,
                      enrollment.provider, enrollment.service_generation,
                      enrollment.memory_owner_generation, recipe.approved_route_id,
@@ -303,7 +318,8 @@ class MemoryCompoundLedger:
                 if (sequence != expected_sequence or inflight is not None
                         or inflight_sequence is not None or time.monotonic() >= deadline):
                     raise MemoryExecutionDenied("memory step was replayed, concurrent, or expired")
-                db.execute("UPDATE compound_jobs SET inflight_step=?,inflight_sequence=? WHERE handle=?",
+                db.execute("UPDATE compound_jobs SET inflight_step=?,inflight_sequence=?,effect_consumed=0,"
+                           "compound_payload_sha256=NULL,service_request_sha256=NULL WHERE handle=?",
                            (step_id, expected_sequence, handle))
                 db.commit()
             finally:
@@ -320,7 +336,8 @@ class MemoryCompoundLedger:
                            j.owner_generation,j.route_id,j.state,j.sequence,j.deadline,
                            j.source_context,j.consent,j.inflight_step,j.inflight_sequence,
                            b.target_id,b.recipe_sha256,b.parent_grant_id,
-                           b.parent_context_digest,b.parent_request_digest
+                           b.parent_context_digest,b.parent_request_digest,
+                           j.compound_payload_sha256,j.service_request_sha256,j.effect_consumed
                     FROM compound_jobs j JOIN compound_bindings b ON b.handle=j.handle
                     WHERE j.handle=?
                 """, (binding.job_handle,)).fetchone()
@@ -342,8 +359,134 @@ class MemoryCompoundLedger:
                 or row[17] != binding.parent_request_digest
                 or hashlib.sha256(source).hexdigest() != binding.source_context_sha256
                 or (None if consent is None else hashlib.sha256(consent).hexdigest())
-                    != binding.consent_sha256):
+                    != binding.consent_sha256
+                or row[18] != binding.compound_envelope_sha256
+                or row[19] != binding.service_request_sha256
+                or row[20] != 0):
             raise MemoryExecutionDenied("memory step binding is stale, revoked, or differs from durable state")
+
+    def bind_step_payload(self, binding: MemoryStepBinding) -> None:
+        """Persist final canonical payload digests against the live reservation."""
+        with memory_state_lock(self.owned, self.lock_path):
+            db = self._connect()
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                row = db.execute("SELECT j.profile,j.namespace,j.provider,j.service_generation,"
+                    "j.owner_generation,j.route_id,j.state,j.sequence,j.deadline,j.source_context,j.consent,"
+                    "j.inflight_step,j.inflight_sequence,j.effect_consumed,j.compound_payload_sha256,"
+                    "j.service_request_sha256,b.target_id,b.recipe_sha256,b.parent_grant_id,"
+                    "b.parent_context_digest,b.parent_request_digest FROM compound_jobs j "
+                    "JOIN compound_bindings b ON b.handle=j.handle WHERE j.handle=?",
+                    (binding.job_handle,)).fetchone()
+                source = b"" if row is None else bytes(row[9])
+                consent = None if row is None or row[10] is None else bytes(row[10])
+                if (row is None or row[0] != binding.profile_id or row[1] != binding.namespace_id
+                        or row[2] != binding.provider or row[3] != binding.service_generation
+                        or row[4] != binding.memory_owner_generation or row[5] != binding.approved_route_id
+                        or row[6] != "active" or row[7] != binding.sequence
+                        or row[8] != binding.deadline_monotonic or row[11] != binding.step_id
+                        or row[12] != binding.sequence or row[13] != 0 or row[14] is not None
+                        or row[15] is not None or row[16] != binding.target_id
+                        or row[17] != binding.recipe_sha256 or row[18] != binding.parent_grant_id
+                        or row[19] != binding.parent_context_digest
+                        or row[20] != binding.parent_request_digest
+                        or hashlib.sha256(source).hexdigest() != binding.source_context_sha256
+                        or (None if consent is None else hashlib.sha256(consent).hexdigest())
+                            != binding.consent_sha256
+                        or time.monotonic() >= row[8]):
+                    raise MemoryExecutionDenied("memory step payload cannot bind to a stale reservation")
+                db.execute("UPDATE compound_jobs SET compound_payload_sha256=?,service_request_sha256=? "
+                    "WHERE handle=? AND effect_consumed=0 AND compound_payload_sha256 IS NULL "
+                    "AND service_request_sha256 IS NULL",
+                    (binding.compound_envelope_sha256, binding.service_request_sha256,
+                     binding.job_handle))
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+
+    def consume_step_effect(self, handle: str, compound_payload: bytes,
+                            service_request_sha256: str) -> Mapping[str, Any]:
+        """Atomically consume one exact reservation before any HI12 connector call."""
+        if (not isinstance(compound_payload, bytes)
+                or not isinstance(service_request_sha256, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", service_request_sha256)):
+            raise MemoryExecutionDenied("memory connector payload digest is malformed")
+        payload_sha256 = hashlib.sha256(compound_payload).hexdigest()
+        with memory_state_lock(self.owned, self.lock_path):
+            db = self._connect()
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                row = db.execute("SELECT profile,namespace,provider,service_generation,owner_generation,"
+                    "route_id,state,sequence,deadline,source_context,consent,inflight_step,"
+                    "inflight_sequence,effect_consumed,compound_payload_sha256,service_request_sha256 "
+                    "FROM compound_jobs WHERE handle=?", (handle,)).fetchone()
+                bind = db.execute("SELECT target_id,recipe_sha256,parent_grant_id,"
+                    "parent_context_digest,parent_request_digest FROM compound_bindings WHERE handle=?",
+                    (handle,)).fetchone()
+                if (row is None or bind is None or row[6] != "active" or row[11] is None
+                        or row[12] != row[7] or row[13] != 0 or row[14] != payload_sha256
+                        or row[15] != service_request_sha256 or time.monotonic() >= row[8]):
+                    raise MemoryExecutionDenied("memory effect reservation is stale, changed, or consumed")
+                changed = db.execute("UPDATE compound_jobs SET effect_consumed=1 WHERE handle=? "
+                    "AND state='active' AND effect_consumed=0 AND compound_payload_sha256=? "
+                    "AND service_request_sha256=?", (handle, payload_sha256,
+                                                       service_request_sha256)).rowcount
+                if changed != 1:
+                    raise MemoryExecutionDenied("memory effect reservation was concurrently consumed")
+                result = {
+                    "profile_id": row[0], "namespace_id": row[1], "provider": row[2],
+                    "service_generation": row[3], "owner_generation": row[4],
+                    "route_id": row[5], "sequence": row[7], "deadline_monotonic": row[8],
+                    "source_context_wire": bytes(row[9]),
+                    "consent_wire": None if row[10] is None else bytes(row[10]),
+                    "step_id": row[11], "target_id": bind[0], "recipe_sha256": bind[1],
+                    "parent_grant_id": bind[2], "parent_context_digest": bind[3],
+                    "parent_request_digest": bind[4],
+                    "compound_payload_sha256": payload_sha256,
+                    "service_request_sha256": service_request_sha256,
+                }
+                db.commit()
+                return result
+            except BaseException:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+
+    def get_consumed_step_effect(self, handle: str, compound_payload: bytes,
+                                 service_request_sha256: str) -> Mapping[str, Any]:
+        """Read a consumed binding for the root connector issuer's revalidation."""
+        payload_sha256 = hashlib.sha256(compound_payload).hexdigest()
+        with memory_state_lock(self.owned, self.lock_path):
+            db = self._connect()
+            try:
+                row = db.execute("SELECT profile,namespace,provider,service_generation,owner_generation,"
+                    "route_id,state,sequence,deadline,source_context,consent,inflight_step,"
+                    "inflight_sequence,effect_consumed,compound_payload_sha256,service_request_sha256 "
+                    "FROM compound_jobs WHERE handle=?", (handle,)).fetchone()
+                bind = db.execute("SELECT target_id,recipe_sha256,parent_grant_id,"
+                    "parent_context_digest,parent_request_digest FROM compound_bindings WHERE handle=?",
+                    (handle,)).fetchone()
+            finally:
+                db.close()
+        if (row is None or bind is None or row[6] != "active" or row[11] is None
+                or row[12] != row[7] or row[13] != 1 or row[14] != payload_sha256
+                or row[15] != service_request_sha256 or time.monotonic() >= row[8]):
+            raise MemoryExecutionDenied("consumed memory effect binding changed or expired")
+        return {
+            "profile_id": row[0], "namespace_id": row[1], "provider": row[2],
+            "service_generation": row[3], "owner_generation": row[4],
+            "route_id": row[5], "sequence": row[7], "deadline_monotonic": row[8],
+            "source_context_wire": bytes(row[9]),
+            "consent_wire": None if row[10] is None else bytes(row[10]),
+            "step_id": row[11], "target_id": bind[0], "recipe_sha256": bind[1],
+            "parent_grant_id": bind[2], "parent_context_digest": bind[3],
+            "parent_request_digest": bind[4], "compound_payload_sha256": payload_sha256,
+            "service_request_sha256": service_request_sha256,
+        }
 
     def commit_step(self, handle: str, *, step_id: str, sequence: int,
                     step_index: int, captures: Mapping[str, str], final: bool) -> MemoryJob:
@@ -355,16 +498,18 @@ class MemoryCompoundLedger:
             try:
                 db.execute("BEGIN IMMEDIATE")
                 row = db.execute("SELECT state,next_step,sequence,captures,inflight_step,"
-                    "inflight_sequence FROM compound_jobs WHERE handle=?", (handle,)).fetchone()
+                    "inflight_sequence,effect_consumed FROM compound_jobs WHERE handle=?", (handle,)).fetchone()
                 if (row is None or row[0] != "active" or row[1] != step_index
-                        or row[2] != sequence or row[4] != step_id or row[5] != sequence):
+                        or row[2] != sequence or row[4] != step_id or row[5] != sequence
+                        or row[6] != 1):
                     raise MemoryExecutionDenied("memory step transition lost its one-use reservation")
                 old = json.loads(bytes(row[3]).decode("utf-8"))
                 if not isinstance(old, dict) or set(old) & set(captures):
                     raise MemoryExecutionDenied("memory response capture is malformed or repeated")
                 old.update(captures)
                 db.execute("UPDATE compound_jobs SET state=?,next_step=?,sequence=?,captures=?,"
-                    "inflight_step=NULL,inflight_sequence=NULL,source_context=?,consent=? WHERE handle=?",
+                    "inflight_step=NULL,inflight_sequence=NULL,effect_consumed=0,"
+                    "compound_payload_sha256=NULL,service_request_sha256=NULL,source_context=?,consent=? WHERE handle=?",
                     ("complete" if final else "active", step_index + 1, sequence + 1,
                      canonical_json(old, 16 * 1024), b"" if final else db.execute(
                          "SELECT source_context FROM compound_jobs WHERE handle=?", (handle,)).fetchone()[0],
@@ -390,7 +535,8 @@ class MemoryCompoundLedger:
                 if row is None or row[0] != "active" or row[1:] != (step_id, sequence):
                     raise MemoryExecutionDenied("memory failure does not match the active step")
                 db.execute("UPDATE compound_jobs SET state=?,source_context=X'',consent=NULL,request_body=X'7b7d',"
-                    "captures=X'7b7d',inflight_step=NULL,inflight_sequence=NULL WHERE handle=?",
+                    "captures=X'7b7d',inflight_step=NULL,inflight_sequence=NULL,effect_consumed=0,"
+                    "compound_payload_sha256=NULL,service_request_sha256=NULL WHERE handle=?",
                     (state, handle))
                 db.commit()
             finally:
@@ -407,7 +553,8 @@ class MemoryCompoundLedger:
             try:
                 db.execute("BEGIN IMMEDIATE")
                 cursor = db.execute("UPDATE compound_jobs SET state='revoked',source_context=X'',consent=NULL,"
-                    "request_body=X'7b7d',captures=X'7b7d',inflight_step=NULL,inflight_sequence=NULL "
+                    "request_body=X'7b7d',captures=X'7b7d',inflight_step=NULL,inflight_sequence=NULL,"
+                    "effect_consumed=0,compound_payload_sha256=NULL,service_request_sha256=NULL "
                     "WHERE profile=? AND provider=? AND owner_generation=? AND state='active'",
                     (profile_id, provider, owner_generation))
                 db.commit()
@@ -524,11 +671,17 @@ class MemoryCompoundExecutor:
                     compound_envelope_sha256=payload_digest,
                     service_request_sha256=service_request_digest,
                 )
+                self.ledger.bind_step_payload(binding)
                 self.ledger.verify_step_binding(binding)
                 try:
                     remaining = job.deadline_monotonic - time.monotonic()
                     if remaining <= 0:
                         raise MemoryExecutionDenied("memory compound deadline expired before effect")
+                    # Consume the final one-use reservation atomically before
+                    # the authority callback may issue any HI12 connector
+                    # grant or place service bytes on the namespace socket.
+                    self.ledger.consume_step_effect(
+                        job.handle, compound_envelope, service_request_digest)
                     # This root callback re-resolves the durable reservation,
                     # route recipe, source closure, consent, owner/service
                     # generation and current policy before minting a fresh
