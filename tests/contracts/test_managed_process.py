@@ -323,7 +323,9 @@ class ManagedProcessKernelEvidenceTests(unittest.TestCase):
                 # progress logic.  Simulate the root broker at the method
                 # boundary while retaining real kernel pipes and a real child;
                 # authority RPC and systemd admission have separate tests.
-                cursors = {"stdout": 0, "stdin": 0}
+                cursors = {"stdout": 0, "stdin_sequence": 0}
+                accepted_writes: list[tuple[int, int]] = []
+                read_sizes: list[int] = []
                 loop = asyncio.get_running_loop()
 
                 async def wait_fd(fd: int, *, writable: bool) -> None:
@@ -338,26 +340,38 @@ class ManagedProcessKernelEvidenceTests(unittest.TestCase):
 
                 async def broker_control(operation, fields, timeout=5.0):
                     if operation == "process.write":
-                        chunk = base64.b64decode(fields["data"], validate=True)
+                        self.assertEqual(set(fields), {"data_bytes", "sequence"})
+                        self.assertIs(type(fields["sequence"]), int)
+                        self.assertEqual(fields["sequence"], cursors["stdin_sequence"])
+                        encoded = fields["data_bytes"]
+                        self.assertIsInstance(encoded, bytes)
+                        self.assertLessEqual(len(encoded), 65536)
+                        chunk = encoded
                         while True:
                             try:
                                 count = os.write(child.stdin.fileno(), chunk[:4096])
                                 break
                             except BlockingIOError:
                                 await wait_fd(child.stdin.fileno(), writable=True)
-                        cursors["stdin"] += count
-                        return {"schema": 1, "stdin_cursor": cursors["stdin"],
-                                "bytes_written": count}
+                        cursors["stdin_sequence"] += 1
+                        accepted_writes.append((count, cursors["stdin_sequence"]))
+                        return {"accepted_bytes": count, "sequence": cursors["stdin_sequence"]}
                     if operation == "process.read":
+                        self.assertEqual(set(fields), {"stream", "maximum_bytes"})
+                        self.assertEqual(fields["stream"], "stdout")
+                        maximum = fields["maximum_bytes"]
+                        self.assertIs(type(maximum), int)
+                        self.assertGreaterEqual(maximum, 1)
+                        self.assertLessEqual(maximum, 1_048_576)
                         try:
-                            data = os.read(child.stdout.fileno(), min(fields["max_bytes"], 4096))
+                            data = os.read(child.stdout.fileno(), min(maximum, 4096))
                         except BlockingIOError:
                             await wait_fd(child.stdout.fileno(), writable=False)
-                            data = os.read(child.stdout.fileno(), min(fields["max_bytes"], 4096))
+                            data = os.read(child.stdout.fileno(), min(maximum, 4096))
                         cursors["stdout"] += len(data)
-                        return {"schema": 1, "cursor": cursors["stdout"],
-                                "data": base64.b64encode(data).decode("ascii"),
-                                "eof": not data}
+                        read_sizes.append(len(data))
+                        return {"data_bytes": base64.b64encode(data).decode("ascii"),
+                                "eof": not data, "redacted": False}
                     raise AssertionError(f"unexpected broker operation: {operation}")
 
                 os.set_blocking(child.stdin.fileno(), False)
@@ -373,6 +387,13 @@ class ManagedProcessKernelEvidenceTests(unittest.TestCase):
                     except asyncio.TimeoutError:
                         continue
                 self.assertEqual(bytes(result), payload)
+                self.assertEqual(sum(count for count, _ in accepted_writes), len(payload))
+                self.assertGreater(len(accepted_writes), 2)
+                self.assertTrue(any(count < 65536 for count, _ in accepted_writes))
+                self.assertEqual([sequence for _, sequence in accepted_writes],
+                                 list(range(1, len(accepted_writes) + 1)))
+                self.assertEqual(sum(read_sizes), len(payload))
+                self.assertTrue(all(size <= 4096 for size in read_sizes))
                 self.assertEqual(child.wait(timeout=2), 0)
             finally:
                 if handle is not None:

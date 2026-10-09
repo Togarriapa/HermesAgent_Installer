@@ -37,13 +37,18 @@ class Profile:
     target_id = "colibri-source-build:start"
     generation = "generation-1"
     service_generation_digest = "a" * 64
+    build_service_enrollment_id = "builder-service-1"
+    build_service_generation = "service-generation-1"
     source_artifact_id = "colibri-source"
     source_sha256 = "1" * 64
     toolchain_artifact_id = "aarch64-sysroot"
     toolchain_sha256 = "2" * 64
     builder_artifact_id = "fixed-builder"
     builder_sha256 = "3" * 64
-    argv_recipe = ("/catalog/builder", "build", "--fixed")
+    argv_recipe = (
+        {"build_path": {"mount_id": "builder", "relative_path": ""}},
+        {"literal": "build"}, {"literal": "--fixed"},
+    )
     environment = {"LANG": "C"}
     max_lifetime_seconds = 600
     output_root_id = "build-output"
@@ -131,21 +136,32 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
             def resolve(self, artifact_id, _digest, _staging, *, expected_uid):
                 assert expected_uid == os.getuid()
                 path = artifact_paths[artifact_id]
+                manifest = hashlib.sha256(b"[]").hexdigest()
                 return SimpleNamespace(artifact_id=artifact_id, sha256=specs[artifact_id].sha256,
-                                       path=path)
+                                       path=path, tree_files=(), tree_manifest_sha256=manifest)
 
         class Catalog:
-            def resolve(self, target_id, generation):
+            def resolve_service(self, target_id, generation, services):
                 assert target_id == profile.target_id and generation == profile.generation
-                return profile
+                assert services is service_catalog
+                return profile, SimpleNamespace(
+                    enrollment_id=profile.build_service_enrollment_id,
+                    generation=profile.build_service_generation,
+                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
 
         class Launcher:
             seen = False
 
-            def run(self, inputs, *, timeout, cancelled):
+            def run_selected_build(self, inputs, *, context, authorization, peer_pid,
+                                   peer_pidfd, timeout, cancelled):
                 self.seen = True
                 assert inputs.source_root == source and inputs.toolchain_root == toolchain
                 assert inputs.builder_executable == builder and timeout > 0
+                assert inputs.enrollment_id == "enrollment-1"
+                assert inputs.operation_id == "colibri-source-build-v1"
+                assert inputs.selection_digest == authorization.request_digest
+                assert inputs.argv_recipe[0] == {"build_path": {"mount_id": "builder", "relative_path": ""}}
+                assert peer_pid == 42 and peer_pidfd == 7 and context.enrollment_id == "enrollment-1"
                 assert not cancelled()
                 filled_output(inputs.output_root)
                 return completed()
@@ -172,9 +188,11 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
             nonce="nonce-1", context_digest="b" * 64, signature="sig",
             enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
         launcher = Launcher()
+        service_catalog = object()
         service = RootBuildExecutionService(
             build_catalog=Catalog(), artifact_catalog=Artifacts(), artifact_staging_root=base,
             launcher=launcher, fact_inspector=FixtureInspector(), authority_key=b"k" * 32,
+            service_catalog=service_catalog,
             store=make_store(base / "cas"), expected_uid=os.getuid())
         response = service(context=context, authorization=authorization, payload=payload,
                            timeout=60, peer_pid=42, peer_pidfd=7, cancelled=lambda: False)
@@ -185,6 +203,83 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
         assert receipt["operation_id"] == "colibri-source-build-v1"
         assert receipt["service_generation_digest"] == profile.service_generation_digest
         assert {output["relative_path"] for output in receipt["output_records"]} == set(profile.output_specs)
+        assert list(output_root.iterdir()) == []
+
+
+def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activating_receipt():
+    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+        base = Path(temp)
+        output_root = base / "outputs"
+        output_root.mkdir(mode=0o700)
+        profile = Profile(output_root)
+        source, toolchain = base / "source", base / "toolchain"
+        source.mkdir(mode=0o700)
+        toolchain.mkdir(mode=0o700)
+        builder = base / "builder"
+        builder.write_bytes(b"root-pinned builder")
+        builder.chmod(0o700)
+        artifact_specs = {
+            "colibri-source": SimpleNamespace(sha256=profile.source_sha256, tree_files=False),
+            "aarch64-sysroot": SimpleNamespace(sha256=profile.toolchain_sha256, tree_files=False),
+            "fixed-builder": SimpleNamespace(sha256=profile.builder_sha256, tree_files=False),
+        }
+        paths = {"colibri-source": source, "aarch64-sysroot": toolchain, "fixed-builder": builder}
+
+        class Artifacts:
+            artifacts = artifact_specs
+
+            def resolve(self, artifact_id, _digest, _staging, *, expected_uid):
+                return SimpleNamespace(artifact_id=artifact_id, sha256=artifact_specs[artifact_id].sha256,
+                                       path=paths[artifact_id], tree_files=(),
+                                       tree_manifest_sha256=hashlib.sha256(b"[]").hexdigest())
+
+        class Catalog:
+            def resolve_service(self, _target_id, _generation, _services):
+                return profile, SimpleNamespace(
+                    enrollment_id=profile.build_service_enrollment_id,
+                    generation=profile.build_service_generation,
+                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
+
+        class Launcher:
+            def run_selected_build(self, inputs, **_kwargs):
+                filled_output(inputs.output_root)
+                return completed()
+
+        payload = json.dumps({"schema": 1, "enrollment_id": "enrollment-1",
+                              "generation": profile.generation,
+                              "operation_id": "colibri-source-build-v1", "parameters": {}},
+                             sort_keys=True, separators=(",", ":")).encode("ascii")
+        now = time.monotonic()
+        context = HostContext(
+            principal_id="principal-1", profile_id="profile-1", namespace_id="namespace-1",
+            uid=os.getuid(), purpose="build", intent_id="intent-1", trace_id="trace-1",
+            sensitivity=Sensitivity.PRIVATE, lineage_hash="a" * 64, policy_revision="policy-1",
+            capabilities=frozenset({"build"}), issued_at_monotonic=now,
+            monotonic_expires_at=now + 300, nonce="nonce-1", grant_id="grant-1", signature="sig",
+            enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
+        authorization = EffectAuthorization(
+            principal_id="principal-1", profile_id="profile-1", namespace_id="namespace-1",
+            uid=os.getuid(), purpose="build", sensitivity=Sensitivity.PRIVATE, trace_id="trace-1",
+            policy_revision="policy-1", lineage_hash="a" * 64, capability="build",
+            intent_id="intent-1", target=profile.target_id, recipient=None,
+            request_digest=canonical_digest(payload), retry_index=0,
+            issued_at_monotonic=now, monotonic_expires_at=now + 300, grant_id="grant-1",
+            nonce="nonce-1", context_digest="b" * 64, signature="sig",
+            enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
+        store = make_store(base / "cas")
+        service_catalog = object()
+        service = RootBuildExecutionService(
+            build_catalog=Catalog(), artifact_catalog=Artifacts(), artifact_staging_root=base,
+            launcher=Launcher(), fact_inspector=FixtureInspector(corrupt=True),
+            authority_key=b"k" * 32, service_catalog=service_catalog,
+            store=store, expected_uid=os.getuid())
+
+        with pytest.raises(AuthorityDenied):
+            service(context=context, authorization=authorization, payload=payload,
+                    timeout=60, peer_pid=42, peer_pidfd=7, cancelled=lambda: False)
+
+        assert list(output_root.iterdir()) == []
+        assert not (store.root / "current").exists()
 
 
 def filled_output(root):
