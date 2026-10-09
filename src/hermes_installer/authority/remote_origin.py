@@ -139,8 +139,6 @@ class RemoteOriginCatalog(Protocol):
     def selected_tunnel(self, enrollment_id: str) -> SelectedTunnel: ...
     def selected_origin(self, enrollment_id: str) -> SelectedRemoteOrigin: ...
     def selected_origin_probe(self, enrollment_id: str) -> RemoteOriginProbeBinding: ...
-    def resolve_selected_native_principal(self, native_profile_id: str,
-            native_generation: str, service_generation_digest: str) -> Any: ...
 
 
 class TunnelTokenWriter(Protocol):
@@ -1087,14 +1085,18 @@ class SelectedRemoteOriginProbeAuthority:
                  current_peer: CurrentRemoteOriginCaller,
                  process_manager: RemoteOriginProcessManager,
                  custody: Any,
+                 resolve_selected_native_principal: Callable[[str, str, str], Any],
                  socket_resolver: RemoteOriginControlSocketResolver,
                  signer: ReceiptSigner,
                  now: Callable[[], float] = time.monotonic,
                  peer_credentials: Callable[[socket.socket], tuple[int, int, int]] | None = None):
         if not isinstance(process_manager, CustodyRemoteOriginProcessManager):
             raise ValueError("root custody-backed remote-origin process manager is required")
+        if not callable(resolve_selected_native_principal):
+            raise ValueError("root protected native PrincipalBinding resolver is required")
         self._catalog, self._setup_transactions, self._current_peer = catalog, setup_transactions, current_peer
         self._process_manager, self._custody, self._signer, self._now = process_manager, custody, signer, now
+        self._resolve_selected_native_principal = resolve_selected_native_principal
         self._registry = RootOriginProbeRegistry(signer, now=now)
         self._transport = PrivateGatewayOriginProbe(socket_resolver=socket_resolver,
             process_manager=process_manager, registry=self._registry, current_peer=current_peer,
@@ -1263,12 +1265,10 @@ class SelectedRemoteOriginProbeAuthority:
         native_proof, native_expiry = _selected_enrolled_process_proof(
             self._custody, current.native_profile_id, current.desktop_generation,
             current.native_enrollment_id, now=self._now)
-        principal_resolver = getattr(self._catalog, "resolve_selected_native_principal", None)
         try:
             from .service import PrincipalBinding
-            principal = (principal_resolver(current.native_profile_id,
+            principal = self._resolve_selected_native_principal(current.native_profile_id,
                 current.desktop_generation, current.service_generation_digest)
-                if callable(principal_resolver) else None)
         except Exception:
             principal = None
         if (not isinstance(principal, PrincipalBinding)

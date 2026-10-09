@@ -302,6 +302,7 @@ class RemoteOriginPrivateProbeTests(unittest.TestCase):
                 authority = SelectedRemoteOriginProbeAuthority(
                     catalog=catalog, setup_transactions=_TransactionVerifier(tx), current_peer=_Caller(caller),
                     process_manager=process_manager, custody=custody,
+                    resolve_selected_native_principal=catalog.resolve_selected_native_principal,
                     socket_resolver=ActiveCatalogControlSocketResolver(catalog), signer=signer,
                     peer_credentials=lambda _sock: (os.getpid(), os.getuid(), os.getgid()))
                 handle = authority.issue_selected_origin_probe("remote-enrollment", setup_handle)
