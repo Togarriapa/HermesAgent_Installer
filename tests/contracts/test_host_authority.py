@@ -243,7 +243,8 @@ class ChildDelegationContracts(unittest.TestCase):
         service_ref = {}
 
         def child_handler(*, context, authorization, payload, timeout, peer_pid, peer_pidfd=None, cancelled):
-            effects.append((context.profile_id, authorization.uid, authorization.target, payload))
+            effects.append((context.profile_id, authorization.uid, authorization.target, payload,
+                            context.source_receipts, context.sensitivity))
             return {"status": 200, "body": b'{"started":true}',
                     "headers": {"content-type": "application/json"}, "receipt_id": "child-start"}
 
@@ -263,10 +264,23 @@ class ChildDelegationContracts(unittest.TestCase):
                       (child_rule.operation, child_rule.target): child_handler},
             policy=FixturePolicy(), delegations={delegation.delegation_id: delegation})
         service_ref["service"] = service
+        # The unit fixture uses synthetic UIDs but still exercises the same
+        # grant/receipt binding path as the root-internal cross-UID dispatch.
+        service._native_process_identity = lambda _pid, _uid: "fixture-parent-process"
         parent_payload = b'{"job":"weekly"}'
+        base_source = HostContext.from_wire(service._issue_context(parent.uid, {
+            "purpose": "resource-cron", "intent": "run-selected-job", "trace_id": "trace-child",
+            "lease_seconds": 20.0, "source_contexts": [],
+            "final_payload_digest": canonical_digest(parent_payload),
+            "operation": "resource.cron.run",
+        }, peer_pid=os.getpid()))
+        receipt = service.issue_source_receipt(
+            base_source, source_kind="schedule-event", origin_id="fixture-schedule",
+            payload=b"root-observed-schedule", ttl_seconds=20)
         source = HostContext.from_wire(service._issue_context(parent.uid, {
             "purpose": "resource-cron", "intent": "run-selected-job", "trace_id": "trace-child",
             "lease_seconds": 20.0, "source_contexts": [],
+            "source_receipts": [receipt.to_wire()],
             "final_payload_digest": canonical_digest(parent_payload),
             "operation": "resource.cron.run",
         }, peer_pid=os.getpid()))
@@ -282,7 +296,8 @@ class ChildDelegationContracts(unittest.TestCase):
         }, cancelled=lambda: False)
         self.assertEqual(response["status"], 200)
         self.assertEqual(effects, [("profile:child", child.uid, child_rule.target,
-                                    b'{"argv":["pinned"]}')])
+                                    b'{"argv":["pinned"]}', (), Sensitivity.PRIVATE)])
+        self.assertIn(receipt.receipt_id, service._source_receipts_consumed)
         with self.assertRaises(AuthorityDenied):
             service.perform_delegated_effect(parent_grant, delegation_id="cron-weekly-child",
                                              payload=b'{"argv":["again"]}', peer_pid=os.getpid(),

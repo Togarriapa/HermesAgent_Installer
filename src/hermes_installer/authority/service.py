@@ -296,7 +296,11 @@ class AuthorityService:
             policy_revision=self._policy_revision(), capabilities=child_binding.capabilities,
             issued_at_monotonic=now, monotonic_expires_at=expiry,
             nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24), signature="pending",
-            source_receipts=parent_authorization.source_receipts,
+            # The parent effect already consumed its source receipts. Preserve
+            # their authenticated ancestry and sensitivity through the signed
+            # derived lineage hash above, but do not replay the consumed receipt
+            # IDs under the child UID.
+            source_receipts=(),
             final_payload_digest=payload_digest,
             enrollment_id=canonical_digest({"uid": child_binding.uid,
                                             "principal_id": child_binding.principal_id,
@@ -321,7 +325,13 @@ class AuthorityService:
             "authorization": grant.to_wire(), "operation": rule.child_operation,
             "payload": __import__("base64").b64encode(payload).decode("ascii"),
             "timeout": effective_timeout,
-        }, cancelled=lambda: cancelled() or self.monotonic() >= expiry)
+        }, cancelled=lambda: cancelled() or self.monotonic() >= expiry,
+            # This call is internal to the root service after the parent grant,
+            # selected child profile, and delegated operation have all been
+            # verified. The actual kernel peer is the parent process; treating
+            # it as the child's SO_PEERCRED identity would reject every
+            # intentional cross-UID delegation.
+            enforce_peer_identity=False)
         import base64
         return BrokeredEffectResponse(response["status"], base64.b64decode(response["body"], validate=True),
                                       response["headers"], response["receipt_id"])
