@@ -197,18 +197,16 @@ class BootstrapTests(unittest.TestCase):
             returncode=None
             def __init__(self):
                 self.stdout=BlockingStream()
-            def wait(self, timeout=None):
-                return 0
         proc=FakeProc()
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data"); data.ensure()
             state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
             boot.script_path.parent.mkdir(parents=True,exist_ok=True)
-            boot.script_path.write_text("#!/usr/bin/env bash\\n")
+            boot.script_path.write_text("#!/usr/bin/env bash\n")
             started=time.monotonic()
-            with patch("hermes_installer.bootstrap.subprocess.Popen",return_value=proc), \\
-                 patch("hermes_installer.bootstrap._child_state",return_value="lost"), \\
+            with patch("hermes_installer.bootstrap.subprocess.Popen",return_value=proc), \
+                 patch("hermes_installer.bootstrap._child_state",return_value="lost"), \
                  patch("hermes_installer.bootstrap._stop_group",return_value=False):
                 with self.assertRaisesRegex(BootstrapError,"custody was lost"):
                     boot._run_process(["--manifest"],timeout=5,capture=True)
