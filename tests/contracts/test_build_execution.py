@@ -296,6 +296,21 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
         assert not (store.root / "current").exists()
 
 
+def test_output_cleanup_rejects_replaced_job_root_instead_of_succeeding():
+    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+        base = Path(temp)
+        target = base / "target"
+        target.mkdir(mode=0o700)
+        replaced = base / "job-output"
+        replaced.symlink_to(target, target_is_directory=True)
+
+        with pytest.raises(AuthorityDenied):
+            RootBuildExecutionService._remove_job_output_root(replaced, os.getuid())
+
+        assert target.is_dir()
+        assert replaced.is_symlink()
+
+
 def filled_output(root):
     root.mkdir(mode=0o700, exist_ok=True)
     write_file(root, "bin/colibri", b"fixture ARM64 executable", executable=True)

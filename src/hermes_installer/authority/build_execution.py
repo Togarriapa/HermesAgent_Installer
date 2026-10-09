@@ -1471,9 +1471,15 @@ class RootBuildExecutionService:
     @staticmethod
     def _remove_job_output_root(path: Path, owner_uid: int) -> None:
         try:
-            ContentAddressedBuildStore._check_owned_directory(path, owner_uid, mode=0o700)
-        except (OSError, AuthorityDenied):
+            path.lstat()
+        except FileNotFoundError:
             return
+        except OSError:
+            raise AuthorityDenied("build.output_cleanup", "unique build output root cannot be inspected") from None
+        # Cleanup failure must fail the build before the receipt's current-index
+        # rename. In particular, never interpret changed ownership or a symlink
+        # substitution as if the output root had already been removed.
+        ContentAddressedBuildStore._check_owned_directory(path, owner_uid, mode=0o700)
         # This path is a uniquely created child of the protected enrolled output
         # root. Do not follow links while clearing the build-owned job output.
         for current, dirs, files in os.walk(path, topdown=False, followlinks=False):
