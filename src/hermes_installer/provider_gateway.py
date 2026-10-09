@@ -8,6 +8,7 @@ import hmac
 import http.server
 import json
 import os
+import socket
 import stat
 import threading
 import uuid
@@ -79,16 +80,107 @@ def _ensure_private_directory(root: OwnedRoot, relative: str) -> bool:
     return created_leaf
 
 
+def _write_owned_once(root: OwnedRoot, relative: str, data: bytes, mode: int = 0o600) -> bool:
+    """Atomically create an owned file without replacing a concurrent writer."""
+    path = root.path(relative)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = path.with_name("." + path.name + "." + uuid.uuid4().hex + ".tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(tmp, flags, mode)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(tmp, path, follow_symlinks=False)
+        except FileExistsError:
+            return False
+        dfd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+        return True
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _read_gateway_port(root: OwnedRoot, relative: str) -> int:
+    path = root.path(relative)
+    info = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+        raise OwnershipError("Recorded gateway port is not a private owned file")
+    raw = path.read_bytes()
+    if len(raw) > 8 or not raw.endswith(b"\n") or not raw[:-1].isdigit():
+        raise OwnershipError("Recorded gateway port is malformed")
+    port = int(raw[:-1])
+    if not 1024 <= port <= 65535:
+        raise OwnershipError("Recorded gateway port is outside the managed range")
+    return port
+
+
+def _persist_gateway_port(root: OwnedRoot, plugin: str, requested: int | None) -> int:
+    relative = plugin + "/.gateway-port"
+    path = root.path(relative)
+    try:
+        saved = _read_gateway_port(root, relative)
+    except FileNotFoundError:
+        saved = None
+    if saved is not None:
+        if requested not in (None, saved):
+            raise GatewayError("The owned provider plugin already records a different gateway port")
+        return saved
+    if requested is not None and not 1024 <= requested <= 65535:
+        raise GatewayError("Managed gateway port must be between 1024 and 65535")
+    if requested is None:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.bind(("127.0.0.1", 0))
+            selected = int(probe.getsockname()[1])
+        finally:
+            probe.close()
+    else:
+        selected = requested
+    if not _write_owned_once(root, relative, f"{selected}\n".encode("ascii")):
+        saved = _read_gateway_port(root, relative)
+        if requested not in (None, saved):
+            raise GatewayError("Another setup recorded a different gateway port")
+        return saved
+    return selected
+
+
 def materialize_hermes_provider_plugin(root: OwnedRoot, *, profile_relative: str,
-                                       port: int, model: str) -> dict[str, str]:
-    """Write the supported Hermes provider plugin under the selected HERMES_HOME."""
+                                       port: int | None, model: str) -> dict[str, str]:
+    """Write or safely reconcile the supported Hermes provider plugin."""
     if not isinstance(root, OwnedRoot):
         raise TypeError("provider plugin requires an OwnedRoot")
     root.ensure()
-    profile = root.path(profile_relative)
-    if not 1 <= port <= 65535 or model not in ALLOWED_MODELS:
-        raise GatewayError("Invalid managed local provider endpoint or model")
+    if model not in ALLOWED_MODELS:
+        raise GatewayError("Invalid managed local provider model")
     plugin = f"{profile_relative.rstrip('/')}/plugins/model-providers/{LOCAL_PROVIDER_NAME}"
+    plugin_path = root.path(plugin)
+    created = _ensure_private_directory(root, plugin)
+    marker_relative = plugin + "/.hermes-installer-owned"
+    marker = ("hermes-installer-provider-plugin-v1\n" + plugin + "\n").encode("utf-8")
+    if not created:
+        marker_path = root.path(marker_relative)
+        try:
+            marker_info = marker_path.lstat()
+            if (marker_path.is_symlink() or not stat.S_ISREG(marker_info.st_mode)
+                    or marker_info.st_uid != os.getuid()
+                    or stat.S_IMODE(marker_info.st_mode) & 0o077
+                    or marker_path.read_bytes() != marker):
+                raise OwnershipError("Existing provider plugin directory lacks matching installer ownership")
+        except FileNotFoundError:
+            raise OwnershipError("Existing provider plugin directory lacks installer ownership") from None
+        allowed_entries = {".hermes-installer-owned", ".gateway-port", "__init__.py", "plugin.yaml"}
+        if any(entry.name not in allowed_entries for entry in plugin_path.iterdir()):
+            raise OwnershipError("Existing provider plugin directory contains unrelated files")
+    port = _persist_gateway_port(root, plugin, port)
     init = f'''"""Installer-managed provider profile. Dispatch is local and policy-gated."""
 from providers import register_provider
 from providers.base import ProviderProfile
@@ -114,26 +206,11 @@ register_provider(ProviderProfile(
         "version: 1.0.0\n"
         "description: Installer-managed local privacy and budget gateway\n"
     ).encode("utf-8")
-    plugin_path = root.path(plugin)
-    marker_relative = plugin + "/.hermes-installer-owned"
-    marker = ("hermes-installer-provider-plugin-v1\n" + plugin + "\n").encode("utf-8")
-    created = _ensure_private_directory(root, plugin)
-    if not created:
-        marker_path = root.path(marker_relative)
-        try:
-            marker_info = marker_path.lstat()
-            if marker_path.is_symlink() or not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != os.getuid() or stat.S_IMODE(marker_info.st_mode) & 0o077 or marker_path.read_bytes() != marker:
-                raise OwnershipError("Existing provider plugin directory lacks matching installer ownership")
-        except FileNotFoundError:
-            raise OwnershipError("Existing provider plugin directory lacks installer ownership") from None
-        allowed_entries = {".hermes-installer-owned", "__init__.py", "plugin.yaml"}
-        if any(entry.name not in allowed_entries for entry in plugin_path.iterdir()):
-            raise OwnershipError("Existing provider plugin directory contains unrelated files")
-    else:
+    if created:
         _write_owned(root, marker_relative, marker, 0o600)
     init_path = _write_owned(root, plugin + "/__init__.py", init, 0o600)
     manifest_path = _write_owned(root, plugin + "/plugin.yaml", manifest, 0o600)
-    return {"plugin": str(plugin_path), "entrypoint": str(init_path), "manifest": str(manifest_path)}
+    return {"plugin": str(plugin_path), "entrypoint": str(init_path), "manifest": str(manifest_path), "port": str(port)}
 
 
 class _BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -175,10 +252,12 @@ class LocalProviderGateway:
 
     def __init__(self, dispatcher: Dispatcher, *, token: str, profile_id: str,
                  sensitivity: Sensitivity, model: str, max_output_tokens: int = 4096,
-                 host: str = "127.0.0.1", read_timeout_seconds: float = 10.0,
+                 host: str = "127.0.0.1", port: int = 0, read_timeout_seconds: float = 10.0,
                  max_connections: int = 16):
         if host != "127.0.0.1":
             raise GatewayError("Provider gateway must bind IPv4 loopback only")
+        if not isinstance(port, int) or isinstance(port, bool) or (port != 0 and not 1024 <= port <= 65535):
+            raise GatewayError("Gateway port must be zero for an ephemeral fixture or a managed user port")
         if not isinstance(token, str) or not 32 <= len(token) <= 256 or any(ord(c) < 33 for c in token):
             raise GatewayError("Local dispatch token must be a generated high-entropy secret")
         if not profile_id or len(profile_id) > 128 or model not in ALLOWED_MODELS:
@@ -196,6 +275,7 @@ class LocalProviderGateway:
         self.model = model
         self.max_output_tokens = max_output_tokens
         self.host = host
+        self.requested_port = port
         self.read_timeout_seconds = read_timeout_seconds
         self.max_connections = max_connections
         self._closing = threading.Event()
@@ -381,7 +461,7 @@ class LocalProviderGateway:
         if self._server is not None:
             return self.port
         self._closing.clear()
-        server = _BoundedThreadingHTTPServer((self.host, 0), self._build_handler(), max_connections=self.max_connections)
+        server = _BoundedThreadingHTTPServer((self.host, self.requested_port), self._build_handler(), max_connections=self.max_connections)
         self._server = server
         thread = threading.Thread(target=server.serve_forever, name="hermes-provider-gateway", daemon=True)
         thread.start()

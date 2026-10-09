@@ -47,6 +47,29 @@ class ProviderGatewayTests(unittest.TestCase):
             return exc.code,exc.read(),exc.headers
         return response.status,response.read(),response.headers
 
+    def test_plugin_port_is_stable_across_restarts_and_conflicts_are_preserved(self):
+        root = OwnedRoot(Path(self.temp.name) / "stable")
+        root.ensure()
+        first = materialize_hermes_provider_plugin(root, profile_relative="hermes", port=None, model=MODEL)
+        selected = int(first["port"])
+        self.assertTrue(1024 <= selected <= 65535)
+        second = materialize_hermes_provider_plugin(root, profile_relative="hermes", port=None, model=MODEL)
+        self.assertEqual(second["port"], first["port"])
+        self.assertEqual(Path(first["entrypoint"]).read_text().count(f"127.0.0.1:{selected}/v1"), 1)
+        with self.assertRaisesRegex(Exception, "different gateway port"):
+            materialize_hermes_provider_plugin(root, profile_relative="hermes", port=selected + 1, model=MODEL)
+        # A listener that acquires the persisted endpoint causes startup to
+        # fail closed; the service never silently moves away from the plugin URL.
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.bind(("127.0.0.1", selected))
+        blocker.listen()
+        self.addCleanup(blocker.close)
+        gateway = LocalProviderGateway(self.dispatcher, token=TOKEN, profile_id="public-demo",
+            sensitivity=Sensitivity.PUBLIC, model=MODEL, port=selected)
+        with self.assertRaises(OSError):
+            gateway.start()
+        self.assertIsNone(gateway._server)
+
     def test_gateway_authenticates_and_routes_native_chat_to_dispatcher(self):
         payload=json.dumps({"model":MODEL,"messages":[{"role":"user","content":"hello"}],"max_tokens":999}).encode()
         status,body,headers=self.request(body=payload)
