@@ -211,7 +211,7 @@ class BuildCustodyLinuxTests(unittest.TestCase):
                          {"literal": "-c"}, {"literal": code_arg}),
             environment={"LANG": "C", "LC_ALL": "C"}, output_specs={},
             output_root=self.output, output_root_id="output-" + self.token,
-            output_owner_uid=self.uid, max_lifetime_seconds=30,
+            output_owner_uid=self.uid, output_owner_gid=self.gid, max_lifetime_seconds=30,
         )
 
     def _claims(self):
