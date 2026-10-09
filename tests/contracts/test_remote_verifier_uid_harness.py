@@ -113,6 +113,7 @@ class TwoUidVerifierSubprocessTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="hermes-remote-uid-", dir="/run") as raw:
             root = Path(raw)
+            os.chmod(root, 0o755)
             fixture_root = root / "fixture-repo"
             (fixture_root / "tests" / "fixtures").mkdir(parents=True)
             shutil.copy2(HELPER, fixture_root / "tests" / "fixtures" / HELPER.name)
