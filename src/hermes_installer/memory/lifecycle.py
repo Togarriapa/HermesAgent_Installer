@@ -12,8 +12,17 @@ class Provider(Protocol):
 class MemoryManager:
     def __init__(self,providers:Iterable[Provider],route_allowed:Callable[[str,str],tuple[bool,str]]):self.providers={p.name:p for p in providers}; self.route_allowed=route_allowed; self.owner={}
     def select_owner(self,profile:str,name:str|None):
+        old=self.owner.get(profile)
+        if old==name:return
+        if old:
+            provider=self.providers[old]
+            flush=getattr(provider,"flush",None); stop=getattr(provider,"stop_capture",None)
+            if flush:flush(profile)
+            if stop:stop(profile)
         if name is None:self.owner.pop(profile,None); return
         if name not in self.providers:raise ValueError(f"provider unavailable: {name}")
+        start=getattr(self.providers[name],"start_capture",None)
+        if start:start(profile)
         self.owner[profile]=name
     def ingest(self,record:MemoryRecord,generated_by_memory:bool=False):
         if generated_by_memory or record.source.startswith("memory:"):raise PermissionError("recursive ingestion denied")
@@ -28,3 +37,9 @@ class MemoryManager:
         ok,reason=self.route_allowed(namespace,"memory_retrieval")
         if not ok:raise PermissionError(reason)
         return [r for r in self.providers[name].search(namespace,query,limit) if r.namespace==namespace][:limit]
+    def export(self,name:str,namespace:str):
+        if name not in self.providers:raise ValueError("provider unavailable")
+        return [r for r in self.providers[name].export(namespace) if r.namespace==namespace]
+    def remove(self,name:str,namespace:str,record_id:str):
+        if name not in self.providers:raise ValueError("provider unavailable")
+        return self.providers[name].remove(namespace,record_id)
