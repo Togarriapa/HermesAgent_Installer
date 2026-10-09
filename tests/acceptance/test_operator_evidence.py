@@ -80,7 +80,7 @@ class OperatorEvidenceTests(unittest.TestCase):
             for acceptance_id in profile.acceptance_ids
         }
         self.assertTrue(expected_pairs.issubset(actual_pairs))
-        self.assertTrue({("AC18", f"EV-HI{number:02d}") for number in range(1, 10)}.issubset(actual_pairs))
+        self.assertTrue({("AC18", f"EV-HI{number:02d}") for number in range(1, 14)}.issubset(actual_pairs))
         for acceptance_id, evidence_id in expected_pairs:
             self.assertTrue(profile_for(evidence_id, acceptance_id).assertions)
 
@@ -96,6 +96,17 @@ class OperatorEvidenceTests(unittest.TestCase):
                 "shared_target_does_not_imply_cross_operation_permission",
                 "fresh_one_use_frame_grants_preserve_original_stream_deadline",
                 "trusted_expiry_and_revocation_cleanup_independent_and_observed",
+            },
+            ("AC18", "EV-HI13"): {
+                "root_verified_actual_access_jwt_and_fresh_selected_policy_before_native_bytes",
+                "enrolled_principal_fingerprint_profile_route_generation_and_lease_bound",
+                "gateway_claims_headers_self_signed_tokens_and_caller_policy_denied_as_authority",
+                "native_connector_asset_pixels_and_input_admitted_by_root_before_delivery",
+                "forged_token_claim_allowlist_profile_generation_sibling_replay_and_expiry_denied_before_bytes",
+                "active_websocket_closed_on_logout_revocation_renewal_or_generation_failure_within_lease_bound",
+                "watchdog_enforces_bounded_stream_expiry_independent_of_frame_activity",
+                "setup_read_and_tunnel_secrets_absent_from_gateway_and_desktop",
+                "fixture_jwt_policy_evidence_separate_from_enrolled_cloudflare_and_native_proof",
             },
             ("AC18", "EV-HI10"): {
                 "registered_process_handle_required", "current_cgroup_descendants_attested",
