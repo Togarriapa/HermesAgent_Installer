@@ -35,6 +35,7 @@ class OAuthAttemptError(CredentialError):
 
 class OAuthTransport(Protocol):
     def post_form(self, endpoint: str, values: Mapping[str, str], *, timeout: float) -> Mapping[str, object]: ...
+    def get_json(self, endpoint: str, *, timeout: float) -> Mapping[str, object]: ...
 
 
 class HostCredentialVault(Protocol):
@@ -120,8 +121,12 @@ class ChatGPTPlanAuth:
                  vault: HostCredentialVault,
                  verify_id_token: Callable[[str, str, str], Mapping[str, object]],
                  clock: Callable[[], float] = time.time):
-        if not host_id.startswith("urn:uuid:") or len(host_id) > 64:
-            raise ValueError("a stable urn:uuid host ID is required")
+        try:
+            canonical_host_id = "urn:uuid:" + str(uuid.UUID(host_id.removeprefix("urn:uuid:")))
+        except (TypeError, ValueError, AttributeError):
+            raise ValueError("a stable urn:uuid host ID is required") from None
+        if host_id != canonical_host_id:
+            raise ValueError("a stable canonical urn:uuid host ID is required")
         if not agent_name or len(agent_name) > 128:
             raise ValueError("a stable application name is required")
         self.host_id, self.agent_name = host_id, agent_name
