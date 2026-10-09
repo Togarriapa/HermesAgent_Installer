@@ -519,7 +519,33 @@
           "expires_monotonic"
         ],
         "resolver": "Registry retains private resolved prefix/executable paths and actual member/alias/file observations; resolve_interpreter(handle,distribution_handle) revalidates current retained source/runtime/requirements/file identities and only returns private root resolver DTO. No path crosses setup caller wire. Receipt lease <=600 and original acquisition deadline; immutable runtime pin can be re-observed for fresh actual actor lease, never worker prolongation.",
-        "evidence": "Existing BD/HI tasks: exact normal TLS+payload hashes, safe contained archive/wheel materialization, Linux actual probe/reexec/module import closure; wrong hash/architecture/SOABI/lock/link/module/env/foreign handoff negatives. No privileged execution on development Mac; no source download or fake platform fixture claims runtime acceptance."
+        "evidence": "Existing BD/HI tasks: exact normal TLS+payload hashes, safe contained archive/wheel materialization, Linux actual probe/reexec/module import closure; wrong hash/architecture/SOABI/lock/link/module/env/foreign handoff negatives. No privileged execution on development Mac; no source download or fake platform fixture claims runtime acceptance.",
+        "protected_reexec_handoff": {
+          "owner_module": "hermes_installer.authority.installer_release_build",
+          "constructor": "RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap(distribution_registry,interpreter_registry,candidate_selection_registry,owned_journal_root)",
+          "journal": "Fixed /var/lib/hermes-installer/bootstrap-handoffs root0/0700 nofollow held directory; private records0600 created exclusive/atomic and root journal integrity checks. No installed authority session/key/policy needed. Records are transition custody, never HostContext/effect authority.",
+          "create": "create_for_current_process(distribution_handle,interpreter_receipt_handle,candidate_selection_handle)->RootBootstrapRuntimeHandoff root-local. Re-resolves all actual verified retained source/runtime/explicit choice records; observes current actual euid0/PID/starttime/PIDFD and currently loaded selected bootstrap source members before storing expected target executable and closed module/runtime tree. No peer/PID/path/role supplied by caller.",
+          "DTO_fields": [
+            "schema",
+            "handoff_handle",
+            "candidate_selection_handle",
+            "distribution_receipt_handle",
+            "interpreter_receipt_handle",
+            "candidate_git_sha",
+            "source_tree_digest",
+            "runtime_closure_sha256",
+            "expected_executable_sha256",
+            "original_pid",
+            "original_start_ticks",
+            "original_uid",
+            "nonce",
+            "issued_monotonic",
+            "expires_monotonic"
+          ],
+          "transport": "Root registry creates sealed memfd fixed child FD3 containing canonical UTF8 JSON {schema:1,handoff_handle,nonce}<=4096 bytes, root0600 and F_SEAL_WRITE|F_SEAL_GROW|F_SEAL_SHRINK|F_SEAL_SEAL. It retains actual descriptor inode/content SHA in private record. Root reexec_selected_bootstrap(handoff) duplicates only this descriptor to FD3 across os.execve in SAME PID, closes unrelated FDs, uses actual private registry-resolved selected executable/source entry and sanitized environment. No candidate/runtime/receipt identity from argv or env; no generic worker FD context. Fixed bootstrap entry reads FD3 only; descriptor is lookup transport, not authorization.",
+          "take": "take_current_reexec_handoff()->RootBootstrapRuntimeHandoff root-local no selectors; verifies FD3 seals/dev/inode/exact retained bytes, nonce, actual same PID/start_ticks/UID0, selected source/runtime receipts and current actual executable hash/inode/module origins; only expected exe transition admitted, original process cannot consume before verified reexec. Atomic pending->consumed once, lease<=600/original acquisition expiry, foreign process/replay/different executable denies. Returned private record supplies exact candidate/distribution/runtime to actor verifier/build; no caller handle can mint identity.",
+          "cleanup": "Registry closes retained PIDFD and memfd when consumed/expired/failed; root journal retains private audit digests only. exec failure revokes handoff and wipes temporary message; does not activate service/policy. Root actor proof still mandatory after take before release publication."
+        }
       }
     }
   },
