@@ -207,3 +207,22 @@ def test_ingress_envelope_rejects_duplicate_and_nonfinite_fields():
             expected_replay_sha256="b" * 64, expected_observed=1.0,
             expected_event_data={},
         )
+
+
+def test_event_drop_releases_admission_identity_and_both_payload_capsules():
+    from types import SimpleNamespace
+
+    registry = object.__new__(RootResourceControllerRegistry)
+    registry._events = {"event-handle": SimpleNamespace(
+        handle=SimpleNamespace(handle="event-handle"), payload=b"canonical",
+        raw_payload=b"original raw",
+    )}
+    registry._event_admissions = {"event-handle": object()}
+    registry._event_bytes = len(b"canonical") + len(b"original raw")
+    registry._used = {("event-handle", "node-a"), ("other-event", "node-b")}
+
+    registry._drop_event_locked("event-handle")
+
+    assert registry._event_bytes == 0
+    assert "event-handle" not in registry._event_admissions
+    assert registry._used == {("other-event", "node-b")}

@@ -1489,6 +1489,7 @@ class RootResourceControllerRegistry:
             self._pending_context_requests.clear()
             self._event_ids_seen.clear()
             self._replay_keys_seen.clear()
+            self._event_admissions.clear()
 
     def _prune_locked(self, now: float) -> int:
         expired = [key for key, record in self._events.items()
@@ -1503,4 +1504,5 @@ class RootResourceControllerRegistry:
         if record is not None:
             self._event_bytes = max(0, self._event_bytes - len(record.payload)
                                     - (len(record.raw_payload) if record.raw_payload is not None else 0))
+        self._event_admissions.pop(key, None)
         self._used = {item for item in self._used if item[0] != key}
