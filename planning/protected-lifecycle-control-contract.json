@@ -1063,5 +1063,23 @@
       "service_record": "Render unchanged v30 record with actual existing root NSS/principal/roots/transaction bindings; prepared runtime fields null. Existing identity-policy principal binding must exactly match selected actual receipt, no substitute principal.",
       "typed_enum": "receipt_field retains artifact_id|sha256|generation|receipt_handle plus only official-pm-runtime: catalog_executable_path|executable_artifact_id|executable_sha256|runtime_artifact_ids|package_runtime_records; native-compiled-closure: child_artifact_refs. Root phase-aware parser/resolver validates role-specific enum and type, not arbitrary getter/path. field_bindings and receipt_bindings remain exact {field_path,receipt_role,receipt_field}."
     }
+  },
+  "closed_root_plan_template_selection": {
+    "artifact_id": "installer-root-setup-plan-template-v1",
+    "source_relative_path": "plans/amendments/2026-10-10-closed-root-plan-template-selection-v81/root-setup-plan-template-v1.json",
+    "installed_relative_path": "templates/root-setup-plan-template-v1.json",
+    "roles": [
+      "template"
+    ],
+    "sha256": "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5",
+    "size_bytes": 920,
+    "template_artifact_ids": [
+      "installer-bootstrap-compiler-template-v1",
+      "installer-authentik-policy-template-v1",
+      "installer-prepared-authority-base-template-v1",
+      "installer-bootstrap-receipt-bindings-template-v1",
+      "installer-composio-whatsapp-catalog-read-policy-v1"
+    ],
+    "projection": "Supersedes v53 two-template selection only, preserves other v53 manifest fields. RootInstalledReleaseBuilder installs these exact latest reviewed template bytes and every referenced actual template artifact/hash in sealed full release manifest/catalog. Initial compiler reads exact list; factory equality uses this literal order. Policy reader/template selection has no effect/account readiness authority. Actual deployed root plan artifact installer-root-setup-plan-v1 remains distinct compiler output from this source template; artifact_selection all-reviewed-verified-release-catalog-ids remains sorted exact currentcatalog IDs, no missing Resources proof or fake runtime output IDs."
   }
 }
