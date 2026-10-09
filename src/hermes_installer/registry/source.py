@@ -141,15 +141,21 @@ class BundledRegistrySource:
                         continue
                     if not member.isfile() or member.mode & 0o7000:
                         raise RegistrySourceError("vendored snapshot contains a symlink or special file")
-                    if member.mode & 0o777 not in {0o644,0o755}:
+                    # git archive tar headers can carry the creator's umask
+                    # group-write bit; Git tree identity records only executable.
+                    # The pinned archive digest authenticates the exact header and
+                    # we normalize to Git's canonical 0644/0755 representation.
+                    archive_mode = member.mode & 0o777
+                    if archive_mode not in {0o644, 0o664, 0o755, 0o775}:
                         raise RegistrySourceError("vendored source file has an unexpected mode")
+                    mode = 0o755 if archive_mode & 0o111 else 0o644
                     stream=archive.extractfile(member)
                     if stream is None: raise RegistrySourceError("vendored source file cannot be read")
                     data=stream.read(self.MAX_EXPANDED_BYTES+1)
                     expanded+=len(data)
                     if expanded>self.MAX_EXPANDED_BYTES: raise RegistrySourceError("vendored source exceeds expansion limit")
                     files[name]=data
-                    modes[name]=member.mode & 0o777
+                    modes[name]=mode
         except RegistrySourceError:
             raise
         except (tarfile.TarError,OSError,EOFError):
