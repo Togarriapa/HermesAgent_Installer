@@ -867,14 +867,18 @@ class RootMemoryStepEffectAuthority:
             "request_digest": payload_digest, "retry_index": 0,
         })
         authorization = EffectAuthorization.from_wire(authorization_wire)
-        if (authorization.operation != "connector.open"
-                or authorization.target != enrollment.target_id
-                or authorization.request_digest != payload_digest
-                or authorization.final_payload_digest != payload_digest
-                or authorization.context_digest != canonical_digest(
-                    {**context.claims(), "signature": context.signature})
-                or authorization.monotonic_expires_at > binding["deadline_monotonic"]):
-            raise MemoryExecutionDenied("AuthorityService returned a differently bound memory HI12 grant")
+        grant_mismatches = [name for name, valid in {
+            "operation": authorization.operation == "connector.open",
+            "target": authorization.target == enrollment.target_id,
+            "request_digest": authorization.request_digest == payload_digest,
+            "final_payload_digest": authorization.final_payload_digest == payload_digest,
+            "context_digest": authorization.context_digest == canonical_digest(
+                {**context.claims(), "signature": context.signature}),
+            "deadline": authorization.monotonic_expires_at <= binding["deadline_monotonic"],
+        }.items() if not valid]
+        if grant_mismatches:
+            raise MemoryExecutionDenied("AuthorityService returned a differently bound memory HI12 grant: "
+                                        + ",".join(grant_mismatches))
         result = self.service._perform_effect(source.uid, os.getpid(), {
             "authorization": authorization.to_wire(), "operation": "connector.open",
             "payload": __import__("base64").b64encode(child_payload).decode("ascii"),
