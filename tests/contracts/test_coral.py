@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,15 +28,148 @@ def test_device_selection_refuses_ambiguity_and_missing_access() -> None:
         choose_coral_device((CoralDevice("usb", "1-1", "18d1", "9302", None, "permission_denied"),))
 
 
+def test_selected_device_binding_requires_exact_kernel_node_identity() -> None:
+    selected = CoralDevice("usb", "1-1", "18d1", "9302", "/dev/bus/usb/001/002", "accessible",
+                           "/sys/devices/platform/usb/1-1", 189, 1, 4242,
+                           "1-1:1.0", "/sys/devices/platform/usb/1-1/1-1:1.0")
+    binding = selected.host_binding_request()
+    assert binding["physical_identity"] == "1-1"
+    assert binding["transport"] == "usb"
+    assert binding["interface_identity"] == "1-1:1.0"
+    assert binding["major"] == 189 and binding["inode"] == 4242
+    assert binding["device_node"] == "/dev/bus/usb/001/002"
+    assert binding["device_major"] == 189 and binding["device_minor"] == 1
+    assert binding["observed_identity_sha256"] == selected.identity_sha256
+    with pytest.raises(CoralError, match="complete kernel identity"):
+        device().host_binding_request()
+
+
+def test_pcie_binding_uses_catalog_transport_and_driver_identity() -> None:
+    selected = CoralDevice("pcie", "0000:01:00.0", "1ac1", "089a", "/dev/apex_0",
+        "accessible", "/sys/devices/pci0000:00/0000:00:01.0", 120, 0, 7001,
+        driver_identity="apex")
+    binding = selected.host_binding_request()
+    assert binding["transport"] == "pci"
+    assert binding["physical_identity"] == "0000:01:00.0"
+    assert binding["driver"] == "apex"
+    assert binding["interface_identity"] is None
+
+
 def test_legacy_runtime_is_separate_and_exactly_reports_unavailable_interpreter(tmp_path: Path) -> None:
     plan = runtime_plan(device(), component_root=tmp_path / "component", architecture="aarch64",
         hermes_python=Path("/usr/bin/python3"))
     assert plan.isolated_environment == (tmp_path / "component").resolve() / "venvs/coral-edge-tpu"
-    assert "CPython 3.6 through 3.9" in plan.isolated_python_requirement
+    assert "CPython 3.9" in plan.isolated_python_requirement
     assert any("blocked until" in note for note in plan.notes)
     assert "libedgetpu1-std" in plan.runtime_packages
     with pytest.raises(CoralError, match="Linux ARM64"):
         runtime_plan(device(), component_root=tmp_path, architecture="x86_64", hermes_python=Path("/usr/bin/python3"))
+
+
+def test_existing_coral_interpreter_is_probed_only_through_managed_runner(tmp_path: Path) -> None:
+    component = tmp_path / "component"
+    component.mkdir(mode=0o700)
+    candidate = component / "python3.9"
+    candidate.write_text("managed runtime")
+    candidate.chmod(0o700)
+    calls = []
+
+    def managed(argv, *, cwd, timeout, env):
+        calls.append((argv, cwd, timeout, env))
+        return SimpleNamespace(exit_code=0, stdout="3.9\n")
+
+    plan = runtime_plan(device(), component_root=component, architecture="aarch64",
+        hermes_python=Path("/usr/bin/python3"), compatible_python=candidate, run_command=managed)
+    assert "EOL" in " ".join(plan.notes)
+    assert len(calls) == 1 and calls[0][2] == 5
+    assert calls[0][0][0] == str(candidate.resolve())
+
+    def wrong_version(argv, **kwargs): return SimpleNamespace(exit_code=0, stdout="3.10\n")
+    with pytest.raises(CoralError, match="exact CPython 3.9"):
+        runtime_plan(device(), component_root=component, architecture="aarch64",
+            hermes_python=Path("/usr/bin/python3"), compatible_python=candidate,
+            run_command=wrong_version)
+
+
+def test_coral_python_provisioning_requires_selection_and_live_root_authority() -> None:
+    with pytest.raises(PermissionError, match="must be selected"):
+        coral.provision_coral_python(selected=False, authority_client=object(),
+            enrollment_id="e", generation="g", manifest_sha256="a" * 64)
+    with pytest.raises(CoralError, match="root package-set effect denied"):
+        coral.provision_coral_python(selected=True, authority_client=object(),
+            enrollment_id="e", generation="g", manifest_sha256="a" * 64)
+
+
+def test_coral_package_set_caller_sends_only_fixed_enrollment_and_checks_root_receipt() -> None:
+    import json
+    from hermes_installer.authority.package_sets import package_set_request
+    from hermes_installer.authority.types import BrokeredEffectResponse, EffectAuthorization, Sensitivity
+
+    manifest, enrollment, generation = "a" * 64, "enroll-1", "generation-2"
+    payload = {"package_set_id": coral.CORAL_PACKAGE_SET_ID, "manifest_sha256": "a" * 64,
+        "enrollment_id": enrollment, "generation": generation,
+        "runtime_build_attestation_digest": "b" * 64,
+        "wheel_sha256": [coral.CORAL_TFLITE_WHEEL_SHA256, coral.CORAL_NUMPY_WHEEL_SHA256],
+        "installed_tree_sha256": "c" * 64, "status": "installed"}
+    target, _body, digest = package_set_request(package_set_id=coral.CORAL_PACKAGE_SET_ID,
+        manifest_sha256=manifest, enrollment_id=enrollment, generation=generation)
+    authorization = EffectAuthorization(principal_id="installer", profile_id="profile", namespace_id="ns",
+        uid=1001, purpose="hermes-bootstrap", sensitivity=Sensitivity.PRIVATE, trace_id="trace",
+        policy_revision="policy-1", lineage_hash="d" * 64, capability="hermes-bootstrap",
+        intent_id="install-set", target=target, recipient=None, request_digest=digest, retry_index=0,
+        issued_at_monotonic=1.0, monotonic_expires_at=100.0, grant_id="grant-1", nonce="nonce-1",
+        context_digest="e" * 64, signature="signature", enrollment_id=enrollment,
+        generation=generation, operation="package.install")
+    response = BrokeredEffectResponse(200, json.dumps(payload).encode(),
+        {"content-type": "application/json"}, target)
+    seen = []
+    host_context = object()
+
+    class Client:
+        def context(self, **request):
+            seen.append(("context", request))
+            return host_context
+
+        def authorize_effect(self, context, **request):
+            seen.append(("authorize", context, request))
+            assert context is host_context
+            assert request["target"] == target and request["request_digest"] == digest
+            return authorization
+
+        def install_package_set(self, authorization, **request):
+            seen.append(("install", authorization, request))
+            return response
+
+    receipt = coral.install_coral_runtime_package_set(Client(),
+        enrollment_id=enrollment, generation=generation, manifest_sha256=manifest)
+    assert receipt.status == "installed" and receipt.receipt_id == target
+    assert receipt.wheel_sha256 == (coral.CORAL_TFLITE_WHEEL_SHA256, coral.CORAL_NUMPY_WHEEL_SHA256)
+    assert seen[0] == ("context", {"purpose": "hermes-bootstrap",
+        "intent": "install-coral-runtime-package-set", "operation": "package.install",
+        "final_payload_digest": digest, "lease_seconds": 600.0, "cancelled": None})
+    assert seen[2][0] == "install" and seen[2][1] is authorization
+    assert seen[2][2] == {"package_set_id": coral.CORAL_PACKAGE_SET_ID,
+        "manifest_sha256": manifest, "enrollment_id": enrollment,
+        "generation": generation, "timeout": 600.0, "cancelled": None}
+    payload["generation"] = "old-generation"
+    response = BrokeredEffectResponse(200, json.dumps(payload).encode(),
+        {"content-type": "application/json"}, target)
+    with pytest.raises(CoralError, match="root package-set effect denied"):
+        coral.install_coral_runtime_package_set(Client(),
+            enrollment_id="enroll-1", generation="generation-2", manifest_sha256="a" * 64)
+    payload["generation"] = "generation-2"
+    payload["wheel_sha256"] = list(reversed(payload["wheel_sha256"]))
+    response = BrokeredEffectResponse(200, json.dumps(payload).encode(),
+        {"content-type": "application/json"}, target)
+    with pytest.raises(CoralError, match="root package-set effect denied"):
+        coral.install_coral_runtime_package_set(Client(),
+            enrollment_id="enroll-1", generation="generation-2", manifest_sha256="a" * 64)
+
+
+def test_coral_package_set_caller_fails_closed_without_published_host_client() -> None:
+    with pytest.raises(CoralError, match="root package-set effect denied"):
+        coral.install_coral_runtime_package_set(object(), enrollment_id="e",
+            generation="g", manifest_sha256="a" * 64)
 
 
 def test_sample_selection_reads_exact_official_manifest_pin() -> None:
@@ -45,12 +180,53 @@ def test_sample_selection_reads_exact_official_manifest_pin() -> None:
     assert artifact.url == coral.CORAL_SAMPLE_URL
 
 
+def test_official_sample_copies_only_the_selected_catalog_artifact(tmp_path: Path, monkeypatch) -> None:
+    payload = b"sample"
+    digest = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(coral, "CORAL_SAMPLE_BYTES", len(payload))
+    monkeypatch.setattr(coral, "CORAL_SAMPLE_SHA256", digest)
+    monkeypatch.setattr(coral, "CORAL_SAMPLE_STORE_ID", f"artifact:coral-compiled-sample:{digest}")
+    staged = tmp_path / "catalog" / "sample.tflite"
+    staged.parent.mkdir()
+    staged.write_bytes(payload)
+    receipt = SimpleNamespace(artifact_id="coral-compiled-sample", sha256=digest,
+                              size_bytes=len(payload), path=staged)
+
+    class Catalog:
+        def resolve_store_id(self, store_id, staging_root, *, expected_uid):
+            assert store_id == coral.CORAL_SAMPLE_STORE_ID
+            assert expected_uid == 0
+            return receipt
+
+    with pytest.raises(CoralError, match="catalog receipt"):
+        coral.download_official_sample(tmp_path / "out.tflite", selected=True)
+    target = coral.download_official_sample(tmp_path / "out.tflite", selected=True,
+        catalog=Catalog(), staging_root=tmp_path / "catalog")
+    assert target.read_bytes() == payload
+    assert target.stat().st_mode & 0o222 == 0
+
+
 def test_component_runtime_lock_is_complete_and_matches_reviewed_metadata() -> None:
     artifacts = coral.load_coral_runtime_artifacts()
     assert set(artifacts) == {"python/cpython", "tensorflow/tflite-runtime", "numpy/numpy"}
     assert artifacts["python/cpython"].size == 20_183_236
     assert artifacts["tensorflow/tflite-runtime"].digest_algorithm == "sha256"
     assert artifacts["numpy/numpy"].digest_algorithm == "sha256"
+
+
+def test_coral_runtime_resolution_uses_exact_artifact_receipts(tmp_path: Path) -> None:
+    seen = []
+
+    class Catalog:
+        def resolve_store_id(self, store_id, staging_root, *, expected_uid):
+            seen.append((store_id, expected_uid))
+            return SimpleNamespace(artifact_id="wrong-id", sha256="0" * 64,
+                                   size_bytes=0, path=tmp_path / "missing")
+
+    with pytest.raises(CoralError, match="receipt differs"):
+        coral.resolve_coral_runtime_artifacts(Catalog(), tmp_path / "staging")
+    assert seen == [(f"artifact:{coral.CORAL_RUNTIME_STORE_IDS['python/cpython']}:"
+                     "00e07d7c0f2f0cc002432d1ee84d2a40dae404a99303e3f97701c10966c91834", 0)]
 
 
 def test_delegate_use_and_actual_output_required_even_for_selected_device(tmp_path: Path, monkeypatch) -> None:
@@ -60,21 +236,30 @@ def test_delegate_use_and_actual_output_required_even_for_selected_device(tmp_pa
     runtime.write_bytes(b"runtime")
     monkeypatch.setattr(coral, "_verify_sample", lambda path: None)
     monkeypatch.setattr(coral, "_sha256", lambda path: "a" * 64)
+    selection_digest = "d" * 64
     base = {"model_sha256": coral.CORAL_SAMPLE_SHA256, "transport": "usb", "device_address": "1-1",
         "runtime_sha256": "a" * 64, "delegate_library": "/runtime/libedgetpu.so.1",
         "runtime_version": "2.14", "python_version": "3.9", "architecture": "aarch64",
         "delegate_loaded": True, "delegate_used": True, "delegated_operation_count": 1,
-        "inference_performed": True, "output_sha256": "b" * 64, "elapsed_seconds": 0.04}
-    assert assess_inference_evidence(base, device(), sample_path=sample, runtime_path=runtime).status == "verified_delegate_used"
+        "inference_performed": True, "output_sha256": "b" * 64, "elapsed_seconds": 0.04,
+        "hermes_python_changed": False, "device_identity_sha256": selection_digest}
+    evidence_args = {"sample_path": sample, "runtime_path": runtime,
+                     "root_selection_digest": selection_digest}
+    assert assess_inference_evidence(base, device(), **evidence_args).status == "verified_delegate_used"
     for patch, message in (({"delegate_used": False}, "completed inference"),
                            ({"delegated_operation_count": 0}, "completed inference"),
                            ({"inference_performed": False}, "completed inference"),
                            ({"output_sha256": None}, "output digest"),
                            ({"delegate_loaded": False}, "CPU fallback")):
         with pytest.raises(CoralError, match=message):
-            assess_inference_evidence(base | patch, device(), sample_path=sample, runtime_path=runtime)
+            assess_inference_evidence(base | patch, device(), **evidence_args)
     with pytest.raises(ArtifactError, match="model"):
-        assess_inference_evidence(base | {"model_sha256": "0" * 64}, device(), sample_path=sample, runtime_path=runtime)
+        assess_inference_evidence(base | {"model_sha256": "0" * 64}, device(), **evidence_args)
+    with pytest.raises(ArtifactError, match="root-attested device selection digest"):
+        assess_inference_evidence(base | {"device_identity_sha256": "0" * 64}, device(), **evidence_args)
+    with pytest.raises(CoralError, match="root-attested generation-bound"):
+        assess_inference_evidence(base, device(), sample_path=sample, runtime_path=runtime,
+                                  root_selection_digest="not-a-digest")
 
 
 def test_worker_calls_delegate_invokes_model_and_requires_delegate_operation(tmp_path: Path, monkeypatch) -> None:
@@ -119,7 +304,7 @@ def test_worker_calls_delegate_invokes_model_and_requires_delegate_operation(tmp
     monkeypatch.setitem(sys.modules, "tflite_runtime", parent_runtime)
     monkeypatch.setitem(sys.modules, "tflite_runtime.interpreter", fake_tflite)
     evidence = worker.run_inference(model, transport="usb", address="1-1", device_selector="usb:0",
-                                    runtime_library=str(runtime))
+                                    device_identity_sha256="c" * 64, runtime_library=str(runtime))
     assert evidence["delegate_loaded"] and evidence["delegate_used"]
     assert evidence["delegated_operation_count"] == 1 and evidence["inference_performed"]
     assert evidence["output_sha256"] == __import__("hashlib").sha256(b"input").hexdigest()
@@ -128,4 +313,4 @@ def test_worker_calls_delegate_invokes_model_and_requires_delegate_operation(tmp
     monkeypatch.setitem(sys.modules, "tflite_runtime.interpreter", no_delegate)
     with pytest.raises(RuntimeError, match="fallback is disabled"):
         worker.run_inference(model, transport="usb", address="1-1", device_selector="usb:0",
-                             runtime_library=str(runtime))
+                             device_identity_sha256="c" * 64, runtime_library=str(runtime))
