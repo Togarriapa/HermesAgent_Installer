@@ -1,0 +1,3 @@
+# Device/profile generation join v2
+
+Sol additive HI09/HW02 exact type clarification: device enrollment generation is independent from process profile generation. Protected profile stores device_enrollment_id and expected_device_generation opaque string; root matches actual DeviceIdentity.generation to expected device epoch while independently validating process profile/grant generation. Hotplug/replacement invalidates join, no cast or accidental equal-generation assumption. planning/native-package-binding-contract.json normative join updated. Existing tasks/evidence/open acceptance/frozen baseline/tag unchanged.

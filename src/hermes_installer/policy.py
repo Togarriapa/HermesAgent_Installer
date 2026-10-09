@@ -27,6 +27,7 @@ DISABLED_PUBLIC_PLUGINS = [
     {"id": ident, "enabled": False}
     for ident in ("web", "file-parser", "response-healing", "pareto-router", "context-compression")
 ]
+PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING = 4096
 
 
 class PolicyDenied(RuntimeError):

@@ -181,3 +181,45 @@ Remote acceptance SHALL separately prove unauthorized HTTP/WS denial, actual off
 #### Scenario: R0211 Actual target functional proof
 - **WHEN** enrolled Pi/Cloudflare account and allowed test principal are selected
 - **THEN** verifier SHALL record candidate/source/service/resource IDs, unauthorized GET/assets/WS denial, native Hello/tool/cancel/restart and expiry/revocation/isolation/lifecycle results with redacted digests; configured-only tunnel status SHALL not pass
+
+### Requirement: Root-observed remote session bridge
+The installer SHALL verify actual Access JWT and fresh root selected policy at root authority, join verified identity to current native profile and bind every asset/input/stream operation to fixed connector session lease/generation. Gateway local or selfsigned claims SHALL not authorize root effects.
+
+#### Scenario: Forged gateway claims or expired active stream
+- **WHEN** root JWT/policy/principal verification fails or active lease revokes/expires
+- **THEN** deny before bytes or close both stream directions within tested bounded lease and preserve setup/read/tunnel credential separation.
+
+### Requirement: Typed remote root session wire
+The installer SHALL expose distinct one-shot asset and leased WebSocket admissions through peer-bound opaque root handles and finite typed connector operations that check current session state and fresh exact grants internally.
+
+#### Scenario: Asset handle reused for WebSocket or caller chooses connector
+- **WHEN** caller reuses consumed asset admission, selects target/path or sends frame after root lease expiry
+- **THEN** reject before bytes and close owned relay without localcontext or raw FD bypass.
+
+### Requirement: Protected runtime assembly identities
+The installer SHALL load strict root-owned active generation catalogs, verify immutable native closure/device kernel isolation, attest actual successful build output dynamically and sign the exact full connector effect payload digest.
+
+#### Scenario: Preclaimed build hash or partial effect digest
+- **WHEN** output was not actually attested after terminal success, closure/import/device identity differs or grant signs only partial payload
+- **THEN** deny activation/effect without permissive fallback and preserve truthful failure/native evidence.
+
+### Requirement: Root remote controller and native principal binding
+The installer SHALL bind verified remote native principal and actual gateway kernel controller separately through a dedicated root-internal one-use connector issuer, active protected policy/OTP enrollment and actual origin/token/closure receipts. Normal worker contexts SHALL not be relabelled and gateway SHALL receive no policy/setup credential resolver.
+
+#### Scenario: Gateway context relabel or metadata-only origin activation
+- **WHEN** caller claims native principal from gateway context or activation lacks actual current root readiness/token/mount proof
+- **THEN** deny before bytes/activation, preserve configured checkpoint and exact native/account resume requirements.
+
+### Requirement: Selected backend and actual gateway role bindings
+The installer SHALL resolve protected resource backend/body recipe/action/source/consent scope before each child effect and SHALL verify actual launched gateway role against explicit HI13 protected profile-role association.
+
+#### Scenario: Legacy backend metadata or unobserved gateway role
+- **WHEN** only declared backend/role metadata exists without current root selected effect/actual launch proof
+- **THEN** deny backend/admission before bytes and retain exact incomplete implementation/native evidence.
+
+### Requirement: Exact protected execution joins
+The installer SHALL resolve each effect from its exact selected active node, scope, observer and setup role joins, with fresh bounded authority and immutable result ancestry.
+
+#### Scenario: Mismatched backend or setup identity
+- **WHEN** a node selects a different backend, an event/result lacks root-observed closure, or runtime tunnel identity requests setup writer/probe authority
+- **THEN** root rejects before effects and preserves pending original acceptance; no caller booleans or consumed grants substitute for proof

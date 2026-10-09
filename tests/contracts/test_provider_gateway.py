@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import inspect
 import socket
 import tempfile
 import threading
@@ -13,16 +15,30 @@ from pathlib import Path
 from hermes_installer.policy import BudgetLedger, DispatchAuthorization, DispatchContext, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
 from hermes_installer.provider_gateway import (GatewayError, LOCAL_KEY_ENV, LOCAL_PROVIDER_NAME, LocalProviderGateway, materialize_hermes_provider_plugin, materialize_hermes_profile_config)
 from hermes_installer.state import OwnedRoot
+from hermes_installer.provider_effect_handlers import canonical_provider_request
 
 
 MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
 TOKEN="local-fixture-token-value-0123456789abcdef"
 
 
+def _native_normalization_policy():
+    module = Path(inspect.getsourcefile(canonical_provider_request))
+    record = {"id": "provider-output-reject-4096-v1", "revision": 1,
+              "route_schema_id": "provider-chat-compatible-v1",
+              "output_limit_mode": "reject-over-ceiling", "output_limit_ceiling": 4096,
+              "canonicalizer_artifact_id": "provider-canonicalizer-v1",
+              "canonicalizer_sha256": hashlib.sha256(module.read_bytes()).hexdigest()}
+    record["normalization_policy_sha256"] = hashlib.sha256(
+        json.dumps({key: value for key, value in record.items() if key != "normalization_policy_sha256"},
+                   sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return record
+
+
 def fixture_context(*, native_context_handle=None, normalized_payload=None, purpose, intent, source_contexts=(), source_receipts=(),
                     trace_id, lease_seconds, final_payload_digest=None,
                     operation=None, retry_index=0, cancelled=None,
-                    sensitivity=Sensitivity.PUBLIC):
+                    sensitivity=Sensitivity.PUBLIC, profile_id=None, tool_request=False):
     return DispatchContext(
         profile_id="fixture-profile", purpose=purpose, sensitivity=sensitivity, trace_id=trace_id,
         principal_id="fixture-principal", namespace="fixture-namespace",
@@ -54,7 +70,7 @@ class ProviderGatewayTests(unittest.TestCase):
         root=OwnedRoot(Path(self.temp.name)/"owned");root.ensure()
         self.transport=RecordingTransport()
         self.dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),self.transport,context_authorizer=synthetic_authorizer)
-        self.gateway=LocalProviderGateway(self.dispatcher,token=TOKEN,profile_id="public-demo",sensitivity=Sensitivity.PUBLIC,model=MODEL,max_output_tokens=32,context_factory=fixture_context)
+        self.gateway=LocalProviderGateway(self.dispatcher,token=TOKEN,profile_id="public-demo",sensitivity=Sensitivity.PUBLIC,model=MODEL,max_output_tokens=32,context_factory=fixture_context,fixture_only_allow_synthetic_context=True)
         self.port=self.gateway.start()
         self.addCleanup(self.gateway.close)
         self.addCleanup(self.temp.cleanup)
@@ -69,12 +85,68 @@ class ProviderGatewayTests(unittest.TestCase):
             return exc.code,exc.read(),exc.headers
         return response.status,response.read(),response.headers
 
-    def test_host_context_factory_is_required(self):
-        with self.assertRaisesRegex(GatewayError, "host-issued context factory"):
+    def test_synthetic_context_factory_requires_explicit_fixture_mode(self):
+        with self.assertRaisesRegex(GatewayError, "only to explicit fixtures"):
             LocalProviderGateway(
                 self.dispatcher, token=TOKEN, profile_id="public-demo",
-                sensitivity=Sensitivity.PUBLIC, model=MODEL,
+                sensitivity=Sensitivity.PUBLIC, model=MODEL, context_factory=fixture_context,
             )
+
+    def test_production_gateway_uses_one_atomic_native_broker_call(self):
+        class NativeBridge:
+            def __init__(self): self.calls = []
+            def dispatch_native_request(self, handle, payload, *, retry_index, timeout, cancelled=None):
+                self.calls.append((handle, payload, retry_index, timeout, cancelled()))
+                class Response:
+                    status = 200
+                    body = b'{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
+                    headers = {"Content-Type": "application/json"}
+                return Response()
+
+        bridge = NativeBridge()
+        gateway = LocalProviderGateway(
+            self.dispatcher, token=TOKEN, profile_id="untrusted-label",
+            sensitivity=Sensitivity.PRIVATE, model=MODEL, native_bridge=bridge,
+            normalization_policy=_native_normalization_policy(),
+        )
+        port = gateway.start()
+        self.addCleanup(gateway.close)
+        body = json.dumps({"model": MODEL, "messages": [{"role": "user", "content": "fixture"}]}).encode()
+        status, response, _ = self.request_at(
+            port, body=body,
+            headers={"X-Hermes-Installer-Context": "opaque-native-event-handle-00011",
+                     "X-Hermes-Installer-Retry-Index": "2"},
+        )
+        self.assertEqual(status, 200)
+        self.assertIn(b'"choices"', response)
+        self.assertEqual(len(bridge.calls), 1)
+        handle, normalized, retry_index, _timeout, cancelled = bridge.calls[0]
+        self.assertEqual(handle, "opaque-native-event-handle-00011")
+        self.assertEqual(json.loads(normalized)["model"], MODEL)
+        self.assertEqual(retry_index, 2)
+        self.assertFalse(cancelled)
+        self.assertEqual(self.transport.calls, [])
+        for invalid in (
+            {"model": MODEL, "max_tokens": 4097, "messages": [{"role": "user", "content": "x"}]},
+            {"model": MODEL, "max_tokens": 100, "max_output_tokens": 50,
+             "messages": [{"role": "user", "content": "x"}]},
+        ):
+            denied, _, _ = self.request_at(port, body=json.dumps(invalid).encode(), headers={
+                "X-Hermes-Installer-Context": "opaque-native-event-handle-00011",
+                "X-Hermes-Installer-Retry-Index": "2",
+            })
+            self.assertEqual(denied, 400)
+        self.assertEqual(len(bridge.calls), 1)
+
+    def request_at(self, port, *, body, headers):
+        url=f"http://127.0.0.1:{port}/v1/chat/completions"
+        request=urllib.request.Request(url,data=body,method="POST",headers={
+            "Authorization":"Bearer "+TOKEN,"Content-Type":"application/json",**headers})
+        try:
+            response=urllib.request.urlopen(request,timeout=2)
+        except urllib.error.HTTPError as exc:
+            return exc.code,exc.read(),exc.headers
+        return response.status,response.read(),response.headers
 
     def test_plugin_port_is_stable_across_restarts_and_conflicts_are_preserved(self):
         root = OwnedRoot(Path(self.temp.name) / "stable")
@@ -94,7 +166,7 @@ class ProviderGatewayTests(unittest.TestCase):
         blocker.listen()
         self.addCleanup(blocker.close)
         gateway = LocalProviderGateway(self.dispatcher, token=TOKEN, profile_id="public-demo",
-            sensitivity=Sensitivity.PUBLIC, model=MODEL, port=selected, context_factory=fixture_context)
+            sensitivity=Sensitivity.PUBLIC, model=MODEL, port=selected, context_factory=fixture_context, fixture_only_allow_synthetic_context=True)
         with self.assertRaises(OSError):
             gateway.start()
         self.assertIsNone(gateway._server)
@@ -136,10 +208,19 @@ class ProviderGatewayTests(unittest.TestCase):
         self.assertEqual(normalized["model"],MODEL)
         self.assertEqual(normalized["max_tokens"],32)
 
-    def test_gateway_requires_host_issued_native_context_handle(self):
+    def test_gateway_without_atomic_host_bridge_never_dispatches(self):
+        gateway = LocalProviderGateway(
+            self.dispatcher, token=TOKEN, profile_id="public-demo",
+            sensitivity=Sensitivity.PUBLIC, model=MODEL,
+        )
+        port = gateway.start()
+        self.addCleanup(gateway.close)
         payload=json.dumps({"model":MODEL,"messages":[{"role":"user","content":"hello"}]}).encode()
-        status,_,_=self.request(body=payload,headers={"X-Hermes-Installer-Context":""})
-        self.assertEqual(status,403)
+        status,_,_=self.request_at(port,body=payload,headers={
+            "X-Hermes-Installer-Context":"opaque-native-event-handle-00011",
+            "X-Hermes-Installer-Retry-Index":"0",
+        })
+        self.assertEqual(status,503)
         self.assertEqual(self.transport.calls,[])
 
     def test_auth_origin_route_and_size_fail_before_dispatch(self):
@@ -165,8 +246,8 @@ class ProviderGatewayTests(unittest.TestCase):
         self.assertEqual(self.transport.calls,[])
 
     def test_http_cannot_downgrade_trusted_private_profile_or_choose_public_model(self):
-        private=LocalProviderGateway(self.dispatcher,token=TOKEN,profile_id="private-session",sensitivity=Sensitivity.PRIVATE,model=MODEL,context_factory=fixture_context)
-        private.context_factory=lambda **claims: fixture_context(**claims, sensitivity=Sensitivity.PRIVATE)
+        private=LocalProviderGateway(self.dispatcher,token=TOKEN,profile_id="private-session",sensitivity=Sensitivity.PRIVATE,model=MODEL,context_factory=fixture_context,fixture_only_allow_synthetic_context=True)
+        private.context_factory=lambda **claims: fixture_context(**(claims | {"sensitivity": Sensitivity.PRIVATE}))
         private_port=private.start()
         self.addCleanup(private.close)
         req=urllib.request.Request(f"http://127.0.0.1:{private_port}/v1/chat/completions",
@@ -254,7 +335,7 @@ class ProviderGatewayTests(unittest.TestCase):
         transport=RecordingTransport()
         dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),transport,context_authorizer=synthetic_authorizer)
         gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="slow",sensitivity=Sensitivity.PUBLIC,
-                                     model=MODEL,read_timeout_seconds=0.15,max_connections=1,context_factory=fixture_context)
+                                     model=MODEL,read_timeout_seconds=0.15,max_connections=1,context_factory=fixture_context,fixture_only_allow_synthetic_context=True)
         port=gateway.start()
         self.addCleanup(gateway.close)
         with socket.create_connection(("127.0.0.1",port),timeout=2) as sock:
@@ -275,7 +356,7 @@ class ProviderGatewayTests(unittest.TestCase):
         root=OwnedRoot(Path(self.temp.name)/"limited"); root.ensure()
         dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),RecordingTransport(),context_authorizer=synthetic_authorizer)
         gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="limited",sensitivity=Sensitivity.PUBLIC,
-                                     model=MODEL,read_timeout_seconds=1,max_connections=1,context_factory=fixture_context)
+                                     model=MODEL,read_timeout_seconds=1,max_connections=1,context_factory=fixture_context,fixture_only_allow_synthetic_context=True)
         port=gateway.start()
         self.addCleanup(gateway.close)
         first=socket.create_connection(("127.0.0.1",port),timeout=2)
@@ -307,7 +388,7 @@ class ProviderGatewayTests(unittest.TestCase):
         root=OwnedRoot(Path(self.temp.name)/"cancel"); root.ensure()
         downstream=CancellableTransport()
         dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),downstream,context_authorizer=synthetic_authorizer)
-        gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="cancel",sensitivity=Sensitivity.PUBLIC,model=MODEL,context_factory=fixture_context)
+        gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="cancel",sensitivity=Sensitivity.PUBLIC,model=MODEL,context_factory=fixture_context,fixture_only_allow_synthetic_context=True)
         port=gateway.start()
         self.addCleanup(gateway.close)
         outcome=[]

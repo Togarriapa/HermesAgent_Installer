@@ -87,13 +87,13 @@
     "task_ids": [
       "PR-R0068"
     ],
-    "adapter_type": "routing service adapter",
-    "install_artifacts": "pinned native ARM64 service/dependencies",
-    "dependencies": "loopback/auth service + allowlisted configured providers",
-    "functional_method": "Send synthetic tool-call route through service and recording endpoints; paid/private fallback/loop/compression/retry denial asserted",
+    "adapter_type": "pinned isolated routing service build and HI11 provider bridge adapter",
+    "install_artifacts": "pinned source/package-lock + protected Node 26.7.0 linux-arm64 artifact + native dependency output",
+    "dependencies": "verified component source, isolated Node runtime, protected host egress profile, exact account admission and current eligible route",
+    "functional_method": "Synthetic tool-call through adapter and recording bridge; actual OmniRoute service/native ARM64 effect test remains separately required",
     "fixture_test": "tests/integrations/test_omniroute.py",
     "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
-    "status": "planned-not-run"
+    "status": "adapter fixture locally passed; CI, upstream ARM64 runtime and protected route proof pending"
   },
   {
     "component_id": "ponytail",

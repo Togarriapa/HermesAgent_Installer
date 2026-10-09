@@ -6,9 +6,17 @@ module never edits HERMES_HOME or runs source hooks.
 from __future__ import annotations
 
 import hashlib
+import fcntl
+import os
 import re
+import stat
+import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
+
+import yaml
 
 from hermes_installer.components.adapters import resolve_component_adapter
 from hermes_installer.components.skill_handlers import discover_component_skills
@@ -18,6 +26,232 @@ from hermes_installer.registry.generation import GenerationStore
 
 class ComponentBindingError(ValueError):
     """A component cannot be safely exposed to the selected profile."""
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedProfileConfigTarget:
+    """Protected installer resolution of the one profile selected for this operation.
+
+    Only the trusted installer/native-loader integration may provide this
+    value. In particular, plugin arguments and component declarations must
+    never choose ``profile_id`` or either path.
+    """
+
+    profile_id: str
+    hermes_home: Path
+    profile_data_root: Path
+    owner_uid: int
+
+
+class SelectedProfileConfigResolver(Protocol):
+    """Root-owned resolver; it selects the active profile without caller input."""
+
+    def resolve_selected_profile(self) -> SelectedProfileConfigTarget | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SkillConfigWriteReceipt:
+    profile_id: str
+    config_path: Path
+    previous_sha256: str | None
+    config_sha256: str
+    external_dir: str
+    status: str = "configured_pending_native_discovery"
+
+
+_MAX_PROFILE_CONFIG_BYTES = 1_048_576
+
+
+def _read_profile_config(path: Path, owner_uid: int) -> bytes | None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise ComponentBindingError("selected profile config cannot be inspected") from None
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)
+            or info.st_uid != owner_uid or info.st_mode & 0o077
+            or info.st_size > _MAX_PROFILE_CONFIG_BYTES):
+        raise ComponentBindingError("selected profile config is not a private owner-controlled file")
+    try:
+        data = path.read_bytes()
+    except OSError:
+        raise ComponentBindingError("selected profile config cannot be read") from None
+    if len(data) > _MAX_PROFILE_CONFIG_BYTES:
+        raise ComponentBindingError("selected profile config exceeds the size limit")
+    return data
+
+
+def _canonical_private_directory(path: Path, label: str) -> Path:
+    """Resolve an existing directory while rejecting user-controlled symlinks.
+
+    macOS exposes its private temporary tree through the system `/tmp` alias.
+    That one OS-owned alias is accepted; every other symlink in the supplied
+    path is rejected before the canonical directory is used for I/O.
+    """
+    if not isinstance(path, Path) or not path.is_absolute() or ".." in path.parts:
+        raise ComponentBindingError(f"{label} path is invalid")
+    current = Path(path.anchor)
+    try:
+        for part in path.parts[1:]:
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                allowed_system_alias = (
+                    info.st_uid == 0 and (
+                        (sys.platform == "darwin" and current == Path("/tmp")
+                         and os.path.realpath(current) == "/private/tmp")
+                        or (sys.platform == "darwin" and current == Path("/var")
+                            and os.path.realpath(current) == "/private/var")
+                    )
+                )
+                if not allowed_system_alias:
+                    raise ComponentBindingError(f"{label} path may not contain symlinks")
+        resolved = path.resolve(strict=True)
+        info = resolved.lstat()
+    except ComponentBindingError:
+        raise
+    except OSError:
+        raise ComponentBindingError(f"{label} path is unavailable") from None
+    if not stat.S_ISDIR(info.st_mode):
+        raise ComponentBindingError(f"{label} is not a directory")
+    return resolved
+
+
+def _merge_external_dir(config_bytes: bytes | None, external_entry: str) -> bytes:
+    if config_bytes is None:
+        document: object = {}
+    else:
+        try:
+            document = yaml.safe_load(config_bytes.decode("utf-8-sig"))
+        except (UnicodeDecodeError, yaml.YAMLError):
+            raise ComponentBindingError("selected profile config is not valid safe UTF-8 YAML") from None
+        if document is None:
+            document = {}
+    if not isinstance(document, dict):
+        raise ComponentBindingError("selected profile config root must be a mapping")
+    merged = dict(document)
+    skills_value = merged.get("skills", {})
+    if not isinstance(skills_value, dict):
+        raise ComponentBindingError("selected profile skills config must be a mapping")
+    skills = dict(skills_value)
+    current = skills.get("external_dirs", [])
+    if isinstance(current, str):
+        current = [current]
+    if not isinstance(current, list) or any(not isinstance(entry, str) for entry in current):
+        raise ComponentBindingError("selected profile skills.external_dirs must be a string or string list")
+    entries = list(current)
+    if external_entry not in entries:
+        entries.append(external_entry)
+    skills["external_dirs"] = entries
+    merged["skills"] = skills
+    try:
+        rendered = yaml.safe_dump(merged, sort_keys=False, allow_unicode=True).encode("utf-8")
+    except yaml.YAMLError:
+        raise ComponentBindingError("selected profile config cannot be safely rendered") from None
+    if len(rendered) > _MAX_PROFILE_CONFIG_BYTES:
+        raise ComponentBindingError("merged selected profile config exceeds the size limit")
+    return rendered
+
+
+def configure_selected_profile_skill(
+    binding: ComponentSkillBinding,
+    resolver: SelectedProfileConfigResolver,
+    *,
+    expected_config_sha256: str | None,
+) -> SkillConfigWriteReceipt:
+    """Atomically append a staged component root to the protected selected profile.
+
+    The caller supplies only a binding and an expected config revision. Profile
+    identity and paths come from the no-argument trusted resolver. Passing
+    ``None`` as the expected revision is required when config.yaml is absent.
+    Existing settings and external roots are retained; unexpected concurrent
+    edits fail with a retryable conflict instead of being overwritten.
+    """
+    if not callable(getattr(resolver, "resolve_selected_profile", None)):
+        raise ComponentBindingError("trusted selected-profile resolver is required")
+    target = resolver.resolve_selected_profile()
+    if not isinstance(target, SelectedProfileConfigTarget):
+        raise ComponentBindingError("trusted selected profile is unavailable")
+    if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", target.profile_id)
+            or binding.profile_id != target.profile_id):
+        raise ComponentBindingError("component binding does not match the protected selected profile")
+    if type(target.owner_uid) is not int or target.owner_uid != os.geteuid():
+        raise ComponentBindingError("selected profile must be owned by the installer user")
+    home = target.hermes_home
+    data_root = target.profile_data_root
+    external_dir = binding.external_dir
+    try:
+        home = _canonical_private_directory(home, "Hermes home")
+        data_root = _canonical_private_directory(data_root, "profile data root")
+        external_dir = _canonical_private_directory(external_dir, "component generation")
+        if not external_dir.is_relative_to(data_root):
+            raise ComponentBindingError("component generation escaped its installer-owned profile data root")
+        home_info, data_info = home.lstat(), data_root.lstat()
+    except OSError:
+        raise ComponentBindingError("selected profile paths are unavailable") from None
+    for info in (home_info, data_info):
+        if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != target.owner_uid or info.st_mode & 0o077):
+            raise ComponentBindingError("selected profile roots are not private and owner-controlled")
+    if expected_config_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", expected_config_sha256):
+        raise ComponentBindingError("expected selected profile config revision is invalid")
+
+    # Hermes' pinned get_config_path() is get_hermes_home()/config.yaml;
+    # external_dirs entries are resolved relative to that same home.
+    config_path = home / "config.yaml"
+    external_entry = external_dir.relative_to(home).as_posix() if external_dir.is_relative_to(home) else str(external_dir)
+    lock_path = home / ".installer-skills-config.lock"
+    temporary: Path | None = None
+    try:
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except OSError:
+        raise ComponentBindingError("cannot open the private selected profile config lock") from None
+    try:
+        lock_info = os.fstat(lock_fd)
+        if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != target.owner_uid
+                or lock_info.st_mode & 0o077):
+            raise ComponentBindingError("selected profile config lock is not private")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        old = _read_profile_config(config_path, target.owner_uid)
+        old_digest = hashlib.sha256(old).hexdigest() if old is not None else None
+        if old_digest != expected_config_sha256:
+            raise ComponentBindingError("selected profile config revision changed; retry from a fresh resolver snapshot")
+        payload = _merge_external_dir(old, external_entry)
+        temporary = home / f".config.yaml.skills-{uuid.uuid4().hex}.tmp"
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if _read_profile_config(config_path, target.owner_uid) != old:
+            raise ComponentBindingError("selected profile config changed during write; retry from a fresh snapshot")
+        os.replace(temporary, config_path)
+        temporary = None
+        directory_fd = os.open(home, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        return SkillConfigWriteReceipt(
+            profile_id=target.profile_id,
+            config_path=config_path,
+            previous_sha256=old_digest,
+            config_sha256=hashlib.sha256(payload).hexdigest(),
+            external_dir=external_entry,
+        )
+    except ComponentBindingError:
+        raise
+    except OSError:
+        raise ComponentBindingError("selected profile config write failed") from None
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+        os.close(lock_fd)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +300,14 @@ def stage_component_skill(
     contract = resolve_component_adapter(source.component_id)
     if source.source_identity != contract.source_identity or source.revision != contract.revision:
         raise ComponentBindingError("component source identity differs from the reviewed source pin")
+    if source.component_id == "diagram-design":
+        # This source has a specific export helper and shared reference/asset
+        # closure that generic skill discovery alone cannot establish.
+        from hermes_installer.components.diagram_design import verify_diagram_design_source
+        try:
+            verify_diagram_design_source(source)
+        except ValueError as exc:
+            raise ComponentBindingError(str(exc)) from None
     source_files = {
         name: body for name, body in source.files.items()
         if name != "INSTALLER-SOURCE-PROVENANCE.json"

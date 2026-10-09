@@ -36,4 +36,14 @@ Dependencies: installer-bootstrap-desktop. Full IDs and task edges: planning/dep
 
 ## 3. Supported ChatGPT-plan protocol refinement
 
-- [ ] 3.1 `PR-T01` Implement PR01 supported SIWC auth permission and HTTP/SSE normalization/completion; prerequisites PR-F01, HI-T08, HI-T09. Evidence EV-PR01: recording bounded response.completed/failed/incomplete/partial EOF/usage errors, unsupported fields/tools and source/grant/retry/cancel negatives. Keep actual enrolled-account/native inference acceptance separate and original PR-F02/03 plus PR-R0124/25/26 open.
+- [ ] 3.1 `PR-T01` Implement PR01 supported SIWC auth permission and HTTP/SSE normalization/completion; prerequisites PR-F01, HI-T08, HI-T09, HI-T11. Evidence EV-PR01: recording bounded response.completed/failed/incomplete/partial EOF/usage errors, unsupported fields/tools and source/grant/retry/cancel negatives. Keep actual enrolled-account/native inference acceptance separate and original PR-F02/03 plus PR-R0124/25/26 open.
+
+## 4. Isolated OmniRoute runtime compatibility
+
+- [ ] 4.1 `PR-T02` Implement PR02 protected component Node/source/dependency/build/service binding; prerequisites PR-F01, HI-T01, HI-T09. Evidence EV-PR02: reject Node20/out-of-range/writable runtime/unpinned module/ABI/path and prove separate isolated nativeARM64 build/health/provider operation. Keep artifact declarations/range checks distinct from native/target acceptance.
+
+Protected native composition clarification: plans/amendments/2026-10-09-native-package-binding-v1.md, planning/native-package-binding-contract.json and native-cross-process-bridge-contract.json define root-selected immutable package/resolver, observed source channels and shared route normalization. Existing HI-T08/09/11, RB-T09 and PR-F03/PR-T01 remain open; no caller provenance or late payload mutation.
+
+Native protected config v3: plans/amendments/2026-10-09-native-protected-config-v3.md specifies strict native-packages.json package/issuer joins and separate canonical normalization-policy/module hashes. Existing HI08/09/11/RB08/provider tasks remain open; config presence is not actual observer/native evidence.
+
+Native observed invocation context v6: plans/amendments/2026-10-09-native-observed-invocation-context-v6.md and planning/native-package-binding-contract.json define exact root response/call handles and begin/ancestry DTOs; existing HI-T08/09/11/RB-T09/provider tasks remain open.

@@ -13,3 +13,27 @@ Model: GPT-6 Luna development from Sol amendment. Additive mapping: planning/res
 - [ ] 7.1 `RB-T07` Implement RB06 fixed registry.read metadata adapters; prerequisites RB-T02, RB-T03, HI-T03, HI-T08, HI-T09. Evidence EV-RB06: bounded positive metadata reads plus arbitrary URL/method/redirect/private query/oversize/pagination negatives and separate actual native plugin invocation. Preserve no install/publish/execute/activation and keep target acceptance open.
 
 - [ ] 8.1 `RB-T08` Implement RB07 protected selected cron/webhook/channel event issuer and bounded bundle DAG job/child admission; prerequisites RB-T02, RB-T03, HI-T03, HI-T08, HI-T09. Evidence EV-RB07: native/backend positive jobs plus forged timer/HMAC/replay/account/private lineage/reused child grant/cycle/concurrency/generation-revoke negatives; no outbound installation-test message and distinct fixture/target states.
+
+- [ ] 9.1 `RB-T09` Implement RB08 protected original plugin effect catalog; prerequisites RB-T02, RB-T03, HI-T03, HI-T08, HI-T09, HI-T12. Evidence EV-RB08: actual native selected backend effects plus scope/digest/confirmation/replay/duplicate/ambiguity/private recipient negatives; all original plugin obligations and target/account acceptance remain open.
+
+Protected native composition clarification: plans/amendments/2026-10-09-native-package-binding-v1.md, planning/native-package-binding-contract.json and native-cross-process-bridge-contract.json define root-selected immutable package/resolver, observed source channels and shared route normalization. Existing HI-T08/09/11, RB-T09 and PR-F03/PR-T01 remain open; no caller provenance or late payload mutation.
+
+RB08 selected facade schemas: planning/protected-plugin-effect-contract.json and plans/amendments/2026-10-09-plugin-facade-action-schemas-v2.md. Root Epic lifecycle/voice session receipts required; backend mapping remains separately source-reviewed. Existing RB-T09 stays open.
+
+Native resolver reader v2: planning/native-package-binding-contract.json and plans/amendments/2026-10-09-native-resolver-reader-v2.md define peer-bound path-free immutable reader and presentation-only resolver; root re-resolves every effect. Existing HI-T08/09/RB-T09 remain open; document facade schemas retain actual tool/device/native evidence gates.
+
+Fixed recipe/session clarification: plans/amendments/2026-10-09-fixed-operation-recipes-voice-sessions-v1.md defines selection-only operation_recipes and bounded root-observed voice sessions. Existing HI-T09/HW-T03/RB-T09 remain open; no caller shell/device/session authorization claims.
+
+Native protected config v3: plans/amendments/2026-10-09-native-protected-config-v3.md specifies strict native-packages.json package/issuer joins and separate canonical normalization-policy/module hashes. Existing HI08/09/11/RB08/provider tasks remain open; config presence is not actual observer/native evidence.
+
+RB08 voice result receipts v3: plans/amendments/2026-10-09-voice-result-receipts-v3.md defines exact STT/TTS typed output without raw PCM/path/secret; actual root-observed receipts required, existing RB-T09 remains open.
+
+Hermes/resource selection v3: plans/amendments/2026-10-09-hermes-bootstrap-resource-job-selection-v3.md defines fixed stage/health recipes and activegeneration resourcejob/DAG/source/backend joins; BD-F03/LC-F03/LC-F04/HI-T09/RB-T08 tasks and nativeevidence remainopen.
+
+Resource backend/remote role v4: plans/amendments/2026-10-09-resource-backend-remote-role-v4.md defines activeRB07 selectedbackend/bodyrecipe joins/freshchildeffects andexplicitHI13profile-role plusactualrootlaunchproof. ExistingRB-T08/HI-T13remainopen.
+
+Resource DAG/remote setup joins v5 (RB07 / RB-T08): see plans/amendments/2026-10-09-resource-dag-remote-setup-joins-v5.md and the live resource/native/assembly/remote contracts. Per-node protected joins and root-observed provenance are mandatory; existing implementation and target acceptance remain open.
+
+Native observed invocation context v6: plans/amendments/2026-10-09-native-observed-invocation-context-v6.md and planning/native-package-binding-contract.json define exact root response/call handles and begin/ancestry DTOs; existing HI-T08/09/11/RB-T09/provider tasks remain open.
+
+Resource profile execution v6: plans/amendments/2026-10-09-resource-profile-task-execution-v6.md and planning/protected-resource-job-contract.json bind each task backend to existing protected process recipe/native package with fresh child process.start. Existing RB-T08/HI-T09 remain open.

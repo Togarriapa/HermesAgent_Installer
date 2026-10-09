@@ -201,3 +201,24 @@ The installer SHALL satisfy this obligation: Bind management interfaces to loopb
 #### Scenario: R0155 unavailable or failed prerequisite
 - **WHEN** a crash, process/package lock, disk failure, symlink escape, schema mismatch or failed candidate health check interrupts the operation
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Selected Hermes and resource runtime recipes
+The installer SHALL resolve fixed parameter-free Hermes stage/health recipes and active protected resource job DAG/source/backend joins, retaining official PM runtime and actual functional health evidence.
+
+#### Scenario: Caller supplies bootstrap paths or source-only health
+- **WHEN** caller overrides recipe/roots/argv or only inventory/status exists without actual selected native workflow
+- **THEN** reject overrides or keep functional readiness incomplete, preserve prior generation and exact resume reason.
+
+### Requirement: Protected lifecycle provision and control
+The installer SHALL derive enrollment provision and finite process control effects from actual trusted root transaction/peer/owned livehandle state, preserve first-snapshot trust provenance and atomic recoverable generation changes, and SHALL not accept worker bearer targets or ready assertions.
+
+#### Scenario: Forged bootstrap intent or stale process control
+- **WHEN** caller supplies unregistered bootstrap intent, claimed roots/identity or stale/sibling control handle
+- **THEN** reject before effects, preserve prior generation/private state and require actual root target/ownership evidence.
+
+### Requirement: Actual selected service and runtime provenance
+The installer SHALL bind build service identity to a protected current service enrollment and derive bootstrap executable pins only from actual completed runtime receipts.
+
+#### Scenario: Source hash used as runtime identity
+- **WHEN** a prepared profile substitutes a source archive hash or unjoined output UID for executable/service proof
+- **THEN** root rejects execution publication and retains the original incomplete checkpoint

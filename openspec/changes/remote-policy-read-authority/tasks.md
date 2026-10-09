@@ -10,3 +10,5 @@ GPT-6 Luna implements; Sol owns scope refinement. Dependencies and methods: plan
 - [ ] 6.1 `RP-T06` Implement Distinct revocation evidence and readiness (RP06); prerequisites RP-T01, RP-T02, RP-T03, RP-T04, RP-T05, RT-F02, RT-F03. EV-RP06: policy enforcement evidence is recorded separately; token/logout revocation acceptance stays pending rather than inferred or waived; live bounds identify event timing and provider visibility. Update docs/remote-desktop-access.md and actual contract/failure evidence; keep target evidence separate.
 
 RP-T06 includes strict OpenSpec/planning/frozen-tree CI validation, production isolated-custody/IPC probes and AC17 exact target/account revocation timing. No missing authority or fixture-only success counts as live acceptance.
+
+Remote dual-principal issuer/closure proof v3: plans/amendments/2026-10-09-remote-dual-principal-issuer-closure-proof-v3.md binds activeenrollment OTP/principal/gateway records, dedicatedroot perframeissuer withoutcontextrelabel, isolatedverifierclient, actualtoken/origin receipts and loadedclosure proofs. ExistingHI08/09/11/13/RP/RTtasksremainopen.

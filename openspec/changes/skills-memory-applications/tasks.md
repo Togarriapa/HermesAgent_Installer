@@ -60,3 +60,23 @@ Dependencies: installer-bootstrap-desktop, resource-registry-import, providers-c
 - Review code against every requirement/scenario and actual evidence; do not archive incomplete hardware/account tasks.
 - Run strict pinned OpenSpec validation and coverage; archive only verified completed changes using the installed documented workflow, preserving dated history and canonical specs.
 - Sol must approve refinement via append-only amendment; keep plans/2026-10-09-v1 immutable.
+
+## 3. Protected memory service connectors
+
+- [ ] 3.1 `SK-T01` Implement SK01 exact selected memory provider/backend/service/route/private owner connector enrollment; prerequisites HI-T07, HI-T08, HI-T09, HI-T12, PR-F01. Evidence EV-SK01: actual isolated selected backend capture/search/remove/export/restore/private extraction/embedding plus wrong profile/variant/project/URI/owner/secret/source/retry/generation/cancel/restore negatives. Unsupported required routes remain incomplete; no fixture/health-only native acceptance.
+
+SK01 / SK-T01 route identity clarification: see plans/amendments/2026-10-09-memory-route-identities-v2.md and planning/memory-service-connector-contract.json. Stable per-backend Claude approved_route_ids join distinct outer effect and connector targets; no inferred missing health/delete or variant fallback. Existing task remains open.
+
+Selected binding/memory recipes v4: plans/amendments/2026-10-09-selected-native-binding-memory-recipes-v4.md defines root no-argument peer-selected package and fixed compound route steps with fresh child grants, no caller path/provenance or reused outer grant. Existing HI-T08/09/SK-T01 remain open.
+
+Memory compound wire v5: plans/amendments/2026-10-09-memory-compound-wire-v5.md and memory-service-connector-contract.json specify canonical body envelope/root serializer/stateful finite steps; no worker HTTPframe/scope/step authority and fresh grants each step. Existing tasks remain open.
+
+Closed memory/model recipe identities v6: plans/amendments/2026-10-09-closed-memory-model-recipe-ids-v6.md and protected contract JSON define finite schema/recipe IDs, empty model launch parameters and root-owned forced scope. Actual serializer/result/ARM64 effect evidence remains pending, existing tasks open.
+
+Original R0092/R0093 functional fixture refinement: plans/amendments/2026-10-09-local-component-functional-fixtures-v1.md and planning/local-component-functional-fixture-contract.json require actual pinned source+locks/upstreampipeline, syntheticvision/localHTML and real mockedLLMboundary, not skill references/surrogateprotocol. ExistingSK-R0092/0093 and EV-R0092/0093 remainopen.
+
+Pinned source document link v1: plans/amendments/2026-10-09-pinned-source-document-link-v1.md and pinned-source-document-link-contract.json preserveoriginalGitlink metadata and allowonly exactpinnedrootstable regularcompiled documentcopy. Upstreamdocs notgovernance; R0092/SK-R0092/EV-R0092 remainopen.
+
+Additive root-state/build-mount refinement (SK01 / SK-T01): see plans/amendments/2026-10-09-root-memory-state-build-mounts-v1.md; selected protected mount nodes and separate UID0 authority journal state are mandatory. Original scope and pending target acceptance unchanged.
+
+Immutable source-buffer materialization v2: plans/amendments/2026-10-09-immutable-source-buffer-materialization-v2.md; exact retained original Git bytes may replace source-filesystem inode checks only when no mutable source path is used. Destination/root closure checks and existing SK-R0092 target gates remain.

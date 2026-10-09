@@ -92,11 +92,29 @@ class NativeRegistryTests(unittest.TestCase):
   unresolved=[item for item in entries if item.kind not in {"profiles","skills"}]
   self.assertEqual(len(profiles),208)
   self.assertEqual(len(skills),396)
-  self.assertTrue(all(item.native_path for item in entries))
+  self.assertTrue(all(item.native_path for item in profiles+skills))
   self.assertTrue(all(item.adapter_id for item in profiles+skills))
-  self.assertTrue(all(item.adapter_id is None for item in unresolved))
   self.assertTrue(all(item.blockers for item in unresolved))
+  self.assertTrue(all(item.readiness is not None for item in entries))
+  self.assertTrue(all(not item.readiness["functional"] and not item.readiness["enabled"] for item in entries))
   self.assertEqual({item.discoverability for item in profiles},{"Hermes native HERMES_HOME selected by the internal orchestrator"})
   self.assertEqual({item.discoverability for item in skills},{"Hermes SKILL.md discovery"})
   self.assertTrue(all(item.native_path.startswith("skills/") for item in skills))
+ def test_runtime_registrations_are_provenance_bound_and_disabled(self):
+  files=self.registry.materialize()
+  runtime_paths=[path for path in files if path.startswith("installer-registry/runtime/")]
+  self.assertGreater(len(runtime_paths),0)
+  registrations=[json.loads(files[path]) for path in runtime_paths]
+  self.assertTrue(all(item["enabled"] is False for item in registrations))
+  self.assertTrue(all(item["identity"]["source_revision"]==self.registry.source.revision for item in registrations))
+  bindings=[item for item in self.registry.crosswalk() if item.kind not in {"profiles","skills"}]
+  self.assertTrue(all(item.blockers for item in bindings))
+  self.assertTrue(all(item.readiness["materialized"] or item.kind=="plugins" for item in bindings))
+  self.assertTrue(all(not item.readiness["authenticated"] and not item.readiness["functional"]
+                      and not item.readiness["enabled"] and not item.readiness["target_verified"]
+                      for item in bindings))
+  ledger=json.loads(files["installer-registry/crosswalk.json"])
+  runtime_items=[item for item in ledger["items"] if item["kind"] not in {"profiles","skills"}]
+  self.assertTrue(all(not item["readiness"]["functional"] and not item["readiness"]["enabled"]
+                      and not item["readiness"]["target_verified"] for item in runtime_items))
 if __name__=="__main__": unittest.main()

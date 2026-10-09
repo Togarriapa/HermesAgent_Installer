@@ -62,3 +62,87 @@ Selected cron, webhook, channel and bundle resources SHALL use protected enrollm
 
 - **WHEN** a selected recurring/webhook/channel event starts a multi-child workflow
 - **THEN** root authenticates event and current selection, consumes one job admission, issues fresh scoped per-child grants and denies replay/unselected/private-route/overlimit/stale generation before effects
+
+### Requirement: RB08 Protected original plugin effects
+The installer SHALL enforce the pinned manifest obligations through protected finite selected action schemas, immutable handler identity, exact operation/target grants, current private source lineage and scoped root credential references. External writes SHALL require independent runtime task/user-order authority and required one-shot human confirmation of the exact final payload; durable duplicate/ambiguity journals SHALL prevent blind retries.
+
+#### Scenario: Forged or ambiguous plugin effect
+- **WHEN** a native plugin supplies an unenrolled action, altered digest, caller confirmation, sibling account, consumed grant or ambiguous prior write
+- **THEN** reject before backend bytes, retain truthful state and require the exact missing scope, reconciliation or fresh authority without weakening original functionality.
+
+### Requirement: Protected native composition
+The installer SHALL bind actual native producer package/adapter closure through immutable root-selected profile generation and observed issuer channels, and SHALL apply the same protected route normalization policy before final request digest and gateway effect. Caller registration/labels SHALL not establish provenance.
+
+#### Scenario: Mutable package or divergent normalization
+- **WHEN** native closure, peer generation, issuer provenance or route-normalized final payload differs from protected enrollment
+- **THEN** deny before effect bytes and retain exact incomplete implementation/native evidence state.
+
+### Requirement: RB08 Selected facade argument schemas
+The installer SHALL enforce the finite source-bound Epic and voice facade action schemas with extra fields forbidden and root-owned lifecycle/session/artifact references.
+
+#### Scenario: Caller asserts accepted Epic or microphone permission
+- **WHEN** caller supplies lifecycle/session claims without current root verified receipt
+- **THEN** reject before deletion, microphone bytes or backend dispatch.
+
+### Requirement: Protected resolver reader
+The installer SHALL expose only peer-bound selected immutable resolver records via path-free native.resolver.read and SHALL re-resolve current protected effect enrollment on every dispatch.
+
+#### Scenario: Caller reuses stale resolver as permission
+- **WHEN** profile generation, handler, scope or policy changed after reading resolver
+- **THEN** deny affected effect before bytes; presentation records confer no authority.
+
+### Requirement: Fixed operation and voice session selection
+The installer SHALL resolve only protected fixed operation recipes and current root-authorized device/session handles; caller inputs SHALL not select physical executable, path, environment or device. Raw captured voice SHALL be bounded ephemeral memory only.
+
+#### Scenario: Forged recipe or expired voice session
+- **WHEN** selected operation parameters escape its schema or voice session is stale, sibling-owned or lacks trusted permission
+- **THEN** reject before execution/capture and cancel owned expired resources.
+
+### Requirement: Native protected configuration identities
+The installer SHALL validate strict root-owned package/issuer catalogs and distinct canonical normalization-policy and installed module hashes with actual current enrollment joins.
+
+#### Scenario: Partial hash or unobserved configured issuer
+- **WHEN** policy/module digest is missing or source observer only exists as configuration text
+- **THEN** keep affected native effect unavailable and require actual identity/observer evidence.
+
+### Requirement: Protected voice result receipts
+The installer SHALL expose only strict bounded transcript/source receipt or owned audio artifact receipt fields; raw PCM, paths, URLs and credentials SHALL not appear in tool results.
+
+#### Scenario: Voice service returns raw or extra fields
+- **WHEN** result violates selected strict receipt schema or lacks actual root-observed provenance
+- **THEN** reject result and preserve exact incomplete action state without leaking raw capture.
+
+### Requirement: Selected Hermes and resource runtime recipes
+The installer SHALL resolve fixed parameter-free Hermes stage/health recipes and active protected resource job DAG/source/backend joins, retaining official PM runtime and actual functional health evidence.
+
+#### Scenario: Caller supplies bootstrap paths or source-only health
+- **WHEN** caller overrides recipe/roots/argv or only inventory/status exists without actual selected native workflow
+- **THEN** reject overrides or keep functional readiness incomplete, preserve prior generation and exact resume reason.
+
+### Requirement: Selected backend and actual gateway role bindings
+The installer SHALL resolve protected resource backend/body recipe/action/source/consent scope before each child effect and SHALL verify actual launched gateway role against explicit HI13 protected profile-role association.
+
+#### Scenario: Legacy backend metadata or unobserved gateway role
+- **WHEN** only declared backend/role metadata exists without current root selected effect/actual launch proof
+- **THEN** deny backend/admission before bytes and retain exact incomplete implementation/native evidence.
+
+### Requirement: Exact protected execution joins
+The installer SHALL resolve each effect from its exact selected active node, scope, observer and setup role joins, with fresh bounded authority and immutable result ancestry.
+
+#### Scenario: Mismatched backend or setup identity
+- **WHEN** a node selects a different backend, an event/result lacks root-observed closure, or runtime tunnel identity requests setup writer/probe authority
+- **THEN** root rejects before effects and preserves pending original acceptance; no caller booleans or consumed grants substitute for proof
+
+### Requirement: Root-observed native invocation ancestry
+The installer SHALL bind native tool and memory invocation ancestry to actual root-observed response/event handles and selected loaded actions, with fresh per-effect authority.
+
+#### Scenario: Worker invents current invocation
+- **WHEN** a worker supplies a forged response/call handle or changes observed action arguments
+- **THEN** root rejects before effects and does not mint source or user provenance from caller assertions
+
+### Requirement: Selected native profile task recipe
+The installer SHALL resolve resource profile tasks through selected protected process recipes and native package bindings, and pass root-constructed task data through bounded stdin only.
+
+#### Scenario: Manifest attempts process selection
+- **WHEN** a resource manifest or worker supplies executable, profile path, argv or reusable parent grant as execution authority
+- **THEN** root rejects and resolves only its selected per-node process binding with a fresh exact child grant

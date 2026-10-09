@@ -5,7 +5,7 @@ from hermes_installer.remote.policy import AccessPolicyIdentity, FreshAccessPoli
 
 
 class FixtureClient:
-    def __init__(self, app, provider, policies):
+    def __init__(self, app, provider, policies, on_request=None):
         self.app = app
         self.provider = provider
         self.policies = policies
@@ -13,9 +13,12 @@ class FixtureClient:
         self.network = None
         self.app_sequence = None
         self.provider_sequence = None
+        self.on_request = on_request
 
     def request(self, method, path, payload=None):
         self.reads.append((method, path))
+        if self.on_request is not None:
+            self.on_request(method, path)
         if method != "GET":
             raise AssertionError("policy authority must be read-only")
         if path.endswith("/access/apps/app-1"):
@@ -82,6 +85,20 @@ class FreshAccessPolicyAuthorityTests(unittest.TestCase):
         self.assertEqual(self.resolutions, ["vault://remote/access-read"] * 2)
         self.assertTrue(all(method == "GET" for method, _ in self.client.reads))
         self.assertNotIn("fixture-secret-value", repr(self.authority))
+
+    def test_observation_interval_starts_before_the_first_cloudflare_read(self):
+        now = [100.0]
+        client = FixtureClient(self.app, self.provider, [self.policy],
+                               on_request=lambda _method, _path: now.__setitem__(0, now[0] + 0.5))
+        authority = FreshAccessPolicyAuthority(
+            self.identity, "vault://remote/access-read", lambda _ref: "fixture-secret-value",
+            lambda _token: client, clock=lambda: now[0],
+        )
+        observation = authority.inspect("owner@example.net")
+        self.assertTrue(observation.allowed)
+        self.assertEqual(observation.started_monotonic, 100.0)
+        self.assertEqual(observation.ended_monotonic, 103.0)
+        self.assertEqual(len(client.reads), 6)
 
     def test_policy_removal_broadening_and_page_overflow_deny(self):
         self.assertTrue(self.authority.allows("owner@example.net"))
