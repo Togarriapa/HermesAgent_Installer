@@ -75,13 +75,14 @@ class ComponentSkillBindingTests(unittest.TestCase):
                 self.source, store, profile_id="../other", profile_data_root=self.profile_root
             ))
 
-    def test_requires_license_review_before_native_exposure(self):
+    def test_private_profile_binding_preserves_separate_redistribution_review(self):
         from dataclasses import replace
         blocked = replace(self.source, redistribution_license_review_required=True)
-        with self.assertRaisesRegex(ComponentBindingError, "redistribution review"):
-            self.with_store(lambda store: stage_component_skill(
-                blocked, store, profile_id="default", profile_data_root=self.profile_root
-            ))
+        result = self.with_store(lambda store: stage_component_skill(
+            blocked, store, profile_id="default", profile_data_root=self.profile_root
+        ))
+        self.assertTrue(result.redistribution_license_review_required)
+        self.assertTrue(result.external_dir.is_relative_to(self.profile_root.resolve()))
 
 
 if __name__ == "__main__":

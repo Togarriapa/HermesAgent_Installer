@@ -30,6 +30,7 @@ class ComponentSkillBinding:
     skill_files: tuple[str, ...]
     names: tuple[str, ...]
     source_sha256: str
+    redistribution_license_review_required: bool
     status: str = "staged_pending_native_discovery"
 
 
@@ -60,8 +61,6 @@ def stage_component_skill(
         raise ComponentBindingError("generation store is not rooted in this profile's installer-owned data")
     if not store.root.resolve(strict=True).is_relative_to(profile_root):
         raise ComponentBindingError("component generations escaped the profile data root")
-    if source.redistribution_license_review_required:
-        raise ComponentBindingError("source redistribution review is required before native exposure")
     if not source.files or not source.source_identity or not re.fullmatch(r"[a-f0-9]{40}", source.revision):
         raise ComponentBindingError("component source lacks a complete pinned identity")
     contract = resolve_component_adapter(source.component_id)
@@ -121,4 +120,5 @@ def stage_component_skill(
         skill_files=tuple(skill.skill_file for skill in discovery.skills),
         names=tuple(skill.name for skill in discovery.skills),
         source_sha256=digest.hexdigest(),
+        redistribution_license_review_required=source.redistribution_license_review_required,
     )
