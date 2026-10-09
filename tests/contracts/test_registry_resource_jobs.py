@@ -11,7 +11,7 @@ from hermes_installer.registry.resource_jobs import (
     ResourceBackendEnrollment, ResourceBodyRecipe, ResourceBodyRecipeField,
     ResourceChildAdmission, ResourceJobDenied, ResourceJobEnrollment,
     ResourceJobLedger, ResourceJobNode, ResourceBodyRecipeScope,
-    ResourceScopeBinding, ResourceValidator,
+    ResourceScopeBinding, ResourceValidator, RootResourceJobAdmissionHandle,
 )
 
 
@@ -290,3 +290,25 @@ def test_recipe_renders_only_exact_event_fields_and_backend_scope() -> None:
     with pytest.raises(ResourceJobDenied, match="scope binding or validator"):
         recipe.render(backend=backend, scope_bindings={"scope": other_scope}, validators=validators,
                      event_fields={"message": "hello"}, parent_results={})
+
+
+def test_root_profile_task_handle_is_immutable_bound_and_does_not_reveal_prompt_in_repr():
+    payload = b'{"prompt":"private selected prompt"}'
+    handle = RootResourceJobAdmissionHandle(
+        handle_id="handle-1", job_id="job-1", node_id="node-1",
+        child_admission_id="attempt-1", attempt_index=0, backend_enrollment_id="backend-1",
+        resource_generation=hashlib.sha256(b"resource").hexdigest(),
+        profile_id="profile-1", profile_generation="profile-generation",
+        native_package_id="package-1", native_package_generation="package-generation",
+        process_enrollment_id="process-1", process_generation="process-generation",
+        operation_id="hermes-resource-profile-task-v1", child_target_id="process:profile:chat",
+        child_capability="hermes-profile-invoke", task_body_recipe_id="task-recipe",
+        task_request_schema_id="prompt-v1", task_payload=payload,
+        task_payload_sha256=hashlib.sha256(payload).hexdigest(),
+        parent_closure_digest=hashlib.sha256(b"closure").hexdigest(), expires_monotonic=20.0,
+    )
+    assert "private selected prompt" not in repr(handle)
+    with pytest.raises((AttributeError, TypeError)):
+        handle.node_id = "other-node"
+    with pytest.raises(ResourceJobDenied, match="payload or closure digest"):
+        replace(handle, task_payload=b'{"prompt":"changed"}')

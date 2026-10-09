@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import patch
+import hashlib
+import time
 import unittest
 
 from hermes_installer.registry.resource_backends import (
@@ -10,12 +13,14 @@ from hermes_installer.registry.resource_backends import (
     ResourceProfileTaskUnavailable,
     resource_profile_task_handler_sha256,
     resolve_resource_profile_task,
+    ResourceProfileTaskAdapter,
 )
 from hermes_installer.registry.resource_jobs import (
     ResourceBackendEnrollment,
     ResourceBodyRecipe,
     ResourceBodyRecipeField,
     ResourceValidator,
+    RootResourceJobAdmissionHandle,
 )
 
 
@@ -135,6 +140,70 @@ class ResourceProfileBackendTests(unittest.TestCase):
 
     def test_handler_identity_is_bound_to_this_adapter_source(self):
         self.assertRegex(resource_profile_task_handler_sha256(), r"^[0-9a-f]{64}$")
+
+    def test_adapter_forwards_only_exact_live_root_admission_handle(self):
+        from hermes_installer.authority.service import AuthorityService
+
+        selection, backend, _, _, _ = _selected()
+        payload = b'{"prompt":"review the event"}'
+        handle = RootResourceJobAdmissionHandle(
+            handle_id="handle-1", job_id="job-1", node_id="node-1",
+            child_admission_id="attempt-1", attempt_index=0,
+            backend_enrollment_id=backend.backend_id,
+            resource_generation=backend.generation, profile_id=backend.profile_id,
+            profile_generation=backend.profile_generation,
+            native_package_id=backend.native_package_id,
+            native_package_generation=backend.native_package_generation,
+            process_enrollment_id=_EXECUTION_BINDING["process_enrollment_id"],
+            process_generation=_EXECUTION_BINDING["process_generation"],
+            operation_id=HERMES_RESOURCE_PROFILE_TASK_OPERATION,
+            child_target_id=_EXECUTION_BINDING["child_target_id"],
+            child_capability=_EXECUTION_BINDING["child_capability"],
+            task_body_recipe_id=_EXECUTION_BINDING["task_body_recipe_id"],
+            task_request_schema_id=_EXECUTION_BINDING["task_request_schema_id"],
+            task_payload=payload, task_payload_sha256=hashlib.sha256(payload).hexdigest(),
+            parent_closure_digest="b" * 64, expires_monotonic=time.monotonic() + 60,
+        )
+        launcher = object.__new__(AuthorityService)
+        with patch.object(AuthorityService, "launch_resource_profile_task", create=True,
+                          return_value={"started": True}) as launch:
+            adapter = ResourceProfileTaskAdapter(selection, node_id="node-1", launcher=launcher)
+            self.assertEqual(adapter.launch_resource_profile_task(handle, "node-1"), {"started": True})
+            launch.assert_called_once_with(handle, "node-1")
+
+    def test_adapter_rejects_mismatched_or_expired_root_handle_before_authority(self):
+        from dataclasses import replace
+        from hermes_installer.authority.service import AuthorityService
+
+        selection, backend, _, _, _ = _selected()
+        payload = b'{"prompt":"review the event"}'
+        base = RootResourceJobAdmissionHandle(
+            handle_id="handle-1", job_id="job-1", node_id="node-1",
+            child_admission_id="attempt-1", attempt_index=0,
+            backend_enrollment_id=backend.backend_id,
+            resource_generation=backend.generation, profile_id=backend.profile_id,
+            profile_generation=backend.profile_generation,
+            native_package_id=backend.native_package_id,
+            native_package_generation=backend.native_package_generation,
+            process_enrollment_id=_EXECUTION_BINDING["process_enrollment_id"],
+            process_generation=_EXECUTION_BINDING["process_generation"],
+            operation_id=HERMES_RESOURCE_PROFILE_TASK_OPERATION,
+            child_target_id=_EXECUTION_BINDING["child_target_id"],
+            child_capability=_EXECUTION_BINDING["child_capability"],
+            task_body_recipe_id=_EXECUTION_BINDING["task_body_recipe_id"],
+            task_request_schema_id=_EXECUTION_BINDING["task_request_schema_id"],
+            task_payload=payload, task_payload_sha256=hashlib.sha256(payload).hexdigest(),
+            parent_closure_digest="b" * 64, expires_monotonic=time.monotonic() + 60,
+        )
+        launcher = object.__new__(AuthorityService)
+        with patch.object(AuthorityService, "launch_resource_profile_task", create=True) as launch:
+            adapter = ResourceProfileTaskAdapter(selection, node_id="node-1", launcher=launcher)
+            for bad in (replace(base, backend_enrollment_id="other-backend"),
+                        replace(base, process_generation="stale-generation"),
+                        replace(base, expires_monotonic=time.monotonic() - 1)):
+                with self.assertRaises(ResourceProfileTaskUnavailable):
+                    adapter.launch_resource_profile_task(bad, "node-1")
+            launch.assert_not_called()
 
 
 if __name__ == "__main__":

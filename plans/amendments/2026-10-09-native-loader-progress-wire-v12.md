@@ -1,0 +1,3 @@
+# Native loader progress wire v12
+
+HI-T08/HI-T09 and EV-HI08/EV-HI09 retain original scope and acceptance. v11 specified a trusted selected loader progress channel but omitted framing and receiver call surface. The live assembly contract now fixes canonical length-prefixed JSON, three finite ordered records, bounded action tuple, root-private register/receive APIs and immutable event lookup. Root custody and active catalog joins remain mandatory; ordinary worker readiness never suffices. No new requirement/task or implementation claim. All original acceptance remains pending; baseline unchanged.

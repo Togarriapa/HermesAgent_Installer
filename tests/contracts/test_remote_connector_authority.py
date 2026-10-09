@@ -242,9 +242,16 @@ class RemoteConnectorEffectAuthorityContracts(unittest.TestCase):
             handlers={(operation, "xpra-native"): handler for operation in operations},
             policy=_HI12Policy(),
             profile_generations={"native-desktop": "desktop-generation-1"})
+        def resolve_native(profile_id, generation, current_digest):
+            if (profile_id, generation, current_digest) != (
+                    "native-desktop", "desktop-generation-1", generation_digest[0]):
+                raise RuntimeError("stale protected root principal catalog")
+            return binding
         hi12 = AuthorityServiceHI12Adapter(
             service, boot_epoch=lambda: "boot-epoch-1",
-            service_generation_digest=lambda: generation_digest[0], monotonic=lambda: self.now)
+            service_generation_digest=lambda: generation_digest[0],
+            resolve_selected_native_principal=resolve_native,
+            monotonic=lambda: self.now)
         authority = self._authority_for_hi12(hi12)
         auth = authority.issue_remote_connector_effect(
             self.binding, "connector.open", self._open_payload(), 0,

@@ -245,3 +245,138 @@ The installer SHALL bind build service identity to a protected current service e
 #### Scenario: Source hash used as runtime identity
 - **WHEN** a prepared profile substitutes a source archive hash or unjoined output UID for executable/service proof
 - **THEN** root rejects execution publication and retains the original incomplete checkpoint
+
+### Requirement: Root-local setup and journal provenance
+The installer SHALL authenticate initial provision through its installed root-local setup session and transaction-scoped artifact receipts, and resolve authority state from protected root journal selection.
+
+#### Scenario: Worker fabricates bootstrap actor
+- **WHEN** a worker supplies root labels, another transaction receipt or a writable journal mapping
+- **THEN** root rejects before provision/state effects without requiring or inventing a first active worker context
+
+### Requirement: Installed root first setup acquisition
+
+First setup SHALL verify the installed root actor/plan catalog and acquire selected artifacts through the root-local transaction-bound CAS fetch contract without requiring an active worker.
+
+#### Scenario: Unverified setup actor or source
+- **WHEN** actor closure, plan, catalog or source receipt verification fails
+- **THEN** provisioning remains incomplete without activating a worker profile.
+
+### Requirement: Native health and typed task proof
+
+The implementation SHALL enforce the applicable native health receipt and typed task admission contracts. Use planning/protected-lifecycle-control-contract.json native_health_receipt for actual native health and planning/protected-resource-job-contract.json typed_admission/service_methods/recipe_domain for RB-T08. Original tasks/acceptance remain pending.
+
+#### Scenario: Status without native result
+- **WHEN** only source/status/exit evidence is available
+- **THEN** functional health and task result acceptance remain incomplete.
+
+### Requirement: Root observed initial input closure
+
+The implementation SHALL resolve actual installed release custody and full admitted source receipt closure before issuing native input provenance. Private or unknown sensitivity SHALL remain unchanged absent separate reviewed clearance.
+
+#### Scenario: Digest without source closure
+- **WHEN** only a digest or caller provenance label is available
+- **THEN** no trusted input receipt or admitted native effect is created.
+
+### Requirement: Protected setup store and bounded probe response
+
+The implementation SHALL resolve the protected setup catalog/store and validate the exact bounded private probe response against current root admission and actual observations.
+
+#### Scenario: Untrusted injected catalog or response
+- **WHEN** selected artifact custody or probe envelope/observation binding differs
+- **THEN** provisioning/readiness cannot be marked complete.
+
+### Requirement: Selected installed bootstrap policy
+
+The root factory SHALL resolve the exact installed reviewed bootstrap policy and actual transaction-bound receipt fields before publishing active records.
+
+#### Scenario: Missing executable receipt
+- **WHEN** an active template binding lacks an actual verified runnable artifact receipt
+- **THEN** no active service record is synthesized from defaults or source archive identity.
+
+### Requirement: Non-circular functional health activation
+
+Runnable authority publication SHALL require actual artifact receipts; functional enablement SHALL separately require actual passed health against that committed generation.
+
+#### Scenario: Runnable record without functional health
+- **WHEN** runnable custody exists but health has not passed
+- **THEN** functional enablement and installation acceptance remain pending.
+
+### Requirement: Concrete first-stage policy publication
+
+The installed root entrypoint SHALL compile and publish reviewed closed-template policy/catalog bytes from actual selected release/NSS/ownedroot observations before invoking the policy factory. HERMES_HOME SHALL use explicit service data root/hermes.
+
+#### Scenario: First install without policy files
+- **WHEN** no policy generation exists
+- **THEN** verified stage0 publication constructs it without an active worker or caller authority rows.
+
+### Requirement: Prepared native materialization receipt closure
+
+Root materialization SHALL occur under verified prepared transaction and exact fixed CAS output roles before runnable activation. HERMES_HOME SHALL equal selected service_home_root_id. Resources source proof SHALL remain independent from Hermes source proof.
+
+#### Scenario: Source or role substitution
+- **WHEN** a native output receipt substitutes another source or role
+- **THEN** active record publication is denied.
+
+### Requirement: Closed first-stage source template
+
+The compiler SHALL use the exact pinned closed template and finite actual root fact bindings; prepared stage SHALL not require an active worker.
+
+#### Scenario: Missing runtime or identity binding
+- **WHEN** a required root binding has not been actually verified
+- **THEN** no active record is synthesized and preparation reports exact prerequisite.
+
+### Requirement: Existing observation assembly joins
+The implementation SHALL apply the exact root registry, principal-selection and protected observation joins relevant to this change in `plans/amendments/2026-10-09-final-observation-assembly-v31.md`.
+
+#### Scenario: Static selection lacks actual runtime proof
+- **WHEN** an actual current role, display, source event or terminal execution receipt is absent
+- **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence
+
+### Requirement: Root observed first setup principal selection
+The compiler SHALL resolve selected authenticated principal receipt through the root setup registry before publishing concrete identity rows.
+
+#### Scenario: No active worker exists during first setup
+- **WHEN** actual selected authenticated identity and dedicated NSS allocation are verified in the root setup transaction
+- **THEN** the compiler binds the exact principal fields without requiring a previous active worker profile or fabricating a principal from operator UID
+
+### Requirement: Installed closure and native construction joins
+The implementation SHALL use the applicable exact root release and native assembly joins in the v33 amendment before activating selected runtime behavior.
+
+#### Scenario: First input precedes provider pending pair
+- **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
+- **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors
+
+### Requirement: Complete frozen baseline receipt digest
+The deployment verifier SHALL distinguish the complete frozen-tree SHA256 map from the original160 snapshot file manifest.
+
+#### Scenario: Frozen metadata is present
+- **WHEN** computing baseline_tree_sha256
+- **THEN** every regular frozen file including hashes.json is included, while original160 snapshot entries are checked separately against their bytes
+
+### Requirement: Noncircular root observation receipts
+The implementation SHALL use exact v35 initial identity and terminal companion joins applicable to this change.
+
+#### Scenario: Companion proof follows immutable terminal
+- **WHEN** root custody has issued the actual terminal receipt
+- **THEN** root native registry binds a separate verified companion receipt without fabricating or modifying custody evidence
+
+### Requirement: Noncircular immutable first-stage publication
+The implementation SHALL use the exact applicable v36 release roles, immutable policy publication and pre-event root ingress custody joins.
+
+#### Scenario: First ingress has no source receipt yet
+- **WHEN** root resolves selected ingress controller custody
+- **THEN** actual process/module/selected ingress proof is checked independently before atomically minting the source receipt and event handle
+
+### Requirement: Official committed PM runtime identity
+The implementation SHALL resolve the exact selected official committed PM dependency environment through the v37 root runtime receipt.
+
+#### Scenario: PM source or sync receipt alone exists
+- **WHEN** actual selected runtime executable identity and source/lock/tool joins have not been verified
+- **THEN** runtime activation and functional health remain pending, without substituting a source archive digest or system Python
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
