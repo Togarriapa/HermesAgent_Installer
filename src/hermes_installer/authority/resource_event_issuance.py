@@ -213,7 +213,7 @@ class ResourceEventContextIssuer:
         )
         if (type(role_proof) is not RootIngressControllerProof
                 or role_proof._resolver is not registry.custody_resolver
-                or role_proof.schema != 1
+                or type(role_proof.schema) is not int or role_proof.schema != 1
                 or role_proof.controller_role_id != role.id
                 or role_proof.controller_kind != role.controller_kind
                 or role_proof.controller_generation != role.controller_generation
@@ -234,12 +234,19 @@ class ResourceEventContextIssuer:
                 or role_proof.live_peer_identity.executable_sha256 != role.daemon_executable_sha256
                 or role_proof.namespace_id != RootControllerRoleResolver._namespace_binding_id(
                     role_proof.live_peer_identity)
-                or role_proof.uid != 0 or role_proof.pid <= 0 or role_proof.pidfd < 0
+                or type(role_proof.uid) is not int or role_proof.uid != 0
+                or type(role_proof.pid) is not int or role_proof.pid <= 0
+                or type(role_proof.pidfd) is not int or role_proof.pidfd < 0
                 or not role_proof.proof_handle or not role_proof.selected_ingress_binding_id
                 or not callable(getattr(role_proof, "revalidate", None))
                 or role_proof.revalidate() is not True
+                or type(role_proof.issued_monotonic) not in (int, float)
+                or not math.isfinite(role_proof.issued_monotonic)
+                or type(role_proof.expires_monotonic) not in (int, float)
+                or not math.isfinite(role_proof.expires_monotonic)
                 or role_proof.issued_monotonic > self.monotonic()
-                or role_proof.expires_monotonic <= self.monotonic()):
+                or role_proof.expires_monotonic <= self.monotonic()
+                or role_proof.expires_monotonic > self.monotonic() + role.max_lease_seconds):
             raise AuthorityDenied("resource.controller", "root source controller custody is stale")
         now = self.monotonic()
         if not math.isfinite(now) or role_proof.expires_monotonic <= now:
