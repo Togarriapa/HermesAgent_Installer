@@ -37,3 +37,5 @@ HI10/HI-T10/EV-HI10 concretizes existing remote native process/sandbox proof; HI
 ## Cross-process native handoff refinement
 
 HI11/HI-T11/EV-HI11 operationalizes existing HI08/PR source lineage for actual producer and gateway peer separation, without transferring bearer authority.
+
+HI11 wire clarification in native-cross-process-bridge-v2 captures complete request directly; existing source snapshots are bounded retained ancestry, not portable effect authority.

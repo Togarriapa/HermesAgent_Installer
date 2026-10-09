@@ -108,3 +108,8 @@ Cross-process native source handoff SHALL use root-issued one-use bridge state b
 
 - **WHEN** separate gateway resolves a native source reference with different PID/generation/payload or replays an attempt
 - **THEN** root denies before bytes; valid paired identities use exact final digest/full source closure and consume each attempt once
+
+#### Scenario: Incomplete request envelope or retry reuse
+
+- **WHEN** producer captures messages without full SDK fields or reuses a prior bridge on retry
+- **THEN** root rejects final effect mismatch/replay before bytes; a new complete request capture and fresh one-use bridge preserves full bounded parent ancestry
