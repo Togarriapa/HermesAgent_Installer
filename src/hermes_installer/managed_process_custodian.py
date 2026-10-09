@@ -1314,7 +1314,15 @@ class ManagedProcessEffectHandler:
                     payload: bytes, timeout: float, peer_pid: int,
                     peer_pidfd: int | None,
                     cancelled: Callable[[], bool]) -> Mapping[str, Any]:
-            return self.dispatch(profile, operation, context=context, authorization=authorization,
+            # Resolve the current immutable enrollment row for this handler ID.
+            # A refreshed row with the same effect target must be used for
+            # admission; a changed target remains unreachable through this
+            # already-registered handler key and is rejected by dispatch.
+            with self._lock:
+                current_profile = self.profiles.get(profile.profile_id)
+            if current_profile is None:
+                raise AuthorityDenied("process.profile", "enrolled process profile is no longer active")
+            return self.dispatch(current_profile, operation, context=context, authorization=authorization,
                                  payload=payload, timeout=timeout, peer_pid=peer_pid,
                                  peer_pidfd=peer_pidfd,
                                  cancelled=cancelled)
@@ -1343,7 +1351,15 @@ class ManagedProcessEffectHandler:
             return self._start(profile, context, authorization, payload, timeout, peer_pid,
                                peer_pidfd, cancelled)
         if operation == "process.inspect":
-            return self._inspect(profile, context, payload, timeout, cancelled)
+            try:
+                return self._inspect(profile, context, payload, timeout, cancelled)
+            except Exception as exc:
+                if self._diagnostic_sink is not None:
+                    code = getattr(exc, "code", "internal")
+                    if not isinstance(code, str) or not re.fullmatch(r"[a-z0-9_.-]{1,64}", code):
+                        code = "internal"
+                    self._diagnostic_sink(("inspect-deny:" + code).encode("ascii"))
+                raise
         return self._control(profile, context, operation, payload, timeout, cancelled)
 
     @staticmethod
