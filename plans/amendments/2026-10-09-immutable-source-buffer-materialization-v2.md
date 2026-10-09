@@ -1,0 +1,3 @@
+# Immutable source buffer materialization
+
+Sol additive SK-R0092/R0092 source-link implementation clarification. Verified immutable in-memory original Git blobs provide content stability without a source filesystem inode claim. Root still validates exact target/source identities before copy and actual owned regular destination after write; filesystem-backed copy retains nofollow inode/hash stability requirements. Full original source mode/blob/tree proof and separate compiled digest remain required. This does not import source governance or prove pipeline/native acceptance. Existing tasks remain open.

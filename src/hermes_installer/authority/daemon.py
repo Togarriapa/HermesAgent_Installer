@@ -207,34 +207,11 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
             artifact_catalog=artifact_catalog, vault=vault,
         )
     service.root_authority_runtime = authority_runtime
-    # Native request bridging remains unavailable until the protected
-    # root-observer registry is composed with an actual ingress/terminal event
-    # source. Enrollment metadata alone cannot turn worker-submitted bytes into
-    # trusted input provenance.
-    if enrollment.memory_providers:
-        from hermes_installer.memory.broker import MemoryTarget, build_memory_handlers, build_memory_runtime
-        targets = {}
-        for raw in enrollment.memory_providers.values():
-            fields = {key: value for key, value in raw.items() if key != "id"}
-            fields["approved_route_ids"] = frozenset(fields["approved_route_ids"])
-            target = MemoryTarget(**fields)
-            targets[(target.profile_id, target.namespace_id, target.provider)] = target
-        runtime = build_memory_runtime(
-            targets, service, root_data_dir=Path("/var/lib/hermes-installer/memory"), vault=vault)
-        service.memory_owner_state = runtime["owner_state"]
-        active_lookup = runtime["consent_active"]
-        if callable(active_lookup):
-            service.background_consent_active = active_lookup
-        memory_handlers = build_memory_handlers(
-            targets=runtime["targets"], owner_state=runtime["owner_state"], queue=runtime["queue"],
-            ipc=runtime["ipc"], engines=runtime["engines"], eligibility=runtime["eligibility"],
-            maximum_timeout=runtime["maximum_timeout"],
-        )
-        enrolled_operations = {(rule.operation, rule.target) for rule in enrollment.rules.values()}
-        for key, handler in memory_handlers.items():
-            if key not in enrolled_operations or key in service.handlers:
-                raise AuthorityDenied("authority.configuration", "memory handler lacks a unique protected effect rule")
-            service.handlers[key] = handler
+    # Memory stays unavailable until the active service-generation records
+    # join typed MemoryServiceEnrollment values to a protected root-journal
+    # resolver and the per-step HI12 effect issuer. The older memory_providers
+    # sidecar and a guessed /var/lib path are not authority to create state or
+    # register effects.
     return service, enrollment
 
 

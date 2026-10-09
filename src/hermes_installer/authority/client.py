@@ -21,7 +21,8 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
-    NativeEventHandle, NativeInvocationBinding, NativeInvocationContexts, NativeToolCallBinding,
+    NativeEventHandle, NativeInvocationBinding, NativeInvocationContexts, NativeResponseMetadata,
+    NativeToolCallBinding,
     VerifiedEffectAuthorization, canonical_bytes, canonical_digest, strict_json_loads,
 )
 from .process_controls import ProcessControlResponse
@@ -251,6 +252,25 @@ class AuthorityClient:
         if contexts.invocation_handle != invocation_handle:
             raise AuthorityDenied("native.invocation", "root invocation context belongs to another call")
         return contexts
+
+    def take_native_response_metadata(self, response_delivery_handle: str,
+                                      response_body_sha256: str,
+                                      native_request_handle: str) -> NativeResponseMetadata:
+        """Take response metadata once, bound to the raw body and original HI11 request."""
+        if (not isinstance(response_delivery_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{43}", response_delivery_handle)
+                or not isinstance(native_request_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", native_request_handle)
+                or not isinstance(response_body_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", response_body_sha256)):
+            raise AuthorityDenied("native.response.take", "provider response lookup fields are malformed")
+        result = self._rpc("native.response.take", {
+            "schema": 1,
+            "delivery_handle": response_delivery_handle,
+            "response_body_sha256": response_body_sha256,
+            "native_request_handle": native_request_handle,
+        })
+        return NativeResponseMetadata.from_wire(result)
 
     def remote_sessions(self) -> Any:
         """Return typed HI13 calls over this client's authenticated Unix RPC.

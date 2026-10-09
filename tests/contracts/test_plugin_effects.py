@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -75,7 +76,7 @@ class Authority:
 def dispatcher(*, selected=None, authority=None, invocation_contexts=None, identity=None):
     resolver = Resolver(selected)
     authority = authority or Authority()
-    invocation_contexts = invocation_contexts or (lambda **_: (object(),))
+    invocation_contexts = invocation_contexts or trusted_lineage
     identity = identity or SimpleNamespace(kind="plugins", resource_id="web",
                                            content_digest="a" * 64)
     schema = PluginActionSchema(
@@ -95,6 +96,15 @@ def dispatcher(*, selected=None, authority=None, invocation_contexts=None, ident
                                   selected_effects=resolver,
                                   action_schemas=StaticPluginActionSchemas({("web", schema.action_id): schema}),
                                   identity=identity), resolver, authority
+
+
+def trusted_lineage(**kwargs):
+    return SimpleNamespace(
+        schema=1, invocation_handle="i" * 32, source_receipt_handles=(),
+        parent_closure_digest="c" * 64,
+        arguments_sha256=kwargs["arguments_sha256"],
+        expires_monotonic=time.monotonic() + 10,
+    )
 
 
 def test_dispatch_binds_canonical_envelope_to_one_use_authority_grant():
@@ -121,6 +131,48 @@ def test_dispatch_binds_canonical_envelope_to_one_use_authority_grant():
         "recipient": "public-web", "request_digest": digest, "retry_index": 0,
     }
     assert resolver.calls == [("web", "retrieve-public-web-content")]
+    assert context_args["source_receipt_handles"] == ()
+
+
+def test_dispatch_accepts_typed_root_contexts_dto_and_passes_only_receipt_handles():
+    # The authority's immutable NativeInvocationContexts DTO omits the
+    # wire-only schema field after from_wire() has validated it.
+    def typed_contexts(**kwargs):
+        return SimpleNamespace(
+            invocation_handle="h" * 32,
+            source_receipt_handles=("r" * 32,),
+            parent_closure_digest="c" * 64,
+            arguments_sha256=kwargs["arguments_sha256"],
+            expires_monotonic=time.monotonic() + 10,
+        )
+
+    client, _, authority = dispatcher(invocation_contexts=typed_contexts)
+    client.invoke("web", "retrieve-public-web-content", {"url": "https://example.com"})
+
+    context_args = authority.calls[0][1]
+    assert context_args["source_receipt_handles"] == ("r" * 32,)
+    assert "source_contexts" not in context_args
+
+
+def test_invocation_lineage_is_action_and_canonical_argument_bound():
+    observed = []
+
+    def provider(**kwargs):
+        observed.append(kwargs)
+        return trusted_lineage(**kwargs)
+
+    client, _, authority = dispatcher(invocation_contexts=provider)
+    arguments = {"url": "https://example.com/docs"}
+    client.invoke("web", "retrieve-public-web-content", arguments)
+
+    assert observed[0]["adapter_id"] == "web"
+    assert observed[0]["action_id"] == "retrieve-public-web-content"
+    assert observed[0]["arguments_sha256"] == hashlib.sha256(
+        json.dumps(arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    context_args = authority.calls[0][1]
+    assert "source_contexts" not in context_args
+    assert context_args["source_receipt_handles"] == ()
 
 
 def test_missing_selected_enrollment_fails_before_authority_or_network_effect():
@@ -128,7 +180,7 @@ def test_missing_selected_enrollment_fails_before_authority_or_network_effect():
     missing.selected = None
     authority = Authority()
     client = PluginEffectDispatcher(
-        authority=authority, invocation_contexts=lambda **_: (object(),),
+        authority=authority, invocation_contexts=trusted_lineage,
         selected_effects=missing,
         action_schemas=StaticPluginActionSchemas({}),
         identity=SimpleNamespace(kind="plugins", resource_id="web", content_digest="a" * 64),
@@ -170,7 +222,18 @@ def test_identity_manifest_operation_or_target_tampering_fails_closed():
 
 def test_empty_provenance_and_authority_context_mismatch_never_perform():
     authority = Authority()
-    client, _, _ = dispatcher(authority=authority, invocation_contexts=lambda **_: ())
+    client, _, _ = dispatcher(authority=authority, invocation_contexts=lambda **_: None)
+    with pytest.raises(PluginEffectUnavailable, match="lineage"):
+        client.invoke("web", "retrieve-public-web-content", {"url": "https://example.com"})
+    assert authority.calls == []
+
+    bad_lineage = SimpleNamespace(
+        schema=True, invocation_handle="i" * 32, source_receipt_handles=(),
+        parent_closure_digest="c" * 64,
+        arguments_sha256=hashlib.sha256(b'{"url":"https://example.com"}').hexdigest(),
+        expires_monotonic=time.monotonic() + 10,
+    )
+    client, _, authority = dispatcher(invocation_contexts=lambda **_: bad_lineage)
     with pytest.raises(PluginEffectUnavailable, match="lineage"):
         client.invoke("web", "retrieve-public-web-content", {"url": "https://example.com"})
     assert authority.calls == []
@@ -187,6 +250,17 @@ def test_empty_provenance_and_authority_context_mismatch_never_perform():
     with pytest.raises(PluginEffectUnavailable, match="does not match"):
         client.invoke("web", "retrieve-public-web-content", {"url": "https://example.com"})
     assert [call[0] for call in mismatch.calls] == ["context"]
+
+    bad_lineage = SimpleNamespace(
+        schema=1, invocation_handle="i" * 32, source_receipt_handles=(),
+        parent_closure_digest="c" * 64, arguments_sha256="0" * 64,
+        expires_monotonic=time.monotonic() + 10,
+    )
+    authority = Authority()
+    client, _, _ = dispatcher(authority=authority, invocation_contexts=lambda **_: bad_lineage)
+    with pytest.raises(PluginEffectUnavailable, match="lineage"):
+        client.invoke("web", "retrieve-public-web-content", {"url": "https://example.com"})
+    assert authority.calls == []
 
 
 @pytest.mark.parametrize("envelope", [
@@ -235,10 +309,10 @@ def test_confirmation_and_idempotency_are_policy_bound_and_not_optional():
 
 def test_trusted_factory_fails_closed_when_root_selected_package_binding_is_absent():
     authority = Authority()
-    with pytest.raises(PluginEffectUnavailable, match="native-package binding"):
+    with pytest.raises(PluginEffectUnavailable, match="package binding"):
         build_plugin_effects_facade(
-            authority=authority, invocation_contexts=lambda **_: (),
-            identity=SimpleNamespace(kind="plugins", resource_id="web"),
+            authority=authority, invocation_contexts=lambda **_: None,
+            identity=SimpleNamespace(kind="plugins", resource_id="web", content_digest="a" * 64),
             action_schemas=StaticPluginActionSchemas({}),
         )
     assert authority.calls == []
@@ -276,15 +350,28 @@ def test_trusted_factory_accepts_only_loader_package_matching_selected_manifest(
         argument_schema={"type": "object"}, result_schema={"type": "object"},
     )})
     facade = build_plugin_effects_facade(
-        authority=authority, invocation_contexts=lambda **_: (object(),),
+        authority=authority, invocation_contexts=trusted_lineage,
         identity=identity, action_schemas=schema_registry,
     )
     assert isinstance(facade, PluginEffectDispatcher)
     assert authority.calls == []
 
+    # The protected loader may already have performed the no-argument root
+    # package bind. In that case the component factory must consume its
+    # verified object without requiring a second binder on AuthorityClient.
+    loader_selected = SelectedNativePackage("a" * 64)
+    unbound_authority = Authority()
+    facade = build_plugin_effects_facade(
+        authority=unbound_authority, invocation_contexts=trusted_lineage,
+        identity=identity, action_schemas=schema_registry,
+        selected_package=loader_selected,
+    )
+    assert isinstance(facade, PluginEffectDispatcher)
+    assert unbound_authority.calls == []
+
     with pytest.raises(PluginEffectUnavailable, match="package binding"):
         build_plugin_effects_facade(
-            authority=authority, invocation_contexts=lambda **_: (object(),),
+            authority=authority, invocation_contexts=trusted_lineage,
             identity=SimpleNamespace(kind="plugins", resource_id="web", content_digest="c" * 64),
             action_schemas=schema_registry,
         )
