@@ -209,3 +209,10 @@ The installer SHALL bind verified remote native principal and actual gateway ker
 #### Scenario: Gateway context relabel or metadata-only origin activation
 - **WHEN** caller claims native principal from gateway context or activation lacks actual current root readiness/token/mount proof
 - **THEN** deny before bytes/activation, preserve configured checkpoint and exact native/account resume requirements.
+
+### Requirement: Selected backend and actual gateway role bindings
+The installer SHALL resolve protected resource backend/body recipe/action/source/consent scope before each child effect and SHALL verify actual launched gateway role against explicit HI13 protected profile-role association.
+
+#### Scenario: Legacy backend metadata or unobserved gateway role
+- **WHEN** only declared backend/role metadata exists without current root selected effect/actual launch proof
+- **THEN** deny backend/admission before bytes and retain exact incomplete implementation/native evidence.

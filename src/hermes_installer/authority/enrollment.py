@@ -349,6 +349,19 @@ class NativeBridgeEnrollment:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceIssuerRecord:
+    issuer_channel_id: str
+    producer_profile_id: str
+    producer_role_artifact_id: str
+    producer_role_sha256: str
+    capture_schema_id: str
+    allowed_parent_channels: tuple[str, ...]
+    generation: str
+    observer_enrollment_id: str
+    source_action_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ProtectedEnrollment:
     key_id: str
     bindings_by_uid: Mapping[int, PrincipalBinding]
@@ -372,13 +385,74 @@ class ProtectedEnrollment:
     native_package_records: list[Mapping[str, Any]]
     memory_enrollments: Mapping[tuple[str, str], Any]
     operation_parameter_schemas: list[Mapping[str, Any]]
+    source_issuers: tuple[SourceIssuerRecord, ...]
+    resource_job_records: tuple[Mapping[str, Any], ...]
+    remote_session_records: tuple[Mapping[str, Any], ...]
+    resource_backend_enrollment_records: tuple[Mapping[str, Any], ...]
+    resource_body_recipe_records: tuple[Mapping[str, Any], ...]
+
+
+_SOURCE_ACTIONS_BY_CHANNEL = {
+    "native-input": frozenset({"authenticated-input"}),
+    "tool-result": frozenset({"registered-tool-result"}),
+    "memory-result": frozenset({"registered-memory-result"}),
+    "effect-result": frozenset({"registered-effect-result"}),
+    "delegated-child": frozenset({"registered-child-result"}),
+    "schedule-event": frozenset({"root-timer-event"}),
+}
+
+
+def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
+    if not isinstance(value, list) or len(value) > 1024:
+        raise AuthorityDenied("enrollment.source", "protected source issuer catalog is invalid")
+    result = []
+    seen_ids: set[str] = set()
+    seen_bindings: set[tuple[str, str, str]] = set()
+    expected = {"issuer_channel_id", "producer_profile_id", "producer_role_artifact_id",
+                "producer_role_sha256", "capture_schema_id", "allowed_parent_channels",
+                "generation", "observer_enrollment_id", "source_action_ids"}
+    channels = set(_SOURCE_ACTIONS_BY_CHANNEL)
+    for row in value:
+        item = _exact(row, expected, "source issuer")
+        channel = _read_id(item["issuer_channel_id"], "issuer channel")
+        profile = _read_id(item["producer_profile_id"], "source producer profile")
+        role_artifact = _read_id(item["producer_role_artifact_id"], "source producer role artifact")
+        capture_schema = _read_id(item["capture_schema_id"], "source capture schema")
+        generation = _read_id(item["generation"], "source producer generation")
+        observer_id = _read_id(item["observer_enrollment_id"], "source observer enrollment")
+        role_sha = item["producer_role_sha256"]
+        actions = item["source_action_ids"]
+        parents = item["allowed_parent_channels"]
+        if (channel not in channels or not isinstance(role_sha, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", role_sha)
+                or not isinstance(actions, list) or not actions or len(actions) > 16
+                or any(not isinstance(action, str) for action in actions)
+                or len(actions) != len(set(actions))
+                or not set(actions).issubset(_SOURCE_ACTIONS_BY_CHANNEL[channel])
+                or not isinstance(parents, list) or len(parents) > len(channels)
+                or any(not isinstance(parent, str) or parent not in channels for parent in parents)
+                or len(parents) != len(set(parents))):
+            raise AuthorityDenied("enrollment.source", "protected source issuer row is malformed")
+        binding_key = (channel, profile, generation)
+        if observer_id in seen_ids or binding_key in seen_bindings:
+            raise AuthorityDenied("enrollment.source", "protected source issuer is duplicated")
+        seen_ids.add(observer_id)
+        seen_bindings.add(binding_key)
+        result.append(SourceIssuerRecord(
+            channel, profile, role_artifact, role_sha, capture_schema,
+            tuple(parents), generation, observer_id, tuple(actions),
+        ))
+    return tuple(result)
 
 
 def _validate_service_generations(value: Any) -> dict[str, Any]:
     """Validate the one active, root-owned HI09 catalog snapshot and its digest."""
     keys = {"schema", "generation_id", "service_records", "protected_devices",
             "protected_build_records", "native_packages", "memory_enrollments",
-            "operation_parameter_schemas", "generation_digest"}
+            "operation_parameter_schemas", "source_issuers", "resource_jobs",
+            "remote_session_enrollments", "resource_backend_enrollments",
+            "resource_body_recipes",
+            "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != 1:
         raise AuthorityDenied("enrollment.generation", "service generation snapshot schema is unsupported")
@@ -393,12 +467,215 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
     if actual != digest:
         raise AuthorityDenied("enrollment.generation", "service generation snapshot digest does not match")
     list_fields = ("service_records", "protected_devices", "protected_build_records",
-                   "native_packages", "memory_enrollments", "operation_parameter_schemas")
+                   "native_packages", "memory_enrollments", "operation_parameter_schemas",
+                   "source_issuers")
     for name in list_fields:
         rows = item[name]
         if (not isinstance(rows, list) or len(rows) > 1024
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    jobs = item["resource_jobs"]
+    if (not isinstance(jobs, list) or len(jobs) > 692
+            or any(not isinstance(row, dict) for row in jobs)):
+        raise AuthorityDenied("enrollment.generation", "protected resource_jobs catalog is invalid")
+    resource_fields = {
+        "resource_id", "kind", "selected_enabled", "profile_id", "principal_id",
+        "generation", "consent_revision", "approved_action_ids", "fixed_target_ids",
+        "credential_reference_ids", "recipient_scope", "source_policy", "schedule_or_route_id",
+        "max_children", "max_concurrency", "max_runtime_seconds", "max_payload_bytes",
+        "max_replay_entries", "enrollment_id", "source_issuer_channel_id",
+        "observer_enrollment_id", "backend_enrollment_id", "approved_dag",
+    }
+    seen_resource_ids: set[str] = set()
+    for row in jobs:
+        resource = _exact(row, resource_fields, "resource job enrollment")
+        resource_id = _read_id(resource["resource_id"], "resource job ID")
+        if resource_id in seen_resource_ids:
+            raise AuthorityDenied("enrollment.generation", "resource job enrollment is duplicated")
+        seen_resource_ids.add(resource_id)
+        dag = _exact(resource["approved_dag"], {"dag_sha256", "nodes"}, "resource job DAG")
+        if (not isinstance(dag["dag_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", dag["dag_sha256"])
+                or not isinstance(dag["nodes"], list) or not 1 <= len(dag["nodes"]) <= 128):
+            raise AuthorityDenied("enrollment.generation", "protected resource job DAG is malformed")
+        node_fields = {"node_id", "resource_id", "action_id", "operation", "target_id",
+                       "recipient", "request_schema_id", "body_recipe_id", "depends_on",
+                       "maximum_attempts"}
+        node_ids: set[str] = set()
+        for raw_node in dag["nodes"]:
+            node = _exact(raw_node, node_fields, "resource job DAG node")
+            node_id = _read_id(node["node_id"], "resource DAG node ID")
+            if node_id in node_ids:
+                raise AuthorityDenied("enrollment.generation", "resource job DAG node is duplicated")
+            node_ids.add(node_id)
+    remote_rows = item["remote_session_enrollments"]
+    if not isinstance(remote_rows, list) or len(remote_rows) > 128:
+        raise AuthorityDenied("enrollment.generation", "protected remote session catalog is invalid")
+    remote_fields = {
+        "id", "gateway_profile_id", "gateway_role_artifact_id", "gateway_role_sha256",
+        "native_desktop_profile_id", "native_generation", "connector_target_id",
+        "approved_asset_routes", "approved_websocket_route", "expected_hostname",
+        "expected_origin", "jwt_issuer", "jwt_audience", "jwks_origin",
+        "jwt_algorithm_allowlist", "allowed_email_reference_id", "policy_verifier_enrollment_id",
+        "policy_config_digest", "maximum_lease_seconds", "watchdog_interval_seconds",
+        "policy_revision", "principal_bindings_by_subject", "access_policy_binding",
+        "tunnel_runtime_binding",
+    }
+    access_fields = {
+        "verifier_enrollment_id", "account_id", "application_id", "policy_id",
+        "otp_identity_provider_id", "otp_provider_type", "verifier_config_digest",
+        "read_credential_reference_id",
+    }
+    tunnel_fields = {
+        "tunnel_enrollment_id", "tunnel_id", "cloudflared_profile_id",
+        "tunnel_token_reference_id", "token_sink_id", "origin_readiness_policy_id",
+    }
+    seen_remote_ids: set[str] = set()
+    for row in remote_rows:
+        remote = _exact(row, remote_fields, "remote session enrollment")
+        remote_id = _read_id(remote["id"], "remote session enrollment ID")
+        if remote_id in seen_remote_ids:
+            raise AuthorityDenied("enrollment.generation", "remote session enrollment is duplicated")
+        try:
+            for name in (
+                "gateway_profile_id", "gateway_role_artifact_id", "native_desktop_profile_id",
+                "native_generation", "connector_target_id", "approved_websocket_route",
+                "expected_hostname", "expected_origin", "jwt_issuer", "jwt_audience",
+                "jwks_origin", "allowed_email_reference_id", "policy_verifier_enrollment_id",
+                "policy_revision",
+            ):
+                _read_id(remote[name], f"remote session {name}")
+            if (not isinstance(remote["gateway_role_sha256"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", remote["gateway_role_sha256"])
+                    or not isinstance(remote["policy_config_digest"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", remote["policy_config_digest"])):
+                raise ValueError("remote session digest is invalid")
+            assets = remote["approved_asset_routes"]
+            algorithms = remote["jwt_algorithm_allowlist"]
+            if (not isinstance(assets, list) or not assets or len(assets) > 32
+                    or any(not isinstance(route, str) for route in assets)
+                    or len(assets) != len(set(assets))
+                    or not isinstance(algorithms, list) or algorithms != ["RS256"]
+                    or type(remote["maximum_lease_seconds"]) is not int
+                    or not 1 <= remote["maximum_lease_seconds"] <= 60
+                    or type(remote["watchdog_interval_seconds"]) is not int
+                    or not 1 <= remote["watchdog_interval_seconds"] <= 5):
+                raise ValueError("remote session routes, JWT, or lease bounds are invalid")
+            for route in assets:
+                _read_id(route, "remote approved asset route")
+            principals = remote["principal_bindings_by_subject"]
+            if not isinstance(principals, dict) or not principals or len(principals) > 256:
+                raise ValueError("remote principal subject map is invalid")
+            for subject, binding in principals.items():
+                _read_id(subject, "remote verified subject")
+                item_binding = _exact(binding, {"principal_id", "profile_id", "email"},
+                                      "remote verified principal binding")
+                _read_id(item_binding["principal_id"], "remote principal ID")
+                _read_id(item_binding["profile_id"], "remote profile ID")
+                email = item_binding["email"]
+                if (not isinstance(email, str) or len(email) > 320 or "@" not in email
+                        or email != email.casefold() or any(c.isspace() for c in email)):
+                    raise ValueError("remote verified email binding is invalid")
+            access = _exact(remote["access_policy_binding"], access_fields,
+                            "remote Access policy binding")
+            for name in access_fields - {"otp_provider_type", "verifier_config_digest"}:
+                _read_id(access[name], f"remote access {name}")
+            if (access["otp_provider_type"] != "onetimepin"
+                    or not isinstance(access["verifier_config_digest"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", access["verifier_config_digest"])):
+                raise ValueError("remote Access verifier binding is invalid")
+            tunnel = _exact(remote["tunnel_runtime_binding"], tunnel_fields,
+                            "remote tunnel runtime binding")
+            for name in tunnel_fields:
+                _read_id(tunnel[name], f"remote tunnel {name}")
+        except (TypeError, ValueError, AuthorityDenied):
+            raise AuthorityDenied("enrollment.generation", "protected remote session record is malformed") from None
+        seen_remote_ids.add(remote_id)
+    backend_rows = item["resource_backend_enrollments"]
+    if (not isinstance(backend_rows, list) or len(backend_rows) > 692
+            or any(not isinstance(row, dict) for row in backend_rows)):
+        raise AuthorityDenied("enrollment.generation", "protected resource backend catalog is invalid")
+    backend_fields = {
+        "id", "resource_id", "profile_id", "principal_id", "generation", "consent_revision",
+        "source_issuer_channel_id", "observer_enrollment_id", "native_package_id",
+        "native_package_generation", "handler_artifact_id", "handler_sha256",
+        "approved_action_ids", "operation", "target_id", "recipient",
+        "credential_reference_ids", "request_schema_id", "result_schema_id", "body_recipe_id",
+        "scope_binding_id", "maximum_request_bytes", "maximum_response_bytes", "maximum_seconds",
+    }
+    seen_backend_ids: set[str] = set()
+    for row in backend_rows:
+        backend = _exact(row, backend_fields, "resource backend enrollment")
+        backend_id = _read_id(backend["id"], "resource backend enrollment ID")
+        if backend_id in seen_backend_ids:
+            raise AuthorityDenied("enrollment.generation", "resource backend enrollment is duplicated")
+        seen_backend_ids.add(backend_id)
+        for name in (backend_fields - {"handler_sha256", "approved_action_ids",
+                                       "credential_reference_ids", "maximum_request_bytes",
+                                       "maximum_response_bytes", "maximum_seconds", "recipient"}):
+            _read_id(backend[name], f"resource backend {name}")
+        if (not isinstance(backend["handler_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", backend["handler_sha256"])
+                or not isinstance(backend["approved_action_ids"], list)
+                or not backend["approved_action_ids"]
+                or len(backend["approved_action_ids"]) > 64
+                or any(not isinstance(value, str) for value in backend["approved_action_ids"])
+                or len(set(backend["approved_action_ids"])) != len(backend["approved_action_ids"])
+                or not isinstance(backend["credential_reference_ids"], list)
+                or len(backend["credential_reference_ids"]) > 64
+                or any(not _is_credential_reference(value) for value in backend["credential_reference_ids"])
+                or len(set(backend["credential_reference_ids"])) != len(backend["credential_reference_ids"])
+                or type(backend["maximum_request_bytes"]) is not int
+                or not 1 <= backend["maximum_request_bytes"] <= 256 * 1024
+                or type(backend["maximum_response_bytes"]) is not int
+                or not 1 <= backend["maximum_response_bytes"] <= 2 * 1024 * 1024
+                or type(backend["maximum_seconds"]) is not int
+                or not 1 <= backend["maximum_seconds"] <= 600):
+            raise AuthorityDenied("enrollment.generation", "protected resource backend bounds are invalid")
+        for action in backend["approved_action_ids"]:
+            _read_id(action, "resource backend action ID")
+        if backend["recipient"] is not None:
+            _read_id(backend["recipient"], "resource backend recipient")
+    body_rows = item["resource_body_recipes"]
+    if (not isinstance(body_rows, list) or len(body_rows) > 4096
+            or any(not isinstance(row, dict) for row in body_rows)):
+        raise AuthorityDenied("enrollment.generation", "protected resource body recipe catalog is invalid")
+    body_fields = {"id", "schema_id", "source_artifact_id", "source_sha256",
+                   "output_fields", "scope_bindings", "maximum_bytes"}
+    seen_body_ids: set[str] = set()
+    for row in body_rows:
+        body = _exact(row, body_fields, "resource body recipe")
+        body_id = _read_id(body["id"], "resource body recipe ID")
+        if body_id in seen_body_ids:
+            raise AuthorityDenied("enrollment.generation", "resource body recipe is duplicated")
+        seen_body_ids.add(body_id)
+        for name in ("schema_id", "source_artifact_id"):
+            _read_id(body[name], f"resource body recipe {name}")
+        if (not isinstance(body["source_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", body["source_sha256"])
+                or type(body["maximum_bytes"]) is not int
+                or not 1 <= body["maximum_bytes"] <= 256 * 1024
+                or not isinstance(body["output_fields"], list)
+                or not 1 <= len(body["output_fields"]) <= 64
+                or not isinstance(body["scope_bindings"], dict)
+                or len(body["scope_bindings"]) > 64):
+            raise AuthorityDenied("enrollment.generation", "protected resource body recipe is malformed")
+        output_names: set[str] = set()
+        for output in body["output_fields"]:
+            item_output = _exact(output, {"name", "source", "value", "validator_id"},
+                                 "resource body recipe output")
+            name = _read_id(item_output["name"], "resource body field name")
+            if (name in output_names or item_output["source"] not in {
+                    "literal", "observed-event-field", "owned-parent-result-field"}):
+                raise AuthorityDenied("enrollment.generation", "resource body recipe output is invalid")
+            _read_id(item_output["validator_id"], "resource body validator ID")
+            output_names.add(name)
+        for scope_name, scope_id in body["scope_bindings"].items():
+            _read_id(scope_name, "resource body scope name")
+            _read_id(scope_id, "resource body scope binding ID")
+    # Parse the exact active source-issuer schema here, after verifying the
+    # digest, so callers cannot fall back to an unsigned sidecar catalog.
+    _parse_source_issuers(item["source_issuers"])
     return item
 
 
@@ -911,6 +1188,11 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         service_generations["native_packages"],
         MappingProxyType(memory_enrollments),
         service_generations["operation_parameter_schemas"],
+        _parse_source_issuers(service_generations["source_issuers"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["resource_jobs"]),
+        tuple(dict(row) for row in service_generations["remote_session_enrollments"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["resource_backend_enrollments"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["resource_body_recipes"]),
     )
 
 

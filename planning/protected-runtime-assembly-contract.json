@@ -42,6 +42,8 @@
       "source_issuers",
       "resource_jobs",
       "remote_session_enrollments",
+      "resource_backend_enrollments",
+      "resource_body_recipes",
       "generation_digest"
     ],
     "types": "single selected generation record; each catalog is bounded list<=1024 strict existing inner source-backed records, duplicates/unknown fields rejected. generation_id opaque rootissued string. Empty lists valid only affected actions explicitly unavailable.",
@@ -50,7 +52,8 @@
     "previous_fixed_files": "Previously defined native-packages.json and operation-parameters.json formats are root-owned staging/import sources only. Activeauthority service_generations includesnative_packages/source_issuers/operation_parameter_schemas. No active mutable sidecarfallback. Supplied mirrors require exactnestedcatalogcontent/hash equality.",
     "source_issuers": "Active service_generations.source_issuers is bounded strict list<=1024 of EXACT11-field sourceobserver rows already defined: issuer_channel_id,producer_profile_id,producer_role_artifact_id,producer_role_sha256,capture_schema_id,allowed_parent_channels,generation,observer_enrollment_id,source_action_ids. NOTE existing listed row has9 fields, not11: these9 are canonical exactly; observer_enrollment_id joins separate root private observer registry records whose exact fields are in root_private_api. No added callerrole/destination. Full list participates generation_digest; generation matches activeproducer/profile and observerartifact/actualpendingevent. No mutable sidecarfallback.",
     "resource_jobs": "Active bounded strict list<=692 selected ResourceJobEnrollment rows defined by protected-resource-job-contract.json; entire rows/DAG/source/target/backend references included generation_digest. No runtime sidecar or caller action graph fallback.",
-    "remote_session_enrollments": "Active exact HI13 rows and protected selected OTP/JWT/policy/principal/gateway joins from remote-root-session-bridge-contract.json, fully included generation_digest. Prior top-level declaration is staging/import only; no mutable sidecar/alternate active parser fallback."
+    "remote_session_enrollments": "Active exact HI13 rows and protected selected OTP/JWT/policy/principal/gateway joins from remote-root-session-bridge-contract.json, fully included generation_digest. Prior top-level declaration is staging/import only; no mutable sidecar/alternate active parser fallback.",
+    "resource_backend_enrollments": "Strict activeRB07backend/action/recipe schema in protected-resource-job-contract.json, fullrows includedcanonicalgenerationdigest; no mutable sidecarfallback."
   },
   "device_kernel_enforcement": {
     "profile_fields": [
