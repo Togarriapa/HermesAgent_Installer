@@ -56,6 +56,7 @@ ROUTES = {
         "capture": "POST /agentmemory/remember",
         "delete": "DELETE /agentmemory/governance/memories",
         "export": "GET /agentmemory/export",
+        "backup": "GET /agentmemory/export",
         "restore": "POST /agentmemory/import",
     },
 }
