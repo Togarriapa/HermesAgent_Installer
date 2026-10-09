@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import subprocess
+import hashlib
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 
+from hermes_installer.components import colibri
 from hermes_installer.components.colibri import (
     COLIBRI_REVISION, ColibriError, ColibriService, ColibriServicePlan, ServiceBounds,
-    build_colibri_arm64, probe_host_readiness,
+    build_colibri_arm64, fetch_pinned_colibri_source, probe_host_readiness,
 )
 
 
@@ -50,7 +53,7 @@ def test_colibri_build_rejects_non_arm64_before_touching_source(tmp_path: Path) 
         build_colibri_arm64(tmp_path / "missing", system="Darwin", machine="arm64", runner=subprocess.run)
 
 
-def test_colibri_build_requires_exact_source_revision(tmp_path: Path) -> None:
+def test_colibri_build_requires_catalog_materialized_source(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     (source / "c").mkdir()
@@ -59,10 +62,46 @@ def test_colibri_build_requires_exact_source_revision(tmp_path: Path) -> None:
     def fake_runner(argv, **kwargs):
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, "wrong revision\n")
-    with pytest.raises(ColibriError, match="reviewed revision pin"):
+    with pytest.raises(ColibriError, match="protected artifact catalog"):
         build_colibri_arm64(source, system="Linux", machine="aarch64", runner=fake_runner)
-    assert calls == [("git", "rev-parse", "HEAD")]
+    assert calls == []
     assert len(COLIBRI_REVISION) == 40
+
+
+def test_colibri_source_copy_requires_exact_artifact_and_rechecks_existing_tree(tmp_path: Path, monkeypatch) -> None:
+    payload = b"#!/bin/sh\n"
+    source_root = tmp_path / "immutable" / "content"
+    setup = source_root / "c" / "setup.sh"
+    setup.parent.mkdir(parents=True)
+    setup.write_bytes(payload)
+    setup.chmod(0o555)
+    row = SimpleNamespace(path="c/setup.sh", sha256=hashlib.sha256(payload).hexdigest(),
+                          size_bytes=len(payload), executable=True)
+    artifact = SimpleNamespace(artifact_id="colibri-source", path=source_root,
+        sha256=colibri.COLIBRI_ARCHIVE_SHA256, size_bytes=len(payload), tree_files=(row,),
+        archive_format="tar.gz", archive_root=colibri.COLIBRI_ARCHIVE_ROOT)
+
+    class Catalog:
+        def materialize_store_id(self, store_id, staging_root, *, expected_uid):
+            assert store_id == colibri.COLIBRI_STORE_ID
+            assert expected_uid == 0
+            return artifact
+
+    monkeypatch.setattr(colibri, "COLIBRI_TREE_FILE_COUNT", 1)
+    monkeypatch.setattr(colibri, "COLIBRI_TREE_BYTES", len(payload))
+    copied = fetch_pinned_colibri_source(tmp_path / "component", catalog=Catalog(),
+                                         staging_root=tmp_path / "staging")
+    assert (copied / "c/setup.sh").read_bytes() == payload
+    assert (copied / ".hermes-colibri-source.json").is_file()
+    (copied / "c/unlisted.c").write_text("int main(void) { return 0; }\n")
+    with pytest.raises(ColibriError, match="unlisted paths"):
+        fetch_pinned_colibri_source(tmp_path / "component", catalog=Catalog(),
+                                    staging_root=tmp_path / "staging")
+    (copied / "c/unlisted.c").unlink()
+    (copied / "c/setup.sh").write_text("tampered\n")
+    with pytest.raises(ColibriError, match="changed"):
+        fetch_pinned_colibri_source(tmp_path / "component", catalog=Catalog(),
+                                    staging_root=tmp_path / "staging")
 
 
 def test_readiness_uses_measured_memory_thermal_and_throttling_facts(tmp_path: Path, monkeypatch) -> None:

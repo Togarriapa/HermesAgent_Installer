@@ -12,6 +12,7 @@ import contextlib
 import fcntl
 import math
 import shlex
+import tarfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
@@ -19,6 +20,7 @@ from typing import Sequence
 from . import __version__
 from .bootstrap import BootstrapError, HermesBootstrap
 from .state import Journal, OwnedRoot, OwnershipError, process_lock
+from .lifecycle import GenerationStore, LifecycleBlocked, LifecycleError, LifecycleRecovery
 from .config import ConfigError, InstallerConfig, load_config, validate_config, write_example
 from .preflight import discover_host
 from .results import CommandResult, Finding, OutcomeState
@@ -42,6 +44,9 @@ def build_parser() -> argparse.ArgumentParser:
     install = command("install", "Apply the supported installation plan")
     install.add_argument("--dry-run", action="store_true", help="Print the plan without changes")
     install.add_argument("--non-interactive", action="store_true", help="Require complete validated configuration")
+    setup = command("setup", "Choose components and configure accounts")
+    setup.add_argument("--non-interactive", action="store_true", help="Use only explicit config and secure credential references")
+    setup.add_argument("--save-config", type=Path, help="Write the secret-reference-only result to a new private config file")
     command("resume", "Resume the last checkpointed operation")
     status = command("status", "Show discovered and recorded component states")
     status.add_argument("component", nargs="?", help="Limit status to a component")
@@ -74,12 +79,115 @@ def build_parser() -> argparse.ArgumentParser:
     data.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     data.add_argument("--config", type=Path, default=argparse.SUPPRESS)
     data.add_argument("action", choices=("backup", "restore", "uninstall"))
+    data.add_argument("--backup", type=Path, help="Installer-owned backup directory for restore")
+    data.add_argument("--overwrite", action="store_true", help="Replace conflicting user files during restore")
+    data.add_argument("--include-database", action="store_true", help="Include a consistent installer-state database snapshot")
+    data.add_argument("--restore-database", action="store_true", help="Explicitly restore the installer-state database snapshot")
     sub.add_parser("init-config", help="Write a secret-free example JSON configuration")
     return parser
 
 
 def _configuration(path: Path | None) -> InstallerConfig:
     return load_config(path) if path else validate_config({"schema_version": 1})
+
+
+def _run_setup(args: argparse.Namespace) -> CommandResult:
+    from .setup_wizard import PrivateFileCredentialStore, run_setup_wizard
+
+    if not args.non_interactive and not sys.stdin.isatty():
+        return CommandResult("setup", OutcomeState.FAILED,
+            "Interactive setup requires a terminal. Use --non-interactive with a validated config and secure credential references.",
+            exit_code=2)
+    try:
+        if args.config:
+            raw_config = json.loads(args.config.read_text(encoding="utf-8"))
+            if not isinstance(raw_config, dict):
+                raise ValueError("Configuration root must be an object")
+        else:
+            raw_config = {"schema_version": 1}
+        paths_value = raw_config.get("paths", {})
+        if not isinstance(paths_value, dict):
+            raise ValueError("paths must be an object")
+        state_value = paths_value.get("state_root", "~/HermesInstaller/state")
+        if not isinstance(state_value, str) or not state_value:
+            raise ValueError("paths.state_root must be a non-empty path string")
+        state_root = OwnedRoot(Path(state_value).expanduser())
+        state_root.ensure()
+        resume = "hermes-installer setup" + (" --non-interactive" if args.non_interactive else "")
+        if args.config:
+            resume += " --config " + shlex.quote(str(args.config))
+        if args.save_config:
+            resume += " --save-config " + shlex.quote(str(args.save_config))
+        with process_lock(state_root.path("installer.lock")):
+            journal = Journal(state_root.path("journal.sqlite3"))
+            journal.checkpoint("installer:setup-command", "running", {
+                "config_path": str(args.config) if args.config else None,
+                "non_interactive": bool(args.non_interactive)})
+            try:
+                result = run_setup_wizard(raw_config, credential_store=PrivateFileCredentialStore(state_root.root),
+                    journal=journal, interactive=not args.non_interactive, resume_command=resume)
+            except KeyboardInterrupt:
+                journal.checkpoint("installer:setup-command", "cancelled", {"resume": resume})
+                journal.event("installer:setup-command", "wizard", "cancelled", {"resume": resume})
+                return CommandResult("setup", OutcomeState.PENDING,
+                    "Setup was cancelled; completed private credential writes and user data were preserved.",
+                    resume_command=resume, exit_code=4)
+            except Exception as exc:
+                journal.checkpoint("installer:setup-command", "failed", {
+                    "error_type": type(exc).__name__, "resume": resume})
+                journal.event("installer:setup-command", "wizard", "failed", {
+                    "error_type": type(exc).__name__})
+                raise
+            state = {"ready": OutcomeState.READY, "pending": OutcomeState.PENDING,
+                     "failed": OutcomeState.FAILED}[result.state]
+            config_output = dict(result.config)
+            saved_path = None
+            if args.save_config and result.state != "failed":
+                try:
+                    saved_path = _write_private_config(args.save_config, config_output)
+                except OSError as exc:
+                    journal.checkpoint("installer:setup-command", "failed", {
+                        "error_type": type(exc).__name__, "resume": resume})
+                    journal.event("installer:setup-command", "config-write", "failed", {
+                        "error_type": type(exc).__name__})
+                    raise
+            journal.checkpoint("installer:setup-command", result.state, {
+                "selected_components": dict(result.selected_components),
+                "account_states": dict(result.account_states), "resume": result.resume_command,
+                "saved_config": str(saved_path) if saved_path else None})
+            details = {"selected_components": dict(result.selected_components),
+                "account_states": dict(result.account_states), "next_steps": list(result.next_steps),
+                "config": config_output, "saved_config": str(saved_path) if saved_path else None}
+            return CommandResult("setup", state, result.message,
+                (Finding("setup.wizard", result.message, state, details),),
+                result.resume_command or resume, result.exit_code)
+    except (OSError, OwnershipError, RuntimeError, ValueError, ConfigError) as exc:
+        return CommandResult("setup", OutcomeState.FAILED, str(exc), exit_code=2)
+
+
+def _write_private_config(path: Path, config: dict[str, object]) -> Path:
+    """Create a new mode-0600 config file without following links or replacing data."""
+    target = path.expanduser().absolute()
+    parent = target.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise OwnershipError("Config output parent must be an existing non-symlink directory")
+    payload = (json.dumps(config, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(target, flags, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        directory_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return target
 
 
 def _render(result: CommandResult, as_json: bool) -> None:
@@ -215,6 +323,94 @@ def _resume_checkpoint_exists(state_path: Path) -> bool:
         return False
 
 
+def _run_data_command(args: argparse.Namespace, config: InstallerConfig) -> CommandResult:
+    data_path = Path(config.paths.get("data_root", "~/HermesInstaller/data")).expanduser()
+    state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
+    config_path = getattr(args, "config", None)
+    resume = f"hermes-installer data {args.action}" + (f" --config {shlex.quote(str(config_path))}" if config_path else "")
+    if args.action == "restore" and getattr(args, "backup", None) is not None:
+        resume += " --backup " + shlex.quote(str(args.backup))
+        if getattr(args, "overwrite", False):
+            resume += " --overwrite"
+        if getattr(args, "restore_database", False):
+            resume += " --restore-database"
+    if args.action == "restore" and getattr(args, "backup", None) is None:
+        return CommandResult("data", OutcomeState.FAILED,
+            "Restore requires an explicit installer-owned backup path; no data was changed.",
+            resume_command=resume + " --backup <backup-directory>", exit_code=2)
+    if args.action == "backup" and getattr(args, "restore_database", False):
+        return CommandResult("data", OutcomeState.FAILED,
+            "--restore-database applies only to restore; no data was changed.", exit_code=2)
+    if args.action != "backup" and getattr(args, "include_database", False):
+        return CommandResult("data", OutcomeState.FAILED,
+            "--include-database applies only to backup; no data was changed.", exit_code=2)
+    if (args.action == "uninstall" and not data_path.exists() and not data_path.is_symlink()
+            and not state_path.exists() and not state_path.is_symlink()):
+        return CommandResult("data", OutcomeState.READY,
+            "No installer-owned data or state roots exist; uninstall was a no-op.",
+            (Finding("lifecycle.uninstall", "No owned installation was found", OutcomeState.READY,
+                {"removed_generations": [], "data_retained": True}),))
+    if args.action != "restore" and (getattr(args, "overwrite", False) or getattr(args, "restore_database", False)):
+        return CommandResult("data", OutcomeState.FAILED,
+            "--overwrite and --restore-database apply only to restore; no data was changed.", exit_code=2)
+    try:
+        data_root = OwnedRoot(data_path)
+        state_root = OwnedRoot(state_path)
+        state_root.ensure()
+        lock = state_root.path("installer.lock")
+        with process_lock(lock):
+            data_root.ensure()
+            journal = Journal(state_root.path("journal.sqlite3"))
+            recovery = LifecycleRecovery(data_root, state_root, journal)
+            if args.action == "backup":
+                database = state_root.path("journal.sqlite3")
+                backup = recovery.backup(database=database if getattr(args, "include_database", False) else None)
+                return CommandResult("data", OutcomeState.READY,
+                    "Owned user data backup completed; credential values remain in their configured secure stores.",
+                    (Finding("lifecycle.backup", "Versioned backup verified and committed", OutcomeState.READY,
+                        {"backup": str(backup), "database_included": bool(getattr(args, "include_database", False))}),))
+            if args.action == "restore":
+                database = state_root.path("journal.sqlite3") if getattr(args, "restore_database", False) else None
+                result = recovery.restore(args.backup, overwrite=bool(getattr(args, "overwrite", False)),
+                    database_destination=database)
+                state = OutcomeState.PENDING if result["conflicts_preserved"] else OutcomeState.READY
+                return CommandResult("data", state,
+                    "Backup restore completed; existing conflicting user files were preserved." if result["conflicts_preserved"]
+                    else "Backup restore completed with per-file integrity verification.",
+                    (Finding("lifecycle.restore", "Restore results are journaled", state, result),))
+            if args.action == "uninstall":
+                active_services = [row for row in journal.owned()
+                    if row["kind"] in {"service", "process", "daemon"}
+                    and row["state"] in {"active", "running", "enabled"}]
+                active_generations = [row for row in journal.owned()
+                    if row["kind"] in {"generation", "hermes-generation"}
+                    and row["state"] == "active"]
+                pointer_generation = GenerationStore.inspect_active_readonly(data_root)
+                if active_services or active_generations or pointer_generation is not None:
+                    return CommandResult("data", OutcomeState.PENDING,
+                        "Uninstall is blocked until host custody verifies shutdown and deactivation of active generations; user data was retained.",
+                        (Finding("lifecycle.uninstall", "Active managed effects require verified shutdown", OutcomeState.PENDING,
+                            {"services": [row["resource_id"] for row in active_services],
+                             "generations": [row["resource_id"] for row in active_generations],
+                             "active_generation": pointer_generation.identity if pointer_generation else None}),),
+                        resume_command=resume)
+                result = recovery.uninstall()
+                return CommandResult("data", OutcomeState.READY,
+                    "Installer-owned generations were removed and profiles, overlays, memories, models, and backups were retained.",
+                    (Finding("lifecycle.uninstall", "Data-preserving uninstall completed", OutcomeState.READY, result),))
+    except LifecycleBlocked as exc:
+        return CommandResult("data", OutcomeState.PENDING, str(exc), resume_command=resume)
+    except LifecycleError as exc:
+        return CommandResult("data", OutcomeState.FAILED, str(exc), resume_command=resume, exit_code=1)
+    except RuntimeError:
+        return CommandResult("data", OutcomeState.PENDING,
+            "Another installer operation holds the lifecycle lease; no concurrent lifecycle action was started.",
+            resume_command=resume)
+    except (OwnershipError, OSError, sqlite3.Error, ValueError, tarfile.TarError) as exc:
+        return CommandResult("data", OutcomeState.FAILED, str(exc), resume_command=resume, exit_code=1)
+    return CommandResult("data", OutcomeState.FAILED, "Unsupported data lifecycle action.", exit_code=2)
+
+
 def _recorded_component_findings(state_path: Path, component: str | None = None) -> tuple[Finding, ...]:
     """Report historical checkpoints without mutating SQLite or implying current health."""
     path = state_path.expanduser().absolute()
@@ -296,6 +492,8 @@ def run(args: argparse.Namespace) -> CommandResult:
         except FileExistsError:
             return CommandResult("init-config", OutcomeState.FAILED, f"Refusing to overwrite {path}", exit_code=2)
         return CommandResult("init-config", OutcomeState.READY, f"Wrote secret-free example configuration to {path}")
+    if args.command == "setup":
+        return _run_setup(args)
     try:
         config = _configuration(args.config)
     except ConfigError as exc:
@@ -366,12 +564,14 @@ def run(args: argparse.Namespace) -> CommandResult:
         try:
             if args.command == "resume" and not _resume_checkpoint_exists(state_path):
                 return CommandResult("resume", OutcomeState.FAILED, "There is no readable installer checkpoint to resume; the state directory was not created.", exit_code=2)
-            data_root = OwnedRoot(data_path); data_root.ensure()
-            state_root = OwnedRoot(state_path); state_root.ensure()
+            data_root = OwnedRoot(data_path)
+            state_root = OwnedRoot(state_path)
+            state_root.ensure()
             selection = {"schema_version": config.schema_version, "timezone": config.timezone,
                 "paths": config.paths, "components": config.components, "privacy": config.privacy,
                 "remote_desktop": config.remote_desktop}
             with process_lock(state_root.path("installer.lock")):
+                data_root.ensure()
                 # Journal initialization can create/recover WAL state; keep it under
                 # the exclusive lock shared by status's immutable-reader gate.
                 journal = Journal(state_root.path("journal.sqlite3"))
@@ -402,7 +602,41 @@ def run(args: argparse.Namespace) -> CommandResult:
         else:
             message = "Pinned bootstrap finished with runtime verification pending; no public service was activated."
         return CommandResult(args.command, state, message, findings, resume_command)
-    if args.command in {"configure", "test-connection", "select-memory", "resolve-source", "component", "update", "data"}:
+    if args.command == "data":
+        facts = discover_host()
+        if not facts.supported_arm64_linux:
+            return CommandResult("data", OutcomeState.FAILED,
+                "Data lifecycle commands are restricted to supported Linux ARM64 targets; this host was not changed.",
+                findings=_host_findings(config), exit_code=3)
+        return _run_data_command(args, config)
+    if args.command == "update":
+        facts = discover_host()
+        if not facts.supported_arm64_linux:
+            return CommandResult("update", OutcomeState.FAILED,
+                "Updates are restricted to supported Linux ARM64 targets; this host was not changed.",
+                findings=_host_findings(config), exit_code=3)
+        action = args.action
+        if action == "check":
+            try:
+                data_root = OwnedRoot(Path(config.paths.get("data_root", "~/HermesInstaller/data")).expanduser())
+                active = GenerationStore.inspect_active_readonly(data_root)
+            except (LifecycleError, OwnershipError, OSError, ValueError) as exc:
+                return CommandResult("update", OutcomeState.FAILED,
+                    f"Managed generation state could not be verified: {exc}", exit_code=1)
+            identity = active.identity if active else None
+            message = ("No pinned update candidate is enrolled in the protected artifact catalog; active generation was not changed."
+                       if active else "No installer-managed active generation exists; no update candidate was applied.")
+            return CommandResult("update", OutcomeState.PENDING, message,
+                (Finding("lifecycle.update", message, OutcomeState.PENDING,
+                    {"active_generation": identity, "active_digest": active.digest if active else None,
+                     "candidate_generation": None, "candidate_available": False}),),
+                resume_command=f"hermes-installer update check" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
+        message = "Update activation is blocked until a pinned candidate and managed Hermes health probe are enrolled; no generation was switched."
+        return CommandResult("update", OutcomeState.PENDING, message,
+            (Finding("lifecycle.update", message, OutcomeState.PENDING,
+                {"candidate_generation": None, "health_probe": "protected-managed-process-not-enrolled"}),),
+            resume_command=f"hermes-installer update {action}" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
+    if args.command in {"configure", "test-connection", "select-memory", "resolve-source", "component"}:
         facts = discover_host()
         if not facts.supported_arm64_linux:
             return CommandResult(args.command, OutcomeState.FAILED, "This operation is restricted to supported Linux ARM64 targets; this host was not changed.", findings=_host_findings(config), exit_code=3)
@@ -419,8 +653,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Run this command in a terminal to choose an action, or use `./install.sh plan` for a read-only preflight.")
             parser.print_help()
             return 0
-        choices = {"1": ["plan"], "2": ["install"], "3": ["doctor"], "4": ["verify"], "5": ["resources", "status"], "0": []}
-        print("1) Review a read-only plan\n2) Install or resume setup\n3) Diagnose this machine\n4) Verify an authorized target\n5) Inspect bundled Resources\n0) Exit")
+        choices = {"1": ["plan"], "2": ["setup"], "3": ["doctor"], "4": ["verify"], "5": ["resources", "status"], "0": []}
+        print("1) Review a read-only plan\n2) Guided setup\n3) Diagnose this machine\n4) Verify an authorized target\n5) Inspect bundled Resources\n0) Exit")
         selected = input("Choose an action [0-5]: ").strip()
         if selected not in choices:
             print("Choose one of the listed actions.", file=sys.stderr)

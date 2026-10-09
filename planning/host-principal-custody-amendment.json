@@ -97,6 +97,15 @@
       "then": "host rejects before effects; valid enrollment uses distinct owner-scoped roots, correct process identity and preserved unrelated files",
       "task_id": "HI-T09",
       "evidence_id": "EV-HI09"
+    },
+    {
+      "id": "HI10",
+      "name": "Registered native process attestation",
+      "text": "Native process inspection SHALL resolve only opaque registered process/generation handles and attest current cgroup descendants with stable kernel identity, pinned executable and renderer lineage/sandbox evidence. Caller PID/path/argv claims SHALL not authorize inspection or exposure; incomplete or stale attestation SHALL deny affected remote readiness.",
+      "when": "native renderer relaunch changes process identity or caller supplies a sibling PID",
+      "then": "host denies or reports incomplete before remote exposure; only current registered descendants are attested",
+      "task_id": "HI-T10",
+      "evidence_id": "EV-HI10"
     }
   ],
   "tasks": [
@@ -242,6 +251,21 @@
       "target_acceptance_complete": false,
       "verification": "host rejects before effects; valid enrollment uses distinct owner-scoped roots, correct process identity and preserved unrelated files",
       "docs": "docs/host-principal-custody.md"
+    },
+    {
+      "id": "HI-T10",
+      "requirement_ids": [
+        "HI10"
+      ],
+      "depends_on": [
+        "HI-T01",
+        "HI-T02",
+        "HI-T09"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false,
+      "verification": "actual cgroup descendant attestation and renderer sandbox/relaunch denial; forged sibling PID/path and stale generation denied",
+      "docs": "docs/host-principal-custody.md"
     }
   ],
   "acceptance": {
@@ -263,7 +287,8 @@
       "HI06",
       "HI07",
       "HI08",
-      "HI09"
+      "HI09",
+      "HI10"
     ]
   },
   "change_dependencies": [
@@ -271,5 +296,8 @@
     "resource-registry-import",
     "providers-credentials-budgets-privacy",
     "lifecycle-recovery"
+  ],
+  "refinement_amendments": [
+    "plans/amendments/2026-10-09-fixed-process-inspection-v1.md"
   ]
 }

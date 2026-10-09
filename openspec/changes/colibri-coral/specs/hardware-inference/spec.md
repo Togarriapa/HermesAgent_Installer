@@ -213,3 +213,12 @@ The installer SHALL satisfy this obligation: Build this support even if the targ
 #### Scenario: R0123 unavailable or failed prerequisite
 - **WHEN** engine or model identity mismatches, required storage/device access is unavailable or measured target behavior misses configured thresholds
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Protected fixed Coral package set (HW01)
+
+Coral dependencies SHALL install only from a protected fixed package-set manifest binding the isolated attested CPython runtime and exact pinned NumPy/TFLite wheels. Caller-selected paths, URLs, resolver inputs or extra packages SHALL deny. Offline bounded installation SHALL preserve source bytes/licenses and prior component generation without changing host or Hermes runtimes.
+
+#### Scenario: Exact offline package set
+
+- **WHEN** Coral installation selects the protected package set for its attested isolated runtime
+- **THEN** root installs only both exact fixed wheels offline or rejects incompatible/stale/tampered inputs before effects while preserving host, Hermes and prior component generation
