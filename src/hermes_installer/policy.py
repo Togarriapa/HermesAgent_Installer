@@ -22,6 +22,11 @@ from typing import Callable, Mapping, Protocol
 
 from .state import OwnedRoot, OwnershipError
 
+DISABLED_PUBLIC_PLUGINS = [
+    {"id": ident, "enabled": False}
+    for ident in ("web", "file-parser", "response-healing", "pareto-router", "context-compression")
+]
+
 
 class PolicyDenied(RuntimeError):
     def __init__(self, code: str, message: str):
@@ -171,7 +176,10 @@ def normalize_chat_request(payload: bytes, model: str, output_token_limit: int) 
         raise PolicyDenied("request.tools", "Tool choice must select an ordinary function tool")
     if "n" in value and (not isinstance(value["n"], int) or value["n"] < 1):
         raise PolicyDenied("request.bounds", "Completion count must be a positive integer")
-    if value.get("plugins") not in (None, []):
+    # Dispatcher and endpoint adapter normalize at independent trust boundaries.
+    # Accept exactly our canonical disabled list so normalization is idempotent.
+    supplied_plugins = value.get("plugins")
+    if supplied_plugins not in (None, []) and supplied_plugins != DISABLED_PUBLIC_PLUGINS:
         raise PolicyDenied("request.plugins", "Caller-selected provider plugins are disabled")
     value["n"] = 1
     value["model"] = model
@@ -180,8 +188,7 @@ def normalize_chat_request(payload: bytes, model: str, output_token_limit: int) 
     # Explicitly turn off every currently documented account-default plugin.
     # Provider-side prevent-overrides may reject this request; that remains a
     # closed failure and must not be bypassed with a fallback.
-    value["plugins"] = [{"id": ident, "enabled": False} for ident in
-                        ("web", "file-parser", "response-healing", "pareto-router", "context-compression")]
+    value["plugins"] = [dict(plugin) for plugin in DISABLED_PUBLIC_PLUGINS]
     value["provider"] = {"allow_fallbacks": False, "require_parameters": True, "data_collection": "deny"}
     value["max_tokens"] = output_token_limit
     value["stream"] = bool(value.get("stream", False))

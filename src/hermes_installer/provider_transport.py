@@ -19,7 +19,7 @@ MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 class OpenRouterTransport:
     """POST one normalized chat request to a fixed OpenRouter endpoint.
 
-    Credentials are resolved from an explicit private reference at construction;
+    Credentials are resolved lazily from an explicit private reference on first use;
     they are not accepted from request JSON, route metadata, argv, or Hermes env.
     BoundedNetwork isolates DNS/connect/read behind a killable hard-deadline worker.
     """
