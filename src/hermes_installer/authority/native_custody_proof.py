@@ -630,7 +630,7 @@ class RootNativeLoaderObservationStore:
         with self._lock:
             if self._closed or process_id in self._by_process:
                 self._close_entry(entry)
-                _cleanup_loader_path(None, entry.socket_path, entry.socket_directory)
+                _close_loader_path(None, entry.socket_path, entry.socket_directory)
                 raise AuthorityDenied("native.loader", "loader launch is retired or duplicated")
             self._launches[handle] = entry
             self._by_process[process_id] = handle
@@ -936,7 +936,7 @@ class RootNativeLoaderObservationStore:
             entry.listener_socket = None
             entry.parent_socket = channel
             listener.close()
-            _cleanup_loader_path(None, entry.socket_path, entry.socket_directory)
+            _close_loader_path(None, entry.socket_path, entry.socket_directory)
             return
 
     def _recv_exact(self, entry: _LaunchObservation, length: int,
@@ -1094,7 +1094,7 @@ class RootNativeLoaderObservationStore:
             os.close(entry.child_pidfd)
         except OSError:
             pass
-        _cleanup_loader_path(None, entry.socket_path, entry.socket_directory)
+        _close_loader_path(None, entry.socket_path, entry.socket_directory)
 
 
 def _pidfd_poll(pidfd: int) -> bool:
