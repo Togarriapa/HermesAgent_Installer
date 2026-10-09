@@ -147,7 +147,7 @@ def test_protected_resource_job_index_requires_exact_active_source_backend_and_r
     result = index_resource_job_records(
         [row], backend_enrollments=backends, body_recipes=recipes,
         scope_bindings=scopes, validators=validators,
-        source_issuers={"source-channel": issuer}, source_observers={"observer-1": observer},
+        source_issuers=(issuer,), source_observers={"observer-1": observer},
     )
     assert result[("demo", expected.generation)].backends == expected.backends
 

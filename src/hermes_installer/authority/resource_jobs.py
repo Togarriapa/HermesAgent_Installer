@@ -328,8 +328,8 @@ def index_resource_job_records(
         records: Any, *, backend_enrollments: Mapping[str, ResourceBackendEnrollment],
         body_recipes: Mapping[str, ResourceBodyRecipe],
         scope_bindings: Mapping[str, ResourceScopeBinding],
-        validators: Mapping[str, ResourceValidator], source_issuers: Mapping[str, Any],
-        source_observers: Mapping[str, Any]) -> Mapping[tuple[str, str], ResourceJobEnrollment]:
+        validators: Mapping[str, ResourceValidator], source_issuers: Any,
+        source_observers: Any) -> Mapping[tuple[str, str], ResourceJobEnrollment]:
     """Build an immutable index from strictly joined root digest-verified records.
 
     Rows without an exact active backend, source issuer, and root observer join
@@ -337,6 +337,8 @@ def index_resource_job_records(
     """
     if not isinstance(records, (list, tuple)) or len(records) > 692:
         raise AuthorityDenied("resource.enrollment", "protected resource job catalog is malformed")
+    source_issuers = _index_catalog(source_issuers, "issuer_channel_id", "source issuer")
+    source_observers = _index_catalog(source_observers, "observer_enrollment_id", "source observer")
     result: dict[tuple[str, str], ResourceJobEnrollment] = {}
     for raw in records:
         try:
@@ -374,6 +376,21 @@ def index_resource_job_records(
             raise AuthorityDenied("resource.enrollment", "resource job generation is duplicated")
         result[key] = enrollment
     return MappingProxyType(result)
+
+
+def _index_catalog(records: Any, key_field: str, name: str) -> Mapping[str, Any]:
+    """Accept the loader's immutable row tuple or an already keyed root catalog."""
+    if isinstance(records, Mapping):
+        return records
+    if not isinstance(records, (tuple, list)) or len(records) > 4096:
+        raise AuthorityDenied("resource.enrollment", f"protected {name} catalog is malformed")
+    indexed: dict[str, Any] = {}
+    for record in records:
+        key = getattr(record, key_field, None)
+        if not isinstance(key, str) or not key or key in indexed:
+            raise AuthorityDenied("resource.enrollment", f"protected {name} catalog has invalid identities")
+        indexed[key] = record
+    return MappingProxyType(indexed)
 
 
 @dataclass(frozen=True, slots=True)
