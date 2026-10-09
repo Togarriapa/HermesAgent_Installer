@@ -111,9 +111,9 @@ class MemoryServiceEnrollment:
     literal_loopback_port: int
     fixed_route_map: Mapping[str, MemoryRouteRecipe]
     data_root_id: str
-    authority_state_root_id: str
     auth_reference_id: str
     fixed_project_account_user_scope: Mapping[str, str]
+    authority_state_root_id: str
     memory_owner_generation: int
     private_extraction_embedding_routes: Mapping[str, str]
     background_consent_revision: str
@@ -214,10 +214,10 @@ class MemoryServiceEnrollment:
             service_generation=generation,
             namespace_identity=record["namespace_identity"],
             literal_loopback_port=port, fixed_route_map=routes,
-            data_root_id=record["data_root_id"],
-            authority_state_root_id=record["authority_state_root_id"],
-            auth_reference_id=record["auth_reference_id"],
+             data_root_id=record["data_root_id"],
+             auth_reference_id=record["auth_reference_id"],
             fixed_project_account_user_scope=scope_values,
+            authority_state_root_id=record["authority_state_root_id"],
             memory_owner_generation=record["memory_owner_generation"],
             private_extraction_embedding_routes=private_route_values,
             background_consent_revision=record["background_consent_revision"],
