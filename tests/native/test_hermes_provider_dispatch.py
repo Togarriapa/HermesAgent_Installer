@@ -245,7 +245,6 @@ plugins:
                 self.assertEqual([call[0] for call in transport.calls],
                                  ["synthetic-private-fixture"] * 4)
                 self.assertEqual([call[1] for call in transport.calls], [MODEL] * 4)
-                import json
                 conversation_payloads = [json.loads(call[2]) for call in transport.calls[:2]]
                 tool_messages = [message for message in conversation_payloads[1]["messages"]
                                  if message.get("role") == "tool"]
