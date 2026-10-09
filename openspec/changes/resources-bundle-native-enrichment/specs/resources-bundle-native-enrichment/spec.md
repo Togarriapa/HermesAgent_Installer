@@ -352,3 +352,24 @@ The implementation SHALL use v52 fixed peer-authenticated no-selector source del
 #### Scenario: Initial peer does not know a receipt identifier
 - **WHEN** actual rootselected initial input has been captured
 - **THEN** protected endpoint resolves the unique matching execution input for that peer without exposing metadata in the prompt or requiring a pending provider pair
+
+### Requirement: Root actual EOF and schema source receipts
+The installer SHALL require actual custody write/EOF receipts for task completion and exact root-derived schema receipts for native schema artifacts where applicable.
+
+#### Scenario: Forged or mismatched receipt
+- **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
+- **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+### Requirement: Exact native output byte encoding
+The installer SHALL bind generated native CAS artifacts to the fixed reviewed role encoding, source/member receipts and distinct archive/member-tree digests.
+
+#### Scenario: Alternate or unverified native output
+- **WHEN** generated output uses unknown archive members, alternate encoding or mismatched source/member hashes
+- **THEN** activation is denied and native acceptance remains pending
+
+### Requirement: Stable task identity across stdin phases
+The installer SHALL retain the same frozen task handle while resolving actual stdin receipt from root custody after EOF.
+
+#### Scenario: Pre-stdin receipt lookup
+- **WHEN** the coordinator receives the actual task handle before writing input
+- **THEN** no successful write receipt is available until custody observes complete write and EOF

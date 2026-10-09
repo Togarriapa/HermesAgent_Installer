@@ -617,6 +617,36 @@
       "native_hook": "Source-pinned startup adapter emits/records actual loader ready, then calls take_selected_native_input before consuming --query-file stdin; verifies source handle from actual protected endpoint, SHA/size match exact later stdin, stores opaque ancestry for first native request prepare. Root coordinator waits actual registrydelivery thenwrite/drainEOF; no receiptID transport in prompt/env/argv, no model-visible metadata. Wrongbytes deny/fail before effect. Desktop actualauthenticatedinput similarly uses selected execution queue; ordinarychannel events use distinct v48 channel.event.take endpoint.",
       "custody": "Producer endpoint per selected native service profile/UID protectedAF_UNIX, verified loadedpackage/action/runtime closure. Delivered handle may populate v50 source+delivery joins, rootretains lease/peerproof andaudits exactconsume. Expiry/workerexit/profilegen/selectionchange cancels both queue and launch, wiping pending payload/provenance.",
       "source_only": "Operation is finite source delivery lookup, not generic capture/HTTP/effect grant; no worker arbitraryinput accepted. Unknown/private sensitivity and fullreceiptclosure preserved. Native health/task results still require separate actualrequest/result/tool/terminal proof."
+    },
+    "schema_derivation_receipt": {
+      "owner_module": "hermes_installer.authority.artifacts",
+      "registry": "RootSchemaDerivationReceiptRegistry",
+      "constructor": "from_root_runtime(protected_artifact_catalog,artifact_receipt_registry,native_package_registry,mcp_discovery_registry,root_journal)",
+      "dto": "RootSchemaDerivationReceipt",
+      "fields": {
+        "schema": "literal1",
+        "receipt_handle": "opaque str",
+        "artifact_id": "opaque selected schema artifact ID",
+        "artifact_sha256": "lowercase SHA256 of canonical schema bytes",
+        "size_bytes": "int1..262144",
+        "schema_kind": "arguments|result",
+        "package_id": "opaque str",
+        "package_generation": "opaque str",
+        "adapter_id": "opaque str",
+        "action_id": "opaque str",
+        "source_kind": "packaged-schema|mcp-tools-list",
+        "parent_receipt_handles": "tuple1..8 opaque handles",
+        "source_observation_handle": "opaque retained root observation",
+        "source_member_path": "verified relative package member or null for tools/list",
+        "service_generation_digest": "lowercase SHA256",
+        "issued_monotonic": "finite float",
+        "expires_monotonic": "finite float"
+      },
+      "mint": "mint_schema_artifact(verified_schema_observation)->opaque receipt handle; root-private registry-produced observation only. Canonical JSON UTF8 ensure_ascii=False sort_keys=True separators=(comma,colon), no NaN, duplicate keys or external refs. Exact child artifact ID/hash/size must equal native_schema_artifacts row. Generic fetched source archive handle cannot substitute.",
+      "packaged": "Observation resolves actual immutable selected package parent receipt, verified source member/tree and selected package/action/schema mapping; derives exact schema body bytes from that member or reviewed pinned compiler artifact. Parent member/hash and compiler artifact remain recorded and checked. No caller schema dictionary or path is authority.",
+      "discovery": "Observation resolves actual authenticated root MCP tools/list request and response receipt for exact selected service/tool/current generation; records request/response digest and selected tool argument schema extraction. Result schema is selected packaged wrapper schema unless actual selected discovery supplies a reviewed result schema. A generic fetch receipt or tool label is insufficient.",
+      "resolve": "resolve_schema_derivation(handle,*,artifact_id,artifact_sha256,size_bytes,service_generation_digest)->RootSchemaDerivationReceipt; same retained registry instance checks actual observation, all parent receipts, package/action/kind/current service joins, lease and canonical child bytes. Source receipt handle is this typed derivation handle, not a raw archive receipt.",
+      "evidence": "HI-T08/HI-T09 and MC-F01: exact parent membership/authenticated discovery and child schema digest; mismatched server/tool/package/action/hash/member, stale generation, caller DTO and generic fetch substitution deny. Fixture evidence does not establish native acceptance."
     }
   }
 }
