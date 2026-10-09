@@ -1,0 +1,3 @@
+# Installed bootstrap policy source v21
+
+BD-F01/BD-F03/LC-F03/HI-T01 retain original prepared-to-active provisioning. The same installed root selection catalog now explicitly references installer-bootstrap-policy-v1 with exact policy document/identity/root/template/receipt binding schemas. Root generation/NSS/filesystem facts are observed; active executable/runtime fields require actual transaction-bound receipts. Prepared records remain empty until runnable artifacts exist; no defaults or source archive hashes establish executables. This is a serialization contract, not a claim of deployed policy bytes or target acceptance. Baseline unchanged.

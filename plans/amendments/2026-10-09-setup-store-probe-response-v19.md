@@ -1,0 +1,3 @@
+# Setup store and probe response joins v19
+
+BD-F01/HI-T01/HI-T12/HI-T13/RB-T08 retain original scope. First setup artifact catalog resolves from the same verified installed release and fixed journal-owned CAS child; no arbitrary injected provenance. Non-wire task snapshot includes canonical payload bytes with distinct prompt stdin digest. Private per-action probe response has exact bounded asset/WS envelopes; root independently observes native window and denial cases. No gateway booleans alone establish readiness or external Access acceptance. Original baseline/tasks remain unchanged and acceptance pending.

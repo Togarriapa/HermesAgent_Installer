@@ -42,7 +42,9 @@
     "capability",
     "target_id",
     "recipient",
-    "generation"
+    "generation",
+    "observer_enrollment_ids",
+    "workflow_bindings"
   ],
   "mount": "Root resolves opaque package root/mount from custody profile enrollment; immutable read-only closure visible only to selected service UID/private mount namespace. Caller journal root is separate. Root verifies all closure files/digests/path containment/no symlink escape/executable roles; no caller path/mount/loader/module or mutable profile plugin injection. Native package absence leaves native adapter unavailable.",
   "binder": {
@@ -354,6 +356,159 @@
     "effect_admission": "Each root selected plugin/tool/memory effect additionally resolves current invocation handle, exact selected action/enrollment and final complete argument digest and uses a fresh one-use current policy grant. Source ancestry can parent multiple explicitly admitted effects but cannot authorize one by itself; root owns per-invocation effect sequence and retry bounds. No consumed provider/start grant reused.",
     "result_capture": "Actual root backend observer emits tool-result/memory-result/effect-result source receipt bound this invocation and actual result bytes, full parents and selected operation. Root peer-bound result receipt delivery supplies next transcript provenance; a worker completion message cannot mint result proof. Native-only unbrokered result remains UNKNOWN/private and cannot establish qualified backend/source acceptance.",
     "non_provider_ingress": "Manual/user/background tool entry requires an actual root-observed native-input/schedule/webhook event and fixed compiled action association in the pending observer event registry; use a root-private begin_observed_native_invocation(event_record_id,selected_action_binding,actual_arguments_bytes). No worker RPC can assert that event or select user/public authority; unenrolled manual ingress remains unavailable with integration next step.",
-    "failure_evidence": "Forged/cross-peer/stale response or call handle, changed arguments/tool mapping, missing loaded closure proof, duplicate concurrent admission, source receipt deletion, expiry/revocation and caller-context injection deny before backend bytes. Actual pinned Hermes dispatch + provider stream/tool/memory/result loops required; fixtures and static resolver rows do not close original acceptance."
+    "failure_evidence": "Forged/cross-peer/stale response or call handle, changed arguments/tool mapping, missing loaded closure proof, duplicate concurrent admission, source receipt deletion, expiry/revocation and caller-context injection deny before backend bytes. Actual pinned Hermes dispatch + provider stream/tool/memory/result loops required; fixtures and static resolver rows do not close original acceptance.",
+    "producer_response_transport": {
+      "header": "X-Hermes-Native-Response-Ref: opaque 43-character base64url random256bit lookup ref ONLY; untrusted until root lookup. No source/action/tool/sensitivity/context claims in headers or model-visible body.",
+      "root_creation": "Root private create_native_response_delivery(root_request_record,actual_completed_response_record,selected_gateway_peer) stores actual producer/gateway PIDFD identities, original prepare_native_event native_request_handle, profile/generations/current catalog/policy, exact actual response body digest, producer_context_handle/tool_call_bindings/full ancestry and finite expiry. Gateway receives only lookup ref for response transport; it cannot mint metadata.",
+      "method": "AuthorityClient.take_native_response_metadata(response_delivery_handle,response_body_sha256,native_request_handle) -> ProviderResponseMetadata",
+      "operation": "native.response.take",
+      "request_fields": [
+        "schema=1",
+        "delivery_handle",
+        "response_body_sha256",
+        "native_request_handle"
+      ],
+      "response_fields": [
+        "schema=1",
+        "producer_context_handle",
+        "tool_call_bindings",
+        "response_body_sha256",
+        "native_request_handle",
+        "expires_monotonic"
+      ],
+      "tool_call_binding_fields": [
+        "observed_call_handle",
+        "provider_tool_call_id",
+        "tool_name",
+        "arguments_sha256"
+      ],
+      "digest_domain": "SHA256 exact dechunked uncompressed HTTP response entity bytes sent by gateway and captured by producer raw SDK transport, before parsing/Unicode normalization; for SSE accumulate entire exact entity stream through terminal completion. Root gateway disables response content compression; reject unsupported content encoding or incomplete stream. Metadata is not derived from parsed model extras.",
+      "consumption": "At actual pinned chat_completion_helpers SDK response return/stream completion, installer-owned boundary captures header/raw body digest and lexical native_request_handle returned by preparation. Same-peer authenticated root RPC atomically consumes delivery once and validates exact original request correlation, both current enrolled identities/PIDFDs, response digest and lease. Only then attach immutable installer-owned ProviderResponseMetadata sidecar to response/lexical tool dispatch; never read metadata from model fields or arbitrary SDK attributes.",
+      "bounds": "<=128 tool bindings, <=64KiB metadata, finite expiry<=60s after actual completion and bounded by current source/job/consent/role state. Stored ancestor facts are provenance only, never revive expired effects/grants. A new effect still revalidates current policy/consent/lineage. Pending/failed/incomplete response yields no delivery handle/tool metadata.",
+      "deny": "Forged/swapped header, cross-request even same peer, changed raw bytes, cross-profile/PIDFD/generation, duplicate consume, expired/revoked handle or early streaming tool dispatch denies before tools. Raw response retained only in bounded owned memory/receipt store with original privacy policy.",
+      "gateway_boundary": "Cross-process gateway HTTP response carries ONLY delivery lookup ref. Existing BrokeredEffectResponse producer_context_handle/tool_call_bindings attributes are root-internal DTO only and never forwarded as model body/header claims; root private registry supplies exact peer metadata on native.response.take."
+    }
+  },
+  "observer_derivation": {
+    "foreign_key": "adapter_records[*].observer_enrollment_ids is finite unique list referencing existing active source_issuers[*].observer_enrollment_id. Every enabled issuer must join exactly one selected package/adapter by this explicit key; never guess from shared role artifact SHA. No duplicate observer catalog.",
+    "multiplicity": "Different adapters may use same source channel/profile/generation; distinct observer IDs and exact unique adapter foreign-key joins are required. Earlier channel/profile/generation-only uniqueness is superseded by exact observer identity plus unique selected package/adapter binding, not weakened channel provenance.",
+    "derived_fields": {
+      "observer_enrollment_id": "active issuer observer_enrollment_id",
+      "channel_id": "issuer_channel_id",
+      "source_action_id": "one exact selected source_action_ids entry; current canonical channels each have their fixed action",
+      "profile_id": "producer_profile_id",
+      "generation": "issuer generation equals current service/process profile and package generation join",
+      "principal_id": "selected service profile principal_id",
+      "namespace_id": "selected service profile namespace_identity joined actual authority principal binding",
+      "enrollment_id": "selected service profile enrollment_id",
+      "producer_uid": "selected actual service UID",
+      "producer_executable_sha256": "selected profile actual executable_sha256",
+      "package_id": "unique joined native package package_id",
+      "package_sha256": "package compiled_closure_sha256 (not archive SHA)",
+      "role_id": "joined adapter adapter_id",
+      "role_artifact_id": "issuer producer_role_artifact_id must equal actual selected adapter_artifact_id",
+      "role_sha256": "issuer producer_role_sha256 must equal adapter_sha256 and ArtifactCatalog actual code artifact hash",
+      "origin_id": "observer_enrollment_id root origin identity",
+      "capture_schema_id": "issuer capture_schema_id resolves source-reviewed registered validator in sealed actual role code",
+      "target_id": "joined adapter target_id",
+      "recipient": "joined adapter recipient",
+      "allowed_parent_source_kinds": "exact fixed mapping of issuer allowed_parent_channels; unknown channel denies",
+      "max_event_bytes": "min(1048576, selected actual schema/service byte bound)",
+      "lease_seconds": "minimum30s and current selected service/source policy deadline; never extends original job/consent"
+    },
+    "kind_mapping": {
+      "native-input": "native-input",
+      "tool-result": "tool-result",
+      "memory-result": "memory-record",
+      "effect-result": "provider-result ONLY actual provider.dispatch observer; otherwise tool-result actual selected backend result",
+      "delegated-child": "tool-result with exact root delegation ancestry",
+      "schedule-event": "schedule-event",
+      "webhook-event": "webhook-event"
+    },
+    "schema_and_action": "resolve_observer_schema(capture_schema_id,role_artifact_id,role_sha256) uses root fixed registered schema/action map in actual sealed role closure. Adapter request/result schemas and actual observed event operation/action must match selected channel. No caller dynamic import/validator. Missing static validator or root observer code remains unavailable, not guessed.",
+    "loaded_proof_call": "resolve_loaded_package_closure(live_peer_identity,derived_observer) -> existing LoadedPackageClosureProof from current custody private registry; exact code role/action proof and actual immutable mount/entrypoint/resolver/peer PIDFD/generation required. Do not construct proof from source_issuers or package metadata.",
+    "target_peer_call": "resolve_source_target_peer(derived_observer,root_parent_context) -> {pid,pidfd,uid,profile_id,generation,identity}; root live registry resolves same enrolled producer by default. A distinct counterpart is allowed ONLY from exact current HI11 native_bridges producer/gateway pair and root pending request/result registry. Never caller target PID/profile or generic role routing. Root duplicates owned PIDFD, independently resolves current kernel identity and closes FD on cancel/expiry.",
+    "source_event": "RootSourceObservationRegistry receives these derived typed records and actual pending event/context; current exact full closure/action/bytes/peer proof verification remains mandatory. Multiple matches or no actual loaded/delivery peer proof denies."
+  },
+  "adapter_workflow_binding_schema": {
+    "fields": [
+      "external_tool_name",
+      "external_action_id",
+      "external_argument_schema_id",
+      "external_result_schema_id",
+      "workflow_artifact_id",
+      "workflow_sha256"
+    ],
+    "rules": "Strict bounded list<=61; exact IDs<=128chars and lowercaseSHA256, no duplicate external tool/action/schema association. Artifact reference resolves actual immutable RB08 workflow bytes, selected package/current profile generation and registered engine. Artifact path/size are source ledger information only, not serialized binding fields. Empty list means direct single effect."
+  },
+  "initial_native_input_observer": {
+    "scope": "HI-T08/HI-T11 and RB-T08 original real native input lineage. No inferred PUBLIC/human origin; unknown/private default preserved.",
+    "resource_call": "record_admitted_task_input(root_admission_handle,node_id,owned_process_handle,exact_initial_stdin_bytes)->root input event handle; root runner only after resolving full admitted event closure and current selected actual Hermes producer PIDFD/generation/loaded package. Exact bytes must equal admitted prompt SHA/size; root observes its own write+EOF. Existing schedule/webhook/channel ancestry retained fully, not reclassified as human.",
+    "health_call": "record_selected_health_input(health_observation_handle,owned_process_handle,selected_fixture_artifact_id)->root input event handle; root resolves actual fixture bytes/current producer and parent static-context artifact receipt. PRIVATE/UNKNOWN, not caller public labels.",
+    "desktop_call": "record_authenticated_desktop_input(root_remote_session_handle,owned_native_process_handle,observed_input_event)->root input event handle; root verified HI13 session/principal/profile/current lease, actual constrained gateway input observation and native custody/loaded closure required. This authenticates origin only; sensitivity stays PRIVATE/UNKNOWN absent separate explicit reviewed payload clearance. Ordinary worker/TUI bytes not upgraded.",
+    "issuance": "RootSourceObservationRegistry captures exact input bytes using current selected source_issuer/capture_schema_id/observer role from active digest-bound catalog. Store full parent closure and actual bound producer peer; root delivers same-peer opaque SourceReceiptHandle through existing protected pending delivery registry. No worker capture_source(source_kind) or supplied role/profile/sensitivity accepted.",
+    "producer_access": "take_source_receipt retrieves existing root-issued pending input handle for exact kernel producer/request correlation. prepare_native_event consumes verified handles as ancestry, canonicalizes exact final body, binds pending producer/gateway request and fresh effect as HI11. Initial input admission is not arbitrary request clearance; retries/aux/tools/memory preserve full closure and independent authorization.",
+    "closure": "Root input observer target peer resolver must verify current loaded package readiness proof and actual PIDFD/cgroup/exe/generation, no receipt if mount-only metadata or unavailable trusted observer. Sources lacking authenticated ingress remain private/unknown with unavailable effects requiring original integration; no permanent scope omission.",
+    "event_schema_fields": [
+      "schema=1",
+      "input_event_id",
+      "input_origin_kind",
+      "source_receipt_handle",
+      "payload_sha256",
+      "payload_size_bytes",
+      "producer_profile_id",
+      "producer_generation",
+      "parent_closure_digest",
+      "observed_monotonic",
+      "expires_monotonic"
+    ],
+    "origin_kind": "root-admitted-task|selected-health-fixture|authenticated-desktop-input only selected by separate root observer methods, not worker wire.",
+    "evidence": "Actual native request reaches allowed selected private backend from admitted input and actual source closure; caller forged origin/receipt/mismatched bytes/PIDFD/generation/replay/expiry/empty ancestry denies; fixtures do not establish live target acceptance."
+  },
+  "native_mcp_dispatch": {
+    "task": "MC-F01/MC-F02 + HI-T04/HI-T08/HI-T09 original supported native MCP mediation; no new task ID.",
+    "source": {
+      "revision": "7085fbf7753266fc4943c55ac04926186bc90005",
+      "tools/mcp_tool_registration.py": "7e73a415283c5255fedeb9318fceeb556eb31a19cea2e9bd3d9fdfc0f9297ade",
+      "tools/mcp_tool_discovery.py": "cf2dc204fd293727e0e13a045428152f8e1925aa48ea521f6ec97035dd1e86d9",
+      "tools/mcp_tool.py": "12943abb2e38657d2d467ad97a589c021fba79ad5bc2a33c3c7e0b8a55278700"
+    },
+    "seam": "Pinned _register_candidates registers exact candidate native name/schema/handler and captures server ownership only after registry registration succeeds. Installer-owned reviewed in-process hook replaces only selected owned MCP candidate handler with fixed root broker adapter; preserves actual native registration/name/collision decisions and unowned config entries. Direct upstream MCP effect bypass cannot be enabled for installer-managed selected entries. No source normalization guessed from display names.",
+    "active_catalog": "service_generations.native_mcp_tool_bindings bounded<=1024 list, entire generation_digest covered. Exact rows below join actual selected MCP backend enrollment/current native package/action registration; unavailable unknown server/tool/schema never auto-enables after discovery.",
+    "row_fields": [
+      "id",
+      "profile_id",
+      "process_generation",
+      "native_package_id",
+      "native_package_generation",
+      "native_server_name",
+      "native_tool_name",
+      "native_schema_sha256",
+      "mcp_enrollment_id",
+      "mcp_generation",
+      "mcp_tool_name",
+      "request_schema_id",
+      "result_schema_id",
+      "effect_operation",
+      "effect_target",
+      "capability",
+      "recipient",
+      "scope_bindings",
+      "handler_artifact_id",
+      "handler_artifact_sha256"
+    ],
+    "scope_binding_fields": [
+      "argument_field",
+      "selected_resource_id"
+    ],
+    "scope": "Each selected_resource_id is opaque root-owned account/resource selection already enrolled for that MCP backend; exact argument_field belongs pinned request schema. Root resolves finite resource value/credential handle, validates allowed operation/read-write policy and caller arguments before root-forced scope. Conflicting caller resource/account/project fields rejected, not permission to switch. No URL/credential/device/path selectors in native caller authority.",
+    "call": "AuthorityClient.dispatch_native_mcp(invocation_handle:str,canonical_arguments:bytes)->BrokeredEffectResponse, fixed lookup-only RPC native.mcp.dispatch strict {schema:1,invocation_handle,canonical_arguments_b64}. Root validates same actual native producer PIDFD/profile/generation/loaded package, exact root-observed tool_call_name/arguments digest/one-use invocation handle and selected current native_mcp_tool_bindings row. Worker cannot choose server/tool/target/capability/recipient/role in RPC.",
+    "effect": "Root fresh independent context/grant for existing mcp.request (HTTP) or mcp.stdio (local) exact protected enrollment rule/target/capability/recipient/full normalized scoped args digest. Existing MCPClient actual initialize/tools-list/call/reconnect/cancel/revoke bounded interfaces execute; no generic external proxy or arbitrary subprocess. Credentials only root vault reference resolver, worker no reusable secrets.",
+    "result": "Root validates selected result schema/size/privacy then emits actual tool-result source receipt with full invocation/input lineage and peer-delivery handle through existing root observer registry. MCP output is untrusted data, cannot mint instruction/human/PUBLIC/permission claims. Native lexical tool hook consumes only root metadata handles.",
+    "packaging": "Fixed handler_artifact_id hermes-installer.native-mcp-dispatch.v1 actual implemented reviewed module SHA and native package closure/entrypoint pins required. Planning ID is not a fake runnable artifact hash. In-process hook avoids new stdio proxy peer/context transport; native supported stdio/HTTP discovery/config semantics remain selected bounded broker operations.",
+    "evidence": "MC-F01 initialization+actual native tool registration/discovery/call/result/reconnect/cancel plus unknownname/schema/resource/scope/credential/replay/currentPIDFD/grant/bypass negatives. Fixture success distinct from actual account/native ARM64 acceptance.",
+    "row_types": "All scalar fields nonempty strings<=128 except native_tool_name/mcp_tool_name<=256, SHA256 fields exactly64lowercasehex; generation opaque string. effect_operation enum mcp.request|mcp.stdio, target must current selected rule mcp:<selectedservice>:http|stdio. scope_bindings list<=64 strict records {argument_field:string selected input field,selected_resource_id:string opaque enrolled ID}. Duplicate bindingID/native(profile,generation,toolname)/scopefield denied; no aliases hermes_tool_name/schema_sha256/service_id/tool_name accepted.",
+    "invocation_mapping": "Existing NativeInvocationBinding reused: adapter_id fixed hermes-installer.native-mcp-dispatch.v1, action_id exact selected native_mcp_tool_bindings.id, arguments_sha256 actual root observed canonical original call args. Root selected native package resolver/action registry includes this fixed adapter/action/schema/handler row and actual registered native_tool_name. begin_native_invocation matches exact observed call before lexical native.mcp.dispatch; original provider/input parent handles remain unchanged. New MCP RPC consumes this same one-use invocation, no separate worker provenance DTO.",
+    "native_config": "Native Hermes config file resolved by pinned Hermes config mechanism below exact selected HERMES_HOME; root-owned generated merge patches preserve unowned mcp_servers entries. Each installer-owned native_server_name entry is kept as selected metadata with enabled:false for direct upstream worker transport; root in-process hook supplies current verified native candidates to _register_candidates and routes handlers to broker. This disables only direct worker stdio/HTTP effects, not the mediated MCP capability. Native registration/status/discovery hook must represent actual root-backed tools/protocol/functionality and report blockers truthfully, not configured-only success. Do not enable upstream candidate handler or invent arbitrary stdio proxy command. Selected native server label is protected row native_server_name, never inferred from tool name; direct calls still mandatory host gated."
   }
 }
