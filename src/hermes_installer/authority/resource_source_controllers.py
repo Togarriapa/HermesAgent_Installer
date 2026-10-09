@@ -23,6 +23,7 @@ from .root_controller_custody import RootControllerRoleCatalog
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_OPAQUE_HANDLE = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
 _UNIT = re.compile(r"[A-Za-z0-9_.@:-]{1,255}\.service\Z")
 _KINDS = frozenset({"root-scheduler", "root-webhook", "root-channel"})
 _OPERATIONS_BY_KIND = {
@@ -161,6 +162,79 @@ class RootResourceContextReservation:
 
 
 @dataclass(frozen=True, slots=True)
+class RootResourceEventIssuerCapability:
+    """Per-registry capability passed only to the attached root event issuer."""
+
+    _token: object = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RootResourceSourceEventProof:
+    """Opaque producer event presented to the attached root context issuer."""
+
+    producer_handle: str
+    event_id: str
+    resource_id: str
+    resource_generation: str
+    source_observer_enrollment_id: str
+    source_kind: str
+    payload: bytes = field(repr=False)
+    verified_provenance: object = field(repr=False, compare=False)
+    issuer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        for name in ("producer_handle", "event_id", "resource_id", "resource_generation",
+                     "source_observer_enrollment_id"):
+            if not _identifier(getattr(self, name)):
+                raise ValueError(f"root source event {name} is invalid")
+        if not _OPAQUE_HANDLE.fullmatch(self.producer_handle) or not _OPAQUE_HANDLE.fullmatch(self.event_id):
+            raise ValueError("root source event producer and event handles must be opaque random IDs")
+        if (self.source_kind not in {"schedule-event", "webhook-event", "native-input"}
+                or not isinstance(self.payload, bytes) or not self.payload
+                or isinstance(self.verified_provenance, (str, bytes, bool, int, float, dict, list, tuple))
+                or isinstance(self.issuer_token, (str, bytes, bool, int, float, dict, list, tuple))):
+            raise ValueError("root source event proof is malformed")
+
+    @property
+    def observer_enrollment_id(self) -> str:
+        return self.source_observer_enrollment_id
+
+
+@dataclass(frozen=True, slots=True)
+class RootResourceIssuedSourceEvent:
+    """Signed root source context and complete receipt closure from the issuer."""
+
+    source_context: Any = field(repr=False)
+    receipt: Any = field(repr=False)
+    parent_receipts: tuple[Any, ...] = field(repr=False)
+    payload: bytes = field(repr=False)
+    producer_handle: str
+    event_id: str
+    resource_id: str
+    resource_generation: str
+    source_observer_enrollment_id: str
+    source_kind: str
+    controller_role_id: str
+    controller_proof: Any = field(repr=False)
+
+    def __post_init__(self) -> None:
+        for name in ("producer_handle", "event_id", "resource_id", "resource_generation",
+                     "source_observer_enrollment_id", "controller_role_id"):
+            if not _identifier(getattr(self, name)):
+                raise ValueError(f"issued root source event {name} is invalid")
+        if (not _OPAQUE_HANDLE.fullmatch(self.producer_handle)
+                or not _OPAQUE_HANDLE.fullmatch(self.event_id)
+                or self.source_kind not in {"schedule-event", "webhook-event", "native-input"}
+                or not isinstance(self.payload, bytes) or not self.payload
+                or not isinstance(self.parent_receipts, tuple)):
+            raise ValueError("issued root source event is malformed")
+
+    @property
+    def observer_enrollment_id(self) -> str:
+        return self.source_observer_enrollment_id
+
+
+@dataclass(frozen=True, slots=True)
 class RootControllerEventBinding:
     """Fully joined event, job, source, backend, and active daemon role."""
 
@@ -240,6 +314,8 @@ class RootResourceControllerRegistry:
         self._event_ids_seen: set[tuple[str, str, str]] = set()
         self._ingress_token = object()
         self._context_issuer_token = object()
+        self._event_issuer: Any = None
+        self._event_issuer_capability: RootResourceEventIssuerCapability | None = None
         self._event_bytes = 0
 
     def _select_role(self, *, observer_id: str, controller_kind: str,
@@ -253,6 +329,26 @@ class RootResourceControllerRegistry:
             raise AuthorityDenied("resource.controller", "selected root controller role is missing or ambiguous")
         return matches[0]
 
+    def _select_source_role(self, enrollment: Any, observer_id: str,
+                            source_kind: str) -> RootControllerRoleEnrollment:
+        controller_kind = self._source_controller_kind(source_kind)
+        operation = {"schedule-event": "resource.cron.run",
+                     "webhook-event": "resource.webhook.run",
+                     "native-input": "resource.channel.run"}[source_kind]
+        backends = getattr(enrollment, "backends", {})
+        if not isinstance(backends, Mapping) or not backends:
+            backend = getattr(enrollment, "backend", None)
+            backends = ({backend.backend_id: backend} if backend is not None else {})
+        backend_ids = set(backends)
+        matches = [role for role in self.roles.values()
+                   if role.controller_kind == controller_kind
+                   and observer_id in role.source_observer_enrollment_ids
+                   and operation in role.allowed_operations
+                   and backend_ids.intersection(role.allowed_backend_enrollment_ids)]
+        if len(matches) != 1:
+            raise AuthorityDenied("resource.controller", "source controller role is missing or ambiguous")
+        return matches[0]
+
     def _profile_binding(self, enrollment: Any) -> Any:
         matches = [binding for binding in self.service.bindings_by_uid.values()
                    if binding.profile_id == enrollment.profile_id
@@ -260,6 +356,117 @@ class RootResourceControllerRegistry:
         if len(matches) != 1:
             raise AuthorityDenied("resource.subject", "selected profile principal binding is missing or ambiguous")
         return matches[0]
+
+    def attach_event_issuer(self, issuer: Any) -> RootResourceEventIssuerCapability:
+        """Attach the sole root source-event issuer and return its private capability."""
+        if issuer is None or not callable(getattr(issuer, "issue_source_event", None)):
+            raise ValueError("typed root source-event issuer is required")
+        with self._lock:
+            if self._event_issuer is not None:
+                raise AuthorityDenied("resource.event_issuer", "root source-event issuer is already attached")
+            self._event_issuer = issuer
+            capability = RootResourceEventIssuerCapability(object())
+            self._event_issuer_capability = capability
+            return capability
+
+    def register_issued_event(self, proof: RootResourceSourceEventProof, *,
+                              issuer: Any) -> RootResourceEventHandle:
+        """Consume a producer proof through the attached issuer and retain its signed event."""
+        with self._lock:
+            capability = self._event_issuer_capability
+            if (issuer is not self._event_issuer or capability is None
+                    or not isinstance(proof, RootResourceSourceEventProof)
+                    or proof.issuer_token is not capability._token):
+                raise AuthorityDenied("resource.event_issuer", "source event issuer or capability is invalid")
+        enrollment = self.job_enrollments.get((proof.resource_id, proof.resource_generation))
+        observer = getattr(self.source_observers, "observers", {}).get(
+            proof.source_observer_enrollment_id)
+        expected_source_kind = {"crons": "schedule-event", "webhooks": "webhook-event",
+                                "channels": "native-input"}.get(
+                                    getattr(enrollment, "kind", None))
+        if (enrollment is None or enrollment.selected_enabled is not True
+                or proof.source_kind != expected_source_kind
+                or proof.source_kind not in enrollment.source_policy
+                or len(proof.payload) > enrollment.max_payload_bytes
+                or observer is None
+                or observer.source_kind != proof.source_kind
+                or observer.profile_id != enrollment.profile_id
+                or observer.principal_id != enrollment.principal_id
+                or observer.generation != enrollment.profile_generation
+                or observer.channel_id != enrollment.source_issuer_channel_id
+                or self.selected_specs.get((proof.resource_id, proof.resource_generation)) is None):
+            raise AuthorityDenied("resource.event_issuer", "producer proof is outside active resource selection")
+        expected_role = self._select_source_role(
+            enrollment, proof.source_observer_enrollment_id, proof.source_kind)
+        try:
+            # The attached issuer consumes the producer proof exactly once
+            # inside this call, validates its opaque provenance, then returns
+            # the signed root context and complete source-receipt closure.
+            issued = issuer.issue_source_event(proof, capability)
+        except Exception:
+            raise AuthorityDenied("resource.event_issuer", "root source event could not be signed") from None
+        if not isinstance(issued, RootResourceIssuedSourceEvent):
+            raise AuthorityDenied("resource.event_issuer", "root source issuer returned an invalid event")
+        if (issued.producer_handle != proof.producer_handle
+                or issued.event_id != proof.event_id
+                or issued.resource_id != proof.resource_id
+                or issued.resource_generation != proof.resource_generation
+                or issued.source_observer_enrollment_id != proof.source_observer_enrollment_id
+                or issued.source_kind != proof.source_kind
+                or issued.payload != proof.payload):
+            raise AuthorityDenied("resource.event_issuer", "signed source event differs from producer provenance")
+        from .types import HostContext, SourceReceipt
+        if (not isinstance(issued.source_context, HostContext)
+                or not isinstance(issued.receipt, SourceReceipt)
+                or not isinstance(issued.parent_receipts, tuple)
+                or issued.receipt not in issued.source_context.source_receipts
+                or tuple(issued.source_context.source_receipts) != issued.parent_receipts):
+            raise AuthorityDenied("resource.event_issuer", "issuer omitted the signed complete source closure")
+        enrollment = self.job_enrollments.get((issued.resource_id, issued.resource_generation))
+        observer = getattr(self.source_observers, "observers", {}).get(
+            issued.source_observer_enrollment_id)
+        if (enrollment is None or observer is None
+                or observer.observer_enrollment_id != issued.observer_enrollment_id
+                or observer.source_kind != issued.source_kind
+                or observer.profile_id != enrollment.profile_id
+                or observer.principal_id != enrollment.principal_id
+                or observer.generation != enrollment.profile_generation
+                or observer.channel_id != enrollment.source_issuer_channel_id):
+            raise AuthorityDenied("resource.event_issuer", "source event differs from current protected selection")
+        role = self._select_source_role(
+            enrollment, issued.source_observer_enrollment_id, issued.source_kind)
+        if role != expected_role:
+            raise AuthorityDenied("resource.event_issuer", "active source controller role changed during issuance")
+        custody = issued.controller_proof
+        try:
+            from .root_controller_custody import RootControllerRoleCustody
+            if (not isinstance(custody, RootControllerRoleCustody)
+                    or issued.controller_role_id != role.id
+                    or custody.row != role
+                    or custody.generation_digest != self.service_generation_digest
+                    or custody.expires_monotonic > min(
+                        issued.receipt.monotonic_expires_at,
+                        issued.source_context.monotonic_expires_at)
+                    or custody.revalidate() is not True):
+                raise AuthorityDenied("resource.event_issuer", "source producer custody is stale or mismatched")
+            handle = self._register_verified_event(
+                resource_id=issued.resource_id,
+                generation=issued.resource_generation,
+                source_kind=issued.source_kind,
+                source_observer_enrollment_id=issued.source_observer_enrollment_id,
+                payload=issued.payload,
+                parent_context=issued.source_context,
+                parent_receipts=issued.parent_receipts,
+                _issuer=self._ingress_token,
+            )
+        finally:
+            close = getattr(custody, "close", None)
+            if callable(close):
+                close()
+        if handle.event_id != proof.event_id:
+            self.cancel_event(handle)
+            raise AuthorityDenied("resource.event_issuer", "root receipt event ID differs from producer proof")
+        return handle
 
     def resolve_for_event(self, root_event_handle: RootResourceEventHandle,
                           node_id: str) -> Any:
@@ -356,7 +563,7 @@ class RootResourceControllerRegistry:
             expires_monotonic=expiry,
         )
 
-    def register_verified_event(self, *, resource_id: str, generation: str,
+    def _register_verified_event(self, *, resource_id: str, generation: str,
                                 source_kind: str, source_observer_enrollment_id: str,
                                 payload: bytes,
                                 parent_context: Any,
