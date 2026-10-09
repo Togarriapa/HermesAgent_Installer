@@ -38,7 +38,7 @@ class ResolverTests(unittest.TestCase):
         with self.assertRaises(RegistryError): resolver.authorize(raw,profile_id="profile",namespace="private",subject="operator",host_capabilities={"delegate"},lease_provider=lambda *_:wrong)
         unverified=self.raw("app","profiles","1.0.0",revision="a"*40,observed="b"*40)
         with self.assertRaises(RegistryError): self.resolver({"app":unverified}).resolve(["profiles/app"])
-        with self.assertRaises(RegistryError): RegistryResolver({"app":raw[0].resource},source_verifier=lambda *_:True)
+        with self.assertRaises(RegistryError): RegistryResolver({"app":self.raw("app","profiles","1.0.0")}).resolve(["profiles/app"])
     def test_missing_incompatible_or_unknown_requirements_fail_closed(self):
         with self.assertRaises(RegistryError): self.resolver({"app":self.raw("app","profiles","1.0.0",requires={"skills":["missing@^1.0.0"]})}).resolve(["profiles/app"])
         with self.assertRaises(RegistryError): self.resolver({"app":self.raw("app","profiles","1.0.0")}).resolve(["profiles/app@latest"])

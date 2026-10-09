@@ -1,6 +1,6 @@
 """Typed source validation and raw/resolved/authorized/runtime registry phases."""
 from __future__ import annotations
-import hashlib, json, re, time
+import hashlib, json, math, re, time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import cmp_to_key
@@ -125,8 +125,14 @@ class RegistryResolver:
         return hashlib.sha256(b"hermes-resource-v1\0"+len(encoded).to_bytes(8,"big")+encoded).hexdigest()
 
     def _parse(self, raw: RawResource) -> Resource:
-        if (raw.selected_revision!=raw.observed_revision or not re.fullmatch(r"[a-fA-F0-9]{40,64}",raw.selected_revision)
-            or self.source_verifier is None or not self.source_verifier(raw.repository,raw.selected_revision)):
+        if not isinstance(raw.document, Mapping):
+            raise RegistryError("raw manifest document must be a mapping")
+        try:
+            source_ok = self.source_verifier is not None and self.source_verifier(raw.repository, raw.selected_revision)
+        except Exception as error:
+            raise RegistryError(f"pinned source verifier failed: {type(error).__name__}") from None
+        if (raw.selected_revision != raw.observed_revision
+            or not re.fullmatch(r"[a-fA-F0-9]{40,64}", raw.selected_revision) or not source_ok):
             raise RegistryError(f"pinned source commit was not independently verified: {raw.identity}")
         if not raw.repository.startswith("https://") or "@" in raw.repository: raise RegistryError("registry source must use HTTPS without credentials")
         if self.document_digest(raw.document)!=raw.content_digest: raise RegistryError(f"resource digest mismatch: {raw.identity}")
@@ -192,9 +198,7 @@ class RegistryResolver:
                 visit(dep_kind,dep_id,dep_expr)
             active.remove(node); visited.add(node)
             # retain compatibility projections while typed references remain canonical in dependency_ids.
-            item=Resource(item.id,item.kind,item.version,item.body,item.source_revision,
-                tuple(x.split("/",1)[1].split("@",1)[0] for x in dependencies),(),item.capabilities,item.digest)
-            ordered.append(ResolvedResource(item,tuple(dependencies),True))
+            ordered.append(ResolvedResource(item, tuple(dependencies), True))
         for selector in selectors:
             if not isinstance(selector,str) or not selector: raise RegistryError("root selector must be kind/name[@semver]")
             first,slash,tail=selector.partition("/")
@@ -216,7 +220,9 @@ class RegistryResolver:
         for item in resources:
             lease=lease_provider(item,profile_id,namespace,subject)
             if (not item.provenance_verified or lease.subject!=subject or lease.profile_id!=profile_id or lease.namespace!=namespace
-                or lease.issued_at>now or lease.expires_at<=now or not lease.policy_revision or not lease.grant_id):
+                or not math.isfinite(lease.issued_at) or not math.isfinite(lease.expires_at)
+                or lease.issued_at > now or lease.expires_at <= now or lease.expires_at <= lease.issued_at
+                or lease.expires_at - lease.issued_at > 3600 or not lease.policy_revision or not lease.grant_id):
                 raise RegistryError(f"missing/stale/mismatched host lease for {item.resource.id}")
             allowed=item.resource.capabilities & host & lease.capabilities
             result.append(AuthorizedResource(item,lease,frozenset(allowed),tuple(sorted(item.resource.capabilities-allowed))))
