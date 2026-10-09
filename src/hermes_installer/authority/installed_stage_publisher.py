@@ -290,6 +290,8 @@ def _recover_staging_journals(parent: Path, receipt: Any, manifest_bytes: bytes,
                         or not re.fullmatch(re.escape(prefix) + r"[0-9a-f]{24}", journal["stage_name"])
                         or name != journal["stage_name"] + ".journal.json"):
                     raise BootstrapEnrollmentPending("release staging journal differs from the retained build receipt")
+                if raw != _canonical(journal):
+                    raise BootstrapEnrollmentPending("release staging journal is not canonical JSON")
                 stage = parent / journal["stage_name"]
                 try:
                     stage_info = os.stat(stage, follow_symlinks=False)
@@ -467,12 +469,17 @@ def _verify_predecessor(path: Path, predecessor: Any, uid: int,
             raise BootstrapEnrollmentPending("deployment receipt disappeared after build authorization") from None
         return
     try:
-        record = json.loads(raw.decode("utf-8"))
+        record = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
     except (UnicodeError, ValueError):
         raise BootstrapEnrollmentError("current deployment receipt is malformed") from None
+    receipt_fields = {"schema", "receipt_id", "candidate_git_sha", "release_root",
+                      "release_device", "release_inode", "closure_manifest_relative_path",
+                      "closure_manifest_sha256", "baseline_tree_sha256", "published_monotonic"}
     if (predecessor.state != "present" or _sha(raw) != predecessor.sha256
             or (info.st_dev, info.st_ino) != (predecessor.device, predecessor.inode)
-            or not isinstance(record, dict) or record.get("candidate_git_sha") != predecessor.candidate_git_sha):
+            or not isinstance(record, dict) or set(record) != receipt_fields
+            or record.get("schema") != 1 or record.get("candidate_git_sha") != predecessor.candidate_git_sha
+            or raw != _canonical(record)):
         raise BootstrapEnrollmentPending("deployment receipt changed after build authorization")
 
 
@@ -512,6 +519,8 @@ def _read_record(path: Path, uid: int) -> tuple[bytes, os.stat_result]:
                 if not block:
                     break
                 data.extend(block)
+                if len(data) > MAX_RECEIPT_BYTES:
+                    raise BootstrapEnrollmentError("deployment receipt exceeds its size bound")
             return bytes(data), info
         finally:
             os.close(fd)
@@ -611,7 +620,8 @@ def _write_at(parent_fd: int, name: str, data: bytes, uid: int, mode: int) -> No
                  mode, dir_fd=parent_fd)
     try:
         info = os.fstat(fd)
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_nlink != 1):
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid
+                or info.st_gid != _gid(uid) or info.st_nlink != 1):
             raise BootstrapEnrollmentError("deployment receipt stage is not owned regular file")
         view = memoryview(data)
         while view:
