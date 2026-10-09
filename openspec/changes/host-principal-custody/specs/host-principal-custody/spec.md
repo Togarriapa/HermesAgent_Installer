@@ -208,3 +208,10 @@ The installer SHALL compare selected device identity generation to protected exp
 #### Scenario: Device epoch changes under live profile
 - **WHEN** hotplug or replacement changes selected device identity epoch
 - **THEN** invalidate inference enrollment/active grant and require root reattestation without sibling/all-device fallback.
+
+### Requirement: Root private observed source capture
+The installer SHALL issue qualified source receipts only through root-private actual registered observer/event joins and exact bounded observed bytes, with peer, generation, parent closure, recipient and lease bindings. Worker submitted capture SHALL remain UNKNOWN/private.
+
+#### Scenario: Worker claims tool result or authentic user input
+- **WHEN** actual registered root observer/event/invocation evidence is absent, stale or replayed
+- **THEN** deny qualified receipt before effect and preserve private unknown provenance without omitted original functionality.
