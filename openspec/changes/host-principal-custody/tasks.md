@@ -135,3 +135,7 @@ HI-T12/HI-T13 use private_origin_probe.connector_authority principal_join, seque
 ### v16 installed input closure joins
 
 Use the exact installed_selection_catalog.release_root, task_runner_protocol.source_resolver and native-package-binding-contract.json initial_native_input_observer joins. Existing BD/HI/RB tasks and acceptance remain pending.
+
+### v17 supported loader and task controller
+
+Use assembly native_custody_proof_protocol.systemd_transport/pending_pair_selector and resource task_runner_protocol.neutral_types/controller_source_split/root_event_context. Existing HI/RB tasks remain open; actual kernel effects required.
