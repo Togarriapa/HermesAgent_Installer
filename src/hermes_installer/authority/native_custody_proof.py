@@ -861,11 +861,14 @@ class RootNativeLoaderObservationStore:
             self._by_process.pop(entry.selection.process_id, None)
         self._close_entry(entry)
 
-    def revoke_process(self, process_id: str) -> None:
+    def revoke_process(self, process_id: str, generation: str | None = None) -> None:
         with self._lock:
             handle = self._by_process.get(process_id)
-        if handle is not None:
-            self.revoke_launch(handle)
+            entry = self._launches.get(handle) if handle is not None else None
+            if (entry is None or (generation is not None
+                                  and generation != entry.selection.generation)):
+                return
+        self.revoke_launch(handle)
 
     def _revoke_matching_peer(self, peer_pid: int) -> None:
         with self._lock:
