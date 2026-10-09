@@ -1235,6 +1235,11 @@ def _freeze_json(value: Any) -> Any:
 
 _CRON_FIELD = re.compile(r"^(?:\*|\d+(?:-\d+)?)(?:/\d+)?(?:,(?:\*|\d+(?:-\d+)?)(?:/\d+)?)*$")
 _CRON_LIMITS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
+_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+
+def _valid_header_name(value: Any) -> bool:
+    return isinstance(value, str) and len(value) <= 128 and bool(_HTTP_HEADER_NAME.fullmatch(value))
 
 
 def _validate_cron(spec: Mapping[str, Any], *, expected_source_revision: str | None = None) -> None:
@@ -1415,6 +1420,8 @@ def _validate_webhook_declaration(spec: Mapping[str, Any]) -> None:
     auth = spec.get("authentication")
     if not isinstance(auth, Mapping) or auth.get("type") not in {"hmac-sha256", "bearer"}:
         raise ResourceRuntimeError("webhook must declare HMAC-SHA256 or bearer authentication")
+    if auth.get("type") == "hmac-sha256" and not _valid_header_name(auth.get("signatureHeader")):
+        raise ResourceRuntimeError("webhook signature header name is invalid")
     policy = spec.get("policy")
     if not isinstance(policy, Mapping) or policy.get("authorityFromWebhookReceipt") != "deny":
         raise ResourceRuntimeError("webhook receipts must not create authority")
@@ -1426,7 +1433,7 @@ def _validate_webhook_declaration(spec: Mapping[str, Any]) -> None:
     if action.get("mutate") not in (None, False):
         raise ResourceRuntimeError("webhook actions cannot mutate from receipt authority")
     event = spec.get("event")
-    if event is not None and (not isinstance(event, Mapping) or not isinstance(event.get("header"), str)
+    if event is not None and (not isinstance(event, Mapping) or not _valid_header_name(event.get("header"))
                               or not isinstance(event.get("allowed"), (list, tuple)) or not event["allowed"]):
         raise ResourceRuntimeError("webhook event types must be explicitly allowlisted")
     replay = spec.get("replayProtection")
@@ -1436,12 +1443,14 @@ def _validate_webhook_declaration(spec: Mapping[str, Any]) -> None:
     policy_header = policy.get("deliveryIdHeader")
     policy_id_enabled = policy.get("deduplicateByDeliveryId") is True
     body_digest_enabled = isinstance(replay, Mapping) and replay.get("requireEventIdentity") is True
-    if (not isinstance(replay_header, str) and not (policy_id_enabled and isinstance(policy_header, str))
+    if (not _valid_header_name(replay_header) and not (policy_id_enabled and _valid_header_name(policy_header))
             and not body_digest_enabled):
         raise ResourceRuntimeError("webhook requires a provider event identity or bounded body deduplication")
-    if replay_header is not None and not isinstance(replay_header, str):
+    if replay_header is not None and not _valid_header_name(replay_header):
         raise ResourceRuntimeError("webhook delivery identity header is invalid")
-    if policy_id_enabled and (not isinstance(policy_header, str) or not policy_header):
+    if policy_header is not None and not _valid_header_name(policy_header):
+        raise ResourceRuntimeError("webhook policy delivery-ID header is invalid")
+    if policy_id_enabled and not _valid_header_name(policy_header):
         raise ResourceRuntimeError("webhook delivery-ID deduplication requires an exact header")
     if policy.get("staticRecipientListAsAuthority") not in (None, "deny"):
         raise ResourceRuntimeError("webhook static recipients cannot create authority")

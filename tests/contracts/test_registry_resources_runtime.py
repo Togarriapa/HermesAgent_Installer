@@ -152,6 +152,11 @@ class ResourcesRuntimeTests(unittest.TestCase):
             "replayProtection": {"deliveryIdHeader": "X-Delivery"},
             "policy": {"authorityFromWebhookReceipt": "deny"},
         }
+        with self.assertRaisesRegex(ResourceRuntimeError, "signature header name"):
+            WebhookVerifier(_ReplayStore()).verify(
+                "example", {**spec, "authentication": {"type": "hmac-sha256", "signatureHeader": "X-Bad\r\nHeader"}},
+                {}, body, secret,
+            )
         headers = {"Content-Type": "application/json", "X-Signature": signature, "X-Delivery": "d-1"}
         verifier = WebhookVerifier(_ReplayStore(), now=lambda: 100.0)
         receipt = verifier.verify("example", spec, headers, body, secret)
