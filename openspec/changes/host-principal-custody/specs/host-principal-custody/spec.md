@@ -138,3 +138,10 @@ The installer SHALL bind actual native producer package/adapter closure through 
 #### Scenario: Mutable package or divergent normalization
 - **WHEN** native closure, peer generation, issuer provenance or route-normalized final payload differs from protected enrollment
 - **THEN** deny before effect bytes and retain exact incomplete implementation/native evidence state.
+
+### Requirement: Protected resolver reader
+The installer SHALL expose only peer-bound selected immutable resolver records via path-free native.resolver.read and SHALL re-resolve current protected effect enrollment on every dispatch.
+
+#### Scenario: Caller reuses stale resolver as permission
+- **WHEN** profile generation, handler, scope or policy changed after reading resolver
+- **THEN** deny affected effect before bytes; presentation records confer no authority.

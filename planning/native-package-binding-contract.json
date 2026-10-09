@@ -104,5 +104,23 @@
       "expires_monotonic"
     ],
     "read": "Opaque owned artifact ID with separate typed bounded root reads; no filesystem path/URL in response and no cross-profile receipt transfer"
+  },
+  "resolver_reader": {
+    "method": "read_native_resolver(binding_handle)",
+    "operation": "native.resolver.read",
+    "request_fields": [
+      "schema=1",
+      "opaque_binding_handle"
+    ],
+    "response_fields": [
+      "schema=1",
+      "package_id",
+      "profile_id",
+      "generation",
+      "resolver_sha256",
+      "adapters"
+    ],
+    "adapters": "Finite list of records with adapter_id,manifest_sha256,adapter_sha256,action_id,argument_schema_id,result_schema_id,effect_enrollment_id,operation,capability,target_id,recipient,generation matching package catalog; extra fields forbidden",
+    "semantics": "Root returns canonical bounded immutable resolver document from selected closure after same actual peer/package/generation validation; maximum2MiB and <=692 selected declarations. No request path, FD, module import or caller mount choice. Root selected loader reads only enrolled read-only namespace closure internally. Facade resolver is presentation/routing only: root re-resolves current effect enrollment and all identity/authority/schema/source conditions EVERY effect, never trusts returned record as permission."
   }
 }

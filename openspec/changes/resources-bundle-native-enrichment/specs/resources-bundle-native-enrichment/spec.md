@@ -83,3 +83,10 @@ The installer SHALL enforce the finite source-bound Epic and voice facade action
 #### Scenario: Caller asserts accepted Epic or microphone permission
 - **WHEN** caller supplies lifecycle/session claims without current root verified receipt
 - **THEN** reject before deletion, microphone bytes or backend dispatch.
+
+### Requirement: Protected resolver reader
+The installer SHALL expose only peer-bound selected immutable resolver records via path-free native.resolver.read and SHALL re-resolve current protected effect enrollment on every dispatch.
+
+#### Scenario: Caller reuses stale resolver as permission
+- **WHEN** profile generation, handler, scope or policy changed after reading resolver
+- **THEN** deny affected effect before bytes; presentation records confer no authority.

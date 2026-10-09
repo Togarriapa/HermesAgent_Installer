@@ -282,6 +282,52 @@
         },
         "result": "owned bounded audio artifact receipt; no raw path/cloudfallback"
       }
+    },
+    "ebook-toolchain": {
+      "run": {
+        "operation": "plugin.ebook-toolchain.run",
+        "arguments": {
+          "source_id": "owned immutable source artifact receipt",
+          "format": "epub3|pdf",
+          "title": "bounded plain text<=256chars",
+          "recipe_id": "opaque root selected managed build recipe"
+        },
+        "result": "typed artifact receipt plus validation_status=valid|invalid|unsupported and bounded validation_report artifact; invalid EPUB not deliverable"
+      },
+      "inspect": {
+        "operation": "plugin.ebook-toolchain.run",
+        "arguments": {
+          "source_id": "owned source receipt",
+          "recipe_id": "fixed root inspection recipe"
+        },
+        "result": "bounded typed metadata/structure report"
+      },
+      "validate": {
+        "operation": "plugin.ebook-toolchain.run",
+        "arguments": {
+          "source_id": "owned book receipt",
+          "recipe_id": "fixed root validation recipe"
+        },
+        "result": "validation_status and owned bounded report receipt"
+      }
+    },
+    "kobo-bridge": {
+      "read": {
+        "operation": "plugin.kobo-bridge.read",
+        "arguments": {
+          "book_id": "opaque selected owned device notebook/book ID",
+          "enrollment_id": "opaque root-selected actual compatible device/backend generation"
+        },
+        "result": "owned notebook export artifact receipt and provenance; no password/scrape/DRM"
+      },
+      "deliver": {
+        "operation": "plugin.kobo-bridge.deliver",
+        "arguments": {
+          "export_id": "owned validated EPUB/PDF artifact receipt",
+          "enrollment_id": "opaque selected device/backend generation"
+        },
+        "result": "operation_id plus verified device destination receipt; explicit runtime user delivery and one-shot confirmation before any overwrite"
+      }
     }
   },
   "schema_rule": "Additional argument fields forbidden. IDs resolve current root principal/profile/generation and cannot encode paths/URLs/commands. These facade action schemas are not guessed upstream endpoint schemas; protected selected backend handler must separately validate source-reviewed API mapping. Unsupported requested original actions remain explicit incomplete."
