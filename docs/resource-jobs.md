@@ -58,13 +58,26 @@ retained event projection is bounded, job-expiring, and scrubbed when the job
 terminates, expires, or is revoked. Caller-supplied event bytes and unsigned
 webhook receipts cannot supply recipe values.
 
+For a selected profile task, the private admission row retains the actual
+verified `_JobEvent`, signed parent context, and complete source receipt
+objects beside the one-use node handle. `resolve_admitted_task_source()` is
+available only after consuming that exact handle and rechecks the current
+resource/profile generation, consent, child attempt, lease, parent closure,
+and protected process/native recipe joins. It returns immutable event/result
+projections and a neutral `RootAdmittedTask` metadata snapshot; it exposes no
+receipt handles or worker-controlled ancestry. The closure digest binds the
+signed context/receipts, source-capsule provenance, selected scope IDs, event
+fields, and predecessor result fields.
+
 Admission and child handlers remain unavailable unless root composition joins
 the current protected catalogs and installs the concrete selected process-task
 launcher and terminal/result capsule consumer. Each fixed process task is
 specified to use a separate root `process.start` grant. In particular, the
 current checkout has no `AuthorityService.launch_resource_profile_task` or
-result-capsule completion path, so profile-task nodes and dependent DAG nodes
-must not be reported as functional. Dynamic result/scope recipes fail closed.
+result-capsule completion path. The current source capsule also has no API for
+resolving a live producer PID/PIDFD after admission, so the root runner cannot
+yet safely establish custody identity. Profile-task nodes and dependent DAG
+nodes must not be reported as functional. Dynamic result/scope recipes fail closed.
 The fixture tests establish ledger/parser behavior and the root source capsule
 contract only; no cron, webhook, channel, bundle, or Hermes profile-task effect
 is established.

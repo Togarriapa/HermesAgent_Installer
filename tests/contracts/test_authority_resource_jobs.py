@@ -241,7 +241,9 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
         ResourceJobAuthority, RootResourceProcessReceipt, _JobEvent,
     )
     from hermes_installer.authority.service import AuthorityService
-    from hermes_installer.authority.types import AuthorityDenied, Sensitivity
+    from hermes_installer.authority.types import (
+        AuthorityDenied, HostContext, Sensitivity, SourceReceipt, canonical_digest,
+    )
     from hermes_installer.registry.resource_backends import ResourceProfileTaskAdapter
     from hermes_installer.registry.resource_jobs import ResourceJobLedger
 
@@ -282,11 +284,15 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
     task_adapter.node_id = "node-1"
     task_adapter.launcher = service
     observed_handles = []
+    observed_sources = []
     authority = None
 
     def launcher(handle, node_id):
         observed_handles.append(handle)
         authority.consume_task_handle(handle, node_id)
+        observed_sources.append(authority.resolve_admitted_task_source(handle, node_id))
+        with pytest.raises(AuthorityDenied, match="one-use"):
+            authority.resolve_admitted_task_source(handle, node_id)
         authority.start_task_handle(handle, node_id)
         return RootResourceProcessReceipt(
             job_id=handle.job_id, node_id=handle.node_id,
@@ -324,14 +330,61 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
         ("resource.job.admit", authority._job_target(enrollment)),
         ("resource.job.child.admit", authority._child_target(enrollment, enrollment.nodes[0])),
     }
+    lineage = hashlib.sha256(b"source lineage").hexdigest()
+    source_receipt = SourceReceipt(
+        receipt_id="source-receipt-1", issuer_id="source-issuer", source_kind="schedule-event",
+        principal_id=enrollment.principal_id, profile_id=enrollment.profile_id,
+        namespace_id="namespace-1", uid=501, origin_id="schedule-1",
+        process_generation=enrollment.profile_generation,
+        payload_digest=hashlib.sha256(b"observed payload").hexdigest(),
+        sensitivity=Sensitivity.PRIVATE, parent_lineage_hash=lineage,
+        policy_revision="policy-1", recipient_ceiling=frozenset(),
+        issued_at_monotonic=now(), monotonic_expires_at=now() + 30,
+        signature="source-signature", enrollment_id="source-enrollment",
+        native_process_identity="native-process", parent_receipt_ids=(), nonce="source-nonce",
+    )
+    parent_context = HostContext(
+        principal_id=enrollment.principal_id, profile_id=enrollment.profile_id,
+        namespace_id="namespace-1", uid=501, purpose="resource-job-test", intent_id="intent-1",
+        trace_id="trace-1", sensitivity=Sensitivity.PRIVATE, lineage_hash=lineage,
+        policy_revision="policy-1", capabilities=frozenset({"hermes-resource-runtime"}),
+        issued_at_monotonic=now(), monotonic_expires_at=now() + 30,
+        nonce="context-nonce", grant_id="context-grant", signature="context-signature",
+        source_receipts=(source_receipt,), generation="service-generation",
+        operation="resource.job.admit",
+    )
+    source_capsule_lineage = {
+        "receipt_id": "source-receipt-1", "observer_enrollment_id": "observer-1",
+        "event_record_id": "event-record-1", "invocation_id": "invocation-1",
+        "source_kind": "schedule-event", "channel_id": "schedule-1",
+        "source_action_id": "source-action", "profile_id": enrollment.profile_id,
+        "principal_id": enrollment.principal_id, "namespace_id": "namespace-1",
+        "generation": enrollment.profile_generation,
+        "payload_sha256": hashlib.sha256(b"observed payload").hexdigest(),
+        "parent_receipt_ids": (), "parent_closure_digest": canonical_digest(()),
+        "issued_monotonic": now(), "expires_monotonic": now() + 30,
+    }
     event = _JobEvent(
         enrollment, admission, ("source-receipt-1",), Sensitivity.PRIVATE,
-        hashlib.sha256(b"source lineage").hexdigest(), {}, {},
+        lineage, {}, {}, parent_context, (source_receipt,), source_capsule_lineage,
     )
     result = authority._launch_profile_task(child, event, enrollment.backends["backend-1"], 30.0, lambda: False)
     assert result["receipt_id"] == "root-result-receipt"
     assert len(observed_handles) == 1
     assert observed_handles[0].attempt_index == 0
     assert observed_handles[0].task_payload == b'{"prompt":"perform the selected action"}'
+    source = observed_sources[0]
+    assert source.event is event
+    assert source.parent_context is parent_context
+    assert source.source_receipt_ids == ("source-receipt-1",)
+    assert source.task.task_payload_sha256 == observed_handles[0].task_payload_sha256
+    assert source.task.stdin_sha256 == hashlib.sha256(b"perform the selected action").hexdigest()
+    assert source.task.stdin_size_bytes == len(b"perform the selected action")
+    assert source.task.task_payload == observed_handles[0].task_payload
+    assert source.event.source_capsule_lineage["event_record_id"] == "event-record-1"
+    with pytest.raises(TypeError):
+        source.event.event_fields["injected"] = True
     with pytest.raises(AuthorityDenied, match="forged, replayed, or consumed"):
         authority.consume_task_handle(observed_handles[0], "node-1")
+    with pytest.raises(AuthorityDenied, match="consumed root handle"):
+        authority.resolve_admitted_task_source(observed_handles[0], "node-1")
