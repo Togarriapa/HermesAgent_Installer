@@ -56,6 +56,63 @@ class ResourceRuntimeArtifact:
 
 
 @dataclass(frozen=True, slots=True)
+class HermesProfileExecutionTarget:
+    """Custody-selected launch inputs for one pinned Hermes profile.
+
+    These values come from protected installer/custody state, never a resource
+    manifest. The host broker independently validates the profile target and
+    launch envelope before process creation.
+    """
+
+    profile_id: str
+    executable: Any
+    artifact_sha256: str
+    artifact_root: Any
+    cwd: Any
+    data_root: Any
+    env_allowlist: Mapping[str, str]
+    child_artifact_refs: Mapping[str, str] = field(default_factory=dict)
+    max_lifetime_seconds: int = 600
+    max_output_bytes: int = 1_048_576
+
+    def __post_init__(self) -> None:
+        from pathlib import Path
+        from types import MappingProxyType
+
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", self.profile_id):
+            raise ValueError("selected Hermes profile identity is invalid")
+        for name in ("executable", "artifact_root", "cwd", "data_root"):
+            value = getattr(self, name)
+            if not isinstance(value, Path) or not value.is_absolute():
+                raise ValueError(f"selected Hermes profile {name} must be an absolute Path")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.artifact_sha256):
+            raise ValueError("selected Hermes executable pin must be a SHA-256 digest")
+        if (type(self.max_lifetime_seconds) is not int or not 1 <= self.max_lifetime_seconds <= 600
+                or type(self.max_output_bytes) is not int or not 1 <= self.max_output_bytes <= 4 * 1024 * 1024):
+            raise ValueError("selected Hermes process bounds are outside supported limits")
+        if not isinstance(self.env_allowlist, Mapping) or not isinstance(self.child_artifact_refs, Mapping):
+            raise ValueError("selected Hermes launch maps are required")
+        env = dict(self.env_allowlist)
+        if any(not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", key)
+               or not isinstance(value, str) or "\x00" in value for key, value in env.items()):
+            raise ValueError("selected Hermes environment allowlist is malformed")
+        refs = dict(self.child_artifact_refs)
+        for reference, digest in refs.items():
+            if (not isinstance(reference, str) or not isinstance(digest, str)
+                    or not re.fullmatch(r"artifact:[A-Za-z0-9._-]{1,128}:[0-9a-f]{64}", reference)
+                    or reference.rsplit(":", 1)[1] != digest or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+                raise ValueError("selected Hermes child artifact reference is malformed")
+        object.__setattr__(self, "env_allowlist", MappingProxyType(env))
+        object.__setattr__(self, "child_artifact_refs", MappingProxyType(refs))
+
+
+class SelectedHermesProfileResolver(Protocol):
+    """Resolve only an installed profile selected by the installer runtime."""
+
+    def resolve_profile(self, profile_id: str) -> HermesProfileExecutionTarget | None: ...
+
+
+@dataclass(frozen=True, slots=True)
 class NativePluginRuntimeContext:
     """Only the trusted installer may construct this context for a plugin.
 
@@ -72,6 +129,7 @@ class NativePluginRuntimeContext:
     mcp_registry: object | None = None
     provider_dispatcher: object | None = None
     local_overlay_store: "ProfileOverlayView | None" = None
+    profile_targets: SelectedHermesProfileResolver | None = None
 
 
 class HostContext(Protocol):
@@ -79,6 +137,7 @@ class HostContext(Protocol):
 
 
 class EffectAuthorization(Protocol):
+    capability: str
     request_digest: str
     target: str
     recipient: str | None
@@ -138,9 +197,9 @@ class ReviewedPluginAdapterRegistry:
     """Lazy bridge to the source-reviewed native plugin adapter table."""
 
     def resolve_plugin_adapter(self, adapter_id: str) -> NativePluginImplementation | None:
-        from hermes_installer.components.native_plugins import resolve_native_plugin_adapter
+        from hermes_installer.components.native_plugins import resolve_native_plugin_implementation
 
-        return resolve_native_plugin_adapter(adapter_id)
+        return resolve_native_plugin_implementation(adapter_id)
 
 
 class PluginAdapterUnavailable(ResourceRuntimeError):
@@ -211,7 +270,7 @@ class ResourceOverlayStore:
         path = self.owned_root.path(relative)
         if not path.exists():
             return None
-        self._check_private_directory(path.parent)
+        self._check_private_directory_tree(path.parent)
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
         try:
             descriptor = os.open(path, flags)
@@ -239,8 +298,7 @@ class ResourceOverlayStore:
         import secrets
 
         path = self.owned_root.path(relative)
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self._check_private_directory(path.parent)
+        self._ensure_private_directory_tree(path.parent)
         temp = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
         data = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -275,6 +333,45 @@ class ResourceOverlayStore:
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
                 or stat.S_IMODE(info.st_mode) & 0o077):
             raise ResourceRuntimeError("overlay directory has unsafe ownership or permissions")
+
+    def _check_private_directory_tree(self, path: Any) -> None:
+        root = self.owned_root.root
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            raise ResourceRuntimeError("overlay directory escaped its owned root") from None
+        current = root
+        self._check_private_directory(current)
+        for part in relative.parts:
+            current = current / part
+            self._check_private_directory(current)
+
+    def _ensure_private_directory_tree(self, path: Any) -> None:
+        import os
+        import stat
+
+        root = self.owned_root.root
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            raise ResourceRuntimeError("overlay directory escaped its owned root") from None
+        current = root
+        self._check_private_directory(current)
+        for part in relative.parts:
+            current = current / part
+            try:
+                current.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+            try:
+                info = current.lstat()
+            except OSError:
+                raise ResourceRuntimeError("overlay directory cannot be inspected safely") from None
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+                raise ResourceRuntimeError("overlay directory has unsafe ownership or type")
+            if stat.S_IMODE(info.st_mode) & 0o077:
+                os.chmod(current, 0o700, follow_symlinks=False)
+                self._check_private_directory(current)
 
     def _write_revision(self, profile_id: str, record_id: str, revision: str,
                         value: Mapping[str, Any]) -> None:
@@ -345,7 +442,7 @@ class ResourceOverlayStore:
             return ()
         if directory.is_symlink() or not directory.is_dir():
             raise ResourceRuntimeError("overlay revision directory is unsafe")
-        self._check_private_directory(directory)
+        self._check_private_directory_tree(directory)
         revisions = []
         for path in directory.iterdir():
             if path.is_symlink() or not path.is_file() or not re.fullmatch(r"[0-9a-f]{64}\.json", path.name):
@@ -453,6 +550,323 @@ class FixedResourceEffect:
             raise ValueError("resource effect operation is not a fixed host verb")
         if not 0 < self.timeout_seconds <= 120:
             raise ValueError("resource effect timeout must be at most 120 seconds")
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedResourceExecution:
+    """Root-selected executable resource binding consumed by the root handler.
+
+    The host loader creates these from its protected active-selection ledger,
+    not from generated runtime JSON. Resource declarations never set target,
+    capability, recipient, delegation or enabled state.
+    """
+
+    identity: ResourceIdentity
+    generation_digest: str
+    effective_spec: Mapping[str, Any]
+    capability: str
+    target: str
+    operation: str
+    recipient: str | None
+    delegation_id: str
+    profile_id: str | None
+    enabled: bool
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(r"[0-9a-f]{64}", self.generation_digest):
+            raise ValueError("selected resource generation must be pinned by SHA-256")
+        expected = f"resource:{self.identity.kind}/{self.identity.resource_id}@{self.identity.version}"
+        if self.target != expected:
+            raise ValueError("selected resource target does not match its immutable identity")
+        if not self.capability or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", self.capability):
+            raise ValueError("selected resource capability is invalid")
+        if self.operation not in {
+            "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+            "resource.orchestrator.recruit",
+        }:
+            raise ValueError("selected resource operation is not a fixed resource verb")
+        expected_operation = {
+            "crons": "resource.cron.run", "channels": "resource.channel.route",
+            "webhooks": "resource.webhook.deliver", "bundles": "resource.orchestrator.recruit",
+        }.get(self.identity.kind)
+        if expected_operation != self.operation:
+            raise ValueError("selected resource kind does not match its fixed operation")
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", self.delegation_id):
+            raise ValueError("selected root delegation identity is invalid")
+        if self.profile_id is not None and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", self.profile_id):
+            raise ValueError("selected Hermes profile identity is invalid")
+        if (self.recipient is not None and (not isinstance(self.recipient, str) or not self.recipient
+                                            or len(self.recipient) > 256
+                                            or any(ord(char) < 0x20 for char in self.recipient))):
+            raise ValueError("selected resource recipient is malformed")
+        if type(self.enabled) is not bool or not isinstance(self.effective_spec, Mapping):
+            raise ValueError("selected resource enablement and effective specification are malformed")
+        # Copy the selected effective body so a mutable input mapping cannot
+        # change the root handler's approved action after construction.
+        normalized = json.loads(json.dumps(self.effective_spec, sort_keys=True, separators=(",", ":")))
+        object.__setattr__(self, "effective_spec", _freeze_json(normalized))
+
+
+class SelectedResourceResolver(Protocol):
+    """Root-owned resolver for enabled, generation-pinned resource selections."""
+
+    def resolve(self, identity: ResourceIdentity) -> SelectedResourceExecution | None: ...
+
+
+class RootDelegatedEffectService(Protocol):
+    """Exact in-process AuthorityService delegation used only by root handlers."""
+
+    def perform_delegated_effect(
+        self, parent_authorization: EffectAuthorization, *, delegation_id: str,
+        payload: bytes, peer_pid: int, timeout: float,
+        cancelled: Callable[[], bool],
+    ) -> BrokeredEffectResponse | Mapping[str, Any]: ...
+
+
+class SelectedResourceRegistry:
+    """Validated identity index; production records must come from root custody."""
+
+    __slots__ = ("_rows", "_generation_digest")
+
+    def __init__(self, rows: Sequence[SelectedResourceExecution], *,
+                 expected_generation_digest: str | None = None):
+        indexed: dict[tuple[str, str, str, str, str], SelectedResourceExecution] = {}
+        generations: set[str] = set()
+        for row in rows:
+            if not isinstance(row, SelectedResourceExecution):
+                raise TypeError("selected resource registry accepts only typed enrollment records")
+            key = (row.identity.kind, row.identity.resource_id, row.identity.version,
+                   row.identity.source_path, row.identity.source_revision)
+            if key in indexed:
+                raise ValueError("selected resource identity is duplicated")
+            indexed[key] = row
+            generations.add(row.generation_digest)
+        if len(generations) > 1:
+            raise ValueError("selected resource registry cannot mix active generations")
+        if (expected_generation_digest is not None
+                and (not re.fullmatch(r"[0-9a-f]{64}", expected_generation_digest)
+                     or generations != {expected_generation_digest})):
+            raise ValueError("selected resource registry differs from the protected active generation")
+        from types import MappingProxyType
+
+        self._rows = MappingProxyType(indexed)
+        self._generation_digest = next(iter(generations), None)
+
+    @property
+    def generation_digest(self) -> str | None:
+        return self._generation_digest
+
+    @property
+    def rows(self) -> tuple[SelectedResourceExecution, ...]:
+        return tuple(self._rows.values())
+
+    def resolve(self, identity: ResourceIdentity) -> SelectedResourceExecution | None:
+        key = (identity.kind, identity.resource_id, identity.version,
+               identity.source_path, identity.source_revision)
+        row = self._rows.get(key)
+        if row is None or row.identity.content_digest != identity.content_digest:
+            return None
+        return row
+
+
+class SelectedResourceUnavailable(ResourceRuntimeError):
+    """The selected source item lacks a protected execution target or dependency."""
+
+
+def _cron_profile_prompt(selected: SelectedResourceExecution,
+                         scheduled_for: str,
+                         target: HermesProfileExecutionTarget) -> str:
+    _validate_cron(selected.effective_spec, expected_source_revision=selected.identity.source_revision)
+    action = selected.effective_spec["action"]
+    assert isinstance(action, Mapping)
+    profile_selector = action.get("profile")
+    if (selected.profile_id is None or not isinstance(profile_selector, str)
+            or profile_selector.split("@", 1)[0] != selected.profile_id):
+        # The installer resolves version selectors into profile_id at selection
+        # time. The raw action profile string is not an execution target.
+        raise SelectedResourceUnavailable("cron profile target was not resolved from the selected dependency closure")
+    mode = action.get("mode")
+    if action.get("type") == "installer-resource-candidate-assessment":
+        source = action["source"]
+        try:
+            root = target.artifact_root.resolve(strict=True)
+            bundle = (root / source["path"]).resolve(strict=True)
+        except OSError:
+            raise SelectedResourceUnavailable("pinned Resources snapshot is unavailable under the selected Hermes artifact root") from None
+        if not bundle.is_relative_to(root) or not bundle.is_dir():
+            raise SelectedResourceUnavailable("pinned Resources snapshot is not present under the selected Hermes artifact root")
+        return (
+            "Assess only the installer-owned, pinned Resources snapshot at " + str(bundle)
+            + f" (source revision {source['revision']}, catalog {source['catalogVersion']}). "
+            "Read its declarations and report compatible changes, conflicts, and missing prerequisites. "
+            "Do not access the network, install or update packages, change the active generation, "
+            "enable a schedule/account, send a message, or modify any files. Include evidence paths "
+            "and leave all proposed changes as candidates. Scheduled time: " + scheduled_for
+        )
+    if mode == "agent-runtime-health-report":
+        checks = action.get("checks")
+        permitted = {"agent-process", "container-health", "disk-space", "recent-errors", "resource-version"}
+        if not isinstance(checks, (list, tuple)) or not checks or len(checks) > len(permitted):
+            raise SelectedResourceUnavailable("health report checks are not a bounded reviewed list")
+        if any(not isinstance(value, str) or value not in permitted for value in checks):
+            raise SelectedResourceUnavailable("health report requested an unreviewed check")
+        return (
+            "Run a read-only Hermes runtime health report for these checks only: "
+            + ", ".join(checks) + ". Do not remediate, change files, or send notifications. "
+            "For every finding give the local evidence source and distinguish unavailable probes from healthy results. "
+            "Scheduled time: " + scheduled_for
+        )
+    raise SelectedResourceUnavailable(
+        "cron action has no reviewed local Hermes profile-run recipe; enroll exact targets before activation"
+    )
+
+
+def _cron_recipe_is_supported(selected: SelectedResourceExecution) -> bool:
+    try:
+        _validate_cron(selected.effective_spec, expected_source_revision=selected.identity.source_revision)
+    except ResourceRuntimeError:
+        return False
+    action = selected.effective_spec["action"]
+    if action.get("type") == "installer-resource-candidate-assessment":
+        return action.get("mode") == "candidate-assessment"
+    return (action.get("type") == "profile-run"
+            and action.get("mode") == "agent-runtime-health-report"
+            and "repository" not in action and "ref" not in action)
+
+
+def build_cron_resource_effect_handler(
+    identity: ResourceIdentity,
+    *,
+    selected_resources: SelectedResourceResolver,
+    profile_targets: SelectedHermesProfileResolver,
+    authority_service: RootDelegatedEffectService,
+) -> Callable[..., Mapping[str, Any]]:
+    """Build a root-only cron adapter for one selected resource.
+
+    The parent grant arrives through AuthorityService's fixed handler surface.
+    The selected ledger resolves both resource and profile identities; the
+    handler accepts no prompt, endpoint, argv, account, or profile override.
+    A second one-use child grant is issued by the root service for `process.start`.
+    """
+    if identity.kind != "crons":
+        raise ValueError("cron resource handler requires a cron identity")
+
+    def handle(*, context: HostContext, authorization: EffectAuthorization,
+               payload: bytes, timeout: float, peer_pid: int,
+               cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        selected = selected_resources.resolve(identity)
+        if (selected is None or not selected.enabled or selected.operation != "resource.cron.run"
+                or authorization.target != selected.target
+                or authorization.capability != selected.capability
+                or authorization.recipient != selected.recipient
+                or authorization.request_digest != hashlib.sha256(payload).hexdigest()):
+            raise SelectedResourceUnavailable("cron is not enabled in the protected selected-resource catalog")
+        try:
+            request = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ResourceRuntimeError("scheduled invocation payload is malformed") from None
+        if not isinstance(request, dict) or set(request) != {"profile_id", "scheduled_for"}:
+            raise ResourceRuntimeError("scheduled invocation accepts only its selected profile and schedule instant")
+        if request["profile_id"] != selected.profile_id:
+            raise ResourceRuntimeError("scheduled invocation profile differs from root selection")
+        scheduled_for = request["scheduled_for"]
+        if not isinstance(scheduled_for, str) or not re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})", scheduled_for
+        ):
+            raise ResourceRuntimeError("scheduled invocation time must be an explicit ISO-8601 instant")
+        if not _cron_instant_matches(selected.effective_spec, scheduled_for):
+            raise ResourceRuntimeError("scheduled instant does not match the selected cron expression")
+        profile_id = selected.profile_id
+        if profile_id is None:
+            raise SelectedResourceUnavailable("selected cron has no resolved Hermes profile")
+        target = profile_targets.resolve_profile(profile_id)
+        if target is None or target.profile_id != profile_id:
+            raise SelectedResourceUnavailable("selected Hermes profile has no protected custody target")
+        prompt = _cron_profile_prompt(selected, scheduled_for, target)
+        from hermes_installer.authority import canonical_bytes
+        from hermes_installer.authority.client import canonical_profile_target, profile_launch_envelope
+
+        process_target = canonical_profile_target(profile_id, target.executable, target.data_root)
+        argv = [str(target.executable.resolve(strict=True)), "-p", profile_id, "-z", prompt]
+        launch = profile_launch_envelope(
+            target=process_target, profile_id=profile_id, executable=target.executable,
+            artifact_sha256=target.artifact_sha256, artifact_root=target.artifact_root,
+            cwd=target.cwd, data_root=target.data_root, argv=argv,
+            env_allowlist=target.env_allowlist,
+            child_artifact_refs=target.child_artifact_refs,
+            max_lifetime_seconds=target.max_lifetime_seconds,
+            max_output_bytes=target.max_output_bytes, stdin_mode="closed",
+        )
+        response = authority_service.perform_delegated_effect(
+            authorization, delegation_id=selected.delegation_id,
+            payload=canonical_bytes(launch), peer_pid=peer_pid,
+            timeout=min(timeout, float(target.max_lifetime_seconds)), cancelled=cancelled,
+        )
+        if isinstance(response, Mapping):
+            return response
+        return {"status": response.status, "body": response.body,
+                "headers": dict(response.headers), "receipt_id": response.receipt_id}
+
+    return handle
+
+
+def build_selected_resource_effect_handlers(
+    *,
+    selected_resources: SelectedResourceRegistry,
+    profile_targets: SelectedHermesProfileResolver,
+    authority_service: RootDelegatedEffectService,
+) -> dict[tuple[str, str], Callable[..., Mapping[str, Any]]]:
+    """Build concrete handlers for enabled root-selected cron profile runs.
+
+    Call during root `AuthorityService` assembly with selection records read
+    from protected host custody. The returned map uses the service's exact
+    `(operation, protected target)` key. Unenrolled, disabled, channel, webhook,
+    bundle, plugin, and MCP records do not receive an effect handler here.
+    """
+    handlers: dict[tuple[str, str], Callable[..., Mapping[str, Any]]] = {}
+    for selected in selected_resources.rows:
+        if (not selected.enabled or selected.identity.kind != "crons"
+                or not _cron_recipe_is_supported(selected)):
+            continue
+        key = (selected.operation, selected.target)
+        if key in handlers:
+            raise ValueError("multiple selected resources resolve to the same protected effect target")
+        handlers[key] = build_cron_resource_effect_handler(
+            selected.identity, selected_resources=selected_resources,
+            profile_targets=profile_targets, authority_service=authority_service,
+        )
+    return handlers
+
+
+def selected_resource_effect_blockers(
+    selected_resources: SelectedResourceRegistry,
+    *, profile_targets: SelectedHermesProfileResolver | None = None,
+) -> Mapping[tuple[str, str], str]:
+    """Return exact missing native backends for enabled root-selected records."""
+    reasons: dict[tuple[str, str], str] = {}
+    for selected in selected_resources.rows:
+        if not selected.enabled:
+            continue
+        key = (selected.operation, selected.target)
+        if selected.identity.kind == "crons":
+            if not _cron_recipe_is_supported(selected):
+                reason = "the selected cron action has no reviewed local Hermes execution recipe"
+            elif selected.profile_id is None or profile_targets is None or profile_targets.resolve_profile(selected.profile_id) is None:
+                reason = "the selected cron profile lacks a custody-resolved pinned Hermes process target"
+            else:
+                # Handler factory assembly also needs a fixed root delegation
+                # rule for this exact selected resource and child process.
+                continue
+        elif selected.identity.kind == "channels":
+            reason = "the official Hermes channel connector and protected account enrollment are unavailable"
+        elif selected.identity.kind == "webhooks":
+            reason = "the protected ingress listener, secret enrollment, and delegated Hermes route are unavailable"
+        elif selected.identity.kind == "bundles":
+            reason = "the internal Hermes orchestrator launcher and bounded child-profile delegation are unavailable"
+        else:
+            reason = "no root-owned effect handler is registered for this selected resource kind"
+        reasons[key] = reason
+    return reasons
 
 
 def invoke_fixed_resource_effect(
@@ -709,7 +1123,7 @@ def materialize_runtime_resource(
             "catalog_version": catalog_version, "imports": dict(imports), "enabled": False,
         }
     elif kind == "crons":
-        _validate_cron(effective_spec)
+        _validate_cron(effective_spec, expected_source_revision=identity.source_revision)
         adapter_id = "hermes-installer.scheduled-profile-run.v1"
         native_path = f"scheduler/resources/{resource_id}.json"
         discoverability = "installer managed scheduler registry"
@@ -746,11 +1160,17 @@ def materialize_runtime_resource(
             available = native_plugin_handler_available(resource_id)
         except ImportError:
             available = False
+        # Handler resolvability is a separate fact from Hermes discovery. The
+        # installer-owned PluginContext loader is not packaged yet, so the
+        # resource must not be emitted at a path that Hermes could import.
         adapter_id = resource_id if available else None
-        native_path = f"plugins/{resource_id}/plugin.py" if available else None
-        discoverability = "reviewed Hermes PluginContext register(ctx) adapter" if available else "no reviewed native PluginContext handler is installed"
-        invocation = "Hermes native plugin registry register(ctx)" if available else "unavailable until a source-backed register(ctx) handler is installed"
-        blockers = () if available else (f"{_PLUGIN_NEXT_STEP}: {resource_id}.",)
+        native_path = None
+        discoverability = ("reviewed register(ctx) implementation exists; trusted Hermes loader is not packaged"
+                           if available else "no reviewed native PluginContext handler is installed")
+        invocation = ("pending installer-owned PluginContext loader and runtime-context injection"
+                      if available else "unavailable until a source-backed register(ctx) handler is installed")
+        blockers = (("Package the installer-owned trusted PluginContext loader and verify Hermes discovery/runtime context.",)
+                    if available else (f"{_PLUGIN_NEXT_STEP}: {resource_id}.",))
         registration = None
     else:  # guarded by _safe_identity
         raise ResourceRuntimeError(f"unsupported runtime resource kind: {kind}")
@@ -788,11 +1208,22 @@ def _registration(identity: ResourceIdentity, adapter_id: str, catalog_version: 
     }
 
 
+def _freeze_json(value: Any) -> Any:
+    """Recursively freeze normalized JSON values used in root enrollments."""
+    from types import MappingProxyType
+
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
 _CRON_FIELD = re.compile(r"^(?:\*|\d+(?:-\d+)?)(?:/\d+)?(?:,(?:\*|\d+(?:-\d+)?)(?:/\d+)?)*$")
 _CRON_LIMITS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
 
 
-def _validate_cron(spec: Mapping[str, Any]) -> None:
+def _validate_cron(spec: Mapping[str, Any], *, expected_source_revision: str | None = None) -> None:
     expression = spec.get("schedule")
     fields = expression.split() if isinstance(expression, str) else []
     if len(fields) != 5:
@@ -821,8 +1252,22 @@ def _validate_cron(spec: Mapping[str, Any]) -> None:
         raise ResourceRuntimeError("cron timezone is not available on this host") from None
     action = spec.get("action")
     runtime = spec.get("runtime")
-    if not isinstance(action, Mapping) or action.get("type") != "profile-run":
-        raise ResourceRuntimeError("only the reviewed profile-run cron action is supported")
+    if not isinstance(action, Mapping) or action.get("type") not in {
+        "profile-run", "installer-resource-candidate-assessment",
+    }:
+        raise ResourceRuntimeError("cron action is outside the reviewed native scheduler set")
+    if action.get("type") == "installer-resource-candidate-assessment":
+        source = action.get("source")
+        catalog_version = source.get("catalogVersion") if isinstance(source, Mapping) else None
+        if (action.get("mode") != "candidate-assessment" or not isinstance(source, Mapping)
+                or source.get("kind") != "installer-bundle"
+                or not isinstance(catalog_version, str)
+                or source.get("path") != f"resources/vendor/hermes-agent-resources-{catalog_version}"
+                or not re.fullmatch(r"[a-fA-F0-9]{40,64}", str(source.get("revision", "")))
+                or expected_source_revision is not None
+                and source.get("revision", "").lower() != expected_source_revision.lower()
+                or "repository" in action or "ref" in action):
+            raise ResourceRuntimeError("registry candidate assessment must use the pinned installer bundle only")
     if not isinstance(runtime, Mapping) or runtime.get("engine") != "hermes-cron":
         raise ResourceRuntimeError("cron must declare the Hermes cron engine")
     if runtime.get("profileSelection") != "registry-action-profile":
@@ -837,6 +1282,51 @@ def _validate_cron(spec: Mapping[str, Any]) -> None:
     profile = action.get("profile")
     if not isinstance(profiles, (list, tuple)) or not isinstance(profile, str) or profile not in profiles:
         raise ResourceRuntimeError("cron action profile must be explicitly selected in its dependency closure")
+
+
+def _cron_instant_matches(spec: Mapping[str, Any], instant: str) -> bool:
+    """Check that an explicit instant is a minute selected by the cron rule."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    try:
+        parsed = datetime.fromisoformat(instant.replace("Z", "+00:00"))
+        timezone = ZoneInfo(spec["timezone"])
+        local = parsed.astimezone(timezone)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if parsed.tzinfo is None or local.second != 0 or local.microsecond != 0:
+        return False
+    fields = spec["schedule"].split()
+    if len(fields) != 5:
+        return False
+    values = (local.minute, local.hour, local.day, local.month, (local.weekday() + 1) % 7)
+    bounds = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
+    matches = tuple(
+        _cron_field_matches(field, value, minimum, maximum, index == 4)
+        for index, (field, value, (minimum, maximum)) in enumerate(zip(fields, values, bounds, strict=True))
+    )
+    day_of_month_wild = any(part.startswith("*") for part in fields[2].split(","))
+    day_of_week_wild = any(part.startswith("*") for part in fields[4].split(","))
+    calendar_match = matches[2] and matches[4] if day_of_month_wild or day_of_week_wild else matches[2] or matches[4]
+    return matches[0] and matches[1] and matches[3] and calendar_match
+
+
+def _cron_field_matches(field_value: str, value: int, minimum: int, maximum: int,
+                        is_weekday: bool = False) -> bool:
+    for part in field_value.split(","):
+        base, slash, step_text = part.partition("/")
+        step = int(step_text) if slash else 1
+        if base == "*":
+            start, end = minimum, maximum
+        else:
+            start_text, dash, end_text = base.partition("-")
+            start = int(start_text)
+            end = int(end_text) if dash else start
+        candidates = (0, 7) if is_weekday and value == 0 else (value,)
+        if any(start <= candidate <= end and (candidate - start) % step == 0 for candidate in candidates):
+            return True
+    return False
 
 
 def _validate_channel_declaration(spec: Mapping[str, Any]) -> None:

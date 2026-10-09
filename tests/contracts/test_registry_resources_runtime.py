@@ -3,18 +3,26 @@ import hashlib
 import hmac
 import json
 import tempfile
+from types import ModuleType
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from hermes_installer.registry.resources_runtime import (
     FixedResourceEffect,
+    HermesProfileExecutionTarget,
     NativePluginRuntimeContext,
     PluginAdapterUnavailable,
     ResourceIdentity,
     ResourceOverlayStore,
+    SelectedResourceExecution,
+    SelectedResourceRegistry,
+    ReviewedPluginAdapterRegistry,
     ResourceRuntimeError,
     WebhookVerifier,
     create_native_plugin_handler,
+    build_selected_resource_effect_handlers,
+    selected_resource_effect_blockers,
     invoke_channel_route,
     invoke_fixed_resource_effect,
     invoke_internal_bundle_recruitment,
@@ -167,6 +175,163 @@ class ResourcesRuntimeTests(unittest.TestCase):
         with self.assertRaises(PluginAdapterUnavailable):
             create_native_plugin_handler("fixture", context)
 
+    def test_reviewed_plugin_handler_is_not_emitted_as_hermes_discovery_asset(self):
+        artifact = materialize_runtime_resource(
+            "plugins", "resource-overlay-store", "1.0.0",
+            "plugins/resource-overlay-store.yaml", {"name": "resource-overlay-store"},
+            {}, "a" * 40, "2.3.1",
+        )
+        self.assertEqual(artifact.adapter_id, "resource-overlay-store")
+        self.assertIsNone(artifact.native_path)
+        self.assertEqual(artifact.files, {})
+        self.assertFalse(artifact.readiness.materialized)
+        self.assertTrue(any("PluginContext loader" in blocker for blocker in artifact.blockers))
+
+    def test_selected_cron_handler_delegates_only_the_pinned_profile_launch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle = root / "resources/vendor/hermes-agent-resources-2.3.1"
+            bundle.mkdir(parents=True)
+            revision = "a" * 40
+            identity = ResourceIdentity("daily-review", "crons", "1.0.0", "crons/daily-review.yaml", revision, "b" * 64)
+            spec = {
+                "schedule": "0 1 * * *", "timezone": "UTC",
+                "action": {
+                    "type": "installer-resource-candidate-assessment", "mode": "candidate-assessment",
+                    "profile": "hermes", "source": {
+                        "kind": "installer-bundle", "catalogVersion": "2.3.1",
+                        "path": "resources/vendor/hermes-agent-resources-2.3.1", "revision": revision,
+                    },
+                },
+                "requires": {"profiles": ["hermes"]},
+                "runtime": {"engine": "hermes-cron", "profileSelection": "registry-action-profile"},
+                "policy": {"authorityFromSchedule": "deny", "staticRecipientListAsAuthority": "deny"},
+            }
+            selected = SelectedResourceExecution(
+                identity=identity, generation_digest="c" * 64, effective_spec=spec,
+                capability="resource.cron.run", target="resource:crons/daily-review@1.0.0",
+                operation="resource.cron.run", recipient=None, delegation_id="cron-to-profile",
+                profile_id="hermes", enabled=True,
+            )
+            # Root-owned action data cannot be mutated after selection.
+            spec["action"]["mode"] = "changed"
+            with self.assertRaises(TypeError):
+                selected.effective_spec["action"]["mode"] = "changed"
+
+            executable = root / "venv/bin/hermes"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("fixture", encoding="utf-8")
+            data_root = root / "profiles/hermes"
+            data_root.mkdir(parents=True)
+            target = HermesProfileExecutionTarget(
+                profile_id="hermes", executable=executable,
+                artifact_sha256="d" * 64, artifact_root=root, cwd=root,
+                data_root=data_root, env_allowlist={"PATH": "/usr/bin"},
+                child_artifact_refs={"artifact:resources:" + "e" * 64: "e" * 64},
+            )
+            class Profiles:
+                def resolve_profile(self, profile_id):
+                    return target if profile_id == "hermes" else None
+
+            class Service:
+                def __init__(self):
+                    self.call = None
+                def perform_delegated_effect(self, authorization, **kwargs):
+                    self.call = (authorization, kwargs)
+                    return {"status": "accepted"}
+
+            service = Service()
+            handlers = build_selected_resource_effect_handlers(
+                selected_resources=SelectedResourceRegistry((selected,)),
+                profile_targets=Profiles(), authority_service=service,
+            )
+            self.assertEqual(
+                selected_resource_effect_blockers(
+                    SelectedResourceRegistry((selected,)), profile_targets=Profiles(),
+                ),
+                {},
+            )
+            handler = handlers[(selected.operation, selected.target)]
+            request = {"profile_id": "hermes", "scheduled_for": "2026-10-10T01:00:00Z"}
+            payload = json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+            authorization = type("Authorization", (), {
+                "target": selected.target, "capability": selected.capability,
+                "recipient": None, "request_digest": hashlib.sha256(payload).hexdigest(),
+            })()
+
+            authority_package = ModuleType("hermes_installer.authority")
+            authority_package.__path__ = []
+            authority_package.canonical_bytes = lambda value: json.dumps(
+                value, sort_keys=True, separators=(",", ":"), default=str,
+            ).encode()
+            authority_client = ModuleType("hermes_installer.authority.client")
+            authority_client.canonical_profile_target = lambda *args: "profile:hermes"
+            def launch_envelope(**kwargs):
+                return {
+                    "target": kwargs["target"], "profile_id": kwargs["profile_id"],
+                    "executable": str(kwargs["executable"].resolve()),
+                    "artifact_sha256": kwargs["artifact_sha256"],
+                    "artifact_root": str(kwargs["artifact_root"].resolve()),
+                    "cwd": str(kwargs["cwd"].resolve()),
+                    "data_root": str(kwargs["data_root"].resolve()),
+                    "argv": list(kwargs["argv"]), "env_allowlist": dict(kwargs["env_allowlist"]),
+                    "child_artifact_refs": dict(kwargs["child_artifact_refs"]),
+                    "max_lifetime_seconds": kwargs["max_lifetime_seconds"],
+                    "max_output_bytes": kwargs["max_output_bytes"],
+                    "stdin_mode": kwargs["stdin_mode"],
+                }
+            authority_client.profile_launch_envelope = launch_envelope
+            authority_package.client = authority_client
+            with patch.dict("sys.modules", {
+                "hermes_installer.authority": authority_package,
+                "hermes_installer.authority.client": authority_client,
+            }):
+                result = handler(
+                    context=object(), authorization=authorization, payload=payload,
+                    timeout=60.0, peer_pid=123, cancelled=lambda: False,
+                )
+            self.assertEqual(result, {"status": "accepted"})
+            self.assertEqual(service.call[1]["delegation_id"], "cron-to-profile")
+            launch = json.loads(service.call[1]["payload"])
+            self.assertEqual(launch["profile_id"], "hermes")
+            self.assertEqual(launch["target"], "profile:hermes")
+            self.assertEqual(launch["argv"][:3], [str(executable.resolve()), "-p", "hermes"])
+            self.assertIn("Assess only the installer-owned", launch["argv"][4])
+            self.assertEqual(launch["child_artifact_refs"], target.child_artifact_refs)
+
+    def test_selected_cron_without_reviewed_action_has_exact_pending_reason(self):
+        identity = ResourceIdentity("sync", "crons", "1.0.0", "crons/sync.yaml", "a" * 40, "b" * 64)
+        selected = SelectedResourceExecution(
+            identity=identity, generation_digest="c" * 64,
+            effective_spec={"action": {"type": "profile-run", "mode": "registry-update-check"}},
+            capability="resource.cron.run", target="resource:crons/sync@1.0.0",
+            operation="resource.cron.run", recipient=None, delegation_id="cron-to-profile",
+            profile_id="hermes", enabled=True,
+        )
+        registry = SelectedResourceRegistry((selected,))
+        self.assertEqual(registry.generation_digest, "c" * 64)
+        key = (selected.operation, selected.target)
+        self.assertNotIn(key, build_selected_resource_effect_handlers(
+            selected_resources=registry, profile_targets=object(), authority_service=object(),
+        ))
+        self.assertIn("no reviewed local Hermes execution recipe",
+                      selected_resource_effect_blockers(registry)[key])
+        with self.assertRaisesRegex(ValueError, "active generation"):
+            SelectedResourceRegistry((selected,), expected_generation_digest="d" * 64)
+            self.assertEqual(service.call[1]["peer_pid"], 123)
+            self.assertLessEqual(service.call[1]["timeout"], 600.0)
+
+            spoofed = {"profile_id": "other", "scheduled_for": "2026-10-10T01:00:00Z"}
+            spoofed_bytes = json.dumps(spoofed, sort_keys=True, separators=(",", ":")).encode()
+            spoofed_authorization = type("Authorization", (), {
+                "target": selected.target, "capability": selected.capability,
+                "recipient": None, "request_digest": hashlib.sha256(spoofed_bytes).hexdigest(),
+            })()
+            with self.assertRaisesRegex(ResourceRuntimeError, "differs from root selection"):
+                handler(context=object(), authorization=spoofed_authorization, payload=spoofed_bytes,
+                        timeout=60.0, peer_pid=123, cancelled=lambda: False)
+            self.assertEqual(json.loads(service.call[1]["payload"]), launch)
+
     def test_profile_overlay_is_private_cas_and_soft_delete(self):
         with tempfile.TemporaryDirectory() as temp:
             owned = OwnedRoot(Path(temp) / "installer")
@@ -182,6 +347,68 @@ class ResourcesRuntimeTests(unittest.TestCase):
             self.assertIsNone(view.read("record-1"))
             self.assertEqual(set(view.history("record-1")), {first, tombstone})
             self.assertEqual((owned.root / "resource-overlays/hermes/record-1/current.json").stat().st_mode & 0o077, 0)
+            for relative in (
+                "resource-overlays", "resource-overlays/hermes",
+                "resource-overlays/hermes/record-1",
+                "resource-overlays/hermes/record-1/revisions",
+            ):
+                info = (owned.root / relative).stat()
+                self.assertEqual(info.st_uid, __import__("os").getuid())
+                self.assertEqual(info.st_mode & 0o077, 0, relative)
+
+    def test_overlay_registry_adapter_registers_and_invokes_real_profile_store(self):
+        import base64
+
+        with tempfile.TemporaryDirectory() as temp:
+            owned = OwnedRoot(Path(temp) / "installer")
+            owned.ensure()
+            store = ResourceOverlayStore(owned, Journal(owned.path("state.sqlite3")))
+            authority = _FakeAuthority()
+            runtime = NativePluginRuntimeContext(
+                identity=ResourceIdentity(
+                    "resource-overlay-store", "plugins", "1.0.0", "plugins/resource-overlay-store.yaml",
+                    "a" * 40, "b" * 64,
+                ),
+                declared_capabilities=("overlay.read", "overlay.write"),
+                authority=authority,
+                invocation_contexts=lambda **_: ("host-lineage",),
+                selected_adapters=ReviewedPluginAdapterRegistry(),
+                local_overlay_store=store.for_profile("hermes"),
+            )
+
+            class PluginContext:
+                def __init__(self):
+                    self.tools = {}
+
+                def register_tool(self, *, name, schema, handler, **kwargs):
+                    self.tools[name] = handler
+
+            plugin = PluginContext()
+            create_native_plugin_handler("resource-overlay-store", runtime)(plugin)
+            write = plugin.tools["resource_overlay_write"]
+            read = plugin.tools["resource_overlay_read"]
+            history = plugin.tools["resource_overlay_history"]
+            delete = plugin.tools["resource_overlay_delete"]
+            first = write({"record_id": "memory-1", "value_base64": base64.b64encode(b"private").decode()})
+            self.assertEqual(read({"record_id": "memory-1"})["value_base64"], base64.b64encode(b"private").decode())
+            self.assertEqual(history({"record_id": "memory-1"})["revisions"], [first["revision"]])
+            tombstone = delete({"record_id": "memory-1", "expected_revision": first["revision"]})
+            self.assertEqual(len(tombstone["deleted_revision"]), 64)
+            self.assertFalse(read({"record_id": "memory-1"})["found"])
+
+    def test_overlay_read_refuses_expanded_parent_permissions(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as temp:
+            owned = OwnedRoot(Path(temp) / "installer")
+            owned.ensure()
+            store = ResourceOverlayStore(owned, Journal(owned.path("state.sqlite3")))
+            view = store.for_profile("hermes")
+            view.write("record-1", b"private", expected_revision=None)
+            parent = owned.root / "resource-overlays/hermes"
+            os.chmod(parent, 0o755)
+            with self.assertRaisesRegex(ResourceRuntimeError, "unsafe ownership or permissions"):
+                view.read("record-1")
 
 
 if __name__ == "__main__":
