@@ -540,6 +540,31 @@
       "API": "RootSelectedDisplayStarter resolves actual overlay source/patch receipt before fresh selected display grant; constructs exact root adapter startup closure in operation_recipe. NativeDisplayStartupRegistry.prepare generates actual cookie, custody mounts it readonly, selected Xpra adapter binds same bytes, actual Xvfb/display process starts, seal_started_display verifies actual process/current file and original cookie digest. Child process/source cookie correlation retained by root startup observation receipt. No worker-supplied callback says adopted.",
       "evidence": "Pinned parser+source transformation tests and actual Linux Xpra/Xvfb+Desktop positive authentication; wrong/changed cookie, absent overlay, writable fallback, sibling reader, native-cookie mutation denied. Capture real child argv/env/logs with secrets redacted at source and assert no cookie value; do not emit secret evidence. Existing sandbox/window/publicJWT/lease tests remain separate and all pending."
     },
-    "overlay_receipt_join": "Patch receipt is produced only by selected root overlay builder after exact original Xpra source commit and clean input digests are verified; root retained receipt binds source_commit, source_tree_digest, overlay_artifact_id, overlay_sha256, transformed_tree_sha256, selected enrollment/process generation, service_generation_digest, issued_monotonic and expires_monotonic. Receipt resolver rechecks actual compiled tree and selected mode before launch. ID/hash alone or caller patch-success cannot activate."
+    "overlay_receipt_join": "Patch receipt is produced only by selected root overlay builder after exact original Xpra source commit and clean input digests are verified; root retained receipt binds source_commit, source_tree_digest, overlay_artifact_id, overlay_sha256, transformed_tree_sha256, selected enrollment/process generation, service_generation_digest, issued_monotonic and expires_monotonic. Receipt resolver rechecks actual compiled tree and selected mode before launch. ID/hash alone or caller patch-success cannot activate.",
+    "xpra_overlay_registry": {
+      "owner_module": "hermes_installer.remote.xpra_root_xauthority",
+      "constructor": "RootXpraOverlayReceiptRegistry.from_root_runtime(active_bindings,artifact_catalog,owned_store,journal,signer)",
+      "producer": "record_selected_transformation(selected_startup,input_tree_observation,overlay_artifact_observation,actual_output_observation)->opaque patch_receipt_handle root-local. All observations are typed root builder-owned held immutable source/output/catalog observations; no worker dict or caller path. Verifies source commit521b0d2e762c770b2641d258b93d23575fa9cbea, exact three reviewed input bytes, actual selected overlay artifact bytes, only reviewed finite selected-mode transformations and no extra/ignored checkout files.",
+      "DTO_fields": [
+        "schema",
+        "receipt_handle",
+        "source_commit",
+        "source_tree_digest",
+        "overlay_artifact_id",
+        "overlay_sha256",
+        "transformed_tree_sha256",
+        "output_artifact_id",
+        "output_artifact_sha256",
+        "selected_enrollment_id",
+        "process_generation",
+        "service_generation_digest",
+        "issued_monotonic",
+        "expires_monotonic",
+        "signature"
+      ],
+      "consumer": "resolve_selected_patch(patch_receipt_handle,selected_startup)->RootXpraOverlayPatchReceipt; root starter re-resolves actual held transformed artifact/tree/catalog, exact selected enrollment/process/service generation and original lease before fresh selected display start. Custody verifies resulting executable/child artifact closure; cookie/origin registries do not mint this patch proof.",
+      "digests": "source_tree_digest and transformed_tree_sha256 are SHA256 of canonical sorted full regular source member rows {path,sha256,size_bytes,executable}; output_artifact_sha256 is exact deterministic output archive bytes SHA256, not tree digest. Overlay source module artifact hash is distinct. No secret cookie in receipt/evidence.",
+      "lease": "lease <=600 seconds and <= admitted startup transaction/selection original deadline; renew only by actual root revalidation, no worker prolongation. Actual immutable artifact pin persists after lease, effect proof does not."
+    }
   }
 }
