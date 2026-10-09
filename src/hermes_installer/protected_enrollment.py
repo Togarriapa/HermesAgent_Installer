@@ -465,8 +465,9 @@ class ProtectedEnrollmentCatalog:
         return profile
 
     def resolve_package_runtime(self, enrollment_id: str, generation: str,
-                                package_set_id: str, build_catalog: "ProtectedBuildCatalog"):
-        """Resolve a Coral runtime binding from protected enrollment and attested outputs."""
+                                package_set_id: str, build_catalog: "ProtectedBuildCatalog",
+                                *, build_store: Any):
+        """Resolve a Coral runtime only from a completed, signed root build receipt."""
         profile = self.resolve(enrollment_id, generation)
         package_id = _id(package_set_id, "package set ID")
         if package_id != "coral-cp39-runtime-v1":
@@ -483,23 +484,29 @@ class ProtectedEnrollmentCatalog:
         if record.build_generation != profile.generation:
             raise EnrollmentDenied("package runtime build generation is stale")
         build = build_catalog.resolve(record.build_target, record.build_generation)
-        output_digests = build.attest_outputs()
-        if (record.runtime_build_output not in output_digests
-                or output_digests[record.runtime_build_output] != record.runtime_executable_sha256):
-            raise EnrollmentDenied("installed runtime executable is not an attested build output")
-        attestation = hashlib.sha256(_canonical({
-            "target_id": build.target_id, "generation": build.generation,
-            "source_artifact_id": build.source_artifact_id, "source_sha256": build.source_sha256,
-            "toolchain_artifact_id": build.toolchain_artifact_id, "toolchain_sha256": build.toolchain_sha256,
-            "builder_artifact_id": build.builder_artifact_id, "builder_sha256": build.builder_sha256,
-            "outputs": output_digests,
-        })).hexdigest()
-        if attestation != record.runtime_build_attestation_digest:
+        if build_store is None:
+            raise EnrollmentDenied("completed root build attestation is unavailable")
+        try:
+            receipt = build_store.resolve(build)
+            executable = build_store.resolve_output(build, record.runtime_artifact_id)
+        except Exception:
+            raise EnrollmentDenied("completed root build attestation is unavailable or invalid") from None
+        if (receipt.target_id != record.build_target
+                or receipt.enrollment_id != profile.enrollment_id
+                or receipt.generation != profile.generation
+                or receipt.operation_id != "coral-cpython39-source-build-v1"
+                or receipt.attestation_sha256 != record.runtime_build_attestation_digest):
             raise EnrollmentDenied("runtime build attestation does not match root enrollment")
+        output = next((item for item in receipt.outputs
+                       if item.artifact_id == record.runtime_artifact_id), None)
+        if (output is None or output.name != record.runtime_build_output
+                or output.sha256 != record.runtime_executable_sha256
+                or executable != record.runtime_executable):
+            raise EnrollmentDenied("installed runtime executable is not the selected attested build output")
         glibc = _system_glibc_version()
         if not _version_at_least(glibc, record.target_glibc_min):
             raise EnrollmentDenied("target glibc is below the enrolled Coral runtime minimum")
-        executable = _owned_path(record.runtime_executable, uid=0, directory=False)
+        executable = _owned_path(executable, uid=0, directory=False)
         if hashlib.sha256(executable.read_bytes()).hexdigest() != record.runtime_executable_sha256:
             raise EnrollmentDenied("root-enrolled runtime executable digest changed")
         venv = record.venv_root
@@ -520,7 +527,7 @@ class ProtectedEnrollmentCatalog:
         return PackageSetRuntimeBinding(
             enrollment_id=profile.enrollment_id, generation=profile.generation,
             runtime_artifact_id=record.runtime_artifact_id,
-            runtime_build_attestation_digest=attestation,
+            runtime_build_attestation_digest=receipt.attestation_sha256,
             runtime_executable_sha256=record.runtime_executable_sha256,
             abi=record.abi, glibc_version=glibc,
             service_uid=profile.service_uid, service_gid=profile.service_gid,

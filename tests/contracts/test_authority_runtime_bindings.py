@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermes_installer.authority.runtime_bindings import build_root_runtime_bindings
+from hermes_installer.authority.runtime_bindings import RootRuntimeBindings, build_root_runtime_bindings
 from hermes_installer.protected_enrollment import EnrollmentDenied
 
 
@@ -51,3 +51,35 @@ def test_empty_device_and_build_catalogs_fail_only_when_selected():
         devices.resolve("unavailable-device", "device-generation")
     with pytest.raises(EnrollmentDenied, match="stale"):
         builds.resolve("coral-cpython-build:start", "build-generation")
+
+
+def test_selected_start_join_uses_fixed_recipe_and_effect_target():
+    recipe = SimpleNamespace(
+        process_start_target="root-fixed-start", enrollment_id="enrollment-a",
+        generation="generation-a", profile_id="profile-a", principal_id="principal-a",
+        service_uid=1001, service_gid=1001, operation_id="hermes-server-start-v1",
+    )
+    effect = SimpleNamespace(
+        target="root-fixed-start", enrollment_id="enrollment-a", generation="generation-a",
+        profile_id="profile-a", principal_id="principal-a", service_uid=1001, service_gid=1001,
+    )
+    catalog = SimpleNamespace(
+        resolve_launch_recipe=lambda *_args: recipe,
+        resolve_operation=lambda *_args: effect,
+    )
+    bindings = RootRuntimeBindings(
+        enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None,
+    )
+    selected = bindings.resolve_selected_operation(
+        "enrollment-a", "generation-a", "process.start", "hermes-server-start-v1",
+    )
+    assert (selected.operation, selected.operation_id, selected.target) == (
+        "process.start", "hermes-server-start-v1", "root-fixed-start")
+    assert (selected.profile_id, selected.principal_id, selected.service_uid) == (
+        "profile-a", "principal-a", 1001)
+    with pytest.raises(EnrollmentDenied, match="only protected process.start"):
+        bindings.resolve_selected_operation(
+            "enrollment-a", "generation-a", "process.stop", "hermes-server-start-v1",
+        )

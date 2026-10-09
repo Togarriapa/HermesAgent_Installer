@@ -62,6 +62,34 @@ def test_build_target_is_fixed_and_generation_bound():
         catalog.resolve("/tmp/attacker-script", "g1")
 
 
+def test_package_runtime_requires_signed_completed_build_receipt():
+    profile = SimpleNamespace(
+        enrollment_id="service-a", generation="gen-a",
+        runtime_artifact_ids=("coral-python39-source",), service_uid=1001, service_gid=1001,
+        profile_id="profile-a", principal_id="principal-a",
+        package_runtime_records={"coral-cp39-runtime-v1": SimpleNamespace(
+            runtime_artifact_id="coral-python39-source", abi="cp39/aarch64",
+            target_glibc_min="2.34", build_target="coral-cpython-build:start",
+            build_generation="gen-a", runtime_build_attestation_digest="b" * 64,
+            runtime_executable_sha256="c" * 64, runtime_build_output="python/bin/python3.9",
+            venv_root_id="venv-a", policy_revision="policy-a",
+            runtime_executable=Path("/opt/hermes/python3.9"),
+            venv_root=Path("/var/lib/hermes/venv-a"),
+        )},
+    )
+    catalog = object.__new__(ProtectedEnrollmentCatalog)
+    catalog.resolve = lambda *_args: profile
+    build_catalog = SimpleNamespace(resolve=lambda *_args: SimpleNamespace(
+        target_id="coral-cpython-build:start", generation="gen-a",
+        attest_outputs=lambda: {"python/bin/python3.9": "c" * 64},
+    ))
+    with pytest.raises(EnrollmentDenied, match="completed root build attestation"):
+        catalog.resolve_package_runtime(
+            "service-a", "gen-a", "coral-cp39-runtime-v1", build_catalog,
+            build_store=None,
+        )
+
+
 def test_fixed_build_record_rejects_unlisted_target_and_caller_recipe_fields():
     item = build_record("arbitrary-shell:start")
     with pytest.raises(EnrollmentDenied):

@@ -18,6 +18,19 @@ from hermes_installer.protected_enrollment import (
 
 
 @dataclass(frozen=True, slots=True)
+class SelectedProcessOperation:
+    operation: str
+    operation_id: str
+    target: str
+    enrollment_id: str
+    generation: str
+    profile_id: str
+    principal_id: str
+    service_uid: int
+    service_gid: int
+
+
+@dataclass(frozen=True, slots=True)
 class RootRuntimeBindings:
     """The immutable handler registrations and selectors for one daemon load."""
 
@@ -28,6 +41,32 @@ class RootRuntimeBindings:
     effect_handlers: Mapping[tuple[str, str], Any]
     native_bridges: Mapping[str, Any]
     artifact_catalog: Any
+    build_store: Any
+    service_connector: Any
+
+    def resolve_selected_operation(self, enrollment_id: str, generation: str,
+                                   operation: str, operation_id: str) -> Any:
+        """Join a fixed effect target to one protected typed launch recipe."""
+        if operation != "process.start":
+            raise EnrollmentDenied("only protected process.start recipes are selectable")
+        recipe = self.enrollment_catalog.resolve_launch_recipe(
+            enrollment_id, generation, operation_id,
+        )
+        effect = self.enrollment_catalog.resolve_operation(enrollment_id, generation, operation)
+        if (recipe.process_start_target != effect.target
+                or recipe.enrollment_id != effect.enrollment_id
+                or recipe.generation != effect.generation
+                or recipe.profile_id != effect.profile_id
+                or recipe.principal_id != effect.principal_id
+                or recipe.service_uid != effect.service_uid):
+            raise EnrollmentDenied("selected launch recipe and process.start target do not join")
+        return SelectedProcessOperation(
+            operation=operation, operation_id=recipe.operation_id,
+            target=effect.target, enrollment_id=recipe.enrollment_id,
+            generation=recipe.generation, profile_id=recipe.profile_id,
+            principal_id=recipe.principal_id, service_uid=recipe.service_uid,
+            service_gid=recipe.service_gid,
+        )
 
     def resolve_native_package(self, package_id: str, generation: str) -> Any:
         package = self.enrollment_catalog.resolve_native_package(package_id, generation)
@@ -167,6 +206,8 @@ def build_root_runtime_bindings(
         signing_key = read_protected_file(AUTHORITY_KEY_PATH, expected_uid=expected_uid, maximum=64)
     if not isinstance(signing_key, bytes) or len(signing_key) != 32:
         raise EnrollmentDenied("root package-set signing key is unavailable")
+    from .build_execution import ContentAddressedBuildStore
+    build_store = ContentAddressedBuildStore.root_store(authority_key=signing_key)
     from hermes_installer.artifacts import (
         build_package_set_handlers, load_protected_package_sets,
     )
@@ -187,9 +228,19 @@ def build_root_runtime_bindings(
         artifact_catalog, enrollment.artifact_staging_directory, package_sets,
         runtime_resolver=lambda spec: service_catalog.resolve_package_runtime(
             spec.enrollment_id, spec.generation, spec.package_set_id, build_catalog,
+            build_store=build_store,
         ),
         expected_uid=expected_uid, authorization_check=authorization_check,
     ))
+
+    from hermes_installer.service_connector import build_enrolled_service_connector_handlers
+    service_connector, connector_handlers = build_enrolled_service_connector_handlers(
+        catalog=service_catalog, process_manager=process_manager,
+    )
+    for key, handler in connector_handlers.items():
+        if key in effect_handlers:
+            raise EnrollmentDenied("fixed service connector handler conflicts with an existing root handler")
+        effect_handlers[key] = handler
 
     return RootRuntimeBindings(
         enrollment_catalog=service_catalog,
@@ -199,4 +250,6 @@ def build_root_runtime_bindings(
         effect_handlers=MappingProxyType(effect_handlers),
         native_bridges=MappingProxyType(dict(enrollment.native_bridges)),
         artifact_catalog=artifact_catalog,
+        build_store=build_store,
+        service_connector=service_connector,
     )
