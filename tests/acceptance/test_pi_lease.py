@@ -10,6 +10,7 @@ from hermes_installer.verification.pi_lease import (
     AUTHORIZATION_REFERENCE,
     RETAINED_HUMAN_INSTRUCTION,
     PiObservation,
+    build_pi_contract_test_request,
     build_pi_read_only_lease,
 )
 
@@ -88,6 +89,30 @@ class PiLeaseTests(unittest.TestCase):
         self.assertIn("profile_invocation", lease.denied_actions)
         self.assertIn("model_inference", lease.denied_actions)
         self.assertIn("arbitrary_shell", lease.denied_actions)
+
+    def test_contract_request_is_fixed_to_exact_candidate_and_non_shell_suite(self):
+        lease = build_pi_read_only_lease(self.observation, candidate_sha="f" * 40, now=self.now)
+        request = build_pi_contract_test_request(lease, python_executable="/usr/bin/python3", now=self.now)
+        value = request.to_dict()
+        self.assertEqual("f" * 40, value["candidate_sha"])
+        self.assertEqual(lease.manifest_sha256, value["target_manifest_sha256"])
+        self.assertEqual(("PATH", "PYTHONPATH"), request.environment_allowlist)
+        self.assertEqual(120, request.timeout_seconds)
+        self.assertEqual("/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/repo", request.cwd)
+        self.assertEqual("-m", request.argv[1])
+        self.assertEqual("unittest", request.argv[2])
+        self.assertNotIn(request.argv[0].rsplit("/", 1)[-1], {"sh", "bash", "dash", "zsh"})
+        self.assertEqual(8, len(request.expected_assertions))
+
+    def test_contract_request_rejects_candidate_mismatch_interpreter_and_expired_lease(self):
+        other_checkout = build_pi_read_only_lease(self.observation, candidate_sha="a" * 40, now=self.now)
+        with self.assertRaisesRegex(PermissionError, "does not match"):
+            build_pi_contract_test_request(other_checkout, python_executable="/usr/bin/python3", now=self.now)
+        matching = build_pi_read_only_lease(self.observation, candidate_sha="f" * 40, now=self.now)
+        with self.assertRaisesRegex(PermissionError, "interpreter"):
+            build_pi_contract_test_request(matching, python_executable="/tmp/python3", now=self.now)
+        with self.assertRaisesRegex(PermissionError, "expired"):
+            build_pi_contract_test_request(matching, python_executable="/usr/bin/python3", now=self.now + timedelta(minutes=11))
 
 
 if __name__ == "__main__":
