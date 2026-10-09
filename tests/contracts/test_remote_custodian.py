@@ -57,6 +57,7 @@ class VerifierCustodianConfigTests(unittest.TestCase):
 
     def test_verifier_requires_explicit_policy_read_reference(self):
         for field, value in (("policy_read_token_ref", "inline-secret"),
+                             ("policy_read_token_ref", "env://CF"),
                              ("credential_ref", "file:///var/lib/hermes-installer/remote/read")):
             with self.subTest(field=field):
                 with tempfile.TemporaryDirectory() as directory:

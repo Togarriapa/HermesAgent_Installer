@@ -28,11 +28,9 @@ def validate_policy_read_reference(value: object) -> str | None:
     if value in (None, ""):
         return None
     if (not isinstance(value, str) or len(value) > 2048 or
-            not value.startswith(("keyring://", "secret://", "file://", "env://")) or
+            not value.startswith(("keyring://", "secret://", "file://")) or
             any(ord(ch) < 32 for ch in value)):
-        raise RemoteConfigError("Use a secure keyring://, secret://, file:// or env:// policy-read token reference")
-    if value.startswith("env://") and not re.fullmatch(r"env://[A-Za-z_][A-Za-z0-9_]{0,127}", value):
-        raise RemoteConfigError("The policy-read environment reference is invalid")
+        raise RemoteConfigError("Use a protected keyring://, secret:// or file:// policy-read token reference")
     return value
 
 def validate_hostname(value: str) -> str:
@@ -65,7 +63,7 @@ def collect_remote_setup(*, interactive: bool, config: dict | None = None,
         if not token:
             raise CredentialError("A valid Cloudflare API token is required")
         policy_read_ref = validate_policy_read_reference(input_fn(
-            "Minimum-read Access policy token reference (keyring://, secret://, file:// or env://; blank to configure later): "
+            "Minimum-read Access policy token reference (protected keyring://, secret:// or file://; blank to configure later): "
         ).strip())
     else:
         try:

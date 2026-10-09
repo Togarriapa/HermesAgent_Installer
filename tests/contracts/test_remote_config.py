@@ -55,5 +55,7 @@ class RemoteConfigTests(unittest.TestCase):
             collect_remote_setup(interactive=False,config={**base,"policy_read_token_ref":"env://CF"},environ={"CF":"setup-token"},client_factory=FakeClient)
         with self.assertRaisesRegex(RemoteConfigError,"secure"):
             collect_remote_setup(interactive=False,config={**base,"policy_read_token_ref":"raw-secret"},environ={"CF":"setup-token"},client_factory=FakeClient)
+        with self.assertRaisesRegex(RemoteConfigError,"protected"):
+            collect_remote_setup(interactive=False,config={**base,"policy_read_token_ref":"env://CF"},environ={"CF":"setup-token"},client_factory=FakeClient)
 
 if __name__ == "__main__": unittest.main()

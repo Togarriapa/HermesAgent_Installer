@@ -97,7 +97,7 @@ class VerifierServiceConfig:
         if not re.fullmatch(r"https://[a-z0-9-]+\.cloudflareaccess\.com", self.issuer):
             raise ValueError("fixed Cloudflare Access issuer required")
         if not isinstance(self.policy_read_token_ref, str) or not re.fullmatch(
-            r"(?:keyring|secret|file|env)://[A-Za-z0-9_.:/%-]{1,2040}", self.policy_read_token_ref
+            r"(?:keyring|secret|file)://[A-Za-z0-9_.:/%-]{1,2040}", self.policy_read_token_ref
         ):
             raise ValueError("separate verifier read-token reference required")
         if not isinstance(self.jwks, Mapping) or not 1 <= len(self.jwks) <= 16:
