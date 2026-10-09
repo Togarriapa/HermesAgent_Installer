@@ -53,11 +53,13 @@ class MemoryManager:
 
     def __init__(self, providers: Iterable[Provider], route_allowed=None, *,
                  owner_ledger: OwnerLedger | None = None,
-                 trusted_authorizer: TrustedAuthorizer | None = None):
+                 trusted_authorizer: TrustedAuthorizer | None = None,
+                 capture_queue: Any = None):
         self.providers = {provider.name: provider for provider in providers}
         self._legacy_route = route_allowed
         self.owner_ledger = owner_ledger
         self.trusted_authorizer = trusted_authorizer
+        self.capture_queue = capture_queue
 
     def _require_runtime(self) -> None:
         if self.owner_ledger is None or self.trusted_authorizer is None:
@@ -84,6 +86,8 @@ class MemoryManager:
         old = self.owner_ledger.get_owner(profile)
         if old == name:
             return
+        get_owner_state = getattr(self.owner_ledger, "get_owner_state", None)
+        old_generation = get_owner_state(profile)[1] if old and get_owner_state else None
         previous = self.providers.get(old) if old else None
         selected = self.providers.get(name) if name else None
         if old and previous is None:
@@ -130,6 +134,16 @@ class MemoryManager:
             if abort:
                 abort(profile, transition_id)
             raise
+        if old and old_generation is not None and self.capture_queue is not None:
+            revoke_owner = getattr(self.capture_queue, "revoke_owner", None)
+            if revoke_owner is None:
+                raise MemoryUnavailable("owner changed but durable capture revocation is unavailable")
+            try:
+                revoke_owner(profile, old, old_generation, reason="owner_changed")
+            except Exception as exc:
+                # The committed owner epoch already blocks old jobs. Surface a
+                # durable cleanup failure without trying to undo the new owner.
+                raise MemoryUnavailable("owner changed; old capture queue cleanup needs recovery") from exc
 
     def ingest(self, record: MemoryRecord, *, context: Any = None,
                generated_by_memory: bool = False) -> None:

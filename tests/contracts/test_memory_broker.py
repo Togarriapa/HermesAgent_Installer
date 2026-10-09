@@ -112,7 +112,7 @@ class MemoryBrokerTests(unittest.TestCase):
         owner = lambda profile: ("agentmemory", 7)
         def consent(**kwargs):
             consent_calls.append(kwargs)
-            return b"root-signed-consent"
+            return {"consent_id": "consent-1", "signature": "root-signed"}
         context = Context()
         with tempfile.TemporaryDirectory() as directory:
             queue = DurableMemoryQueue(Path(directory) / "queue",
@@ -127,11 +127,35 @@ class MemoryBrokerTests(unittest.TestCase):
             self.assertEqual(job["id"], receipt)
             self.assertEqual(job["owner_generation"], 7)
             self.assertIn(b'"lineage_hash"', job["source_context"])
-            self.assertEqual(job["consent"], b"root-signed-consent")
+            self.assertEqual(json.loads(job["consent"]), {"consent_id":"consent-1","signature":"root-signed"})
+            self.assertEqual(job["consent_id"], "consent-1")
+            self.assertTrue(queue.consent_active("consent-1"))
             self.assertEqual(queue.result(context, receipt)["status"], "processing")
             self.assertFalse(queue.result(Context("p2", "n2"), receipt)["found"])
             self.assertEqual(consent_calls[0]["provider_id"], "agentmemory")
             self.assertEqual(consent_calls[0]["owner_generation"], 7)
+
+    def test_prepared_owner_transition_blocks_worker_without_consuming_job(self):
+        t = target("p1", "n1", "service-one")
+        with tempfile.TemporaryDirectory() as directory:
+            state = {"transitioning": False, "owner": ("agentmemory", 7)}
+            def owner_state(_):
+                if state["transitioning"]:
+                    raise RuntimeError("prepared owner transition")
+                return state["owner"]
+            queue = DurableMemoryQueue(Path(directory) / "queue",
+                owner_state=owner_state,
+                consent_issuer=lambda **_: {"consent_id":"pending-consent","signature":"signed"})
+            receipt = queue.enqueue(target=t, context=Context(), body={
+                "schema":1,"event":"turn","session_id":"s",
+                "user_content":"synthetic","assistant_content":"synthetic"})
+            state["transitioning"] = True
+            self.assertIsNone(queue.claim())
+            self.assertFalse(queue.consent_active("pending-consent"))
+            self.assertEqual(queue.result(Context(), receipt)["status"], "queued")
+            with queue._db() as db:
+                stored = db.execute("SELECT event FROM jobs WHERE id=?", (receipt,)).fetchone()[0]
+            self.assertIn(b"synthetic", bytes(stored))
 
     def test_pinned_provider_routes_and_payloads_match_upstream_contracts(self):
         # Fixed routes were checked against each provider's exact enrolled source.
@@ -163,13 +187,38 @@ class MemoryBrokerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             queue = DurableMemoryQueue(Path(directory) / "queue",
                 owner_state=lambda _: ("claude-mem", 8),
-                consent_issuer=lambda **_: b"consent")
+                consent_issuer=lambda **_: {"consent_id":"revocable-1","signature":"signed"})
             with self.assertRaises(PermissionError):
                 queue.enqueue(target=t, context=Context(), body={
                     "schema": 1, "event": "turn", "session_id": "s",
                     "user_content": "synthetic", "assistant_content": "synthetic",
                 })
             self.assertIsNone(queue.claim())
+
+    def test_owner_revocation_clears_private_payload_and_disables_consent(self):
+        t = target("p1", "n1", "service-one")
+        owner = {"value": ("agentmemory", 7)}
+        with tempfile.TemporaryDirectory() as directory:
+            queue = DurableMemoryQueue(Path(directory) / "queue",
+                owner_state=lambda _: owner["value"],
+                consent_issuer=lambda **_: {"consent_id":"consent-revoke","signature":"signed"})
+            receipt = queue.enqueue(target=t, context=Context(), body={
+                "schema": 1, "profile":"p1", "namespace":"n1", "event":"turn",
+                "session_id":"synthetic-session", "user_content":"private queued text",
+                "assistant_content":"private generated text"})
+            job = queue.claim()
+            self.assertTrue(queue.consent_active("consent-revoke"))
+            self.assertEqual(queue.revoke_owner("p1", "agentmemory", 7), 1)
+            self.assertFalse(queue.consent_active("consent-revoke"))
+            result = queue.result(Context(), receipt)
+            self.assertEqual(result["status"], "failed")
+            with queue._db() as db:
+                stored = db.execute("SELECT source_context,consent,event FROM jobs WHERE id=?", (receipt,)).fetchone()
+            self.assertEqual(tuple(bytes(value) for value in stored), (b"", b"", b""))
+            # A writer that returns after revocation must not resurrect bytes or
+            # turn an already failed job back into a completed capture.
+            queue.finish(job, {"too_late": True})
+            self.assertEqual(queue.result(Context(), receipt)["status"], "failed")
 
 
 if __name__ == "__main__":

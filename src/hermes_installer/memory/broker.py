@@ -95,12 +95,25 @@ class BackgroundEffect(Protocol):
     def __call__(self, *, source_context_wire: bytes, consent_wire: bytes,
                  provider_id: str, owner_generation: int, action: str,
                  capability: str, payload: bytes, timeout: float,
-                 cancelled: Callable[[], bool]) -> bytes: ...
+                 cancelled: Callable[[], bool]) -> Any: ...
 
 
 class BackgroundConsentIssuer(Protocol):
     def __call__(self, *, context: HostContext, provider_id: str,
-                 owner_generation: int, ttl_seconds: int = 300) -> bytes: ...
+                 owner_generation: int, ttl_seconds: int = 300) -> Any: ...
+
+
+def _consent_wire(value: Any) -> tuple[str, bytes]:
+    """Persist the authority-issued signed consent as canonical bounded JSON."""
+    serializer = getattr(value, "to_wire", None)
+    wire = serializer() if callable(serializer) else value
+    if not isinstance(wire, Mapping):
+        raise BrokerDenied("authority did not return typed background consent")
+    consent_id, signature = wire.get("consent_id"), wire.get("signature")
+    if (not isinstance(consent_id, str) or not consent_id or len(consent_id) > 256
+            or not isinstance(signature, str) or not signature):
+        raise BrokerDenied("authority consent lacks a stable ID or signature")
+    return consent_id, canonical(dict(wire), 16 * 1024)
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,10 +222,20 @@ class DurableMemoryQueue:
                     source_context BLOB NOT NULL, consent BLOB NOT NULL, event BLOB NOT NULL,
                     status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
                     lease_until REAL, created REAL NOT NULL, updated REAL NOT NULL,
-                    result BLOB, error_code TEXT
+                    result BLOB, error_code TEXT, consent_id TEXT NOT NULL DEFAULT ''
                 );
                 CREATE INDEX IF NOT EXISTS memory_jobs_ready ON jobs(status,created);
+                CREATE TABLE IF NOT EXISTS consents(
+                    consent_id TEXT PRIMARY KEY, profile TEXT NOT NULL, provider TEXT NOT NULL,
+                    owner_generation INTEGER NOT NULL, active INTEGER NOT NULL,
+                    created REAL NOT NULL, updated REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS memory_consents_owner
+                    ON consents(profile,provider,owner_generation,active);
                 """)
+                columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
+                if "consent_id" not in columns:
+                    db.execute("ALTER TABLE jobs ADD COLUMN consent_id TEXT NOT NULL DEFAULT ''")
             finally:
                 db.close()
 
@@ -241,10 +264,9 @@ class DurableMemoryQueue:
         if owner != target.provider or type(generation) is not int or generation < 1:
             raise BrokerDenied("provider is not the durable capture owner")
         source = canonical(context.to_wire(), 16 * 1024)
-        consent = self.consent_issuer(context=context, provider_id=target.provider,
-                                      owner_generation=generation, ttl_seconds=300)
-        if not isinstance(consent, bytes) or not 1 <= len(consent) <= 16 * 1024:
-            raise BrokerDenied("authority did not issue bounded signed background consent")
+        consent_id, consent = _consent_wire(self.consent_issuer(
+            context=context, provider_id=target.provider,
+            owner_generation=generation, ttl_seconds=300))
         raw_event = canonical(event, MAX_EVENT)
         receipt = secrets.token_urlsafe(24)
         now = self.clock()
@@ -254,6 +276,7 @@ class DurableMemoryQueue:
                 db.execute("BEGIN IMMEDIATE")
                 db.execute("DELETE FROM jobs WHERE status IN ('complete','failed') AND updated<?",
                            (now - 30 * 86400,))
+                db.execute("DELETE FROM consents WHERE active=0 AND updated<?", (now - 30 * 86400,))
                 n = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
                 if n >= 10000:
                     raise BrokerUnavailable("durable memory queue is full")
@@ -261,9 +284,11 @@ class DurableMemoryQueue:
                                        (context.profile_id,)).fetchone()[0]
                 if profile_n >= 1000:
                     raise BrokerUnavailable("profile memory queue is full")
-                db.execute("INSERT INTO jobs(id,profile,namespace,provider,owner_generation,source_context,consent,event,status,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                db.execute("INSERT INTO consents(consent_id,profile,provider,owner_generation,active,created,updated) VALUES(?,?,?,?,1,?,?)",
+                    (consent_id, context.profile_id, target.provider, generation, now, now))
+                db.execute("INSERT INTO jobs(id,profile,namespace,provider,owner_generation,source_context,consent,event,status,created,updated,consent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (receipt, context.profile_id, context.namespace_id, target.provider,
-                     generation, source, consent, raw_event, "queued", now, now))
+                     generation, source, consent, raw_event, "queued", now, now, consent_id))
                 db.commit()
             except BaseException:
                 db.rollback()
@@ -303,18 +328,34 @@ class DurableMemoryQueue:
                 # retry it automatically: upstream APIs may not offer idempotency.
                 db.execute("UPDATE jobs SET status='failed',error_code='worker_lost_outcome_unknown',source_context=X'',consent=X'',event=X'',lease_until=NULL,updated=? WHERE status='processing' AND lease_until<?",
                            (now, now))
-                row = db.execute("SELECT id,profile,namespace,provider,owner_generation,source_context,consent,event,attempts FROM jobs WHERE status='queued' ORDER BY created LIMIT 1").fetchone()
-                if row is None:
+                db.execute("UPDATE consents SET active=0,updated=? WHERE consent_id IN (SELECT consent_id FROM jobs WHERE status='failed' AND error_code='worker_lost_outcome_unknown')",
+                           (now,))
+                while True:
+                    row = db.execute("SELECT id,profile,namespace,provider,owner_generation,source_context,consent,event,attempts,consent_id FROM jobs WHERE status='queued' ORDER BY created LIMIT 1").fetchone()
+                    if row is None:
+                        db.commit()
+                        return None
+                    try:
+                        owner, generation = self.owner_state(str(row[1]))
+                    except Exception:
+                        # A prepared owner transition or unreadable ledger blocks
+                        # queue processing without consuming or disclosing bytes.
+                        db.rollback()
+                        return None
+                    if owner != row[3] or generation != row[4]:
+                        db.execute("UPDATE jobs SET status='failed',error_code='owner_changed',source_context=X'',consent=X'',event=X'',lease_until=NULL,updated=? WHERE id=? AND status='queued'",
+                                   (now, row[0]))
+                        db.execute("UPDATE consents SET active=0,updated=? WHERE consent_id=?",
+                                   (now, row[9]))
+                        continue
+                    if db.execute("UPDATE jobs SET status='processing',lease_until=?,updated=?,attempts=attempts+1 WHERE id=? AND status='queued'",
+                                  (now + lease_seconds, now, row[0])).rowcount != 1:
+                        db.rollback()
+                        return None
                     db.commit()
-                    return None
-                if db.execute("UPDATE jobs SET status='processing',lease_until=?,updated=?,attempts=attempts+1 WHERE id=? AND status='queued'",
-                              (now + lease_seconds, now, row[0])).rowcount != 1:
-                    db.rollback()
-                    return None
-                db.commit()
-                return dict(zip(("id","profile_id","namespace_id","provider","owner_generation",
-                    "source_context","consent","event","attempts"),
-                    (row[0],row[1],row[2],row[3],row[4],bytes(row[5]),bytes(row[6]),bytes(row[7]),row[8]+1)))
+                    return dict(zip(("id","profile_id","namespace_id","provider","owner_generation",
+                        "source_context","consent","event","attempts","consent_id"),
+                        (row[0],row[1],row[2],row[3],row[4],bytes(row[5]),bytes(row[6]),bytes(row[7]),row[8]+1,row[9])))
             finally:
                 db.close()
 
@@ -327,9 +368,63 @@ class DurableMemoryQueue:
         with process_lock(self.owned.path("memory-queue.lock")):
             db = self._db()
             try:
+                db.execute("BEGIN IMMEDIATE")
                 if db.execute("UPDATE jobs SET status=?,result=?,error_code=?,source_context=X'',consent=X'',event=X'',lease_until=NULL,updated=? WHERE id=? AND status='processing'",
                     (status, raw, error_code[:64] if error_code else None, self.clock(), job["id"])).rowcount != 1:
+                    prior = db.execute("SELECT status,error_code FROM jobs WHERE id=?", (job["id"],)).fetchone()
+                    if prior and prior[0] == "failed" and prior[1] in {
+                            "owner_changed", "capture_disabled", "profile_removed"}:
+                        db.commit()
+                        return
+                    db.rollback()
                     raise BrokerUnavailable("queue lease changed before completion")
+                db.execute("UPDATE consents SET active=0,updated=? WHERE consent_id=?",
+                           (self.clock(), job.get("consent_id", "")))
+                db.commit()
+            finally:
+                db.close()
+
+    def consent_active(self, consent_id: str) -> bool:
+        """Fail closed unless a durable job and matching current owner remain active."""
+        if not isinstance(consent_id, str) or not consent_id or len(consent_id) > 256:
+            return False
+        with process_lock(self.owned.path("memory-queue.lock")):
+            db = self._db()
+            try:
+                row = db.execute("SELECT profile,provider,owner_generation,active FROM consents WHERE consent_id=?",
+                                 (consent_id,)).fetchone()
+            finally:
+                db.close()
+        if row is None or row[3] != 1:
+            return False
+        try:
+            owner, generation = self.owner_state(str(row[0]))
+        except Exception:
+            return False
+        return owner == row[1] and generation == row[2]
+
+    def revoke_owner(self, profile_id: str, provider_id: str, owner_generation: int,
+                     *, reason: str = "owner_changed") -> int:
+        """Atomically revoke one owner's queued consent and erase private payload bytes."""
+        if (not isinstance(profile_id, str) or not profile_id or len(profile_id) > 128
+                or provider_id not in PROVIDERS or type(owner_generation) is not int
+                or owner_generation < 1):
+            raise ValueError("invalid memory owner revocation scope")
+        code = reason if reason in {"capture_disabled", "profile_removed", "owner_changed"} else "owner_changed"
+        now = self.clock()
+        with process_lock(self.owned.path("memory-queue.lock")):
+            db = self._db()
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                changed = db.execute("UPDATE jobs SET status='failed',error_code=?,source_context=X'',consent=X'',event=X'',lease_until=NULL,updated=? WHERE profile=? AND provider=? AND owner_generation=? AND status IN ('queued','processing')",
+                    (code, now, profile_id, provider_id, owner_generation)).rowcount
+                db.execute("UPDATE consents SET active=0,updated=? WHERE profile=? AND provider=? AND owner_generation=? AND active=1",
+                    (now, profile_id, provider_id, owner_generation))
+                db.commit()
+                return int(changed)
+            except BaseException:
+                db.rollback()
+                raise
             finally:
                 db.close()
 
@@ -342,8 +437,10 @@ class DurableMemoryQueue:
             db = self._db()
             try:
                 db.execute("BEGIN IMMEDIATE")
+                now = self.clock()
                 changed = db.execute("UPDATE jobs SET status='failed',error_code=?,source_context=X'',consent=X'',event=X'',lease_until=NULL,updated=? WHERE profile=? AND status IN ('queued','processing')",
-                    (code,self.clock(),profile_id)).rowcount
+                    (code,now,profile_id)).rowcount
+                db.execute("UPDATE consents SET active=0,updated=? WHERE profile=? AND active=1", (now,profile_id))
                 db.commit()
                 return int(changed)
             except BaseException:
@@ -621,11 +718,12 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
     owner_state = ledger.get_owner_state
     consent_issuer = getattr(authority_service, "create_background_consent", None)
     effect_runner = getattr(authority_service, "perform_memory_effect", None)
-    consent_active = callable(consent_issuer) and callable(effect_runner)
+    consent_ready = callable(consent_issuer) and callable(effect_runner)
     queue = None
-    if consent_active:
+    if consent_ready:
         queue = DurableMemoryQueue(root_data_dir / "queue", owner_state=owner_state,
                                    consent_issuer=consent_issuer)
+    consent_active = queue.consent_active if queue is not None else (lambda _consent_id: False)
     def eligibility(target: MemoryTarget, stage: str, context: HostContext) -> bool:
         # Enabling this requires a fresh protected policy decision and an
         # explicitly enrolled private-local route at every operation boundary.
@@ -644,6 +742,7 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         "eligibility": eligibility,
         "maximum_timeout": 20.0,
         "consent_active": consent_active,
+        "consent_ready": consent_ready,
         "background_effect": effect_runner if callable(effect_runner) else None,
     }
 
