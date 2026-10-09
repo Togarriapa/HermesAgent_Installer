@@ -136,6 +136,9 @@ class ProviderAuthorityDispatchTests(unittest.TestCase):
                 dispatcher.dispatch(contexts[0], MODEL, payload, input_tokens=1,
                                     output_token_limit=8)
 
+            # Start a second deterministic attempt sequence for the positive
+            # refresh path after the expected denial above.
+            transport.calls.clear()
             # The broker can retry only when the host event issuer supplies a
             # fresh payload-bound context for the same trusted source closure.
             result = dispatcher.dispatch(contexts[0], MODEL, payload, input_tokens=1,
