@@ -868,6 +868,43 @@ class RootSetupPrincipalSelectionRegistry:
         finally:
             os.close(lock)
 
+    def resolve_adopted_initial_principal(
+        self, normal_session_store: RootSetupSessionStore,
+        normal_session_handle: RootSetupSessionHandle,
+    ) -> VerifiedRootSetupPrincipalSelection:
+        """Resolve the one root-journaled stage-zero adoption for this session.
+
+        The new selection is revalidated against the live normal setup session,
+        current Authentik identity, and reviewed capability selector on every
+        call. Callers receive no filesystem path or raw stage-zero handle.
+        """
+        if (self._session_mode != "setup"
+                or not isinstance(self.setup_session_store, RootSetupSessionStore)
+                or normal_session_store is not self.setup_session_store):
+            raise BootstrapEnrollmentPending("adopted principal lookup requires its concrete normal root session store")
+        proof = _current_principal_setup_context(
+            normal_session_store, normal_session_handle, "setup")
+        matches: list[Mapping[str, Any]] = []
+        for path in self.receipt_root.glob("adopted-*.json"):
+            try:
+                value = _read_json(path)
+            except FileNotFoundError:
+                continue
+            if (isinstance(value, dict) and value.get("schema") == SCHEMA
+                    and value.get("state") == "adopted"
+                    and value.get("normal_setup_session_id") == proof.session_id):
+                matches.append(value)
+        if len(matches) != 1:
+            raise BootstrapEnrollmentPending("normal root setup session has no unique adopted principal selection")
+        adoption = matches[0]
+        handle = adoption.get("new_principal_selection_receipt_handle")
+        if (not isinstance(handle, str) or not _HANDLE.fullmatch(handle)
+                or adoption.get("normal_transaction_handle") != proof.transaction_handle
+                or adoption.get("normal_plan_digest") != proof.plan_digest):
+            raise BootstrapEnrollmentPending("adopted principal selection does not match the current setup transaction")
+        return self.resolve_selected_principal(
+            handle, normal_session_handle, proof.transaction_handle, proof.plan_digest)
+
     def consume_selected_principal(
         self, receipt_handle: str, setup_session_handle: RootSetupSessionHandle,
         transaction_handle: str, plan_digest: str, activation_receipt: EnrollmentReceipt,
