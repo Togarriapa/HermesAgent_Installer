@@ -122,10 +122,11 @@ class ProviderPolicyTests(unittest.TestCase):
     def test_host_classification_overrides_caller_public_label(self):
         with tempfile.TemporaryDirectory() as td:
             provider = RecordingProvider()
-            def private_host_policy(context, capability, now):
-                return DispatchAuthorization("real-principal", context.profile_id, "private-home",
-                    context.trace_id, frozenset({capability}), Sensitivity.PRIVATE,
-                    "host-policy-7", "fresh-grant", now + 30)
+            def private_host_policy(context, capability, intent_id, now, timeout, cancelled):
+                from dataclasses import replace
+                grant = synthetic_authorizer(context, capability, intent_id, now, timeout, cancelled)
+                return replace(grant, principal_id="real-principal", namespace="private-home",
+                    effective_sensitivity=Sensitivity.PRIVATE, policy_revision="host-policy-7")
             dispatcher = Dispatcher(DispatchPolicy({"public": default_public_route()}, "public"),
                 BudgetLedger(self.ledger_root(Path(td))), provider,
                 context_authorizer=private_host_policy)
@@ -150,7 +151,8 @@ class ProviderPolicyTests(unittest.TestCase):
             provider = RecordingProvider()
             ctx = DispatchContext("hermes", "memory-extraction", Sensitivity.PUBLIC, derived_from=(Sensitivity.PRIVATE,))
             with self.assertRaisesRegex(PolicyDenied, "No private-capable route"):
-                self.make(Path(td), provider).dispatch(ctx, MODEL, b"private memory", input_tokens=4, output_token_limit=32)
+                self.make(Path(td), provider).dispatch(ctx, MODEL,
+                    b'{"messages":[{"role":"user","content":"private memory"}]}', input_tokens=4, output_token_limit=32)
             self.assertEqual(provider.calls, [])
 
     def test_private_tool_result_cannot_fallback_to_public(self):
