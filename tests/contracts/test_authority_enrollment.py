@@ -10,12 +10,111 @@ from pathlib import Path
 from hermes_installer.authority.enrollment import (
     AUTHORITY_CONFIG_PATH, CREDENTIAL_DIRECTORY, RootCredentialVault,
     _reject_secret_material, _unique_pairs, _verify_active_process_rules, write_authority_config,
-    write_protected_file, _validate_service_generations,
+    write_protected_file, _validate_service_generations, _parse_observer_delivery_bindings,
+    _parse_source_issuers, _validate_root_key_selection,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
 
 class ProtectedEnrollmentContracts(unittest.TestCase):
+    def test_authority_key_selection_receipt_is_exact_and_digest_independent(self):
+        row = {
+            "schema": 1, "receipt_handle": "a" * 64,
+            "key_id": "authority-key-" + "b" * 32,
+            "algorithm": "HMAC-SHA256", "key_device": 1, "key_inode": 2,
+            "key_uid": 0, "key_mode": 0o600,
+            "release_receipt_handle": "c" * 64,
+            "initial_compilation_session_handle": "d" * 64,
+            "issued_monotonic": 10.0, "expires_monotonic": 40.0,
+        }
+        self.assertEqual(_validate_root_key_selection(row), row)
+        for invalid in (
+            {**row, "key_id": "caller-key"},
+            {**row, "key_uid": True},
+            {**row, "expires_monotonic": float("inf")},
+            {**row, "unreviewed": "field"},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(AuthorityDenied):
+                _validate_root_key_selection(invalid)
+
+    def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
+        issuer = _parse_source_issuers([{
+            "issuer_channel_id": "tool-result", "producer_profile_id": "producer-profile",
+            "producer_role_artifact_id": "adapter-a", "producer_role_sha256": "a" * 64,
+            "capture_schema_id": "capture-a", "allowed_parent_channels": [],
+            "generation": "producer-generation", "observer_enrollment_id": "observer-a",
+            "source_action_ids": ["registered-tool-result"],
+        }])
+        rows = _parse_observer_delivery_bindings(
+            [{"observer_enrollment_id": "observer-a", "delivery_role": "gateway"}],
+            source_issuers=issuer,
+            peer_generations={"producer-profile": "producer-generation",
+                              "gateway-profile": "gateway-generation"},
+        )
+        self.assertEqual((rows[0].observer_enrollment_id, rows[0].delivery_role),
+                         ("observer-a", "gateway"))
+        with self.assertRaises(AuthorityDenied):
+            _parse_observer_delivery_bindings(
+                [{"observer_enrollment_id": "observer-a", "delivery_role": "other"}],
+                source_issuers=issuer,
+                peer_generations={"producer-profile": "producer-generation"},
+            )
+        with self.assertRaises(AuthorityDenied):
+            _parse_observer_delivery_bindings(
+                [{"observer_enrollment_id": "observer-a", "delivery_role": "producer"},
+                 {"observer_enrollment_id": "observer-a", "delivery_role": "gateway"}],
+                source_issuers=issuer,
+                peer_generations={"producer-profile": "producer-generation"},
+            )
+        with self.assertRaises(AuthorityDenied):
+            _parse_observer_delivery_bindings(
+                [{"observer_enrollment_id": "observer-a", "delivery_role": "producer"}],
+                source_issuers=issuer,
+                peer_generations={"producer-profile": "stale-generation"},
+            )
+
+    def test_active_native_mcp_tool_rows_are_digest_bound_and_strict(self):
+        row = {
+            "id": "mcp-action-a", "profile_id": "profile-a",
+            "process_generation": "generation-a", "native_package_id": "package-a",
+            "native_package_generation": "generation-a", "native_server_name": "hermes",
+            "native_tool_name": "search", "native_schema_sha256": "a" * 64,
+            "mcp_enrollment_id": "mcp-service-a", "mcp_generation": "mcp-generation-a",
+            "mcp_tool_name": "search", "request_schema_id": "request-a",
+            "result_schema_id": "result-a", "effect_operation": "mcp.request",
+            "effect_target": "mcp:mcp-service-a:http", "capability": "mcp:mcp-service-a:read",
+            "recipient": None,
+            "scope_bindings": [{"argument_field": "resource", "selected_resource_id": "resource-a"}],
+            "handler_artifact_id": "hermes-installer.native-mcp-dispatch.v1",
+            "handler_artifact_sha256": "b" * 64,
+        }
+
+        def snapshot(bindings):
+            value = {
+                "schema": 1, "generation_id": "generation-root-a",
+                "service_records": [], "protected_devices": [], "protected_build_records": [],
+                "native_packages": [], "memory_enrollments": [], "operation_parameter_schemas": [],
+                "source_issuers": [], "resource_jobs": [], "remote_session_enrollments": [],
+                "resource_backend_enrollments": [], "resource_body_recipes": [],
+                "resource_scope_bindings": [], "resource_validators": [], "root_journal_roots": [],
+                "resource_controller_roles": [], "native_mcp_tool_bindings": bindings,
+                "remote_observation_enrollments": [],
+            }
+            value["generation_digest"] = hashlib.sha256(json.dumps(
+                value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ).encode("utf-8")).hexdigest()
+            return value
+
+        self.assertEqual(len(_validate_service_generations(snapshot([row]))[
+            "native_mcp_tool_bindings"]), 1)
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(snapshot([{**row, "effect_operation": "http.get"}]))
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(snapshot([{**row, "scope_bindings": [
+                row["scope_bindings"][0], row["scope_bindings"][0]]}]))
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(snapshot([{**row, "extra": True}]))
+
     def test_process_rules_are_joined_to_active_generation_targets_for_every_handler(self):
         from types import SimpleNamespace
         from hermes_installer.authority.service import EffectRule, PrincipalBinding
@@ -67,6 +166,8 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_backend_enrollments": [], "resource_body_recipes": [],
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
+            "resource_controller_roles": [], "native_mcp_tool_bindings": [],
+            "remote_observation_enrollments": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -117,6 +218,8 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_backend_enrollments": [], "resource_body_recipes": [],
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
+            "resource_controller_roles": [], "native_mcp_tool_bindings": [],
+            "remote_observation_enrollments": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -170,7 +273,12 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         def snapshot_with(rows):
             value = {
                 "schema": 1, "generation_id": "root-generation-a",
-                "service_records": [], "protected_devices": [],
+                "service_records": [
+                    {"enrollment_id": "desktop-enrollment-a", "profile_id": "desktop-a",
+                     "generation": "desktop-generation-a"},
+                    {"enrollment_id": "display-enrollment-a", "profile_id": "display-a",
+                     "generation": "display-generation"},
+                ], "protected_devices": [],
                 "protected_build_records": [], "native_packages": [],
                 "memory_enrollments": [], "operation_parameter_schemas": [],
                 "source_issuers": [], "resource_jobs": [],
@@ -178,6 +286,8 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "resource_backend_enrollments": [], "resource_body_recipes": [],
                 "resource_scope_bindings": [], "resource_validators": [],
                 "root_journal_roots": [],
+            "resource_controller_roles": [], "native_mcp_tool_bindings": [],
+            "remote_observation_enrollments": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -190,6 +300,30 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _validate_service_generations(snapshot_with([fields, fields]))
         with self.assertRaises(AuthorityDenied):
             _validate_service_generations(snapshot_with([{**fields, "unreviewed": True}]))
+        observation = {
+            "id": "observation-a", "remote_enrollment_id": "remote-a",
+            "gateway_listener_port": 8743, "native_window_enrollment_id": "desktop-enrollment-a",
+            "display_server_profile_id": "display-a", "display_server_generation": "display-generation",
+            "display_name": ":0", "xauthority_receipt_handle": "xauth-receipt-a",
+        }
+        valid_with_observation = snapshot_with([fields])
+        valid_with_observation["remote_observation_enrollments"] = [observation]
+        valid_with_observation["generation_digest"] = hashlib.sha256(json.dumps(
+            {key: value for key, value in valid_with_observation.items() if key != "generation_digest"},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        self.assertEqual(len(_validate_service_generations(valid_with_observation)[
+            "remote_observation_enrollments"]), 1)
+        malformed_observation = dict(valid_with_observation)
+        malformed_observation["remote_observation_enrollments"] = [
+            {**observation, "native_window_enrollment_id": "desktop-a"},
+        ]
+        malformed_observation["generation_digest"] = hashlib.sha256(json.dumps(
+            {key: value for key, value in malformed_observation.items() if key != "generation_digest"},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(malformed_observation)
 
     def test_active_resource_backend_and_body_recipe_rows_are_strict(self):
         backend = {
@@ -200,11 +334,14 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "native_package_generation": "service-generation-a", "handler_artifact_id": "handler-a",
             "handler_sha256": "a" * 64, "approved_action_ids": ["action-a"],
             "operation": "plugin.adapter.call", "target_id": "target-a", "recipient": None,
-            "credential_reference_ids": [], "request_schema_id": "request-a",
+            "credential_reference_ids": ["vault-ref-a"], "request_schema_id": "request-a",
             "result_schema_id": "result-a", "body_recipe_id": "body-a",
             "scope_binding_id": "scope-a", "maximum_request_bytes": 1024,
             "maximum_response_bytes": 2048, "maximum_seconds": 30,
             "profile_generation": "profile-generation-a", "execution_binding": None,
+            "credential_bindings": [{"source_placeholder": "${BACKEND_TOKEN}",
+                                      "credential_reference_id": "vault-ref-a",
+                                      "usage": "backend-account"}],
         }
         body = {
             "id": "body-a", "schema_id": "request-a", "source_artifact_id": "recipe-source-a",
@@ -223,6 +360,8 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_backend_enrollments": [backend], "resource_body_recipes": [body],
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
+            "resource_controller_roles": [], "native_mcp_tool_bindings": [],
+            "remote_observation_enrollments": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -233,6 +372,22 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         malformed["resource_body_recipes"] = [{**body, "unreviewed": True}]
         with self.assertRaises(AuthorityDenied):
             _validate_service_generations(malformed)
+        for changed_binding in (
+            {"source_placeholder": "${BACKEND_TOKEN}", "credential_reference_id": "not-enrolled",
+             "usage": "backend-account"},
+            {"source_placeholder": "${BACKEND_TOKEN}", "credential_reference_id": "vault-ref-a",
+             "usage": "environment"},
+            {"source_placeholder": "${BACKEND_TOKEN}", "credential_reference_id": "vault-ref-a",
+             "usage": "backend-account", "extra": True},
+        ):
+            malformed = dict(snapshot)
+            malformed["resource_backend_enrollments"] = [{**backend, "credential_bindings": [changed_binding]}]
+            malformed["generation_digest"] = hashlib.sha256(json.dumps(
+                {key: value for key, value in malformed.items() if key != "generation_digest"},
+                sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ).encode("utf-8")).hexdigest()
+            with self.assertRaises(AuthorityDenied):
+                _validate_service_generations(malformed)
 
     def test_active_resource_scope_and_validator_catalogs_are_strict_and_digest_bound(self):
         scope = {
@@ -255,6 +410,8 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_backend_enrollments": [], "resource_body_recipes": [],
             "resource_scope_bindings": [scope], "resource_validators": [validator],
             "root_journal_roots": [],
+            "resource_controller_roles": [], "native_mcp_tool_bindings": [],
+            "remote_observation_enrollments": [],
         }
 
         def sign(value):
@@ -307,6 +464,8 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_backend_enrollments": [], "resource_body_recipes": [],
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
+            "resource_controller_roles": [], "native_mcp_tool_bindings": [],
+            "remote_observation_enrollments": [],
         }
 
         def sign(value):
@@ -338,6 +497,8 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_backend_enrollments": [], "resource_body_recipes": [],
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [root],
+            "resource_controller_roles": [], "native_mcp_tool_bindings": [],
+            "remote_observation_enrollments": [],
         }
         unsigned = dict(snapshot)
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(

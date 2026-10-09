@@ -456,14 +456,13 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                     "generation-fixture-1", "d" * 64, None, "committed", (),
                     __import__("time").monotonic(), __import__("time").monotonic() + 30,
                 )
-                registry.consume_selected_principal(
-                    selection_handle, store.handle, store.record["transaction_handle"],
-                    store.record["plan_digest"], committed,
-                )
+                # A structurally valid caller DTO is not a durable CAS proof.
+                # Consumption is now restricted to a concrete RootSetupSessionStore
+                # that verifies the matching transaction journal and selected digest.
                 with self.assertRaises(BootstrapEnrollmentPending):
-                    registry.resolve_selected_principal(
+                    registry.consume_selected_principal(
                         selection_handle, store.handle, store.record["transaction_handle"],
-                        store.record["plan_digest"],
+                        store.record["plan_digest"], committed,
                     )
                 receipt_bytes = (journal / "setup-principal-receipts" / f"{identity_handle}.json").read_text()
                 self.assertNotIn("fixture-only-token", receipt_bytes)

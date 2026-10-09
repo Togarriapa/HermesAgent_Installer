@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import os
 import re
 import secrets
 import stat
+import sys
+import time
 from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +35,423 @@ ARTIFACT_CATALOG_PATH = Path("/etc/hermes-installer/artifact-catalog.json")
 ARTIFACT_STAGING_DIRECTORY = Path("/var/lib/hermes-installer/artifacts")
 MAX_CONFIG_BYTES = 8 * 1_048_576
 MAX_CREDENTIAL_BYTES = 16_384
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootAuthorityKeyReceipt:
+    schema: int
+    receipt_handle: str
+    key_id: str
+    algorithm: str
+    key_device: int
+    key_inode: int
+    key_uid: int
+    key_mode: int
+    release_receipt_handle: str
+    initial_compilation_session_handle: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _issuer_seal: str
+
+
+class RootAuthorityKeySelectionRegistry:
+    """Bind a root-selected nonsecret key ID to the existing root HMAC key."""
+
+    selection_path = Path("/etc/hermes-installer/authority-key-selection.json")
+    private_root_name = "authority-key-receipts"
+
+    def __init__(self, release: Any, actor_verifier: Any, root_journal: Path,
+                 *, initial_compilation_registry: Any):
+        from .installer_release import VerifiedInstallerReleaseReceipt
+        from .bootstrap_runtime_factory import RootInitialCompilationRegistry
+        if (not isinstance(release, VerifiedInstallerReleaseReceipt)
+                or not callable(getattr(actor_verifier, "verify_current", None))
+                or not isinstance(root_journal, Path)
+                or root_journal != Path("/var/lib/hermes-installer/authority-journal")):
+            raise ValueError("root authority key selection dependencies are incomplete")
+        if (not isinstance(initial_compilation_registry, RootInitialCompilationRegistry)
+                or initial_compilation_registry.release is not release
+                or initial_compilation_registry.root_journal != root_journal
+                or initial_compilation_registry.actor_verifier is not actor_verifier):
+            raise ValueError("authority key selection stage-zero registry does not match its installed release")
+        self.release, self.actor_verifier, self.root_journal = release, actor_verifier, root_journal
+        self.initial_compilation_registry = initial_compilation_registry
+        self._seal = secrets.token_hex(32)
+        self._receipts: dict[str, RootAuthorityKeyReceipt] = {}
+        self._key_fds: dict[str, int] = {}
+        self._key_digests: dict[str, str] = {}
+
+    @classmethod
+    def from_installed_release(cls, verified_release: Any, installed_actor_verifier: Any,
+                               root_journal: Path, *,
+                               initial_compilation_registry: Any
+                               ) -> "RootAuthorityKeySelectionRegistry":
+        return cls(verified_release, installed_actor_verifier, root_journal,
+                   initial_compilation_registry=initial_compilation_registry)
+
+    def ensure_selected_key(self, initial_compilation_session_handle: str) -> RootAuthorityKeyReceipt:
+        session = self._resolve_stage0(initial_compilation_session_handle)
+        if os.geteuid() != 0 or not sys.platform.startswith("linux"):
+            raise AuthorityDenied("key.enrollment", "authority key selection requires installed Linux root")
+        self._verify_key_parent()
+        active_key_id = self._active_key_id()
+        key_present = _path_exists_nofollow(AUTHORITY_KEY_PATH)
+        if not key_present and active_key_id is not None:
+            raise AuthorityDenied("key.selection", "active authority key ID exists without its signing key")
+        if not key_present:
+            # Creation is exclusive, journaled as the first-install case, and
+            # never repairs or overwrites an existing key.
+            marker_path = self.root_journal / self.private_root_name / "first-install.json"
+            if (_path_exists_nofollow(marker_path)
+                    and self._first_install_marker(session) is None):
+                raise AuthorityDenied("key.selection", "another initial key-creation transaction needs root reconciliation")
+            self._write_first_install_marker(session, None, None, None, state="creating")
+            create_authority_signing_key(expected_uid=0)
+            created = True
+        else:
+            created = False
+        fd, info, raw = self._open_key()
+        try:
+            prior = self._read_selection()
+            if prior is not None:
+                if (prior["key_device"] != info.st_dev or prior["key_inode"] != info.st_ino
+                        or prior["key_id"] != active_key_id and active_key_id is not None):
+                    raise AuthorityDenied("key.selection", "existing authority key selection conflicts with the installed key")
+                key_id = prior["key_id"]
+                receipt_handle = (prior["receipt_handle"] if prior["initial_compilation_session_handle"]
+                                  == session.compilation_session_handle else secrets.token_hex(32))
+                issued = (prior["issued_monotonic"] if receipt_handle == prior["receipt_handle"]
+                          else time.monotonic())
+            elif active_key_id is not None:
+                key_id = active_key_id
+                receipt_handle = secrets.token_hex(32)
+                issued = time.monotonic()
+            else:
+                first_install = self._first_install_marker(session)
+                if not (created or first_install is not None):
+                    raise AuthorityDenied("key.selection", "existing signing key has no verified active key ID or first-install journal")
+                key_id = (first_install.get("key_id") if first_install is not None
+                          and first_install.get("state") == "created" else None)
+                if not isinstance(key_id, str) or not re.fullmatch(r"authority-key-[0-9a-f]{32}", key_id):
+                    key_id = "authority-key-" + secrets.token_hex(16)
+                receipt_handle = secrets.token_hex(32)
+                issued = time.monotonic()
+                self._write_first_install_marker(session, info, receipt_handle, key_id, state="created")
+            expires = min(float(session.expires_monotonic), issued + 300.0)
+            if expires <= time.monotonic():
+                raise AuthorityDenied("key.selection", "initial compilation session expired")
+            receipt = RootAuthorityKeyReceipt(
+                1, receipt_handle, key_id, "HMAC-SHA256", info.st_dev, info.st_ino,
+                0, 0o600, session.verified_release_receipt_handle,
+                session.compilation_session_handle, issued, expires, self._seal,
+            )
+            self._persist_selection(receipt)
+            self._persist_private_binding(receipt, hashlib.sha256(raw).hexdigest())
+            old_fd = self._key_fds.pop(receipt_handle, None)
+            if old_fd is not None:
+                os.close(old_fd)
+            self._receipts[receipt_handle] = receipt
+            self._key_fds[receipt_handle] = fd
+            self._key_digests[receipt_handle] = hashlib.sha256(raw).hexdigest()
+            fd = -1
+            return receipt
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            raw = b""
+
+    def resolve_selected_key(self, receipt_handle: str,
+                             initial_compilation_session_handle: str) -> RootAuthorityKeyReceipt:
+        session = self._resolve_stage0(initial_compilation_session_handle)
+        receipt = self._receipts.get(receipt_handle)
+        if (receipt is None or not secrets.compare_digest(receipt._issuer_seal, self._seal)
+                or receipt.expires_monotonic <= time.monotonic()
+                or receipt.initial_compilation_session_handle != session.compilation_session_handle
+                or receipt.release_receipt_handle != session.verified_release_receipt_handle):
+            raise AuthorityDenied("key.selection", "root authority key receipt is absent or stale")
+        fd = self._key_fds.get(receipt_handle)
+        if fd is None:
+            raise AuthorityDenied("key.selection", "root authority key continuity handle is absent")
+        info = os.fstat(fd)
+        current_fd, path_info, raw = self._open_key()
+        try:
+            if (info.st_dev != receipt.key_device or info.st_ino != receipt.key_inode
+                    or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600
+                    or path_info.st_dev != receipt.key_device or path_info.st_ino != receipt.key_inode
+                    or not secrets.compare_digest(hashlib.sha256(raw).hexdigest(),
+                                                  self._key_digests[receipt_handle])):
+                raise AuthorityDenied("key.selection", "root authority signing key custody changed")
+            self._verify_private_binding(receipt, self._key_digests[receipt_handle])
+            self._verify_selection(receipt)
+            return receipt
+        finally:
+            os.close(current_fd)
+            raw = b""
+
+    def _resolve_stage0(self, handle: str) -> Any:
+        from .bootstrap_runtime_factory import RootInitialCompilationRegistry, RootInitialCompilationSession
+        if os.geteuid() != 0 or not isinstance(handle, str) or not re.fullmatch(r"[0-9a-f]{64}", handle):
+            raise AuthorityDenied("key.selection", "authority key selection requires a live root stage-zero handle")
+        # The installed actor verifier is also the stage-zero registry's actor.
+        # Resolve through a root registry supplied by the caller's release object.
+        registry = self.initial_compilation_registry
+        if not isinstance(registry, RootInitialCompilationRegistry):
+            raise AuthorityDenied("key.selection", "verified release is not bound to the root stage-zero registry")
+        session = registry.resolve_initial_session(handle)
+        if not isinstance(session, RootInitialCompilationSession):
+            raise AuthorityDenied("key.selection", "root stage-zero session is malformed")
+        registry.verify_initial_session(session)
+        if session._release is not self.release or session._actor is not registry.actor:
+            raise AuthorityDenied("key.selection", "stage-zero session belongs to a different verified release")
+        plan = registry.resolve_setup_plan(session)
+        self.actor_verifier.verify_current(plan)
+        return session
+
+    def _verify_key_parent(self) -> None:
+        _secure_path(AUTHORITY_KEY_PATH.parent / "placeholder", expected_uid=0, allow_missing_leaf=True)
+        _ensure_root_private_dir(self.root_journal / self.private_root_name)
+
+    def _open_key(self):
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            fd = os.open(AUTHORITY_KEY_PATH, flags)
+            info = os.fstat(fd)
+            path_info = AUTHORITY_KEY_PATH.lstat()
+            raw = os.read(fd, 33)
+        except OSError:
+            raise AuthorityDenied("key.selection", "authority signing key is unavailable") from None
+        if (stat.S_ISLNK(path_info.st_mode) or not stat.S_ISREG(info.st_mode)
+                or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600
+                or path_info.st_dev != info.st_dev or path_info.st_ino != info.st_ino
+                or len(raw) != 32 or os.read(fd, 1)):
+            os.close(fd)
+            raise AuthorityDenied("key.selection", "authority signing key custody is invalid")
+        os.lseek(fd, 0, os.SEEK_SET)
+        return fd, info, raw
+
+    def _active_key_id(self) -> str | None:
+        if not _path_exists_nofollow(AUTHORITY_CONFIG_PATH):
+            return None
+        protected = load_protected_enrollment()
+        return protected.key_id
+
+    def _read_selection(self) -> dict[str, Any] | None:
+        if not _path_exists_nofollow(self.selection_path):
+            return None
+        raw = _read_root_selection_bytes(self.selection_path, 16_384)
+        try:
+            row = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+        except (ValueError, UnicodeError):
+            raise AuthorityDenied("key.selection", "authority key selection file is malformed") from None
+        return _validate_root_key_selection(row)
+
+    def _persist_selection(self, receipt: RootAuthorityKeyReceipt) -> None:
+        document = {"schema": 1, "receipt_handle": receipt.receipt_handle,
+                    "key_id": receipt.key_id, "algorithm": receipt.algorithm,
+                    "key_device": receipt.key_device, "key_inode": receipt.key_inode,
+                    "key_uid": 0, "key_mode": 0o600,
+                    "release_receipt_handle": receipt.release_receipt_handle,
+                    "initial_compilation_session_handle": receipt.initial_compilation_session_handle,
+                    "issued_monotonic": receipt.issued_monotonic,
+                    "expires_monotonic": receipt.expires_monotonic}
+        _write_root_selection(self.selection_path, document)
+
+    def _persist_private_binding(self, receipt: RootAuthorityKeyReceipt, digest: str) -> None:
+        root = self.root_journal / self.private_root_name
+        _ensure_root_private_dir(root)
+        _write_root_selection(root / f"{receipt.receipt_handle}.json", {
+            "schema": 1, "receipt_handle": receipt.receipt_handle,
+            "key_device": receipt.key_device, "key_inode": receipt.key_inode,
+            "key_sha256": digest,
+        }, exclusive=True)
+
+    def _verify_private_binding(self, receipt: RootAuthorityKeyReceipt, digest: str) -> None:
+        root = self.root_journal / self.private_root_name
+        try:
+            row = json.loads(_read_root_selection_bytes(root / f"{receipt.receipt_handle}.json",
+                                                        4096).decode(),
+                             object_pairs_hook=_unique_pairs)
+        except Exception:
+            raise AuthorityDenied("key.selection", "private root key continuity record is absent") from None
+        if row != {"schema": 1, "receipt_handle": receipt.receipt_handle,
+                   "key_device": receipt.key_device, "key_inode": receipt.key_inode,
+                   "key_sha256": digest}:
+            raise AuthorityDenied("key.selection", "private root key continuity record changed")
+
+    def _verify_selection(self, receipt: RootAuthorityKeyReceipt) -> None:
+        row = self._read_selection()
+        if row is None or row != {
+            "schema": 1, "receipt_handle": receipt.receipt_handle,
+            "key_id": receipt.key_id, "algorithm": receipt.algorithm,
+            "key_device": receipt.key_device, "key_inode": receipt.key_inode,
+            "key_uid": 0, "key_mode": 0o600,
+            "release_receipt_handle": receipt.release_receipt_handle,
+            "initial_compilation_session_handle": receipt.initial_compilation_session_handle,
+            "issued_monotonic": receipt.issued_monotonic,
+            "expires_monotonic": receipt.expires_monotonic,
+        }:
+            raise AuthorityDenied("key.selection", "authority key selection changed")
+
+    def _write_first_install_marker(self, session: Any, info: os.stat_result | None,
+                                    receipt_handle: str | None, key_id: str | None,
+                                    *, state: str) -> None:
+        root = self.root_journal / self.private_root_name
+        _ensure_root_private_dir(root)
+        _write_root_selection(root / "first-install.json", {
+            "schema": 1, "receipt_handle": receipt_handle,
+            "initial_compilation_session_handle": session.compilation_session_handle,
+            "key_id": key_id,
+            "key_device": None if info is None else info.st_dev,
+            "key_inode": None if info is None else info.st_ino,
+            "state": state,
+        })
+
+    def _first_install_marker(self, session: Any) -> dict[str, Any] | None:
+        path = self.root_journal / self.private_root_name / "first-install.json"
+        if not _path_exists_nofollow(path):
+            return None
+        row = json.loads(_read_root_selection_bytes(path, 4096).decode(),
+                         object_pairs_hook=_unique_pairs)
+        expected = {"schema", "receipt_handle", "initial_compilation_session_handle",
+                    "key_id", "key_device", "key_inode", "state"}
+        if (not isinstance(row, dict) or set(row) != expected
+                or type(row.get("schema")) is not int or row.get("schema") != 1
+                or row.get("initial_compilation_session_handle") != session.compilation_session_handle
+                or row.get("state") not in {"creating", "created"}):
+            return None
+        if row["state"] == "creating":
+            if any(row.get(key) is not None for key in ("receipt_handle", "key_id", "key_device", "key_inode")):
+                raise AuthorityDenied("key.selection", "initial key creation journal is malformed")
+        elif (not isinstance(row.get("receipt_handle"), str)
+              or not re.fullmatch(r"[0-9a-f]{64}", row["receipt_handle"])
+              or not isinstance(row.get("key_id"), str)
+              or not re.fullmatch(r"authority-key-[0-9a-f]{32}", row["key_id"])
+              or type(row.get("key_device")) is not int or row["key_device"] < 0
+              or type(row.get("key_inode")) is not int or row["key_inode"] <= 0):
+            raise AuthorityDenied("key.selection", "completed initial key creation journal is malformed")
+        return row
+
+
+def _path_exists_nofollow(path: Path) -> bool:
+    try:
+        path.lstat()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def _validate_root_key_selection(row: Any) -> dict[str, Any]:
+    fields = {"schema", "receipt_handle", "key_id", "algorithm", "key_device", "key_inode",
+              "key_uid", "key_mode", "release_receipt_handle", "initial_compilation_session_handle",
+              "issued_monotonic", "expires_monotonic"}
+    if (not isinstance(row, dict) or set(row) != fields or type(row.get("schema")) is not int
+            or row.get("schema") != 1 or not isinstance(row.get("receipt_handle"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", row["receipt_handle"])
+            or not isinstance(row.get("key_id"), str)
+            or not re.fullmatch(r"authority-key-[0-9a-f]{32}", row["key_id"])
+            or row.get("algorithm") != "HMAC-SHA256"
+            or type(row.get("key_device")) is not int or row["key_device"] < 0
+            or type(row.get("key_inode")) is not int or row["key_inode"] <= 0
+            or type(row.get("key_uid")) is not int or row["key_uid"] != 0
+            or type(row.get("key_mode")) is not int or row["key_mode"] != 0o600
+            or not isinstance(row.get("release_receipt_handle"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", row["release_receipt_handle"])
+            or not isinstance(row.get("initial_compilation_session_handle"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", row["initial_compilation_session_handle"])
+            or type(row.get("issued_monotonic")) not in (int, float)
+            or type(row.get("expires_monotonic")) not in (int, float)
+            or not math.isfinite(row["issued_monotonic"])
+            or not math.isfinite(row["expires_monotonic"])
+            or row["expires_monotonic"] <= row["issued_monotonic"]):
+        raise AuthorityDenied("key.selection", "authority key selection fields are malformed")
+    return row
+
+
+def _read_root_selection_bytes(path: Path, maximum: int) -> bytes:
+    data = read_protected_file(path, expected_uid=0, maximum=maximum)
+    info = path.lstat()
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)
+            or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600):
+        raise AuthorityDenied("key.selection", "root authority key receipt custody is invalid")
+    return data
+
+
+def _ensure_root_private_dir(path: Path) -> None:
+    if (path != Path("/var/lib/hermes-installer/authority-journal/authority-key-receipts")
+            or os.geteuid() != 0):
+        raise AuthorityDenied("key.selection", "private authority key journal path is not selected")
+    try:
+        path.mkdir(mode=0o700)
+        os.chown(path, 0, 0)
+        fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except FileExistsError:
+        pass
+    except OSError:
+        raise AuthorityDenied("key.selection", "private authority key journal could not be created") from None
+    info = path.lstat()
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o700):
+        raise AuthorityDenied("key.selection", "private authority key journal custody is invalid")
+
+
+def _write_root_selection(path: Path, document: Mapping[str, Any], *, exclusive: bool = False) -> None:
+    selection = Path("/etc/hermes-installer/authority-key-selection.json")
+    private = Path("/var/lib/hermes-installer/authority-journal/authority-key-receipts")
+    private_child = (path.parent == private
+                     and (path.name == "first-install.json"
+                          or bool(re.fullmatch(r"[0-9a-f]{64}\.json", path.name))))
+    if os.geteuid() != 0 or (path != selection and not private_child):
+        raise AuthorityDenied("key.selection", "authority key receipt destination is not selected")
+    _secure_path(path.parent / "placeholder", expected_uid=0, allow_missing_leaf=True)
+    _secure_path(path, expected_uid=0, allow_missing_leaf=True)
+    payload = json.dumps(dict(document), sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    if len(payload) > 16_384:
+        raise AuthorityDenied("key.selection", "authority key selection exceeds its size bound")
+    if _path_exists_nofollow(path):
+        existing = path.lstat()
+        if (stat.S_ISLNK(existing.st_mode) or not stat.S_ISREG(existing.st_mode)
+                or existing.st_uid != 0 or existing.st_gid != 0
+                or stat.S_IMODE(existing.st_mode) != 0o600):
+            raise AuthorityDenied("key.selection", "existing authority key selection custody is invalid")
+        current = read_protected_file(path, expected_uid=0, maximum=16_384)
+        if current == payload:
+            return
+        if exclusive:
+            raise AuthorityDenied("key.selection", "private authority key receipt already exists")
+    temporary = path.with_name("." + path.name + "." + secrets.token_hex(8) + ".tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(temporary, flags, 0o600)
+        try:
+            os.fchown(fd, 0, 0)
+            os.fchmod(fd, 0o600)
+            offset = 0
+            while offset < len(payload):
+                offset += os.write(fd, payload[offset:])
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        if _path_exists_nofollow(path):
+            os.replace(temporary, path)
+        else:
+            os.rename(temporary, path)
+        parent_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
+                            getattr(os, "O_NOFOLLOW", 0))
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except OSError:
+        raise AuthorityDenied("key.selection", "authority key selection update failed") from None
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _secure_path(path: Path, *, expected_uid: int, allow_missing_leaf: bool = False) -> None:
@@ -346,6 +766,7 @@ class NativeBridgeEnrollment:
     provider_enrollment_id: str
     target: str
     recipient: str
+    observer_delivery_bindings: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,6 +780,16 @@ class SourceIssuerRecord:
     generation: str
     observer_enrollment_id: str
     source_action_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RootObserverDeliveryBinding:
+    observer_enrollment_id: str
+    delivery_role: str
+
+
+# Compatibility name used by the strict authority configuration parser.
+ProtectedObserverDeliveryBinding = RootObserverDeliveryBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,9 +821,12 @@ class ProtectedEnrollment:
     remote_session_records: tuple[Mapping[str, Any], ...]
     resource_backend_enrollment_records: tuple[Mapping[str, Any], ...]
     resource_body_recipe_records: tuple[Mapping[str, Any], ...]
-    resource_scope_binding_records: tuple[Mapping[str, Any], ...]
-    resource_validator_records: tuple[Mapping[str, Any], ...]
-    root_journal_root_records: tuple[Mapping[str, Any], ...]
+    resource_scope_binding_records: tuple[Mapping[str, Any], ...] = ()
+    resource_validator_records: tuple[Mapping[str, Any], ...] = ()
+    root_journal_root_records: tuple[Mapping[str, Any], ...] = ()
+    native_mcp_tool_binding_records: tuple[Mapping[str, Any], ...] = ()
+    resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
+    remote_observation_records: tuple[Mapping[str, Any], ...] = ()
 
 
 _SOURCE_ACTIONS_BY_CHANNEL = {
@@ -446,6 +880,37 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
     return tuple(result)
 
 
+def _parse_observer_delivery_bindings(
+    value: Any, *, source_issuers: tuple[SourceIssuerRecord, ...],
+    peer_generations: Mapping[str, str],
+) -> tuple[RootObserverDeliveryBinding, ...]:
+    """Parse bridge target-role selectors and join each observer to a bridge peer."""
+    if not isinstance(value, list) or len(value) > 128:
+        raise AuthorityDenied("enrollment.native_bridge", "native observer delivery bindings are malformed")
+    issuers = {row.observer_enrollment_id: row for row in source_issuers}
+    selected: list[RootObserverDeliveryBinding] = []
+    seen: set[str] = set()
+    for raw in value:
+        try:
+            item = _exact(raw, {"observer_enrollment_id", "delivery_role"},
+                          "native observer delivery binding")
+            observer_id = _read_id(item["observer_enrollment_id"], "observer enrollment ID")
+            role = item["delivery_role"]
+            issuer = issuers.get(observer_id)
+            if (role not in {"producer", "gateway"} or issuer is None
+                    or observer_id in seen
+                    or peer_generations.get(issuer.producer_profile_id) != issuer.generation):
+                raise ValueError("observer delivery target or peer join is invalid")
+            seen.add(observer_id)
+            selected.append(RootObserverDeliveryBinding(observer_id, role))
+        except (TypeError, ValueError, AuthorityDenied):
+            raise AuthorityDenied(
+                "enrollment.native_bridge",
+                "native observer delivery binding is not joined to a current bridge peer",
+            ) from None
+    return tuple(selected)
+
+
 def _validate_service_generations(value: Any) -> dict[str, Any]:
     """Validate the one active, root-owned HI09 catalog snapshot and its digest."""
     keys = {"schema", "generation_id", "service_records", "protected_devices",
@@ -453,7 +918,8 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "operation_parameter_schemas", "source_issuers", "resource_jobs",
             "remote_session_enrollments", "resource_backend_enrollments",
             "resource_body_recipes", "resource_scope_bindings", "resource_validators",
-            "root_journal_roots",
+            "root_journal_roots", "resource_controller_roles",
+            "native_mcp_tool_bindings", "remote_observation_enrollments",
             "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != 1:
@@ -470,12 +936,89 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         raise AuthorityDenied("enrollment.generation", "service generation snapshot digest does not match")
     list_fields = ("service_records", "protected_devices", "protected_build_records",
                    "native_packages", "memory_enrollments", "operation_parameter_schemas",
-                   "source_issuers")
+                   "source_issuers", "native_mcp_tool_bindings",
+                   "resource_controller_roles", "remote_observation_enrollments")
     for name in list_fields:
         rows = item[name]
         if (not isinstance(rows, list) or len(rows) > 1024
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    native_mcp_fields = {
+        "id", "profile_id", "process_generation", "native_package_id",
+        "native_package_generation", "native_server_name", "native_tool_name",
+        "native_schema_sha256", "mcp_enrollment_id", "mcp_generation",
+        "mcp_tool_name", "request_schema_id", "result_schema_id", "effect_operation",
+        "effect_target", "capability", "recipient", "scope_bindings",
+        "handler_artifact_id", "handler_artifact_sha256",
+    }
+    native_mcp_ids: set[str] = set()
+    native_mcp_action_keys: set[tuple[str, str, str]] = set()
+    for row in item["native_mcp_tool_bindings"]:
+        binding = _exact(row, native_mcp_fields, "native MCP tool binding")
+        binding_id = _read_id(binding["id"], "native MCP binding ID")
+        if binding_id in native_mcp_ids:
+            raise AuthorityDenied("enrollment.generation", "native MCP binding ID is duplicated")
+        native_mcp_ids.add(binding_id)
+        for field in (native_mcp_fields - {"native_schema_sha256", "handler_artifact_sha256",
+                                           "native_server_name", "native_tool_name", "mcp_tool_name",
+                                           "effect_operation", "recipient", "scope_bindings"}):
+            _read_id(binding[field], f"native MCP {field}")
+        for field in ("native_schema_sha256", "handler_artifact_sha256"):
+            if not isinstance(binding[field], str) or not re.fullmatch(r"[0-9a-f]{64}", binding[field]):
+                raise AuthorityDenied("enrollment.generation", "native MCP digest is malformed")
+        if (not isinstance(binding["native_server_name"], str)
+                or not re.fullmatch(r"[a-z][a-z0-9_-]{0,62}", binding["native_server_name"])
+                or any(not isinstance(binding[field], str) or not re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}", binding[field])
+                       for field in ("native_tool_name", "mcp_tool_name"))
+                or binding["effect_operation"] not in {"mcp.request", "mcp.stdio"}
+                or binding["recipient"] is not None):
+            raise AuthorityDenied("enrollment.generation", "native MCP tool identity is malformed")
+        key = (binding["profile_id"], binding["process_generation"], binding["native_tool_name"])
+        if key in native_mcp_action_keys:
+            raise AuthorityDenied("enrollment.generation", "native MCP tool selection is duplicated")
+        native_mcp_action_keys.add(key)
+        scopes = binding["scope_bindings"]
+        if not isinstance(scopes, list) or not 1 <= len(scopes) <= 64:
+            raise AuthorityDenied("enrollment.generation", "native MCP scope bindings are malformed")
+        names: set[str] = set()
+        selected_resources: set[str] = set()
+        for raw_scope in scopes:
+            scope = _exact(raw_scope, {"argument_field", "selected_resource_id"}, "native MCP scope binding")
+            name = _read_id(scope["argument_field"], "native MCP argument field")
+            selected = _read_id(scope["selected_resource_id"], "native MCP selected resource")
+            if name in names or selected in selected_resources:
+                raise AuthorityDenied("enrollment.generation", "native MCP scope binding is duplicated")
+            names.add(name)
+            selected_resources.add(selected)
+    controller_fields = {"id", "controller_kind", "daemon_unit_id", "daemon_executable_artifact_id",
+                         "daemon_executable_sha256", "role_module_artifact_id", "role_module_sha256",
+                         "controller_generation", "source_observer_enrollment_ids",
+                         "allowed_backend_enrollment_ids", "allowed_operations", "max_lease_seconds"}
+    controller_ids: set[str] = set()
+    for row in item["resource_controller_roles"]:
+        controller = _exact(row, controller_fields, "resource controller role")
+        controller_id = _read_id(controller["id"], "resource controller ID")
+        if controller_id in controller_ids:
+            raise AuthorityDenied("enrollment.generation", "resource controller role is duplicated")
+        controller_ids.add(controller_id)
+        for field in ("daemon_unit_id", "daemon_executable_artifact_id", "role_module_artifact_id",
+                      "controller_generation"):
+            _read_id(controller[field], f"resource controller {field}")
+        if (controller["controller_kind"] not in {"worker", "root-scheduler", "root-webhook", "root-channel"}
+                or any(not isinstance(controller[field], str) or not re.fullmatch(r"[0-9a-f]{64}", controller[field])
+                       for field in ("daemon_executable_sha256", "role_module_sha256"))
+                or type(controller["max_lease_seconds"]) is not int
+                or not 1 <= controller["max_lease_seconds"] <= 600):
+            raise AuthorityDenied("enrollment.generation", "resource controller role is malformed")
+        for field in ("source_observer_enrollment_ids", "allowed_backend_enrollment_ids", "allowed_operations"):
+            values = controller[field]
+            if (not isinstance(values, list) or len(values) > 128
+                    or any(not isinstance(value, str) for value in values)
+                    or len(values) != len(set(values))):
+                raise AuthorityDenied("enrollment.generation", "resource controller role lists are malformed")
+            for value in values:
+                _read_id(value, f"resource controller {field}")
     jobs = item["resource_jobs"]
     if (not isinstance(jobs, list) or len(jobs) > 692
             or any(not isinstance(row, dict) for row in jobs)):
@@ -667,6 +1210,44 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         except (TypeError, ValueError, AuthorityDenied):
             raise AuthorityDenied("enrollment.generation", "protected remote session record is malformed") from None
         seen_remote_ids.add(remote_id)
+    observation_rows = item["remote_observation_enrollments"]
+    if (not isinstance(observation_rows, list) or len(observation_rows) > 128
+            or any(not isinstance(row, dict) for row in observation_rows)):
+        raise AuthorityDenied("enrollment.generation", "protected remote observation catalog is invalid")
+    remote_by_id = {row["id"]: row for row in remote_rows}
+    observation_fields = {"id", "remote_enrollment_id", "gateway_listener_port",
+                          "native_window_enrollment_id", "display_server_profile_id",
+                          "display_server_generation", "display_name", "xauthority_receipt_handle"}
+    observation_ids: set[str] = set()
+    selected_remote_ids: set[str] = set()
+    for row in observation_rows:
+        observation = _exact(row, observation_fields, "remote observation selection")
+        observation_id = _read_id(observation["id"], "remote observation ID")
+        remote_id = _read_id(observation["remote_enrollment_id"], "remote observation enrollment")
+        native_window_id = _read_id(observation["native_window_enrollment_id"], "native window enrollment")
+        _read_id(observation["display_server_profile_id"], "display server profile")
+        _read_id(observation["display_server_generation"], "display server generation")
+        _read_id(observation["display_name"], "selected display name")
+        _read_id(observation["xauthority_receipt_handle"], "Xauthority receipt handle")
+        port = observation["gateway_listener_port"]
+        remote = remote_by_id.get(remote_id)
+        native_service_rows = [service for service in item["service_records"]
+                               if service.get("profile_id") == (remote or {}).get("native_desktop_profile_id")
+                               and service.get("generation") == (remote or {}).get("native_generation")]
+        display_service_rows = [service for service in item["service_records"]
+                                if service.get("profile_id") == observation["display_server_profile_id"]
+                                and service.get("generation") == observation["display_server_generation"]]
+        if (observation_id in observation_ids or remote_id in selected_remote_ids or remote is None
+                or type(port) is not int or not 1 <= port <= 65535
+                or len(native_service_rows) != 1 or len(display_service_rows) != 1
+                or native_window_id != native_service_rows[0].get("enrollment_id")
+                or observation["display_server_profile_id"] == remote["native_desktop_profile_id"]
+                or not observation["display_name"].strip()
+                or len(observation["display_name"]) > 128
+                or any(ord(char) < 0x20 for char in observation["display_name"])):
+            raise AuthorityDenied("enrollment.generation", "remote observation selection is malformed or stale")
+        observation_ids.add(observation_id)
+        selected_remote_ids.add(remote_id)
     backend_rows = item["resource_backend_enrollments"]
     if (not isinstance(backend_rows, list) or len(backend_rows) > 692
             or any(not isinstance(row, dict) for row in backend_rows)):
@@ -678,7 +1259,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         "approved_action_ids", "operation", "target_id", "recipient",
         "credential_reference_ids", "request_schema_id", "result_schema_id", "body_recipe_id",
         "scope_binding_id", "maximum_request_bytes", "maximum_response_bytes", "maximum_seconds",
-        "profile_generation", "execution_binding",
+        "profile_generation", "execution_binding", "credential_bindings",
     }
     seen_backend_ids: set[str] = set()
     for row in backend_rows:
@@ -690,7 +1271,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         for name in (backend_fields - {"handler_sha256", "approved_action_ids",
                                        "credential_reference_ids", "maximum_request_bytes",
                                        "maximum_response_bytes", "maximum_seconds", "recipient",
-                                       "execution_binding"}):
+                                       "execution_binding", "credential_bindings"}):
             _read_id(backend[name], f"resource backend {name}")
         if (not isinstance(backend["handler_sha256"], str)
                 or not re.fullmatch(r"[0-9a-f]{64}", backend["handler_sha256"])
@@ -712,6 +1293,22 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             raise AuthorityDenied("enrollment.generation", "protected resource backend bounds are invalid")
         for action in backend["approved_action_ids"]:
             _read_id(action, "resource backend action ID")
+        credential_bindings = backend["credential_bindings"]
+        if (not isinstance(credential_bindings, list) or len(credential_bindings) > 16
+                or any(not isinstance(binding, dict) for binding in credential_bindings)):
+            raise AuthorityDenied("enrollment.generation", "resource backend credential bindings are malformed")
+        placeholders: set[str] = set()
+        allowed_usage = {"webhook-hmac-verify", "channel-account", "backend-account"}
+        allowed_refs = set(backend["credential_reference_ids"])
+        for raw_binding in credential_bindings:
+            binding = _exact(raw_binding, {"source_placeholder", "credential_reference_id", "usage"},
+                             "resource credential binding")
+            placeholder = _read_id(binding["source_placeholder"], "resource credential placeholder")
+            reference, usage = binding["credential_reference_id"], binding["usage"]
+            if (placeholder in placeholders or not _is_credential_reference(reference)
+                    or reference not in allowed_refs or usage not in allowed_usage):
+                raise AuthorityDenied("enrollment.generation", "resource credential binding is invalid")
+            placeholders.add(placeholder)
         if backend["recipient"] is not None:
             _read_id(backend["recipient"], "resource backend recipient")
         execution = backend["execution_binding"]
@@ -1151,7 +1748,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                             "normalization_policy_id", "normalization_policy_sha256",
                             "normalization_policy_revision", "route_schema_id",
                             "output_limit_mode", "output_limit_ceiling",
-                            "approved_operation"}, "native bridge")
+                            "approved_operation", "observer_delivery_bindings"}, "native bridge")
         bridge_id = _read_id(item["id"], "native bridge ID")
         producer_id = _read_id(item["producer_profile_id"], "native producer profile")
         gateway_id = _read_id(item["gateway_profile_id"], "native gateway profile")
@@ -1180,6 +1777,11 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                 or producer_binding.uid != producer.owner_uid
                 or gateway_binding.uid != gateway.owner_uid):
             raise AuthorityDenied("enrollment.native_bridge", "native bridge identity or canonicalizer binding is invalid")
+        delivery_bindings = _parse_observer_delivery_bindings(
+            item["observer_delivery_bindings"],
+            source_issuers=_parse_source_issuers(service_generations["source_issuers"]),
+            peer_generations={producer_id: producer.generation, gateway_id: gateway.generation},
+        )
         provider_routes = [route for route in catalogs["provider_enrollments"].values()
                            if route["principal_id"] == producer_binding.principal_id]
         if len(provider_routes) != 1 or "provider-dispatch" not in producer_binding.capabilities:
@@ -1246,6 +1848,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             output_limit_mode=limit_mode, output_limit_ceiling=output_ceiling,
             approved_operation="provider.dispatch", provider_enrollment_id=route["id"],
             target=provider_target, recipient=provider_recipient,
+            observer_delivery_bindings=tuple(delivery_bindings),
         )
         bridge_pairs.add(pair)
     mcp_bindings: dict[str, Any] = {}
@@ -1394,6 +1997,9 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         tuple(MappingProxyType(dict(row)) for row in service_generations["resource_scope_bindings"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["resource_validators"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["root_journal_roots"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["native_mcp_tool_bindings"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["resource_controller_roles"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["remote_observation_enrollments"]),
     )
 
 
