@@ -139,3 +139,10 @@ The installer SHALL bind native tool and memory invocation ancestry to actual ro
 #### Scenario: Worker invents current invocation
 - **WHEN** a worker supplies a forged response/call handle or changes observed action arguments
 - **THEN** root rejects before effects and does not mint source or user provenance from caller assertions
+
+### Requirement: Selected native profile task recipe
+The installer SHALL resolve resource profile tasks through selected protected process recipes and native package bindings, and pass root-constructed task data through bounded stdin only.
+
+#### Scenario: Manifest attempts process selection
+- **WHEN** a resource manifest or worker supplies executable, profile path, argv or reusable parent grant as execution authority
+- **THEN** root rejects and resolves only its selected per-node process binding with a fresh exact child grant
