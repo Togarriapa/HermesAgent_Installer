@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Sequence
 
 from . import __version__
-from .bootstrap import BootstrapError, HermesBootstrap
 from .state import Journal, OwnedRoot, OwnershipError, process_lock
 from .lifecycle import GenerationStore, LifecycleBlocked, LifecycleError, LifecycleRecovery
 from .config import ConfigError, InstallerConfig, load_config, validate_config, write_example
@@ -461,21 +460,6 @@ def _quiescent_journal(state_path: Path):
         with contextlib.suppress(OSError):
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
-
-
-def _resume_checkpoint_exists(state_path: Path) -> bool:
-    """Read-only gate so a fresh resume cannot create a root, marker, database, or WAL."""
-    try:
-        with _quiescent_journal(state_path) as db:
-            row = db.execute("SELECT 1 FROM operations WHERE id='installer:selection'").fetchone()
-        return row is not None
-    except RuntimeError as exc:
-        # A committed WAL needs SQLite recovery under the exclusive installer lock.
-        # Active writers are also allowed through this structural gate; process_lock
-        # below will reject them without opening the journal.
-        return "journal has an active or uncheckpointed WAL" in str(exc) or "installer operation is active" in str(exc)
-    except (OSError, sqlite3.Error, ValueError):
-        return False
 
 
 def _run_data_command(args: argparse.Namespace, config: InstallerConfig) -> CommandResult:

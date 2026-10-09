@@ -34,44 +34,38 @@ class CliLifecycleTests(unittest.TestCase):
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             args=SimpleNamespace(command="install",config=config,dry_run=True)
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
-                 patch("hermes_installer.cli._host_findings",return_value=()), \
-                 patch("hermes_installer.cli.HermesBootstrap") as bootstrap:
+                 patch("hermes_installer.cli._host_findings",return_value=()):
                 result=run(args)
             self.assertEqual(result.state,OutcomeState.READY)
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
-            bootstrap.assert_not_called()
-    def test_resume_without_durable_operation_is_denied_before_bootstrap(self):
+    def test_resume_without_user_mode_checkpoint_uses_root_launcher_status(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             args=SimpleNamespace(command="resume",config=config)
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
                  patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
                      state="unverified",blocker_code="ROOT_ATTESTATION_REQUIRED",
-                     message="The installed launcher has not been verified by its root actor.")), \
-                 patch("hermes_installer.cli.HermesBootstrap") as bootstrap:
+                     message="The installed launcher has not been verified by its root actor.")):
                 result=run(args)
             self.assertEqual(result.state,OutcomeState.PENDING)
             self.assertIn("not been verified",result.message)
             self.assertEqual(result.resume_command,"hermes-installer status")
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
-            bootstrap.assert_not_called()
     def test_install_does_not_use_user_mode_bootstrap_or_create_state_roots(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
                  patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
                      state="unverified",blocker_code="ROOT_ATTESTATION_REQUIRED",
-                     message="The installed launcher has not been verified by its root actor.")), \
-                 patch("hermes_installer.cli.HermesBootstrap") as bootstrap:
+                     message="The installed launcher has not been verified by its root actor.")):
                 first=run(SimpleNamespace(command="install",config=config,dry_run=False))
                 self.assertEqual(first.state,OutcomeState.PENDING)
                 self.assertEqual(first.resume_command,"hermes-installer status")
                 self.assertIn("not been verified",first.message)
                 self.assertFalse((root/"data").exists())
                 self.assertFalse((root/"state").exists())
-                bootstrap.assert_not_called()
 
     def test_update_apply_stays_pending_without_root_owned_lifecycle_effects(self):
         with tempfile.TemporaryDirectory() as td:
