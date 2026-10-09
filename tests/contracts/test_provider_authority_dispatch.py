@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import time
 import unittest
@@ -9,7 +10,7 @@ from types import SimpleNamespace
 
 from hermes_installer.policy import (
     BudgetLedger, DispatchPolicy, Dispatcher, PolicyDenied, ProviderResponse,
-    Sensitivity, default_public_route,
+    Sensitivity, default_public_route, normalize_chat_request,
 )
 from hermes_installer.state import OwnedRoot
 
@@ -25,14 +26,19 @@ class FakeAuthority:
     def authorize_effect(self, context, *, capability, target, recipient, request_digest, retry_index):
         binding = (capability, target, recipient, request_digest, retry_index)
         self.authorizations.append(binding)
-        grant = SimpleNamespace(monotonic_expires_at=time.monotonic() + 20, binding=binding)
+        issued = time.monotonic()
+        grant = SimpleNamespace(monotonic_expires_at=issued + 20, issued_at_monotonic=issued,
+            binding=binding, capability=capability, target=target, recipient=recipient,
+            request_digest=request_digest, retry_index=retry_index)
         self.grants.append(grant)
         return grant
 
     def verify_effect(self, grant, context, *, capability, target, recipient, request_digest, retry_index):
         binding = (capability, target, recipient, request_digest, retry_index)
         self.verifications.append(binding)
-        return grant.binding == binding
+        return SimpleNamespace(authorization=grant if grant.binding == binding else None,
+            operation="provider.dispatch", verified_at_monotonic=time.monotonic(),
+            verification_receipt="fixture-verification-receipt")
 
 
 class BrokerTransport:
@@ -45,7 +51,7 @@ class BrokerTransport:
         return self.response
 
 
-def host_context(*, sensitivity="public", capabilities=frozenset({"provider-inference", "provider-tool-call"})):
+def host_context(*, sensitivity="public", capabilities=frozenset({"provider-inference", "provider-tool-call"}), final_payload_digest=None):
     return SimpleNamespace(
         principal_id="host-principal", profile_id="hermes-public", namespace_id="ns-7", uid=1000,
         purpose="native-hermes-chat", intent_id="intent-9", trace_id="trace-1",
@@ -54,6 +60,7 @@ def host_context(*, sensitivity="public", capabilities=frozenset({"provider-infe
         capabilities=capabilities,
         nonce="context-" + str(uuid.uuid4()), grant_id="grant-" + str(uuid.uuid4()),
         signature="signature-" + str(uuid.uuid4()), sensitivity=sensitivity,
+        final_payload_digest=final_payload_digest,
     )
 
 
@@ -72,8 +79,10 @@ class ProviderAuthorityDispatchTests(unittest.TestCase):
             dispatcher = self.make_dispatcher(td, authority, transport)
             payload = (b'{"messages":[{"role":"user","content":"use a tool"}],'
                        b'"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}')
-            dispatcher.dispatch(host_context(), MODEL, payload, input_tokens=10,
-                                output_token_limit=8, tool_request=False)
+            normalized = normalize_chat_request(payload, MODEL, 8)
+            digest = hashlib.sha256(normalized).hexdigest()
+            dispatcher.dispatch(host_context(final_payload_digest=digest), MODEL, payload,
+                                input_tokens=10, output_token_limit=8, tool_request=False)
             self.assertEqual(len(transport.calls), 1)
             expected = authority.authorizations[0]
             self.assertEqual(expected[0], "provider-tool-call")
