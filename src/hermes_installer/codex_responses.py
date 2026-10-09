@@ -229,7 +229,7 @@ class CodexResponsesTransport:
             try:
                 seconds = float(retry_after)
                 if math.isfinite(seconds) and 0 <= seconds <= 60:
-                    safe_headers["Retry-After"] = str(seconds)
+                    safe_headers["Retry-After"] = str(int(seconds)) if seconds.is_integer() else str(seconds)
             except (TypeError, ValueError, OverflowError):
                 pass
         input_tokens = output_tokens = 0
