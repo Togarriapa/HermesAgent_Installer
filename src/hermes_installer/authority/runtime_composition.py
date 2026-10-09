@@ -79,6 +79,10 @@ class RootAuthorityRuntime:
         return getattr(self.service, "native_runtime_observer", None)
 
     @property
+    def native_loader_observation_store(self) -> Any | None:
+        return getattr(self.service, "native_loader_observation_store", None)
+
+    @property
     def remote_session_authority(self) -> Any | None:
         return self.service.remote_session_authority
 
@@ -89,9 +93,17 @@ class RootAuthorityRuntime:
         if callable(prune):
             prune()
 
+    def revoke_native_process(self, process_id: str, generation: str | None = None) -> None:
+        """Revoke loader proofs when the root process manager retires a process."""
+        store = self.native_loader_observation_store
+        revoke = getattr(store, "revoke_process", None)
+        if callable(revoke):
+            revoke(process_id, generation)
+
     def close(self) -> None:
         """Close attached root observers and stop the active remote lease worker."""
-        for component in (self.native_runtime_observer, self.source_observer_registry):
+        for component in (self.native_runtime_observer, self.source_observer_registry,
+                          self.native_loader_observation_store):
             close = getattr(component, "close", None)
             if callable(close):
                 close()

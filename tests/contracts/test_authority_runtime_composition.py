@@ -115,6 +115,25 @@ def test_root_journal_resolution_is_bound_to_active_generation_and_protected_cat
         )
 
 
+def test_runtime_closes_attached_native_loader_observation_store():
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
+    closed = []
+
+    class LoaderObservationStore:
+        def close(self):
+            closed.append(True)
+
+    store = LoaderObservationStore()
+    service.native_loader_observation_store = store
+    runtime = compose_root_authority_runtime(
+        service=service, enrollment=enrollment, bindings=bindings,
+        artifact_catalog=catalog, vault=vault,
+    )
+    assert runtime.native_loader_observation_store is store
+    runtime.close()
+    assert closed == [True]
+
+
 def test_memory_rows_do_not_fall_back_when_protected_service_catalog_is_missing():
     service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
     active = replace(enrollment, memory_enrollments={("service-one", "generation-one"): object()})
