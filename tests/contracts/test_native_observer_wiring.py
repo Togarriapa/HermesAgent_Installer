@@ -111,3 +111,22 @@ class NativeTaskInputCoordinatorContracts(unittest.TestCase):
                 os.close(read_fd)
             except OSError:
                 pass
+
+    def test_custody_revoke_invalidates_exact_prepared_receipt(self):
+        coordinator, receipt, task, read_fd = self._coordinator()
+        try:
+            self.assertTrue(coordinator.revoke_initial_input_receipt(
+                receipt.receipt_handle, task_handle=task))
+            with self.assertRaises(AuthorityDenied):
+                coordinator.resolve_initial_input_receipt(
+                    receipt.receipt_handle, task_handle=task,
+                    stdin_sha256=receipt.stdin_sha256,
+                    stdin_size_bytes=receipt.stdin_size_bytes,
+                )
+            self.assertFalse(coordinator.revoke_initial_input_receipt(
+                receipt.receipt_handle, task_handle=task))
+        finally:
+            try:
+                os.close(read_fd)
+            except OSError:
+                pass

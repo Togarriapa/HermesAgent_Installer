@@ -220,6 +220,13 @@ class RootTaskInputCoordinator:
                 with self._lock:
                     self._records.pop(receipt_handle, None)
             if source_handle is not None:
+                cancel = getattr(self.task_native_observations, "cancel_task_input", None)
+                if callable(cancel) and initial_receipt is not None:
+                    try:
+                        cancel(task_handle=managed_task_handle,
+                               initial_input_receipt=initial_receipt)
+                    except Exception:
+                        pass
                 self.input_observer.discard_task_input_observation(
                     source_receipt_handle=str(source_handle),
                     receipt_handle=receipt_handle,
@@ -244,6 +251,35 @@ class RootTaskInputCoordinator:
         record = self._lookup_record(receipt_handle, task_handle, stdin_sha256,
                                      stdin_size_bytes, consume=True)
         return record.receipt
+
+    def revoke_initial_input_receipt(self, receipt_handle: str, *,
+                                     task_handle: Any) -> bool:
+        """Revoke an exact prepared input on custody cancellation/failure."""
+        from ..managed_process_custodian import ManagedTaskHandle
+
+        if type(task_handle) is not ManagedTaskHandle:
+            raise AuthorityDenied("native.input.receipt", "task input revocation handle is malformed")
+        with self._lock:
+            record = self._records.get(receipt_handle)
+            if (record is None or record.managed_task_handle is not task_handle
+                    or record.receipt.receipt_handle != receipt_handle):
+                return False
+            self._records.pop(receipt_handle, None)
+            record.consumed = True
+        cancel = getattr(self.task_native_observations, "cancel_task_input", None)
+        if callable(cancel):
+            cancel(task_handle=task_handle, initial_input_receipt=record.receipt)
+        self.input_observer.discard_task_input_observation(
+            source_receipt_handle=record.receipt.source_receipt_handle,
+            receipt_handle=record.receipt.receipt_handle,
+        )
+        release = getattr(self.selected_executions, "release_selection", None)
+        if callable(release):
+            try:
+                release(record.selected_execution)
+            except Exception:
+                pass
+        return True
 
     def _lookup_record(self, receipt_handle: str, task_handle: Any,
                        stdin_sha256: str, stdin_size_bytes: int,
