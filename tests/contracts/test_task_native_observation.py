@@ -149,7 +149,8 @@ def test_capture_pairs_root_retained_native_request_with_completed_result():
         receipt_handles=("input-handle", "result-handle"),
         producer_identity=identity, producer_pid=42, profile_id="profile-a",
         generation="profile-generation-a", package_id="package-a",
-        loaded_package_proof=package_proof, expires_monotonic=90.0, calls={},
+        loaded_package_proof=package_proof, expires_monotonic=90.0,
+        metadata_taken=True, calls={},
     )
     registry = _registry(
         {"source-handle": source, "input-handle": task_input, "result-handle": result},
@@ -187,6 +188,12 @@ def test_capture_pairs_root_retained_native_request_with_completed_result():
 
     response.producer_identity = identity
     registry.source_observers.service.authority_epoch = "rotated-epoch"
+    registry._capture(run)
+    assert run.requests == {}
+    assert run.responses == {}
+
+    registry.source_observers.service.authority_epoch = "epoch-a"
+    response.metadata_taken = False
     registry._capture(run)
     assert run.requests == {}
     assert run.responses == {}

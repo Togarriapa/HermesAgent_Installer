@@ -394,7 +394,8 @@ class RootTaskNativeObservationRegistry:
             native_calls = dict(getattr(invocations, "_invocations", {}))
         response_records = {id(item): item for item in (*responses.values(), *deliveries.values())}
         for item in response_records.values():
-            if not self._matches_task(run, item):
+            if (not self._matches_task(run, item)
+                    or getattr(item, "metadata_taken", False) is not True):
                 continue
             request_id = getattr(item, "native_request_handle", None)
             response_handle = getattr(item, "handle", None)
