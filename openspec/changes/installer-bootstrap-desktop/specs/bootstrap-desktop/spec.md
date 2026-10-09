@@ -499,3 +499,10 @@ The installer SHALL render dormant prepared authority and catalog read policy fr
 #### Scenario: Prepared authority treated as active
 - **WHEN** a dormant empty prepared policy is used to authorize runtime effects
 - **THEN** authorization denies until actual active compilation and receipts exist
+
+### Requirement: Root selected startup and predecessor custody
+The installer SHALL use actual root source CAS/predecessor proofs and finite selected startup admission with fresh role-specific child grants.
+
+#### Scenario: Unbound startup or deployment predecessor
+- **WHEN** caller state substitutes root startup admission or ignores an existing deployment pointer
+- **THEN** startup/publication denies without overwriting unowned or mismatched state

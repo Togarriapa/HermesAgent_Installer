@@ -479,7 +479,49 @@
       "listener": "ipv4 literal127.0.0.1, port integer1..65535 protected enrollment; no caller URL/port. Xpra14500 remains separate selected service connector target. Native helper/provider gateway pair has exact root-enrolled gateway port, never ephemeral port from worker state. Remote JWT gateway listener also exact selected row.",
       "kernel": "Root owns separate network namespace per exact selected pair/session group, only loopback lo, no veth/default route/host network. Only explicitly listed TCP client/server roles get AF_UNIX AF_INET; other workers remain AF_UNIX. Private network namespace bound by actual inode/generation, root-authenticated finite connect/listen port policy enforced by root cgroup BPF or root namespace firewall plus per-service cgroup/UID bindings; allow exact selected loopback endpoints only and deny all other ports, siblings, host/external/DNS. IPAddressDeny=any may add exact127.0.0.1 allow only in this role; IP allow by itself is insufficient port/role enforcement. Root verifies actual manager property/netns/connect policy and positive/negative Linux probes before enrolling functional network.",
       "producer": "Existing Hermes SDK TCP transport joins ONLY selected native producer and provider gateway protected pair namespace. It does not reach root/provider internet; gateway forwards only fixed root provider RPC after current source/context/grant admission. Root connector enters only exact pinned namespace/target for Xpra; no arbitrary AF_INET capability. Public tunnel ingress reaches only selected JWT gateway through fixed root transport, never directly Xpra/provider/Desktop backend.",
-      "scope": "This repairs unusable local loopback transports without broadening other process roles or relaxing any authentication-before-bytes/revocation requirement."
+      "scope": "This repairs unusable local loopback transports without broadening other process roles or relaxing any authentication-before-bytes/revocation requirement.",
+      "receipt_fields": [
+        "schema",
+        "receipt_handle",
+        "network_enrollment_id",
+        "generation",
+        "service_generation_digest",
+        "network_namespace_inode",
+        "member_process_ids",
+        "member_cgroup_ids",
+        "policy_artifact_id",
+        "policy_sha256",
+        "enforced_policy_digest",
+        "observed_listener_bindings",
+        "positive_probe_receipt_handles",
+        "negative_probe_receipt_handles",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "receipt": "RootPrivateLoopbackNetworkReceipt actual registry/kernel netns+port/role enforcement and actual current enrolled listener/process/positive-negative probes. Static fields/port-open checks cannot mint success. Root-private handles no caller netns path/PID/port selectors; retained namespaceFD/cgroup/process proof resolved current before connects and revoked on member exit/generation/session change."
+    },
+    "root_launch_admission": {
+      "owner": "hermes_installer.authority.native_display_startup.RootSelectedDisplayLaunchAuthority",
+      "constructor": "from_root_runtime(active_bindings,verified_root_setup_sessions,authority_service,custody,xauthority_registry,root_journal)",
+      "admit": "admit_selected_start(setup_session_handle,remote_enrollment_id)->opaque startup_authorization_handle; actual current root setup actor/session/plan, committed active service generation, explicit selected remote enablement and selected native principal/namespace verified. Bootstrap enrollment grant alone is not start authority. No ordinary worker API or fabricated HostContext.",
+      "starter": "RootSelectedDisplayStarter.start_selected_display(remote_enrollment_id,startup_authorization_handle)->RootSelectedDisplayStartReceipt; same retained admission registry/current actor/catalog needed. Previous no-handle signature is refined, root-only finite selected start.",
+      "child": "issue_selected_start(startup_authorization_handle,role)->RootSelectedStartupGrant, role literal display|gateway|desktop only. Root derives exact selected service profile/process.start operation target from operation_targets/start recipe and canonical selection-only payload {schema:1,enrollment_id,generation,operation_id,parameters:{}}. Separate fresh one-use HI12 reduced context/effect grant per role, bound actual setup controller identity/PIDFD and selected native subject/profile/principal; no synthetic worker UID identity or generic arbitrary effect issuer. Deadlines inherit setup/start admission and selected process max. Internal owned cleanup/status/wait does not reuse start grant.",
+      "grant_fields": [
+        "schema",
+        "startup_authorization_handle",
+        "role",
+        "service_enrollment_id",
+        "generation",
+        "operation_id",
+        "selection_payload_sha256",
+        "controller_proof_handle",
+        "context",
+        "effect_authorization",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "mount": "resolve_selected_xauthority_mount(startup_authorization_handle,role,prepared_or_sealed_xauthority_handle)->existing typed XauthorityMountBinding; current actual root registry resolves held exact file/inode/hash/reader group and fixed /run/hermes-installer/display/Xauthority target. Custody accepts root registry-produced binding only, rechecks before mount/launch. No caller credential/path/env. Display consumes prepared binding; desktop consumes sealed live display receipt. Gateway has no cookie mount unless its exact reviewed role requires it.",
+      "Xpra": "One custody display process recipe launches official pinned Xpra seamless; Xpra starts its pinned virtual X server child under the same owned cgroup using fixed reviewed xvfb recipe. No second generic launcher or ambient Xvfb lookup. Every child executable belongs selected child_artifact_refs and sandbox/cgroup; native Desktop is a separate enrolled start, not caller --start-child. If target X server requires distinct root recipe, an exact reviewed child enrollment/receipt is required before activation, not silently inferred."
     }
   }
 }

@@ -244,3 +244,10 @@ The installer SHALL launch only enrolled official Desktop/display/gateway recipe
 #### Scenario: Ambient display or broad network substitution
 - **WHEN** a worker supplies display credentials, arbitrary port or unenrolled network role
 - **THEN** startup or connection denies before app bytes and remote acceptance remains pending
+
+### Requirement: Root selected startup and predecessor custody
+The installer SHALL use actual root source CAS/predecessor proofs and finite selected startup admission with fresh role-specific child grants.
+
+#### Scenario: Unbound startup or deployment predecessor
+- **WHEN** caller state substitutes root startup admission or ignores an existing deployment pointer
+- **THEN** startup/publication denies without overwriting unowned or mismatched state
