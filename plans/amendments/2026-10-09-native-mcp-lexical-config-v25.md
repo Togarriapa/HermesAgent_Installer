@@ -1,0 +1,3 @@
+# Native MCP lexical and config mapping v25
+
+MC-F01/HI-T04 preserve native registration and mandatory mediation. Exact row types and native server name now explicit; existing invocation binding maps fixed compiled adapter to selected binding ID action without another provenance DTO. Direct worker transport stays disabled while actual root-backed candidates register through the pinned native registry and status hook. Preserve unowned config and truthfully distinguish mediated functionality from disabled direct transport. No scope omission, arbitrary proxy or accepted configured-only state. Baseline and task IDs unchanged.
