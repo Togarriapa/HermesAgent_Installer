@@ -1,8 +1,10 @@
 """Target workflows require explicit, current owner authorization and scope."""
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import unittest
+from unittest.mock import patch
 
 from hermes_installer.verification.acceptance import AuthorizedTarget, TargetWorkflowRunner
 
@@ -32,6 +34,39 @@ class TargetWorkflowTests(unittest.TestCase):
         runner = TargetWorkflowRunner({}, authorize=lambda _: True)
         with self.assertRaisesRegex(PermissionError, "does not include"):
             runner.run("AC02", target(), "a" * 40, "/tmp/evidence")
+
+    def test_target_expiring_after_parse_is_rejected_before_authorizer_or_probe(self):
+        called = []
+        runner = TargetWorkflowRunner(
+            {"AC01": lambda *_: called.append("probe")},
+            authorize=lambda _: called.append("authorize") or True,
+        )
+        stale = replace(target(), expires_at=(datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat())
+        with self.assertRaisesRegex(PermissionError, "expired"):
+            runner.run("AC01", stale, "a" * 40, "/tmp/evidence")
+        self.assertEqual(called, [])
+
+    def test_authorization_that_expires_during_owner_check_is_rejected(self):
+        called = []
+        current = target(expires_at=(datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat())
+        base = datetime.now(timezone.utc)
+
+        class AdvancingDateTime(datetime):
+            calls = 0
+
+            @classmethod
+            def now(cls, tz=None):
+                cls.calls += 1
+                return base + timedelta(seconds=0 if cls.calls == 1 else 60)
+
+        runner = TargetWorkflowRunner(
+            {"AC01": lambda *_: called.append("probe")},
+            authorize=lambda _: True,
+        )
+        with patch("hermes_installer.verification.acceptance.datetime", AdvancingDateTime):
+            with self.assertRaisesRegex(PermissionError, "expired"):
+                runner.run("AC01", current, "a" * 40, "/tmp/evidence")
+        self.assertEqual(called, [])
 
     def test_missing_adapter_is_explicitly_pending(self):
         result = TargetWorkflowRunner({}, authorize=lambda _: True).run("AC01", target(), "a" * 40, "/tmp/evidence")

@@ -21,6 +21,15 @@ class AuthorizedTarget:
     allowed_acceptance: tuple[str, ...]
     manifest_sha256: str
 
+    def ensure_current(self) -> None:
+        """Recheck the signed enrollment expiry at each point of use."""
+        try:
+            expiry = datetime.fromisoformat(self.expires_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("target authorization expiry is invalid") from exc
+        if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
+            raise PermissionError("target authorization is expired or has no timezone")
+
     @classmethod
     def parse(cls, value: Mapping[str, object], *, manifest_sha256: str) -> "AuthorizedTarget":
         target = cls(
@@ -40,9 +49,7 @@ class AuthorizedTarget:
             raise ValueError("owner and authorization_reference are required")
         if not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256):
             raise ValueError("target manifest digest is required")
-        expiry = datetime.fromisoformat(target.expires_at.replace("Z", "+00:00"))
-        if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
-            raise ValueError("target authorization is expired or has no timezone")
+        target.ensure_current()
         if not target.allowed_acceptance or any(not re.fullmatch(r"AC\d{2}", item) for item in target.allowed_acceptance):
             raise ValueError("explicit acceptance scope is required")
         return target
@@ -67,8 +74,12 @@ class TargetWorkflowRunner:
         self._authorize = authorize
 
     def run(self, acceptance_id: str, target: AuthorizedTarget, candidate_sha: str, output_dir: str) -> WorkflowResult:
+        target.ensure_current()
         if not self._authorize(target):
             raise PermissionError("target enrollment or owner authorization could not be verified")
+        # Authorization callbacks may perform bounded remote checks. Recheck
+        # expiry immediately before dispatch so those checks cannot consume the lease.
+        target.ensure_current()
         if acceptance_id not in target.allowed_acceptance:
             raise PermissionError(f"target authorization does not include {acceptance_id}")
         if not re.fullmatch(r"AC\d{2}", acceptance_id):
