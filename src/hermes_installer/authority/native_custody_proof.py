@@ -915,7 +915,7 @@ class RootNativeLoaderObservationStore:
                     or self.clock() >= entry.deadline):
                 raise AuthorityDenied("native.loader", "loader proof launch was revoked before admission")
             previous = (entry.proofs or {}).get(observer.observer_enrollment_id)
-            mount_ns_inode = _mount_namespace_inode(identity.namespace_identity)
+            mount_ns_inode = _mount_namespace_inode(identity)
             flags = tuple(sorted(set(getattr(mount, "verified_mount_options", ()))))
             if not {"ro", "nosuid", "nodev"}.issubset(flags) or "rw" in flags:
                 raise AuthorityDenied("native.mount", "native package mount flags are incomplete")
