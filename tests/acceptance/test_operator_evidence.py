@@ -51,7 +51,7 @@ def result_value(request, enrolled, **changes):
         "platform": enrolled.platform, "owner": enrolled.owner,
         "authorization_reference": enrolled.authorization_reference,
         "started_at": start.isoformat(), "finished_at": datetime.now(timezone.utc).isoformat(),
-        "exit_code": 0,
+        "exit_code": 0, "timed_out": False,
         "argv_sha256": hashlib.sha256(json.dumps({"argv": request["argv"]}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest(),
         "cwd_sha256": hashlib.sha256(request["cwd"].encode()).hexdigest(),
         "environment_names": ["HOME", "PATH"],
@@ -80,12 +80,34 @@ class OperatorEvidenceTests(unittest.TestCase):
             for acceptance_id in profile.acceptance_ids
         }
         self.assertTrue(expected_pairs.issubset(actual_pairs))
-        self.assertTrue({("AC18", f"EV-HI{number:02d}") for number in range(1, 10)}.issubset(actual_pairs))
+        self.assertTrue({("AC18", f"EV-HI{number:02d}") for number in range(1, 14)}.issubset(actual_pairs))
         for acceptance_id, evidence_id in expected_pairs:
             self.assertTrue(profile_for(evidence_id, acceptance_id).assertions)
 
     def test_supplemental_profiles_are_exact_and_unobserved_claims_stay_pending(self):
         expected = {
+            ("AC18", "EV-HI11"): {
+                "producer_gateway_identity_and_generation_bound", "complete_source_closure_and_final_payload_bound",
+                "operation_retry_and_bounded_lease_bound", "gateway_peer_authenticated_and_admission_atomically_consumed",
+                "opaque_reference_and_caller_header_authority_denied",
+            },
+            ("AC18", "EV-HI12"): {
+                "capability_operation_target_and_canonical_payload_bound",
+                "shared_target_does_not_imply_cross_operation_permission",
+                "fresh_one_use_frame_grants_preserve_original_stream_deadline",
+                "trusted_expiry_and_revocation_cleanup_independent_and_observed",
+            },
+            ("AC18", "EV-HI13"): {
+                "root_verified_actual_access_jwt_and_fresh_selected_policy_before_native_bytes",
+                "enrolled_principal_fingerprint_profile_route_generation_and_lease_bound",
+                "gateway_claims_headers_self_signed_tokens_and_caller_policy_denied_as_authority",
+                "native_connector_asset_pixels_and_input_admitted_by_root_before_delivery",
+                "forged_token_claim_allowlist_profile_generation_sibling_replay_and_expiry_denied_before_bytes",
+                "active_websocket_closed_on_logout_revocation_renewal_or_generation_failure_within_lease_bound",
+                "watchdog_enforces_bounded_stream_expiry_independent_of_frame_activity",
+                "setup_read_and_tunnel_secrets_absent_from_gateway_and_desktop",
+                "fixture_jwt_policy_evidence_separate_from_enrolled_cloudflare_and_native_proof",
+            },
             ("AC18", "EV-HI10"): {
                 "registered_process_handle_required", "current_cgroup_descendants_attested",
                 "stable_kernel_identity_and_executable_pin_verified", "renderer_lineage_and_sandbox_attested",
@@ -107,6 +129,16 @@ class OperatorEvidenceTests(unittest.TestCase):
                 "fresh_reduced_grant_per_child_and_attempt", "source_lineage_sensitivity_and_recipient_bound",
                 "budget_concurrency_runtime_payload_replay_limits_enforced",
                 "unselected_stale_or_replayed_event_denied_before_effect",
+            },
+            ("AC16", "EV-RB08"): {
+                "root_enrolled_finite_action_and_handler_digest_bound", "exact_capability_operation_target_generation_bound",
+                "immutable_native_package_resolver_and_root_observed_source_closure_bound",
+                "every_required_manifest_action_functional_or_exact_incomplete_recorded",
+                "actual_native_selected_backend_effect_and_verified_result_observed",
+                "canonical_arguments_and_final_digest_bound_to_one_use_grant", "principal_profile_recipient_and_credential_scope_verified",
+                "confirmation_and_idempotency_enforced", "durable_ambiguous_outcome_reconciliation_and_restart_replay_denied",
+                "wrong_action_identity_scope_confirmation_replay_and_duplicate_denied_before_effect",
+                "private_recipient_and_cancellation_preserved", "unsupported_or_unqualified_actions_unavailable",
             },
             ("AC08", "EV-PR01"): {
                 "public_client_pkce_state_nonce_loopback_bound",
@@ -265,6 +297,17 @@ class OperatorEvidenceTests(unittest.TestCase):
             finished_at=datetime.now(timezone.utc).isoformat())
         with self.assertRaisesRegex(ValueError, "timeout"):
             verify_operator_result(request, bad_result, enrolled)
+
+    def test_timeout_is_pending_and_does_not_invent_exit_or_assertions(self):
+        enrolled = target()
+        request = request_value(enrolled)
+        result = result_value(request, enrolled, exit_code=None, timed_out=True,
+            assertions={name: None for name in request["expected_assertions"]})
+        verified = verify_operator_result(request, result, enrolled)
+        self.assertEqual(EvidenceState.PENDING, verified.state)
+        self.assertIsNone(verified.exit_code)
+        self.assertIn("timed out", verified.blocker)
+        self.assertTrue(all(value is None for value in verified.assertions.values()))
 
 
 if __name__ == "__main__":

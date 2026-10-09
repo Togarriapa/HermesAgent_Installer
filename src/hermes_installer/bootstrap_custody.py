@@ -20,13 +20,26 @@ from typing import Any, Mapping, Sequence
 class BootstrapCustodyError(RuntimeError):
     """The installed host authority or custodian denied/failed an effect."""
 
+    def __init__(self, message: str, *, process_id: str | None = None,
+                 generation: str | None = None, cleanup_verified: bool | None = None,
+                 receipt_id: str | None = None):
+        super().__init__(message)
+        self.process_id = process_id
+        self.generation = generation
+        self.cleanup_verified = cleanup_verified
+        self.receipt_id = receipt_id
+
 
 class BootstrapCancelled(KeyboardInterrupt):
     """Bootstrap cancellation after custody cleanup was attempted."""
 
-    def __init__(self, *, cleanup_verified: bool):
+    def __init__(self, *, cleanup_verified: bool, process_id: str | None = None,
+                 generation: str | None = None, receipt_id: str | None = None):
         super().__init__("managed Hermes bootstrap process cancelled")
         self.cleanup_verified = cleanup_verified
+        self.process_id = process_id
+        self.generation = generation
+        self.receipt_id = receipt_id
 
 
 @dataclass(frozen=True)
@@ -38,6 +51,7 @@ class ManagedCommandResult:
     cleanup_verified: bool
     receipt_id: str
     process_id: str
+    generation: str
     uid: int
 
 
@@ -92,8 +106,8 @@ class BootstrapCustody:
                    "max_bytes": max_bytes}
         digest = hashlib.sha256(_canonical_bytes(payload)).hexdigest()
         context = client.context(purpose="hermes-bootstrap",
-                                 intent=f"Fetch pinned artifact {artifact_id}",
-                                 operation="artifact.fetch", final_payload_digest=digest)
+            intent=f"Fetch pinned artifact {artifact_id}", operation="artifact.fetch",
+            final_payload_digest=digest)
         grant = client.authorize_effect(context, capability="installer-bootstrap",
             target=target, recipient=None, request_digest=digest)
         response = client.fetch_artifact(grant, target=target, artifact_id=artifact_id,
@@ -115,21 +129,23 @@ class BootstrapCustody:
         return receipt["store_id"], str(getattr(response, "receipt_id", ""))
 
     def _control(self, *, profile_id: str, data_root: Path, operation: str,
-                 payload: Mapping[str, Any], timeout: float = 5.0) -> dict[str, Any]:
+                 payload: Mapping[str, Any], source_receipt: str | None = None,
+                 timeout: float = 5.0) -> dict[str, Any]:
         client = self._required_client()
         body = _canonical_bytes(payload)
-        digest = hashlib.sha256(body).hexdigest()
         verb = operation.removeprefix("process.")
         if verb not in {"status", "read", "write", "stop"}:
             raise BootstrapCustodyError("Host process control verb is not fixed")
         target = f"hermes-profile-control:{profile_id}:{data_root.resolve(strict=True)}:{verb}"
         context = client.context(purpose="hermes-bootstrap",
             intent=f"Control owned Hermes bootstrap process: {operation}",
-            operation=operation, final_payload_digest=digest)
+            operation=operation,
+            final_payload_digest=hashlib.sha256(body).hexdigest(),
+            source_receipt_handles=(source_receipt,) if source_receipt else ())
         if context.profile_id != profile_id:
             raise BootstrapCustodyError("Host authority profile does not match the requested process")
         grant = client.authorize_effect(context, capability="hermes-process-control", target=target,
-            recipient=None, request_digest=digest)
+            recipient=None, request_digest=hashlib.sha256(body).hexdigest())
         response = client.process_control(grant, operation=operation, target=target,
                                           payload=body, timeout=timeout)
         self._record_receipt(operation, target, response)
@@ -153,8 +169,16 @@ class BootstrapCustody:
             from .authority import canonical_digest, canonical_profile_target, profile_launch_envelope
         except ImportError:
             raise BootstrapCustodyError("Host process launch contract is not installed") from None
-        if profile_id is None:
-            raise BootstrapCustodyError("A protected host profile selection is required for process launch")
+        # The first context is used only to obtain the host-selected profile
+        # identity. The effect context below is issued after the exact launch
+        # envelope and digest have been computed.
+        discovery = client.context(purpose="hermes-bootstrap",
+            intent="Resolve the host-enrolled profile for a pinned bootstrap stage",
+            operation="process.start")
+        bound_profile = discovery.profile_id
+        if profile_id is not None and profile_id != bound_profile:
+            raise BootstrapCustodyError("Host authority profile does not match the requested launch")
+        profile_id = bound_profile
         executable = executable.resolve(strict=True)
         data_root = data_root.resolve(strict=True)
         artifact_root = artifact_root.resolve(strict=True)
@@ -174,17 +198,27 @@ class BootstrapCustody:
         launch_digest = canonical_digest(launch)
         context = client.context(purpose="hermes-bootstrap",
             intent="Run one pinned Hermes bootstrap stage under host custody",
-            operation="process.start", final_payload_digest=launch_digest)
+            operation="process.start", final_payload_digest=launch_digest,
+            source_contexts=(discovery,))
         if context.profile_id != profile_id:
-            raise BootstrapCustodyError("Host authority profile does not match the requested launch")
+            raise BootstrapCustodyError("Host authority profile changed while binding the launch")
         grant = client.authorize_effect(context, capability="hermes-profile-invoke",
-            target=launch_target, recipient=None, request_digest=canonical_digest(launch))
+            target=launch_target, recipient=None, request_digest=launch_digest)
         start_response = client.process_start(grant, target=launch_target,
             launch=launch, timeout=min(5.0, timeout))
         self._record_receipt("process.start", launch_target, start_response)
-        started = _json_response(start_response, label="process.start")
+        start_receipt = str(getattr(start_response, "receipt_id", ""))
+        try:
+            started = _json_response(start_response, label="process.start")
+        except BootstrapCustodyError:
+            # The broker accepted a start effect, but the returned handle is
+            # not parseable. Preserve its receipt as unresolved active custody;
+            # a caller must never assume that an unreadable start means no child.
+            raise BootstrapCustodyError("Host process.start receipt could not be parsed; cleanup is unverified",
+                cleanup_verified=False, receipt_id=start_receipt or None) from None
         possible_process_id = started.get("process_id")
         possible_generation = started.get("generation")
+        process_receipt_id = str(getattr(start_response, "receipt_id", "")) or None
         required = {"process_id", "generation", "pid", "uid", "namespace_id",
                     "started_at_monotonic", "stdout_cursor", "stderr_cursor",
                     "expires_at_monotonic"}
@@ -193,23 +227,49 @@ class BootstrapCustody:
                 or started["uid"] <= 0):
             if isinstance(possible_process_id, str) and possible_process_id and isinstance(possible_generation, str) and possible_generation:
                 try:
-                    self._stop(profile_id, data_root, possible_process_id, possible_generation)
+                    self._stop(profile_id, data_root, possible_process_id, possible_generation,
+                               source_receipt=process_receipt_id)
                 except BaseException:
-                    pass
-            raise BootstrapCustodyError("Host process.start receipt lacks a valid owned process handle")
+                    raise BootstrapCustodyError("Host process.start receipt is malformed and cleanup could not be verified",
+                        process_id=possible_process_id, generation=possible_generation,
+                        cleanup_verified=False, receipt_id=process_receipt_id) from None
+                raise BootstrapCustodyError("Host process.start receipt lacks a valid owned process handle",
+                    process_id=possible_process_id, generation=possible_generation,
+                    cleanup_verified=True, receipt_id=process_receipt_id)
+            raise BootstrapCustodyError("Host process.start receipt lacks a valid owned process handle",
+                process_id=possible_process_id if isinstance(possible_process_id, str) else None,
+                generation=possible_generation if isinstance(possible_generation, str) else None,
+                cleanup_verified=False, receipt_id=process_receipt_id)
         process_id = started["process_id"]
         generation = started["generation"]
-        stdout_cursor = started["stdout_cursor"]
-        stderr_cursor = started["stderr_cursor"]
         if not isinstance(generation, str) or not generation:
-            raise BootstrapCustodyError("Host process.start receipt omitted its custody generation")
-        if (type(stdout_cursor) is not int or stdout_cursor < 0
-                or type(stderr_cursor) is not int or stderr_cursor < 0):
+            raise BootstrapCustodyError("Host process.start receipt omitted its custody generation",
+                process_id=process_id, generation=None, cleanup_verified=False,
+                receipt_id=process_receipt_id)
+        if not start_receipt:
             try:
                 self._stop(profile_id, data_root, process_id, generation)
             except BaseException:
-                pass
-            raise BootstrapCustodyError("Host process.start receipt is malformed")
+                raise BootstrapCustodyError("Host process.start omitted its receipt and cleanup could not be verified",
+                    process_id=process_id, generation=generation, cleanup_verified=False,
+                    receipt_id=process_receipt_id) from None
+            raise BootstrapCustodyError("Host process.start omitted its source receipt handle",
+                process_id=process_id, generation=generation, cleanup_verified=True,
+                receipt_id=process_receipt_id)
+        stdout_cursor = started["stdout_cursor"]
+        stderr_cursor = started["stderr_cursor"]
+        if (type(stdout_cursor) is not int or stdout_cursor < 0
+                or type(stderr_cursor) is not int or stderr_cursor < 0):
+            try:
+                self._stop(profile_id, data_root, process_id, generation,
+                           source_receipt=start_receipt)
+            except BaseException:
+                raise BootstrapCustodyError("Host process.start receipt is malformed and cleanup could not be verified",
+                    process_id=process_id, generation=generation, cleanup_verified=False,
+                    receipt_id=process_receipt_id) from None
+            raise BootstrapCustodyError("Host process.start receipt is malformed",
+                process_id=process_id, generation=generation, cleanup_verified=True,
+                receipt_id=process_receipt_id)
         stdout = bytearray()
         diagnostic = bytearray()
         total = 0
@@ -224,7 +284,8 @@ class BootstrapCustody:
                            "stream": stream, "after_cursor": cursor,
                            "max_bytes": min(65536, available - cursor)}
                 reply = self._control(profile_id=profile_id, data_root=data_root,
-                    operation="process.read", payload=request, timeout=min(5.0, max(0.1, deadline-time.monotonic())))
+                    operation="process.read", payload=request, source_receipt=start_receipt,
+                    timeout=min(5.0, max(0.1, deadline-time.monotonic())))
                 try:
                     chunk = base64.b64decode(reply["data"], validate=True)
                     next_cursor = reply["cursor"]
@@ -253,7 +314,8 @@ class BootstrapCustody:
             while time.monotonic() < deadline:
                 status = self._control(profile_id=profile_id, data_root=data_root,
                     operation="process.status", payload={"schema": 1, "process_id": process_id,
-                        "generation": generation}, timeout=min(5.0, max(0.1, deadline-time.monotonic())))
+                        "generation": generation}, source_receipt=start_receipt,
+                    timeout=min(5.0, max(0.1, deadline-time.monotonic())))
                 state = status.get("state")
                 if state not in {"starting", "running", "exited", "stopped", "failed"}:
                     raise BootstrapCustodyError("Host process.status returned an unknown state")
@@ -271,36 +333,46 @@ class BootstrapCustody:
                     code = status.get("exit_code")
                     if type(code) is not int:
                         raise BootstrapCustodyError("Host process.status omitted the process exit code")
+                    # A child exit is not a cgroup cleanup proof. The fixed stop
+                    # verb is idempotent and verifies that descendants are gone.
+                    self._stop(profile_id, data_root, process_id, generation,
+                               source_receipt=start_receipt)
+                    cleanup_verified = True
                     return ManagedCommandResult(code, bytes(stdout), bytes(diagnostic),
                         False, True, str(getattr(start_response, "receipt_id", "")), process_id,
-                        started["uid"])
+                        generation, started["uid"])
                 time.sleep(min(0.05, max(0.0, deadline-time.monotonic())))
-            self._stop(profile_id, data_root, process_id, generation)
+            self._stop(profile_id, data_root, process_id, generation, source_receipt=start_receipt)
             cleanup_verified = True
             return ManagedCommandResult(124, bytes(stdout), bytes(diagnostic), True,
                 cleanup_verified, str(getattr(start_response, "receipt_id", "")), process_id,
-                started["uid"])
+                generation, started["uid"])
         except KeyboardInterrupt:
             try:
-                self._stop(profile_id, data_root, process_id, generation)
+                self._stop(profile_id, data_root, process_id, generation, source_receipt=start_receipt)
                 cleanup_verified = True
             except BaseException:
                 cleanup_verified = False
-            raise BootstrapCancelled(cleanup_verified=cleanup_verified) from None
+            raise BootstrapCancelled(cleanup_verified=cleanup_verified, process_id=process_id,
+                generation=generation, receipt_id=process_receipt_id) from None
         except BaseException:
             try:
-                self._stop(profile_id, data_root, process_id, generation)
+                self._stop(profile_id, data_root, process_id, generation, source_receipt=start_receipt)
                 cleanup_verified = True
             except BaseException:
                 cleanup_verified = False
             if not cleanup_verified:
-                raise BootstrapCustodyError("Host process failed and complete cleanup could not be verified") from None
-            raise
+                raise BootstrapCustodyError("Host process failed and complete cleanup could not be verified",
+                    process_id=process_id, generation=generation, cleanup_verified=False,
+                    receipt_id=process_receipt_id) from None
+            raise BootstrapCustodyError("Host process operation failed after verified cleanup",
+                process_id=process_id, generation=generation, cleanup_verified=True,
+                receipt_id=process_receipt_id) from None
 
     def _stop(self, profile_id: str, data_root: Path, process_id: str,
-              generation: str) -> None:
+              generation: str, *, source_receipt: str | None = None) -> None:
         stopped = self._control(profile_id=profile_id, data_root=data_root,
             operation="process.stop", payload={"schema": 1, "process_id": process_id,
-                "generation": generation}, timeout=5.0)
+                "generation": generation}, source_receipt=source_receipt, timeout=5.0)
         if stopped.get("stopped") is not True:
             raise BootstrapCustodyError("Host process.stop did not verify complete cleanup")

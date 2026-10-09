@@ -2,7 +2,10 @@ from __future__ import annotations
 import hashlib, json, os, tempfile, unittest
 from pathlib import Path
 from hermes_installer.bootstrap import (BootstrapError, EXPECTED_STAGES, HERMES_COMMIT,
+    INSTALL_SCRIPT_ARTIFACT_ID, INSTALL_SCRIPT_SHA256,
     HermesBootstrap, git_blob_sha1)
+from hermes_installer.bootstrap_custody import BootstrapCustodyError, ManagedCommandResult
+from hermes_installer.lifecycle import LifecycleBlocked, LifecycleRecovery
 from hermes_installer.state import Journal, OwnedRoot
 
 SCRIPT=b"#!/usr/bin/env bash\necho fixture\n"
@@ -140,6 +143,91 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(len(failed),1)
             self.assertEqual(failed[0]["details"]["exit_code"],1)
             self.assertIn("effects_after",failed[0]["details"])
+
+    def test_unverified_process_cleanup_is_journaled_as_active_and_blocks_removal(self):
+        with tempfile.TemporaryDirectory() as td:
+            data=OwnedRoot(Path(td)/"data"); data.ensure()
+            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
+            journal=Journal(state_root.path("journal.sqlite3"))
+
+            class CleanupFailureRunner(FakeRunner):
+                def __call__(self,args,*,timeout,capture=False):
+                    if "--stage" in args and args[args.index("--stage")+1] == "products":
+                        raise BootstrapCustodyError("cleanup is not verified", process_id="proc-1",
+                            generation="host-generation-2", cleanup_verified=False)
+                    return super().__call__(args,timeout=timeout,capture=capture)
+
+            boot=HermesBootstrap(data,journal,network=FakeNetwork(),runner=CleanupFailureRunner(),
+                desktop_builder=fake_desktop(data),agent_probe=lambda:True,
+                expected_script_blob=git_blob_sha1(SCRIPT))
+            with self.assertRaises(BootstrapCustodyError):
+                boot.install(include_desktop=False)
+            process=next(row for row in journal.owned("process") if row["resource_id"] == "proc-1")
+            self.assertEqual(process["state"],"active")
+            self.assertTrue(any(event["event"] == "process_effect_failed"
+                and event["details"]["generation"] == "host-generation-2"
+                for event in journal.events("hermes-agent:"+HERMES_COMMIT)))
+            self.assertTrue(any(row["kind"] == "hermes-generation" and row["state"] == "staged"
+                for row in journal.owned()))
+            with self.assertRaises(LifecycleBlocked):
+                LifecycleRecovery(data,state_root,journal).uninstall()
+
+    def test_unparseable_start_receipt_becomes_unresolved_active_custody(self):
+        with tempfile.TemporaryDirectory() as td:
+            data=OwnedRoot(Path(td)/"data"); data.ensure()
+            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
+            journal=Journal(state_root.path("journal.sqlite3"))
+
+            class InvalidReceiptCustody:
+                def fetch_artifact(self, **kwargs):
+                    return f"artifact:{INSTALL_SCRIPT_ARTIFACT_ID}:{INSTALL_SCRIPT_SHA256}","fetch-receipt"
+                def run_process(self, **kwargs):
+                    raise BootstrapCustodyError("unparseable receipt",
+                        receipt_id="start-receipt-1",cleanup_verified=False)
+
+            boot=HermesBootstrap(data,journal,runner=None,desktop_builder=fake_desktop(data),
+                agent_probe=lambda:True)
+            boot.custody=InvalidReceiptCustody()
+            with self.assertRaises(BootstrapError):
+                boot.install(include_desktop=False)
+            process=next(row for row in journal.owned("process")
+                if row["resource_id"] == "unresolved-start:start-receipt-1")
+            self.assertEqual(process["state"],"active")
+            with self.assertRaises(LifecycleBlocked):
+                LifecycleRecovery(data,state_root,journal).uninstall()
+
+    def test_verified_stage_receipts_are_stopped_and_generation_only_becomes_installed_after_probe(self):
+        with tempfile.TemporaryDirectory() as td:
+            data=OwnedRoot(Path(td)/"data"); data.ensure()
+            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
+            journal=Journal(state_root.path("journal.sqlite3"))
+            runner=FakeRunner()
+
+            class CustodyFixture:
+                def __init__(self):
+                    self.index=0
+                def fetch_artifact(self, **kwargs):
+                    return f"artifact:{INSTALL_SCRIPT_ARTIFACT_ID}:{INSTALL_SCRIPT_SHA256}","fetch-receipt"
+                def run_process(self, **kwargs):
+                    self.index += 1
+                    code, output=runner(kwargs["argv"][2:], timeout=kwargs["timeout"], capture=True)
+                    return ManagedCommandResult(code, output, b"bounded diagnostic", False, True,
+                        f"receipt-{self.index}",f"process-{self.index}","host-gen-1",1000)
+
+            boot=HermesBootstrap(data,journal,runner=None,desktop_builder=fake_desktop(data),
+                agent_probe=lambda:True)
+            boot.custody=CustodyFixture()
+            report=boot.install(include_desktop=False)
+            self.assertTrue(report.agent_ready)
+            processes=journal.owned("process")
+            self.assertEqual({row["resource_id"] for row in processes},
+                {f"process-{index}" for index in range(1,len(EXPECTED_STAGES)+2)})
+            self.assertTrue(all(row["state"] == "stopped" for row in processes))
+            generation=next(row for row in journal.owned("hermes-generation")
+                if row["resource_id"] == str(boot.install_dir))
+            self.assertEqual(generation["state"],"installed")
+            self.assertEqual(len([event for event in journal.events(boot.operation)
+                if event["event"] == "process_generation_receipt"]),len(EXPECTED_STAGES)+1)
 
     def test_interrupted_operation_is_durable_and_resumable_after_power_loss(self):
         with tempfile.TemporaryDirectory() as td:

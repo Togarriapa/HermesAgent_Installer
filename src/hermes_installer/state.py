@@ -235,6 +235,33 @@ class Journal:
             return None
         return {"status": row["status"], "updated_at": row["updated_at"], "payload": json.loads(row["payload"])}
 
+    def operations(self, *, prefix: str, statuses: tuple[str, ...] = (),
+                   limit: int = 1000) -> list[dict[str, object]]:
+        """Read a bounded set of matching checkpoints for explicit recovery.
+
+        A prefix is required so callers cannot accidentally turn lifecycle
+        recovery into an unbounded journal export. Returned payloads already
+        pass through the journal's normal secret metadata redactor.
+        """
+        if (not isinstance(prefix, str) or not prefix or len(prefix) > 256
+                or not isinstance(statuses, tuple) or len(statuses) > 32
+                or any(not isinstance(item, str) or not item or len(item) > 128 for item in statuses)
+                or type(limit) is not int or not 1 <= limit <= 10_000):
+            raise ValueError("journal operation query bounds are invalid")
+        with self._transaction() as db:
+            if statuses:
+                placeholders = ",".join("?" for _ in statuses)
+                rows = db.execute(
+                    "SELECT id,status,updated_at,payload FROM operations WHERE substr(id,1,?)=? AND status IN (" + placeholders + ") ORDER BY updated_at,id LIMIT ?",
+                    (len(prefix), prefix, *statuses, limit)).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT id,status,updated_at,payload FROM operations WHERE substr(id,1,?)=? ORDER BY updated_at,id LIMIT ?",
+                    (len(prefix), prefix, limit)).fetchall()
+        return [{"id": row["id"], "status": row["status"],
+                 "updated_at": row["updated_at"], "payload": json.loads(row["payload"])}
+                for row in rows]
+
     def record_owned(self, kind: str, resource_id: str, state: str = "active") -> None:
         with self._transaction() as db:
             db.execute("INSERT INTO owned_resources(kind,resource_id,created_at,state) VALUES(?,?,?,?) ON CONFLICT(kind,resource_id) DO UPDATE SET state=excluded.state", (kind, resource_id, time.time(), state))
