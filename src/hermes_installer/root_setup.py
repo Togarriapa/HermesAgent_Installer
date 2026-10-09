@@ -13,8 +13,9 @@ from enum import StrEnum
 import hashlib
 import os
 import re
-import secrets
+import stat
 import sys
+import time
 from typing import Sequence
 
 
@@ -75,15 +76,31 @@ class RootSetupResult:
 
 @dataclass(frozen=True, slots=True)
 class LauncherStatus:
+    schema: int
     state: str
+    candidate_git_sha: str | None
+    authority: bool
+    resume_command: str
     blocker_code: str | None
     message: str
 
     def __post_init__(self) -> None:
-        if self.state not in {"verified", "unverified"}:
-            raise ValueError("launcher status must be verified or unverified")
-        if self.state == "unverified" and self.blocker_code != "ROOT_ATTESTATION_REQUIRED":
-            raise ValueError("unverified launcher status needs its fixed blocker code")
+        if self.schema != 1:
+            raise ValueError("launcher status schema is unsupported")
+        if self.state not in {"root-setup-required", "prepared", "active", "pending", "failed"}:
+            raise ValueError("launcher status state is not a reviewed lifecycle value")
+        if self.authority is not False:
+            raise ValueError("read-only launcher status cannot carry authority")
+        if self.candidate_git_sha is not None and not _CANDIDATE_SHA.fullmatch(self.candidate_git_sha):
+            raise ValueError("launcher status candidate SHA is malformed")
+        if self.resume_command and self.resume_command not in {
+            "sudo -- hermes-installer-root-setup install",
+            "sudo -- hermes-installer-root-setup resume",
+            "sudo -- hermes-installer-root-setup update",
+        }:
+            raise ValueError("launcher status resume command is outside the fixed launcher schema")
+        if self.state == "root-setup-required" and self.blocker_code != "ROOT_ATTESTATION_REQUIRED":
+            raise ValueError("root-setup-required status needs its fixed blocker code")
         if not self.message or len(self.message) > 256 or "\n" in self.message:
             raise ValueError("launcher status message must be one bounded line")
 
@@ -115,25 +132,69 @@ class VerifiedRootBootstrapCandidateSelection:
     """Sealed proof that a candidate SHA was read from the root controlling TTY."""
 
     candidate_git_sha: str
-    candidate_selection_handle: str
     input_origin: str
     choice_sha256: str
     _seal: object
 
-    def __init__(self, candidate_git_sha: str, candidate_selection_handle: str,
-                 choice_sha256: str, *, _seal: object | None = None):
+    def __init__(self, candidate_git_sha: str, choice_sha256: str, *, _seal: object | None = None):
         if _seal is not _CHOICE_SEAL:
             raise TypeError("candidate selection proofs can only be minted by the root selection registry")
         if (not isinstance(candidate_git_sha, str) or not _CANDIDATE_SHA.fullmatch(candidate_git_sha)
-                or not isinstance(candidate_selection_handle, str)
-                or not _HANDLE.fullmatch(candidate_selection_handle)
                 or not isinstance(choice_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", choice_sha256)):
             raise ValueError("candidate selection proof is malformed")
         object.__setattr__(self, "candidate_git_sha", candidate_git_sha)
-        object.__setattr__(self, "candidate_selection_handle", candidate_selection_handle)
         object.__setattr__(self, "input_origin", "root_tty_explicit")
         object.__setattr__(self, "choice_sha256", choice_sha256)
         object.__setattr__(self, "_seal", _seal)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class RootBootstrapCandidateSelectionSnapshot:
+    candidate_git_sha: str
+    input_origin: str
+    choice_sha256: str
+    controller_pid: int
+    controller_start_ticks: int
+    controller_uid: int
+    controller_gid: int
+    session_id: int
+    process_group_id: int
+    tty_device: int
+    tty_inode: int
+    tty_rdevice: int
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object
+
+    def __init__(self, *, _seal: object, **fields: object):
+        if _seal is not _CHOICE_SEAL:
+            raise TypeError("root candidate snapshots can only be minted by the selection registry")
+        for name, value in fields.items():
+            object.__setattr__(self, name, value)
+        object.__setattr__(self, "_seal", _seal)
+
+
+@dataclass(slots=True)
+class _RootTTYProof:
+    stdin_fd: int
+    pidfd: int
+    controller_pid: int
+    controller_start_ticks: int
+    controller_uid: int
+    controller_gid: int
+    session_id: int
+    process_group_id: int
+    tty_device: int
+    tty_inode: int
+    tty_rdevice: int
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def close(self) -> None:
+        for fd in (self.stdin_fd, self.pidfd):
+            if fd >= 0:
+                os.close(fd)
+        self.stdin_fd = self.pidfd = -1
 
 
 class RootBootstrapCandidateSelectionRegistry:
@@ -141,16 +202,23 @@ class RootBootstrapCandidateSelectionRegistry:
 
     def __init__(self) -> None:
         self._choices: dict[int, RootSetupExplicitChoices] = {}
-        self._receipts: dict[str, VerifiedRootBootstrapCandidateSelection] = {}
+        self._choice_proofs: dict[int, _RootTTYProof] = {}
+        self._selection_proofs: dict[int, tuple[VerifiedRootBootstrapCandidateSelection, _RootTTYProof]] = {}
 
     def issue_explicit_tty_choice(self) -> RootSetupExplicitChoices:
         if not sys.platform.startswith("linux") or os.getuid() != 0 or os.geteuid() != 0:
             raise RuntimeError("candidate source choice requires the Linux root setup process")
         if not (sys.stdin.isatty() and sys.stderr.isatty()):
             raise RuntimeError("candidate source choice requires the root controlling terminal")
+        proof = _capture_root_tty_proof()
         candidate = input("Exact Hermes installer source commit (40 lowercase hex characters): ").strip()
-        choice = RootSetupExplicitChoices(candidate, _seal=_CHOICE_SEAL)
+        try:
+            choice = RootSetupExplicitChoices(candidate, _seal=_CHOICE_SEAL)
+        except BaseException:
+            proof.close()
+            raise
         self._choices[id(choice)] = choice
+        self._choice_proofs[id(choice)] = proof
         return choice
 
     def resolve(self, choices: RootSetupExplicitChoices) -> VerifiedRootBootstrapCandidateSelection:
@@ -159,23 +227,54 @@ class RootBootstrapCandidateSelectionRegistry:
         issued = self._choices.pop(id(choices), None)
         if issued is not choices:
             raise RuntimeError("root source choice is absent, foreign, or already consumed")
-        handle = secrets.token_urlsafe(32)
-        receipt = VerifiedRootBootstrapCandidateSelection(
+        proof = self._choice_proofs.pop(id(choices))
+        if proof.expires_monotonic <= time.monotonic():
+            proof.close()
+            raise RuntimeError("root TTY candidate choice expired before verification")
+        selection = VerifiedRootBootstrapCandidateSelection(
             choices.candidate_git_sha,
-            handle,
             hashlib.sha256(choices.candidate_git_sha.encode("ascii")).hexdigest(),
             _seal=_CHOICE_SEAL,
         )
-        self._receipts[handle] = receipt
-        return receipt
+        self._selection_proofs[id(selection)] = (selection, proof)
+        return selection
 
-    def resolve_handle(self, handle: str) -> VerifiedRootBootstrapCandidateSelection:
-        if not isinstance(handle, str) or not _HANDLE.fullmatch(handle):
-            raise RuntimeError("candidate selection handle is malformed")
-        receipt = self._receipts.pop(handle, None)
-        if receipt is None:
-            raise RuntimeError("candidate selection receipt is absent or already consumed")
-        return receipt
+    def consume_verified_selection(
+        self, selection: VerifiedRootBootstrapCandidateSelection
+    ) -> RootBootstrapCandidateSelectionSnapshot:
+        proof_row = self._selection_proofs.pop(id(selection), None)
+        if (proof_row is None or proof_row[0] is not selection
+                or selection._seal is not _CHOICE_SEAL):
+            raise RuntimeError("candidate selection proof is foreign, absent, or already consumed")
+        proof = proof_row[1]
+        try:
+            _verify_root_tty_proof(proof)
+            return RootBootstrapCandidateSelectionSnapshot(
+                _seal=_CHOICE_SEAL,
+                candidate_git_sha=selection.candidate_git_sha,
+                input_origin=selection.input_origin,
+                choice_sha256=selection.choice_sha256,
+                controller_pid=proof.controller_pid,
+                controller_start_ticks=proof.controller_start_ticks,
+                controller_uid=proof.controller_uid,
+                controller_gid=proof.controller_gid,
+                session_id=proof.session_id,
+                process_group_id=proof.process_group_id,
+                tty_device=proof.tty_device,
+                tty_inode=proof.tty_inode,
+                tty_rdevice=proof.tty_rdevice,
+                issued_monotonic=proof.issued_monotonic,
+                expires_monotonic=proof.expires_monotonic,
+            )
+        finally:
+            proof.close()
+
+    def close(self) -> None:
+        for proof in (*self._choice_proofs.values(), *(row[1] for row in self._selection_proofs.values())):
+            proof.close()
+        self._choices.clear()
+        self._choice_proofs.clear()
+        self._selection_proofs.clear()
 
 
 def verify_installed_launcher() -> bool:
@@ -326,15 +425,100 @@ def launcher_status() -> LauncherStatus:
     and no privileged command to display.
     """
     if os.getuid() != 0 or os.geteuid() != 0 or not sys.platform.startswith("linux"):
-        return LauncherStatus("unverified", "ROOT_ATTESTATION_REQUIRED",
-                              "The installed launcher has not been verified by its root actor.")
+        return _launcher_status_required()
     try:
         if verify_installed_launcher():
-            return LauncherStatus("verified", None, "The current process matches the installed root launcher.")
+            # The actor alone says nothing about a prepared or active setup
+            # generation. Until a typed durable status receipt is connected,
+            # keep presentation at the reviewed non-authorizing state.
+            return _launcher_status_required(
+                message="The root launcher is verified; setup state still requires a durable lifecycle receipt."
+            )
     except (OSError, RuntimeError, ValueError):
         pass
-    return LauncherStatus("unverified", "ROOT_ATTESTATION_REQUIRED",
-                          "The installed launcher has not been verified by its root actor.")
+    return _launcher_status_required()
+
+
+def _launcher_status_required(*, message: str =
+                              "The installed launcher has not been verified by its root actor.") -> LauncherStatus:
+    return LauncherStatus(1, "root-setup-required", None, False, "",
+                          "ROOT_ATTESTATION_REQUIRED", message)
+
+
+def _capture_root_tty_proof() -> _RootTTYProof:
+    if not sys.platform.startswith("linux") or os.getuid() != 0 or os.geteuid() != 0:
+        raise RuntimeError("root TTY proof requires the Linux root setup process")
+    stdin_fd = os.dup(0)
+    try:
+        if not os.isatty(stdin_fd) or not os.isatty(2):
+            raise RuntimeError("root candidate selection requires a controlling TTY")
+        terminal = os.fstat(stdin_fd)
+        stderr_terminal = os.fstat(2)
+        if (not stat.S_ISCHR(terminal.st_mode) or not stat.S_ISCHR(stderr_terminal.st_mode)
+                or (terminal.st_dev, terminal.st_ino, terminal.st_rdev)
+                != (stderr_terminal.st_dev, stderr_terminal.st_ino, stderr_terminal.st_rdev)):
+            raise RuntimeError("root candidate selection must use one controlling terminal")
+        process_group_id = os.getpgrp()
+        if os.tcgetpgrp(stdin_fd) != process_group_id:
+            raise RuntimeError("root candidate selection is not from the foreground terminal group")
+        pid = os.getpid()
+        opener = getattr(os, "pidfd_open", None)
+        if opener is None:
+            raise RuntimeError("root candidate selection requires a kernel process identity handle")
+        pidfd = opener(pid, 0)
+        now = time.monotonic()
+        return _RootTTYProof(
+            stdin_fd=stdin_fd,
+            pidfd=pidfd,
+            controller_pid=pid,
+            controller_start_ticks=_process_start_ticks(pid),
+            controller_uid=os.getuid(),
+            controller_gid=os.getgid(),
+            session_id=os.getsid(0),
+            process_group_id=process_group_id,
+            tty_device=terminal.st_dev,
+            tty_inode=terminal.st_ino,
+            tty_rdevice=terminal.st_rdev,
+            issued_monotonic=now,
+            expires_monotonic=now + 60.0,
+        )
+    except BaseException:
+        os.close(stdin_fd)
+        raise
+
+
+def _verify_root_tty_proof(proof: _RootTTYProof) -> None:
+    if (not sys.platform.startswith("linux") or os.getuid() != 0 or os.geteuid() != 0
+            or proof.controller_pid != os.getpid()
+            or proof.controller_uid != os.getuid() or proof.controller_gid != os.getgid()
+            or proof.session_id != os.getsid(0) or proof.process_group_id != os.getpgrp()
+            or time.monotonic() >= proof.expires_monotonic
+            or proof.expires_monotonic - proof.issued_monotonic > 60.0
+            or proof.controller_start_ticks != _process_start_ticks(proof.controller_pid)):
+        raise RuntimeError("root TTY candidate selection is stale or belongs to another controller")
+    try:
+        os.fstat(proof.pidfd)
+        terminal = os.fstat(proof.stdin_fd)
+        if (not os.isatty(proof.stdin_fd) or not stat.S_ISCHR(terminal.st_mode)
+                or (terminal.st_dev, terminal.st_ino, terminal.st_rdev)
+                != (proof.tty_device, proof.tty_inode, proof.tty_rdevice)
+                or os.tcgetpgrp(proof.stdin_fd) != proof.process_group_id):
+            raise RuntimeError("root controlling terminal changed after candidate selection")
+    except OSError:
+        raise RuntimeError("root controlling terminal proof is no longer available") from None
+
+
+def _process_start_ticks(pid: int) -> int:
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as source:
+            raw = source.read(4096)
+        close = raw.rfind(b")")
+        fields = raw[close + 2:].split()
+        if close < 0 or len(fields) <= 19:
+            raise ValueError
+        return int(fields[19])
+    except (OSError, ValueError, IndexError):
+        raise RuntimeError("root process start identity is unavailable") from None
 
 
 def _require_root_linux() -> None:

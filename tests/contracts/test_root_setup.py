@@ -3,9 +3,12 @@ from __future__ import annotations
 import builtins
 import contextlib
 import io
+import os
+import time
 import unittest
 from unittest.mock import patch
 
+import hermes_installer.root_setup as root_setup
 from hermes_installer.root_setup import (
     RootBootstrapCandidateSelectionRegistry,
     RootSetupAction,
@@ -22,34 +25,53 @@ class RootSetupBoundaryTests(unittest.TestCase):
     def test_candidate_choice_is_exact_root_tty_input_and_one_use(self) -> None:
         registry = RootBootstrapCandidateSelectionRegistry()
         candidate = "a" * 40
+        stdin_fd = os.open(os.devnull, os.O_RDONLY)
+        pidfd = os.open(os.devnull, os.O_RDONLY)
+        tty = os.fstat(stdin_fd)
+        proof = root_setup._RootTTYProof(
+            stdin_fd, pidfd, os.getpid(), 1, 0, 0, 1, os.getpgrp(), tty.st_dev,
+            tty.st_ino, tty.st_rdev, time.monotonic(), time.monotonic() + 30,
+        )
         with patch("hermes_installer.root_setup.sys.platform", "linux"), \
              patch("hermes_installer.root_setup.os.getuid", return_value=0), \
              patch("hermes_installer.root_setup.os.geteuid", return_value=0), \
              patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \
              patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=True), \
+             patch("hermes_installer.root_setup._capture_root_tty_proof", return_value=proof), \
+             patch("hermes_installer.root_setup._verify_root_tty_proof"), \
              patch.object(builtins, "input", return_value=candidate):
             choice = registry.issue_explicit_tty_choice()
         self.assertEqual(choice.candidate_git_sha, candidate)
         receipt = registry.resolve(choice)
         self.assertEqual(receipt.candidate_git_sha, candidate)
         self.assertEqual(receipt.input_origin, "root_tty_explicit")
-        self.assertEqual(len(receipt.candidate_selection_handle), 43)
         self.assertEqual(len(receipt.choice_sha256), 64)
         with self.assertRaises(RuntimeError):
             registry.resolve(choice)
-        self.assertIs(registry.resolve_handle(receipt.candidate_selection_handle), receipt)
+        with patch("hermes_installer.root_setup._verify_root_tty_proof"):
+            snapshot = registry.consume_verified_selection(receipt)
+        self.assertEqual(snapshot.controller_pid, os.getpid())
+        self.assertEqual(snapshot.controller_start_ticks, 1)
         with self.assertRaises(RuntimeError):
-            registry.resolve_handle(receipt.candidate_selection_handle)
+            registry.consume_verified_selection(receipt)
 
     def test_candidate_choice_rejects_forgery_and_noncanonical_sha(self) -> None:
         with self.assertRaises(TypeError):
             RootSetupExplicitChoices("a" * 40)
         registry = RootBootstrapCandidateSelectionRegistry()
+        stdin_fd = os.open(os.devnull, os.O_RDONLY)
+        pidfd = os.open(os.devnull, os.O_RDONLY)
+        tty = os.fstat(stdin_fd)
+        proof = root_setup._RootTTYProof(
+            stdin_fd, pidfd, os.getpid(), 1, 0, 0, 1, os.getpgrp(), tty.st_dev,
+            tty.st_ino, tty.st_rdev, time.monotonic(), time.monotonic() + 30,
+        )
         with patch("hermes_installer.root_setup.sys.platform", "linux"), \
              patch("hermes_installer.root_setup.os.getuid", return_value=0), \
              patch("hermes_installer.root_setup.os.geteuid", return_value=0), \
              patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \
              patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=True), \
+             patch("hermes_installer.root_setup._capture_root_tty_proof", return_value=proof), \
              patch.object(builtins, "input", return_value="A" * 40):
             with self.assertRaises(ValueError):
                 registry.issue_explicit_tty_choice()
@@ -89,7 +111,10 @@ class RootSetupBoundaryTests(unittest.TestCase):
              patch("hermes_installer.root_setup.os.geteuid", return_value=501), \
              patch("hermes_installer.root_setup.sys.platform", "darwin"):
             status = launcher_status()
-        self.assertEqual(status.state, "unverified")
+        self.assertEqual(status.schema, 1)
+        self.assertEqual(status.state, "root-setup-required")
+        self.assertFalse(status.authority)
+        self.assertEqual(status.resume_command, "")
         self.assertEqual(status.blocker_code, "ROOT_ATTESTATION_REQUIRED")
         self.assertNotIn("sudo", status.message)
 
