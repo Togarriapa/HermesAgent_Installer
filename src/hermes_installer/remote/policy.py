@@ -137,9 +137,11 @@ class FreshAccessPolicyAuthority:
             return (
                 not cancel.is_set()
                 and self.clock() <= deadline
+                and self._exact_application(after_app)
                 and self._exact_policy_set(after_policies)
                 and self._application_signature(before_app) == self._application_signature(after_app)
                 and self._policy_signature(first_policies) == self._policy_signature(after_policies)
+                and self._exact_idp(after_idp)
                 and self._idp_signature(idp) == self._idp_signature(after_idp)
             )
         except Exception:
@@ -196,9 +198,23 @@ class FreshAccessPolicyAuthority:
             and idp.get("type") == "onetimepin"
         )
 
+    @classmethod
+    def _idp_signature(cls, idp: Mapping[str, Any]) -> tuple[Any, ...]:
+        # Compare the complete read-only representation to detect in-flight changes.
+        return (cls._freeze(idp),)
+
     @staticmethod
-    def _idp_signature(idp: Mapping[str, Any]) -> tuple[Any, ...]:
-        return (idp.get("id"), idp.get("name"), idp.get("type"))
+    def _freeze(value: Any):
+        if isinstance(value, Mapping):
+            return tuple((key, FreshAccessPolicyAuthority._freeze(item))
+                         for key, item in sorted(value.items(), key=lambda pair: str(pair[0])))
+        if isinstance(value, list):
+            return tuple(FreshAccessPolicyAuthority._freeze(item) for item in value)
+        if isinstance(value, tuple):
+            return tuple(FreshAccessPolicyAuthority._freeze(item) for item in value)
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        return repr(type(value))
 
     def _exact_policy_set(self, rows: list[dict[str, Any]]) -> bool:
         i = self.identity
@@ -231,12 +247,7 @@ class FreshAccessPolicyAuthority:
             return False
 
     def _application_signature(self, app: Mapping[str, Any]) -> tuple[Any, ...]:
-        return (
-            app.get("id"), app.get("name"), app.get("type"),
-            str(app.get("domain", "")).casefold(),
-            tuple(app.get("allowed_idps", ())),
-            tuple(app.get("self_hosted_domains") or ()),
-        )
+        return (self._freeze(app),)
 
     @staticmethod
     def _policy_signature(rows: list[dict[str, Any]]) -> tuple[Any, ...]:

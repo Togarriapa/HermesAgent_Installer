@@ -11,14 +11,20 @@ class FixtureClient:
         self.policies = policies
         self.reads = []
         self.network = None
+        self.app_sequence = None
+        self.provider_sequence = None
 
     def request(self, method, path, payload=None):
         self.reads.append((method, path))
         if method != "GET":
             raise AssertionError("policy authority must be read-only")
         if path.endswith("/access/apps/app-1"):
+            if self.app_sequence is not None:
+                return self.app_sequence.pop(0)
             return self.app
         if path.endswith("/access/identity_providers/idp-1"):
+            if self.provider_sequence is not None:
+                return self.provider_sequence.pop(0)
             return self.provider
         if "/policies?" in path:
             page = int(path.rsplit("page=", 1)[1])
@@ -102,6 +108,13 @@ class FreshAccessPolicyAuthorityTests(unittest.TestCase):
         )
         self.assertFalse(unavailable.allows("owner@example.net"))
         self.assertFalse(self.authority.allows("outsider@example.net"))
+
+    def test_second_snapshot_detects_app_or_provider_configuration_change(self):
+        self.client.app_sequence = [self.app, dict(self.app, enable_binding_cookie=True)]
+        self.assertFalse(self.authority.allows("owner@example.net"))
+        self.client.app_sequence = None
+        self.client.provider_sequence = [self.provider, dict(self.provider, config={"changed": True})]
+        self.assertFalse(self.authority.allows("owner@example.net"))
 
     def test_cancelled_or_expired_read_does_not_resolve_secret_or_call_api(self):
         cancel = threading.Event()
