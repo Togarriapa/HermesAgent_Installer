@@ -15,7 +15,7 @@ from typing import Any, Callable, Mapping
 from .types import AuthorityDenied, BrokeredEffectResponse
 
 _OPERATIONS = frozenset({"process.status", "process.read", "process.write", "process.stop"})
-_HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
+_HANDLE = re.compile(r"[0-9a-f]{32}\Z")
 _GENERATION = re.compile(r"[A-Za-z0-9_.:-]{1,256}\Z")
 _MAX_TIMEOUT = 30.0
 
