@@ -825,7 +825,7 @@
     "root_key_selection": {
       "owner_module": "hermes_installer.authority.enrollment",
       "registry": "RootAuthorityKeySelectionRegistry",
-      "constructor": "from_installed_release(verified_release,installed_actor_verifier,root_journal)",
+      "constructor": "from_installed_release(verified_release,installed_actor_verifier,root_journal,initial_compilation_registry). Initial registry is constructed from verified release/actor before compiler rendering and has no authority-key prerequisite. ensure/resolve_selected_key call actual registry.resolve_initial_session/verify_initial_session, current kernel actor and original plan/lease. Composition supplies same retained registry instance, not callback that accepts arbitrary session text.",
       "API": "ensure_selected_key(initial_compilation_session_handle)->RootAuthorityKeyReceipt; resolve_selected_key(receipt_handle,initial_compilation_session_handle)->same retained receipt",
       "key_path": "/etc/hermes-installer/authority.key existing exact HMAC key path",
       "selection_path": "/etc/hermes-installer/authority-key-selection.json",
