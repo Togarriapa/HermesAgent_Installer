@@ -34,7 +34,7 @@ class NativeMCPRegistrationIndexTests(unittest.TestCase):
             "native_package_generation": "native-generation-1",
             "native_server_name": "figma-native",
             "native_tool_name": self.schema["name"],
-            "native_schema_sha256": schema_sha256(self.schema),
+            "native_schema_sha256": schema_sha256(self.schema["parameters"]),
             "mcp_enrollment_id": "figma",
             "mcp_generation": "mcp-generation-1",
             "mcp_tool_name": "get_file",
@@ -168,6 +168,10 @@ class NativeMCPRegistrationIndexTests(unittest.TestCase):
         changed["parameters"]["properties"]["file_key"]["description"] = "caller-changed"
         with self.assertRaises(NativeMCPBindingError):
             self.index.resolve(self.schema["name"], changed)
+        renamed = copy.deepcopy(self.schema)
+        renamed["name"] = "different-native-name"
+        with self.assertRaises(NativeMCPBindingError):
+            self.index.resolve(self.schema["name"], renamed)
 
     def test_schema_digest_is_canonical_and_rejects_non_json_numbers(self):
         self.assertEqual(
