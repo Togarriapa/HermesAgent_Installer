@@ -74,6 +74,7 @@ class BrokerAuthorityFixture:
             intent_id=context.intent_id, context_digest="fixture-context-digest",
             monotonic_expires_at=min(context.monotonic_expires_at, time.monotonic() + 5),
             final_payload_digest=context.final_payload_digest,
+            operation=context.operation,
         )
         self.grants.append(grant)
         return grant
@@ -81,7 +82,8 @@ class BrokerAuthorityFixture:
     def mcp_request(self, grant, *, target, payload, timeout, cancelled=None):
         self.effects.append((grant, target, payload, timeout, cancelled))
         if (target != grant.target or canonical_digest(payload) != grant.request_digest
-                or grant.final_payload_digest != canonical_digest(payload)):
+                or grant.final_payload_digest != canonical_digest(payload)
+                or grant.operation != "mcp.request"):
             raise AssertionError("broker binding mismatch")
         request = __import__("json").loads(payload)
         method, rid = request["method"], request["request_id"]
