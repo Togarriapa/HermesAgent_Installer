@@ -4,6 +4,7 @@ import hashlib
 import os
 import stat
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -14,11 +15,19 @@ from hermes_installer.authority.native_display_startup import (
     encode_xauthority,
 )
 from hermes_installer.authority.remote_origin import HMACReceiptSigner
+from hermes_installer.managed_process_custodian import ManagedProcessIdentityLease
 
 
 class _Custody:
+    def __init__(self, identity=None):
+        self.identity = identity
+
     def resolve_active_process_handle(self, _profile_id, _generation):
-        raise AssertionError("this preparation-only test must not inspect a process")
+        if self.identity is None:
+            raise AssertionError("this preparation-only test must not inspect a process")
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)
+        return ManagedProcessIdentityLease(**{**self.identity, "pidfd": read_fd})
 
 
 class XauthorityEncodingTests(unittest.TestCase):
@@ -52,6 +61,7 @@ class XauthorityPreparationTests(unittest.TestCase):
             remote_enrollment_id="remote-enrollment", native_profile_id="hermes-desktop",
             native_generation="native-gen-1", display_profile_id="hermes-display",
             display_generation="display-gen-1", display_name=":98",
+            display_executable_sha256="a" * 64,
             receipt_handle="r" * 43, display_uid=self.uid, display_gid=self.gid)
         self.registry = XauthorityStartupRegistry(
             root=self.root, signer=HMACReceiptSigner(b"s" * 32),
@@ -93,6 +103,60 @@ class XauthorityPreparationTests(unittest.TestCase):
         with self.assertRaises((OSError, NativeDisplayStartupDenied)):
             self.registry.prepare(self.selection)
         self.assertEqual(list(outside.iterdir()), [])
+
+    def test_receipt_seals_and_rechecks_current_typed_custody_lease(self):
+        identity = {
+            "process_id": "managed-display-process", "profile_id": "hermes-display",
+            "generation": "display-gen-1", "uid": self.uid, "gid": self.gid,
+            "pid": 2345, "start_ticks": 987654, "executable_device": 1,
+            "executable_inode": 234, "executable_sha256": "a" * 64,
+            "cgroup_identity": "hermes-display.service", "mount_namespace_inode": 10,
+            "network_namespace_inode": 11, "expires_monotonic": time.monotonic() + 300.0,
+        }
+        self.registry.custody = _Custody(identity)
+        prepared = self.registry.prepare(self.selection)
+        receipt = self.registry.seal_started_display(prepared)
+        self.assertEqual(receipt.pid_start_ticks, identity["start_ticks"])
+        self.assertEqual(receipt.xauthority_sha256, prepared.content_sha256)
+        self.assertNotIn(prepared.path.read_bytes()[-32:].hex(), repr(receipt))
+        selected = self.registry.resolve_selected(
+            receipt.receipt_handle,
+            remote_enrollment_id=self.selection.remote_enrollment_id,
+            native_profile_id=self.selection.native_profile_id,
+            native_generation=self.selection.native_generation,
+            display_profile_id=self.selection.display_profile_id,
+            display_generation=self.selection.display_generation,
+            display_name=self.selection.display_name,
+        )
+        try:
+            self.assertEqual(os.fstat(selected.file_fd).st_ino, prepared.inode)
+            self.assertGreaterEqual(selected.pidfd, 0)
+        finally:
+            selected.close()
+
+    def test_receipt_rejects_process_identity_drift(self):
+        identity = {
+            "process_id": "managed-display-process", "profile_id": "hermes-display",
+            "generation": "display-gen-1", "uid": self.uid, "gid": self.gid,
+            "pid": 2345, "start_ticks": 987654, "executable_device": 1,
+            "executable_inode": 234, "executable_sha256": "a" * 64,
+            "cgroup_identity": "hermes-display.service", "mount_namespace_inode": 10,
+            "network_namespace_inode": 11, "expires_monotonic": time.monotonic() + 300.0,
+        }
+        self.registry.custody = _Custody(identity)
+        prepared = self.registry.prepare(self.selection)
+        receipt = self.registry.seal_started_display(prepared)
+        self.registry.custody.identity = {**identity, "start_ticks": 987655}
+        with self.assertRaises(NativeDisplayStartupDenied):
+            self.registry.resolve_selected(
+                receipt.receipt_handle,
+                remote_enrollment_id=self.selection.remote_enrollment_id,
+                native_profile_id=self.selection.native_profile_id,
+                native_generation=self.selection.native_generation,
+                display_profile_id=self.selection.display_profile_id,
+                display_generation=self.selection.display_generation,
+                display_name=self.selection.display_name,
+            )
 
 
 if __name__ == "__main__":
