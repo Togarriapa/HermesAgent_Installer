@@ -18,6 +18,7 @@ from hermes_installer.authority.remote_sessions import (
     RemotePolicyDecision, RemoteSessionEnrollment, RemoteSessionHandle, RootRemoteAccessVerifier,
     _bounded_deadline, _principal_mapping_digest,
 )
+from hermes_installer.authority.remote_registry import RemoteSessionAuthorityRegistry
 from hermes_installer.authority.types import AuthorityDenied
 from hermes_installer.authority.types import canonical_digest
 from hermes_installer.remote.gateway import Principal, RemotePolicy
@@ -444,6 +445,26 @@ class RemoteRootSessionAuthorityTests(unittest.TestCase):
         self.assertNotIn("access-subject-1", repr(auth))
         self.assertNotIn("alice@example.test", repr(auth))
         self.assertNotIn(token.decode(), repr(auth))
+
+    def test_registry_routes_hostname_and_opaque_handle_to_one_authority(self):
+        registry = RemoteSessionAuthorityRegistry({
+            self.enrollment.enrollment_id: self.authority,
+        })
+        request = self.request()
+        admitted = registry.admit_remote_session(
+            self.token(), request, peer_uid=1002, peer_pid=200, peer_pidfd=8)
+        challenge = registry.challenge_remote_session(
+            admitted.remote_session_handle, peer_uid=1002, peer_pid=200, peer_pidfd=8)
+        self.assertEqual(challenge.session_id, admitted.session_id)
+        registry.close_remote_session(
+            admitted.remote_session_handle, peer_uid=1002, peer_pid=200, peer_pidfd=8)
+        with self.assertRaises(AuthorityDenied):
+            registry.challenge_remote_session(
+                admitted.remote_session_handle, peer_uid=1002, peer_pid=200, peer_pidfd=8)
+        with self.assertRaises(AuthorityDenied):
+            registry.admit_remote_session(
+                self.token(), replace(request, hostname="other.example.test"),
+                peer_uid=1002, peer_pid=200, peer_pidfd=8)
 
 
 if __name__ == "__main__":
