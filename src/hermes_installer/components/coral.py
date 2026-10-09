@@ -60,57 +60,38 @@ class CoralPackageSetReceipt:
     receipt_id: str
 
 
-def install_coral_runtime_package_set(authority_client, authorization, *,
+def install_coral_runtime_package_set(authority_client, *,
                                       enrollment_id: str, generation: str,
-                                      manifest_sha256: str, timeout: float = 600) -> CoralPackageSetReceipt:
-    """Ask root custody to install only the enrolled CPython39 package set.
+                                      manifest_sha256: str, timeout: float = 600,
+                                      cancelled: Callable[[], bool] | None = None) -> CoralPackageSetReceipt:
+    """Mint an exact one-effect grant and install only the protected Coral set."""
+    from hermes_installer.authority.package_sets import install_package_set, package_set_request
+    from hermes_installer.authority.types import AuthorityDenied
 
-    The caller provides no paths, interpreter, wheel IDs, requirements or pip
-    options. The response must be the authenticated host receipt for these exact
-    pinned wheels and the selected enrollment generation.
-    """
-    if (not enrollment_id or not generation
-            or not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256)
-            or isinstance(timeout, bool) or not 0 < timeout <= 600):
-        raise ValueError("Coral package-set enrollment, generation, manifest digest and bounded timeout are required")
-    method = getattr(authority_client, "install_package_set", None)
-    if not callable(method):
-        raise CoralError("Coral runtime remains unavailable: the host authority has no package-set client")
-    target = f"package-set:{CORAL_PACKAGE_SET_ID}:{manifest_sha256}"
-    response = method(authorization, target=target, package_set_id=CORAL_PACKAGE_SET_ID,
-        manifest_sha256=manifest_sha256, enrollment_id=enrollment_id, generation=generation,
-        timeout=timeout)
-    if getattr(response, "status", None) != 200:
-        raise CoralError("root package-set effect did not return a successful authenticated receipt")
-    receipt_id = getattr(response, "receipt_id", None)
-    body = getattr(response, "body", None)
-    if (not isinstance(receipt_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", receipt_id)
-            or not isinstance(body, bytes) or len(body) > 64 * 1024):
-        raise CoralError("root package-set response lacks a bounded opaque receipt")
+    if (not isinstance(enrollment_id, str) or not enrollment_id
+            or not isinstance(generation, str) or not generation
+            or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not 0 < timeout <= 600):
+        raise ValueError("Coral package-set enrollment, generation and bounded timeout are required")
     try:
-        raw = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise CoralError("root package-set response is not valid JSON") from None
-    fields = {"package_set_id", "manifest_sha256", "enrollment_id", "generation",
-              "runtime_build_attestation_digest", "wheel_sha256", "installed_tree_sha256", "status"}
-    if not isinstance(raw, dict) or set(raw) != fields:
-        raise CoralError("root package-set response has an unexpected receipt schema")
-    wheel_digests = raw.get("wheel_sha256")
-    expected_wheels = (CORAL_TFLITE_WHEEL_SHA256, CORAL_NUMPY_WHEEL_SHA256)
-    valid_wheels = (isinstance(wheel_digests, list) and len(wheel_digests) == 2
-                    and all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
-                            for value in wheel_digests)
-                    and tuple(wheel_digests) == expected_wheels)
-    if (raw["package_set_id"] != CORAL_PACKAGE_SET_ID
-            or raw["manifest_sha256"] != manifest_sha256
-            or raw["enrollment_id"] != enrollment_id or raw["generation"] != generation
-            or raw["status"] != "installed" or not valid_wheels
-            or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
-                   for value in (raw["runtime_build_attestation_digest"], raw["installed_tree_sha256"]))):
-        raise CoralError("root package-set receipt does not bind the selected generation and exact Coral wheels")
-    return CoralPackageSetReceipt(CORAL_PACKAGE_SET_ID, manifest_sha256, enrollment_id, generation,
-        raw["runtime_build_attestation_digest"], tuple(wheel_digests),
-        raw["installed_tree_sha256"], "installed", receipt_id)
+        target, _payload, digest = package_set_request(package_set_id=CORAL_PACKAGE_SET_ID,
+            manifest_sha256=manifest_sha256, enrollment_id=enrollment_id, generation=generation)
+        context = authority_client.context(purpose="hermes-bootstrap",
+            intent="install-coral-runtime-package-set", operation="package.install",
+            final_payload_digest=digest, lease_seconds=float(timeout), cancelled=cancelled)
+        authorization = authority_client.authorize_effect(context, capability="hermes-bootstrap",
+            target=target, recipient=None, request_digest=digest, retry_index=0,
+            cancelled=cancelled)
+        receipt = install_package_set(authority_client, authorization,
+            package_set_id=CORAL_PACKAGE_SET_ID, manifest_sha256=manifest_sha256,
+            enrollment_id=enrollment_id, generation=generation, timeout=timeout,
+            cancelled=cancelled)
+    except (AuthorityDenied, AttributeError, TypeError, ValueError) as exc:
+        raise CoralError(f"root package-set effect denied: {exc}") from exc
+    return CoralPackageSetReceipt(receipt.package_set_id, receipt.manifest_sha256,
+        receipt.enrollment_id, receipt.generation, receipt.runtime_build_attestation_digest,
+        tuple(receipt.wheel_sha256), receipt.installed_tree_sha256, receipt.status,
+        receipt.broker_receipt_id)
 
 
 @dataclass(frozen=True, slots=True)

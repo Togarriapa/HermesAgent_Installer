@@ -107,44 +107,73 @@ def test_coral_package_set_blocker_names_missing_host_effect_not_missing_spec(tm
 
 def test_coral_package_set_caller_sends_only_fixed_enrollment_and_checks_root_receipt() -> None:
     import json
+    from hermes_installer.authority.package_sets import package_set_request
+    from hermes_installer.authority.types import BrokeredEffectResponse, EffectAuthorization, Sensitivity
+
+    manifest, enrollment, generation = "a" * 64, "enroll-1", "generation-2"
     payload = {"package_set_id": coral.CORAL_PACKAGE_SET_ID, "manifest_sha256": "a" * 64,
-        "enrollment_id": "enroll-1", "generation": "generation-2",
+        "enrollment_id": enrollment, "generation": generation,
         "runtime_build_attestation_digest": "b" * 64,
         "wheel_sha256": [coral.CORAL_TFLITE_WHEEL_SHA256, coral.CORAL_NUMPY_WHEEL_SHA256],
         "installed_tree_sha256": "c" * 64, "status": "installed"}
-    response = SimpleNamespace(status=200, receipt_id="receipt_1234567890",
-                               body=json.dumps(payload).encode())
+    target, _body, digest = package_set_request(package_set_id=coral.CORAL_PACKAGE_SET_ID,
+        manifest_sha256=manifest, enrollment_id=enrollment, generation=generation)
+    authorization = EffectAuthorization(principal_id="installer", profile_id="profile", namespace_id="ns",
+        uid=1001, purpose="hermes-bootstrap", sensitivity=Sensitivity.PRIVATE, trace_id="trace",
+        policy_revision="policy-1", lineage_hash="d" * 64, capability="hermes-bootstrap",
+        intent_id="install-set", target=target, recipient=None, request_digest=digest, retry_index=0,
+        issued_at_monotonic=1.0, monotonic_expires_at=100.0, grant_id="grant-1", nonce="nonce-1",
+        context_digest="e" * 64, signature="signature", enrollment_id=enrollment,
+        generation=generation, operation="package.install")
+    response = BrokeredEffectResponse(200, json.dumps(payload).encode(),
+        {"content-type": "application/json"}, target)
     seen = []
+    host_context = object()
 
     class Client:
+        def context(self, **request):
+            seen.append(("context", request))
+            return host_context
+
+        def authorize_effect(self, context, **request):
+            seen.append(("authorize", context, request))
+            assert context is host_context
+            assert request["target"] == target and request["request_digest"] == digest
+            return authorization
+
         def install_package_set(self, authorization, **request):
-            seen.append((authorization, request))
+            seen.append(("install", authorization, request))
             return response
 
-    authorization = object()
-    receipt = coral.install_coral_runtime_package_set(Client(), authorization,
-        enrollment_id="enroll-1", generation="generation-2", manifest_sha256="a" * 64)
-    assert receipt.status == "installed" and receipt.receipt_id == "receipt_1234567890"
+    receipt = coral.install_coral_runtime_package_set(Client(),
+        enrollment_id=enrollment, generation=generation, manifest_sha256=manifest)
+    assert receipt.status == "installed" and receipt.receipt_id == target
     assert receipt.wheel_sha256 == (coral.CORAL_TFLITE_WHEEL_SHA256, coral.CORAL_NUMPY_WHEEL_SHA256)
-    assert seen[0][0] is authorization
-    assert seen[0][1] == {"target": f"package-set:{coral.CORAL_PACKAGE_SET_ID}:" + "a" * 64,
-        "package_set_id": coral.CORAL_PACKAGE_SET_ID, "manifest_sha256": "a" * 64,
-        "enrollment_id": "enroll-1", "generation": "generation-2", "timeout": 600}
+    assert seen[0] == ("context", {"purpose": "hermes-bootstrap",
+        "intent": "install-coral-runtime-package-set", "operation": "package.install",
+        "final_payload_digest": digest, "lease_seconds": 600.0, "cancelled": None})
+    assert seen[2][0] == "install" and seen[2][1] is authorization
+    assert seen[2][2] == {"package_set_id": coral.CORAL_PACKAGE_SET_ID,
+        "manifest_sha256": manifest, "enrollment_id": enrollment,
+        "generation": generation, "timeout": 600.0, "cancelled": None}
     payload["generation"] = "old-generation"
-    response.body = json.dumps(payload).encode()
-    with pytest.raises(CoralError, match="selected generation and exact Coral wheels"):
-        coral.install_coral_runtime_package_set(Client(), authorization,
+    response = BrokeredEffectResponse(200, json.dumps(payload).encode(),
+        {"content-type": "application/json"}, target)
+    with pytest.raises(CoralError, match="root package-set effect denied"):
+        coral.install_coral_runtime_package_set(Client(),
             enrollment_id="enroll-1", generation="generation-2", manifest_sha256="a" * 64)
     payload["generation"] = "generation-2"
     payload["wheel_sha256"] = list(reversed(payload["wheel_sha256"]))
-    with pytest.raises(CoralError, match="selected generation and exact Coral wheels"):
-        coral.install_coral_runtime_package_set(Client(), authorization,
+    response = BrokeredEffectResponse(200, json.dumps(payload).encode(),
+        {"content-type": "application/json"}, target)
+    with pytest.raises(CoralError, match="root package-set effect denied"):
+        coral.install_coral_runtime_package_set(Client(),
             enrollment_id="enroll-1", generation="generation-2", manifest_sha256="a" * 64)
 
 
 def test_coral_package_set_caller_fails_closed_without_published_host_client() -> None:
-    with pytest.raises(CoralError, match="no package-set client"):
-        coral.install_coral_runtime_package_set(object(), object(), enrollment_id="e",
+    with pytest.raises(CoralError, match="root package-set effect denied"):
+        coral.install_coral_runtime_package_set(object(), enrollment_id="e",
             generation="g", manifest_sha256="a" * 64)
 
 
