@@ -19,10 +19,12 @@ MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
 TOKEN="local-fixture-token-value-0123456789abcdef"
 
 
-def synthetic_authorizer(context, capability, now):
+def synthetic_authorizer(context, capability, intent_id, now, timeout, cancelled):
+    import uuid
     return DispatchAuthorization("fixture-principal", context.profile_id, context.profile_id,
         context.trace_id, frozenset({"inference", "tool-call"}),
-        context.effective_sensitivity, "fixture-revision", "fixture-grant", now + 60)
+        context.effective_sensitivity, "fixture-revision", context.purpose,
+        capability, intent_id, "f" * 64, str(uuid.uuid4()), now + min(60, timeout))
 
 
 class RecordingTransport:
