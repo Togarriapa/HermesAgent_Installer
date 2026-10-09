@@ -88,7 +88,7 @@ def _safe_runtime_dir(path: Path, *, create: bool) -> bool:
 _RUN_PROBE_SOURCE = (
     "import json,os,signal,socket,subprocess,sys,time\n"
     "root_pid=__ROOT_PID__; home_secret=__HOME_SECRET__; credential=__CREDENTIAL__\n"
-    "expected={'HOME':'/hermes','HERMES_HOME':'/hermes','PATH':'/usr/bin','LANG':'C'}\n"
+    "expected={'HOME':'/hermes','HERMES_HOME':'/hermes','PATH':'/usr/bin','LANG':'C','LC_ALL':'C'}\n"
     "def denied(path):\n"
     "    try:\n"
     "        with open(path,'rb') as source: source.read(1)\n"
@@ -335,7 +335,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             "artifact_sha256": self.digest, "service_user": self.service_user,
             "trace_id": "ci-trace-" + self.token[:12], "operation_id": "ci-op-" + self.token[:12],
             "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes",
-                            "PATH": "/usr/bin", "LANG": "C"},
+                            "PATH": "/usr/bin", "LANG": "C", "LC_ALL": "C"},
             "mode": mode, "artifact_ref": self.run_store_id if mode == "run" else self.parent_store_id,
             "child_artifact_refs": self.child_refs,
         }
@@ -360,7 +360,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             "artifact_sha256": self.digest, "service_user": self.service_user,
             "trace_id": "ci-trace-" + self.token[:12], "operation_id": "ci-op-" + self.token[:12],
             "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes",
-                            "PATH": "/usr/bin", "LANG": "C"},
+                            "PATH": "/usr/bin", "LANG": "C", "LC_ALL": "C"},
             "mode": mode, "artifact_ref": self.run_store_id if mode == "run" else self.parent_store_id,
             "child_artifact_refs": self.child_refs,
             "expect_denial": expect_denial,
@@ -444,7 +444,8 @@ result['descendant_pid']=descendant.pid
 print(json.dumps(result,sort_keys=True),flush=True)
 time.sleep(30)
 '''
-        env_allowlist = {"HOME": "/hermes", "HERMES_HOME": "/hermes", "PATH": "/usr/bin", "LANG": "C"}
+        env_allowlist = {"HOME": "/hermes", "HERMES_HOME": "/hermes", "PATH": "/usr/bin",
+                         "LANG": "C", "LC_ALL": "C"}
         args = [str(os.getpid()), str(self.home_secret), str(self.credential_path), json.dumps(env_allowlist)]
         client, started = self._start_client(mode="run", child_code=child, child_args=args)
         try:
