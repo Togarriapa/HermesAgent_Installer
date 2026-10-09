@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping
 
 MAX_HEADER_BYTES = 32 * 1024
-MAX_BODY_BYTES = 16 * 1024 * 1024
+MAX_BODY_BYTES = 2 * 1024 * 1024
 
 
 class HTTPFrameError(ValueError):
