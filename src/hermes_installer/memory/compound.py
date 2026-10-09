@@ -315,9 +315,8 @@ def validate_step_outcome(*, route_id: str, step_id: str, status: int,
             raise MemoryRecipeUnavailable("AgentMemory created memory title is invalid")
         return MemoryStepOutcome({"success": True, "id": memory_id}, {"memory_id": memory_id})
     if route_id == "openviking-find":
-        if value.get("status") != "ok" or not isinstance(value.get("result"), dict):
-            raise MemoryRecipeUnavailable("OpenViking find response failed source schema")
-        return MemoryStepOutcome(value["result"], {})
+        raise MemoryRecipeUnavailable(
+            "OpenViking find result validator is not enrolled for the selected source schema")
     raise MemoryRecipeUnavailable("selected route has no semantic response validator")
 
 
