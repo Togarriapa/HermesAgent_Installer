@@ -250,3 +250,10 @@ The installer SHALL bind verified remote native principal and actual gateway ker
 #### Scenario: Gateway context relabel or metadata-only origin activation
 - **WHEN** caller claims native principal from gateway context or activation lacks actual current root readiness/token/mount proof
 - **THEN** deny before bytes/activation, preserve configured checkpoint and exact native/account resume requirements.
+
+### Requirement: Distinct native manifest digest domains
+The installer SHALL verify native manifest.json against explicit entrypoint_sha256 and original resource manifest against its separate source identity, with fixed closure paths and no assumed digest equality.
+
+#### Scenario: Source manifest digest substitutes native entrypoint pin
+- **WHEN** loader receives wrong digestdomain or callerselected module path
+- **THEN** deny loader activation before imports and retain exact incomplete closure evidence.

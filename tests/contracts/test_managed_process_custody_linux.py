@@ -30,7 +30,8 @@ from hermes_installer.authority.daemon import DEFAULT_SOCKET_DIR
 from hermes_installer.authority.service import AuthorityService, EffectRule, PrincipalBinding
 from hermes_installer.authority.types import Sensitivity
 from hermes_installer.managed_process_custodian import (
-    ManagedProcessEffectHandler, ManagedProfileCustody,
+    ManagedNativePackageMount, ManagedProcessEffectHandler, ManagedProfileCustody,
+    native_package_mount_target,
     process_control_target, process_inspect_target, process_start_target,
 )
 
@@ -212,7 +213,10 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         os.chown(self.script_root, 0, 0)
         self.run_store_id, self.run_digest, self.run_script = self._enroll_script("run", self._run_probe_source())
         self.parent_store_id, self.parent_digest, self.parent_script = self._enroll_script("parent", self._parent_probe_source())
-        self.child_refs = {self.run_store_id: self.run_digest, self.parent_store_id: self.parent_digest}
+        self.native_store_id, self.native_digest, self.native_script = self._enroll_script(
+            "native", self._native_mount_probe_source())
+        self.child_refs = {self.run_store_id: self.run_digest, self.parent_store_id: self.parent_digest,
+                           self.native_store_id: self.native_digest}
         self.enrollment_id = "ci-enrollment-" + self.token[:16]
         self.home_id = "ci-home-" + self.token[:16]
         self.work_id = "ci-work-" + self.token[:16]
@@ -242,6 +246,8 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
                 "run": self._operation_recipe(self.run_store_id, self.run_digest, "run"),
                 "parent-death": self._operation_recipe(
                     self.parent_store_id, self.parent_digest, "parent-death"),
+                "native-package": self._operation_recipe(
+                    self.native_store_id, self.native_digest, "native-package"),
             },
             parameter_schemas={"ci-empty": {"id": "ci-empty", "fields": []}},
             authority_socket=DEFAULT_SOCKET_DIR / f"{self.uid}.sock",
@@ -349,7 +355,8 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             return self.executable
         for enrolled_id, enrolled_digest, path in (
                 (self.run_store_id, self.run_digest, self.run_script),
-                (self.parent_store_id, self.parent_digest, self.parent_script)):
+                (self.parent_store_id, self.parent_digest, self.parent_script),
+                (self.native_store_id, self.native_digest, self.native_script)):
             if store_id == enrolled_id and digest == enrolled_digest:
                 return path
         raise ValueError("test artifact is not enrolled")
@@ -379,6 +386,101 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
     @staticmethod
     def _parent_probe_source() -> str:
         return _PARENT_PROBE_SOURCE
+
+    def _native_mount_probe_source(self) -> str:
+        package_id = "ci-native-package-" + self.token[:12]
+        module_digest = hashlib.sha256(b"def register(ctx):\n    return None\n").hexdigest()
+        closure_files = [{"relative_path": "adapter.py", "sha256": module_digest,
+                          "size_bytes": len(b"def register(ctx):\n    return None\n"), "mode": 0o444}]
+        closure_digest = hashlib.sha256(json.dumps(
+            closure_files, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")).hexdigest()
+        target = native_package_mount_target(package_id=package_id, profile_id=self.profile_id,
+            generation="ci-" + self.token[:16], compiled_closure_sha256=closure_digest)
+        return (
+            "import hashlib,json,os,time\n"
+            f"root={str(target)!r}\n"
+            "manifest=open(root+'/manifest.json','rb').read()\n"
+            "module=open(root+'/closure/adapter.py','rb').read()\n"
+            "lines=open('/proc/self/mountinfo').read().splitlines()\n"
+            "parts=[line.split() for line in lines if len(line.split())>5 and line.split()[4]==root]\n"
+            "opts=set(parts[0][5].split(',')) if len(parts)==1 else set()\n"
+            "optional=parts[0][6:parts[0].index('-')] if len(parts)==1 else ['ambiguous']\n"
+            "try: open(root+'/closure/adapter.py','ab').write(b'x'); write_denied=False\n"
+            "except OSError: write_denied=True\n"
+            "print(json.dumps({'manifest_bytes':len(manifest),'module_bytes':len(module),"
+            "'read_only':'ro' in opts,'nosuid':'nosuid' in opts,'nodev':'nodev' in opts,"
+            "'noexec':'noexec' in opts,'private':not any(x.startswith(('shared:','master:')) for x in optional),"
+            "'write_denied':write_denied},sort_keys=True),flush=True)\n"
+            "time.sleep(30)\n"
+        )
+
+    def _native_package_fixture(self) -> ManagedNativePackageMount:
+        from types import SimpleNamespace
+
+        root = self.stage / "native-fixture"
+        closure = root / "closure"
+        closure.mkdir(parents=True, mode=0o755)
+        module = closure / "adapter.py"
+        module.write_bytes(b"def register(ctx):\n    return None\n")
+        module.chmod(0o444)
+        os.chown(module, 0, 0)
+        closure.chmod(0o555)
+        os.chown(closure, 0, 0)
+        module_bytes = module.read_bytes()
+        module_digest = hashlib.sha256(module_bytes).hexdigest()
+        closure_files = [{"relative_path": "adapter.py", "sha256": module_digest,
+                          "size_bytes": len(module_bytes), "mode": 0o444}]
+        closure_digest = hashlib.sha256(json.dumps(
+            closure_files, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")).hexdigest()
+        package_id = "ci-native-package-" + self.token[:12]
+        generation = self.profile.generation
+        adapter_id = "ci-native-adapter"
+        adapter_artifact_id = "ci-native-adapter-artifact-" + self.token[:12]
+        action_id = "ci-native-action"
+        dependency_ids = []
+        manifest = {
+            "schema": 1, "package_id": package_id, "profile_id": self.profile_id,
+            "generation": generation, "closure_files": closure_files,
+            "adapters": [{"adapter_id": adapter_id, "relative_module_path": "adapter.py",
+                "module_name": "fixture.adapter", "entrypoint_symbol": "register",
+                "artifact_sha256": module_digest, "allowed_internal_modules": [],
+                "allowed_dependency_artifact_ids": dependency_ids, "action_ids": [action_id]}],
+            "dependencies": [],
+        }
+        manifest_bytes = json.dumps(manifest, sort_keys=True, separators=(",", ":"),
+                                    ensure_ascii=False).encode("utf-8")
+        entry = root / "manifest.json"
+        entry.write_bytes(manifest_bytes)
+        entry.chmod(0o444)
+        os.chown(entry, 0, 0)
+        resolver = root / "resolver.bin"
+        resolver.write_bytes(b"pinned-resolver-fixture")
+        resolver.chmod(0o444)
+        os.chown(resolver, 0, 0)
+        values = lambda path, artifact_id: SimpleNamespace(
+            path=path, artifact_id=artifact_id, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        binding = SimpleNamespace(
+            package_id=package_id, profile_id=self.profile_id, generation=generation,
+            compiled_closure_artifact_id="ci-native-tree-" + self.token[:12],
+            compiled_closure_sha256=closure_digest,
+            entrypoint_artifact_id="ci-native-manifest-" + self.token[:12],
+            entrypoint_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+            resolver_artifact_id="ci-native-resolver-" + self.token[:12],
+            resolver_sha256=hashlib.sha256(resolver.read_bytes()).hexdigest(),
+            service_mount_id="ci-native-mount", adapter_records={adapter_id: SimpleNamespace(
+                adapter_id=adapter_id, adapter_artifact_id=adapter_artifact_id,
+                adapter_sha256=module_digest, action_id=action_id)},
+        )
+        closure_artifact = SimpleNamespace(path=closure, artifact_id=binding.compiled_closure_artifact_id,
+            sha256="1" * 64, tree_manifest_sha256=closure_digest)
+        return ManagedNativePackageMount(
+            binding, self.profile_id, generation, closure_artifact,
+            values(entry, binding.entrypoint_artifact_id),
+            values(resolver, binding.resolver_artifact_id),
+            {adapter_id: values(module, adapter_artifact_id)}, {},
+        )
 
     def _client(self) -> subprocess.Popen[str]:
         env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent",
@@ -532,6 +634,41 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             if client.poll() is None:
                 client.kill()
                 client.wait(timeout=5)
+
+    def test_native_package_mount_is_verified_before_exec_and_live_proof_is_handle_bound(self) -> None:
+        package = self._native_package_fixture()
+        self.handler.native_package_resolver = lambda profile_id, generation: (
+            package if profile_id == self.profile_id and generation == self.profile.generation else None)
+        client, started = self._start_client(mode="native-package")
+        try:
+            proof = self.handler.resolve_loaded_native_package(
+                started["process_id"], self.profile.generation)
+            self.assertIsNotNone(proof, "root did not retain an actual package mount proof")
+            self.assertEqual(proof.mount.package_id, package.binding.package_id)
+            self.assertEqual(proof.mount.compiled_closure_sha256,
+                             package.binding.compiled_closure_sha256)
+            self.assertEqual(proof.mount.verified_mount_options, ("ro", "nosuid", "nodev", "noexec"))
+            self.assertTrue(proof.mount.private_propagation)
+            self.assertIsNone(self.handler.resolve_loaded_native_package(
+                started["process_id"], "stale-generation"))
+            assert client.stdout is not None
+            ready, _, _ = __import__("select").select([client.stdout], [], [], 20)
+            self.assertTrue(ready, "native package fixture did not complete its bounded observation")
+            result = json.loads(client.stdout.readline())
+            self.assertEqual(result.get("event"), "stopped", result)
+            observation = json.loads(result["stdout"])
+            self.assertGreater(observation["manifest_bytes"], 0)
+            self.assertGreater(observation["module_bytes"], 0)
+            for field in ("read_only", "nosuid", "nodev", "noexec", "private", "write_denied"):
+                self.assertIs(observation[field], True, field)
+            self.assertTrue(result["cleanup_verified"])
+            self.assertFalse(self.handler._pids(result["cgroup"]))
+            self.assertIsNone(self.handler.resolve_loaded_native_package(
+                started["process_id"], self.profile.generation))
+        finally:
+            if client.poll() is None:
+                client.kill()
+            client.wait(timeout=5)
 
     def test_prelaunch_cancellation_after_slow_environment_probe_never_starts_unit(self) -> None:
         marker = self.stage / "environment-probe-entered"
