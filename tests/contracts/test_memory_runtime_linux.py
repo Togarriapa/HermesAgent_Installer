@@ -218,7 +218,11 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
                         raise PermissionError("fixture credential request escaped protected scope")
                     return "fake-memory-key-for-loopback-test"
 
-            journal_parent = Path(tempfile.mkdtemp(prefix="memory-root-journal-"))
+            # The production catalog rejects a path below world-writable /tmp,
+            # including when the final directory itself is root-owned. Model
+            # the installer-owned journal beneath /run in this disposable CI.
+            journal_parent = Path(tempfile.mkdtemp(
+                prefix="memory-root-journal-", dir="/run"))
             journal = journal_parent / "authority-journal"
             journal.mkdir(mode=0o700)
             os.chown(journal, 0, 0)
