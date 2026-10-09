@@ -669,3 +669,11 @@ The installer SHALL satisfy this obligation: Finish with the project location, e
 #### Scenario: R0195 unavailable or failed prerequisite
 - **WHEN** a requested item or assertion lacks functional evidence, contains a failed/pending result or only has source/configuration/fixture evidence
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Installer-owned target and result verification
+
+The executable verifier SHALL bind actual selected installer target/current candidate and each original assertion to root-observed concrete workflow receipts.
+
+#### Scenario: Fixture or candidate drift
+- **WHEN** a result is fixture-only, incomplete or differs from current enrolled target/candidate
+- **THEN** acceptance remains pending and no claimed success is exported.

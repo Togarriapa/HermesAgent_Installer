@@ -36,3 +36,7 @@ Implement foundation tasks before dependent obligations. Stage artifacts and rev
 ## Open Questions
 
 Live target/account values and pending source selections are tracked in planning/blockers.json. The architecture supports source overrides and configure-later without deleting these requirements. New technical scope choices require a separate Sol-reviewed append-only amendment, never edits to the frozen baseline.
+
+### v28 installer-owned verifier constructors
+
+VD-F02/VD-F04 use protected-runtime-assembly-contract.json installer_target_result_verifier exact current root target/candidate/admission/result constructors and receipts. All AC01..18 remain pending absent actual dimensions.
