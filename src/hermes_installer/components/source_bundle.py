@@ -147,6 +147,7 @@ class VerifiedComponentSource:
     license: str | None
     license_files: tuple[str, ...]
     redistribution_license_review_required: bool
+    quarantined_skill_problems: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def generation_id(self) -> str:
@@ -386,6 +387,7 @@ class GitHubComponentSourceFetcher:
             license=contract.license,
             license_files=license_files,
             redistribution_license_review_required=contract.redistribution_license_review_required,
+            quarantined_skill_problems=audit.quarantined_skill_problems,
         )
 
     def _unpack(self, archive: bytes, identity: str, revision: str) -> tuple[dict[str, bytes], dict[str, int]]:
