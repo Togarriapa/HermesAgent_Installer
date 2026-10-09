@@ -138,7 +138,7 @@ def _resume_checkpoint_exists(state_path: Path) -> bool:
             or database.is_symlink() or not stat.S_ISREG(db_info.st_mode)
             or db_info.st_uid != os.getuid() or stat.S_IMODE(db_info.st_mode) & 0o077):
             return False
-        uri = database.as_uri() + "?mode=ro"
+        uri = database.as_uri() + "?mode=ro&immutable=1"
         with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=2)) as db:
             row = db.execute("SELECT 1 FROM operations WHERE id='installer:selection'").fetchone()
         return row is not None
