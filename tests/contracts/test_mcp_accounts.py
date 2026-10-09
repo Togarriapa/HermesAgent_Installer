@@ -7,10 +7,12 @@ from hermes_installer.mcp.playwright_mcp import validate_fixture_origin
 
 class MCPAccountTests(unittest.TestCase):
     def test_google_eligibility_and_service_are_explicit(self):
-        with self.assertRaises(PermissionError):
+        with self.assertRaises(TypeError):
             google(None, service="drive", resource_id="file-1", preview_eligible=False)
         with self.assertRaises(TypeError):
             google(None, service="drive", resource_id="file-1", preview_eligible=True)
+        self.assertEqual(google(None, service="drive", resource_id="file-1").service.id,
+                         "google-drive")
         with self.assertRaises(ValueError):
             google(None, service="unknown", resource_id="x")
 
