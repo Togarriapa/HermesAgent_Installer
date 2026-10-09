@@ -8,8 +8,7 @@ from types import SimpleNamespace
 
 from hermes_installer.codex_responses import CODEX_RECIPIENT, CODEX_TARGET
 from hermes_installer.policy import (
-    PROVIDER_RECIPIENT, Sensitivity, canonical_provider_target,
-    normalize_chat_request,
+    PROVIDER_RECIPIENT, canonical_provider_target, normalize_chat_request,
 )
 from hermes_installer.provider_effect_handlers import (
     CODEX_ENDPOINT, OPENROUTER_ENDPOINT, OPENROUTER_MODEL,
@@ -59,15 +58,15 @@ def _context(sensitivity="public", capabilities=frozenset({"provider-inference"}
 
 
 def _authorization(context, *, target, recipient, digest, capability="provider-inference",
-                   retry_index=0):
+                   retry_index=0, sensitivity="public"):
     return SimpleNamespace(
         principal_id=context.principal_id, profile_id=context.profile_id,
         namespace_id=context.namespace_id, uid=context.uid,
         purpose=context.purpose, intent_id=context.intent_id,
         trace_id=context.trace_id, policy_revision=context.policy_revision,
-        lineage_hash=context.lineage_hash, sensitivity=Sensitivity.PUBLIC,
+        lineage_hash=context.lineage_hash,
         monotonic_expires_at=context.monotonic_expires_at - 1,
-        target=target, recipient=recipient, request_digest=digest,
+        sensitivity=sensitivity, target=target, recipient=recipient, request_digest=digest,
         capability=capability, retry_index=retry_index,
     )
 
@@ -177,7 +176,7 @@ class ProviderEffectHandlerTests(unittest.TestCase):
             _openrouter_enrollment(frozenset({"public", "private"}))
         with self.assertRaises(ValueError):
             ProviderEnrollment(
-                provider="codex", account_id="opaque-account", target=CODEX_TARGET,
+                provider="codex", account_id="opaque-account", target="https://attacker.invalid",
                 recipient=CODEX_RECIPIENT, credential_reference="vault://codex",
                 credential_scope="openai:codex:responses",
                 models=frozenset({"gpt-test"}), allowed_sensitivities=frozenset({"public"}),
