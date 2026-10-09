@@ -47,7 +47,7 @@ class FakeAuthority:
             raise RuntimeError("fake broker failure")
         self.calls.append((grant, target, recipient, request_digest, payload, timeout, cancelled))
         return SimpleNamespace(status=200,
-            body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":9,"output_tokens":4}}}\n\n',
+            body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":9,"output_tokens":4}}}\n\n',
             headers={"Content-Type": "text/event-stream", "Retry-After": "2", "Set-Cookie": "secret"})
 
 
@@ -178,8 +178,52 @@ class CodexResponsesTests(unittest.TestCase):
         unterminated=b'event: response.completed\ndata: {"type":"response.completed","response":{}}'
         with self.assertRaisesRegex(PolicyDenied, "before response.completed"):
             validate_responses_sse(unterminated, "text/event-stream")
-        complete=b'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":7,"output_tokens":3}}}\n\n'
-        self.assertEqual(validate_responses_sse(complete, "text/event-stream"), (7, 3))
+        complete=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed","usage":{"input_tokens":7,"output_tokens":3}}}\n\n'
+        self.assertEqual(validate_responses_sse(complete, "text/event-stream; charset=utf-8"), (7, 3))
+        for response in ({}, {"id":"resp_fixture","usage":{"input_tokens":7,"output_tokens":3}},
+                         {"id":"resp_fixture","status":"completed"}):
+            event=json.dumps({"type":"response.completed","response":response}, separators=(",", ":"))
+            with self.subTest(response=response), self.assertRaises(PolicyDenied):
+                validate_responses_sse(("event: response.completed\ndata: "+event+"\n\n").encode(), "text/event-stream")
+
+    def test_completed_function_call_history_round_trips_with_linked_output(self):
+        authority = FakeAuthority()
+        transport = CodexResponsesTransport(authority)
+        tool = {"type": "function", "name": "read_file", "parameters": {"type": "object"}}
+        history = [
+            {"type": "message", "role": "user", "content": "read README"},
+            {"type": "function_call", "call_id": "call_read_1", "name": "read_file",
+             "arguments": "{\"path\":\"README.md\"}", "status": "completed"},
+            {"type": "function_call_output", "call_id": "call_read_1",
+             "output": "{\"text\":\"synthetic result\"}"},
+        ]
+        payload = request(input=history, tools=[tool])
+        normalized, model, uses_tools = normalize_responses_request(payload)
+        self.assertEqual(model, "codex-model")
+        self.assertTrue(uses_tools)
+        digest = hashlib.sha256(normalized).hexdigest()
+        response = transport(context(final_payload_digest=digest), payload, retry_index=0)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(authority.calls), 1)
+        self.assertEqual(authority.calls[0][4], normalized)
+        sent = json.loads(authority.calls[0][4])
+        self.assertEqual(sent["input"], history)
+        self.assertFalse(sent["store"])
+        self.assertTrue(sent["stream"])
+
+    def test_function_call_history_requires_declared_tool_and_matching_output(self):
+        tool = {"type": "function", "name": "read_file", "parameters": {"type": "object"}}
+        call = {"type": "function_call", "call_id": "call_1", "name": "read_file",
+                "arguments": "{}", "status": "completed"}
+        bad_requests = [
+            request(input=[call], tools=[tool]),
+            request(input=[dict(call, name="unknown"), {
+                "type": "function_call_output", "call_id": "call_1", "output": "x"}], tools=[tool]),
+            request(input=[call, {"type": "function_call_output", "call_id": "other", "output": "x"}], tools=[tool]),
+        ]
+        for payload in bad_requests:
+            with self.subTest(payload=payload), self.assertRaises(PolicyDenied):
+                normalize_responses_request(payload)
 
     def test_function_tool_output_requires_tool_capability(self):
         _, _, uses_tools = normalize_responses_request(request(input=[
