@@ -1,11 +1,15 @@
 """Native Plugin identity is explicit and activation needs a trusted adapter."""
 import unittest
+from dataclasses import dataclass
+import base64
+import hashlib
 
 from hermes_installer.components.native_plugins import (
     NATIVE_PLUGIN_ADAPTERS,
     NativePluginUnavailable,
     create_native_plugin_handler,
     resolve_native_plugin_adapter,
+    RESOURCE_OVERLAY_STORE_IMPLEMENTATION,
 )
 
 
@@ -54,6 +58,70 @@ class NativePluginAdapterTests(unittest.TestCase):
     def test_unknown_plugin_id_is_not_accepted_as_alias(self):
         with self.assertRaisesRegex(KeyError, "unknown native Plugin"):
             create_native_plugin_handler("codex-plugin-from-declaration", _Context())
+
+    def test_overlay_tools_write_read_history_and_cas_delete_effects(self):
+        @dataclass(frozen=True)
+        class Value:
+            value: bytes
+            revision: str
+
+        class Store:
+            def __init__(self):
+                self.values = {}
+                self.versions = {}
+
+            def read(self, record_id):
+                return self.values.get(record_id)
+
+            def write(self, record_id, value, expected_revision):
+                current = self.values.get(record_id)
+                if (current.revision if current else None) != expected_revision:
+                    raise RuntimeError("overlay compare-and-swap conflict")
+                revision = hashlib.sha256(value).hexdigest()
+                self.values[record_id] = Value(value, revision)
+                self.versions.setdefault(record_id, []).append(revision)
+                return revision
+
+            def history(self, record_id):
+                return tuple(self.versions.get(record_id, ()))
+
+            def delete(self, record_id, expected_revision):
+                current = self.values.get(record_id)
+                if current is None or current.revision != expected_revision:
+                    raise RuntimeError("overlay compare-and-swap conflict")
+                del self.values[record_id]
+                tombstone = hashlib.sha256((record_id + expected_revision).encode()).hexdigest()
+                self.versions[record_id].append(tombstone)
+                return tombstone
+
+        class PluginContext:
+            def __init__(self):
+                self.tools = {}
+
+            def register_tool(self, *, name, toolset, schema, handler, **kwargs):
+                self.tools[name] = (toolset, schema, handler, kwargs)
+
+        class Runtime:
+            def __init__(self):
+                self.local_overlay_store = Store()
+
+        runtime = Runtime()
+        plugin = PluginContext()
+        RESOURCE_OVERLAY_STORE_IMPLEMENTATION.register(plugin, runtime)
+        write = plugin.tools["resource_overlay_write"][2]
+        read = plugin.tools["resource_overlay_read"][2]
+        history = plugin.tools["resource_overlay_history"][2]
+        delete = plugin.tools["resource_overlay_delete"][2]
+        first = write({"record_id": "lesson:1", "value_base64": base64.b64encode(b"learned").decode()})
+        self.assertEqual(read({"record_id": "lesson:1"})["value_base64"], base64.b64encode(b"learned").decode())
+        second = write({"record_id": "lesson:1", "value_base64": base64.b64encode(b"updated").decode(), "expected_revision": first["revision"]})
+        self.assertEqual(len(history({"record_id": "lesson:1"})["revisions"]), 2)
+        self.assertNotEqual(first["revision"], second["revision"])
+        with self.assertRaisesRegex(RuntimeError, "conflict"):
+            delete({"record_id": "lesson:1", "expected_revision": first["revision"]})
+        deletion = delete({"record_id": "lesson:1", "expected_revision": second["revision"]})
+        self.assertEqual(read({"record_id": "lesson:1"}), {"found": False, "record_id": "lesson:1"})
+        self.assertEqual(len(deletion["deleted_revision"]), 64)
 
 
 if __name__ == "__main__":
