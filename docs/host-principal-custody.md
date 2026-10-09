@@ -17,3 +17,9 @@ The host authority fixtures are synthetic contract fixtures. They do not prove p
 ## Verification distinction
 
 Static syntax and whitespace checks have passed for the current supervisor changes. The meaningful Linux negative-effect suite, CI result, root custodian integration, protected profile enrollment, and Pi evidence must be recorded separately before enabling any affected capability. A failed probe leaves that capability disabled with its exact retry/resume action.
+
+## Fixed local service connector (HI07)
+
+`hermes_installer.service_connector` adds a protected connector for the exact enrolled `xpra-native` and `colibri-main` service targets. Its worker-facing API returns an opaque typed stream handle (`connector_id`, generation, expiry, frame limit and byte budget) and exposes only sequenced `read`, `write` and `close` operations. Root resolves a protected live service handle and namespace; caller data cannot select a PID, URL, host, port, route outside the fixed catalog or namespace. Each verb requires a fresh one-use grant bound to the same target, route, session, peer PIDFD, source lineage and bounded lease. The root watchdog retains bidirectional close authority and reaps expired or cancelled streams. See [fixed-service-connector.md](fixed-service-connector.md) for the API and current fixture boundary.
+
+The route catalog currently contains Xpra HTTP/WebSocket at namespace-local loopback port 14500 and Colibri's OpenAI-compatible inference API at namespace-local loopback port 8000. The connector has a loopback fixture effect/denial suite wired into the root Ubuntu Linux workflow. Local source and macOS skipped tests do not establish Linux namespace effects; the authority operation rules/daemon registration, protocol-specific allowlist enforcement, successful Linux CI result, native desktop and Pi service evidence remain pending. Memory/MCP routes are not enrolled by this connector.

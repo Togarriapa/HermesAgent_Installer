@@ -48,7 +48,8 @@ _OPERATIONS = frozenset({
     "process.read", "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
     "resource.orchestrator.recruit",
-    "source.capture",
+    "source.capture", "process.inspect", "connector.open", "connector.read",
+    "connector.write", "connector.close", "native.event.prepare", "native.request.dispatch",
 })
 
 
@@ -158,7 +159,7 @@ class AuthorityService:
 
     def __init__(self, *, signing_key: bytes, key_id: str,
                  bindings_by_uid: Mapping[int, PrincipalBinding],
-                 rules: Mapping[tuple[str, str], EffectRule],
+                 rules: Mapping[tuple[str, str, str], EffectRule],
                  handlers: Mapping[tuple[str, str], EffectHandler],
                  policy: AuthorityPolicy | None = None,
                  monotonic: Callable[[], float] = time.monotonic,
@@ -173,7 +174,7 @@ class AuthorityService:
         profile_ids = [binding.profile_id for binding in bindings_by_uid.values()]
         if len(profile_ids) != len(set(profile_ids)):
             raise ValueError("each managed profile must map to exactly one host principal UID")
-        if any(key != (rule.capability, rule.target) for key, rule in rules.items()):
+        if any(key != (rule.capability, rule.operation, rule.target) for key, rule in rules.items()):
             raise ValueError("effect rule map keys must match their protected rule bindings")
         enrolled_operations = {(rule.operation, rule.target) for rule in rules.values()}
         if set(handlers) - enrolled_operations:
@@ -216,7 +217,9 @@ class AuthorityService:
         parent_binding = self._binding(parent_authorization.uid)
         self._verify_grant_signature(parent_authorization)
         self._assert_grant_current(parent_authorization, parent_binding, parent_authorization.uid)
-        parent_effect_rule = self.rules.get((parent_authorization.capability, parent_authorization.target))
+        parent_effect_rule = self.rules.get((parent_authorization.capability,
+                                             parent_authorization.operation,
+                                             parent_authorization.target))
         with self._lock:
             consumed = parent_authorization.nonce in self._nonces
             already_delegated = parent_authorization.grant_id in self._delegated_parents
@@ -241,7 +244,8 @@ class AuthorityService:
         # no caller may select a child principal, UID, namespace or capability.
         child_binding = next((item for item in self.bindings_by_uid.values()
                               if item.profile_id == rule.child_profile_id), None)
-        child_effect_rule = self.rules.get((rule.child_capability, rule.child_target))
+        child_effect_rule = self.rules.get((rule.child_capability, rule.child_operation,
+                                            rule.child_target))
         if (child_binding is None or rule.child_capability not in child_binding.capabilities
                 or child_effect_rule is None or child_effect_rule.operation != rule.child_operation
                 or child_effect_rule.recipient != rule.child_recipient
@@ -413,7 +417,7 @@ class AuthorityService:
                 "monotonic_expires_at", "source_receipts", "final_payload_digest", "enrollment_id",
                 "generation", "operation", "native_process_identity")):
             raise AuthorityDenied("effect.revalidation", "handler context differs from the signed grant")
-        rule = self.rules.get((authorization.capability, authorization.target))
+        rule = self.rules.get((authorization.capability, operation, authorization.target))
         if (rule is None or rule.operation != operation
                 or authorization.operation != operation
                 or authorization.source_receipts != context.source_receipts
@@ -731,9 +735,11 @@ class AuthorityService:
         owner_state = self.memory_owner_state
         if (owner_state is None or type(owner_generation) is not int or owner_generation < 1
                 or owner_state(context.profile_id) != (provider_id, owner_generation)
-                or self.rules.get(("memory-capture", f"memory:{provider_id}:enqueue")) is None):
+                or self.rules.get(("memory-capture", "memory.enqueue",
+                                   f"memory:{provider_id}:enqueue")) is None):
             raise AuthorityDenied("memory.consent", "memory provider generation or enqueue target is not enrolled")
-        enqueue_rule = self.rules[("memory-capture", f"memory:{provider_id}:enqueue")]
+        enqueue_rule = self.rules[("memory-capture", "memory.enqueue",
+                                   f"memory:{provider_id}:enqueue")]
         if (enqueue_rule.operation, enqueue_rule.target) not in self.handlers:
             raise AuthorityDenied("memory.consent", "root memory enqueue handler is unavailable")
         consent_digest = canonical_digest({"context": _context_digest(context), "provider": provider_id,
@@ -880,7 +886,7 @@ class AuthorityService:
                 or not isinstance(request_digest, str) or len(request_digest) != 64
                 or type(retry_index) is not int or not 0 <= retry_index <= 100):
             raise AuthorityDenied("effect.request", "effect binding is invalid")
-        rule = self.rules.get((capability, target))
+        rule = self.rules.get((capability, context.operation, target))
         if (rule is None or (rule.operation, rule.target) not in self.handlers
                 or rule.recipient != recipient
                 or context.operation != rule.operation
@@ -936,7 +942,7 @@ class AuthorityService:
         self._assert_grant_current(grant, binding, uid)
         if canonical_digest(body) != grant.request_digest:
             raise AuthorityDenied("effect.binding", "broker payload digest mismatch")
-        rule = self.rules.get((grant.capability, grant.target))
+        rule = self.rules.get((grant.capability, grant.operation, grant.target))
         if (rule is None or rule.operation != payload["operation"]
                 or rule.recipient != grant.recipient
                 or grant.operation != payload["operation"]
@@ -1015,7 +1021,7 @@ class AuthorityService:
                 or grant.recipient != payload["recipient"] or grant.request_digest != payload["request_digest"]
                 or grant.retry_index != payload["retry_index"]):
             raise AuthorityDenied("effect.binding", "effect grant binding mismatch")
-        rule = self.rules.get((grant.capability, grant.target))
+        rule = self.rules.get((grant.capability, grant.operation, grant.target))
         if rule is None or rule.recipient != grant.recipient:
             raise AuthorityDenied("effect.denied", "fixed effect target is not enrolled")
         if not self.policy.allow_effect(context=context, rule=rule,

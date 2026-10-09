@@ -94,7 +94,8 @@
     ],
     "HW-F01": [
       "BD-F01",
-      "PR-F01"
+      "PR-F01",
+      "HW-T03"
     ],
     "HW-F02": [
       "HW-F01",
@@ -105,7 +106,8 @@
       "HW-F01",
       "BD-F01",
       "PR-F01",
-      "HW-T01"
+      "HW-T01",
+      "HW-T02"
     ],
     "SK-F01": [
       "BD-F01",
@@ -116,7 +118,8 @@
       "SK-F01",
       "BD-F01",
       "RG-F01",
-      "PR-F01"
+      "PR-F01",
+      "SK-T01"
     ],
     "SK-F03": [
       "SK-F01",
@@ -1134,7 +1137,8 @@
       "PR-F01"
     ],
     "PR-R0130": [
-      "PR-F01"
+      "PR-F01",
+      "PR-T02"
     ],
     "SK-R0131": [
       "SK-F01"
@@ -2228,7 +2232,8 @@
       "PR-F03",
       "HI-T07",
       "HI-T08",
-      "HI-T09"
+      "HI-T09",
+      "HI-T11"
     ],
     "HI-T05": [
       "HI-T01",
@@ -2246,7 +2251,9 @@
       "HI-T07",
       "HI-T08",
       "HI-T09",
-      "HI-T10"
+      "HI-T10",
+      "HI-T11",
+      "HI-T12"
     ],
     "HI-T07": [
       "HI-T01",
@@ -2285,12 +2292,46 @@
     "HW-T01": [
       "HI-T01",
       "HI-T09",
-      "BD-F01"
+      "BD-F01",
+      "HW-T03"
     ],
     "PR-T01": [
       "PR-F01",
       "HI-T08",
+      "HI-T09",
+      "HI-T11"
+    ],
+    "HI-T11": [
+      "HI-T08",
       "HI-T09"
+    ],
+    "HW-T02": [
+      "HI-T02",
+      "HI-T09",
+      "HW-T01"
+    ],
+    "HW-T03": [
+      "HI-T01",
+      "HI-T02",
+      "HI-T09",
+      "BD-F01"
+    ],
+    "PR-T02": [
+      "PR-F01",
+      "HI-T01",
+      "HI-T09"
+    ],
+    "HI-T12": [
+      "HI-T03",
+      "HI-T07",
+      "HI-T09"
+    ],
+    "SK-T01": [
+      "HI-T07",
+      "HI-T08",
+      "HI-T09",
+      "HI-T12",
+      "PR-F01"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."

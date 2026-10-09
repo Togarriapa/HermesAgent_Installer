@@ -251,6 +251,9 @@ class ManagedProcessEffectHandler:
         self._finished: dict[str, tuple[str, float]] = {}
         self._starting: set[str] = set()
         self._lock = threading.RLock()
+        # Root-only test harness may capture bounded manager diagnostics. This
+        # is never serialized to a worker or populated from caller text.
+        self._diagnostic_sink: Callable[[bytes], None] | None = None
         for profile in self.profiles.values():
             self._validate_profile(profile)
 
@@ -493,7 +496,11 @@ class ManagedProcessEffectHandler:
             "--property=ProtectControlGroups=yes", "--property=RestrictSUIDSGID=yes",
             "--property=RestrictNamespaces=user", "--property=RestrictAddressFamilies=AF_UNIX",
             "--property=PrivateNetwork=yes", "--property=IPAddressDeny=any",
-            "--property=InaccessiblePaths=/etc/hermes-installer /var/lib/hermes-installer /etc/ssh /etc/ssl/private",
+            # The product data root is created by the root installer. On a
+            # clean host (and the isolated CI manager namespace) it may not
+            # exist yet; systemd's `-` prefix skips only that absent path.
+            # Once enrolled/installed, the same path is still masked.
+            "--property=InaccessiblePaths=/etc/hermes-installer -/var/lib/hermes-installer /etc/ssh /etc/ssl/private",
             f"--property=BindPaths={root}:{mount}",
         ]
         authority_socket = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
@@ -593,7 +600,7 @@ class ManagedProcessEffectHandler:
             os.close(parent_fd)
             if artifact_mount_dir is not None:
                 _remove_artifact_mount(artifact_mount_dir)
-            raise AuthorityDenied("process.start", "root process manager could not start the enrolled service") from None
+            raise AuthorityDenied("process.launcher_start", "root process manager could not start the enrolled service") from None
         started = self.monotonic()
         deadline = min(launch_deadline, started + 10.0)
         child_fd = None
@@ -606,7 +613,18 @@ class ManagedProcessEffectHandler:
             while self.monotonic() < deadline:
                 if cancelled() or _pidfd_exited(parent_fd):
                     raise AuthorityDenied("process.parent", "process owner ended before admission")
-                cg = self._show(unit, "ControlGroup")
+                try:
+                    cg = self._show(unit, "ControlGroup")
+                except AuthorityDenied as exc:
+                    # systemd-run returns after submitting the unit but before
+                    # systemd necessarily publishes it to `show`. Retry only
+                    # this initial fixed-property lookup while the bounded
+                    # launcher is still alive; all later readback failures
+                    # remain fail-closed.
+                    if exc.code != "process.manager.readback" or launcher.poll() is not None:
+                        raise
+                    time.sleep(.025)
+                    continue
                 if cg.startswith("/") and Path("/sys/fs/cgroup", *cg.strip("/").split()).exists():
                     members = (Path("/sys/fs/cgroup") / cg.lstrip("/") / "cgroup.procs").read_text().split()
                     for raw_pid in members:
@@ -625,21 +643,65 @@ class ManagedProcessEffectHandler:
                 if identity:
                     break
                 if launcher.poll() is not None:
-                    raise AuthorityDenied("process.start", "service exited before admission")
+                    sink = self._diagnostic_sink
+                    if sink is not None:
+                        parts = [f"launcher-exit={launcher.returncode}".encode("ascii")]
+                        for name, stream in ((b"stdout", launcher.stdout), (b"stderr", launcher.stderr)):
+                            if stream is None:
+                                continue
+                            try:
+                                output = stream.read(1024)
+                            except (OSError, ValueError):
+                                output = b""
+                            parts.append(name + b"=" + output[:1024])
+                        # `systemd-run --quiet --wait --collect` intentionally
+                        # keeps manager details off the worker channel. On a
+                        # rejected unit the transient unit may already be
+                        # collected, so capture only fixed, non-command
+                        # properties and the bounded journal reason for the
+                        # root-owned CI diagnostic sink. Never return this to
+                        # the caller or include ExecStart/Environment fields.
+                        for label, command_args in (
+                            (b"unit-properties", [str(self.systemctl), "--system", "show", unit,
+                                "-p", "Result", "-p", "ExecMainCode", "-p", "ExecMainStatus",
+                                "-p", "StatusText", "-p", "ControlGroup", "-p", "PrivateNetwork",
+                                "-p", "RestrictAddressFamilies"]),
+                            (b"unit-journal", ["/usr/bin/journalctl", "--system", "--no-pager",
+                                "-n", "8", "-o", "cat", "--unit", unit]),
+                        ):
+                            try:
+                                diagnostic = subprocess.run(command_args, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+                                    close_fds=True, timeout=1.0, check=False)
+                                parts.append(label + b"=" + diagnostic.stdout[:1024])
+                            except (OSError, subprocess.TimeoutExpired):
+                                parts.append(label + b"=<unavailable>")
+                        sink(b"\n".join(parts)[:2048])
+                    raise AuthorityDenied("process.launcher_early_exit", "service exited before admission")
                 time.sleep(.025)
             if identity is None:
-                raise AuthorityDenied("process.start", "service did not become ready before its deadline")
+                raise AuthorityDenied("process.admission_deadline", "service did not become ready before its deadline")
             pid, ticks, dev, ino = identity
             if Path(cgroup).name != unit or ".." in Path(cgroup).parts:
                 raise AuthorityDenied("process.cgroup", "service did not receive its exact cgroup")
             expected_props = {
                 "KillMode": "control-group", "ProtectSystem": "strict", "PrivateTmp": "yes",
-                "PrivateDevices": "yes", "NoNewPrivileges": "yes", "IPAddressDeny": "any",
+                "PrivateDevices": "yes", "NoNewPrivileges": "yes",
+                # systemd expands `any` to both address-family CIDR ranges in
+                # the observed unit property; compare the kernel rule form.
+                "IPAddressDeny": "0.0.0.0/0 ::/0",
                 "PrivateNetwork": "yes", "RestrictAddressFamilies": "AF_UNIX", "ProtectHome": "tmpfs",
                 "ProtectProc": "invisible", "ProcSubset": "pid", "User": profile.service_user,
             }
             for key, value in expected_props.items():
-                if self._show(unit, key) != value:
+                actual_value = self._show(unit, key)
+                matches = (set(actual_value.split()) == {"0.0.0.0/0", "::/0"}
+                           if key == "IPAddressDeny" else actual_value == value)
+                if not matches:
+                    if self._diagnostic_sink is not None:
+                        self._diagnostic_sink(
+                            f"readback-mismatch:{key}:actual={actual_value[:160]!r}:expected={value!r}".encode("ascii", "backslashreplace"))
                     raise AuthorityDenied("process.sandbox", "manager isolation readback failed")
             if self._show(unit, "Description") != f"HermesInstaller {profile.profile_id} {profile.generation}":
                 raise AuthorityDenied("process.unit", "manager unit is not bound to the profile generation")
@@ -822,7 +884,7 @@ class ManagedProcessEffectHandler:
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True, timeout=1.5, check=False)
         if result.returncode or len(result.stdout) > 4096:
-            raise AuthorityDenied("process.manager", "manager readback failed")
+            raise AuthorityDenied("process.manager.readback", "manager readback failed")
         return result.stdout.decode("utf-8", "strict").strip()
 
     def _ctl(self, args: list[str], timeout: float) -> None:
@@ -903,14 +965,25 @@ class ManagedProcessEffectHandler:
 
     def _stop_partial(self, unit: str, launcher: subprocess.Popen[bytes]) -> None:
         if unit.startswith("hermes-installer-"):
-            self._ctl(["kill", "--kill-whom=all", "--signal=SIGKILL", unit], 1)
-            self._ctl(["stop", unit], 1)
+            cgroup = f"/system.slice/{unit}"
+            for command in (["kill", "--kill-whom=all", "--signal=SIGKILL", unit],
+                            ["stop", unit]):
+                try:
+                    self._ctl(command, 1)
+                except AuthorityDenied:
+                    # systemd returns failure when --collect already removed
+                    # a transient unit. Treat that as clean only when the
+                    # exact registered system.slice cgroup is absent/empty.
+                    if self._pids(cgroup):
+                        raise AuthorityDenied("process.cleanup", "partial unit cgroup could not be stopped") from None
         if launcher.poll() is None:
             launcher.kill()
         try:
             launcher.wait(timeout=1.0)
         except subprocess.TimeoutExpired:
             raise AuthorityDenied("process.cleanup", "partial root service launcher did not reap") from None
+        if unit.startswith("hermes-installer-") and self._pids(f"/system.slice/{unit}"):
+            raise AuthorityDenied("process.cleanup", "partial unit cgroup remains populated")
 
 
 def build_managed_process_handlers(profiles: Mapping[str, ManagedProfileCustody], **kwargs: Any):

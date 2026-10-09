@@ -174,6 +174,8 @@ class AuthentikSystemPolicy(AuthorityPolicy):
         local_operations = frozenset({
             "process.start", "process.status", "process.read", "process.write",
             "process.stop", "artifact.fetch", "package.install",
+            "process.inspect", "connector.open", "connector.read", "connector.write",
+            "connector.close",
             "memory.request", "memory.doctor", "memory.capture", "memory.search",
             "memory.export", "memory.delete", "memory.extract", "memory.embed",
             "memory.backup", "memory.restore", "memory.enqueue", "memory.result",

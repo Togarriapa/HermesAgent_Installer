@@ -35,6 +35,8 @@ _AUTHORITY_OPERATIONS = frozenset({
     "memory.embed", "memory.backup", "memory.restore", "memory.enqueue", "memory.result",
     "host.write", "alert.deliver", "process.start", "process.status", "process.read",
     "process.write", "process.stop", "artifact.fetch", "package.install",
+    "process.inspect", "connector.open", "connector.read", "connector.write",
+    "connector.close", "native.event.prepare", "native.request.dispatch",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
     "resource.orchestrator.recruit",
     "source.capture",
