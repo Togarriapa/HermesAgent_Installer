@@ -119,8 +119,24 @@ class StreamableHTTPTransport:
         return f"StreamableHTTPTransport(service_id={self.service_id!r}, endpoint=<bound>, credentials=<redacted>)"
 
     def _check_grant(self, context, grant) -> None:
-        # The host ContextAuthorizer creates grants from trusted context. A user
-        # config label or service name never supplies authority on its own.
+        # This transport is instantiated only by the protected authority broker.
+        # The daemon authenticates and consumes this host grant before calling it.
+        from ..authority.types import EffectAuthorization, HostContext
+        if type(grant) is EffectAuthorization and type(context) is HostContext:
+            capability = f"mcp:{self.service_id}:"
+            if (grant.target != f"mcp:{self.service_id}:http"
+                    or grant.capability not in {capability + "connect", capability + "read"}
+                    or grant.principal_id != context.principal_id
+                    or grant.profile_id != context.profile_id
+                    or grant.namespace_id != context.namespace_id
+                    or grant.uid != context.uid
+                    or grant.trace_id != context.trace_id
+                    or grant.intent_id != context.intent_id
+                    or grant.policy_revision != context.policy_revision
+                    or grant.lineage_hash != context.lineage_hash
+                    or grant.monotonic_expires_at <= self.monotonic()):
+                raise TransportError("MCP host authorization is stale or mismatched")
+            return
         from ..policy import DispatchAuthorization
         if not isinstance(grant, DispatchAuthorization) or context is None:
             raise TransportError("MCP host authorization is unavailable")
