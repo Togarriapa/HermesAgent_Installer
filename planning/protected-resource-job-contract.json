@@ -467,7 +467,10 @@
           "dto": "RootTaskNativeExecutionReceipt",
           "composition_attribute": "task_native_observations",
           "constructor": "RootTaskNativeObservationRegistry(source_observer_registry, native_bridge_broker, admitted_task_registry, process_custody_registry)",
-          "inputs": "All four dependencies are the actual root-composed registries, not worker callbacks. Root observers record actual during-live event receipts keyed admitted task/process/profile generation. Resolve immutable terminal receipt against retained admission and event closure; no source receipt ID inferred from stdout. Runner consumes root_runtime.task_native_observations.resolve_task_execution(task_handle, terminal_receipt). Registry owns retained event handles; caller gets immutable receipt, not authority to mint events."
+          "inputs": "All four dependencies are the actual root-composed registries, not worker callbacks. Root observers record actual during-live event receipts keyed admitted task/process/profile generation. Resolve immutable terminal receipt against retained admission and event closure; no source receipt ID inferred from stdout. Runner consumes root_runtime.task_native_observations.resolve_task_execution(task_handle, terminal_receipt). Registry owns retained event handles; caller gets immutable receipt, not authority to mint events.",
+          "implementation_module": "hermes_installer.authority.task_native_observation",
+          "canonical_public_import": "hermes_installer.authority.source_observers.RootTaskNativeObservationRegistry re-export",
+          "implementation_owner": "luna_task_native_observation only; source_observers owner adds agreed re-export, not competing implementation"
         }
       }
     },
