@@ -39,7 +39,7 @@ class FakeRunner:
                 (directory/".git"/"HEAD").write_text(HERMES_COMMIT)
             if stage=="complete":
                 (directory/".hermes"/"bin").mkdir(parents=True)
-                (directory/".hermes"/"bin"/"hermes").write_text("#!/bin/sh\\necho Hermes fixture version\\n")
+                (directory/".hermes"/"bin"/"hermes").write_text("#!/bin/sh\necho Hermes fixture version\n")
                 (directory/".hermes"/"bin"/"hermes").chmod(0o700)
                 (directory/".hermes-bootstrap-complete").write_text(json.dumps({"pinnedCommit":HERMES_COMMIT}))
             if stage=="products" and self.fail_once==stage:
@@ -64,9 +64,9 @@ class BootstrapTests(unittest.TestCase):
             boot.install_dir.mkdir(parents=True)
             (boot.install_dir/".git").mkdir(); (boot.install_dir/".git"/"HEAD").write_text(HERMES_COMMIT)
             bin_dir=boot.install_dir/".hermes"/"bin";bin_dir.mkdir(parents=True)
-            hermes=bin_dir/"hermes";hermes.write_text("#!/bin/sh\\necho Hermes 1.0\\n");hermes.chmod(0o700)
+            hermes=bin_dir/"hermes";hermes.write_text("#!/bin/sh\necho Hermes 1.0\n");hermes.chmod(0o700)
             self.assertTrue(boot._verify_agent_runtime())
-            hermes.write_text("#!/bin/sh\\nexit 1\\n");hermes.chmod(0o700)
+            hermes.write_text("#!/bin/sh\nexit 1\n");hermes.chmod(0o700)
             self.assertFalse(boot._verify_agent_runtime())
     def test_git_blob_identity_is_content_sensitive(self):
         self.assertEqual(git_blob_sha1(SCRIPT),hashlib.sha1(b"blob "+str(len(SCRIPT)).encode()+b"\0"+SCRIPT).hexdigest())
