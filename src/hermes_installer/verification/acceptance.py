@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 import re
 from typing import Callable, Mapping
 
 from ..evidence import EvidenceRecord, EvidenceState
+from ..state import OwnedRoot
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,16 +80,15 @@ class WorkflowResult:
     state: EvidenceState
     message: str
     record: EvidenceRecord | None = None
-
-
-Workflow = Callable[[AuthorizedTarget, str], EvidenceRecord]
+    blocker_code: str | None = None
+    next_step: str | None = None
+    observed_state: EvidenceState | None = None
 
 
 class TargetWorkflowRunner:
-    """Dispatch only explicitly registered, target-scoped probes; no shell strings."""
+    """Authorize targets and retain owner-run proof; never execute callback workflows."""
 
-    def __init__(self, workflows: Mapping[str, Workflow], authorize: Callable[[AuthorizedTarget], bool]) -> None:
-        self._workflows = dict(workflows)
+    def __init__(self, *, authorize: Callable[[AuthorizedTarget], bool]) -> None:
         self._authorize = authorize
 
     def run(self, acceptance_id: str, target: AuthorizedTarget, candidate_sha: str, output_dir: str) -> WorkflowResult:
@@ -105,11 +104,35 @@ class TargetWorkflowRunner:
             raise ValueError("invalid acceptance id")
         if not re.fullmatch(r"[0-9a-f]{40}", candidate_sha):
             raise ValueError("candidate_sha must be a full lowercase Git SHA")
-        workflow = self._workflows.get(acceptance_id)
-        if workflow is None:
-            return WorkflowResult(acceptance_id, EvidenceState.PENDING, "No functional probe is registered; no target effects occurred.")
-        record = workflow(target, str(Path(output_dir)))
-        record.validate()
-        if record.candidate_sha != candidate_sha or record.target_id != target.target_id:
-            raise ValueError("probe evidence is not bound to the selected candidate and target")
-        return WorkflowResult(acceptance_id, record.state, record.blocker or "Workflow evidence recorded.", record)
+        if not isinstance(output_dir, str) or not output_dir.strip():
+            raise ValueError("an evidence output directory is required")
+        return WorkflowResult(acceptance_id, EvidenceState.PENDING,
+            "No structured owner-run result was supplied; target effects were not started.",
+            blocker_code="operator_result_missing",
+            next_step="Run the installer-owned request on the authorized target and return its bounded structured result.")
+
+    def collect_result(
+        self, request_value: Mapping[str, object], result_value: Mapping[str, object],
+        target: AuthorizedTarget, candidate_sha: str, evidence_root: OwnedRoot,
+    ) -> WorkflowResult:
+        """Validate and retain a bounded owner-run observation without executing it."""
+        from .operator_evidence import ProbeRequest, verify_operator_result
+
+        target.validate()
+        if not self._authorize(target):
+            raise PermissionError("target enrollment or owner authorization could not be verified")
+        target.ensure_current()
+        request = ProbeRequest.from_dict(request_value)
+        if request.acceptance_id not in target.allowed_acceptance:
+            raise PermissionError(f"target authorization does not include {request.acceptance_id}")
+        if request.candidate_sha != candidate_sha:
+            raise ValueError("probe request is not bound to the selected candidate SHA")
+        verified = verify_operator_result(request.to_dict(), result_value, target)
+        record = verified.retain(evidence_root)
+        return WorkflowResult(
+            request.acceptance_id, EvidenceState.PENDING,
+            "Structured target observation retained; an enrolled evidence verifier must authenticate the artifact before acceptance.",
+            record, blocker_code="artifact_authentication_required",
+            next_step="Authenticate the retained artifact with the enrolled verifier; keep the acceptance pending until it verifies.",
+            observed_state=record.state,
+        )
