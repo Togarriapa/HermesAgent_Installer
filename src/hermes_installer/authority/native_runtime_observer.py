@@ -11,6 +11,8 @@ to the worker.
 from __future__ import annotations
 
 import threading
+import re
+import time
 from typing import Any, Callable, Mapping
 
 from .types import AuthorityDenied, HostContext
@@ -21,6 +23,77 @@ _MAX_PARENT_RECEIPTS = 64
 
 class NativeRuntimeObserverUnavailable(PermissionError):
     """Selected native runtime wiring or root observation is unavailable."""
+
+
+class NativeInvocationContextProvider:
+    """Resolve one lexical Hermes invocation to its root-registered ancestry.
+
+    ``current_binding`` must be the installer-owned lexical accessor installed
+    by the pinned Hermes dispatch hook. This provider never accepts an
+    invocation handle from tool arguments or from a plugin. Root lookup is
+    authenticated by ``AuthorityClient`` and every returned opaque source
+    handle remains subject to the authority's normal peer, profile, generation
+    and lease checks when it is used to issue an effect context.
+    """
+
+    def __init__(self, *, authority: Any, selected_package: Any,
+                 current_binding: Callable[[], Any],
+                 monotonic: Callable[[], float] = time.monotonic) -> None:
+        if (not callable(getattr(authority, "get_invocation_contexts", None))
+                or not callable(current_binding)
+                or not isinstance(getattr(selected_package, "package_id", None), str)
+                or not isinstance(getattr(selected_package, "profile_id", None), str)
+                or not isinstance(getattr(selected_package, "generation", None), str)):
+            raise NativeRuntimeObserverUnavailable("native invocation context provider is incomplete")
+        self.authority = authority
+        self.selected_package = selected_package
+        self.current_binding = current_binding
+        self.monotonic = monotonic
+
+    def __call__(self, *, adapter_id: str, action_id: str,
+                 arguments_sha256: str, purpose: str, intent: str) -> Any:
+        """Return typed root ancestry only for the exact current selected action."""
+        del purpose, intent  # Classification labels do not select invocation ancestry.
+        if (not isinstance(adapter_id, str) or not adapter_id
+                or not isinstance(action_id, str) or not action_id
+                or not isinstance(arguments_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", arguments_sha256)):
+            raise AuthorityDenied("native.invocation", "selected action binding is malformed")
+        binding = self.current_binding()
+        if binding is None:
+            raise AuthorityDenied("native.invocation", "no root-bound native invocation is active")
+        invocation_handle = getattr(binding, "invocation_handle", None)
+        expected = (
+            getattr(binding, "package_id", None) == self.selected_package.package_id
+            and getattr(binding, "profile_id", None) == self.selected_package.profile_id
+            and getattr(binding, "generation", None) == self.selected_package.generation
+            and getattr(binding, "adapter_id", None) == adapter_id
+            and getattr(binding, "action_id", None) == action_id
+            and getattr(binding, "arguments_sha256", None) == arguments_sha256
+            and type(getattr(binding, "expires_monotonic", None)) in (int, float)
+            and self.monotonic() < binding.expires_monotonic
+            and isinstance(invocation_handle, str)
+            and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", invocation_handle)
+        )
+        if not expected:
+            raise AuthorityDenied("native.invocation", "current invocation does not bind this selected action")
+        contexts = self.authority.get_invocation_contexts(invocation_handle)
+        if (getattr(contexts, "invocation_handle", None) != invocation_handle
+                or getattr(contexts, "arguments_sha256", None) != arguments_sha256
+                or getattr(contexts, "parent_closure_digest", None)
+                != getattr(binding, "parent_closure_digest", None)
+                or type(getattr(contexts, "expires_monotonic", None)) not in (int, float)
+                or self.monotonic() >= contexts.expires_monotonic
+                or not isinstance(getattr(contexts, "source_receipt_handles", None), tuple)
+                or len(contexts.source_receipt_handles) > 128
+                or any(not isinstance(handle, str)
+                       or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
+                       for handle in contexts.source_receipt_handles)):
+            raise AuthorityDenied("native.invocation", "root returned mismatched or expired invocation ancestry")
+        # Keep lookup results opaque. AuthorityClient.context consumes these
+        # receipt handles with the exact effect digest; no worker-created
+        # HostContext or source classification is substituted here.
+        return contexts
 
 
 class NativeRuntimeObserver:

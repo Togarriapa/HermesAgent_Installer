@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import dataclass
 from types import ModuleType
 from types import SimpleNamespace
 
 from hermes_installer.authority.native_runtime_observer import (
+    NativeInvocationContextProvider,
     NativeRuntimeObserver,
     NativeRuntimeObserverUnavailable,
 )
@@ -175,6 +177,81 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             observer.observe_effect_result(**args)
         self.assertEqual(source_observers.calls, [])
+
+    def test_invocation_provider_uses_lexical_binding_and_checks_exact_action(self):
+        @dataclass(frozen=True)
+        class Binding:
+            invocation_handle: str = "i" * 40
+            package_id: str = "package-a"
+            profile_id: str = "profile-a"
+            generation: str = "generation-a"
+            adapter_id: str = "adapter-a"
+            action_id: str = "action-a"
+            arguments_sha256: str = "a" * 64
+            parent_closure_digest: str = "b" * 64
+            expires_monotonic: float = 20.0
+
+        @dataclass(frozen=True)
+        class Contexts:
+            invocation_handle: str = "i" * 40
+            source_receipt_handles: tuple[str, ...] = ("r" * 40,)
+            parent_closure_digest: str = "b" * 64
+            arguments_sha256: str = "a" * 64
+            expires_monotonic: float = 19.0
+
+        class Authority:
+            def __init__(self):
+                self.lookups = []
+
+            def get_invocation_contexts(self, invocation_handle):
+                self.lookups.append(invocation_handle)
+                return Contexts()
+
+        authority = Authority()
+        binding = Binding()
+        provider = NativeInvocationContextProvider(
+            authority=authority,
+            selected_package=SimpleNamespace(
+                package_id="package-a", profile_id="profile-a", generation="generation-a"),
+            current_binding=lambda: binding,
+            monotonic=lambda: 10.0,
+        )
+        contexts = provider(
+            adapter_id="adapter-a", action_id="action-a", arguments_sha256="a" * 64,
+            purpose="native-hermes-chat", intent="untrusted labels do not select lineage",
+        )
+        self.assertEqual(contexts.source_receipt_handles, ("r" * 40,))
+        self.assertEqual(authority.lookups, ["i" * 40])
+        with self.assertRaises(AuthorityDenied):
+            provider(adapter_id="adapter-b", action_id="action-a", arguments_sha256="a" * 64,
+                     purpose="native-hermes-chat", intent="x")
+        with self.assertRaises(AuthorityDenied):
+            provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="c" * 64,
+                     purpose="native-hermes-chat", intent="x")
+        self.assertEqual(authority.lookups, ["i" * 40])
+
+    def test_invocation_provider_rejects_expired_or_mismatched_root_ancestry(self):
+        binding = SimpleNamespace(
+            invocation_handle="i" * 40, package_id="package-a", profile_id="profile-a",
+            generation="generation-a", adapter_id="adapter-a", action_id="action-a",
+            arguments_sha256="a" * 64, parent_closure_digest="b" * 64,
+            expires_monotonic=9.0,
+        )
+        provider = NativeInvocationContextProvider(
+            authority=SimpleNamespace(get_invocation_contexts=lambda _handle: None),
+            selected_package=SimpleNamespace(
+                package_id="package-a", profile_id="profile-a", generation="generation-a"),
+            current_binding=lambda: binding,
+            monotonic=lambda: 10.0,
+        )
+        with self.assertRaises(AuthorityDenied):
+            provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="a" * 64,
+                     purpose="native-hermes-chat", intent="x")
+
+        binding.expires_monotonic = 20.0
+        with self.assertRaises(AuthorityDenied):
+            provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="a" * 64,
+                     purpose="native-hermes-chat", intent="x")
 
 
 if __name__ == "__main__":
