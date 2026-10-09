@@ -55,8 +55,10 @@ class BrokerAuthorityFixture:
         self.contexts = []
         self.grants = []
         self.effects = []
+        self.block_method = None
+        self.cancel_observed = False
 
-    def context(self, *, purpose, intent, source_contexts=(), trace_id=None, lease_seconds=30):
+    def context(self, *, purpose, intent, source_contexts=(), trace_id=None, lease_seconds=30, cancelled=None):
         context = SimpleNamespace(intent_id=intent, monotonic_expires_at=time.monotonic() + lease_seconds)
         self.contexts.append((purpose, intent, context))
         return context
@@ -77,6 +79,12 @@ class BrokerAuthorityFixture:
             raise AssertionError("broker binding mismatch")
         request = __import__("json").loads(payload)
         method, rid = request["method"], request.get("id")
+        if method == self.block_method:
+            import time as time_module
+            while cancelled is not None and not cancelled():
+                time_module.sleep(0.002)
+            self.cancel_observed = cancelled is not None and cancelled()
+            raise RuntimeError("cancelled by host caller")
         if method == "notifications/initialized":
             return BrokeredEffectResponse(202, b"", {}, "fixture-receipt")
         if method == "initialize":
@@ -177,6 +185,25 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
                             for grant, _, payload, *_ in authority.effects))
         self.assertNotIn(b"example.invalid", b"".join(payload for _, _, payload, *_ in authority.effects))
         self.assertIsNone(transport._session_id)  # no direct HTTP exchange occurred
+        await client.close()
+
+    async def test_host_broker_cancel_callback_is_signalled_at_aggregate_deadline(self):
+        authority = BrokerAuthorityFixture()
+        authority.block_method = "tools/call"
+        client = MCPClient(
+            StreamableHTTPTransport("https://example.invalid/mcp", service_id="fixture"),
+            {"get_state"}, service_id="fixture", selection="sensor.office",
+            timeout=0.05, authority_client=authority,
+            result_scrubber=lambda result: result,
+        )
+        await client.initialize()
+        await client.discover()
+        started = time.monotonic()
+        with self.assertRaises(MCPError):
+            await client.call_read("get_state", {"entity_id": "sensor.office"})
+        self.assertLessEqual(time.monotonic() - started, 0.07)
+        await asyncio.sleep(0.01)
+        self.assertTrue(authority.cancel_observed)
         await client.close()
 
     async def test_handshake_pagination_schema_scoped_read_and_health(self):
