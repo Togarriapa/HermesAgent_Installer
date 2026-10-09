@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "change": "colibri-coral",
+  "refines": [
+    "R0042"
+  ],
+  "pins": [
+    {
+      "identity": "python/cpython",
+      "version": "3.9.25",
+      "url": "https://www.python.org/ftp/python/3.9.25/Python-3.9.25.tar.xz",
+      "artifact_bytes": 20183236,
+      "artifact_sha256": "00e07d7c0f2f0cc002432d1ee84d2a40dae404a99303e3f97701c10966c91834",
+      "license": "PSF license; official source",
+      "maintenance": "EOL2025-10-31; source-only final Python3.9 release",
+      "checked_on": "2026-10-09",
+      "change": "colibri-coral",
+      "requirement_ids": [
+        "R0042"
+      ],
+      "task_ids": [
+        "HW-F03",
+        "HW-R0042"
+      ],
+      "evidence_ids": [
+        "EV-R0042"
+      ],
+      "status": "source bytes/hash verified only; no build/install/inference/native qualification performed"
+    },
+    {
+      "identity": "tensorflow/tflite-runtime",
+      "version": "2.14.0",
+      "url": "https://files.pythonhosted.org/packages/34/f0/15d5f892028f406d875b4b867b4797736c9806baf737fd59d7d5ac59ef02/tflite_runtime-2.14.0-cp39-cp39-manylinux_2_34_aarch64.whl",
+      "artifact_bytes": 2325666,
+      "artifact_sha256": "be198b7dc4401204be54a15884d9e336389790eb707439524540f5a9329fdd02",
+      "license": "Apache2.0; PyPI project metadata",
+      "abi": "CPython3.9 Linuxaarch64 manylinux2_34; glibc>=2.34",
+      "checked_on": "2026-10-09",
+      "change": "colibri-coral",
+      "requirement_ids": [
+        "R0042"
+      ],
+      "task_ids": [
+        "HW-F03",
+        "HW-R0042"
+      ],
+      "evidence_ids": [
+        "EV-R0042"
+      ],
+      "status": "source bytes/hash verified only; no build/install/inference/native qualification performed"
+    }
+  ],
+  "authority": "Direct TFLite runtime delegate API; PyCoral package not required by selected worker",
+  "component_runtime": "component-owned CPython prefix/venv only; official Hermes PM Python3.14 and host Python untouched",
+  "activation_gates": [
+    "nativeLinuxaarch64 and actualglibc>=2.34",
+    "complete reviewed hash-pinned transitive dependency lock; no unreviewed pip resolver or lazy install",
+    "working selected USB/PCIe runtime and actual delegated operations",
+    "kernel filesystem/process/credential isolation and no network during bounded inference",
+    "legacyEOL maintenance limitation disclosed; not labeled current/supported production stack"
+  ],
+  "primary_evidence": [
+    "https://www.python.org/downloads/release/python-3925/",
+    "https://pypi.org/pypi/tflite-runtime/2.14.0/json",
+    "https://www.coral.withgoogle.com/docs/edgetpu/tflite-python/"
+  ]
+}
