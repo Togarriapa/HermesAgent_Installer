@@ -187,3 +187,10 @@ The installer SHALL enforce canonical typed memory compound write envelopes with
 #### Scenario: Forged HTTP frame or skipped compound step
 - **WHEN** caller submits arbitrary HTTP bytes, wrong job/step or reused frame grant
 - **THEN** reject before backend bytes with owned failure/cleanup journal and no sibling scope mutation.
+
+### Requirement: Root-observed remote session bridge
+The installer SHALL verify actual Access JWT and fresh root selected policy at root authority, join verified identity to current native profile and bind every asset/input/stream operation to fixed connector session lease/generation. Gateway local or selfsigned claims SHALL not authorize root effects.
+
+#### Scenario: Forged gateway claims or expired active stream
+- **WHEN** root JWT/policy/principal verification fails or active lease revokes/expires
+- **THEN** deny before bytes or close both stream directions within tested bounded lease and preserve setup/read/tunnel credential separation.

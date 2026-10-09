@@ -2109,7 +2109,8 @@
     "RT-F03": [
       "RT-F01",
       "RT-F02",
-      "LC-F03"
+      "LC-F03",
+      "HI-T13"
     ],
     "RT-R0196": [
       "RT-F01"
@@ -2254,7 +2255,8 @@
       "HI-T09",
       "HI-T10",
       "HI-T11",
-      "HI-T12"
+      "HI-T12",
+      "HI-T13"
     ],
     "HI-T07": [
       "HI-T01",
@@ -2341,6 +2343,14 @@
       "HI-T08",
       "HI-T09",
       "HI-T12"
+    ],
+    "HI-T13": [
+      "HI-T07",
+      "HI-T09",
+      "HI-T12",
+      "RP-T02",
+      "RP-T03",
+      "RP-T04"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."

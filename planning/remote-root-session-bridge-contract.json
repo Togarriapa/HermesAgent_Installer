@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "requirement_id": "HI13",
+  "task_id": "HI-T13",
+  "evidence_id": "EV-HI13",
+  "change": "host-principal-custody",
+  "state": "root remote identity bridge specified; actual native/account admission and revocation not verified",
+  "refines": [
+    "HI07",
+    "HI09",
+    "HI10",
+    "R0200",
+    "R0201",
+    "R0206",
+    "R0207",
+    "RP02",
+    "RP03",
+    "RP04",
+    "RP05"
+  ],
+  "root_config": {
+    "catalog": "authority.json remote_session_enrollments",
+    "fields": [
+      "id",
+      "gateway_profile_id",
+      "gateway_role_artifact_id",
+      "gateway_role_sha256",
+      "native_desktop_profile_id",
+      "native_generation",
+      "connector_target_id",
+      "approved_asset_routes",
+      "approved_websocket_route",
+      "expected_hostname",
+      "expected_origin",
+      "jwt_issuer",
+      "jwt_audience",
+      "jwks_origin",
+      "jwt_algorithm_allowlist",
+      "allowed_email_reference_id",
+      "policy_verifier_enrollment_id",
+      "policy_config_digest",
+      "maximum_lease_seconds",
+      "watchdog_interval_seconds"
+    ],
+    "joins": "Root policy verifier selected account/app/policy/OTP config and distinct root-held read-only vault reference; no calleraccount/app/policy selection. Current gateway registry SO_PEERCRED/PIDFD/starttime/exe/cgroup/profilegen authenticated each RPC. NativeDesktop/connector enrollment generation exact."
+  },
+  "admit": {
+    "signature": "admit_remote_session(access_jwt:bytes, request:RemoteAdmissionRequest) -> opaque remote_session_handle",
+    "operation": "remote.session.admit",
+    "request_fields": [
+      "schema=1",
+      "request_id",
+      "hostname",
+      "origin",
+      "route_id",
+      "action=asset-read|websocket-attach",
+      "client_nonce"
+    ],
+    "forbidden": [
+      "subject",
+      "email",
+      "token_fingerprint",
+      "policy_grant",
+      "role",
+      "principal_id",
+      "connector_url",
+      "display",
+      "PID",
+      "sensitivity",
+      "caller_lease",
+      "credential_reference"
+    ],
+    "validation": "Root itself parses and verifies actual JWT using pinned audited JWT library/strict allowed asymmetric algorithm, HTTPS fixed enrolled JWKS issuer/audience/exp/nbf/clock bounds, canonical verified email in enrolled allowlist. Root derives token SHA256 fingerprint and subject, joins root principal/profile by actual enrolled subject/email mapping, rejects ambiguous/inactive mapping. Root obtains fresh current policy/verifier decision for journal-selected app/policy/OTP config using distinct read credential before any worker/asset/pixel/input bytes. Gateway self-signature/claims/localcontext cannot replace verification. Root validates fixed host/origin/route and returns no secrets/JWT/transferable contexts/grants."
+  },
+  "renew": {
+    "signature": "renew_remote_session(handle, access_jwt:bytes, renewal_nonce) -> renewed bounded lease",
+    "operation": "remote.session.renew",
+    "semantics": "Root issues one-use renewal nonce from owned session; separate fresh Access-protected HTTP renewal submits actual token and root redoes JWT, allowlist/current policy and subject/profile/session/host/origin/config/target-generation checks. WebSocket frames cannot renew. New lease never retroactively authorizes expired stream; expired/revoked session closes and new admission required. Same verified principal/currentrootallowedtoken transition only; stale/replayed/crosssessionnonce denied."
+  },
+  "close": {
+    "operation": "remote.session.close",
+    "semantics": "Owned authenticated gateway cancellation or rootwatchdog close; expiry/revoke cleanup independent of ability to issue fresh expired grant; sibling closes denied."
+  },
+  "protected_state": [
+    "opaque_nonce",
+    "actual_gateway_identity",
+    "gateway_generation",
+    "verified_subject",
+    "verified_email",
+    "root_principal_id",
+    "root_profile_id",
+    "token_sha256_fingerprint",
+    "jwt_expiry_monotonic",
+    "policy_verified_monotonic",
+    "policy_config_digest",
+    "policy_revision",
+    "desktop_generation",
+    "connector_target_id",
+    "fixed_route_id",
+    "session_id",
+    "lease_expiry_monotonic",
+    "renewal_nonce_state",
+    "revocation_state"
+  ],
+  "connector_binding": "Root remote-session handle consumed/resolved by connector session admission, root internally issues exact HI12 connector grants bound verified principal/fingerprint/profile/native+gatewaygeneration/session/route/sequence/originallease. Caller local HostContext cannot authorize remote session independently. Every frame checks rootcurrentstate; no transferable selfsignedgatewaytoken/intent. Active bidirectional streams/watchers canceled on expiration/revocation/logout/identity/config/generation/process/token/app/policy changes.",
+  "limits": "maximum lease<=60s, watchdog<=5s, expiry minimum JWT/currentpolicy/remotelease/connector/process bound. Fresh policy signature alone is not token/session revocation proof; actual Cloudflare fresh-edge renewal denial on revoked policy/token/session required. If providerrevocation checks unavailable, no activation/renewal and exact resume evidence; bounded<=60s enforcement not instant claim. Admission JWT<=16KiB, strict route request<=8KiB; no raw JWT/token secrets inargv/logs/evidence.",
+  "credentials": "Managementsetup token never remote runtime; policyminimumread reference only isolated rootverifier; protectedtunneltokenfile only cloudflared; gateway/Desktop receive neitherread nor management secret. JWT IPCover rootselected authenticated private AF_UNIX bounded frame only, no bearer persist/log/export.",
+  "evidence": "EV-HI13 actual two-process gateway/root positive verified Access session and nativeconnector bytes plus forgedJWT/emailheaders/selfsignedclaims/wrongaudienceissueralgorithm/allowlist/subjectprofile/configdigest/generation/sibling/replay/expiredlease denied before allasset/pixel/inputbytes. Actual activeWS logout/revocation/freshrenewal/cancel closes<=60s (+watchdog observed bound); setup/read/tunnel secrets absent gateway/Desktop. FixtureJWT/policy evidence distinct from actual enrolledCloudflare/native proof."
+}

@@ -73,3 +73,5 @@ Selected binding/memory recipes v4: plans/amendments/2026-10-09-selected-native-
 Canonical native digest v4: plans/amendments/2026-10-09-native-canonical-digests-v4.md defines exact hash preimages/encoding and separates document/module/archive identities; existing HI08/09/11 tasks remain open.
 
 Memory compound wire v5: plans/amendments/2026-10-09-memory-compound-wire-v5.md and memory-service-connector-contract.json specify canonical body envelope/root serializer/stateful finite steps; no worker HTTPframe/scope/step authority and fresh grants each step. Existing tasks remain open.
+
+- [ ] 13.1 `HI-T13` Implement HI13 root-observed remote session admit/renew/close; prerequisites HI-T07, HI-T09, HI-T12, RP-T02, RP-T03, RP-T04. Evidence EV-HI13: actual root verified Access/native positive and forged claim/JWT/profile/config/replay/revocation negatives before allbytes; account/native acceptance open.
