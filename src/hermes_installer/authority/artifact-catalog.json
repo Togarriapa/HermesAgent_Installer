@@ -118326,6 +118326,20 @@
       "source_url": "https://raw.githubusercontent.com/google-coral/test_data/104342d2d3480b3e66203073dac24f4e2dbb4c41/mobilenet_v2_1.0_224_quant_edgetpu.tflite",
       "tree_files": [],
       "version": "104342d2d3480b3e66203073dac24f4e2dbb4c41"
+    },
+    {
+      "archive_format": null,
+      "archive_root": null,
+      "artifact_id": "coral-inference-worker",
+      "filename": "inference_worker.py",
+      "max_bytes": 4970,
+      "max_tree_bytes": 1,
+      "redirect_hosts": [],
+      "sha256": "9125f7733f10364351ca0fbe4846d89081e77c18f1aae84ce0d28d0c030cc5de",
+      "size_bytes": 4970,
+      "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/8a7dad7c648f0ee982ccde473d2d4061eb5041a8/src/hermes_installer/coral/inference_worker.py",
+      "tree_files": [],
+      "version": "8a7dad7c648f0ee982ccde473d2d4061eb5041a8"
     }
   ],
   "packages": [],

@@ -19,6 +19,8 @@ from hermes_installer.artifacts import (
     TreeFile,
     build_artifact_handlers,
     load_protected_catalog,
+    load_protected_package_sets,
+    sign_package_set_manifest,
 )
 from hermes_installer.authority.types import AuthorityDenied, canonical_digest
 
@@ -263,6 +265,35 @@ class ArtifactBrokerContracts(unittest.TestCase):
         self.assertEqual(rechecked, [("artifact.fetch", grant.request_digest, 0)])
         self.assertEqual(opened, [])
 
+    def test_cached_receipt_revalidates_fresh_policy_without_opening_network(self):
+        data = b"already verified"
+        spec = self.spec(data)
+        catalog = ArtifactCatalog.from_records((spec,))
+        final = self.root / "objects" / spec.artifact_id / spec.sha256 / spec.filename
+        final.parent.mkdir(parents=True, mode=0o700)
+        final.write_bytes(data)
+        final.chmod(0o444)
+        calls = []
+
+        def authorization_check(context, authorization, *, operation, request_digest, retry_index):
+            calls.append((operation, request_digest, retry_index))
+            if len(calls) > 1:
+                raise AuthorityDenied("policy.changed", "authorization was revoked")
+
+        def opener(*args, **kwargs):
+            self.fail("a cached artifact must not open a network request")
+
+        handlers = build_artifact_handlers(catalog, self.root, expected_uid=self.uid,
+                                           opener=opener, authorization_check=authorization_check)
+        grant, payload = self.request(spec)
+        with self.assertRaises(AuthorityDenied) as denied:
+            handlers[("artifact.fetch", grant.target)](
+                context=self.context(grant), authorization=grant, payload=payload,
+                timeout=5, peer_pid=1, cancelled=lambda: False)
+        self.assertEqual(denied.exception.code, "policy.changed")
+        self.assertEqual(calls, [("artifact.fetch", grant.request_digest, 0),
+                                 ("artifact.fetch", grant.request_digest, 0)])
+
     def test_catalog_loader_rejects_mutable_or_unpinned_catalog(self):
         record = {
             "schema": 1,
@@ -303,6 +334,50 @@ class ArtifactBrokerContracts(unittest.TestCase):
         self.assertEqual(len(catalog.artifacts["coral-python39-source"].tree_files), 4266)
         self.assertEqual(catalog.artifacts["hermes-pm-node-linux-arm64"].archive_format, "tar.xz")
         self.assertFalse(catalog.packages)
+
+    def test_signed_coral_package_set_binds_only_enrolled_source_runtime_and_two_wheels(self):
+        seed = Path(__file__).parents[2] / "src/hermes_installer/authority/artifact-catalog.json"
+        catalog_path = self.base / "catalog.json"
+        catalog_path.write_bytes(seed.read_bytes())
+        catalog_path.chmod(0o600)
+        catalog = load_protected_catalog(catalog_path, expected_uid=self.uid)
+        key = b"test-only-package-set-signing-key-material-32"
+        manifest = {
+            "schema": 1, "package_set_id": "coral-cp39-runtime-v1",
+            "enrollment_id": "pi-coral", "generation": "gen-4",
+            "runtime_artifact_id": "coral-python39-source",
+            "runtime_build_attestation_digest": "a" * 64,
+            "runtime_executable_sha256": "b" * 64,
+            "abi": "cp39/aarch64", "target_glibc_min": "2.34",
+            "service_uid": max(1, self.uid), "venv_root_id": "coral-venv-root",
+            "wheel_entries": [
+                {"identity": "tensorflow/tflite-runtime", "version": "2.14.0",
+                 "artifact_id": "coral-tflite-runtime-cp39-arm64",
+                 "artifact_sha256": "be198b7dc4401204be54a15884d9e336389790eb707439524540f5a9329fdd02",
+                 "artifact_bytes": 2_325_666, "license": "Apache-2.0"},
+                {"identity": "numpy/numpy", "version": "1.26.4",
+                 "artifact_id": "coral-numpy-cp39-arm64",
+                 "artifact_sha256": "d5241e0a80d808d70546c697135da2c613f30e28251ff8307eb72ba696945764",
+                 "artifact_bytes": 14_226_281, "license": "BSD-3-Clause"},
+            ],
+            "reviewed_installer_artifact_id": "hermes-installer-artifact-broker-v1",
+            "policy_revision": "policy-12",
+        }
+        signed = sign_package_set_manifest(manifest, signing_key=key, key_id="test-enrollment")
+        path = self.base / "package-sets.json"
+        path.write_text(json.dumps({"schema": 1, "package_sets": [signed]}), encoding="utf-8")
+        path.chmod(0o600)
+        loaded = load_protected_package_sets(path, catalog=catalog, signing_key=key,
+                                            key_id="test-enrollment", expected_uid=self.uid)
+        self.assertEqual(tuple(loaded), ("coral-cp39-runtime-v1",))
+        self.assertEqual(len(loaded["coral-cp39-runtime-v1"].wheel_entries), 2)
+
+        signed["wheel_entries"].append(dict(signed["wheel_entries"][0]))
+        path.write_text(json.dumps({"schema": 1, "package_sets": [signed]}), encoding="utf-8")
+        path.chmod(0o600)
+        with self.assertRaises(AuthorityDenied):
+            load_protected_package_sets(path, catalog=catalog, signing_key=key,
+                                       key_id="test-enrollment", expected_uid=self.uid)
 
     def test_package_install_enrollment_requires_tree_and_exact_artifact_digest(self):
         spec = self.spec(b"archive")
