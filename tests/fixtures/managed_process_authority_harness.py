@@ -107,8 +107,23 @@ async def main() -> None:
                       "inspection": inspection}), flush=True)
     if request["mode"] == "parent-death":
         await asyncio.Event().wait()
-    stdout = await handle.read(65536, 5.0, stream="stdout")
-    stderr = await handle.read(65536, 1.0, stream="stderr")
+
+    async def read_line_bounded(stream: str, deadline_seconds: float) -> bytes:
+        deadline = time.monotonic() + deadline_seconds
+        chunks = bytearray()
+        while time.monotonic() < deadline and len(chunks) < 65536:
+            chunk = await handle.read(65536 - len(chunks),
+                                      min(1.0, max(0.0, deadline - time.monotonic())),
+                                      stream=stream)
+            chunks.extend(chunk)
+            if b"\n" in chunks or handle._eof[stream]:
+                break
+        return bytes(chunks)
+
+    stdout = await read_line_bounded("stdout", 8.0)
+    if b"\n" not in stdout:
+        raise RuntimeError("managed process did not produce a complete bounded output line")
+    stderr = await read_line_bounded("stderr", 1.5)
     await handle.stop("Linux custody integration probe", timeout=8)
     print(json.dumps({"event": "stopped", "stdout": stdout.decode("utf-8", "strict"),
                       "stderr": stderr.decode("utf-8", "strict"),
