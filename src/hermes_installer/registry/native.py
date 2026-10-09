@@ -161,7 +161,7 @@ def _skill_file(item: ResolvedResource, source_path: str, source_document: Mappi
     if not isinstance(description, str) or not description.strip():
         raise RegistryError(f"skill has no usable description for native discovery: {name}")
     frontmatter = yaml.safe_dump({"name": name, "description": description.strip()}, sort_keys=False, allow_unicode=True).rstrip()
-    return f"homes/default/skills/{name}/SKILL.md", (
+    return f"homes/skills/{name}/SKILL.md", (
         f"---\n{frontmatter}\n---\n\n{body}\n\n"
         + "## Complete registry skill declaration\n\n```yaml\n"
         + yaml.safe_dump(dict(spec), sort_keys=False, allow_unicode=True)
@@ -288,7 +288,7 @@ class NativeRegistry:
                 invocation = "orchestrator-internal-profile.v1"
                 blockers = ("Native profile discovery and guarded workflow invocation remain pending target evidence.",)
             elif kind == "skills":
-                native_path = f"profiles/default/skills/{name}/SKILL.md"
+                native_path = f"skills/{name}/SKILL.md"
                 adapter_id = "hermes.skill-directory.v1"
                 discoverability = "Hermes SKILL.md discovery"
                 invocation = "Hermes native on-demand skill loader"
@@ -408,9 +408,8 @@ class NativeRegistry:
                 "blockers": list(binding.blockers),
             })
 
-        # Seed each isolated specialist home only with skills in its resolved
-        # dependency closure. Hermes will discover the selected profile's SKILL.md
-        # files without sharing mutable HERMES_HOME state between workers.
+        # Hermes scans HERMES_HOME/skills. A selected profile resolution
+        # includes only its dependency closure, so only those files are staged.
         skill_files = {
             f"skills/{item.resource.id}/SKILL.md": _skill_file(
                 item,
@@ -419,34 +418,14 @@ class NativeRegistry:
             )[1]
             for item in selected.resources if item.resource.kind.value == "skills"
         }
-        skills_by_name = {
-            item.resource.id: f"skills/{item.resource.id}/SKILL.md"
-            for item in selected.resources if item.resource.kind.value == "skills"
-        }
-        for item in selected.resources:
-            if item.resource.kind.value != "profiles":
-                continue
-            requires = (item.effective_spec or item.resource.body).get("requires", {})
-            selectors = requires.get("skills", ()) if isinstance(requires, Mapping) else ()
-            if isinstance(selectors, str):
-                selectors = (selectors,)
-            if not isinstance(selectors, (list, tuple)):
-                raise RegistryError(f"profile skill requirements are invalid: {item.resource.id}")
-            for selector in selectors:
-                if not isinstance(selector, str):
-                    raise RegistryError(f"profile skill selector is invalid: {item.resource.id}")
-                skill_name = selector.split("@", 1)[0]
-                skill_path = skills_by_name.get(skill_name)
-                if skill_path is None:
-                    raise RegistryError(f"profile skill dependency was not resolved: {item.resource.id}/{skill_name}")
-                out[f"homes/profiles/{item.resource.id}/{skill_path}"] = skill_files[skill_path]
-
         native_files = []
         for staged_path in sorted(path for path in out if path.startswith("homes/")):
-            if staged_path.startswith("homes/default/"):
-                target_path = "profiles/default/" + staged_path.removeprefix("homes/default/")
-            else:
+            if staged_path.startswith("homes/profiles/"):
                 target_path = "profiles/" + staged_path.removeprefix("homes/profiles/")
+            elif staged_path.startswith("homes/skills/"):
+                target_path = "skills/" + staged_path.removeprefix("homes/skills/")
+            else:
+                raise RegistryError(f"native staged path is outside supported Hermes roots: {staged_path}")
             native_files.append({"staged": staged_path, "target": target_path, "conflict_policy": "preserve-existing"})
 
         out["installer-registry/crosswalk.json"] = (
