@@ -3025,6 +3025,7 @@ class ManagedBuildJobRunner:
                     missing_proof.append("exit_code_" + str(exit_code))
                 output = bytes(log).decode("utf-8", "replace").casefold()
                 diagnostic_sources = [output]
+                diagnostic_bytes = [bytes(log)]
                 if exit_code == 226:
                     try:
                         journal = subprocess.run(["/usr/bin/journalctl", "--no-pager", "-n", "12",
@@ -3033,6 +3034,7 @@ class ManagedBuildJobRunner:
                             env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
                             timeout=.75, check=False)
                         if journal.returncode == 0 and len(journal.stdout) <= 16384:
+                            diagnostic_bytes.append(journal.stdout)
                             diagnostic_sources.append(journal.stdout.decode("utf-8", "replace").casefold())
                     except (OSError, subprocess.TimeoutExpired):
                         pass
@@ -3055,7 +3057,7 @@ class ManagedBuildJobRunner:
                     # Root-only injected diagnostic sink for isolated fixture
                     # tests; normal production assembly leaves this unset.
                     with contextlib.suppress(Exception):
-                        self._diagnostic_observer(bytes(log))
+                        self._diagnostic_observer(b"\n".join(diagnostic_bytes))
                 raise AuthorityDenied("build.cleanup", "terminal proof is incomplete: " + ",".join(missing_proof))
             finished = manager.monotonic()
             proc_id = job_id
