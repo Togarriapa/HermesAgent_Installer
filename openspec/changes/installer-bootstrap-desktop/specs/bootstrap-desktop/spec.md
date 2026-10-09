@@ -252,3 +252,11 @@ The installer SHALL authenticate initial provision through its installed root-lo
 #### Scenario: Worker fabricates bootstrap actor
 - **WHEN** a worker supplies root labels, another transaction receipt or a writable journal mapping
 - **THEN** root rejects before provision/state effects without requiring or inventing a first active worker context
+
+### Requirement: Installed root first setup acquisition
+
+First setup SHALL verify the installed root actor/plan catalog and acquire selected artifacts through the root-local transaction-bound CAS fetch contract without requiring an active worker.
+
+#### Scenario: Unverified setup actor or source
+- **WHEN** actor closure, plan, catalog or source receipt verification fails
+- **THEN** provisioning remains incomplete without activating a worker profile.
