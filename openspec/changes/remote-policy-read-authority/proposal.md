@@ -19,3 +19,5 @@ None; additive refinement to pending remote requirements, no weakened canonical 
 # Impact
 
 Remote installer credential/configuration workflow, verifier process/IPC, gateway renewal, ownership journal/lifecycle and AC13/15/17 evidence. All211 original requirements, AC01..16, owned Resources amendment and frozen baseline remain intact.
+
+Remote dual-principal issuer/closure proof v3: plans/amendments/2026-10-09-remote-dual-principal-issuer-closure-proof-v3.md binds activeenrollment OTP/principal/gateway records, dedicatedroot perframeissuer withoutcontextrelabel, isolatedverifierclient, actualtoken/origin receipts and loadedclosure proofs. ExistingHI08/09/11/13/RP/RTtasksremainopen.

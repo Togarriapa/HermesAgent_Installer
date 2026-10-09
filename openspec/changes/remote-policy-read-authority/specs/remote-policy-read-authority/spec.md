@@ -63,3 +63,10 @@ Verification SHALL distinguish policy/email removal, local logout, Cloudflare ap
 
 - **WHEN** policy-removal fixture passes but Cloudflare token-revoke behavior has not been observed
 - **THEN** policy enforcement evidence is recorded separately; token/logout revocation acceptance stays pending rather than inferred or waived; live bounds identify event timing and provider visibility
+
+### Requirement: Root remote controller and native principal binding
+The installer SHALL bind verified remote native principal and actual gateway kernel controller separately through a dedicated root-internal one-use connector issuer, active protected policy/OTP enrollment and actual origin/token/closure receipts. Normal worker contexts SHALL not be relabelled and gateway SHALL receive no policy/setup credential resolver.
+
+#### Scenario: Gateway context relabel or metadata-only origin activation
+- **WHEN** caller claims native principal from gateway context or activation lacks actual current root readiness/token/mount proof
+- **THEN** deny before bytes/activation, preserve configured checkpoint and exact native/account resume requirements.
