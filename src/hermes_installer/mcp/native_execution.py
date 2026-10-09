@@ -16,14 +16,20 @@ import secrets
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from ..authority import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
     canonical_bytes, canonical_digest,
 )
+from ..authority.native_runtime_observer import NativeInvocationRegistry
+from ..authority.service import AuthorityService
 from ..authority.types import strict_json_loads
+from ..authority.native_runtime_observer import RootNativeMCPInvocation
 from .broker import ProtectedMCPService, mcp_intent
+from .native_dispatch import NativeMCPRegistrationIndex
+from .native_schema_catalog import NativeMCPProtectedSchemaCatalog
 from .client import (
     SUPPORTED_PROTOCOL_VERSIONS, MCPError, _validate_schema, _validate_value,
 )
@@ -65,60 +71,61 @@ class NativeMCPExecutionDenied(AuthorityDenied):
     """The root could not prove the complete native MCP execution binding."""
 
 
-@dataclass(frozen=True, slots=True)
-class RootNativeMCPInvocation:
-    """Typed result from the root's one-use invocation-registry resolver.
+def build_native_mcp_schema_catalog(records: Any, *, authority_service: Any,
+                                    artifact_catalog: Any, staging_root: Path,
+                                    expected_uid: int = 0) -> Any:
+    """Build the schema catalog from CAS bytes and retained signed source receipts.
 
-    This is transport data, not an authority token. The ``resolve`` callback
-    below must atomically consume the live registry invocation after checking
-    SO_PEERCRED, the borrowed PIDFD, loaded-package proof, lexical action and
-    complete source-receipt closure.
+    This factory is root-runtime-only. ``records`` must already be the exact
+    protected native schema rows selected by ``RootRuntimeBindings``; the
+    caller cannot supply artifact paths or a receipt-verification callback.
     """
+    from ..artifacts import ArtifactCatalog
+    from .native_schema_catalog import NativeMCPProtectedSchemaCatalog
 
-    invocation_handle: str
-    package_id: str
-    profile_id: str
-    package_generation: str
-    process_generation: str
-    adapter_id: str
-    action_id: str
-    arguments_sha256: str
-    parent_closure_digest: str
-    expires_monotonic: float
-    source_receipt_handles: tuple[str, ...]
-    native_process_identity: str
+    if (not isinstance(artifact_catalog, ArtifactCatalog)
+            or not isinstance(staging_root, Path) or not staging_root.is_absolute()
+            or type(expected_uid) is not int or expected_uid < 0
+            or not callable(getattr(authority_service, "resolve_retained_source_receipt", None))):
+        raise TypeError("root CAS and source receipt services are required")
 
-    def __post_init__(self) -> None:
-        for name in ("invocation_handle", "package_id", "profile_id", "package_generation",
-                     "process_generation", "adapter_id", "action_id", "native_process_identity"):
-            value = getattr(self, name)
-            if not isinstance(value, str) or not value:
-                raise ValueError(f"root native invocation {name} is invalid")
-        for name in ("invocation_handle",):
-            if not _OPAQUE.fullmatch(getattr(self, name)):
-                raise ValueError(f"root native invocation {name} is invalid")
-        for name in ("arguments_sha256", "parent_closure_digest"):
-            if not isinstance(getattr(self, name), str) or not _SHA256.fullmatch(getattr(self, name)):
-                raise ValueError(f"root native invocation {name} is invalid")
-        if (isinstance(self.expires_monotonic, bool)
-                or not isinstance(self.expires_monotonic, (int, float))
-                or not self.expires_monotonic > 0):
-            raise ValueError("root native invocation lease is invalid")
-        if (not isinstance(self.source_receipt_handles, tuple)
-                or len(self.source_receipt_handles) > _MAX_SOURCE_HANDLES
-                or any(not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
-                       for handle in self.source_receipt_handles)
-                or len(set(self.source_receipt_handles)) != len(self.source_receipt_handles)):
-            raise ValueError("root native invocation source closure is invalid")
+    def read_artifact(artifact_id: str, digest: str) -> bytes:
+        resolved = artifact_catalog.resolve(
+            artifact_id, digest, staging_root, expected_uid=expected_uid,
+        )
+        body = resolved.path.read_bytes()
+        if hashlib.sha256(body).hexdigest() != digest:
+            raise NativeMCPExecutionDenied("native.mcp.artifact", "schema CAS bytes changed during read")
+        return body
+
+    def verify_source_receipt(handle: str, identity: Mapping[str, str]) -> bool:
+        try:
+            from ..authority.source_observers import SourceReceiptHandle
+            authority_service.resolve_retained_source_receipt(
+                SourceReceiptHandle(handle), payload_digest=identity.get("sha256", ""),
+            )
+        except Exception:
+            return False
+        return True
+
+    return NativeMCPProtectedSchemaCatalog.from_protected_records(
+        records, read_artifact=read_artifact,
+        verify_source_receipt=verify_source_receipt,
+    )
 
 
 class NativeMCPInvocationResolver(Protocol):
     """Root-only, one-use resolver for live HI11/HI12 native tool calls."""
 
-    def consume(self, invocation_handle: str, *, peer_uid: int, peer_pid: int,
-                peer_pidfd: int) -> RootNativeMCPInvocation: ...
+    def consume_native_mcp_invocation(
+        self, peer_uid: int, peer_pid: int, peer_pidfd: int,
+        invocation_handle: str, canonical_arguments: bytes,
+    ) -> RootNativeMCPInvocation: ...
 
-    def is_current(self, invocation: RootNativeMCPInvocation) -> bool:
+    def is_current_native_mcp_invocation(
+        self, invocation: RootNativeMCPInvocation, peer_uid: int,
+        peer_pid: int, peer_pidfd: int,
+    ) -> bool:
         """Recheck process, loaded package, action and source closure at each effect."""
         ...
 
@@ -146,15 +153,14 @@ class NativeMCPDispatcher:
                  invocation_resolver: NativeMCPInvocationResolver,
                  monotonic: Callable[[], float] = time.monotonic,
                  timeout: float = _TIMEOUT) -> None:
-        if service is None or not callable(getattr(service, "_issue_context", None)):
+        if type(service) is not AuthorityService:
             raise TypeError("the live root AuthorityService is required")
-        if (not callable(getattr(registration_index, "resolve_action", None))
-                or not callable(getattr(schema_catalog, "resolve", None))):
+        if (type(registration_index) is not NativeMCPRegistrationIndex
+                or type(schema_catalog) is not NativeMCPProtectedSchemaCatalog):
             raise TypeError("root native MCP registration and schema catalogs are required")
         if (not isinstance(protected_services, Mapping)
                 or not isinstance(current_mcp_generations, Mapping)
-                or not callable(getattr(invocation_resolver, "consume", None))
-                or not callable(getattr(invocation_resolver, "is_current", None))):
+                or type(invocation_resolver) is not NativeInvocationRegistry):
             raise TypeError("root MCP enrollment and one-use invocation resolver are required")
         if not 0 < timeout <= _TIMEOUT:
             raise ValueError("native MCP aggregate timeout must be in (0, 9] seconds")
@@ -191,9 +197,8 @@ class NativeMCPDispatcher:
             arguments = strict_json_loads(canonical_arguments.decode("utf-8"))
             if not isinstance(arguments, dict) or canonical_bytes(arguments) != canonical_arguments:
                 raise ValueError
-            invocation = self._invocations.consume(
-                invocation_handle, peer_uid=peer_uid, peer_pid=peer_pid,
-                peer_pidfd=peer_pidfd,
+            invocation = self._invocations.consume_native_mcp_invocation(
+                peer_uid, peer_pid, peer_pidfd, invocation_handle, canonical_arguments,
             )
             if (type(invocation) is not RootNativeMCPInvocation
                     or invocation.invocation_handle != invocation_handle
@@ -212,7 +217,7 @@ class NativeMCPDispatcher:
             selection = self._validate_selection(binding, arguments)
             service, operation, target = self._service_for(binding)
             self._require_result_observer(service, operation, target)
-            self._require_current(invocation)
+            self._require_current(invocation, peer_uid, peer_pid, peer_pidfd)
         except NativeMCPExecutionDenied:
             raise
         except Exception:
@@ -273,6 +278,13 @@ class NativeMCPDispatcher:
             body = canonical_bytes({"jsonrpc": "2.0", "id": request_id, "result": scrubbed})
             if len(body) > _MAX_OUTPUT_BYTES or cancelled() or self._monotonic() >= deadline:
                 raise MCPError("native MCP result exceeded its aggregate deadline or bound")
+            # Invocation consumption is one-use, but revocation, profile unload,
+            # process replacement, or peer termination can still happen while
+            # the broker is performing I/O. Recheck the exact consumed DTO at
+            # the release boundary before exposing either bytes or its receipt.
+            self._require_current(invocation, peer_uid, peer_pid, peer_pidfd)
+            if cancelled() or self._monotonic() >= deadline:
+                raise MCPError("native MCP result exceeded its aggregate deadline or bound")
             return BrokeredEffectResponse(
                 200, body, {"content-type": "application/json"},
                 "native-mcp-" + hashlib.sha256(body).hexdigest()[:24],
@@ -284,23 +296,29 @@ class NativeMCPDispatcher:
             raise NativeMCPExecutionDenied("native.mcp.effect", "selected native MCP read was denied or unavailable") from None
 
     def _validate_binding(self, binding: Any, invocation: RootNativeMCPInvocation) -> None:
-        if (getattr(binding, "adapter_id", None) != _ADAPTER_ID
+        adapter_id = getattr(binding, "adapter_id", getattr(binding, "handler_artifact_id", None))
+        if (adapter_id != _ADAPTER_ID
                 or getattr(binding, "id", None) != invocation.action_id
-                or getattr(binding, "adapter_id", None) != invocation.adapter_id
+                or adapter_id != invocation.adapter_id
                 or getattr(binding, "native_package_id", None) != invocation.package_id
-                or getattr(binding, "native_package_generation", None) != invocation.package_generation
+                or getattr(binding, "process_generation", None) != invocation.generation
                 or getattr(binding, "profile_id", None) != invocation.profile_id
-                or getattr(binding, "process_generation", None) != invocation.process_generation
+                or getattr(binding, "process_generation", None) != invocation.generation
+                or getattr(binding, "native_tool_name", None) != invocation.tool_name
                 or getattr(binding, "handler_artifact_id", None) != _ADAPTER_ID
                 or getattr(binding, "effect_operation", None) not in {"mcp.request", "mcp.stdio"}
                 or getattr(binding, "capability", None) != f"mcp:{getattr(binding, 'mcp_enrollment_id', '')}:read"
                 or getattr(binding, "recipient", None) is not None):
             raise NativeMCPExecutionDenied("native.mcp.action", "root invocation does not match its selected MCP action")
         if (invocation.package_id != getattr(binding, "native_package_id", None)
-                or invocation.package_generation != getattr(binding, "native_package_generation", None)):
+                or invocation.generation != getattr(binding, "process_generation", None)):
             raise NativeMCPExecutionDenied("native.mcp.package", "selected native package generation changed")
-        if self.service.profile_generations.get(invocation.profile_id) != invocation.process_generation:
+        if self.service.profile_generations.get(invocation.profile_id) != invocation.generation:
             raise NativeMCPExecutionDenied("native.mcp.profile", "selected native process generation is stale")
+        if (not isinstance(invocation.service_generation_digest, str)
+                or not _SHA256.fullmatch(invocation.service_generation_digest)
+                or self.service.service_generation_digest != invocation.service_generation_digest):
+            raise NativeMCPExecutionDenied("native.mcp.service", "native MCP invocation uses a stale service generation")
 
     def _require_result_observer(self, service: ProtectedMCPService,
                                  operation: str, target: str) -> None:
@@ -315,9 +333,12 @@ class NativeMCPDispatcher:
                 "native.mcp.lineage", "selected MCP result capture and peer delivery are unavailable",
             )
 
-    def _require_current(self, invocation: RootNativeMCPInvocation) -> None:
+    def _require_current(self, invocation: RootNativeMCPInvocation,
+                         peer_uid: int, peer_pid: int, peer_pidfd: int) -> None:
         try:
-            current = self._invocations.is_current(invocation)
+            current = self._invocations.is_current_native_mcp_invocation(
+                invocation, peer_uid, peer_pid, peer_pidfd,
+            )
         except Exception:
             current = False
         if current is not True:
@@ -420,7 +441,7 @@ class NativeMCPDispatcher:
                     notification: bool = False,
                     consume_sources: bool = False) -> _MCPResponse:
         remaining = min(deadline, invocation.expires_monotonic) - self._monotonic()
-        self._require_current(invocation)
+        self._require_current(invocation, uid, pid, pidfd)
         if remaining <= 0 or cancelled():
             raise NativeMCPExecutionDenied("native.mcp.deadline", "MCP call was cancelled or expired")
         envelope = {
@@ -438,7 +459,7 @@ class NativeMCPDispatcher:
             "trace_id": secrets.token_urlsafe(18), "lease_seconds": min(30.0, remaining),
             "source_contexts": [], "source_receipt_handles": list(lineage_handles),
             "final_payload_digest": digest, "operation": operation,
-        }, peer_pid=pid, inherited_process_identity=invocation.native_process_identity)
+        }, peer_pid=pid)
         context = HostContext.from_wire(context_wire)
         rule = self.service.rules.get((
             f"mcp:{service.service_id}:{'read' if method == 'tools/call' else 'connect'}",
@@ -453,7 +474,7 @@ class NativeMCPDispatcher:
             "retry_index": 0,
         }, peer_pid=pid)
         grant = EffectAuthorization.from_wire(grant_wire)
-        self._require_current(invocation)
+        self._require_current(invocation, uid, pid, pidfd)
         if cancelled() or self._monotonic() >= min(deadline, invocation.expires_monotonic,
                                                     grant.monotonic_expires_at):
             raise NativeMCPExecutionDenied("native.mcp.deadline", "MCP call expired before broker dispatch")

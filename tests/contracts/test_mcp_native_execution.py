@@ -2,23 +2,34 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
+import os
+import tempfile
 import threading
 import time
 import unittest
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from hermes_installer.authority.service import AuthorityService, EffectRule, PrincipalBinding
-from hermes_installer.authority.native_runtime_observer import NativeRuntimeObserver
-from hermes_installer.authority.types import Sensitivity, canonical_digest
+from hermes_installer.authority.native_runtime_observer import (
+    NativeActionSelection, NativeInvocationRegistry, NativeRuntimeObserver,
+)
+from hermes_installer.authority.types import HostContext, Sensitivity, canonical_digest
+from hermes_installer.artifacts import ArtifactCatalog, ArtifactSpec
 from hermes_installer.mcp.broker import ProtectedMCPService, build_mcp_handlers
 from hermes_installer.mcp.native_execution import (
-    NativeMCPDispatcher, NativeMCPExecutionDenied, RootNativeMCPInvocation,
+    NativeMCPDispatcher, NativeMCPExecutionDenied, build_native_mcp_schema_catalog,
 )
+from hermes_installer.mcp.native_dispatch import (
+    HANDLER_ARTIFACT_ID, NativeMCPRegistrationIndex, schema_sha256,
+)
+from hermes_installer.authority.native_runtime_observer import _NativeInvocation
 from hermes_installer.mcp.transports import StreamableHTTPTransport
 
 
@@ -99,23 +110,23 @@ class _FixtureServer:
 class NativeMCPExecutionTests(unittest.TestCase):
     def setUp(self):
         self.http = _FixtureServer()
-        self.binding = SimpleNamespace(
-            id="action-mcp-read", adapter_id="hermes-installer.native-mcp-dispatch.v1",
-            handler_artifact_id="hermes-installer.native-mcp-dispatch.v1",
-            native_package_id="package-a", native_package_generation="package-gen-a",
-            profile_id="profile-a", process_generation="process-gen-a",
-            native_server_name="figma", native_tool_name="mcp__figma__read_metadata",
-            native_schema_sha256=hashlib.sha256(json.dumps(
-                ARGUMENT_SCHEMA, ensure_ascii=False, sort_keys=True,
-                separators=(",", ":"), allow_nan=False,
-            ).encode()).hexdigest(),
-            mcp_enrollment_id="figma", mcp_generation="service-gen-a",
-            mcp_tool_name="get_metadata", request_schema_id="schema-args",
-            result_schema_id="schema-result", effect_operation="mcp.request",
-            effect_target="mcp:figma:http", capability="mcp:figma:read",
-            recipient=None, scope_bindings=(("fileKey", "selected-file"),),
-        )
-        service_record = ProtectedMCPService(
+        self.handler_digest = "d" * 64
+        self.binding_record = {
+            "id": "action-mcp-read", "handler_artifact_id": HANDLER_ARTIFACT_ID,
+            "native_package_id": "package-a", "native_package_generation": "package-gen-a",
+            "profile_id": "profile-a", "process_generation": "process-gen-a",
+            "native_server_name": "figma", "native_tool_name": "mcp__figma__read_metadata",
+            "native_schema_sha256": schema_sha256(ARGUMENT_SCHEMA),
+            "mcp_enrollment_id": "figma", "mcp_generation": "service-gen-a",
+            "mcp_tool_name": "get_metadata", "request_schema_id": "schema-args",
+            "result_schema_id": "schema-result", "effect_operation": "mcp.request",
+            "effect_target": "mcp:figma:http", "capability": "mcp:figma:read",
+            "recipient": None, "scope_bindings": [{
+                "argument_field": "fileKey", "selected_resource_id": "selected-file",
+            }],
+            "handler_artifact_sha256": self.handler_digest,
+        }
+        protected_service = ProtectedMCPService(
             service_id="figma", channel="http", allowed_tools=frozenset({"get_metadata"}),
             transport_binding_id="root-http-binding", reviewed_revision="a" * 64,
             selection_arguments={"get_metadata": ("fileKey",)},
@@ -144,7 +155,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
 
         self_endpoint = self.http.endpoint
         handlers = build_mcp_handlers(
-            {"figma": service_record}, transport_factory=lambda _service, _context: FixtureTransport(),
+            {"figma": protected_service}, transport_factory=lambda _service, _context: FixtureTransport(),
         )
         caps = frozenset({"mcp:figma:connect", "mcp:figma:read", "mcp:test:loopback"})
         rules = {
@@ -162,6 +173,12 @@ class NativeMCPExecutionTests(unittest.TestCase):
 
             def __init__(self):
                 self.captured = []
+                self.current = True
+                self.revoke_after_capture = False
+                self.provider_observer = SimpleNamespace(source_kind="provider-result")
+                self.observers["provider-result-observer"] = self.provider_observer
+                self.package = SimpleNamespace(package_id="package-a")
+                self.loaded_proof = object()
 
             def record_observed_event(self, observer_id, **kwargs):
                 if observer_id != "mcp-result-observer":
@@ -172,12 +189,28 @@ class NativeMCPExecutionTests(unittest.TestCase):
                 if observer_id != "mcp-result-observer" or event_id != "e" * 40:
                     raise PermissionError("unknown fixture event")
                 self.captured.append(payload)
+                if self.revoke_after_capture:
+                    self.current = False
                 return "r" * 40
+
+            def take_source_receipt(self, *_args, **_kwargs):
+                return "r" * 40
+
+            def _resolve(self, *_args, **_kwargs):
+                return self.provider_observer
+
+            def _resolve_package_role(self, _observer):
+                return self.package, None
+
+            def _resolve_loaded_package_proof(self, *_args, **_kwargs):
+                if not self.current:
+                    return None
+                return self.loaded_proof
 
         class ReceiptDelivery:
             def take_source_receipt(self, handle, *, peer_uid, peer_pid, peer_pidfd):
                 if (handle != "r" * 40 or peer_uid != 1234 or peer_pid != 3456
-                        or peer_pidfd != 77):
+                        or peer_pidfd != self_peer_pidfd):
                     raise PermissionError("receipt peer mismatch")
                 return handle
 
@@ -197,78 +230,184 @@ class NativeMCPExecutionTests(unittest.TestCase):
             profile_generations={"profile-a": "process-gen-a"},
             native_runtime_observer=observer,
             source_receipt_delivery=ReceiptDelivery(),
+            service_generation_digest="c" * 64,
         )
-        self.invocation = RootNativeMCPInvocation(
-            invocation_handle="i" * 40, package_id="package-a", profile_id="profile-a",
-            package_generation="package-gen-a", process_generation="process-gen-a",
-            adapter_id="hermes-installer.native-mcp-dispatch.v1", action_id="action-mcp-read",
+        from unittest.mock import patch
+        self.identity_patch = patch.object(
+            AuthorityService, "_native_process_identity",
+            staticmethod(lambda _pid, _uid: "native-process-fixture"),
+        )
+        self.identity_patch.start()
+        self.producer_fd = os.open(os.devnull, os.O_RDONLY)
+        self.gateway_fd = os.open(os.devnull, os.O_RDONLY)
+        self_peer_pidfd = self.producer_fd
+        producer_identity = SimpleNamespace(
+            profile_id="profile-a", generation="process-gen-a", kernel_uid=1234,
+            executable_sha256="e" * 64,
+        )
+        gateway_identity = SimpleNamespace(
+            profile_id="gateway-profile", generation="gateway-gen", kernel_uid=4321,
+            executable_sha256="f" * 64,
+        )
+
+        def process_resolver(pid, pidfd, *, profile_id, generation):
+            if not self.source_observers.current:
+                return None
+            if (pid, pidfd, profile_id, generation) == (
+                    3456, self.producer_fd, "profile-a", "process-gen-a"):
+                return producer_identity
+            if (pid, pidfd, profile_id, generation) == (
+                    4567, self.gateway_fd, "gateway-profile", "gateway-gen"):
+                return gateway_identity
+            return None
+
+        bridge = SimpleNamespace(
+            bridge_id="native-mcp-fixture-bridge", producer_uid=1234,
+            producer_profile_id="profile-a", producer_generation="process-gen-a",
+            gateway_profile_id="gateway-profile", gateway_generation="gateway-gen",
+        )
+        selected_action = NativeActionSelection(
+            package_id="package-a", profile_id="profile-a", generation="process-gen-a",
+            adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
+            validate_arguments=lambda body: body == b'{"fileKey":"selected-file"}',
+        )
+
+        def action_resolver(_bridge, identity, tool_name):
+            if identity is not producer_identity or tool_name != "mcp__figma__read_metadata":
+                raise PermissionError("unselected native action")
+            return selected_action
+
+        self.invocation_registry = NativeInvocationRegistry(
+            service=self.authority, source_observers=self.source_observers,
+            bridges={bridge.bridge_id: bridge},
+            provider_result_observer_ids={
+                ("fixture-provider", "provider.fixed", "fixture-recipient"):
+                    "provider-result-observer",
+            },
+            provider_tool_call_parser=lambda *_args: (),
+            process_resolver=process_resolver, action_resolver=action_resolver,
+        )
+        self.authority.attach_native_invocation_registry(self.invocation_registry)
+        context = self.authority._issue_context(1234, {
+            "purpose": "native-mcp-fixture", "intent": "selected-plugin-read",
+            "trace_id": "native-mcp-fixture-trace", "lease_seconds": 30,
+            "source_contexts": [],
+            "final_payload_digest": hashlib.sha256(
+                b'{"fileKey":"selected-file"}',
+            ).hexdigest(),
+            "operation": "provider.dispatch",
+        }, peer_pid=3456)
+        source_receipt = self.authority.issue_source_receipt(
+            HostContext.from_wire(context),
+            source_kind="tool-result", origin_id="fixture-provider-result",
+            payload=b"root-captured provider result", ttl_seconds=30,
+        )
+        self.source_handle = "s" * 40
+        self.authority._source_receipt_handles[self.source_handle] = source_receipt
+        self.invocation_handle = "i" * 40
+        self.invocation = _NativeInvocation(
+            invocation_handle=self.invocation_handle,
+            response_handle="d" * 43, observed_call_handle="o" * 40,
+            bridge=bridge, producer_identity=producer_identity, producer_pid=3456,
+            producer_pidfd=self.producer_fd, gateway_identity=gateway_identity,
+            gateway_pid=4567, gateway_pidfd=self.gateway_fd, package_id="package-a",
+            profile_id="profile-a", generation="process-gen-a",
+            adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
+            tool_name="mcp__figma__read_metadata",
             arguments_sha256=hashlib.sha256(b'{"fileKey":"selected-file"}').hexdigest(),
-            parent_closure_digest="b" * 64, expires_monotonic=time.monotonic() + 30,
-            source_receipt_handles=(), native_process_identity="native-process-fixture",
+            parent_closure_digest="b" * 64, receipt_handles=(self.source_handle,),
+            observer_id="provider-result-observer", loaded_package_proof=self.source_observers.loaded_proof,
+            expires_monotonic=time.monotonic() + 30,
+            service_generation_digest=self.authority.service_generation_digest,
         )
+        self.invocation_registry._invocations[self.invocation_handle] = self.invocation
+        def artifact_bytes(schema):
+            return json.dumps(schema, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=False, allow_nan=False).encode("utf-8")
 
-        class Resolver:
-            def __init__(self, owner):
-                self.owner, self.consumed = owner, False
-
-            def consume(self, handle, *, peer_uid, peer_pid, peer_pidfd):
-                if (self.consumed or handle != self.owner.invocation_handle or peer_uid != 1234
-                        or peer_pid != 3456 or peer_pidfd != 77):
-                    raise PermissionError("fixture invocation binding denied")
-                self.consumed = True
-                return self.owner
-
-            def is_current(self, invocation):
-                return invocation is self.owner and self.consumed
-
-        class Registrations:
-            def resolve_action(self, action_id):
-                if action_id != self_action:
-                    raise KeyError(action_id)
-                return self_binding
-
-        class Schemas:
-            def resolve(self, schema_id, **identity):
-                if identity != {
-                    "native_package_id": "package-a",
-                    "native_package_generation": "package-gen-a",
-                    "adapter_id": "hermes-installer.native-mcp-dispatch.v1",
-                    "action_id": "action-mcp-read",
-                    "schema_kind": "arguments" if schema_id == "schema-args" else "result",
-                }:
-                    raise KeyError("schema join mismatch")
-                return ARGUMENT_SCHEMA if schema_id == "schema-args" else RESULT_SCHEMA
-
-        self_action, self_binding = self.binding.id, self.binding
+        schema_records = []
+        schema_bytes = {"schema-args": artifact_bytes(ARGUMENT_SCHEMA),
+                        "schema-result": artifact_bytes(RESULT_SCHEMA)}
+        for schema_id, schema_kind in (("schema-args", "arguments"),
+                                       ("schema-result", "result")):
+            schema_records.append({
+                "id": schema_id, "artifact_id": "artifact-" + schema_id,
+                "sha256": hashlib.sha256(schema_bytes[schema_id]).hexdigest(),
+                "schema_kind": schema_kind, "native_package_id": "package-a",
+                "native_package_generation": "package-gen-a", "adapter_id": HANDLER_ARTIFACT_ID,
+                "action_id": "action-mcp-read", "source_receipt_handle": "pending",
+            })
+        stage = Path(tempfile.mkdtemp(prefix="mcp-schema-fixture-"))
+        os.chmod(stage, 0o700)
+        self.schema_stage = stage
+        artifact_specs = []
+        for index, record in enumerate(schema_records):
+            body = schema_bytes[record["id"]]
+            receipt = self.authority.issue_source_receipt(
+                HostContext.from_wire(context), source_kind="static-context",
+                origin_id=record["id"], payload=body, ttl_seconds=30,
+            )
+            handle = ("q" if index == 0 else "w") * 40
+            self.authority._source_receipt_handles[handle] = receipt
+            record["source_receipt_handle"] = handle
+            spec = ArtifactSpec(
+                artifact_id=record["artifact_id"], version="1", sha256=record["sha256"],
+                source_url=f"https://schemas.hermes.invalid/{record['id']}.json",
+                max_bytes=256 * 1024, size_bytes=len(body), filename="schema.json",
+            )
+            artifact_specs.append(spec)
+            object_dir = stage / "objects" / record["artifact_id"] / record["sha256"]
+            object_dir.mkdir(parents=True, mode=0o700)
+            (object_dir / "schema.json").write_bytes(body)
+            os.chmod(object_dir / "schema.json", 0o400)
+        self.schema_catalog = build_native_mcp_schema_catalog(
+            schema_records, authority_service=self.authority,
+            artifact_catalog=ArtifactCatalog.from_records(tuple(artifact_specs)),
+            staging_root=stage, expected_uid=os.getuid(),
+        )
+        service_record = {
+            "id": "figma", "channel": "http", "allowed_tools": ["get_metadata"],
+            "selection_arguments": {"get_metadata": ["fileKey"]},
+        }
+        self.registration_index = NativeMCPRegistrationIndex.from_protected_records(
+            [self.binding_record], services={"figma": service_record},
+            mcp_generation_by_enrollment={"figma": "service-gen-a"},
+            profile_id="profile-a", process_generation="process-gen-a",
+            native_package_id="package-a", native_package_generation="package-gen-a",
+            handler_artifact_sha256=self.handler_digest,
+        )
         # NativeMCPDispatcher uses /proc identity checks at the actual effect
         # boundary. The contract fixture pins a deterministic fake live peer;
         # Linux custody proves kernel PIDFD identity in its separate workflow.
-        from unittest.mock import patch
-        self.identity_patch = patch.object(AuthorityService, "_native_process_identity",
-                                           staticmethod(lambda _pid, _uid: "native-process-fixture"))
-        self.identity_patch.start()
         self.dispatcher = NativeMCPDispatcher(
-            self.authority, registration_index=Registrations(), schema_catalog=Schemas(),
-            protected_services={"figma": service_record},
+            self.authority, registration_index=self.registration_index,
+            schema_catalog=self.schema_catalog,
+            protected_services={"figma": protected_service},
             current_mcp_generations={"figma": "service-gen-a"},
-            invocation_resolver=Resolver(self.invocation), timeout=5.0,
+            invocation_resolver=self.invocation_registry, timeout=5.0,
         )
+        self.authority.attach_native_mcp_dispatcher(self.dispatcher)
 
     def tearDown(self):
         self.identity_patch.stop()
+        self.invocation_registry.close()
+        try:
+            os.close(self.producer_fd)
+            os.close(self.gateway_fd)
+        except OSError:
+            pass
         self.http.close()
+        import shutil
+        shutil.rmtree(self.schema_stage, ignore_errors=True)
 
     def test_root_dispatch_initializes_discovers_calls_and_scrubs_selected_read(self):
-        response = self.dispatcher.dispatch_native_mcp(
-            peer_uid=1234, peer_pid=3456, peer_pidfd=77,
-            invocation_handle=self.invocation.invocation_handle,
-            canonical_arguments=b'{"fileKey":"selected-file"}', cancelled=lambda: False,
-        )
-        self.assertEqual(response.status, 200)
-        self.assertNotIn(b"fixture-secret-canary", response.body)
-        self.assertIn(b"Bearer [REDACTED]", response.body)
-        self.assertEqual(response.source_receipt_handle, "r" * 40)
-        self.assertEqual(self.source_observers.captured, [response.body])
+        response = self._service_dispatch(b'{"fileKey":"selected-file"}')
+        self.assertEqual(response["status"], 200)
+        body = base64.b64decode(response["body"], validate=True)
+        self.assertNotIn(b"fixture-secret-canary", body)
+        self.assertIn(b"Bearer [REDACTED]", body)
+        self.assertEqual(response["source_receipt_handle"], "r" * 40)
+        self.assertEqual(self.source_observers.captured, [body])
         methods = [row[0]["method"] for row in self.http.requests]
         self.assertEqual(methods, ["initialize", "notifications/initialized", "tools/list", "tools/call"])
         call = self.http.requests[-1][0]
@@ -278,11 +417,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
 
     def test_selected_resource_mismatch_is_denied_before_any_network_request(self):
         with self.assertRaises(NativeMCPExecutionDenied):
-            self.dispatcher.dispatch_native_mcp(
-                peer_uid=1234, peer_pid=3456, peer_pidfd=77,
-                invocation_handle=self.invocation.invocation_handle,
-                canonical_arguments=b'{"fileKey":"other-file"}', cancelled=lambda: False,
-            )
+            self._service_dispatch(b'{"fileKey":"other-file"}')
         self.assertEqual(self.http.requests, [])
 
     def test_missing_root_result_observer_denies_before_network_request(self):
@@ -290,26 +425,33 @@ class NativeMCPExecutionTests(unittest.TestCase):
         self.authority.native_runtime_observer = None
         try:
             with self.assertRaises(NativeMCPExecutionDenied):
-                self.dispatcher.dispatch_native_mcp(
-                    peer_uid=1234, peer_pid=3456, peer_pidfd=77,
-                    invocation_handle=self.invocation.invocation_handle,
-                    canonical_arguments=b'{"fileKey":"selected-file"}',
-                    cancelled=lambda: False,
-                )
+                self._service_dispatch(b'{"fileKey":"selected-file"}')
         finally:
             self.authority.native_runtime_observer = observer
         self.assertEqual(self.http.requests, [])
 
     def test_revoked_invocation_is_rechecked_before_each_effect(self):
-        self.dispatcher._invocations.is_current = lambda _invocation: False
+        self.source_observers.current = False
         with self.assertRaises(NativeMCPExecutionDenied):
-            self.dispatcher.dispatch_native_mcp(
-                peer_uid=1234, peer_pid=3456, peer_pidfd=77,
-                invocation_handle=self.invocation.invocation_handle,
-                canonical_arguments=b'{"fileKey":"selected-file"}',
-                cancelled=lambda: False,
-            )
+            self._service_dispatch(b'{"fileKey":"selected-file"}')
         self.assertEqual(self.http.requests, [])
+
+    def test_revocation_after_result_capture_blocks_release(self):
+        self.source_observers.revoke_after_capture = True
+        with self.assertRaises(NativeMCPExecutionDenied):
+            self._service_dispatch(b'{"fileKey":"selected-file"}')
+        self.assertEqual([row[0]["method"] for row in self.http.requests], [
+            "initialize", "notifications/initialized", "tools/list", "tools/call",
+        ])
+        self.assertEqual(len(self.source_observers.captured), 1)
+
+    def _service_dispatch(self, arguments):
+        return self.authority._dispatch_native_mcp(
+            1234, 3456, self.producer_fd,
+            {"schema": 1, "invocation_handle": self.invocation_handle,
+             "canonical_arguments_b64": base64.b64encode(arguments).decode("ascii")},
+            cancelled=lambda: False,
+        )
 
 
 if __name__ == "__main__":
