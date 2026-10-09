@@ -93,6 +93,19 @@ class CliLifecycleTests(unittest.TestCase):
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
 
+    def test_update_rollback_is_not_misrouted_to_root_update_action(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
+            with patch("hermes_installer.cli.discover_host",return_value=self.host), \
+                 patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
+                     state="verified",blocker_code=None,
+                     message="The current process matches the installed root launcher.")):
+                result=run(SimpleNamespace(command="update",action="rollback",config=config))
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertEqual(result.resume_command,"hermes-installer status")
+            self.assertFalse((root/"data").exists())
+            self.assertFalse((root/"state").exists())
+
     def test_update_check_verifies_active_generation_without_creating_state(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); data=OwnedRoot(root/"data"); data.ensure()

@@ -741,14 +741,16 @@ def run(args: argparse.Namespace) -> CommandResult:
                      "candidate_generation": None, "candidate_available": False}),),
                 resume_command=f"hermes-installer update check" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
         launcher_state, blocker_code, launcher_message = _root_launcher_status()
+        root_action = "update" if action == "apply" else None
         message = f"{launcher_message} No update or rollback effect was started; managed generation activation requires the root-owned transaction and live health observer."
         return CommandResult("update", OutcomeState.PENDING, message,
             (Finding("lifecycle.update", message, OutcomeState.PENDING,
                 {"candidate_generation": None, "health_probe": "protected-managed-process-not-enrolled",
                  "launcher_verified": launcher_state == "verified", "blocker_code": blocker_code,
                  "effects_started": False}),),
-            resume_command=(f"sudo -- hermes-installer-root-setup update"
-                            if launcher_state == "verified" else "hermes-installer status"))
+            resume_command=(f"sudo -- hermes-installer-root-setup {root_action}"
+                            if launcher_state == "verified" and root_action is not None
+                            else "hermes-installer status"))
     if args.command in {"configure", "test-connection", "select-memory", "resolve-source"}:
         facts = discover_host()
         if not facts.supported_arm64_linux:
