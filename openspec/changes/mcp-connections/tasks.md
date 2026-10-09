@@ -30,3 +30,17 @@ Dependencies: installer-bootstrap-desktop, resource-registry-import, providers-c
 - Review code against every requirement/scenario and actual evidence; do not archive incomplete hardware/account tasks.
 - Run strict pinned OpenSpec validation and coverage; archive only verified completed changes using the installed documented workflow, preserving dated history and canonical specs.
 - Sol must approve refinement via append-only amendment; keep plans/2026-10-09-v1 immutable.
+
+### v24 native MCP handler binding
+
+MC-F01/MC-F02 and HI-T04/08/09 use native-package-binding-contract.json native_mcp_dispatch exact source-backed in-process hook/catalog/RPC/result joins. All original native/account acceptance remains pending.
+
+### v25 MCP lexical/config mapping
+
+Use native_mcp_dispatch row_types/invocation_mapping/native_config exact records, same one-use lexical binding and root-backed native candidate registration. MC/HI acceptance remains pending.
+
+Installed release/native assembly v33: `plans/amendments/2026-10-09-installed-release-native-assembly-v33.md`; exact root receipt and construction joins preserve existing task IDs and pending evidence.
+
+Native candidate index delivery v38: `plans/amendments/2026-10-09-native-candidate-index-delivery-v38.md`; exact compiled member/receipt joins preserve open tasks.
+
+Native schema artifact joins v39: `plans/amendments/2026-10-09-native-schema-artifact-joins-v39.md`; exact selected schema source mapping, original tasks remain pending.
