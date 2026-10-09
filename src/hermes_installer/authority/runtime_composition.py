@@ -351,7 +351,7 @@ def compose_root_authority_runtime(
             runtime_probe=None,
             owner_uid=vault.expected_uid,
         )
-        build_execution_service = RootBuildExecutionService(
+        candidate_build_execution_service = RootBuildExecutionService(
             build_catalog=build_catalog,
             service_catalog=bindings.enrollment_catalog,
             artifact_catalog=artifact_catalog,
@@ -365,7 +365,8 @@ def compose_root_authority_runtime(
             expected_uid=vault.expected_uid,
             monotonic=service.monotonic,
         )
-        for key, handler in build_execution_service.handlers().items():
+        installed_build_routes = 0
+        for key, handler in candidate_build_execution_service.handlers().items():
             operation, target = key
             # A catalog profile alone is not activation. Install only if the
             # active service snapshot also grants this exact selected route.
@@ -373,8 +374,12 @@ def compose_root_authority_runtime(
             if not any(rule.operation == operation and rule.target == target
                        for rule in service.rules.values()):
                 continue
-            for generation in set(service.profile_generations.values()):
-                if not isinstance(generation, str) or not generation:
+            for protected_build_row in enrollment.protected_build_records:
+                if not isinstance(protected_build_row, Mapping):
+                    continue
+                generation = protected_build_row.get("generation")
+                if (protected_build_row.get("target_id") != target
+                        or not isinstance(generation, str) or not generation):
                     continue
                 try:
                     profile = build_catalog.resolve(target, generation)
@@ -394,6 +399,9 @@ def compose_root_authority_runtime(
             if key in service.handlers:
                 raise AuthorityDenied("authority.composition", "build route duplicates an installed handler")
             service.handlers[key] = handler
+            installed_build_routes += 1
+        if installed_build_routes:
+            build_execution_service = candidate_build_execution_service
 
     job_authority = None
     if jobs:
