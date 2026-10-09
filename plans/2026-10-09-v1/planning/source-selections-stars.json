@@ -1,0 +1,129 @@
+{
+  "checked_on": "2026-10-09",
+  "selection_policy": "most GitHub stars among matching source candidates",
+  "candidates": {
+    "agent-memory": [
+      {
+        "full_name": "rohitg00/agentmemory",
+        "html_url": "https://github.com/rohitg00/agentmemory",
+        "description": "#1 Persistent memory for AI coding agents based on real-world benchmarks",
+        "stargazers_count": 29257,
+        "fork": false,
+        "archived": false,
+        "default_branch": "main",
+        "license": {
+          "key": "apache-2.0",
+          "name": "Apache License 2.0",
+          "spdx_id": "Apache-2.0",
+          "url": "https://api.github.com/licenses/apache-2.0",
+          "node_id": "MDc6TGljZW5zZTI="
+        }
+      }
+    ],
+    "awesome-harness-engineering": [
+      {
+        "full_name": "ai-boost/awesome-harness-engineering",
+        "html_url": "https://github.com/ai-boost/awesome-harness-engineering",
+        "description": "Awesome list for AI agent harness engineering: tools, patterns, evals, memory, MCP, permissions, observability, and orchestration.",
+        "stargazers_count": 4765,
+        "fork": false,
+        "archived": false,
+        "default_branch": "main",
+        "license": {
+          "key": "other",
+          "name": "Other",
+          "spdx_id": "NOASSERTION",
+          "url": null,
+          "node_id": "MDc6TGljZW5zZTA="
+        }
+      },
+      {
+        "full_name": "walkinglabs/awesome-harness-engineering",
+        "html_url": "https://github.com/walkinglabs/awesome-harness-engineering",
+        "description": "\ud83d\udee0\ufe0f Awesome tools & guides for harness engineering.",
+        "stargazers_count": 4361,
+        "fork": false,
+        "archived": false,
+        "default_branch": "main",
+        "license": {
+          "key": "other",
+          "name": "Other",
+          "spdx_id": "NOASSERTION",
+          "url": null,
+          "node_id": "MDc6TGljZW5zZTA="
+        }
+      }
+    ],
+    "awesome-design": [
+      {
+        "full_name": "bergside/awesome-design-skills",
+        "html_url": "https://github.com/bergside/awesome-design-skills",
+        "description": "List of 67 awesome DESIGN.md and SKILL.md design skill files for agentic tools like Claude Design, Google Stitch, Codex, Cursor, and other AI tools",
+        "stargazers_count": 3101,
+        "fork": false,
+        "archived": false,
+        "default_branch": "main",
+        "license": {
+          "key": "mit",
+          "name": "MIT License",
+          "spdx_id": "MIT",
+          "url": "https://api.github.com/licenses/mit",
+          "node_id": "MDc6TGljZW5zZTEz"
+        }
+      }
+    ],
+    "book-to-skill": [
+      {
+        "full_name": "virgiliojr94/book-to-skill",
+        "html_url": "https://github.com/virgiliojr94/book-to-skill",
+        "description": "Turn any technical book PDF into a Claude Code skill \u2014 ready to study, reference, and use while you work.",
+        "stargazers_count": 34266,
+        "fork": false,
+        "archived": false,
+        "default_branch": "master",
+        "license": {
+          "key": "mit",
+          "name": "MIT License",
+          "spdx_id": "MIT",
+          "url": "https://api.github.com/licenses/mit",
+          "node_id": "MDc6TGljZW5zZTEz"
+        }
+      },
+      {
+        "full_name": "apple-ouyang/book-to-skill",
+        "html_url": "https://github.com/apple-ouyang/book-to-skill",
+        "description": "\u628a\u4e66\u62c6\u6210 AI Agent \u53ef\u6267\u884c\u7684 Skill\uff0c\u8ba9\u4e66\u4e2d\u7684\u667a\u6167\u53d8\u6210\u4f60\u7684\u51b3\u7b56\u526f\u9a7e\u9a76 | Turn books into executable AI Agent Skills",
+        "stargazers_count": 160,
+        "fork": false,
+        "archived": false,
+        "default_branch": "main",
+        "license": {
+          "key": "mit",
+          "name": "MIT License",
+          "spdx_id": "MIT",
+          "url": "https://api.github.com/licenses/mit",
+          "node_id": "MDc6TGljZW5zZTEz"
+        }
+      }
+    ],
+    "apple-design": [
+      {
+        "full_name": "dickwu/apple-design-skill",
+        "html_url": "https://github.com/dickwu/apple-design-skill",
+        "description": "Cross-platform UI/UX design reviewer based on Apple HIG. Works with Flutter, Tauri, Electron, React Native. Compatible with Claude Code, Cursor, Codex.",
+        "stargazers_count": 1064,
+        "fork": false,
+        "archived": false,
+        "default_branch": "main",
+        "license": null
+      }
+    ]
+  },
+  "selected": {
+    "agent-memory": "rohitg00/agentmemory",
+    "awesome-harness-engineering": "ai-boost/awesome-harness-engineering",
+    "awesome-design": "bergside/awesome-design-skills",
+    "book-to-skill": "virgiliojr94/book-to-skill",
+    "apple-design": "dickwu/apple-design-skill"
+  }
+}

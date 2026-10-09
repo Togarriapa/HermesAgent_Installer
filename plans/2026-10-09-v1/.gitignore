@@ -1,0 +1,12 @@
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.*
+!*.example
+*.secret
+private/
+runtime-data/
+evidence/runtime/

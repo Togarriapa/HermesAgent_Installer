@@ -1,0 +1,1036 @@
+[
+  {
+    "component_id": "ecc",
+    "requirement_ids": [
+      "R0063"
+    ],
+    "task_ids": [
+      "SK-R0063"
+    ],
+    "adapter_type": "portable-skills + reviewed hook adapter",
+    "install_artifacts": "complete skill trees/root references and host hooks inspected separately",
+    "dependencies": "Hermes scoped skills; optional host hook events",
+    "functional_method": "Invoke selected hook against temporary coding fixture and assert callback effect; hooks unavailable until adapter verified",
+    "fixture_test": "tests/integrations/test_ecc.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "jakeschincariol-replica-skill",
+    "requirement_ids": [
+      "R0064"
+    ],
+    "task_ids": [
+      "SK-R0064"
+    ],
+    "adapter_type": "skill-helper adapter",
+    "install_artifacts": "full skill directories and helper scripts",
+    "dependencies": "isolated helpers and native skill discovery",
+    "functional_method": "Discover skill, resolve all helper references and run documented harmless synthetic replication fixture in temp workspace",
+    "fixture_test": "tests/integrations/test_jakeschincariol_replica_skill.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "graphify",
+    "requirement_ids": [
+      "R0065"
+    ],
+    "task_ids": [
+      "SK-R0065"
+    ],
+    "adapter_type": "CLI/skill + optional MCP adapter",
+    "install_artifacts": "verified moved Graphify-Labs/graphify source; graphifyy distribution reviewed at pin",
+    "dependencies": "feature-scoped Python graph stack; Hermes installer references reviewed",
+    "functional_method": "Build a graph from tiny local code/text fixture, query expected node/edge; optional MCP initialize/query separately",
+    "fixture_test": "tests/integrations/test_graphify.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "public-apis-public-apis",
+    "requirement_ids": [
+      "R0066"
+    ],
+    "task_ids": [
+      "SK-R0066"
+    ],
+    "adapter_type": "reference catalog index",
+    "install_artifacts": "pinned catalog and license retained",
+    "dependencies": "on-demand local index/search",
+    "functional_method": "Query fixture category/API name with source provenance; assert no listed API account/server automatically provisioned",
+    "fixture_test": "tests/integrations/test_public_apis_public_apis.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "adewaskar-jarvis",
+    "requirement_ids": [
+      "R0067"
+    ],
+    "task_ids": [
+      "SK-R0067"
+    ],
+    "adapter_type": "optional independent voice application",
+    "install_artifacts": "reviewed application and Claude Code assumptions",
+    "dependencies": "supported voice/audio dependencies + eligible configured client/account",
+    "functional_method": "Synthetic audio/text fixture through isolated supported route; account-ineligible state prevents voice/provider service activation",
+    "fixture_test": "tests/integrations/test_adewaskar_jarvis.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "omniroute",
+    "requirement_ids": [
+      "R0068"
+    ],
+    "task_ids": [
+      "PR-R0068"
+    ],
+    "adapter_type": "routing service adapter",
+    "install_artifacts": "pinned native ARM64 service/dependencies",
+    "dependencies": "loopback/auth service + allowlisted configured providers",
+    "functional_method": "Send synthetic tool-call route through service and recording endpoints; paid/private fallback/loop/compression/retry denial asserted",
+    "fixture_test": "tests/integrations/test_omniroute.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "ponytail",
+    "requirement_ids": [
+      "R0069"
+    ],
+    "task_ids": [
+      "SK-R0069"
+    ],
+    "adapter_type": "coding/review skill adapter",
+    "install_artifacts": "portable skill and supported host features",
+    "dependencies": "scoped native skills and isolated review workspace",
+    "functional_method": "Harmless repository review fixture produces expected structured review; assert original Orchestrator remains coordinator",
+    "fixture_test": "tests/integrations/test_ponytail.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "addy-osmani-s-agent-skills",
+    "requirement_ids": [
+      "R0070"
+    ],
+    "task_ids": [
+      "SK-R0070"
+    ],
+    "adapter_type": "skill tree importer",
+    "install_artifacts": "individual skills plus shared root refs",
+    "dependencies": "native discovery and supported helpers",
+    "functional_method": "Resolve all relative/shared references from discovered selected skill; fixture asserts task-scoped load, no root instructions global concatenation",
+    "fixture_test": "tests/integrations/test_addy_osmani_s_agent_skills.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "claude-mem",
+    "requirement_ids": [
+      "R0071"
+    ],
+    "task_ids": [
+      "SK-R0071"
+    ],
+    "adapter_type": "memory service/provider adapter",
+    "install_artifacts": "native Hermes capture/search support inspected at pinned upstream",
+    "dependencies": "isolated worker/database; compatible extraction provider",
+    "functional_method": "Store synthetic fact, complete extraction, restart worker/profile and retrieve new session; namespace/capture-owner/backup denial tests",
+    "fixture_test": "tests/integrations/test_claude_mem.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "browser-use",
+    "requirement_ids": [
+      "R0072"
+    ],
+    "task_ids": [
+      "SK-R0072"
+    ],
+    "adapter_type": "local browser library/CLI/skill adapter",
+    "install_artifacts": "reviewed local browser integration separate from cloud offer",
+    "dependencies": "native ARM64 supported browser sandbox and isolated Python deps",
+    "functional_method": "Navigate local fixture, assert selected interaction/screenshot, cancel bounded worker; cloud access remains disabled without budget/account",
+    "fixture_test": "tests/integrations/test_browser_use.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "agent-memory",
+    "requirement_ids": [
+      "R0073"
+    ],
+    "task_ids": [
+      "SK-R0073"
+    ],
+    "adapter_type": "selected selectable memory adapter",
+    "install_artifacts": "candidate rohitg00/agentmemory retained; no silent choice",
+    "dependencies": "selected source dependency and capture/search interface review",
+    "functional_method": "Source-override policy regression plus selected-source integration: synthetic fact extraction/restart/new-session retrieval and namespace/one-owner tests; selected identity rohitg00/agentmemory follows user star policy, not automatic functional success",
+    "fixture_test": "tests/integrations/test_agent_memory.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run",
+    "selected_source": "https://github.com/rohitg00/agentmemory"
+  },
+  {
+    "component_id": "scientific-agent-skills",
+    "requirement_ids": [
+      "R0074"
+    ],
+    "task_ids": [
+      "SK-R0074"
+    ],
+    "adapter_type": "feature-scoped scientific skills",
+    "install_artifacts": "complete skill contents/references; per-feature dependencies",
+    "dependencies": "separate scientific environments, no giant global install",
+    "functional_method": "Discover selected skill and execute small deterministic calculation/data fixture with pinned feature deps; other heavy features remain readiness-specific",
+    "fixture_test": "tests/integrations/test_scientific_agent_skills.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "diagram-design",
+    "requirement_ids": [
+      "R0075"
+    ],
+    "task_ids": [
+      "SK-R0075"
+    ],
+    "adapter_type": "diagram/export skill adapter",
+    "install_artifacts": "skill refs/assets and render/export helpers",
+    "dependencies": "reviewed renderer/native libs in on-demand environment",
+    "functional_method": "Render harmless diagram fixture and validate exported file format/content/asset resolution",
+    "fixture_test": "tests/integrations/test_diagram_design.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "antropic-cybersecurity-skills",
+    "requirement_ids": [
+      "R0076"
+    ],
+    "task_ids": [
+      "SK-R0076"
+    ],
+    "adapter_type": "third-party procedure skills",
+    "install_artifacts": "full directories and explicit non-Anthropic attribution",
+    "dependencies": "native skills only by default; authorized exercise tools separately gated",
+    "functional_method": "Discover procedures/references and assert no security exercise/scan is executed during install; invocation in inert fixture only",
+    "fixture_test": "tests/integrations/test_antropic_cybersecurity_skills.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "awesome-harness-engineering",
+    "requirement_ids": [
+      "R0077"
+    ],
+    "task_ids": [
+      "SK-R0077"
+    ],
+    "adapter_type": "selected reference catalog",
+    "install_artifacts": "ai-boost and walkinglabs candidates retained",
+    "dependencies": "local catalog/index after user selection",
+    "functional_method": "Source-override policy regression plus selected-source integration: catalog search returns provenance and no always-running orchestration service; selected identity ai-boost/awesome-harness-engineering follows user star policy, not automatic functional success",
+    "fixture_test": "tests/integrations/test_awesome_harness_engineering.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run",
+    "selected_source": "https://github.com/ai-boost/awesome-harness-engineering"
+  },
+  {
+    "component_id": "open-viking",
+    "requirement_ids": [
+      "R0078"
+    ],
+    "task_ids": [
+      "SK-R0078"
+    ],
+    "adapter_type": "native catalog memory plugin + isolated server",
+    "install_artifacts": "volcengine/OpenViking/examples/hermes-plugin reviewed; hermes plugins install openviking",
+    "dependencies": "server/environment/native ARM64 extensions; separately eligible extraction+embedding endpoints",
+    "functional_method": "Server doctor then synthetic extraction/restart/retrieval; assert environment lacks unrelated tokens, one owner, namespace and no recursive ingestion",
+    "fixture_test": "tests/integrations/test_open_viking.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "panniantong-agent-reach",
+    "requirement_ids": [
+      "R0079"
+    ],
+    "task_ids": [
+      "SK-R0079"
+    ],
+    "adapter_type": "CLI/skill/per-channel adapter",
+    "install_artifacts": "upstream Agent-Reach source and correct package identity",
+    "dependencies": "feature-isolated channel deps/account scopes",
+    "functional_method": "Run CLI diagnostic against local mocked channel; each selected real channel requires harmless scoped functional read and separate credential status",
+    "fixture_test": "tests/integrations/test_panniantong_agent_reach.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "superpowers",
+    "requirement_ids": [
+      "R0080"
+    ],
+    "task_ids": [
+      "SK-R0080"
+    ],
+    "adapter_type": "Hermes skill/bootstrap/hooks adapter",
+    "install_artifacts": "documented native Hermes integration reviewed at pin",
+    "dependencies": "native skills and actual supported host bootstrap/hook API",
+    "functional_method": "Trigger installed bootstrap/hook on temp fixture and assert observable invocation; markdown presence alone fails hook proof",
+    "fixture_test": "tests/integrations/test_superpowers.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "gstack",
+    "requirement_ids": [
+      "R0081"
+    ],
+    "task_ids": [
+      "SK-R0081"
+    ],
+    "adapter_type": "instruction-only unless newly proven adapter",
+    "install_artifacts": "reviewed upstream Hermes instruction limitation",
+    "dependencies": "portable instructions; native host tools only where documented/tested",
+    "functional_method": "Native discovery/reference integrity plus explicit instruction-only status; any executable hook requires separate actual invocation evidence",
+    "fixture_test": "tests/integrations/test_gstack.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "ruflo",
+    "requirement_ids": [
+      "R0082"
+    ],
+    "task_ids": [
+      "SK-R0082"
+    ],
+    "adapter_type": "optional supported adapter/MCP/isolated runtime",
+    "install_artifacts": "reviewed source/features and ARM64 native dependencies",
+    "dependencies": "on-demand service/MCP with per-tool scope",
+    "functional_method": "Run harmless isolated orchestration/query fixture and MCP handshake if selected; assert never replaces registry coordinator",
+    "fixture_test": "tests/integrations/test_ruflo.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "open-executive",
+    "requirement_ids": [
+      "R0083"
+    ],
+    "task_ids": [
+      "SK-R0083"
+    ],
+    "adapter_type": "independent optional application",
+    "install_artifacts": "reviewed own agents/provider assumptions",
+    "dependencies": "on-demand isolated service and eligible allowlisted providers",
+    "functional_method": "Synthetic application workflow returns expected artifact through supported bridge, denies unconfigured/paid route, preserves Hermes user-facing identity",
+    "fixture_test": "tests/integrations/test_open_executive.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "ui-ux-pro-max",
+    "requirement_ids": [
+      "R0084"
+    ],
+    "task_ids": [
+      "SK-R0084"
+    ],
+    "adapter_type": "searchable design skill adapter",
+    "install_artifacts": "skill/search data/Python helpers and current installer package identity",
+    "dependencies": "isolated helper runtime and native skill discovery",
+    "functional_method": "Selected design search fixture returns expected guidance/provenance and resolves helper data; optional host install flags reviewed",
+    "fixture_test": "tests/integrations/test_ui_ux_pro_max.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "taste-skill",
+    "requirement_ids": [
+      "R0085"
+    ],
+    "task_ids": [
+      "SK-R0085"
+    ],
+    "adapter_type": "selectable design skill tree",
+    "install_artifacts": "individual style packs preserved",
+    "dependencies": "task/profile scoped discovery",
+    "functional_method": "Fixture selects one style and verifies other style rules are not concatenated globally; original references retained",
+    "fixture_test": "tests/integrations/test_taste_skill.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "awesome-design",
+    "requirement_ids": [
+      "R0086"
+    ],
+    "task_ids": [
+      "SK-R0086"
+    ],
+    "adapter_type": "selected design reference skills",
+    "install_artifacts": "bergside/awesome-design-skills candidate only",
+    "dependencies": "selected native skill/search helpers after review",
+    "functional_method": "Source-override policy regression plus selected-source integration: complete-tree discoverability/reference test plus actual helper operation when provided; selected identity bergside/awesome-design-skills follows user star policy, not automatic functional success",
+    "fixture_test": "tests/integrations/test_awesome_design.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run",
+    "selected_source": "https://github.com/bergside/awesome-design-skills"
+  },
+  {
+    "component_id": "emil-kowalski-impeccable",
+    "requirement_ids": [
+      "R0087"
+    ],
+    "task_ids": [
+      "SK-R0087"
+    ],
+    "adapter_type": "Impeccable skill/command routing adapter",
+    "install_artifacts": "pbakaus/impeccable; attribution corrected separately from Emil pack",
+    "dependencies": "native Hermes documented routes and verified ARM64 engine assets",
+    "functional_method": "Invoke documented skill/command route on fixture and assert output; explicitly unavailable native design hook unless actual adapter test establishes it",
+    "fixture_test": "tests/integrations/test_emil_kowalski_impeccable.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "hyperframes",
+    "requirement_ids": [
+      "R0088"
+    ],
+    "task_ids": [
+      "SK-R0088"
+    ],
+    "adapter_type": "skill + on-demand video renderer",
+    "install_artifacts": "full skill tree/renderer dependency review",
+    "dependencies": "compatible pinned Node/FFmpeg/native ARM64 browser sandbox",
+    "functional_method": "Render tiny local scene to video, validate frame/duration/output metadata and bounded cleanup; no paid media providers enabled",
+    "fixture_test": "tests/integrations/test_hyperframes.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "humanizer",
+    "requirement_ids": [
+      "R0089"
+    ],
+    "task_ids": [
+      "SK-R0089"
+    ],
+    "adapter_type": "portable writing skill",
+    "install_artifacts": "complete skill and refs",
+    "dependencies": "native scoped discovery",
+    "functional_method": "Harmless synthetic writing fixture verifies discovery and declared procedure access; no extra service",
+    "fixture_test": "tests/integrations/test_humanizer.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "obsidian-skills",
+    "requirement_ids": [
+      "R0090"
+    ],
+    "task_ids": [
+      "SK-R0090"
+    ],
+    "adapter_type": "file-format skill + optional tools",
+    "install_artifacts": "full skill tree, separately approved vault/tool paths",
+    "dependencies": "native skills; optional supported ARM64 CLI/desktop",
+    "functional_method": "Synthetic markdown/canvas fixture with approved temp vault; deny writes outside vault and classify unavailable optional desktop tools honestly",
+    "fixture_test": "tests/integrations/test_obsidian_skills.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "banana-claude",
+    "requirement_ids": [
+      "R0091"
+    ],
+    "task_ids": [
+      "SK-R0091"
+    ],
+    "adapter_type": "Claude-oriented image plugin adapter",
+    "install_artifacts": "review client/adapter hooks and Gemini integration",
+    "dependencies": "eligible compatible client + deliberately configured Gemini budget/auth",
+    "functional_method": "Mock image endpoint asserts capability/budget/private-routing and plugin invocation; live generation remains pending account/budget, never paid install test",
+    "fixture_test": "tests/integrations/test_banana_claude.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "screenshot-to-code",
+    "requirement_ids": [
+      "R0092"
+    ],
+    "task_ids": [
+      "SK-R0092"
+    ],
+    "adapter_type": "independent vision web application",
+    "install_artifacts": "reviewed application source, not assumed skill",
+    "dependencies": "isolated frontend/backend + eligible vision endpoint",
+    "functional_method": "Synthetic screenshot fixture against mock compatible vision provider yields generated code; text-only route rejected, separate live vision proof",
+    "fixture_test": "tests/integrations/test_screenshot_to_code.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "scrapegraph-ai",
+    "requirement_ids": [
+      "R0093"
+    ],
+    "task_ids": [
+      "SK-R0093"
+    ],
+    "adapter_type": "local library/tool adapter",
+    "install_artifacts": "review actual ScrapeGraphAI project and Python constraint",
+    "dependencies": "isolated Python>=3.12,<4 plus reviewed native deps/model route",
+    "functional_method": "Scrape local HTML fixture into expected structured result with allowlisted model; cloud/MCP products and billing remain distinct optional items",
+    "fixture_test": "tests/integrations/test_scrapegraph_ai.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "book-to-skill",
+    "requirement_ids": [
+      "R0094"
+    ],
+    "task_ids": [
+      "SK-R0094"
+    ],
+    "adapter_type": "selected extraction/skill-generation adapter",
+    "install_artifacts": "virgiliojr94 and apple-ouyang candidates retained",
+    "dependencies": "selected extraction/generation deps and eligible provider",
+    "functional_method": "Source-override policy regression plus selected-source integration: tiny rights-authorized text fixture produces valid full Hermes skill directory and discovery test; selected identity virgiliojr94/book-to-skill follows user star policy, not automatic functional success",
+    "fixture_test": "tests/integrations/test_book_to_skill.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run",
+    "selected_source": "https://github.com/virgiliojr94/book-to-skill"
+  },
+  {
+    "component_id": "apple-design",
+    "requirement_ids": [
+      "R0095"
+    ],
+    "task_ids": [
+      "SK-R0095"
+    ],
+    "adapter_type": "selected design-reference skill",
+    "install_artifacts": "dickwu/apple-design-skill candidate; no detected license; not Apple-owned",
+    "dependencies": "source/license selection then native scoped skill refs",
+    "functional_method": "Source-license/override regression plus selected reference discovery with accurate attribution, no Xcode/Mac-only toolchain installed on Pi; selected identity dickwu/apple-design-skill follows user star policy, not automatic functional success",
+    "fixture_test": "tests/integrations/test_apple_design.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run",
+    "selected_source": "https://github.com/dickwu/apple-design-skill"
+  },
+  {
+    "component_id": "latent-spaces-brag",
+    "requirement_ids": [
+      "R0096"
+    ],
+    "task_ids": [
+      "SK-R0096"
+    ],
+    "adapter_type": "launch-video skill/renderer adapter",
+    "install_artifacts": "full source/assets; reuse compatible Hyperframes deps",
+    "dependencies": "on-demand render stack; optional narration endpoint separately gated",
+    "functional_method": "Tiny synthetic launch-video fixture validates frame/duration/assets; narration disabled without eligible account/budget and no renderer duplicates",
+    "fixture_test": "tests/integrations/test_latent_spaces_brag.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "figma-mcp",
+    "requirement_ids": [
+      "R0097"
+    ],
+    "task_ids": [
+      "MC-R0097"
+    ],
+    "adapter_type": "official remote MCP",
+    "install_artifacts": "official endpoint and compatible native Hermes transport",
+    "dependencies": "OAuth/account plan/tool access/user-selected file",
+    "functional_method": "Initialize/tools-list plus read selected fixture/mock and eventual chosen file; revoked token/plan denial and no write tests",
+    "fixture_test": "tests/integrations/test_figma_mcp.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "playwright-mcp",
+    "requirement_ids": [
+      "R0098"
+    ],
+    "task_ids": [
+      "MC-R0098"
+    ],
+    "adapter_type": "official local MCP/browser",
+    "install_artifacts": "pinned @playwright/mcp and native ARM64 browser",
+    "dependencies": "sandboxed isolated profile/browser deps",
+    "functional_method": "Local fixture navigation/accessibility snapshot/screenshot; inspect output image and timeout/cancel/reconnect; no personal cookies or --no-sandbox",
+    "fixture_test": "tests/integrations/test_playwright_mcp.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "revenuecat-mcp",
+    "requirement_ids": [
+      "R0099"
+    ],
+    "task_ids": [
+      "MC-R0099"
+    ],
+    "adapter_type": "official remote MCP",
+    "install_artifacts": "official endpoint and scoped auth",
+    "dependencies": "OAuth/APIv2 reference + selected project",
+    "functional_method": "Initialize/discovery/selected-project harmless list/read; deny product/customer/entitlement/billing/subscription writes and revoke behavior",
+    "fixture_test": "tests/integrations/test_revenuecat_mcp.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "google",
+    "requirement_ids": [
+      "R0100"
+    ],
+    "task_ids": [
+      "MC-R0100"
+    ],
+    "adapter_type": "official selectable service MCP + explicit community option",
+    "install_artifacts": "official Developer Preview eligibility rechecked; community not automatic",
+    "dependencies": "personal/Workspace eligibility, Cloud project/APIs/OAuth minimal scopes, selected services",
+    "functional_method": "Read-only per-service selected-resource calls; callback/refresh/revoked scope fixtures; no send/edit/calendar creation",
+    "fixture_test": "tests/integrations/test_google.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "home-assistant",
+    "requirement_ids": [
+      "R0101"
+    ],
+    "task_ids": [
+      "MC-R0101"
+    ],
+    "adapter_type": "existing official MCP integration",
+    "install_artifacts": "existing /api/mcp or /api/mcp/assist, admin vs Assist compatibility",
+    "dependencies": "instance/token or documented OAuth + explicit exposed entity",
+    "functional_method": "Read selected entity/state; initialization/reconnect/revoked auth; broker denies device-control writes and no replacement instance",
+    "fixture_test": "tests/integrations/test_home_assistant.py",
+    "live_gate": "B-TARGET and selected credentials/device/resource where needed; fixtures never establish live readiness",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "hermes-agent",
+    "requirement_ids": [
+      "R0028",
+      "R0034",
+      "R0035",
+      "R0036",
+      "R0037",
+      "R0038"
+    ],
+    "task_ids": [
+      "BD-R0028",
+      "BD-R0034",
+      "BD-R0035",
+      "BD-R0036",
+      "BD-R0037",
+      "BD-R0038"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_desktop.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "hermes-desktop",
+    "requirement_ids": [
+      "R0028",
+      "R0034",
+      "R0035",
+      "R0036",
+      "R0037",
+      "R0038"
+    ],
+    "task_ids": [
+      "BD-R0028",
+      "BD-R0034",
+      "BD-R0035",
+      "BD-R0036",
+      "BD-R0037",
+      "BD-R0038"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_desktop.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "resource-registry",
+    "requirement_ids": [
+      "R0045",
+      "R0046"
+    ],
+    "task_ids": [
+      "RG-R0045",
+      "RG-R0046"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_adapter.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "colibri",
+    "requirement_ids": [
+      "R0041",
+      "R0112",
+      "R0113",
+      "R0120"
+    ],
+    "task_ids": [
+      "HW-R0041",
+      "HW-R0112",
+      "HW-R0113",
+      "HW-R0120"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_coral.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "glm-5-2",
+    "requirement_ids": [
+      "R0112",
+      "R0113"
+    ],
+    "task_ids": [
+      "HW-R0112",
+      "HW-R0113"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_colibri.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "coral",
+    "requirement_ids": [
+      "R0041",
+      "R0042",
+      "R0043"
+    ],
+    "task_ids": [
+      "HW-R0041",
+      "HW-R0042",
+      "HW-R0043"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_coral.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "nemotron-free",
+    "requirement_ids": [
+      "R0104",
+      "R0105",
+      "R0106"
+    ],
+    "task_ids": [
+      "PR-R0104",
+      "PR-R0105",
+      "PR-R0106"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_evidence.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "openrouter-account",
+    "requirement_ids": [
+      "R0104",
+      "R0106"
+    ],
+    "task_ids": [
+      "PR-R0104",
+      "PR-R0106"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_evidence.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "codex-account",
+    "requirement_ids": [
+      "R0124",
+      "R0125"
+    ],
+    "task_ids": [
+      "PR-R0124",
+      "PR-R0125"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_evidence.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "openai-api",
+    "requirement_ids": [
+      "R0124",
+      "R0125"
+    ],
+    "task_ids": [
+      "PR-R0124",
+      "PR-R0125"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_evidence.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "claude-free",
+    "requirement_ids": [
+      "R0127",
+      "R0128"
+    ],
+    "task_ids": [
+      "PR-R0127",
+      "PR-R0128"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/contracts/test_evidence.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "emil-skills",
+    "requirement_ids": [
+      "R0085",
+      "R0086",
+      "R0087",
+      "R0088",
+      "R0089",
+      "R0090",
+      "R0091"
+    ],
+    "task_ids": [
+      "SK-R0085",
+      "SK-R0086",
+      "SK-R0087",
+      "SK-R0088",
+      "SK-R0089",
+      "SK-R0090",
+      "SK-R0091"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/integrations/test_taste_skill.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "google-community-mcp",
+    "requirement_ids": [
+      "R0101",
+      "R0102",
+      "R0103"
+    ],
+    "task_ids": [
+      "MC-R0101",
+      "MC-R0102",
+      "MC-R0103"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/integrations/test_home_assistant.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "google-gmail",
+    "requirement_ids": [
+      "R0097"
+    ],
+    "task_ids": [
+      "MC-R0097"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/integrations/test_figma_mcp.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "google-drive",
+    "requirement_ids": [
+      "R0097"
+    ],
+    "task_ids": [
+      "MC-R0097"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/integrations/test_figma_mcp.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "google-docs",
+    "requirement_ids": [
+      "R0097"
+    ],
+    "task_ids": [
+      "MC-R0097"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/integrations/test_figma_mcp.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "google-sheets",
+    "requirement_ids": [
+      "R0097"
+    ],
+    "task_ids": [
+      "MC-R0097"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/integrations/test_figma_mcp.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "google-calendar",
+    "requirement_ids": [
+      "R0097"
+    ],
+    "task_ids": [
+      "MC-R0097"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/integrations/test_figma_mcp.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "google-contacts",
+    "requirement_ids": [
+      "R0097"
+    ],
+    "task_ids": [
+      "MC-R0097"
+    ],
+    "functional_method": "Execute linked concrete requirement/evidence methods on actual selected target/account only when configured; distinguish setup from functional proof",
+    "fixture_test": "tests/integrations/test_figma_mcp.py",
+    "live_gate": "B-TARGET/B-ACCOUNTS as applicable",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "cloudflare-tunnel",
+    "requirement_ids": [
+      "R0198",
+      "R0199",
+      "R0207",
+      "R0208",
+      "R0209"
+    ],
+    "task_ids": [
+      "RT-R0198",
+      "RT-R0199",
+      "RT-R0207",
+      "RT-R0208",
+      "RT-R0209"
+    ],
+    "adapter_type": "service",
+    "functional_method": "AC13 automatic exact owned setup/recovery; AC14 unauthorized HTTP/assets/WS denied then real official-app-only pixels/control; AC15 active-socket expiry/revocation/principal isolation",
+    "fixture_test": "tests/contracts/test_cloudflare_setup.py",
+    "live_gate": "B-TARGET/B-CLOUDFLARE-LIVE",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "cloudflare-access",
+    "requirement_ids": [
+      "R0197",
+      "R0200",
+      "R0201",
+      "R0206",
+      "R0210",
+      "R0211"
+    ],
+    "task_ids": [
+      "RT-R0197",
+      "RT-R0200",
+      "RT-R0201",
+      "RT-R0206",
+      "RT-R0210",
+      "RT-R0211"
+    ],
+    "adapter_type": "account-integration",
+    "functional_method": "AC13 automatic exact owned setup/recovery; AC14 unauthorized HTTP/assets/WS denied then real official-app-only pixels/control; AC15 active-socket expiry/revocation/principal isolation",
+    "fixture_test": "tests/contracts/test_remote_gateway.py",
+    "live_gate": "B-TARGET/B-CLOUDFLARE-LIVE",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "remote-desktop-bridge",
+    "requirement_ids": [
+      "R0202",
+      "R0203",
+      "R0204",
+      "R0205",
+      "R0206",
+      "R0211"
+    ],
+    "task_ids": [
+      "RT-R0202",
+      "RT-R0203",
+      "RT-R0204",
+      "RT-R0205",
+      "RT-R0206",
+      "RT-R0211"
+    ],
+    "adapter_type": "application-bridge",
+    "functional_method": "AC13 automatic exact owned setup/recovery; AC14 unauthorized HTTP/assets/WS denied then real official-app-only pixels/control; AC15 active-socket expiry/revocation/principal isolation",
+    "fixture_test": "tests/contracts/test_remote_gateway.py",
+    "live_gate": "B-TARGET/B-CLOUDFLARE-LIVE",
+    "status": "planned-not-run"
+  },
+  {
+    "component_id": "remote-desktop-html5",
+    "requirement_ids": [
+      "R0201",
+      "R0202",
+      "R0203",
+      "R0204",
+      "R0205",
+      "R0206",
+      "R0211"
+    ],
+    "task_ids": [
+      "RT-R0201",
+      "RT-R0202",
+      "RT-R0203",
+      "RT-R0204",
+      "RT-R0205",
+      "RT-R0206",
+      "RT-R0211"
+    ],
+    "adapter_type": "browser-client",
+    "functional_method": "AC13 automatic exact owned setup/recovery; AC14 unauthorized HTTP/assets/WS denied then real official-app-only pixels/control; AC15 active-socket expiry/revocation/principal isolation",
+    "fixture_test": "tests/contracts/test_remote_gateway.py",
+    "live_gate": "B-TARGET/B-CLOUDFLARE-LIVE",
+    "status": "planned-not-run"
+  }
+]

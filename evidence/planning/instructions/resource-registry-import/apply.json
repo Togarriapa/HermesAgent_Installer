@@ -1,0 +1,181 @@
+{
+  "changeName": "resource-registry-import",
+  "changeDir": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import",
+  "schemaName": "spec-driven",
+  "contextFiles": {
+    "proposal": [
+      "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/proposal.md"
+    ],
+    "specs": [
+      "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/specs/registry-runtime/spec.md"
+    ],
+    "design": [
+      "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/design.md"
+    ],
+    "tasks": [
+      "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md"
+    ]
+  },
+  "progress": {
+    "total": 21,
+    "complete": 0,
+    "remaining": 21
+  },
+  "tasks": [
+    {
+      "id": "1",
+      "description": "1.1 `RG-F01` Implement reviewed source fetch, root-driven discovery, validator runner, selectors/inheritance/quality materialization; verify all eight kinds, cycle/missing-version failure and provenance digest; document pipeline. Evidence: `tests/contracts/test_registry_resolution.py`.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 7
+    },
+    {
+      "id": "2",
+      "description": "1.2 `RG-F02` Implement host authorization intersection, bounded broker, Authentik fresh checks and denied-capability status; verify process/filesystem/network/account/schedule denial and token hierarchy/revocation fixtures; document policy. Evidence: `tests/contracts/test_registry_authorization.py`.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 8
+    },
+    {
+      "id": "3",
+      "description": "1.3 `RG-F03` Implement Hermes-only correlated orchestration/runtime crosswalk and state isolation; verify direct specialist rejection, dissent/contributor metadata, cancellation, concurrent HERMES_HOME denial; document topology. Evidence: `tests/contracts/test_registry_topology.py`.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 9
+    },
+    {
+      "id": "4",
+      "description": "1.4 `RG-F04` Implement overlay rebasing/quarantine and atomic generations; verify permission expansion, private overlay preservation, failed health and rollback; document update contract. Evidence: `tests/contracts/test_registry_generations.py`.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 10
+    },
+    {
+      "id": "5",
+      "description": "2.1 `RG-R0045` Implement `R0045` in `src/hermes_installer/registry/adapter.py`: Source: Togarriapa/HermesAgent_Resources (https://github.com/Togarriapa/HermesAgent_Resources). Verify with `tests/contracts/test_adapter.py` (EV-R0045): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 14
+    },
+    {
+      "id": "6",
+      "description": "2.2 `RG-R0046` Implement `R0046` in `src/hermes_installer/registry/adapter.py`: This is a custom declarative registry, not simply a directory of native Hermes skills. Inspect `README.md`, `catalog.yaml`, `SPEC.md`, `RUNTIME_IMPORT.md`, `TOPOLOGY.md`, `ORCHESTRATION.md`, `PROFILE_MATRIX.md`, `INTEGRATION_MATRIX.md`, `EXTERNAL_INTEGRATIONS.md`, `QUALITY_POLICY.yaml`, and the supplied validators/materializer. Verify with `tests/contracts/test_adapter.py` (EV-R0046): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 15
+    },
+    {
+      "id": "7",
+      "description": "2.3 `RG-R0047` Implement `R0047` in `src/hermes_installer/registry/adapter.py`: Build a version-aware importer that: Verify with `tests/contracts/test_adapter.py` (EV-R0047): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 16
+    },
+    {
+      "id": "8",
+      "description": "2.4 `RG-R0048` Implement `R0048` in `src/hermes_installer/registry/adapter.py`: Fetches a pinned commit without executing fetched content during discovery. Verify with `tests/contracts/test_adapter.py` (EV-R0048): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 17
+    },
+    {
+      "id": "9",
+      "description": "2.5 `RG-R0049` Implement `R0049` in `src/hermes_installer/registry/adapter.py`: Discovers resources from the catalog's declared manifest roots rather than a hard-coded list. Include Profiles, Skills, Plugins, MCPs, Bundles, Channels, Crons, and Webhooks in the inventory. Verify with `tests/contracts/test_adapter.py` (EV-R0049): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 18
+    },
+    {
+      "id": "10",
+      "description": "2.6 `RG-R0050` Implement `R0050` in `src/hermes_installer/registry/adapter.py`: Runs the repository's applicable validation tools, resolves dependency selectors and inheritance, and materializes effective specifications using its existing tooling where appropriate. Verify with `tests/contracts/test_adapter.py` (EV-R0050): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 19
+    },
+    {
+      "id": "11",
+      "description": "2.7 `RG-R0051` Implement `R0051` in `src/hermes_installer/registry/adapter.py`: Produces an explicit crosswalk from the custom schema to the installed Hermes version's real profiles, skills, plugins, tool configuration, and runtime mechanisms. Generate an adapter where required; do not assume native Hermes understands `hermes.togarriapa/v1` YAML. Verify with `tests/contracts/test_adapter.py` (EV-R0051): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 20
+    },
+    {
+      "id": "12",
+      "description": "2.8 `RG-R0052` Implement `R0052` in `src/hermes_installer/policy.py`: Preserves provenance, resource identities, versions, supporting files, and source paths. Keep generated artifacts separate from pristine source and private/local overlays. Verify with `tests/contracts/test_policy.py` (EV-R0052): Recording dispatch fixture: assert exact destination/model/data classification and aggregate budget; deny paid/private-ineligible retry/fallback/extraction and preserve unavailable-route reason. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 21
+    },
+    {
+      "id": "13",
+      "description": "2.9 `RG-R0053` Implement `R0053` in `src/hermes_installer/registry/adapter.py`: Makes all valid declared profiles and skills discoverable. Report dependencies that prevent a particular capability from becoming usable. Do not fabricate MCP servers or provider implementations from their declarative names. Verify with `tests/contracts/test_adapter.py` (EV-R0053): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 22
+    },
+    {
+      "id": "14",
+      "description": "2.10 `RG-R0054` Implement `R0054` in `src/hermes_installer/runtime/authorization.py`: Enforces relevant execution boundaries through actual runtime controls, not merely persona text. Native Hermes profiles separate state; do not assume they provide filesystem or process sandboxing. Verify with `tests/contracts/test_authorization.py` (EV-R0054): Denial fixture at actual dispatch/process/filesystem boundary: attempts beyond authorized scope fail before target side effect, including schedule/webhook/delegated identities and fresh lookup failure. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 23
+    },
+    {
+      "id": "15",
+      "description": "2.11 `RG-R0055` Implement `R0055` in `src/hermes_installer/policy.py`: Activates a validated generation atomically and retains a rollback target. Updates must preserve local/private learning and quarantine conflicting or permission-expanding changes. Verify with `tests/contracts/test_policy.py` (EV-R0055): Recording dispatch fixture: assert exact destination/model/data classification and aggregate budget; deny paid/private-ineligible retry/fallback/extraction and preserve unavailable-route reason. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 24
+    },
+    {
+      "id": "16",
+      "description": "2.12 `RG-R0056` Implement `R0056` in `src/hermes_installer/registry/adapter.py`: Preserve the repository's intended topology: user → Hermes → Orchestrator → internal specialists/teams → Orchestrator → Hermes. Specialists must not become independent user-facing channels. Preserve the declared response contract, scoped recruitment, contributor reporting, and material dissent where applicable. Verify with `tests/contracts/test_adapter.py` (EV-R0056): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 25
+    },
+    {
+      "id": "17",
+      "description": "2.13 `RG-R0057` Implement `R0057` in `src/hermes_installer/registry/adapter.py`: Use resource-aware limits on concurrent agents rather than launching a process for every profile at boot. Verify with `tests/contracts/test_adapter.py` (EV-R0057): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 26
+    },
+    {
+      "id": "18",
+      "description": "2.14 `RG-R0058` Implement `R0058` in `src/hermes_installer/runtime/authorization.py`: The repository's materializer explicitly does not apply host authorization. Finish that integration in the runtime adapter and test it. For example, if enabling its homelab administration capability, enforce its Authentik identity/group and bounded-broker requirements. If those dependencies are absent, leave that capability unavailable and report why; Verify with `tests/contracts/test_authorization.py` (EV-R0058): Denial fixture at actual dispatch/process/filesystem boundary: attempts beyond authorized scope fail before target side effect, including schedule/webhook/delegated identities and fresh lookup failure. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 27
+    },
+    {
+      "id": "19",
+      "description": "2.15 `RG-R0059` Implement `R0059` in `src/hermes_installer/registry/adapter.py`: do not replace the checks with an instruction to the model. Verify with `tests/contracts/test_adapter.py` (EV-R0059): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 28
+    },
+    {
+      "id": "20",
+      "description": "2.16 `RG-R0060` Implement `R0060` in `src/hermes_installer/registry/adapter.py`: Importing registry definitions must not automatically enable every scheduled task, financial integration, outbound messaging channel, webhook, or external account. Register those definitions and activate only the capabilities selected and configured for this installation. Distinguish text-core readiness, individual resource readiness, and full registry compliance. Verify with `tests/contracts/test_adapter.py` (EV-R0060): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 29
+    },
+    {
+      "id": "21",
+      "description": "2.17 `RG-R0061` Implement `R0061` in `src/hermes_installer/registry/adapter.py`: Missing required dependencies must not be silently rewritten as optional or counted as compliant. Verify with `tests/contracts/test_adapter.py` (EV-R0061): Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance. Update `docs/registry-runtime.md` and component/evidence states; preserve explicit blockers.",
+      "done": false,
+      "sourcePath": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller/openspec/changes/resource-registry-import/tasks.md",
+      "line": 30
+    }
+  ],
+  "taskTrackingConfigured": true,
+  "state": "ready",
+  "instruction": "Read context files, work through pending tasks, mark complete as you go.\nPause if you hit blockers or need clarification.",
+  "context": "This is the authorized greenfield Togarriapa/HermesAgent_Installer repository.\nGPT-6.1 Sol owns specifications/task creation/refinement; GPT-6 Luna owns development.\nFrozen baseline plans/2026-10-09-v1 plus immutable annotated tag must never change.\nAppend-only Sol amendments and live planning/OpenSpec artifacts evolve separately.\nTarget: Raspberry Pi5, nominal16GB RAM,1TB SSD, Coral USB or PCIe/M.2; detect actual facts.\nSupported64-bit Linux ARM64, graphical user session for native official Hermes Desktop.\nThin shell bootstrap and typed modular Python; isolated dependencies, official Hermes PM Python3.14.\nUpstream Hermes7085fbf7753266fc4943c55ac04926186bc90005; registry113f42d33be9e0c8f0f47f5ca998e687323dec83.\nRead SOURCES.md and COMPATIBILITY.md for dated primary evidence; revalidate at configuration/update.\nPreserve data/settings/credentials/private learning/unrelated services. No reimage/format/service takeover.\nRuntime enforcement and Hermes-only correlated topology, no prompt-only authorization/sandbox claims.\nZero additional metered spending; privacy/budget/capability policy wraps all dispatch/background/retries.\nOne automatic long-term memory owner; preserve native session memory and provenance.\nNative ARM64 Colibri GLM-5.2, experimental until measured; Coral separate delegate-used inference.\nOfficial MCPs with harmless selected-resource reads and bounded init/discovery/reconnect/cancel.\nUser-facing installer/docs English, new schedules/display times Europe/Lisbon; preserve host timezone.\nNo physical target/accounts enrolled and no privileged installation on development Mac.\nDoD: real adapters/handlers, meaningful fixture failures, source-to-spec/task/test/component/AC coverage,\nstrict OpenSpec validation, truthful distinct functional/account/hardware evidence and executable target workflow.\nCloudflare direct addition: blank hostname, secure scoped token, automatic owned tunnel/DNS/Access emailOTP setup.\nBrowser remote only official native Desktop app; loopback JWT gateway/WS expiry-revocation leases, no host desktop/shell/backend exposure.\nManagement token setup-only; active zone/owned conflicts/transaction resume, zero paid certificate purchase.\nPreserve original12 acceptance criteria plus addedAC13..15; target/account mutation pending secure enrollment.\nPlanned commands/tests are not available/verified until implementation evidence exists.\n",
+  "root": {
+    "path": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller",
+    "source": "nearest"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "hermes-agent-installer",
+  "version": "0.0.0",
+  "description": "OpenSpec-driven Raspberry Pi Hermes installer; immutable specification baseline",
+  "scripts": {
+    "validate:specs": "openspec validate --all --strict --no-interactive --json",
+    "validate:plan": "python3 scripts/check_plan.py --live && python3 scripts/check_plan.py",
+    "test:planning": "python3 -m unittest discover -s tests/planning -v"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Togarriapa/HermesAgent_Installer.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Togarriapa/HermesAgent_Installer/issues"
+  },
+  "homepage": "https://github.com/Togarriapa/HermesAgent_Installer#readme",
+  "devDependencies": {
+    "@fission-ai/openspec": "1.14.1"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

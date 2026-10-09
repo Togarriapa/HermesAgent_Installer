@@ -1,0 +1,98 @@
+{
+  "items": [
+    {
+      "id": "colibri-coral",
+      "type": "change",
+      "valid": true,
+      "issues": [],
+      "durationMs": 31
+    },
+    {
+      "id": "development-governance",
+      "type": "spec",
+      "valid": true,
+      "issues": [],
+      "durationMs": 2
+    },
+    {
+      "id": "installer-bootstrap-desktop",
+      "type": "change",
+      "valid": true,
+      "issues": [],
+      "durationMs": 48
+    },
+    {
+      "id": "lifecycle-recovery",
+      "type": "change",
+      "valid": true,
+      "issues": [],
+      "durationMs": 37
+    },
+    {
+      "id": "mcp-connections",
+      "type": "change",
+      "valid": true,
+      "issues": [],
+      "durationMs": 32
+    },
+    {
+      "id": "providers-credentials-budgets-privacy",
+      "type": "change",
+      "valid": true,
+      "issues": [],
+      "durationMs": 31
+    },
+    {
+      "id": "remote-desktop-tunnel",
+      "type": "change",
+      "valid": true,
+      "issues": [],
+      "durationMs": 32
+    },
+    {
+      "id": "resource-registry-import",
+      "type": "change",
+      "valid": true,
+      "issues": [],
+      "durationMs": 19
+    },
+    {
+      "id": "skills-memory-applications",
+      "type": "change",
+      "valid": true,
+      "issues": [],
+      "durationMs": 19
+    },
+    {
+      "id": "verification-documentation",
+      "type": "change",
+      "valid": true,
+      "issues": [],
+      "durationMs": 19
+    }
+  ],
+  "summary": {
+    "totals": {
+      "items": 10,
+      "passed": 10,
+      "failed": 0
+    },
+    "byType": {
+      "change": {
+        "items": 9,
+        "passed": 9,
+        "failed": 0
+      },
+      "spec": {
+        "items": 1,
+        "passed": 1,
+        "failed": 0
+      }
+    }
+  },
+  "version": "1.0",
+  "root": {
+    "path": "/Users/ctw03020/Documents/ChatGPT/HermesInstaller",
+    "source": "nearest"
+  }
+}

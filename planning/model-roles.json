@@ -1,0 +1,9 @@
+{
+  "specification": "gpt-6.1-sol",
+  "task_creation": "gpt-6.1-sol",
+  "refinement": "gpt-6.1-sol",
+  "development": "gpt-6-luna",
+  "execution": "sequential-model-handoff",
+  "scope": "complete original prompt, no independently authorized hardware/accounts/spending",
+  "baseline_tag": "hermes-installer-plan-2026-10-09-v1"
+}
