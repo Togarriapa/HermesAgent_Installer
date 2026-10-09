@@ -204,7 +204,13 @@
     "scope_binding": "Opaque rootselected immutable account/channel/backend scope record in selectedexistingconnector/provider/plugin enrollment; no publiceventURL/account inferred orcallerselectable. Credential refs resolved only rootbackendrole, no secretexport; missingactualsource schema/recipe/validator/backend remainsincomplete.",
     "root_private_signature": "invoke_resource_backend(backend_enrollment_id,node_id,root_job_admission_handle,canonical_payload_bytes) -> bounded typed result plus rootobserved source result receipt",
     "effect": "Root resolvesactualjob/node/currentinstanceadmission, freshchildspecific sourcecontext+oneuse grant andexactpayload/recipe beforeselectedhandler. This rootprivateAPI notworkerbearerproxy. Nativeworkflow tools/provider/plugin/channel sideeffects require their OWN fresh reduced childgrants/currentrecipient/budget/account policy, never resource.run blanketpermission. Root backend invokes actualenrolled nativeaction/connector, notrecordingfakebackend.",
-    "bounds": "Jobenrolledlimits tighten backend maxima; maxbytes finite<=256KiBrequest/2MiBresponse default, runtime<=600s/originaljoblease, children/concurrencyfinite. Revoke/gen/currentconsent/failure canceldescendants, no repeatingconsumedparent."
+    "bounds": "Jobenrolledlimits tighten backend maxima; maxbytes finite<=256KiBrequest/2MiBresponse default, runtime<=600s/originaljoblease, children/concurrencyfinite. Revoke/gen/currentconsent/failure canceldescendants, no repeatingconsumedparent.",
+    "credential_bindings": {
+      "field": "Existing active ResourceBackendEnrollment gains credential_bindings list<=16 exact records {source_placeholder,credential_reference_id,usage}. Fully generation_digest and resource/profile/native/backend joins bound; credential_reference_id must belong existing credential_reference_ids allowlist.",
+      "usage": "enum webhook-hmac-verify|channel-account|backend-account; no arbitrary secret role. source_placeholder exact declared pinned effective_spec field token (including ${...} declaration or fixed role name) but never an environment variable or implicit vault ID.",
+      "webhook": "Exactly one webhook-hmac-verify binding for selected webhook source must resolve same selected resourceID/resourcegeneration/profile/currentobserver/backend/controller role. Root protected vault reader resolves credential_reference_id under scoped enrollment/usage, secret used only HMAC/freshness/replay validation before root event. Explicit protected mapping required, no placeholder-name equality guess. Root never returns secret to handler/worker/log/result.",
+      "scope": "ResourceControllerRegistry resolves effective_spec only from current selected immutable source/registry record and these protected bindings. Missing/duplicate/conflicting binding or scope/vault denial leaves ingress unavailable with exact setup prerequisite. Source issuer itself has no duplicated secret map; joins selected backend binding by event resource/action."
+    }
   },
   "generation_joins": {
     "resource_generation": "job.generation and each backend.generation identify resource selection epoch; child node resource may differ and must resolve its own selected resource epoch in active catalog",
@@ -431,6 +437,42 @@
         "worker": "Use existing actual SourceObserverRegistry LiveSourceProducer; controller_profile_id its actual profile, source_receipt_id exact retainedreceipt. Actualroleartifact and existingloadedpackage proof/current authorityepoch mandatory; no serializedcapsule as PIDFD.",
         "root": "Root scheduler/webhook/channel is actual installed enrolled root dispatcher role/process observed by root composition, not worker profile. controller_profile_id null unless it has its own explicit actual service enrollment; source_receipt_id null when root event has no historical process. controller_generation actual selected dispatcher/source-issuer epoch, not invented subject profile generation. Root event registry validates timer/HMAC/channel/consent lineage and actual controller kernel PIDFD/artifact. subject fields derive admitted target job policy and remain distinct from controller identity. Root-only child issuer accepts this typed admitted role, no ordinary worker context relabel.",
         "ownership": "Resolver duplicates actual retainedcontrollerPIDFD; RootTaskRunner owns/ closes it after launch/failure/cancel. Custody duplicates only if it retains beyond call; closes own duplicates at terminal. Registry original stays its owner. Root cancellation closes only owned child process; historical source expiry/revocation still checked per original policy."
+      },
+      "native_execution_receipt": {
+        "API": "RootTaskNativeObservationRegistry.resolve_task_execution(task_handle,terminal_receipt_handle)->RootTaskNativeExecutionReceipt; actual root source/native bridge/custody collectors register observations while exact owned task producer is live, not worker flags or stdout.",
+        "fields": [
+          "schema=1",
+          "native_execution_receipt_handle",
+          "task_handle",
+          "process_id",
+          "process_generation",
+          "native_package_generation",
+          "loader_ready_event_id",
+          "initial_input_event_id",
+          "native_request_event_ids",
+          "native_result_event_ids",
+          "required_tool_result_event_ids",
+          "parent_closure_digest",
+          "task_payload_sha256",
+          "terminal_receipt_handle",
+          "observed_monotonic"
+        ],
+        "checks": "Require root actual ready/import/action registry and exact admitted initial-input receipt/full parents, actual native request/completed result events for selected task workflow, and tool results when requested/enrolled workflow requires them. Fixed safe local no-model fixture can omit model events only if separately selected reviewed recipe says so, never general chat substitute. Root finalizes stored observations against actual terminal task/current transaction and observed closure; process exit does not synthesize readiness.",
+        "terminal_join": "RootTaskTerminalReceipt adds native_execution_receipt_handle (nullable for failed/incomplete state); successful result validation requires nonnull actual root registry receipt. process.start native_loader_ready_event_id proves readiness only and may supply ready event prerequisite, not complete request/result boundary. Dead process needs no new fake live proof: stored during-live observations plus actual terminal/custody receipts suffice only for same task and original expiry/revocation policy.",
+        "failure": "Missing native observer/code/current package/input/result closure leaves task completion incomplete; exit0 and validtext do not override. No model-output truth or human/public classification from native receipt.",
+        "assembly": {
+          "owner_module": "hermes_installer.authority.source_observers",
+          "class": "RootTaskNativeObservationRegistry",
+          "dto_module": "hermes_installer.registry.resource_jobs",
+          "dto": "RootTaskNativeExecutionReceipt",
+          "composition_attribute": "task_native_observations",
+          "constructor": "RootTaskNativeObservationRegistry(source_observer_registry, native_bridge_broker, admitted_task_registry, process_custody_registry)",
+          "inputs": "All four dependencies are the actual root-composed registries, not worker callbacks. Root observers record actual during-live event receipts keyed admitted task/process/profile generation. Resolve immutable terminal receipt against retained admission and event closure; no source receipt ID inferred from stdout. Runner consumes root_runtime.task_native_observations.resolve_task_execution(task_handle, terminal_receipt). Registry owns retained event handles; caller gets immutable receipt, not authority to mint events.",
+          "implementation_module": "hermes_installer.authority.task_native_observation",
+          "canonical_public_import": "hermes_installer.authority.source_observers.RootTaskNativeObservationRegistry re-export",
+          "implementation_owner": "luna_task_native_observation only; source_observers owner adds agreed re-export, not competing implementation"
+        },
+        "terminal_sequence": "Custody issues immutable terminal receipt first after actual EOF/reap/output/cgroup observations; native_execution_receipt_handle may remain null. Runner passes that exact terminal receipt to root registry resolve_task_execution; registry returns immutable companion RootTaskNativeExecutionReceipt bound its terminal_receipt_handle and full during-live event closure. Successful selected-result capsule requires BOTH actual immutable terminal receipt and verified companion handle. Do not mutate/replace custody terminal receipt, fabricate a nonnull field or require terminal to pre-reference a later registry receipt. Optional custody finalizer may record companion after registry validation but is not required for success; companion join is authoritative."
       }
     },
     "recipe_domain": "task_body_recipe_id/task_request_schema_id select inner Hermes prompt recipe/schema; node/body_recipe_id and backend/body_recipe_id select outer resource request recipe/schema. Distinct domains, no automatic equality requirement. Both protected/current/source-pinned/forced-scope joins are mandatory; caller cannot choose either."
@@ -462,7 +504,8 @@
     ],
     "capsule": "Only validated canonical payload bytes become existing root result capsule, signed/registry peer-job-node-generation bound full source closure/recipient ceiling. result_fields exact schema whitelist, not generic stdout projection. Consume once via existing consume_resource_task_completion; failure never advances DAG.",
     "tests": "Actual selected Hermes stdout+EOF+nativeboundary positive; invalidUTF8/truncation/empty/stderr-only/exitfailure/forgedschema/duplicateJSON/extra outputfields/changedartifact/currentgeneration/sourceclosure negatives. Fixtures separated from real target proof.",
-    "effective_cap": "Existing ResourceValidator.maximum_bytes <=262144 remains stricter effective cap. Actual runtime output payload must satisfy min(selected schema max_bytes, current validator maximum_bytes, custody max_output_bytes); no cap increase or weak schema bypass intended. Fixed schema1048576 is outer maximum only, not requirement to permit all bytes."
+    "effective_cap": "Existing ResourceValidator.maximum_bytes <=262144 remains stricter effective cap. Actual runtime output payload must satisfy min(selected schema max_bytes, current validator maximum_bytes, custody max_output_bytes); no cap increase or weak schema bypass intended. Fixed schema1048576 is outer maximum only, not requirement to permit all bytes.",
+    "generation_api": "Corrects v18 API epoch ambiguity: resolve_selected_result(backend_enrollment_id,result_schema_id,expected_service_generation_digest,expected_resource_generation)->RootSelectedResultValidator. Verify expected_service_generation_digest against actual active root catalog/artifact/validator snapshot, backend.generation against expected_resource_generation from frozen admitted job. They are distinct, never compared for equality. Result schema/artifact belongs current selected row and full snapshot; either drift invalidates selection."
   },
   "root_controller_role_catalog": {
     "placement": "Active service_generations.resource_controller_roles bounded list<=64, included entire generation_digest; no mutable sidecar/default role inference.",
@@ -484,7 +527,36 @@
     "joins": "daemon_unit_id root-selected actual system daemon unit, not caller service name. Root custody resolves its current MainPID/PIDFD/starttime/cgroup/executable pin and root-owned loader/module closure. UID0 actual root dispatcher required. role_module artifact verified actual loaded immutable module, not inferred from job artifact/receipt labels. Each source_observer ID joins exact active source_issuer/current observer role and capture schema; allowed backend IDs join active resource backend rows/current resource/profile generation.",
     "resolver": "RootResourceControllerRegistry.resolve_for_event(root_event_handle,node_id)->RootTaskController; root event handle created only by concrete selected timer/HMAC+replay/channel ingress root observer, retains full immutable event closure/consent/body/current policy. Resolve role row by exact observer ID+kind and backend ID unique match; verify daemon kernel identity/actual module pins/current snapshot, duplicate its owned PIDFD for runner. No synthetic source process or caller self-enrollment.",
     "issuer": "issue_resource_job_context(root_event_handle,node_id,operation,canonical_payload_sha256) root-private registry: operation must equal exact selected node/backend operation and row allowed_operations, payload digest must equal root-rendered canonical body from protected body recipe/forced scope/full source closure. Root event registration stores actual action/body bindings. Fresh child grant selects only enrolled reduced process.start target/recipe, no caller operation/digest accepted as truth. Missing event/role/module/current peer denies.",
-    "ownership": "Source observer owner implements authority/resource_source_controllers.py actual role/event resolver and root issuer integration; authority owner consumes typed current controller and emits fresh reduced effect. Runtime task adapter consumes these APIs, never substitutes callbacks/worker claims."
+    "ownership": "Source observer owner implements authority/resource_source_controllers.py actual role/event resolver and root issuer integration; authority owner consumes typed current controller and emits fresh reduced effect. Runtime task adapter consumes these APIs, never substitutes callbacks/worker claims.",
+    "initial_ingress_custody": {
+      "owner_module": "hermes_installer.authority.resource_source_controllers",
+      "resolve_call": "resolve_selected_ingress_controller(controller_role_id,selected_source_issuer_id,selected_backend_id)->RootIngressControllerProof",
+      "proof_fields": [
+        "schema",
+        "proof_handle",
+        "controller_role_id",
+        "controller_kind",
+        "controller_generation",
+        "source_issuer_id",
+        "backend_enrollment_id",
+        "resource_generation",
+        "service_generation_digest",
+        "pid",
+        "pidfd",
+        "uid",
+        "live_peer_identity",
+        "role_artifact_id",
+        "role_artifact_sha256",
+        "namespace_id",
+        "selected_ingress_binding_id",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "selection": "Arguments are internal root static ingress/scheduler selection IDs, never public caller selectors. Resolve active resource_controller_roles/source_issuers/backend rows/current generations and actual root daemon/service PIDFD/executable/cgroup/module closure. This lookup requires no event handle or SourceReceipt. Timer exact root timer registration; webhook fixed selected route/account/HMAC credential binding+durable replay record; channel selected authenticated account/session binding. selected_ingress_binding_id is that actual protected registry record, not event ID.",
+      "mint_call": "capture_selected_ingress(proof_handle,root_observed_input_record)->RootResourceEventHandle",
+      "capture": "Private actual observer supplies bounded exact authenticated timer/webhook/channel record, not worker dict. Registry revalidates proof/controller PIDFD/module/lease/selection/HMAC/session/replay/time, atomically reserves input nonce then captures actual bytes and mints SourceReceipt plus event capsule/handle in single journal transaction. SourceReceipt.native_process_identity derives actual controller process proof, not source labels/event contents. After mint, downstream admitted source resolver may use event/receipt. No circular prerequisite or fake daemon identity.",
+      "ownership": "Registry retains controller PIDFD; proof caller receives root-local borrowed/dup clearly managed handle, capture uses retained registry lookup. On revocation/restart/gen mismatch proof expires and event mint denies. Historical source ancestry and current task execution controller remain distinct."
+    }
   },
   "profile_handler_artifact": {
     "artifact_id": "hermes-installer.resource-profile-task.v1",

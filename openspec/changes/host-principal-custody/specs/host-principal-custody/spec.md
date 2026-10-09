@@ -405,3 +405,27 @@ Root event context issuance SHALL require the exact active daemon/module/observe
 #### Scenario: Unverified root dispatcher role
 - **WHEN** role/module/kernel/event/body bindings are absent or stale
 - **THEN** no context or child effect is fabricated.
+
+### Requirement: Protected native MCP call binding
+
+Installer-managed native MCP calls SHALL resolve exact observed invocation/name/schema to current enrolled backend/resource and fresh protected MCP effect before bytes.
+
+#### Scenario: Native call mapping mismatch
+- **WHEN** name/schema/resource/package/peer or one-use invocation binding differs
+- **THEN** no MCP effect or credential reaches the unselected backend.
+
+### Requirement: Exact native MCP lexical and configuration mapping
+
+Installer-owned MCP calls SHALL retain exact protected server/tool/schema and same lexical invocation binding while preventing direct worker transport bypass.
+
+#### Scenario: Configured direct transport bypass
+- **WHEN** an installer-owned entry attempts direct worker effects instead of the selected broker
+- **THEN** no MCP bytes or credentials are forwarded.
+
+### Requirement: Actual task native and credential closure
+
+Successful task completion SHALL bind actual native execution receipts and distinct service/resource epochs. Webhook verification SHALL use explicit protected placeholder-to-vault-role mapping.
+
+#### Scenario: Native or credential mapping absence
+- **WHEN** the current exact native or scoped credential join is missing
+- **THEN** no successful task capsule or authenticated webhook event is fabricated.
