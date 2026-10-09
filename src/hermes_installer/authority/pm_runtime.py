@@ -77,21 +77,23 @@ class RootPMRuntimeProvisioner:
     All paths and target choices are constructor-owned. Caller-visible inputs
     are opaque receipt handles minted by the active root setup session.
     """
-    def __init__(self, *, session_store: Any, session_handle: Any,
+    def __init__(self, *, setup_session: Any,
                  artifact_fetcher: Any, receipt_registry: Any, catalog: Any,
                  artifact_root: Path, runtime_root: Path,
                  authority_uid: int = 0, monotonic: Callable[[], float] = time.monotonic,
                  timeout_seconds: float = _MAX_SECONDS):
         if (authority_uid != 0 or not artifact_root.is_absolute() or not runtime_root.is_absolute()
-                or not callable(getattr(session_store, "_live", None))
+                or not callable(getattr(setup_session, "_check_live", None))
+                or not callable(getattr(getattr(getattr(setup_session, "_factory", None), "session_store", None), "_live", None))
                 or not callable(getattr(artifact_fetcher, "fetch_selected_artifact", None))
                 or not callable(getattr(receipt_registry, "lookup", None))
                 or not callable(getattr(catalog, "materialize_tree", None))):
             raise ValueError("PM runtime provisioner requires one root setup custody set")
         if not 1 <= timeout_seconds <= _MAX_SECONDS:
             raise ValueError("PM runtime deadline exceeds the reviewed bound")
-        self.sessions = session_store
-        self.session_handle = session_handle
+        self.setup_session = setup_session
+        self.sessions = setup_session._factory.session_store
+        self.session_handle = setup_session._handle
         self.fetcher = artifact_fetcher
         self.receipts = receipt_registry
         self.catalog = catalog
@@ -105,17 +107,18 @@ class RootPMRuntimeProvisioner:
                            source_receipt_handle: str,
                            pm_lock_receipt_handle: str) -> str:
         self._require_root()
+        self.setup_session._check_live()
         live = self.sessions._live(self.session_handle)
         proof = self._proof(live)
         if (not _opaque(prepared_setup_receipt_handle)
                 or not _opaque(source_receipt_handle) or not _opaque(pm_lock_receipt_handle)):
             raise BootstrapEnrollmentError("PM runtime provisioning requires opaque setup receipts")
-        prior = self.sessions._last_receipt if hasattr(self.sessions, "_last_receipt") else None
+        prior = self.setup_session._last_receipt
         if (prior is None or prior.provision_receipt_handle != prepared_setup_receipt_handle
                 or prior.transaction_handle != proof.transaction_handle
                 or prior.state not in {"prepared", "committed"}):
             raise BootstrapEnrollmentError("prepared setup receipt is not current for this root session")
-        self._lookup_exact(source_receipt_handle, proof, SOURCE_ID, None)
+        self._lookup_exact(source_receipt_handle, proof, SOURCE_ID, SOURCE_SHA256)
         self._lookup_exact(pm_lock_receipt_handle, proof, LOCK_ID, LOCK_SHA256)
         if SOURCE_ID not in live.plan.allowed_artifact_ids or LOCK_ID not in live.plan.allowed_artifact_ids:
             raise BootstrapEnrollmentError("selected setup plan excludes the pinned Hermes source or PM lock")
@@ -299,15 +302,16 @@ class RootPMRuntimeProvisioner:
 
 class RootPMRuntimeReceiptRegistry:
     """Root-private path-free receipt store and resolver for the native factory."""
-    def __init__(self, *, runtime_root: Path, session_store: Any,
+    def __init__(self, *, runtime_root: Path, setup_session: Any,
                  current_guard: Callable[[str, str], bool] | None = None,
                  monotonic: Callable[[], float] = time.monotonic,
                  authority_uid: int = 0):
         if (authority_uid != 0 or not runtime_root.is_absolute()
-                or not callable(getattr(session_store, "_live", None))):
+                or not callable(getattr(setup_session, "_check_live", None))):
             raise ValueError("PM runtime registry is not bound to root setup authority")
         self.runtime_root = runtime_root
-        self.sessions = session_store
+        self.setup_session = setup_session
+        self.sessions = setup_session._factory.session_store
         if not callable(current_guard):
             raise ValueError("PM runtime resolver requires the root factory current-generation guard")
         self.current_guard = current_guard
