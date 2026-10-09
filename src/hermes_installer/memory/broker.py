@@ -562,6 +562,12 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
             _scope(context, target, body)
             if cancelled():
                 return _reply({"error":"cancelled"}, 499)
+            enrolled_scope = (target.enrollment.fixed_project_account_user_scope
+                              if target.enrollment is not None else {
+                                  "project_id": target.namespace_id,
+                                  "account_id": target.profile_id,
+                                  "user_id": target.profile_id,
+                              })
             if action == "enqueue":
                 if queue is None:
                     raise BrokerUnavailable("durable queue is unavailable")
@@ -611,8 +617,14 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 source=_text(body.get("source"),"source",512)
                 if source.startswith("memory:"):
                     raise BrokerDenied("recursive memory ingestion denied")
-                if target.provider=="claude-mem":
-                    request={"projectId":target.namespace_id,"kind":"manual","type":"fact",
+                if target.provider=="claude-mem" and target.enrollment is not None and target.enrollment.backend_variant == "worker-observation":
+                    request={"text":"\n".join(facts),"title":record_id,
+                        "project":enrolled_scope["project_id"],
+                        "metadata":{"hermes_record_id":record_id,
+                        "hermes_lineage":context.lineage_hash,"hermes_source":source,
+                        "owner_generation":generation}}
+                elif target.provider=="claude-mem":
+                    request={"projectId":enrolled_scope["project_id"],"kind":"manual","type":"fact",
                         "facts":facts,"metadata":{"hermes_record_id":record_id,
                         "hermes_lineage":context.lineage_hash,"hermes_source":source,
                         "owner_generation":generation}}
@@ -622,7 +634,8 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     # The root-only adapter maps this bounded body to the pinned
                     # REST operation. Per-profile service/data roots provide scope.
                     request={"content":"\n".join(facts),"type":"fact",
-                        "project":target.namespace_id,
+                        "project":enrolled_scope["project_id"],
+                        "agentId":enrolled_scope["user_id"],
                         "concepts":["hermes-record:"+record_id,
                                     "hermes-lineage:"+context.lineage_hash,
                                     "hermes-source:"+source]}
@@ -636,18 +649,22 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 if target.provider=="openviking":
                     request={"query":q,"target_uri":"viking://~/memories","context_type":["memory"],"limit":limit,"read_content":True}
                 elif target.provider=="claude-mem":
-                    request={"projectId":target.namespace_id,"query":q,"limit":min(limit,50)}
+                    if target.enrollment is not None and target.enrollment.backend_variant == "worker-observation":
+                        request={"query":q,"limit":min(limit,100)}
+                    else:
+                        request={"projectId":enrolled_scope["project_id"],"query":q,"limit":min(limit,50)}
                 else:
-                    request={"query":q,"project":target.namespace_id,"limit":min(limit,20)}
+                    request={"query":q,"project":enrolled_scope["project_id"],
+                             "agentId":enrolled_scope["user_id"],"limit":min(limit,20)}
             elif action=="doctor":
                 request={"profile_id":context.profile_id,"namespace_id":context.namespace_id,
                          "service_generation":target.service_generation}
             elif action=="delete":
                 rid=_text(body.get("record_id"),"record id",256)
                 if target.provider=="agentmemory":
-                    request={"memoryId":rid,"project":target.namespace_id}
+                    request={"memoryId":rid}
                 elif target.provider=="claude-mem":
-                    request={"id":rid,"projectId":target.namespace_id}
+                    request={"record_id":rid,"projectId":enrolled_scope["project_id"]}
                 else:
                     raise BrokerUnavailable("OpenViking pinned API has no per-memory delete operation")
             elif action in {"export","backup","restore"}:
