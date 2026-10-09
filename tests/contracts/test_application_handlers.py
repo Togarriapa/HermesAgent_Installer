@@ -40,7 +40,7 @@ class ApplicationHandlerTests(unittest.TestCase):
             "packages/cli/package.json": b'{"engines":{"node":">=22"}}',
             "bun.lock": b'{"lockfileVersion":1,"workspaces":{"":{"name":"hyperframes"},"packages/cli":{"name":"@hyperframes/cli"}},"packages":{"react":["react@19.0.0"]}}',
         })
-        self.assertEqual("source-locks-reviewed; functional-probe-pending", hyper.evidence_state)
+        self.assertEqual("lockfile-integrity-reviewed; functional-probe-pending", hyper.evidence_state)
         omni = review_isolated_runtime("omniroute", {
             "package.json": b'{"engines":{"node":">=20"}}',
             "package-lock.json": b'{"lockfileVersion":3}',
