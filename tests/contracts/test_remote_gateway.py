@@ -32,5 +32,8 @@ class RemoteGatewayTests(unittest.TestCase):
   p=Principal("owner@example.net","s1",1700001000,"digest")
   with self.assertRaises(GatewayDenied):websocket_target("/stream",principal=p,host=self.policy.hostname,origin="https://evil.example",policy=self.policy)
   self.assertEqual(canonical_asset("/client/index.html"),"/client/index.html")
+  self.assertEqual(canonical_asset("/client/js/Client.js"),"/client/js/Client.js")
+  for path in ("/client/connect.html","/client/clipboard.html","/client/digest.html","/client/mitm.html","/client/sw.js","/client/default-settings.txt","/client/server-status.json","/client/js/client.txt"):
+   with self.subTest(path=path),self.assertRaises(GatewayDenied):canonical_asset(path)
   for path in ("/client/%2e%2e/secret","/client/../secret","/client/%252e%252e/secret"):
    with self.subTest(path=path),self.assertRaises(GatewayDenied):canonical_asset(path)

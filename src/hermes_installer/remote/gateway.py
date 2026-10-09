@@ -29,18 +29,29 @@ def validate_access_jwt(token:str,*,policy:RemotePolicy,now:Callable[[],float]=t
   from jwt import PyJWK
   if not isinstance(token,str) or len(token)>16384 or token.count(".")!=2:raise GatewayDenied("invalid Access token")
   hdr=jwt.get_unverified_header(token);kid=hdr.get("kid")
-  if hdr.get("alg")!="RS256" or not isinstance(kid,str) or not 1<=len(kid)<=128:raise GatewayDenied("unsupported Access token algorithm")
+  if hdr.get("alg")!="RS256" or hdr.get("crit") is not None or any(k in hdr for k in ("jku","jwk","x5u","x5c")) or not isinstance(kid,str) or not 1<=len(kid)<=128:raise GatewayDenied("unsupported Access token algorithm")
   jwk=policy.jwks.key(kid) if callable(getattr(policy.jwks,"key",None)) else policy.jwks.get(kid)
   if not isinstance(jwk,Mapping) or jwk.get("kty")!="RSA" or jwk.get("alg") not in (None,"RS256") or jwk.get("use") not in (None,"sig"):raise GatewayDenied("Access signing key unavailable")
   key=PyJWK.from_dict(dict(jwk),algorithm="RS256").key
-  claims=jwt.decode(token,key,algorithms=["RS256"],issuer=policy.issuer,audience=policy.audience,leeway=0,options={"require":["iss","aud","exp","nbf","iat","sub","email"],"verify_signature":True,"verify_exp":False,"verify_nbf":False,"verify_iat":False})
+  claims=jwt.decode(token,key,algorithms=["RS256"],issuer=policy.issuer,audience=None,leeway=0,options={"require":["iss","aud","exp","nbf","iat","sub","email"],"verify_signature":True,"verify_exp":False,"verify_nbf":False,"verify_iat":False,"verify_aud":False})
  except GatewayDenied:raise
  except Exception:raise GatewayDenied("Access token validation failed") from None
- ts=now();aud=claims.get("aud")
- if aud!=policy.audience or claims.get("iss")!=policy.issuer:raise GatewayDenied("Access issuer or audience mismatch")
+ ts=now()
+ try:
+  if isinstance(ts,bool) or not isinstance(ts,(int,float)):raise ValueError
+  ts=float(ts)
+  if not math.isfinite(ts):raise ValueError
+ except (TypeError,ValueError,OverflowError):raise GatewayDenied("gateway clock is invalid") from None
+ aud=claims.get("aud")
+ if not (aud==policy.audience or (isinstance(aud,list) and len(aud)==1 and aud[0]==policy.audience)) or claims.get("iss")!=policy.issuer:raise GatewayDenied("Access issuer or audience mismatch")
  email,subject=claims.get("email"),claims.get("sub");numeric={k:claims.get(k) for k in ("iat","nbf","exp")}
+ try:
+  if any(isinstance(v,bool) or not isinstance(v,(int,float)) for v in numeric.values()):raise ValueError
+  numeric={k:float(v) for k,v in numeric.items()}
+  if not all(math.isfinite(v) for v in numeric.values()):raise ValueError
+ except (TypeError,ValueError,OverflowError):raise GatewayDenied("Access time/principal claims are invalid") from None
  if not math.isfinite(ts) or not isinstance(email,str) or not email.strip() or email.casefold() not in policy.allowed_emails:raise GatewayDenied("Access principal is not allowed")
- if not isinstance(subject,str) or not subject or any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in numeric.values()):raise GatewayDenied("Access time/principal claims are invalid")
+ if not isinstance(subject,str) or not subject or any(not isinstance(v,float) for v in numeric.values()):raise GatewayDenied("Access time/principal claims are invalid")
  if numeric["iat"]>ts+policy.clock_skew_seconds or numeric["nbf"]>ts+policy.clock_skew_seconds or numeric["exp"]<=ts or numeric["iat"]>=numeric["exp"] or numeric["nbf"]>=numeric["exp"]:raise GatewayDenied("Access token is not currently valid")
  return Principal(email.casefold(),subject,float(numeric["exp"]),hashlib.sha256(token.encode()).hexdigest())
 def authorize_request(*,token:str|None,policy:RemotePolicy,method:str,path:str,host:str,origin:str|None,now:Callable[[],float]=time.time)->Principal:

@@ -9,8 +9,13 @@ from .gateway import GatewayDenied,RemotePolicy,SocketLease,authorize_request,we
 def canonical_asset(raw:str)->str:
     path=raw.split("?",1)[0]
     if not path.startswith("/") or "\\" in path or unquote(path)!=path or unquote(unquote(path))!=path or any(s in {".",".."} for s in path.split("/")):raise GatewayDenied("non-canonical asset path")
-    if not path.startswith("/client/") or path=="/client/":raise GatewayDenied("asset route denied")
-    return path
+    if path in {"/client/index.html","/client/bootstrap.html","/client/favicon.png","/client/favicon.ico"}:
+        return path
+    suffix=path[len("/client/"):]
+    if suffix.startswith("js/") and suffix.endswith(".js"):return path
+    if suffix.startswith("css/") and suffix.endswith(".css"):return path
+    if suffix.startswith("icons/") and suffix.rsplit(".",1)[-1].casefold() in {"png","ico","svg","woff","woff2","ttf"}:return path
+    raise GatewayDenied("asset is outside the pinned minimal Xpra client")
 @dataclass
 class GatewayRuntime:
     policy:RemotePolicy
@@ -27,6 +32,7 @@ class GatewayRuntime:
         u=urlsplit(self.upstream)
         if u.scheme!="http" or u.hostname not in {"127.0.0.1","::1"} or u.username or u.password:raise ValueError("fixed loopback upstream required")
         if not 1<=self.max_lease_seconds<=60 or not 1<=self.watchdog_seconds<=5 or not 1<=self.max_active_sockets<=4:raise ValueError("lease/watchdog exceeds hard bound")
+        if self.profile_id!="hermes-desktop":raise ValueError("only the pinned Hermes Desktop profile may be exposed")
     def principal(self,request,method,path):
         return authorize_request(token=request.headers.get("Cf-Access-Jwt-Assertion"),policy=self.policy,method=method,path=path,host=request.headers.get("Host",""),origin=request.headers.get("Origin"),now=self.clock)
     def create_lease(self,principal):
@@ -50,7 +56,7 @@ _RENEW="""<script>(()=>{let busy=false;async function renew(){if(busy)return;bus
 def create_app(runtime:GatewayRuntime):
     from aiohttp import ClientSession,web,WSMsgType
     app=web.Application(client_max_size=2048);app["runtime"]=runtime
-    async def startup(a):a["client"]=ClientSession(timeout=__import__("aiohttp").ClientTimeout(total=30,connect=3,sock_read=10),trust_env=False,auto_decompress=False)
+    async def startup(a):a["client"]=ClientSession(timeout=__import__("aiohttp").ClientTimeout(total=30,connect=3,sock_read=10),connector=__import__("aiohttp").TCPConnector(limit=12,limit_per_host=8),trust_env=False,auto_decompress=False)
     async def cleanup(a):await a["client"].close()
     @web.middleware
     async def auth_errors(request,handler):
@@ -61,13 +67,13 @@ def create_app(runtime:GatewayRuntime):
         raise web.HTTPFound("/client/bootstrap.html")
     async def create(request):
         p=runtime.principal(request,"POST","/session")
-        if request.content_length!=0:raise GatewayDenied("request body forbidden")
+        if request.can_read_body:raise GatewayDenied("request body forbidden")
         key,lease=runtime.create_lease(p)
         return web.json_response({"lease_id":key,"profile_id":runtime.profile_id,"renewal_challenge":lease.renewal_challenge,"socket_nonce":lease.socket_nonce,"expires_in":max(0,int(lease.expires_at-runtime.monotonic()))},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
     async def renew(request):
         p=runtime.principal(request,"POST","/renew")
         if request.content_length is None or request.content_length>2048:raise GatewayDenied("invalid renewal body")
-        try:body=await request.json()
+        try:body=await asyncio.wait_for(request.json(),timeout=3)
         except Exception:raise GatewayDenied("invalid renewal body") from None
         if not isinstance(body,dict) or set(body)!={"lease_id","challenge"} or not all(isinstance(body[x],str) for x in body):raise GatewayDenied("invalid renewal fields")
         lease=runtime.renew(body["lease_id"],p,body["challenge"])
@@ -82,16 +88,29 @@ def create_app(runtime:GatewayRuntime):
         if request.query_string and any(k.casefold() in {"server","host","port","ssl","url"} for k in request.query):raise GatewayDenied("upstream override denied")
         suffix=path[len("/client/"):]
         upstream=runtime.upstream.rstrip("/")+"/"+quote(suffix,safe="/-._~")
-        async with request.app["client"].request(request.method,upstream,allow_redirects=False,headers={"Accept":request.headers.get("Accept","*/*")}) as response:
+        async with request.app["client"].request(request.method,upstream,allow_redirects=False,headers={"Accept":request.headers.get("Accept","*/*"),"Accept-Encoding":"identity"}) as response:
             if response.status in {301,302,303,307,308}:raise GatewayDenied("upstream redirect denied")
-            data=b"" if request.method=="HEAD" else await response.content.read(16*1024*1024+1)
-            if len(data)>16*1024*1024:raise GatewayDenied("upstream asset exceeds bound")
+            length=response.headers.get("Content-Length")
+            if length is not None:
+                try:
+                    if int(length)<0 or int(length)>16*1024*1024:raise GatewayDenied("upstream asset exceeds bound")
+                except ValueError:raise GatewayDenied("invalid upstream content length") from None
+            data=b""
+            if request.method!="HEAD":
+                chunks=[];size=0
+                while True:
+                    chunk=await response.content.read(min(65536,16*1024*1024+1-size))
+                    if not chunk:break
+                    chunks.append(chunk);size+=len(chunk)
+                    if size>16*1024*1024:raise GatewayDenied("upstream asset exceeds bound")
+                data=b"".join(chunks)
             ctype=response.headers.get("Content-Type","")
             if path=="/client/index.html" and "text/html" in ctype:
                 text=data.decode("utf-8","strict")
                 if "</body>" not in text.casefold():raise GatewayDenied("unexpected HTML client document")
                 pos=text.casefold().rfind("</body>")
                 text=text[:pos]+_RENEW+text[pos:];data=text.encode("utf-8")
+            if path=="/client/css/client.css":data+=b"\n#float_menu{display:none!important}\n"
             headers={k:v for k,v in response.headers.items() if k.lower() in {"content-type","etag","last-modified"}}
             headers["Cache-Control"]="no-store"
             return web.Response(status=response.status,body=data,headers=headers)
@@ -112,27 +131,30 @@ def create_app(runtime:GatewayRuntime):
                 while not downstream.closed:
                     await asyncio.sleep(runtime.watchdog_seconds)
                     try:lease.authorize_frame(now=runtime.monotonic())
-                    except GatewayDenied:await downstream.close(code=1008,message=b"lease expired");return
+                    except GatewayDenied:await asyncio.wait_for(downstream.close(code=1008,message=b"lease expired"),timeout=2);return
             async def relay(src,dst):
                 async for msg in src:
                     lease.authorize_frame(now=runtime.monotonic())
-                    if msg.type==WSMsgType.BINARY:await dst.send_bytes(msg.data)
-                    elif msg.type==WSMsgType.TEXT:await dst.send_str(msg.data)
-                    elif msg.type==WSMsgType.PING:await dst.ping(msg.data)
-                    elif msg.type==WSMsgType.PONG:await dst.pong(msg.data)
-                    elif msg.type==WSMsgType.CLOSE:await dst.close();return
+                    if msg.type==WSMsgType.BINARY:await asyncio.wait_for(dst.send_bytes(msg.data),timeout=5)
+                    elif msg.type==WSMsgType.TEXT:await asyncio.wait_for(dst.send_str(msg.data),timeout=5)
+                    elif msg.type==WSMsgType.PING:await asyncio.wait_for(dst.ping(msg.data),timeout=5)
+                    elif msg.type==WSMsgType.PONG:await asyncio.wait_for(dst.pong(msg.data),timeout=5)
+                    elif msg.type==WSMsgType.CLOSE:await asyncio.wait_for(dst.close(),timeout=2);return
             wd=asyncio.create_task(watchdog())
             relays={asyncio.create_task(relay(downstream,upstream)),asyncio.create_task(relay(upstream,downstream)),wd}
             try:
                 done,pending=await asyncio.wait(relays,return_when=asyncio.FIRST_COMPLETED)
                 for task in pending:task.cancel()
-                await asyncio.gather(*pending,return_exceptions=True)
+                if pending:await asyncio.wait(pending,timeout=5)
                 for task in done:
-                    if task is not wd and task.exception():raise task.exception()
+                    if task is not wd and not task.cancelled() and task.exception():raise task.exception()
             finally:
+                runtime.leases.pop(key,None)
+                for close in (upstream.close(),downstream.close()):
+                    try:await asyncio.wait_for(close,timeout=2)
+                    except Exception:pass
                 for task in relays:task.cancel()
-                await asyncio.gather(*relays,return_exceptions=True)
-                runtime.leases.pop(key,None);await upstream.close();await downstream.close()
+                await asyncio.wait(relays,timeout=5)
             return downstream
     app.router.add_get("/",root);app.router.add_post("/session",create);app.router.add_post("/renew",renew)
     app.router.add_get("/client/{tail:.*}",client);app.router.add_get("/client/",client)
