@@ -78,8 +78,8 @@ class OpenAIAuthTests(unittest.TestCase):
             auth.complete(attempt, bad, credential_ref="host-vault://account")
         self.assertEqual(transport.calls, [])
         callback = (attempt.callback_uri + "?code=one-use-code&state=" + attempt.state
-                    + "&client_id=another-client")
-        with self.assertRaisesRegex(OAuthAttemptError, "issued client"):
+                    + "&client_id=dynamic_agent_client")
+        with self.assertRaisesRegex(OAuthAttemptError, "reusable client ID"):
             auth.complete(attempt, callback, credential_ref="host-vault://account")
         self.assertEqual(vault.accounts, {})
 
