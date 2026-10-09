@@ -129,7 +129,7 @@ class NativeMemoryPluginTests(unittest.TestCase):
             return Response()
 
         authority.memory_request = request
-        provider = OpenVikingProvider(authority)
+        provider = OpenVikingProvider(authority, timeout=2.0)
         self.assertEqual(provider.search("namespace-a", "synthetic", 1, context=source), [])
         issued = authority.context_requests[-1]
         self.assertEqual(issued["operation"], "memory.search")
