@@ -29,7 +29,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity, SourceReceipt,
-    canonical_bytes, canonical_digest,
+    canonical_bytes, canonical_digest, strict_json_loads,
 )
 
 MAX_REQUEST = 4 * 1024 * 1024 + 16_384
@@ -1769,8 +1769,8 @@ class AuthorityService:
                 break
             if chunk == b"\n":
                 try:
-                    return json.loads(data.decode("ascii"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return strict_json_loads(data.decode("ascii"))
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                     raise AuthorityDenied("protocol.json", "authority request is malformed") from None
             data.extend(chunk)
         raise AuthorityDenied("protocol.bounds", "authority request is incomplete or oversized")
