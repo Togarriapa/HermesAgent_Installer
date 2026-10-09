@@ -33,9 +33,13 @@ class RootSetupBoundaryTests(unittest.TestCase):
         receipt = registry.resolve(choice)
         self.assertEqual(receipt.candidate_git_sha, candidate)
         self.assertEqual(receipt.input_origin, "root_tty_explicit")
+        self.assertEqual(len(receipt.candidate_selection_handle), 43)
         self.assertEqual(len(receipt.choice_sha256), 64)
         with self.assertRaises(RuntimeError):
             registry.resolve(choice)
+        self.assertIs(registry.resolve_handle(receipt.candidate_selection_handle), receipt)
+        with self.assertRaises(RuntimeError):
+            registry.resolve_handle(receipt.candidate_selection_handle)
 
     def test_candidate_choice_rejects_forgery_and_noncanonical_sha(self) -> None:
         with self.assertRaises(TypeError):

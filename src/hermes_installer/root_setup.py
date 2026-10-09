@@ -13,6 +13,7 @@ from enum import StrEnum
 import hashlib
 import os
 import re
+import secrets
 import sys
 from typing import Sequence
 
@@ -114,17 +115,22 @@ class VerifiedRootBootstrapCandidateSelection:
     """Sealed proof that a candidate SHA was read from the root controlling TTY."""
 
     candidate_git_sha: str
+    candidate_selection_handle: str
     input_origin: str
     choice_sha256: str
     _seal: object
 
-    def __init__(self, candidate_git_sha: str, choice_sha256: str, *, _seal: object | None = None):
+    def __init__(self, candidate_git_sha: str, candidate_selection_handle: str,
+                 choice_sha256: str, *, _seal: object | None = None):
         if _seal is not _CHOICE_SEAL:
             raise TypeError("candidate selection proofs can only be minted by the root selection registry")
         if (not isinstance(candidate_git_sha, str) or not _CANDIDATE_SHA.fullmatch(candidate_git_sha)
+                or not isinstance(candidate_selection_handle, str)
+                or not _HANDLE.fullmatch(candidate_selection_handle)
                 or not isinstance(choice_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", choice_sha256)):
             raise ValueError("candidate selection proof is malformed")
         object.__setattr__(self, "candidate_git_sha", candidate_git_sha)
+        object.__setattr__(self, "candidate_selection_handle", candidate_selection_handle)
         object.__setattr__(self, "input_origin", "root_tty_explicit")
         object.__setattr__(self, "choice_sha256", choice_sha256)
         object.__setattr__(self, "_seal", _seal)
@@ -135,6 +141,7 @@ class RootBootstrapCandidateSelectionRegistry:
 
     def __init__(self) -> None:
         self._choices: dict[int, RootSetupExplicitChoices] = {}
+        self._receipts: dict[str, VerifiedRootBootstrapCandidateSelection] = {}
 
     def issue_explicit_tty_choice(self) -> RootSetupExplicitChoices:
         if not sys.platform.startswith("linux") or os.getuid() != 0 or os.geteuid() != 0:
@@ -152,11 +159,23 @@ class RootBootstrapCandidateSelectionRegistry:
         issued = self._choices.pop(id(choices), None)
         if issued is not choices:
             raise RuntimeError("root source choice is absent, foreign, or already consumed")
-        return VerifiedRootBootstrapCandidateSelection(
+        handle = secrets.token_urlsafe(32)
+        receipt = VerifiedRootBootstrapCandidateSelection(
             choices.candidate_git_sha,
+            handle,
             hashlib.sha256(choices.candidate_git_sha.encode("ascii")).hexdigest(),
             _seal=_CHOICE_SEAL,
         )
+        self._receipts[handle] = receipt
+        return receipt
+
+    def resolve_handle(self, handle: str) -> VerifiedRootBootstrapCandidateSelection:
+        if not isinstance(handle, str) or not _HANDLE.fullmatch(handle):
+            raise RuntimeError("candidate selection handle is malformed")
+        receipt = self._receipts.pop(handle, None)
+        if receipt is None:
+            raise RuntimeError("candidate selection receipt is absent or already consumed")
+        return receipt
 
 
 def verify_installed_launcher() -> bool:
