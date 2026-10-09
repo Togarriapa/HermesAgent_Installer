@@ -300,3 +300,34 @@ Runnable authority publication SHALL require actual artifact receipts; functiona
 #### Scenario: Runnable record without functional health
 - **WHEN** runnable custody exists but health has not passed
 - **THEN** functional enablement and installation acceptance remain pending.
+
+### Requirement: Concrete first-stage policy publication
+
+The installed root entrypoint SHALL compile and publish reviewed closed-template policy/catalog bytes from actual selected release/NSS/ownedroot observations before invoking the policy factory. HERMES_HOME SHALL use explicit service data root/hermes.
+
+#### Scenario: First install without policy files
+- **WHEN** no policy generation exists
+- **THEN** verified stage0 publication constructs it without an active worker or caller authority rows.
+
+### Requirement: Prepared native materialization receipt closure
+
+Root materialization SHALL occur under verified prepared transaction and exact fixed CAS output roles before runnable activation. HERMES_HOME SHALL equal selected service_home_root_id. Resources source proof SHALL remain independent from Hermes source proof.
+
+#### Scenario: Source or role substitution
+- **WHEN** a native output receipt substitutes another source or role
+- **THEN** active record publication is denied.
+
+### Requirement: Closed first-stage source template
+
+The compiler SHALL use the exact pinned closed template and finite actual root fact bindings; prepared stage SHALL not require an active worker.
+
+#### Scenario: Missing runtime or identity binding
+- **WHEN** a required root binding has not been actually verified
+- **THEN** no active record is synthesized and preparation reports exact prerequisite.
+
+### Requirement: Existing observation assembly joins
+The implementation SHALL apply the exact root registry, principal-selection and protected observation joins relevant to this change in `plans/amendments/2026-10-09-final-observation-assembly-v31.md`.
+
+#### Scenario: Static selection lacks actual runtime proof
+- **WHEN** an actual current role, display, source event or terminal execution receipt is absent
+- **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence

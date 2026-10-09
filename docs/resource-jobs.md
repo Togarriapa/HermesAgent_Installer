@@ -86,3 +86,22 @@ functional. Dynamic result/scope recipes fail closed. Fixture tests exercise
 ledger/parser behavior and typed root source/controller resolution; they do
 not establish cron, webhook, channel, bundle, Hermes process custody, or target
 effects.
+# Root source-event authority
+
+Root timer, webhook, and channel adapters must be attached to the active
+`ResourceEventContextIssuer` inside the authority process. An attached producer
+receives an opaque per-instance capability and can create a one-use
+`RootResourceSourceEventProof` only at its native accepted-event seam. The
+proof is not serializable and carries the exact canonical event bytes plus an
+opaque producer observation that is revalidated when consumed. The issuer
+rechecks current resource generation and consent, the selected observer and
+source policy, and live root controller custody before it signs the original
+private `HostContext` and source receipt. The controller registry then admits
+that signed closure as the retained root event; child-node issuance separately
+revalidates the selected backend/body recipe and live controller custody.
+
+The proof/capsule interfaces are root-internal only. Worker RPCs, reconstructed
+dataclasses, caller-supplied root contexts, event labels, and serialized HMAC
+or timer claims cannot enter this path. A producer without a concrete native
+provenance verifier or root-stage custody resolver remains unavailable; in
+particular, channel adapters must not substitute another transport's proof.

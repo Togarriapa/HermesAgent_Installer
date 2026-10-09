@@ -230,3 +230,10 @@ The installer SHALL authorize private origin probes through a separate root-owne
 #### Scenario: Setup probe submitted to public issuer
 - **WHEN** a private probe handle or synthetic Access context reaches the public remote connector issuer
 - **THEN** it is rejected, and only the separate root-private exact probe issuer may admit selected local app readiness operations
+
+### Requirement: Existing observation assembly joins
+The implementation SHALL apply the exact root registry, principal-selection and protected observation joins relevant to this change in `plans/amendments/2026-10-09-final-observation-assembly-v31.md`.
+
+#### Scenario: Static selection lacks actual runtime proof
+- **WHEN** an actual current role, display, source event or terminal execution receipt is absent
+- **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence
