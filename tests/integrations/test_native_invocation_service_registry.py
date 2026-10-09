@@ -282,6 +282,16 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 expires_monotonic=grant.monotonic_expires_at,
                 cancelled=lambda: False,
             )
+            retained = registry._deliveries[delivery.response_delivery_handle]
+            self.assertEqual(retained.response_bytes, response_bytes)
+            self.assertEqual(retained.response_digest, response_digest)
+            self.assertIs(retained.request_context, context)
+            self.assertIs(retained.authorization, grant)
+            self.assertEqual(retained.request_digest, request_digest)
+            self.assertEqual(retained.retry_index, 0)
+            self.assertEqual(retained.response_receipt_handle, retained.receipt_handles[-1])
+            self.assertEqual(retained.response_status, 200)
+            self.assertEqual(retained.response_headers["Content-Type"], "application/json")
             self.assertFalse(hasattr(delivery, "producer_context_handle"))
             lookup_payload = {
                 "schema": 1,

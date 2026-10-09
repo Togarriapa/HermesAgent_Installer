@@ -251,13 +251,19 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             producer_pid=123, producer_pidfd=456, gateway_identity=gateway,
             gateway_pid=124, gateway_pidfd=457, observer_id="observer",
             package_id="package", profile_id="profile-a", generation="generation-a",
+            native_package_generation="package-generation-a",
             loaded_package_proof="proof", expires_monotonic=20.0, calls={},
+            request_context=SimpleNamespace(), authorization=SimpleNamespace(retry_index=0),
+            target="provider://fixed", recipient="provider:fixed", request_digest="a" * 64,
+            retry_index=0, response_status=200, response_headers={}, response_bytes=body,
+            response_receipt_handle="s" * 43,
         )
         registry._responses = {response.handle: response}
         registry._deliveries = {response.delivery_handle: response}
         registry._calls = {}
         registry._invocations = {}
         registry._issued_handles = {response.handle, response.delivery_handle}
+        registry._retained_response_bytes = len(body)
         registry.process_resolver = lambda pid, _fd, **_kwargs: producer if pid == 123 else gateway
         registry._loaded_proof = lambda *_args: "proof"
 
