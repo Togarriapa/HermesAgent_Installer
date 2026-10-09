@@ -127,7 +127,7 @@ def run_configuration_command(action: str, *, config_data: Mapping[str, Any],
     if adapter is None:
         result = AdapterResult("pending", f"The {key.replace('_', ' ')} adapter is not available.", {},
             (f"Complete protected {key.replace('_', ' ')} enrollment, then run `hermes-installer {action} {target or key}`.",))
-        return _outcome(result, command=action, resume_command=resume_command)
+        return _outcome(result, command=action, resume_command=resume_command, config=current)
 
     if action == "test-connection":
         test = getattr(adapter, "test_connection", None)
@@ -143,7 +143,7 @@ def run_configuration_command(action: str, *, config_data: Mapping[str, Any],
         if not isinstance(result, AdapterResult):
             raise TypeError("connection probe must return a typed AdapterResult")
         return _outcome(result, command=action, resume_command=resume_command,
-                        details={"target": target, "name": name})
+                        details={"target": target, "name": name}, config=current)
 
     if target == "provider" and name and hasattr(adapter, "select_provider"):
         try:
