@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import base64
+import ipaddress
 import json
 import math
 import os
@@ -334,8 +335,290 @@ ORIGIN_PROBE_OBSERVATIONS = frozenset({
     "authorized_websocket_attached", "official_desktop_window_observed",
     "arbitrary_route_denied", "shell_route_denied", "full_host_desktop_denied",
 })
-_MAX_PROBE_FRAME = 64 * 1024
+_MAX_PROBE_RESPONSE = 1_500_000
+_MAX_PROBE_ASSET = 1_000_000
+_MAX_PROBE_WS_SAMPLE = 64 * 1024
 _PROBE_OPAQUE = re.compile(r"[A-Za-z0-9_-]{43}\Z")
+_PROBE_ACTIONS = {"asset-get", "asset-head", "websocket-attach"}
+
+
+@dataclass(frozen=True, slots=True)
+class OriginProbeActionControlRequest:
+    """Exact private per-action wire; all selection stays in the child handle."""
+    schema: int
+    probe_handle: str
+    action: str
+    asset_id: str | None
+
+    @classmethod
+    def create(cls, probe_handle: str, action: str,
+               asset_id: str | None) -> "OriginProbeActionControlRequest":
+        _opaque_handle(probe_handle, "root per-action probe handle")
+        if (action not in _PROBE_ACTIONS
+                or (action == "websocket-attach") != (asset_id is None)
+                or (asset_id is not None and asset_id not in _remote_probe_asset_paths())):
+            raise RemoteOriginDenied("private origin probe action differs from the fixed selection")
+        return cls(1, probe_handle, action, asset_id)
+
+    def to_wire(self) -> dict[str, Any]:
+        return {"schema": self.schema, "probe_handle": self.probe_handle,
+                "action": self.action, "asset_id": self.asset_id}
+
+
+@dataclass(frozen=True, slots=True)
+class OriginProbeActionControlResponse:
+    """Canonical byte evidence returned for one immutable child action."""
+    probe_handle: str
+    action: str
+    asset_id: str | None
+    result: Mapping[str, Any]
+    result_digest: str
+
+    @classmethod
+    def from_wire(cls, raw: Mapping[str, Any], request: OriginProbeActionControlRequest
+                  ) -> "OriginProbeActionControlResponse":
+        expected = {"schema", "operation", "probe_handle", "action", "asset_id",
+                    "result", "result_digest"}
+        if (not isinstance(raw, Mapping) or set(raw) != expected or raw["schema"] != 1
+                or raw["operation"] != "probe_action_result"
+                or raw["probe_handle"] != request.probe_handle
+                or raw["action"] != request.action or raw["asset_id"] != request.asset_id
+                or not isinstance(raw["result"], dict)):
+            raise RemoteOriginDenied("private gateway action response differs from its child request")
+        body = {key: value for key, value in raw.items() if key != "result_digest"}
+        digest = hashlib.sha256(_canonical(body)).hexdigest()
+        if not isinstance(raw["result_digest"], str) or not hmac.compare_digest(
+                raw["result_digest"], digest):
+            raise RemoteOriginDenied("private gateway action result digest is invalid")
+        result = raw["result"]
+        if request.action in {"asset-get", "asset-head"}:
+            if set(result) != {"status_code", "headers", "body_b64", "body_sha256"}:
+                raise RemoteOriginDenied("private gateway asset result fields are invalid")
+            if (type(result["status_code"]) is not int or not 100 <= result["status_code"] <= 599
+                or not isinstance(result["headers"], dict)
+                    or not set(result["headers"]).issubset(
+                        {"content-type", "content-length", "cache-control"})
+                    or any(not isinstance(k, str) or not isinstance(v, str) or len(v) > 1024
+                           for k, v in result["headers"].items())
+                    or not isinstance(result["body_b64"], str)
+                    or not isinstance(result["body_sha256"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", result["body_sha256"])):
+                raise RemoteOriginDenied("private gateway asset result is malformed")
+            try:
+                content = base64.b64decode(result["body_b64"], validate=True)
+            except Exception:
+                raise RemoteOriginDenied("private gateway asset body encoding is invalid") from None
+            if (len(content) > _MAX_PROBE_ASSET
+                    or (request.action == "asset-head" and content)
+                    or not hmac.compare_digest(hashlib.sha256(content).hexdigest(),
+                                               result["body_sha256"])):
+                raise RemoteOriginDenied("private gateway asset bytes do not match their digest")
+        else:
+            required = {"status_code", "frame_b64", "frame_bytes", "frame_count",
+                        "frame_sha256", "observation_id"}
+            if set(result) != required or result["status_code"] != 101:
+                raise RemoteOriginDenied("private gateway WebSocket result fields are invalid")
+            try:
+                frame = base64.b64decode(result["frame_b64"], validate=True)
+            except Exception:
+                raise RemoteOriginDenied("private gateway WebSocket frame encoding is invalid") from None
+            if (not isinstance(result["frame_b64"], str)
+                    or type(result["frame_bytes"]) is not int
+                    or type(result["frame_count"]) is not int
+                    or not 0 < len(frame) <= _MAX_PROBE_WS_SAMPLE
+                    or result["frame_bytes"] != len(frame) or result["frame_count"] != 1
+                    or not isinstance(result["frame_sha256"], str)
+                    or not hmac.compare_digest(hashlib.sha256(frame).hexdigest(), result["frame_sha256"])
+                    or not isinstance(result["observation_id"], str)
+                    or not hmac.compare_digest(hashlib.sha256(
+                        b"hermes-probe-ws-v1\0" + frame).hexdigest(), result["observation_id"])):
+                raise RemoteOriginDenied("private gateway WebSocket sample digest is invalid")
+        return cls(request.probe_handle, request.action, request.asset_id,
+                   dict(result), digest)
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayBoundaryHTTPFact:
+    """One root-observed fixed gateway request, with no caller-selected URL/path."""
+    status_code: int
+    application_bytes: int
+    request_sha256: str
+    response_sha256: str
+
+    def __post_init__(self) -> None:
+        if (type(self.status_code) is not int or not 100 <= self.status_code <= 599
+                or type(self.application_bytes) is not int or self.application_bytes < 0
+                or not re.fullmatch(r"[0-9a-f]{64}", self.request_sha256)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.response_sha256)):
+            raise ValueError("root gateway boundary observation is malformed")
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayBoundaryObservation:
+    gateway_identity_digest: str
+    network_namespace_inode: int
+    listener_addresses: tuple[str, ...]
+    requests: Mapping[str, GatewayBoundaryHTTPFact]
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        names = {"unauthenticated", "arbitrary-route", "shell-route", "full-host-desktop"}
+        if (not re.fullmatch(r"[0-9a-f]{64}", self.gateway_identity_digest)
+                or type(self.network_namespace_inode) is not int or self.network_namespace_inode <= 0
+                or not self.listener_addresses or set(self.requests) != names
+                or any(not isinstance(value, GatewayBoundaryHTTPFact) for value in self.requests.values())
+                or not _finite_monotonic(self.issued_monotonic)
+                or not _finite_monotonic(self.expires_monotonic)
+                or self.expires_monotonic <= self.issued_monotonic):
+            raise ValueError("root gateway boundary proof is malformed")
+
+
+@dataclass(frozen=True, slots=True)
+class NativeWindowObservation:
+    profile_id: str
+    generation: str
+    uid: int
+    pid: int
+    pid_starttime_ticks: int
+    websocket_observation_id: str
+    window_identity_sha256: str
+    surface_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.profile_id, str) or not self.profile_id
+                or not isinstance(self.generation, str) or not self.generation
+                or type(self.uid) is not int or self.uid <= 0
+                or type(self.pid) is not int or self.pid <= 0
+                or type(self.pid_starttime_ticks) is not int or self.pid_starttime_ticks <= 0
+                or not re.fullmatch(r"[0-9a-f]{64}", self.websocket_observation_id)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.window_identity_sha256)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.surface_sha256)
+                or not _finite_monotonic(self.issued_monotonic)
+                or not _finite_monotonic(self.expires_monotonic)
+                or self.expires_monotonic <= self.issued_monotonic):
+            raise ValueError("root native window observation is malformed")
+
+
+def aggregate_root_origin_observations(selected: SelectedRemoteOrigin, *,
+        asset_get: OriginProbeActionControlResponse,
+        asset_head: OriginProbeActionControlResponse,
+        websocket: OriginProbeActionControlResponse,
+        boundary: GatewayBoundaryObservation,
+        native_window: NativeWindowObservation,
+        gateway_identity_digest: str,
+        gateway_proof: Mapping[str, Any],
+        native_proof: Mapping[str, Any],
+        now: Callable[[], float] = time.monotonic) -> tuple[dict[str, bool], tuple[str, ...], str, str]:
+    """Build the readiness map from bounded action bytes and root observations."""
+    expected_asset = hashlib.sha256(
+        b"hermes-client-asset-v1\0/client/index.html").hexdigest()
+    actions = (asset_get, asset_head, websocket)
+    if (not isinstance(asset_get, OriginProbeActionControlResponse)
+            or not isinstance(asset_head, OriginProbeActionControlResponse)
+            or not isinstance(websocket, OriginProbeActionControlResponse)
+            or (asset_get.action, asset_get.asset_id) != ("asset-get", expected_asset)
+            or (asset_head.action, asset_head.asset_id) != ("asset-head", expected_asset)
+            or (websocket.action, websocket.asset_id) != ("websocket-attach", None)
+            or not all(isinstance(item, Mapping) for item in (gateway_proof, native_proof))):
+        raise RemoteOriginDenied("root per-action probe selection is incomplete or mismatched")
+    get_body = base64.b64decode(asset_get.result["body_b64"], validate=True)
+    head_body = base64.b64decode(asset_head.result["body_b64"], validate=True)
+    ws_frame = base64.b64decode(websocket.result["frame_b64"], validate=True)
+    if (not 200 <= asset_get.result["status_code"] < 300
+            or not 200 <= asset_head.result["status_code"] < 300
+            or not get_body or head_body or not ws_frame):
+        raise RemoteOriginDenied("selected Xpra client asset or WebSocket returned no app bytes")
+    if (not isinstance(boundary, GatewayBoundaryObservation)
+            or boundary.gateway_identity_digest != gateway_identity_digest):
+        raise RemoteOriginDenied("gateway boundary evidence does not match selected root process")
+    now_value = float(now())
+    if (boundary.issued_monotonic > now_value or boundary.expires_monotonic <= now_value
+            or boundary.expires_monotonic - boundary.issued_monotonic > 30.0
+            or boundary.network_namespace_inode != gateway_proof.get("network_namespace_inode")):
+        raise RemoteOriginDenied("gateway boundary observation is stale or in another namespace")
+    try:
+        listeners = tuple(ipaddress.ip_address(address) for address in boundary.listener_addresses)
+    except ValueError:
+        raise RemoteOriginDenied("gateway listener binding is not a kernel-observed IP address") from None
+    if not listeners or any(not address.is_loopback for address in listeners):
+        raise RemoteOriginDenied("selected gateway has a non-loopback network listener")
+    facts = boundary.requests
+    if (not isinstance(facts, Mapping)
+            or set(facts) != {"unauthenticated", "arbitrary-route", "shell-route", "full-host-desktop"}
+            or facts["unauthenticated"].status_code not in {401, 403}
+            or any(facts[key].status_code not in {403, 404}
+                   for key in ("arbitrary-route", "shell-route", "full-host-desktop"))
+            or any(fact.application_bytes != 0 for fact in facts.values())):
+        raise RemoteOriginDenied("gateway boundary did not reject unauthorized routes before app bytes")
+    if (not isinstance(native_window, NativeWindowObservation)
+            or native_window.profile_id != selected.native_profile_id
+            or native_window.generation != selected.desktop_generation
+            or native_window.uid != native_proof.get("uid")
+            or native_window.pid != native_proof.get("pid")
+            or native_window.pid_starttime_ticks != native_proof.get("pid_starttime_ticks")
+            or native_window.websocket_observation_id != websocket.result["observation_id"]
+            or native_window.issued_monotonic > now_value or native_window.expires_monotonic <= now_value
+            or native_window.expires_monotonic - native_window.issued_monotonic > 30.0):
+        raise RemoteOriginDenied("root native window observation is not bound to the selected Desktop stream")
+    observations = {
+        "loopback_only": True,
+        "unauthenticated_denied": True,
+        "authorized_asset_served": True,
+        "authorized_websocket_attached": True,
+        "official_desktop_window_observed": True,
+        "arbitrary_route_denied": True,
+        "shell_route_denied": True,
+        "full_host_desktop_denied": True,
+    }
+    assertion_ids = tuple(sorted((
+        f"asset-get:{asset_get.result_digest}", f"asset-head:{asset_head.result_digest}",
+        f"websocket:{websocket.result_digest}",
+        "boundary:" + _digest_canonical({key: {
+            "status_code": fact.status_code, "application_bytes": fact.application_bytes,
+            "request_sha256": fact.request_sha256, "response_sha256": fact.response_sha256}
+            for key, fact in facts.items()}),
+        "native-window:" + native_window.window_identity_sha256,
+        "native-surface:" + native_window.surface_sha256)))
+    request_digest = _digest_canonical({
+        "actions": [item.probe_handle for item in actions],
+        "action_results": [item.result_digest for item in actions]})
+    result_digest = _digest_canonical({
+        "observations": observations, "assertion_ids": assertion_ids,
+        "asset_get": dict(asset_get.result), "asset_head": dict(asset_head.result),
+        "websocket": dict(websocket.result),
+        "boundary": {key: {"status_code": fact.status_code,
+            "application_bytes": fact.application_bytes, "request_sha256": fact.request_sha256,
+            "response_sha256": fact.response_sha256} for key, fact in facts.items()},
+        "native_window": {"identity": native_window.window_identity_sha256,
+            "surface": native_window.surface_sha256,
+            "websocket_observation_id": native_window.websocket_observation_id}})
+    return observations, assertion_ids, request_digest, result_digest
+
+
+def _remote_probe_asset_paths() -> dict[str, str]:
+    """Map opaque stable IDs to the pinned client manifest, never wire paths."""
+    from ..remote.client_assets import CLIENT_ASSETS
+    result = {}
+    for path in sorted(CLIENT_ASSETS):
+        encoded = path.encode("ascii", "strict")
+        opaque_id = hashlib.sha256(b"hermes-client-asset-v1\0" + encoded).hexdigest()
+        result[opaque_id] = path
+    return result
+
+
+def resolve_probe_asset_path(binding: Any, asset_id: str) -> str:
+    """Resolve an opaque selected asset ID inside root-only connector code."""
+    from .remote_probe_connector_authority import RootSetupProbeBinding
+    if (not isinstance(binding, RootSetupProbeBinding)
+            or not isinstance(asset_id, str) or asset_id not in binding.asset_ids):
+        raise RemoteOriginDenied("setup probe asset is outside its root-pinned manifest")
+    path = _remote_probe_asset_paths().get(asset_id)
+    if path is None:
+        raise RemoteOriginDenied("setup probe asset ID is absent from the pinned manifest")
+    return path
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -485,97 +768,6 @@ class RootOriginProbeReceipt:
                            if item.name != "signature"})
 
 
-@dataclass(frozen=True, slots=True)
-class OriginProbeControlRequest:
-    schema: int
-    operation: str
-    probe_handle: str
-    sequence: int
-    challenge: str
-    remote_enrollment_id: str
-    gateway_profile_id: str
-    gateway_generation: str
-    native_profile_id: str
-    desktop_generation: str
-    connector_target_id: str
-    policy_config_digest: str
-    policy_revision: str
-    service_generation_digest: str
-    request_digest: str
-
-    @classmethod
-    def create(cls, selected: SelectedRemoteOrigin, handle: str,
-               challenge: str, sequence: int) -> "OriginProbeControlRequest":
-        fields_value = dict(schema=1, operation="probe_selected_origin", probe_handle=handle,
-            sequence=sequence, challenge=challenge,
-            remote_enrollment_id=selected.enrollment_id,
-            gateway_profile_id=selected.gateway_profile_id,
-            gateway_generation=selected.gateway_generation,
-            native_profile_id=selected.native_profile_id,
-            desktop_generation=selected.desktop_generation,
-            connector_target_id=selected.connector_target_id,
-            policy_config_digest=selected.policy_config_digest,
-            policy_revision=selected.policy_revision,
-            service_generation_digest=selected.service_generation_digest)
-        digest = hashlib.sha256(_canonical(fields_value)).hexdigest()
-        return cls(**fields_value, request_digest=digest)
-
-    def to_wire(self) -> dict[str, Any]:
-        return {item.name: getattr(self, item.name) for item in fields(self)}
-
-
-@dataclass(frozen=True, slots=True)
-class OriginProbeControlResponse:
-    schema: int
-    operation: str
-    probe_handle: str
-    sequence: int
-    challenge: str
-    request_digest: str
-    remote_enrollment_id: str
-    gateway_profile_id: str
-    gateway_generation: str
-    native_profile_id: str
-    desktop_generation: str
-    connector_target_id: str
-    policy_config_digest: str
-    policy_revision: str
-    service_generation_digest: str
-    observations: Mapping[str, bool]
-    observed_assertion_ids: tuple[str, ...]
-    asset_content_sha256: str
-    websocket_observation_id: str
-    native_window_observation_id: str
-
-    @classmethod
-    def from_wire(cls, value: Mapping[str, Any]) -> "OriginProbeControlResponse":
-        required = {"schema", "operation", "probe_handle", "sequence", "challenge",
-            "request_digest", "remote_enrollment_id", "gateway_profile_id", "gateway_generation",
-            "native_profile_id", "desktop_generation", "connector_target_id", "policy_config_digest",
-            "policy_revision", "service_generation_digest", "observations", "observed_assertion_ids",
-            "asset_content_sha256", "websocket_observation_id", "native_window_observation_id"}
-        if not isinstance(value, Mapping) or set(value) != required:
-            raise RemoteOriginDenied("private gateway probe response fields are invalid")
-        observations = value["observations"]
-        assertions = value["observed_assertion_ids"]
-        if (not isinstance(observations, Mapping) or set(observations) != ORIGIN_PROBE_OBSERVATIONS
-                or any(type(observations[key]) is not bool for key in ORIGIN_PROBE_OBSERVATIONS)
-                or not isinstance(assertions, list) or not 1 <= len(assertions) <= 32
-                or any(not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", item)
-                       for item in assertions)):
-            raise RemoteOriginDenied("private gateway probe evidence map is malformed")
-        try:
-            return cls(**{**value, "observations": dict(observations),
-                          "observed_assertion_ids": tuple(assertions)})
-        except (TypeError, ValueError):
-            raise RemoteOriginDenied("private gateway probe response could not be typed") from None
-
-    def to_wire(self) -> dict[str, Any]:
-        result = {item.name: getattr(self, item.name) for item in fields(self)}
-        result["observed_assertion_ids"] = list(self.observed_assertion_ids)
-        return result
-
-
 class ProbeObservationMap(Mapping[str, bool]):
     """Eight-key public observation view; receipt handle remains opaque metadata."""
     __slots__ = ("_values", "probe_receipt_handle")
@@ -602,14 +794,34 @@ class _ProbeHandleRecord:
     handle: str
     selected: SelectedRemoteOrigin
     setup_transaction: VerifiedRemoteSetupTransaction
+    setup_transaction_handle: str = field(repr=False)
+    setup_caller_identity: RemoteOriginCallerIdentity = field(repr=False)
     setup_peer_digest: str
     probe_process_identity_digest: str
     kernel_evidence: KernelOriginEvidence
+    session_id: str = field(repr=False)
     issued: float
     expires: float
     state: str = "issued"
     receipt: RootOriginProbeReceipt | None = None
     result: Mapping[str, bool] | None = None
+    action_sequence: int = 0
+    action_result_digests: dict[str, str] = field(default_factory=dict, repr=False)
+
+
+@dataclass(slots=True, repr=False)
+class _ProbeActionHandleRecord:
+    handle: str
+    parent: _ProbeHandleRecord
+    action: str
+    asset_id: str | None
+    issued: float
+    expires: float
+    state: str = "issued"
+    effect_sequence: int = 0
+    frame_sequence: int = 0
+    connector_handle: str | None = field(default=None, repr=False)
+    result_digest: str | None = field(default=None, repr=False)
 
 
 class RootOriginProbeRegistry:
@@ -618,22 +830,138 @@ class RootOriginProbeRegistry:
         self._signer, self._now = signer, now
         self._lock = threading.RLock()
         self._handles: dict[str, _ProbeHandleRecord] = {}
+        self._action_handles: dict[str, _ProbeActionHandleRecord] = {}
         self._receipts: dict[str, RootOriginProbeReceipt] = {}
 
     def issue(self, selected: SelectedRemoteOrigin, transaction: VerifiedRemoteSetupTransaction,
               peer_digest: str, probe_process_digest: str,
-              evidence: KernelOriginEvidence) -> str:
+              evidence: KernelOriginEvidence, *, setup_transaction_handle: str,
+              setup_caller_identity: RemoteOriginCallerIdentity) -> str:
         issued = float(self._now())
         expires = min(issued + 30.0, transaction.expires_monotonic,
                       evidence.expires_monotonic)
         if not _finite_monotonic(issued) or not _finite_monotonic(expires) or expires <= issued:
             raise RemoteOriginDenied("selected remote probe has no fresh bounded lifetime")
         handle = secrets.token_urlsafe(32)
+        session_id = "setup-probe:" + secrets.token_urlsafe(24)
         with self._lock:
-            self._handles[handle] = _ProbeHandleRecord(handle, selected, transaction,
-                peer_digest, probe_process_digest, evidence, issued,
-                math.nextafter(expires, -math.inf))
+            self._handles[handle] = _ProbeHandleRecord(
+                handle=handle, selected=selected, setup_transaction=transaction,
+                setup_transaction_handle=setup_transaction_handle,
+                setup_caller_identity=setup_caller_identity,
+                setup_peer_digest=peer_digest,
+                probe_process_identity_digest=probe_process_digest,
+                kernel_evidence=evidence, session_id=session_id, issued=issued,
+                expires=math.nextafter(expires, -math.inf))
         return handle
+
+    def authorize_action(self, parent_handle: str, action: str,
+                         asset_id: str | None) -> str:
+        """Mint a child handle whose action and asset cannot change in transit."""
+        if action not in {"asset-get", "asset-head", "websocket-attach"}:
+            raise RemoteOriginDenied("setup probe action is outside the fixed route set")
+        if (action == "websocket-attach") != (asset_id is None):
+            raise RemoteOriginDenied("setup probe action and asset selection disagree")
+        if asset_id is not None and asset_id not in _remote_probe_asset_paths():
+            raise RemoteOriginDenied("setup probe asset ID is not in the pinned manifest")
+        with self._lock:
+            parent = self._handles.get(parent_handle)
+            now = float(self._now())
+            if (parent is None or parent.state != "running" or now >= parent.expires
+                    or parent.action_sequence >= 16):
+                raise RemoteOriginDenied("root setup probe is absent, expired, or at its action bound")
+            child = secrets.token_urlsafe(32)
+            self._action_handles[child] = _ProbeActionHandleRecord(
+                child, parent, action, asset_id, now,
+                math.nextafter(parent.expires, -math.inf))
+            parent.action_sequence += 1
+            return child
+
+    def resolve_action(self, handle: str) -> _ProbeActionHandleRecord:
+        with self._lock:
+            action = self._action_handles.get(handle)
+            now = float(self._now())
+            if (action is None or action.state not in {"issued", "running"}
+                    or now >= action.expires or action.parent.state != "running"
+                    or now >= action.parent.expires):
+                raise RemoteOriginDenied("root setup-probe action handle is absent, stale, or spent")
+            return action
+
+    def resolve_parent(self, handle: str) -> _ProbeHandleRecord:
+        with self._lock:
+            parent = self._handles.get(handle)
+            now = float(self._now())
+            if (parent is None or parent.state != "running" or now >= parent.expires):
+                raise RemoteOriginDenied("root setup probe is absent, expired, or inactive")
+            return parent
+
+    def action_cancelled(self, handle: str) -> bool:
+        with self._lock:
+            action = self._action_handles.get(handle)
+            now = float(self._now())
+            return bool(action is None or action.state in {"cancelled", "consumed"}
+                        or now >= action.expires or action.parent.state != "running"
+                        or now >= action.parent.expires)
+
+    def advance_connector_effect(self, handle: str, operation: str, effect_sequence: int,
+                                 frame_sequence: int,
+                                 connector_handle: str | None) -> bool:
+        """CAS both post-effect and HI07 frame counters after a full syscall."""
+        with self._lock:
+            action = self._action_handles.get(handle)
+            if (action is None or action.state in {"cancelled", "consumed"}
+                    or float(self._now()) >= action.expires
+                    or action.parent.state != "running"):
+                raise RemoteOriginDenied("setup probe connector effect lost its live handle")
+            if operation == "connector.open":
+                if (action.state != "issued" or effect_sequence != 0 or frame_sequence != 0
+                        or not isinstance(connector_handle, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", connector_handle)):
+                    action.state = "cancelled"
+                    raise RemoteOriginDenied("setup probe connector open state is invalid")
+                action.connector_handle = connector_handle
+                action.state = "running"
+                action.effect_sequence += 1
+                return True
+            if (action.state != "running" or action.connector_handle != connector_handle
+                    or type(effect_sequence) is not int
+                    or effect_sequence != action.effect_sequence
+                    or type(frame_sequence) is not int
+                    or frame_sequence != action.frame_sequence
+                    or operation not in {"connector.read", "connector.write", "connector.close"}):
+                action.state = "cancelled"
+                raise RemoteOriginDenied("setup probe connector sequence changed")
+            if operation == "connector.close":
+                action.effect_sequence += 1
+                action.state = "consumed"
+                return True
+            action.effect_sequence += 1
+            action.frame_sequence += 1
+            return True
+
+    def cancel_action(self, handle: str) -> None:
+        with self._lock:
+            action = self._action_handles.get(handle)
+            if action is not None:
+                action.state = "cancelled"
+
+    def record_action_result(self, handle: str, result_digest: str) -> None:
+        if not re.fullmatch(r"[0-9a-f]{64}", result_digest):
+            raise RemoteOriginDenied("private gateway action result digest is malformed")
+        with self._lock:
+            action = self._action_handles.get(handle)
+            if (action is None or action.state != "consumed"
+                    or action.parent.state != "running" or action.result_digest is not None):
+                raise RemoteOriginDenied("private gateway action was not fully consumed or was replayed")
+            action.result_digest = result_digest
+            action.parent.action_result_digests[handle] = result_digest
+
+    def consume_action(self, handle: str) -> None:
+        with self._lock:
+            action = self._action_handles.get(handle)
+            if action is None or action.state not in {"issued", "running"}:
+                raise RemoteOriginDenied("root setup-probe action handle was already spent")
+            action.state = "consumed"
 
     def begin(self, handle: str, selected: SelectedRemoteOrigin,
               peer_digest: str) -> tuple[_ProbeHandleRecord, str, int]:
@@ -739,13 +1067,22 @@ class PrivateGatewayOriginProbe:
                  registry: RootOriginProbeRegistry,
                  current_peer: CurrentRemoteOriginCaller,
                  custody: Any,
+                 authorize_action: Callable[[str, str, str | None], str],
+                 boundary_observer: Callable[[SelectedRemoteOrigin, str, Mapping[str, Any], float],
+                                             GatewayBoundaryObservation] | None = None,
+                 window_observer: Callable[[SelectedRemoteOrigin, Mapping[str, Any], str, float],
+                                           NativeWindowObservation] | None = None,
                  now: Callable[[], float] = time.monotonic,
                  peer_credentials: Callable[[socket.socket], tuple[int, int, int]] | None = None,
                  timeout_seconds: float = 5.0):
         if not 0.1 <= timeout_seconds <= 5.0:
             raise ValueError("origin probe socket timeout must be <=5 seconds")
+        if not callable(authorize_action):
+            raise ValueError("root child-action mint is required")
         self._socket_resolver, self._process_manager = socket_resolver, process_manager
         self._registry, self._current_peer, self._custody, self._now = registry, current_peer, custody, now
+        self._authorize_action = authorize_action
+        self._boundary_observer, self._window_observer = boundary_observer, window_observer
         self._peer_credentials = peer_credentials
         self._timeout = timeout_seconds
 
@@ -766,11 +1103,70 @@ class PrivateGatewayOriginProbe:
         if pid != expected.pid or uid != expected.uid or gid != expected.gid:
             raise RemoteOriginDenied("private gateway control peer is not the selected process")
 
+    def probe_action(self, selected: SelectedRemoteOrigin, root_probe_handle: str,
+                     action_name: str, asset_id: str | None) -> OriginProbeActionControlResponse:
+        """Send one fixed per-action child command on the selected private socket."""
+        child_handle = self._authorize_action(root_probe_handle, action_name, asset_id)
+        request = OriginProbeActionControlRequest.create(child_handle, action_name, asset_id)
+        action = self._registry.resolve_action(child_handle)
+        parent = action.parent
+        if (_selection_digest(parent.selected) != _selection_digest(selected)
+                or action.action != action_name or action.asset_id != asset_id):
+            raise RemoteOriginDenied("private origin action differs from its root child binding")
+        caller = self._current_peer.current()
+        if (not isinstance(caller, RemoteOriginCallerIdentity)
+                or not hmac.compare_digest(caller.digest(), parent.setup_peer_digest)):
+            raise RemoteOriginDenied("setup transaction caller changed before private action")
+        fresh_kernel = self._process_manager.inspect_selected_origin(selected)
+        if (fresh_kernel.gateway_identity_digest != parent.kernel_evidence.gateway_identity_digest
+                or fresh_kernel.expires_monotonic <= float(self._now())):
+            raise RemoteOriginDenied("selected gateway/native process identity changed before action")
+        probe_identity = _selected_probe_process_identity(self._custody, selected, now=self._now)
+        if probe_identity[0] != parent.probe_process_identity_digest:
+            raise RemoteOriginDenied("selected probe role changed before private action")
+        gateway_peer = self._process_manager.inspect_gateway_peer(selected)
+        if (gateway_peer.profile_id != selected.gateway_profile_id
+                or gateway_peer.enrollment_id != selected.gateway_enrollment_id
+                or gateway_peer.generation != selected.gateway_generation):
+            raise RemoteOriginDenied("selected gateway control peer changed before action")
+        binding = self._socket_resolver.resolve(selected)
+        if binding.owner_uid != gateway_peer.uid:
+            raise RemoteOriginDenied("private gateway socket owner differs from selected process")
+        socket_before = _validate_control_socket(binding)
+        raw = _canonical(request.to_wire())
+        if len(raw) > 8192:
+            raise RemoteOriginDenied("private per-action request exceeds its bound")
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(self._timeout)
+            try:
+                sock.connect(os.fspath(binding.path))
+                self._verify_server_peer(sock, gateway_peer)
+                sock.sendall(struct.pack("!I", len(raw)) + raw)
+                response_size = struct.unpack("!I", _recv_exact(sock, 4))[0]
+                if not 1 <= response_size <= _MAX_PROBE_RESPONSE:
+                    raise RemoteOriginDenied("private action result exceeds its bound")
+                response_wire = _strict_json_object(_recv_exact(sock, response_size))
+            finally:
+                sock.close()
+        except RemoteOriginDenied:
+            raise
+        except (OSError, TimeoutError):
+            self._registry.cancel_action(child_handle)
+            raise RemoteOriginDenied("private per-action gateway transport failed") from None
+        socket_after = _validate_control_socket(binding)
+        if (socket_before.st_dev, socket_before.st_ino) != (socket_after.st_dev, socket_after.st_ino):
+            self._registry.cancel_action(child_handle)
+            raise RemoteOriginDenied("private gateway socket changed during action")
+        response = OriginProbeActionControlResponse.from_wire(response_wire, request)
+        self._registry.record_action_result(child_handle, response.result_digest)
+        return response
+
     def probe_selected_app(self, enrollment: SelectedRemoteOrigin,
                            root_probe_handle: str) -> ProbeObservationMap:
         _opaque_handle(root_probe_handle, "root origin probe handle")
         caller = self._current_peer.current()
-        record, challenge, sequence = self._registry.begin(
+        record, _challenge, _sequence = self._registry.begin(
             root_probe_handle, enrollment, caller.digest())
         fresh_kernel = self._process_manager.inspect_selected_origin(enrollment)
         if (fresh_kernel.gateway_identity_digest != record.kernel_evidence.gateway_identity_digest
@@ -784,66 +1180,43 @@ class PrivateGatewayOriginProbe:
                 or gateway_peer.enrollment_id != enrollment.gateway_enrollment_id
                 or gateway_peer.generation != enrollment.gateway_generation):
             raise RemoteOriginDenied("gateway private control process binding changed")
-        binding = self._socket_resolver.resolve(enrollment)
-        if binding.owner_uid != gateway_peer.uid:
-            raise RemoteOriginDenied("private control socket owner differs from selected gateway UID")
-        socket_before = _validate_control_socket(binding)
-        request = OriginProbeControlRequest.create(enrollment, root_probe_handle, challenge, sequence)
-        request_digest = request.request_digest
-        raw = _canonical(request.to_wire())
-        if len(raw) > _MAX_PROBE_FRAME:
-            raise RemoteOriginDenied("private gateway probe request exceeds its bound")
-        try:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(self._timeout)
-            try:
-                sock.connect(os.fspath(binding.path))
-                self._verify_server_peer(sock, gateway_peer)
-                length = struct.pack("!I", len(raw))
-                sock.sendall(length + raw)
-                response_size = struct.unpack("!I", _recv_exact(sock, 4))[0]
-                if not 1 <= response_size <= _MAX_PROBE_FRAME:
-                    raise RemoteOriginDenied("private gateway probe response exceeds its bound")
-                response_wire = _strict_json_object(_recv_exact(sock, response_size))
-            finally:
-                sock.close()
-        except RemoteOriginDenied:
-            raise
-        except (OSError, TimeoutError):
-            raise RemoteOriginDenied("private gateway origin probe transport failed") from None
-        socket_after = _validate_control_socket(binding)
-        if (socket_before.st_dev, socket_before.st_ino) != (socket_after.st_dev, socket_after.st_ino):
-            raise RemoteOriginDenied("selected private control socket changed during probe")
-        response_expected = {"schema", "operation", "probe_handle", "sequence", "challenge",
-            "request_digest", "remote_enrollment_id", "gateway_profile_id", "gateway_generation",
-            "native_profile_id", "desktop_generation", "connector_target_id", "policy_config_digest",
-            "policy_revision", "service_generation_digest", "observations", "observed_assertion_ids",
-            "asset_content_sha256", "websocket_observation_id", "native_window_observation_id"}
-        response = OriginProbeControlResponse.from_wire(response_wire)
-        echoes = {"schema": 1, "operation": "probe_selected_origin_result",
-            "probe_handle": root_probe_handle, "sequence": sequence, "challenge": challenge,
-            "request_digest": request_digest, "remote_enrollment_id": enrollment.enrollment_id,
-            "gateway_profile_id": enrollment.gateway_profile_id,
-            "gateway_generation": enrollment.gateway_generation,
-            "native_profile_id": enrollment.native_profile_id,
-            "desktop_generation": enrollment.desktop_generation,
-            "connector_target_id": enrollment.connector_target_id,
-            "policy_config_digest": enrollment.policy_config_digest,
-            "policy_revision": enrollment.policy_revision,
-            "service_generation_digest": enrollment.service_generation_digest}
-        if any(getattr(response, key) != value for key, value in echoes.items()):
-            raise RemoteOriginDenied("private gateway probe response does not match its challenge or selection")
-        observations = response.observations
-        if (any(type(observations[key]) is not bool for key in ORIGIN_PROBE_OBSERVATIONS)
-                or any(observations[key] is not True for key in ORIGIN_PROBE_OBSERVATIONS)):
-            raise RemoteOriginDenied("private gateway failed app-only HTTP, WebSocket, or native-window probe")
-        for key in ("websocket_observation_id", "native_window_observation_id"):
-            if not isinstance(getattr(response, key), str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", getattr(response, key)):
-                raise RemoteOriginDenied("private gateway omitted a concrete stream or native-window observation")
-        if not isinstance(response.asset_content_sha256, str) or not re.fullmatch(
-                r"[0-9a-f]{64}", response.asset_content_sha256):
-            raise RemoteOriginDenied("private gateway app asset digest is malformed")
-        result = response.to_wire()
+        asset_id = hashlib.sha256(
+            b"hermes-client-asset-v1\0/client/index.html").hexdigest()
+        actions = (
+            self.probe_action(enrollment, root_probe_handle, "asset-get", asset_id),
+            self.probe_action(enrollment, root_probe_handle, "asset-head", asset_id),
+            self.probe_action(enrollment, root_probe_handle, "websocket-attach", None),
+        )
+        # Process identity is refreshed after transport. Boundary and window
+        # evidence must come from distinct root-owned observers; absence leaves
+        # readiness unavailable rather than accepting gateway-supplied claims.
+        gateway_proof, _ = _selected_enrolled_process_proof(
+            self._custody, enrollment.gateway_profile_id, enrollment.gateway_generation,
+            enrollment.gateway_enrollment_id, expected_sha=enrollment.gateway_role_sha256,
+            now=self._now)
+        native_proof, _ = _selected_enrolled_process_proof(
+            self._custody, enrollment.native_profile_id, enrollment.desktop_generation,
+            enrollment.native_enrollment_id, now=self._now)
+        boundary_observer = self._boundary_observer
+        window_observer = self._window_observer
+        if not callable(boundary_observer) or not callable(window_observer):
+            raise RemoteOriginDenied("root gateway boundary and native-window observers are unavailable")
+        deadline = min(record.expires, float(self._now()) + 5.0)
+        boundary = boundary_observer(enrollment, record.kernel_evidence.gateway_identity_digest,
+                                     gateway_proof, deadline)
+        if not isinstance(boundary, GatewayBoundaryObservation):
+            raise RemoteOriginDenied("root gateway boundary observer returned no typed evidence")
+        websocket_observation_id = actions[2].result["observation_id"]
+        native_window = window_observer(enrollment, native_proof, websocket_observation_id, deadline)
+        if not isinstance(native_window, NativeWindowObservation):
+            raise RemoteOriginDenied("root native-window observer returned no typed evidence")
+        observations, assertion_ids, request_digest, result_digest = aggregate_root_origin_observations(
+            enrollment, asset_get=actions[0], asset_head=actions[1], websocket=actions[2],
+            boundary=boundary, native_window=native_window,
+            gateway_identity_digest=record.kernel_evidence.gateway_identity_digest,
+            gateway_proof=gateway_proof, native_proof=native_proof, now=self._now)
+        result = {"observations": observations, "observed_assertion_ids": assertion_ids,
+                  "request_digest": request_digest, "result_digest": result_digest}
         return self._registry.complete(record, result, request_digest)
 
 
@@ -877,6 +1250,37 @@ def _selected_probe_process_identity(custody: Any,
     return digest, float(proof.expires_monotonic)
 
 
+def _selected_enrolled_process_proof(custody: Any, profile_id: str, generation: str,
+        enrollment_id: str, *, expected_sha: str | None = None,
+        now: Callable[[], float] = time.monotonic) -> tuple[dict[str, Any], float]:
+    try:
+        proof = custody.inspect_enrolled_process(profile_id, generation)
+    except Exception:
+        proof = None
+    required = ("process_id", "profile_id", "enrollment_id", "profile_generation", "uid", "gid",
+                "pid", "pid_starttime_ticks", "executable_device", "executable_inode",
+                "executable_sha256", "cgroup_id", "mount_namespace_inode",
+                "network_namespace_inode", "pidfd_registry_handle", "expires_monotonic")
+    if (proof is None or any(not hasattr(proof, key) for key in required)
+            or proof.profile_id != profile_id or proof.profile_generation != generation
+            or proof.enrollment_id != enrollment_id
+            or expected_sha is not None and proof.executable_sha256 != expected_sha
+            or not _finite_monotonic(proof.expires_monotonic)
+            or proof.expires_monotonic <= float(now())
+            or proof.uid <= 0 or proof.gid < 0 or proof.pid <= 0
+            or proof.pid_starttime_ticks <= 0 or proof.executable_device <= 0
+            or proof.executable_inode <= 0 or proof.mount_namespace_inode <= 0
+            or proof.network_namespace_inode <= 0 or not proof.cgroup_id
+            or not proof.pidfd_registry_handle):
+        raise RemoteOriginDenied("selected enrolled service process proof is unavailable")
+    result = {key: getattr(proof, key) for key in required}
+    return result, float(proof.expires_monotonic)
+
+
+def _digest_canonical(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(_canonical(dict(value))).hexdigest()
+
+
 class SelectedRemoteOriginProbeAuthority:
     """Root service authority for setup-bound one-use private origin probing."""
     def __init__(self, *, catalog: RemoteOriginCatalog,
@@ -884,18 +1288,28 @@ class SelectedRemoteOriginProbeAuthority:
                  current_peer: CurrentRemoteOriginCaller,
                  process_manager: RemoteOriginProcessManager,
                  custody: Any,
+                 resolve_selected_native_principal: Callable[[str, str, str], Any],
                  socket_resolver: RemoteOriginControlSocketResolver,
                  signer: ReceiptSigner,
+                 boundary_observer: Callable[[SelectedRemoteOrigin, str, Mapping[str, Any], float],
+                                             GatewayBoundaryObservation] | None = None,
+                 window_observer: Callable[[SelectedRemoteOrigin, Mapping[str, Any], str, float],
+                                           NativeWindowObservation] | None = None,
                  now: Callable[[], float] = time.monotonic,
                  peer_credentials: Callable[[socket.socket], tuple[int, int, int]] | None = None):
         if not isinstance(process_manager, CustodyRemoteOriginProcessManager):
             raise ValueError("root custody-backed remote-origin process manager is required")
+        if not callable(resolve_selected_native_principal):
+            raise ValueError("root protected native PrincipalBinding resolver is required")
         self._catalog, self._setup_transactions, self._current_peer = catalog, setup_transactions, current_peer
         self._process_manager, self._custody, self._signer, self._now = process_manager, custody, signer, now
+        self._resolve_selected_native_principal = resolve_selected_native_principal
         self._registry = RootOriginProbeRegistry(signer, now=now)
         self._transport = PrivateGatewayOriginProbe(socket_resolver=socket_resolver,
             process_manager=process_manager, registry=self._registry, current_peer=current_peer,
-            custody=custody, now=now, peer_credentials=peer_credentials)
+            custody=custody, authorize_action=self.authorize_probe_action,
+            boundary_observer=boundary_observer, window_observer=window_observer,
+            now=now, peer_credentials=peer_credentials)
 
     def issue_selected_origin_probe(self, remote_enrollment_id: str,
                                     root_setup_transaction_handle: str) -> str:
@@ -958,7 +1372,9 @@ class SelectedRemoteOriginProbeAuthority:
         evidence = dataclass_replace(evidence, expires_monotonic=min(
             evidence.expires_monotonic, probe_expiry, caller.expires_monotonic))
         return self._registry.issue(selected, transaction, caller.digest(),
-                                    probe_identity_digest, evidence)
+                                    probe_identity_digest, evidence,
+                                    setup_transaction_handle=root_setup_transaction_handle,
+                                    setup_caller_identity=caller)
 
     def probe_selected_app(self, selected: SelectedRemoteOrigin,
                            root_probe_handle: str) -> ProbeObservationMap:
@@ -973,6 +1389,214 @@ class SelectedRemoteOriginProbeAuthority:
         if not isinstance(caller, RemoteOriginCallerIdentity):
             raise RemoteOriginDenied("current setup caller has no root process identity")
         return self._registry.resolve_ready(root_probe_handle, selected, caller.digest())
+
+    def authorize_probe_action(self, root_probe_handle: str, action: str,
+                               asset_id: str | None) -> str:
+        """Create a child only after rejoining the active root transaction and peers."""
+        _opaque_handle(root_probe_handle, "root origin probe handle")
+        parent = self._registry.resolve_parent(root_probe_handle)
+        selected = parent.selected
+        caller = self._current_peer.current()
+        if (not isinstance(caller, RemoteOriginCallerIdentity)
+                or not hmac.compare_digest(caller.digest(), parent.setup_peer_digest)):
+            raise RemoteOriginDenied("setup probe action caller differs from current root transaction")
+        current = self._catalog.selected_origin(selected.enrollment_id)
+        if (not isinstance(current, SelectedRemoteOrigin)
+                or _selection_digest(current) != _selection_digest(selected)):
+            raise RemoteOriginDenied("selected remote origin changed before child action mint")
+        transaction = self._verify_current_probe_transaction(parent)
+        if _setup_transaction_digest(transaction) != _setup_transaction_digest(parent.setup_transaction):
+            raise RemoteOriginDenied("root setup transaction changed before child action mint")
+        kernel = self._process_manager.inspect_selected_origin(current)
+        if (not isinstance(kernel, KernelOriginEvidence)
+                or kernel.gateway_identity_digest != parent.kernel_evidence.gateway_identity_digest
+                or kernel.expires_monotonic <= float(self._now())):
+            raise RemoteOriginDenied("selected gateway/native custody changed before child action mint")
+        probe_identity, probe_expiry = _selected_probe_process_identity(
+            self._custody, current, now=self._now)
+        gateway = self._process_manager.inspect_gateway_peer(current)
+        if (probe_identity != parent.probe_process_identity_digest
+                or probe_expiry <= float(self._now())
+                or gateway.enrollment_id != current.gateway_enrollment_id
+                or gateway.profile_id != current.gateway_profile_id
+                or gateway.generation != current.gateway_generation):
+            raise RemoteOriginDenied("root probe or gateway role changed before child action mint")
+        return self._registry.authorize_action(root_probe_handle, action, asset_id)
+
+    def resolve_probe_connector_binding(self, handle: str, uid: int, pid: int,
+                                        pidfd: int):
+        """Resolve a child action handle to the authority owner's typed HI12 binding.
+
+        This method is called by the private SetupProbeConnectorAuthority only;
+        it accepts no route, target, generation, principal, path, or deadline.
+        """
+        _opaque_handle(handle, "root setup-probe action handle")
+        if any(type(value) is not int or value <= 0 for value in (uid, pid, pidfd)):
+            raise RemoteOriginDenied("setup-probe connector peer identity is malformed")
+        action = self._registry.resolve_action(handle)
+        parent = action.parent
+        selected = parent.selected
+        current = self._catalog.selected_origin(selected.enrollment_id)
+        if (not isinstance(current, SelectedRemoteOrigin)
+                or _selection_digest(current) != _selection_digest(selected)):
+            raise RemoteOriginDenied("active selected setup probe or origin changed")
+        transaction = self._verify_current_probe_transaction(parent)
+        if _setup_transaction_digest(transaction) != _setup_transaction_digest(parent.setup_transaction):
+            raise RemoteOriginDenied("root setup transaction changed during native probe")
+        kernel = self._process_manager.inspect_selected_origin(current)
+        if (not isinstance(kernel, KernelOriginEvidence)
+                or kernel.gateway_identity_digest != parent.kernel_evidence.gateway_identity_digest
+                or not _finite_monotonic(kernel.expires_monotonic)
+                or kernel.expires_monotonic <= float(self._now())):
+            raise RemoteOriginDenied("selected gateway or native process identity changed")
+        probe_digest, probe_expiry = _selected_probe_process_identity(
+            self._custody, current, now=self._now)
+        if probe_digest != parent.probe_process_identity_digest:
+            raise RemoteOriginDenied("selected root probe role changed")
+        gateway = self._process_manager.inspect_gateway_peer(current)
+        if (gateway.profile_id != current.gateway_profile_id
+                or gateway.enrollment_id != current.gateway_enrollment_id
+                or gateway.generation != current.gateway_generation):
+            raise RemoteOriginDenied("selected gateway process binding changed")
+        probe_proof, probe_expiry = _selected_enrolled_process_proof(
+            self._custody, current.probe_binding.profile_id,
+            current.probe_binding.generation, current.probe_binding.enrollment_id,
+            expected_sha=current.probe_binding.role_sha256, now=self._now)
+        if (uid != probe_proof["uid"] or pid != probe_proof["pid"]
+                or probe_expiry <= float(self._now())):
+            raise RemoteOriginDenied("setup connector caller is not the selected probe role")
+        try:
+            live_peer = self._custody.resolve_live_peer(pid, pidfd,
+                profile_id=current.probe_binding.profile_id,
+                generation=current.probe_binding.generation)
+        except Exception:
+            live_peer = None
+        namespace_identity = (f"mnt:{probe_proof['mount_namespace_inode']};"
+                              f"net:{probe_proof['network_namespace_inode']}")
+        if (live_peer is None or live_peer.kernel_uid != uid
+                or live_peer.start_ticks != probe_proof["pid_starttime_ticks"]
+                or live_peer.executable_sha256 != probe_proof["executable_sha256"]
+                or live_peer.cgroup_identity != probe_proof["cgroup_id"]
+                or live_peer.namespace_identity != namespace_identity):
+            raise RemoteOriginDenied("setup connector PIDFD does not match current probe custody")
+        native_proof, native_expiry = _selected_enrolled_process_proof(
+            self._custody, current.native_profile_id, current.desktop_generation,
+            current.native_enrollment_id, now=self._now)
+        try:
+            from .service import PrincipalBinding
+            principal = self._resolve_selected_native_principal(current.native_profile_id,
+                current.desktop_generation, current.service_generation_digest)
+        except Exception:
+            principal = None
+        if (not isinstance(principal, PrincipalBinding)
+                or principal.profile_id != current.native_profile_id
+                or principal.uid != native_proof["uid"]
+                or not principal.namespace_id or not principal.principal_id):
+            raise RemoteOriginDenied("current protected native PrincipalBinding is unavailable")
+        gateway_proof, gateway_expiry = _selected_enrolled_process_proof(
+            self._custody, current.gateway_profile_id, current.gateway_generation,
+            current.gateway_enrollment_id, expected_sha=current.gateway_role_sha256,
+            now=self._now)
+        if (gateway_proof["pid"] != gateway.pid
+                or gateway_proof["uid"] != gateway.uid
+                or gateway_proof["gid"] != gateway.gid
+                or gateway_proof["pid_starttime_ticks"] != gateway.pid_starttime_ticks
+                or gateway_proof["executable_device"] != gateway.executable_device
+                or gateway_proof["executable_inode"] != gateway.executable_inode
+                or gateway_proof["executable_sha256"] != gateway.executable_sha256
+                or gateway_proof["cgroup_id"] != gateway.cgroup_id
+                or gateway_proof["mount_namespace_inode"] != gateway.mount_namespace_inode
+                or gateway_proof["network_namespace_inode"] != gateway.network_namespace_inode
+                or gateway_proof["pidfd_registry_handle"] != gateway.pidfd_registry_handle):
+            # Full proof equality includes executable and namespaces, not merely
+            # the gateway's mutable PID number.
+            raise RemoteOriginDenied("gateway enrolled proof changed during setup probe")
+        from .remote_probe_connector_authority import RootSetupProbeBinding
+        now = float(self._now())
+        expiry = min(parent.expires, action.expires, transaction.expires_monotonic,
+                     probe_expiry, native_expiry, gateway_expiry,
+                     gateway.expires_monotonic, math.nextafter(now + 30.0, -math.inf))
+        frame_deadline = min(expiry, math.nextafter(now + 5.0, -math.inf))
+        if expiry <= now or frame_deadline <= now:
+            raise RemoteOriginDenied("setup probe connector deadline expired")
+        asset_ids = tuple(sorted(_remote_probe_asset_paths()))
+        return RootSetupProbeBinding(
+            probe_handle=handle,
+            setup_transaction_handle=parent.setup_transaction_handle,
+            setup_transaction_digest=_setup_transaction_digest(transaction),
+            setup_actor_identity_digest=parent.setup_peer_digest,
+            probe_actor_identity_digest=parent.probe_process_identity_digest,
+            setup_profile_id=transaction.setup_profile_id,
+            setup_generation=transaction.setup_generation,
+            setup_enrollment_id=transaction.setup_enrollment_id,
+            setup_role_sha256=transaction.setup_role_sha256,
+            probe_enrollment_id=current.probe_binding.enrollment_id,
+            probe_profile_id=current.probe_binding.profile_id,
+            probe_generation=current.probe_binding.generation,
+            probe_role_sha256=current.probe_binding.role_sha256,
+            gateway_identity_digest=kernel.gateway_identity_digest,
+            gateway_profile_id=current.gateway_profile_id,
+            gateway_generation=current.gateway_generation,
+            gateway_enrollment_id=current.gateway_enrollment_id,
+            native_identity_digest=_digest_canonical(native_proof),
+            native_enrollment_id=current.native_enrollment_id,
+            native_profile_id=current.native_profile_id,
+            native_generation=current.desktop_generation,
+            enrollment_id=current.native_enrollment_id,
+            target_id="xpra-native", connector_target_id="xpra-native",
+            approved_route_ids=("xpra-http", "xpra-websocket"),
+            asset_ids=asset_ids, selected_action=action.action,
+            selected_asset_id=action.asset_id, session_id=parent.session_id,
+            next_sequence=action.frame_sequence,
+            effect_sequence=action.effect_sequence,
+            policy_revision=current.policy_revision,
+            policy_config_digest=current.policy_config_digest,
+            service_generation_digest=current.service_generation_digest,
+            principal_id=principal.principal_id,
+            connector_handle=action.connector_handle,
+            issued_monotonic=action.issued, expires_monotonic=expiry,
+            frame_deadline_monotonic=frame_deadline,
+            cancelled=lambda: self._registry.action_cancelled(handle))
+
+    def advance_probe_connector_sequence(self, handle: str, expected_effect_sequence: int,
+            expected_frame_sequence: int, operation: str, connector_handle: str, *,
+            peer_uid: int, peer_pid: int, peer_pidfd: int) -> bool:
+        binding = self.resolve_probe_connector_binding(handle, peer_uid, peer_pid, peer_pidfd)
+        if (expected_effect_sequence != binding.effect_sequence
+                or expected_frame_sequence != binding.next_sequence or operation not in {
+                "connector.open", "connector.read", "connector.write", "connector.close"}):
+            raise RemoteOriginDenied("setup probe effect or frame sequence changed")
+        return self._registry.advance_connector_effect(handle, operation,
+            expected_effect_sequence, expected_frame_sequence, connector_handle)
+
+    def cancel_probe_action(self, handle: str, *, peer_uid: int, peer_pid: int,
+                            peer_pidfd: int) -> None:
+        self.resolve_probe_connector_binding(handle, peer_uid, peer_pid, peer_pidfd)
+        self._registry.cancel_action(handle)
+
+    def create_setup_connector_authority(self, *, hi12: Any,
+                                        boot_epoch: Callable[[], str]) -> Any:
+        """Compose the distinct HI12 setup issuer with this root child registry."""
+        from .remote_probe_connector_authority import SetupProbeConnectorAuthority
+        return SetupProbeConnectorAuthority(
+            resolve_binding=self.resolve_probe_connector_binding,
+            hi12=hi12, boot_epoch=boot_epoch,
+            advance_sequence=self.advance_probe_connector_sequence,
+            monotonic=self._now)
+
+    def _verify_current_probe_transaction(self,
+            record: _ProbeHandleRecord) -> VerifiedRemoteSetupTransaction:
+        try:
+            transaction = self._setup_transactions.verify_origin_probe_transaction(
+                record.setup_transaction_handle, record.selected, record.setup_caller_identity)
+        except Exception:
+            raise RemoteOriginDenied("root setup transaction is no longer current") from None
+        if (not isinstance(transaction, VerifiedRemoteSetupTransaction)
+                or transaction.setup_peer_identity_digest != record.setup_peer_digest
+                or transaction.remote_enrollment_id != record.selected.enrollment_id
+                or not transaction.issued_monotonic <= float(self._now()) < transaction.expires_monotonic):
+            raise RemoteOriginDenied("root setup transaction changed or expired")
+        return transaction
 
 
 def _canonical(value: Any) -> bytes:
