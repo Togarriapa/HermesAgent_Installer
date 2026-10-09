@@ -62,6 +62,12 @@ class MemoryCompoundTests(unittest.TestCase):
                       "body_recipe_id": "openviking-create-owned-session-v1"},
                 body={"content": "x"}, scope_bindings=self.scope)
 
+    def test_agentmemory_arbitrary_json_is_not_accepted_as_semantic_success(self):
+        from hermes_installer.memory.compound import validate_step_outcome
+        with self.assertRaises(MemoryRecipeUnavailable):
+            validate_step_outcome(route_id="agentmemory-capture", step_id="capture",
+                                  status=201, value={"anything": "looks successful"})
+
     def test_envelope_requires_exact_fields_and_canonical_bytes(self):
         value = {"schema": 1, "handle_id": "handle-1", "generation": "gen-1",
                  "sequence": 1, "compound_job_handle": "job-1", "step_id": "create",
