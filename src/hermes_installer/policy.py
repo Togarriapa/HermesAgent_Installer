@@ -10,6 +10,7 @@ import contextlib
 import json
 import math
 import os
+import re
 import sqlite3
 import stat
 import threading
@@ -50,10 +51,27 @@ class DispatchContext:
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     deadline: float | None = None
     cancelled: Callable[[], bool] = field(default=lambda: False, compare=False, repr=False)
+    principal_id: str = ""
+    namespace: str = ""
+    provenance: str = ""
+    capabilities: frozenset[str] = frozenset()
+    policy_revision: str = ""
+    grant_id: str = ""
+    lease_expires_at: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.profile_id or not self.purpose or not self.trace_id:
             raise PolicyDenied("context.missing", "Trusted dispatch context is incomplete")
+        if (not isinstance(self.principal_id, str) or not isinstance(self.namespace, str)
+                or not isinstance(self.provenance, str) or not isinstance(self.capabilities, frozenset)
+                or any(not isinstance(item, str) or not item for item in self.capabilities)
+                or not isinstance(self.policy_revision, str) or not isinstance(self.grant_id, str)):
+            raise PolicyDenied("context.claims", "Host dispatch claims have invalid structure")
+        if self.provenance and not re.fullmatch(r"sha256:[0-9a-f]{64}", self.provenance):
+            raise PolicyDenied("context.provenance", "Host provenance must be a canonical SHA-256 digest")
+        if (isinstance(self.lease_expires_at, bool) or not isinstance(self.lease_expires_at, (int, float))
+                or not math.isfinite(self.lease_expires_at)):
+            raise PolicyDenied("context.lease", "Host lease expiry must be a finite monotonic timestamp")
         if not isinstance(self.sensitivity, Sensitivity) or any(not isinstance(x, Sensitivity) for x in self.derived_from):
             raise PolicyDenied("context.classification", "Sensitivity must be assigned by trusted host policy")
         if not callable(self.cancelled):
