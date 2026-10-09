@@ -44,7 +44,6 @@ class SelectedDisplayStartup:
     display_profile_id: str
     display_generation: str
     display_name: str
-    display_executable_sha256: str
     receipt_handle: str
     display_uid: int
     display_gid: int
@@ -57,7 +56,6 @@ class SelectedDisplayStartup:
                 or not _OPAQUE.fullmatch(self.receipt_handle)
                 or not isinstance(self.display_name, str)
                 or not re.fullmatch(r":[0-9]{1,3}(?:\.[0-9]{1,2})?", self.display_name)
-                or not _SHA256.fullmatch(self.display_executable_sha256)
                 or type(self.display_uid) is not int or self.display_uid <= 0
                 or type(self.display_gid) is not int or self.display_gid <= 0):
             raise ValueError("root-selected display startup identity is malformed")
@@ -72,7 +70,6 @@ class PreparedXauthority:
     display_profile_id: str
     display_generation: str
     display_name: str
-    display_executable_sha256: str
     receipt_handle: str
     display_uid: int
     display_gid: int
@@ -99,7 +96,6 @@ class XauthorityStartupReceipt:
     display_profile_id: str
     display_generation: str
     display_name: str
-    display_executable_sha256: str
     process_id: str
     process_generation: str
     pid: int
@@ -136,7 +132,6 @@ class XauthorityStartupReceipt:
             "display_profile_id": self.display_profile_id,
             "display_generation": self.display_generation,
             "display_name": self.display_name,
-            "display_executable_sha256": self.display_executable_sha256,
             "process_id": self.process_id,
             "process_generation": self.process_generation,
             "pid": self.pid, "pid_start_ticks": self.pid_start_ticks,
@@ -170,6 +165,50 @@ class SelectedXauthorityFile:
     @property
     def path(self) -> Path:
         return self.receipt.xauthority_path
+
+    @property
+    def device(self) -> int:
+        return self.receipt.xauthority_device
+
+    @property
+    def inode(self) -> int:
+        return self.receipt.xauthority_inode
+
+    @property
+    def owner_uid(self) -> int:
+        return self.receipt.xauthority_uid
+
+    @property
+    def owner_gid(self) -> int:
+        return self.receipt.xauthority_gid
+
+    @property
+    def mode(self) -> int:
+        return self.receipt.xauthority_mode
+
+    @property
+    def content_sha256(self) -> str:
+        return self.receipt.xauthority_sha256
+
+    @property
+    def process_id(self) -> str:
+        return self.receipt.process_id
+
+    @property
+    def process_generation(self) -> str:
+        return self.receipt.process_generation
+
+    @property
+    def pid_start_ticks(self) -> int:
+        return self.receipt.pid_start_ticks
+
+    @property
+    def pidfd_identity(self) -> str:
+        return self.receipt.pidfd_identity
+
+    @property
+    def cgroup_id(self) -> str:
+        return self.receipt.cgroup_identity
 
     def close(self) -> None:
         for fd_name in ("file_fd", "pidfd"):
@@ -315,7 +354,6 @@ class XauthorityStartupRegistry:
                 selected.remote_enrollment_id, selected.native_profile_id,
                 selected.native_generation, selected.display_profile_id,
                 selected.display_generation, selected.display_name,
-                selected.display_executable_sha256,
                 selected.receipt_handle, selected.display_uid, selected.display_gid,
                 directory_path / name,
                 info.st_dev, info.st_ino, info.st_uid, info.st_gid,
@@ -360,8 +398,7 @@ class XauthorityStartupRegistry:
         if (lease.profile_id != prepared.display_profile_id
                 or lease.generation != prepared.display_generation
                 or lease.uid != prepared.display_uid
-                or lease.gid != prepared.display_gid
-                or lease.executable_sha256 != prepared.display_executable_sha256):
+                or lease.gid != prepared.display_gid):
             raise NativeDisplayStartupDenied("display process lease differs from the selected generation")
         if (lease.uid <= 0 or lease.gid <= 0 or lease.pid <= 0
                 or lease.start_ticks <= 0 or lease.pidfd < 0
@@ -388,7 +425,6 @@ class XauthorityStartupRegistry:
             "display_profile_id": prepared.display_profile_id,
             "display_generation": prepared.display_generation,
             "display_name": prepared.display_name,
-            "display_executable_sha256": prepared.display_executable_sha256,
             "process_id": lease.process_id, "process_generation": lease.generation,
             "pid": lease.pid, "pid_start_ticks": lease.start_ticks,
             "pidfd_identity": pidfd_identity, "cgroup_identity": lease.cgroup_identity,
@@ -493,7 +529,7 @@ class XauthorityStartupRegistry:
         fields = (
             "remote_enrollment_id", "native_profile_id", "native_generation",
             "display_server_profile_id", "display_server_generation", "display_name",
-            "display_executable_sha256", "xauthority_receipt_handle", "xauthority_path", "xauthority_device",
+            "xauthority_receipt_handle", "xauthority_device",
             "xauthority_inode", "xauthority_uid", "xauthority_gid",
             "xauthority_mode", "xauthority_sha256",
         )
@@ -511,17 +547,12 @@ class XauthorityStartupRegistry:
             display_name=selected.display_name,
         )
         receipt = resolved.receipt
-        if selected.display_executable_sha256 != receipt.display_executable_sha256:
-            resolved.close()
-            raise NativeDisplayStartupDenied("selected display executable pin differs from startup receipt")
         expected = (
-            str(receipt.xauthority_path), receipt.xauthority_device,
-            receipt.xauthority_inode, receipt.xauthority_uid, receipt.xauthority_gid,
+            receipt.xauthority_device, receipt.xauthority_inode, receipt.xauthority_uid, receipt.xauthority_gid,
             receipt.xauthority_mode, receipt.xauthority_sha256,
         )
         actual = (
-            str(selected.xauthority_path), selected.xauthority_device,
-            selected.xauthority_inode, selected.xauthority_uid, selected.xauthority_gid,
+            selected.xauthority_device, selected.xauthority_inode, selected.xauthority_uid, selected.xauthority_gid,
             selected.xauthority_mode, selected.xauthority_sha256,
         )
         if actual != expected:
