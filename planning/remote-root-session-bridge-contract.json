@@ -236,5 +236,28 @@
       "expires_monotonic"
     ],
     "activation": "Atomicsetup journal requires currentrootoriginreadiness+protectedtokenreceipt+ownedDNS/tunnel/AccessOTPresource records beforefinalingressactivation. Resume checkpoint notsuccessfulpublicactivation; rootgen/token/peer/policychange invalidatesreceipts. Accountmutations onlyidentifiedauthorizedsetup, codefixturesneverproductionproof."
+  },
+  "gateway_role_binding": {
+    "association": "ActiveHI13row gateway_profile_id+gateway_role_artifact_id+gateway_role_sha256 IS explicitrootprotected profile-role assignment; no inferencefromargvrecipes orcallerprocess_role_artifact_hashes. Rootlookup exactassociation, no implicitprofilewildcard.",
+    "actual_role_proof_fields": [
+      "schema=1",
+      "role_proof_id",
+      "profile_id",
+      "profile_generation",
+      "role_id=remote-gateway",
+      "role_artifact_id",
+      "role_artifact_sha256",
+      "entrypoint_artifact_id",
+      "entrypoint_sha256",
+      "observed_gateway_identity_digest",
+      "root_launch_record_id",
+      "sealed_closure_receipt_id",
+      "actual_ready_event_id",
+      "service_generation_digest",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "issuer": "Rootcustody/selectedtrustedloader observer afteractualrootselectedlaunch+immutable verifiedroleentrypoint/closure and actualcurrentkernelpeer/readycontrol event. Root registryobservedroleproof comparedexactHI13row/currentprofilegen eachadmission/frame. Metadataartifactexists notexecutedroleproof; normalworkerready/hashlabels insufficient.",
+    "mapping": "No new worker/profilecallerfieldrequired; root registry storesactualrole observations keyed actualprocesshandle/profilegen andprotectedHI13 association. Missingactualroleattestation remoteunavailable withexactlauncherproofstep, not relaxexpectedhash."
   }
 }

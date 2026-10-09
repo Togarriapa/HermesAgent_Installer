@@ -118,3 +118,10 @@ The installer SHALL resolve fixed parameter-free Hermes stage/health recipes and
 #### Scenario: Caller supplies bootstrap paths or source-only health
 - **WHEN** caller overrides recipe/roots/argv or only inventory/status exists without actual selected native workflow
 - **THEN** reject overrides or keep functional readiness incomplete, preserve prior generation and exact resume reason.
+
+### Requirement: Selected backend and actual gateway role bindings
+The installer SHALL resolve protected resource backend/body recipe/action/source/consent scope before each child effect and SHALL verify actual launched gateway role against explicit HI13 protected profile-role association.
+
+#### Scenario: Legacy backend metadata or unobserved gateway role
+- **WHEN** only declared backend/role metadata exists without current root selected effect/actual launch proof
+- **THEN** deny backend/admission before bytes and retain exact incomplete implementation/native evidence.

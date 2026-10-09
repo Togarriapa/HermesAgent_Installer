@@ -264,3 +264,10 @@ The installer SHALL derive enrollment provision and finite process control effec
 #### Scenario: Forged bootstrap intent or stale process control
 - **WHEN** caller supplies unregistered bootstrap intent, claimed roots/identity or stale/sibling control handle
 - **THEN** reject before effects, preserve prior generation/private state and require actual root target/ownership evidence.
+
+### Requirement: Selected backend and actual gateway role bindings
+The installer SHALL resolve protected resource backend/body recipe/action/source/consent scope before each child effect and SHALL verify actual launched gateway role against explicit HI13 protected profile-role association.
+
+#### Scenario: Legacy backend metadata or unobserved gateway role
+- **WHEN** only declared backend/role metadata exists without current root selected effect/actual launch proof
+- **THEN** deny backend/admission before bytes and retain exact incomplete implementation/native evidence.
