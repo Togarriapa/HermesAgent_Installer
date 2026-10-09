@@ -186,7 +186,8 @@
       "maximum_request_bytes",
       "maximum_response_bytes",
       "maximum_seconds",
-      "profile_generation"
+      "profile_generation",
+      "execution_binding"
     ],
     "joins": "Each DAG node backend_enrollment_id resolves its own exact active backend row. Node resource/action/operation/target/recipient/request+result schema/body recipe/scope binding must equal that selected row; action belongs to approved_action_ids. A job has no singular execution backend. Existing singular job backend field is staging-only legacy input and never execution authority; migration must preserve every node and reject ambiguous mapping.",
     "body_recipe_fields": [
@@ -279,5 +280,38 @@
     ],
     "storage": "Root-only immutable bounded canonical result bytes in authority ledger; capsule handle not caller source proof. Strict pinned result schema validated before field extraction; full actual result source receipt + entire parent ancestry remains PRIVATE/UNKNOWN unless separate trusted clearance. Payload hash is UTF8 canonical sorted compact JSON ensure_ascii=false allow_nan=false no newline, no duplicate keys. Root receipt binds actual backend operation result and selected profile/epoch; never accept worker result bytes as backend proof.",
     "resolution": "Only completed declared dependency node in same job/principal/profile and live lease may supply fields; verify payload hash/schema/source receipt/full closure/current consent/generation. Missing, forged, ambiguous, failed or stale result cannot advance DAG."
+  },
+  "profile_execution_binding": {
+    "source_review": {
+      "repo": "NousResearch/hermes-agent",
+      "revision": "7085fbf7753266fc4943c55ac04926186bc90005",
+      "files": {
+        "hermes_cli/main.py": "a6293934e0ef99849d7a2f3c040256c2466f6fc0382b876bf750f8bd8e6cb912",
+        "hermes_cli/_parser.py": "75fa3070d9cdcbeaa3fc1424e9c3dba06a403b9d43c74aaccc3b82829edf366c"
+      },
+      "facts": "main module entry point and chat parser support --query-file - reading stdin, --oneshot boolean, --quiet; exact pinned source reviewed, runtime untested."
+    },
+    "execution_binding_shape": "null for non-process native backend; profile-run/agent-task backend requires strict {process_enrollment_id,process_generation,operation_id,native_package_id,native_package_generation,child_operation,child_target_id,child_capability,task_body_recipe_id,task_request_schema_id}",
+    "operation_id": "hermes-resource-profile-task-v1",
+    "recipe": "Existing protected service_records operation_recipes resolves exact selected PM-managed Python3.14 executable and immutable Hermes source/native overlay closure. Fixed argv suffix -m hermes_cli.main chat --query-file - --oneshot --quiet, root selected separate service HOME/HERMES_HOME/cwd/env and bounded single-query stdin+EOF. No query/model/profile/path supplied in argv; no shell. Record executable/source/package hashes are actual enrolled artifacts, not invented source review hashes as executable identity.",
+    "request_schema": "hermes-resource-profile-query-v1: strict object {prompt:string}, UTF8 nonempty<=262144 bytes, no extra fields. Root constructs prompt only through exact selected task_body_recipe_id from immutable literal/verified event/predecessor fields and forced scope. Original source declarations select action/mode, root validates capability/recipient/privacy rules before launch; prompt cannot confer permissions.",
+    "root_resolution": "resolve_resource_profile_execution(root_job_admission_handle,node_id) resolves node backend execution_binding then existing ProtectedEnrollmentCatalog service profile/process operation recipe and loaded native package. Creates HermesProfileExecutionTarget only inside root from actual selected custody record; existing physical path DTO is not worker authority and cannot be copied from resource YAML. Backend/profile/namespace/current generation/native package joins must all match.",
+    "delegation": "Root admits exactly one process.start child for this node/attempt using fresh reduced child grant. child_target_id and child_capability must equal existing protected process enrollment operation_targets[process.start] and rule; operation_id selects its fixed recipe. Parent resource job grant is consumed/audit only. No generic perform_delegated_effect with reused parent. Root binds descendant process source channel to original resource event/full result ancestry before provider/tool bytes; all nested effects still separately admitted.",
+    "root_private_call": "launch_resource_profile_task(root_job_admission_handle,node_id) -> bounded RootResourceProcessReceipt; root derives canonical selection-only process.start payload and writes selected query under root-owned stdin protocol. Caller cannot choose profile/task/process delegation.",
+    "receipt_fields": [
+      "schema=1",
+      "job_id",
+      "node_id",
+      "backend_enrollment_id",
+      "process_id",
+      "process_generation",
+      "native_package_generation",
+      "task_payload_sha256",
+      "parent_closure_digest",
+      "terminal_receipt_handle",
+      "result_capsule_handle",
+      "expires_monotonic"
+    ],
+    "terminal": "Root owns bounded terminal wait/read/stop bookkeeping as assembly contract; output/error actual bytes become root observed result capsule after selected result schema validation. Launch success alone is not native task completion. Source/PM/native boundary unavailable leaves this original route incomplete with exact prerequisite."
   }
 }

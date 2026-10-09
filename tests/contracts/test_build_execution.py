@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import base64
 import tempfile
 import time
@@ -18,6 +19,19 @@ from hermes_installer.authority.build_execution import (
 from hermes_installer.authority.types import (
     AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
 )
+
+
+def _test_temp_parent():
+    # Darwin exposes its root-owned sticky temp directory at /private/tmp; Linux
+    # uses /tmp. Never make Linux tests depend on a Darwin-only alias.
+    return "/private/tmp" if sys.platform == "darwin" else "/tmp"
+
+
+@pytest.mark.parametrize(("platform_name", "expected"),
+                         [("darwin", "/private/tmp"), ("linux", "/tmp")])
+def test_temp_parent_uses_only_the_platform_specific_sticky_root(monkeypatch, platform_name, expected):
+    monkeypatch.setattr(sys, "platform", platform_name)
+    assert _test_temp_parent() == expected
 
 
 def constraints():
@@ -37,6 +51,8 @@ class Profile:
     target_id = "colibri-source-build:start"
     generation = "generation-1"
     service_generation_digest = "a" * 64
+    build_service_enrollment_id = "builder-service-1"
+    build_service_generation = "service-generation-1"
     source_artifact_id = "colibri-source"
     source_sha256 = "1" * 64
     toolchain_artifact_id = "aarch64-sysroot"
@@ -108,7 +124,7 @@ def make_store(path: Path):
 
 
 def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_returns_receipt():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
         output_root.mkdir(mode=0o700)
@@ -139,9 +155,13 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
                                        path=path, tree_files=(), tree_manifest_sha256=manifest)
 
         class Catalog:
-            def resolve(self, target_id, generation):
+            def resolve_service(self, target_id, generation, services):
                 assert target_id == profile.target_id and generation == profile.generation
-                return profile
+                assert services is service_catalog
+                return profile, SimpleNamespace(
+                    enrollment_id=profile.build_service_enrollment_id,
+                    generation=profile.build_service_generation,
+                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
 
         class Launcher:
             seen = False
@@ -182,9 +202,11 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
             nonce="nonce-1", context_digest="b" * 64, signature="sig",
             enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
         launcher = Launcher()
+        service_catalog = object()
         service = RootBuildExecutionService(
             build_catalog=Catalog(), artifact_catalog=Artifacts(), artifact_staging_root=base,
             launcher=launcher, fact_inspector=FixtureInspector(), authority_key=b"k" * 32,
+            service_catalog=service_catalog,
             store=make_store(base / "cas"), expected_uid=os.getuid())
         response = service(context=context, authorization=authorization, payload=payload,
                            timeout=60, peer_pid=42, peer_pidfd=7, cancelled=lambda: False)
@@ -199,7 +221,7 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
 
 
 def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activating_receipt():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
         output_root.mkdir(mode=0o700)
@@ -226,8 +248,11 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
                                        tree_manifest_sha256=hashlib.sha256(b"[]").hexdigest())
 
         class Catalog:
-            def resolve(self, _target_id, _generation):
-                return profile
+            def resolve_service(self, _target_id, _generation, _services):
+                return profile, SimpleNamespace(
+                    enrollment_id=profile.build_service_enrollment_id,
+                    generation=profile.build_service_generation,
+                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
 
         class Launcher:
             def run_selected_build(self, inputs, **_kwargs):
@@ -256,10 +281,12 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
             nonce="nonce-1", context_digest="b" * 64, signature="sig",
             enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
         store = make_store(base / "cas")
+        service_catalog = object()
         service = RootBuildExecutionService(
             build_catalog=Catalog(), artifact_catalog=Artifacts(), artifact_staging_root=base,
             launcher=Launcher(), fact_inspector=FixtureInspector(corrupt=True),
-            authority_key=b"k" * 32, store=store, expected_uid=os.getuid())
+            authority_key=b"k" * 32, service_catalog=service_catalog,
+            store=store, expected_uid=os.getuid())
 
         with pytest.raises(AuthorityDenied):
             service(context=context, authorization=authorization, payload=payload,
@@ -277,7 +304,7 @@ def filled_output(root):
 
 
 def test_dynamic_output_manifest_is_root_hashed_and_atomically_resolved():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
         output_root.mkdir(mode=0o700)
@@ -302,7 +329,7 @@ def test_dynamic_output_manifest_is_root_hashed_and_atomically_resolved():
 
 
 def test_root_fact_mismatch_or_inspector_error_never_publishes_receipt():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -321,7 +348,7 @@ def test_root_fact_mismatch_or_inspector_error_never_publishes_receipt():
     {"kernel_limits": {"PrivateNetwork": "no"}},
 ])
 def test_no_receipt_for_nonterminal_or_unproven_process(changes):
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -334,7 +361,7 @@ def test_no_receipt_for_nonterminal_or_unproven_process(changes):
 
 @pytest.mark.parametrize("mutation", ["missing", "extra", "symlink", "oversize"])
 def test_output_scanner_rejects_incomplete_or_unbounded_tree(mutation):
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -354,7 +381,7 @@ def test_output_scanner_rejects_incomplete_or_unbounded_tree(mutation):
 
 
 def test_cancellation_and_tampered_receipt_or_cas_object_fail_closed():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -421,7 +448,7 @@ def elf64_aarch64(needed=()):
 
 
 def test_linux_fact_inspector_parses_aarch64_elf_dependencies_and_rejects_x86():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         root = Path(temp)
         path = root / "colibri"
         path.write_bytes(elf64_aarch64(("libgomp.so.1", "libm.so.6", "libc.so.6")))
@@ -444,7 +471,7 @@ def test_linux_fact_inspector_parses_aarch64_elf_dependencies_and_rejects_x86():
 
 
 def test_linux_fact_inspector_hashes_actual_root_owned_dependency_closure():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         root = Path(temp)
         expected = {}
         for name in ("libgomp.so.1", "libm.so.6", "libc.so.6"):
