@@ -86,9 +86,9 @@ class BootstrapTests(unittest.TestCase):
             data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
             runner=FakeRunner(); boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=runner,expected_script_blob=git_blob_sha1(SCRIPT))
             boot.install(include_desktop=False)
-            desktop_before=sum(1 for call in runner.calls if "include-desktop" in call[0])
+            desktop_before=sum(1 for call in runner.calls if "--include-desktop" in call[0])
             report=boot.install(include_desktop=True)
-            desktop_after=sum(1 for call in runner.calls if "include-desktop" in call[0])
+            desktop_after=sum(1 for call in runner.calls if "--include-desktop" in call[0])
             self.assertTrue(report.desktop_built)
             self.assertEqual(desktop_after,desktop_before+1)
     def test_manifest_change_stops_before_any_stage(self):
