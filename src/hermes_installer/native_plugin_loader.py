@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import contextlib
+import functools
 import importlib.util
 import inspect
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -36,10 +38,139 @@ _MODULE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z", r
 _MAX_ENTRYPOINT_BYTES = 32 * 1024 * 1024
 _MAX_CLOSURE_FILES = 200_000
 _MAX_CLOSURE_BYTES = 4 * 1024 * 1024 * 1024
+_MAX_PLUGIN_RESULT_BYTES = 2 * 1024 * 1024
+_MAX_PLUGIN_RESULT_NODES = 50_000
+_MAX_PLUGIN_RESULT_DEPTH = 64
+_UNSAFE_PLUGIN_RESULT = (
+    '{"error":"Native plugin result could not be represented safely.",'
+    '"error_type":"native_plugin_result_contract"}'
+)
 
 
 class NativePluginLoadUnavailable(PermissionError):
     """Selected package mount, manifest, or adapter source is unavailable."""
+
+
+def _validate_plugin_result_tree(value: Any) -> None:
+    """Bound and validate JSON results before adapting them to Hermes' tool contract."""
+    nodes = 0
+    active: set[int] = set()
+
+    def visit(item: Any, depth: int) -> None:
+        nonlocal nodes
+        nodes += 1
+        if nodes > _MAX_PLUGIN_RESULT_NODES or depth > _MAX_PLUGIN_RESULT_DEPTH:
+            raise ValueError("result structure exceeds its bound")
+        if item is None or type(item) is bool:
+            return
+        if type(item) is str:
+            if len(item) > _MAX_PLUGIN_RESULT_BYTES:
+                raise ValueError("result string exceeds its bound")
+            item.encode("utf-8")
+            return
+        if type(item) is int:
+            if item.bit_length() > _MAX_PLUGIN_RESULT_BYTES * 4:
+                raise ValueError("result integer exceeds its bound")
+            return
+        if type(item) is float:
+            if not math.isfinite(item):
+                raise ValueError("result float is not finite")
+            return
+        if type(item) not in {dict, list}:
+            raise ValueError("result contains an unsupported value")
+
+        identity = id(item)
+        if identity in active:
+            raise ValueError("result contains a cycle")
+        active.add(identity)
+        try:
+            if type(item) is dict:
+                for key, child in item.items():
+                    if type(key) is not str:
+                        raise ValueError("result object key is not text")
+                    if len(key) > _MAX_PLUGIN_RESULT_BYTES:
+                        raise ValueError("result object key exceeds its bound")
+                    key.encode("utf-8")
+                    visit(child, depth + 1)
+            else:
+                for child in item:
+                    visit(child, depth + 1)
+        finally:
+            active.remove(identity)
+
+    visit(value, 0)
+
+
+def _plugin_tool_result(value: Any) -> Any:
+    """Map reviewed structured adapter output to Hermes' bounded string contract."""
+    if isinstance(value, str):
+        return value
+    if type(value) not in {dict, list, int, float, bool, type(None)}:
+        return _UNSAFE_PLUGIN_RESULT
+    if type(value) is dict and value.get("_multimodal") is True and isinstance(value.get("content"), list):
+        try:
+            _validate_plugin_result_tree(value)
+            encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                 separators=(",", ":"), allow_nan=False).encode("utf-8")
+            if len(encoded) > _MAX_PLUGIN_RESULT_BYTES:
+                return _UNSAFE_PLUGIN_RESULT
+        except (TypeError, ValueError, UnicodeError, RecursionError):
+            return _UNSAFE_PLUGIN_RESULT
+        # Hermes recognizes this exact envelope and passes its typed content
+        # through to multimodal handling; do not flatten it to ordinary text.
+        return value
+    try:
+        _validate_plugin_result_tree(value)
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode("utf-8")
+        if len(encoded) > _MAX_PLUGIN_RESULT_BYTES:
+            return _UNSAFE_PLUGIN_RESULT
+        return encoded.decode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        # Do not include handler values or serializer exceptions in the tool
+        # result; they may contain credentials or private effect output.
+        return _UNSAFE_PLUGIN_RESULT
+
+
+class _NativePluginContextResultAdapter:
+    """Preserve PluginContext APIs while enforcing Hermes' supported tool result types."""
+
+    __slots__ = ("__context",)
+
+    def __init__(self, context: object) -> None:
+        object.__setattr__(self, "_NativePluginContextResultAdapter__context", context)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(object.__getattribute__(self, "_NativePluginContextResultAdapter__context"), name)
+
+    def register_tool(self, name: str, toolset: str, schema: dict, handler: Any,
+                      check_fn: Any = None, requires_env: Any = None, is_async: bool = False,
+                      description: str = "", emoji: str = "", override: bool = False) -> Any:
+        if not callable(handler):
+            raise NativePluginLoadUnavailable("selected native tool handler is unavailable")
+        if is_async:
+            @functools.wraps(handler)
+            async def bounded_handler(*args: Any, **kwargs: Any) -> Any:
+                return _plugin_tool_result(await handler(*args, **kwargs))
+        else:
+            @functools.wraps(handler)
+            def bounded_handler(*args: Any, **kwargs: Any) -> Any:
+                result = handler(*args, **kwargs)
+                if inspect.isawaitable(result):
+                    close = getattr(result, "close", None)
+                    if callable(close):
+                        close()
+                    return _UNSAFE_PLUGIN_RESULT
+                return _plugin_tool_result(result)
+
+        context = object.__getattribute__(self, "_NativePluginContextResultAdapter__context")
+        return context.register_tool(
+            name=name, toolset=toolset, schema=schema, handler=bounded_handler,
+            check_fn=check_fn, requires_env=requires_env, is_async=is_async,
+            description=description, emoji=emoji, override=override,
+        )
 
 
 def selected_mount_target(package_id: str, profile_id: str, generation: str,
@@ -445,7 +576,7 @@ def predeclare_selected_native_package(plugin_manager: object, package: Selected
                 setattr(ctx, "plugin_effects", runtime_context.plugin_effects)
             except Exception:
                 raise NativePluginLoadUnavailable("pinned Hermes PluginContext cannot accept the trusted facade") from None
-            _adapter.register(ctx, runtime_context)
+            _adapter.register(_NativePluginContextResultAdapter(ctx), runtime_context)
 
         module.register = register
         prepared[adapter_id] = module
