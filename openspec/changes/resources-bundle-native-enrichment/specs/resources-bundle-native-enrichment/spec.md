@@ -331,3 +331,10 @@ The implementation SHALL use v48 actual selected root transport capture and fixe
 #### Scenario: Worker presents an SDK message object
 - **WHEN** no actual retained root transport/account/event proof exists
 - **THEN** no source context is minted and channel effects remain unavailable with exact trusted setup prerequisite
+
+### Requirement: Explicit root registry phases
+The implementation SHALL distinguish v50 draft/bound identity selection and evidence lookup/one-use stdin consumption.
+
+#### Scenario: Source is queued but not delivered
+- **WHEN** root validates initial input receipt
+- **THEN** queued source alone cannot permit stdin and actual producer delivery/current binding is required

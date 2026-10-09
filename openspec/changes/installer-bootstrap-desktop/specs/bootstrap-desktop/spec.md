@@ -415,3 +415,10 @@ The implementation SHALL resolve the exact v49 immutable identity template throu
 #### Scenario: Only a session digest exists
 - **WHEN** identity policy revision is needed
 - **THEN** root resolves actual verified template bytes rather than inventing a module constant or trusting a caller revision
+
+### Requirement: Explicit root registry phases
+The implementation SHALL distinguish v50 draft/bound identity selection and evidence lookup/one-use stdin consumption.
+
+#### Scenario: Source is queued but not delivered
+- **WHEN** root validates initial input receipt
+- **THEN** queued source alone cannot permit stdin and actual producer delivery/current binding is required
