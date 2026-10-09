@@ -250,3 +250,5 @@ The implementation SHALL use v48 actual selected root transport capture and fixe
 #### Scenario: Worker presents an SDK message object
 - **WHEN** no actual retained root transport/account/event proof exists
 - **THEN** no source context is minted and channel effects remain unavailable with exact trusted setup prerequisite
+
+Composio selected trigger derivation v77: `plans/amendments/2026-10-10-composio-trigger-artifact-exchange-derivation-v77.md`; existing RG-F03/R0060/RB-T08 gates remain open and account setup proof stays distinct.

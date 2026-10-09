@@ -15,6 +15,7 @@ from hermes_installer.authority.root_controller_custody import (
     RootControllerRoleEnrollment,
     RootControllerRoleModuleRegistry,
     RootControllerRoleResolver,
+    RootSelectedIngressBinding,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
@@ -127,6 +128,7 @@ class RootControllerCustodyTests(unittest.TestCase):
                 artifact_id, Path("/usr/bin/python3"), "b" * 64),
             loaded_role_registry=self.registry,
             current_generation_digest=lambda: self.current_generation,
+            selected_ingress_binding_resolver=lambda role_id, issuer_id, backend_id: self._ingress_binding(),
             monotonic=lambda: self.now,
         )
 
@@ -153,6 +155,25 @@ class RootControllerCustodyTests(unittest.TestCase):
             expires_monotonic=self.now + 20,
         )
 
+    def _ingress_binding(self):
+        observer = SimpleNamespace(
+            observer_enrollment_id="timer-observer", source_kind="schedule-event",
+            channel_id="timer-issuer", profile_id="resource-profile",
+            principal_id="resource-principal", capture_schema_id="timer-input-v1")
+        issuer = SimpleNamespace(
+            issuer_channel_id="timer-issuer", observer_enrollment_id="timer-observer",
+            producer_profile_id="resource-profile", capture_schema_id="timer-input-v1")
+        backend = SimpleNamespace(
+            backend_id="selected-backend", source_issuer_channel_id="timer-issuer",
+            observer_enrollment_id="timer-observer", operation="resource.cron.run",
+            profile_id="resource-profile", principal_id="resource-principal",
+            generation="c" * 64)
+        return RootSelectedIngressBinding(
+            role=self.role, source_issuer=issuer, source_observer=observer, backend=backend,
+            resource_generation="c" * 64, service_generation_digest=GENERATION,
+            authority_epoch="epoch-3", selected_ingress_binding_id="timer-binding-1",
+            expires_monotonic=self.now + 20)
+
     def test_event_resolves_actual_role_and_owned_duplicate_pidfd(self):
         custody = self.resolver.resolve_for_event("root-event-opaque-handle", "daily-report")
         self.assertEqual(custody.pid, os.getpid())
@@ -164,6 +185,53 @@ class RootControllerCustodyTests(unittest.TestCase):
         custody.close()
         self.assertIn(caller_fd, self.inspector.live)
         self.inspector.close_pidfd(caller_fd)
+
+    def test_selected_ingress_custody_is_resolved_before_event_or_receipt(self):
+        before = set(self.inspector.live)
+        proof = self.resolver.resolve_selected_ingress_controller(
+            "timer-role", "timer-issuer", "selected-backend")
+        self.assertEqual(proof.schema, 1)
+        self.assertEqual(proof.controller_role_id, "timer-role")
+        self.assertEqual(proof.source_issuer_id, "timer-issuer")
+        self.assertEqual(proof.backend_enrollment_id, "selected-backend")
+        self.assertEqual(proof.resource_generation, "c" * 64)
+        self.assertEqual(proof.authority_epoch, "epoch-3")
+        self.assertEqual(proof.role_artifact_id, "resource-controller-role")
+        self.assertEqual(proof.role_artifact_sha256, ROLE_SHA)
+        self.assertEqual(proof.live_peer_identity.start_time_ticks, self.inspector.start)
+        self.assertTrue(proof.namespace_id.startswith("ns1:"))
+        self.assertNotEqual(proof.pidfd, self.inspector.identity.pidfd)
+        self.assertTrue(proof.revalidate())
+        self.resolver.release_ingress_proof(proof.proof_handle)
+        self.assertFalse(proof.revalidate())
+        proof.close()
+        self.assertEqual(before, self.inspector.live)
+
+    def test_selected_ingress_forged_join_and_expiry_are_denied(self):
+        original = self.resolver._selected_ingress_binding_resolver
+        self.resolver._selected_ingress_binding_resolver = lambda *_: replace(
+            self._ingress_binding(), selected_ingress_binding_id="")
+        before = set(self.inspector.live)
+        with self.assertRaises(AuthorityDenied):
+            self.resolver.resolve_selected_ingress_controller(
+                "timer-role", "timer-issuer", "selected-backend")
+        self.assertEqual(before, self.inspector.live)
+        self.resolver._selected_ingress_binding_resolver = original
+        self.resolver._selected_ingress_binding_resolver = lambda *_: replace(
+            self._ingress_binding(), expires_monotonic=self.now)
+        with self.assertRaises(AuthorityDenied):
+            self.resolver.resolve_selected_ingress_controller(
+                "timer-role", "timer-issuer", "selected-backend")
+
+    def test_selected_ingress_proof_is_revoked_with_active_generation(self):
+        before = set(self.inspector.live)
+        proof = self.resolver.resolve_selected_ingress_controller(
+            "timer-role", "timer-issuer", "selected-backend")
+        self.current_generation = "e" * 64
+        self.assertFalse(proof.revalidate())
+        self.assertNotIn(proof.proof_handle, self.resolver._ingress_proofs)
+        proof.close()
+        self.assertEqual(before, self.inspector.live)
 
     def test_forged_observer_or_backend_join_is_denied_before_pidfd_open(self):
         self.binding = self._binding()
