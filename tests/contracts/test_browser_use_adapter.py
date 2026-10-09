@@ -30,6 +30,7 @@ class BrowserUseAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((), spec.credential_references)
         self.assertEqual(2048, spec.memory_limit_mb)
         self.assertIn("#action", spec.argv[2])
+        self.assertIn("chromium_sandbox=True", spec.argv[2])
         self.assertIn(("BROWSER_USE_HEADLESS", "1"), spec.environment)
 
     def test_non_loopback_or_url_mutation_is_denied(self):

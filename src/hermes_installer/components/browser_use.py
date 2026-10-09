@@ -24,7 +24,9 @@ _PROBE = r'''import asyncio, json, sys
 from browser_use import Browser, BrowserProfile
 
 async def main():
-    browser = Browser(browser_profile=BrowserProfile(headless=True, enable_default_extensions=False))
+    browser = Browser(browser_profile=BrowserProfile(
+        headless=True, enable_default_extensions=False, chromium_sandbox=True
+    ))
     try:
         await browser.start()
         page = await browser.new_page(sys.argv[1])

@@ -73,6 +73,7 @@ jobs:
               browser = Browser(browser_profile=BrowserProfile(
                   headless=True,
                   enable_default_extensions=False,
+                  chromium_sandbox=True,
               ))
               try:
                   await browser.start()
