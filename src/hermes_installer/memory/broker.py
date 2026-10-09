@@ -10,9 +10,10 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol
 
-from hermes_installer.authority.types import EffectAuthorization, HostContext
+if TYPE_CHECKING:
+    from hermes_installer.authority.types import EffectAuthorization, HostContext
 from hermes_installer.state import OwnedRoot, process_lock
 
 MAX_REQUEST = 256 * 1024
@@ -399,7 +400,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     raise BrokerUnavailable("provider internal extraction/embedding path is not private eligible")
                 request = {"record_id":_text(body.get("record_id"),"record id",256),
                     "source":_text(body.get("source"),"source",512),"facts":facts,"embeddings":vectors,
-                    "lineage":context.lineage_hash}
+                    "lineage":context.lineage_hash,"owner_generation":generation}
                 if request["source"].startswith("memory:"):
                     raise BrokerDenied("recursive memory ingestion denied")
             elif action == "search":
@@ -499,6 +500,7 @@ class MemoryJobWorker:
             self._owner(job)
             event=json.loads(job["event"].decode("utf-8"))
             source_wire=bytes(job["source_context"])
+            from hermes_installer.authority.types import HostContext
             source=HostContext.from_wire(json.loads(source_wire.decode("utf-8")))
             if source.profile_id!=job["profile_id"] or source.namespace_id!=job["namespace_id"]:
                 raise BrokerDenied("queued signed source context scope mismatch")
@@ -514,7 +516,8 @@ class MemoryJobWorker:
             vectors=_vectors(embedded.get("embeddings"),len(facts))
             stored=self._perform(job,source_wire,"capture","memory-capture",
                 {"schema":1,"record_id":job["id"],"source":record["source"],
-                 "facts":facts,"embeddings":vectors,"provenance":record["provenance"]})
+                 "facts":facts,"embeddings":vectors,"provenance":record["provenance"],
+                 "owner_generation":job["owner_generation"]})
             self._owner(job)
             self.queue.finish(job,{"capture_receipt":stored.get("receipt_id"),"fact_count":len(facts)})
         except BrokerDenied:
@@ -538,6 +541,12 @@ class MemoryJobWorker:
             provider_id=str(job["provider"]),owner_generation=int(job["owner_generation"]),
             action=action,capability=CAPABILITIES[action],payload=raw,timeout=15.0,
             cancelled=self.cancelled)
+        status=getattr(result,"status",200)
+        if not 200 <= int(status) < 300:
+            if int(status) in {401,403,404}:
+                raise BrokerDenied("background policy or target denied")
+            raise BrokerUnavailable("background stage failed")
+        result=getattr(result,"body",result)
         parsed=_result(result)
         if parsed.get("error"):
             if parsed.get("error")=="policy_revoked":raise BrokerDenied("background policy revoked")
