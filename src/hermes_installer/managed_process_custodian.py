@@ -1159,7 +1159,12 @@ class ManagedProcessEffectHandler:
     def _remove_native_staging(stage: Path) -> None:
         if stage.parent != Path("/run/hermes-installer/native-staging"):
             raise AuthorityDenied("native.cleanup", "native staging path is outside fixed custody")
-        info = stage.lstat()
+        try:
+            info = stage.lstat()
+        except FileNotFoundError:
+            # Several bounded preparation failures unwind through both their
+            # local exception branch and the outer launch-finally block.
+            return
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
             raise AuthorityDenied("native.cleanup", "native staging tree custody changed")
         ManagedProcessEffectHandler._umount_native_staging(stage)
