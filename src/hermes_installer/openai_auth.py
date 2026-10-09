@@ -10,6 +10,7 @@ import hashlib
 import secrets
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Mapping, Protocol
 from urllib.parse import urlencode, urlsplit, parse_qs
@@ -158,9 +159,17 @@ class ChatGPTPlanAuth:
         if not isinstance(attempt, OAuthAttempt) or attempt.host_id != self.host_id:
             raise OAuthAttemptError("Pending OAuth attempt does not belong to this host")
         _validate_callback_uri(attempt.callback_uri)
-        parsed = urlsplit(callback_url)
-        if (parsed.scheme, parsed.hostname, parsed.port, parsed.path) != (
-                "http", "127.0.0.1", urlsplit(attempt.callback_uri).port, CALLBACK_PATH):
+        try:
+            parsed = urlsplit(callback_url)
+            expected = urlsplit(attempt.callback_uri)
+            callback_port = parsed.port
+            expected_port = expected.port
+        except (TypeError, ValueError):
+            raise OAuthAttemptError("OAuth callback endpoint is invalid") from None
+        if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1"
+                or callback_port != expected_port or parsed.path != CALLBACK_PATH
+                or parsed.username or parsed.password
+                or parsed.netloc != f"127.0.0.1:{expected_port}"):
             raise OAuthAttemptError("OAuth callback endpoint does not match the pending request")
         fields = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
         if any(len(v) != 1 for v in fields.values()):
