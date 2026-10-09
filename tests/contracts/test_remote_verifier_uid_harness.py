@@ -33,7 +33,13 @@ HELPER = Path(__file__).resolve().parents[1] / "fixtures" / "remote_verifier_uid
 
 
 def _free_ids():
-    used_uids = {entry.st_uid for entry in Path("/proc").iterdir() if entry.name.isdigit()}
+    used_uids = set()
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            try:
+                used_uids.add(entry.stat().st_uid)
+            except (FileNotFoundError, PermissionError):
+                continue
     used_gids = set()
     try:
         for line in Path("/etc/group").read_text(encoding="utf-8").splitlines():
