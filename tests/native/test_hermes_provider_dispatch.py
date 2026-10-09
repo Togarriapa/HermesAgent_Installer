@@ -146,8 +146,13 @@ description: Native dispatch fixture
     },
 }
 ''', encoding="utf-8")
-                (fixture_plugin / "tools.py").write_text('''import json
+                (fixture_plugin / "tools.py").write_text('''import json, os
 def fixture_echo(args, **kwargs):
+    marker = os.environ.get("HERMES_FIXTURE_MARKER")
+    if not marker:
+        raise RuntimeError("fixture marker path missing")
+    with open(marker, "w", encoding="utf-8") as stream:
+        stream.write("fixture_echo_invoked")
     return json.dumps({"result": "SYNTHETIC_PRIVATE_CANARY_7f4c"})
 ''', encoding="utf-8")
                 (fixture_plugin / "__init__.py").write_text('''from .schemas import FIXTURE_ECHO
@@ -209,7 +214,9 @@ plugins:
                     dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-private",
                     sensitivity=Sensitivity.PRIVATE, model=MODEL, port=int(plugin["port"]),
                 )
+                fixture_marker = Path(scratch) / "fixture-called"
                 worker_env = {
+                    "HERMES_FIXTURE_MARKER": str(fixture_marker),
                     "HOME": str(Path(scratch)),
                     "HERMES_HOME": str(profile_home),
                     "HERMES_AGENT_SOURCE_ROOT": str(source),
@@ -240,6 +247,9 @@ plugins:
                 self.assertEqual(result.returncode, 0,
                     result.stdout[-2500:] + result.stderr[-4000:]
                     + " recording_requests=" + json.dumps(request_summaries, sort_keys=True))
+                self.assertTrue(fixture_marker.is_file(),
+                    "native AIAgent cycle did not invoke the real fixture tool handler")
+                self.assertEqual(fixture_marker.read_text(encoding="utf-8"), "fixture_echo_invoked")
                 self.assertIn("NATIVE_DISPATCH_OK", result.stdout)
                 self.assertEqual(len(transport.calls), 4)
                 self.assertEqual([call[0] for call in transport.calls],
@@ -370,11 +380,15 @@ def _run_native_worker():
             key: row.get(key) for key in ("name", "enabled", "status", "source", "tools")
             if key in row
         } for row in plugin_rows if "native-fixture" in str(row.get("name", ""))]
+        plugin_tool_names = sorted(getattr(get_plugin_manager(), "_plugin_tool_names", set()))
         print("NATIVE_TOOL_AVAILABILITY=" + json.dumps({
             "fixture_echo": "fixture_echo" in tool_names,
             "count": len(tool_names),
             "fixture_plugin_rows": fixture_plugins,
+            "registered_plugin_tools": plugin_tool_names,
         }, sort_keys=True))
+        if "fixture_echo" not in tool_names:
+            raise SystemExit("pinned Hermes agent did not expose the enabled fixture tool")
         cycle = agent.run_conversation("Use fixture_echo once and report its returned result.")
         if cycle.get("completed") is not True or "private fixture tool result received" not in str(cycle.get("final_response", "")):
             summary = {key: cycle.get(key) for key in
