@@ -320,6 +320,7 @@ class MCPRegistryImplementation:
             return invoke_public_registry_read(
                 runtime_context, service_id="registry:modelcontextprotocol", query=query,
                 limit=_bounded_page(fields.get("limit"), 30), cursor=_cursor(fields.get("cursor")),
+                action_id="discover-servers", invocation_arguments=fields,
                 intent="Discover public MCP server metadata without installing or executing it",
             )
 
@@ -332,6 +333,8 @@ class MCPRegistryImplementation:
             return invoke_public_registry_read(
                 runtime_context, service_id="registry:modelcontextprotocol", query=query,
                 limit=20, cursor=None,
+                action_id=("inspect-server-metadata" if "version" in fields
+                           else "inspect-versions"), invocation_arguments=fields,
                 intent="Inspect public MCP server metadata and version history only",
             )
 
@@ -381,6 +384,7 @@ class Agent37DiscoveryImplementation:
             return invoke_public_registry_read(
                 runtime_context, service_id="registry:agent37", query=query,
                 limit=_bounded_page(fields.get("limit"), 30), cursor=_cursor(fields.get("cursor")),
+                action_id="discover-skill-candidates", invocation_arguments=fields,
                 intent="Discover public Agent37 skill metadata; do not import or execute candidates",
             )
 
@@ -389,6 +393,7 @@ class Agent37DiscoveryImplementation:
             return invoke_public_registry_read(
                 runtime_context, service_id="registry:agent37", query={"id": fields.get("skill_id")},
                 limit=1, cursor=None,
+                action_id="inspect-public-metadata", invocation_arguments=fields,
                 intent="Inspect a public Agent37 metadata record without importing its skill content",
             )
 
