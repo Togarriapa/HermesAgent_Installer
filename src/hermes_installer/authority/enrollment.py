@@ -402,6 +402,52 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
     return item
 
 
+def _verify_active_process_rules(service_profiles: Mapping[str, Any],
+                                authority_profiles: Mapping[str, Any],
+                                bindings: Mapping[int, Any],
+                                rules: Mapping[tuple[str, str, str], Any]) -> None:
+    """Require one exact authority rule for every root-registered process verb."""
+    if set(service_profiles) != set(authority_profiles):
+        raise ValueError("active service generations and authority process profiles differ")
+    binding_by_profile: dict[str, Any] = {}
+    for binding in bindings.values():
+        if binding.profile_id in binding_by_profile:
+            raise ValueError("authority process profile principal is duplicated")
+        binding_by_profile[binding.profile_id] = binding
+    process_operations = (
+        ("hermes-profile-invoke", "process.start"),
+        ("hermes-process-control", "process.status"),
+        ("hermes-process-control", "process.read"),
+        ("hermes-process-control", "process.write"),
+        ("hermes-process-control", "process.stop"),
+        ("hermes-process-control", "process.inspect"),
+    )
+    seen_targets: set[tuple[str, str]] = set()
+    for profile_id, service in service_profiles.items():
+        authority_profile = authority_profiles[profile_id]
+        binding = binding_by_profile.get(profile_id)
+        if (authority_profile.owner_uid != service.service_uid
+                or authority_profile.owner_gid != service.service_gid
+                or authority_profile.generation != service.generation
+                or binding is None or binding.principal_id != service.principal_id
+                or binding.profile_id != service.profile_id
+                or binding.namespace_id != service.namespace_identity
+                or binding.uid != service.service_uid):
+            raise ValueError("service generation does not join its authority process identity")
+        for capability, operation in process_operations:
+            target = service.operation_targets.get(operation)
+            if not isinstance(target, str) or not target:
+                raise ValueError("active service generation omits a registered process target")
+            handler_key = (operation, target)
+            if handler_key in seen_targets:
+                raise ValueError("managed process target is duplicated")
+            seen_targets.add(handler_key)
+            rule = rules.get((capability, operation, target))
+            if (rule is None or rule.operation != operation or rule.recipient is not None
+                    or capability not in binding.capabilities):
+                raise ValueError("managed process handler has no exact authority rule")
+
+
 def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                               vault: RootCredentialVault | None = None,
                               expected_uid: int = 0) -> ProtectedEnrollment:
@@ -594,20 +640,6 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
     primary_gids = [process_profiles[binding.profile_id].owner_gid for binding in bindings.values()]
     if len(primary_gids) != len(set(primary_gids)) or any(type(gid) is not int or gid <= 0 for gid in primary_gids):
         raise AuthorityDenied("enrollment.principal", "socket principals require unique protected primary groups")
-    from hermes_installer.managed_process_custodian import process_control_target, process_start_target
-    for profile in process_profiles.values():
-        required_process_rules = [
-            ("hermes-profile-invoke", "process.start", process_start_target(profile)),
-            ("hermes-process-control", "process.inspect", f"{profile.profile_id}:inspect"),
-            *(("hermes-process-control", operation, process_control_target(profile, operation))
-              for operation in ("process.status", "process.read", "process.write", "process.stop")),
-        ]
-        for capability, operation, target in required_process_rules:
-            rule = rules.get((capability, operation, target))
-            if (rule is None or rule.operation != operation or rule.recipient is not None
-                    or any(capability not in binding.capabilities
-                           for binding in bindings.values() if binding.profile_id == profile.profile_id)):
-                raise AuthorityDenied("enrollment.process", "managed process verb is not explicitly enrolled")
     catalogs = {}
     for field in ("provider_enrollments", "mcp_services", "memory_providers"):
         entries = root[field]
@@ -836,6 +868,36 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                 memory_enrollments[key] = memory
         except (ImportError, TypeError, ValueError, KeyError):
             raise AuthorityDenied("enrollment.memory", "protected memory service generation is invalid") from None
+    # Process effect rules are joined to the active digest-bound service
+    # snapshot, not targets reconstructed from caller journal/profile paths.
+    # The root manager registers precisely these six handlers per profile.
+    try:
+        from hermes_installer.protected_enrollment import ProtectedEnrollmentCatalog
+        generation_catalog = ProtectedEnrollmentCatalog.from_verified_records(
+            service_generations["service_records"],
+            protected_digest=service_generations["generation_digest"],
+            expected_uid=0,
+            native_packages=service_generations["native_packages"],
+            memory_enrollments=memory_enrollments,
+            parameter_schemas=service_generations["operation_parameter_schemas"],
+        )
+        generation_profiles = {}
+        for service_record in service_generations["service_records"]:
+            service = generation_catalog.resolve(
+                service_record["enrollment_id"], service_record["generation"],
+            )
+            if service.profile_id in generation_profiles:
+                raise ValueError("service profile is duplicated")
+            authority_profile = process_profiles.get(service.profile_id)
+            if (authority_profile is None
+                    or authority_profile.owner_uid != service.service_uid
+                    or authority_profile.owner_gid != service.service_gid
+                    or authority_profile.generation != service.generation):
+                raise ValueError("service generation does not join its authority process identity")
+            generation_profiles[service.profile_id] = service
+        _verify_active_process_rules(generation_profiles, process_profiles, bindings, rules)
+    except (ImportError, AttributeError, KeyError, PermissionError, TypeError, ValueError):
+        raise AuthorityDenied("enrollment.process", "managed process targets do not join the active service generation") from None
     return ProtectedEnrollment(
         key_id, bindings, rules, policy, process_profiles,
         catalogs["provider_enrollments"], catalogs["mcp_services"],
