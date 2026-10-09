@@ -44,6 +44,27 @@ jobs:
           uv lock --python "$TARGET_PYTHON"
           uv lock --locked --python "$TARGET_PYTHON"
           BROWSER_USE_DISABLE_EXTENSIONS=1 uv run --locked --python "$TARGET_PYTHON" --no-dev browser-use install
+          # Preserve Chromium's sandbox in hosted CI. Prefer its unprivileged
+          # user namespace; use only the matching pinned browser's SUID helper
+          # when this runner blocks unprivileged namespaces.
+          if unshare --user --map-root-user true 2>/dev/null; then
+            printf 'CHROMIUM_SANDBOX_MODE=user-namespace\n'
+          else
+            sandbox_helper="$(find "$HOME/.cache/ms-playwright" -type f \( -name chrome_sandbox -o -name chrome-sandbox \) -print -quit)"
+            if [[ -n "$sandbox_helper" ]]; then
+              sandbox_path="/usr/local/sbin/hermes-browser-use-chrome-sandbox"
+              sudo install -o root -g root -m 4755 "$sandbox_helper" "$sandbox_path"
+              export CHROME_DEVEL_SANDBOX="$sandbox_path"
+              printf 'CHROMIUM_SANDBOX_MODE=setuid-helper\n'
+            elif [[ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)" == "1" ]]; then
+              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+              unshare --user --map-root-user true
+              printf 'CHROMIUM_SANDBOX_MODE=apparmor-user-namespace\n'
+            else
+              echo 'No supported sandbox path: user namespaces unavailable and no pinned Chromium SUID helper was shipped.' >&2
+              exit 1
+            fi
+          fi
           BROWSER_USE_DISABLE_EXTENSIONS=1 uv run --locked --python "$TARGET_PYTHON" --no-dev --no-sync python - <<'PY'
           import asyncio
           import platform
