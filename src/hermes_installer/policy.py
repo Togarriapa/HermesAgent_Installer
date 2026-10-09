@@ -158,6 +158,22 @@ class Transport(Protocol):
                  timeout: float, trace_id: str, cancelled: Callable[[], bool]) -> ProviderResponse: ...
 
 
+def request_requires_tools(payload: bytes) -> bool:
+    """Inspect the chat envelope so a caller flag cannot hide tool use."""
+    try:
+        value = json.loads(payload)
+    except (TypeError, ValueError, UnicodeDecodeError):
+        raise PolicyDenied("request.format", "Provider request must be valid JSON") from None
+    if not isinstance(value, dict) or not isinstance(value.get("messages"), list):
+        raise PolicyDenied("request.format", "Provider request must contain a messages array")
+    if value.get("tools") not in (None, []):
+        return True
+    if value.get("tool_choice") not in (None, "none"):
+        return True
+    return any(isinstance(message, dict) and bool(message.get("tool_calls"))
+               for message in value["messages"])
+
+
 def normalize_chat_request(payload: bytes, model: str, output_token_limit: int) -> bytes:
     """Override caller-controlled model/token fields before any provider transport."""
     if not isinstance(payload, bytes) or len(payload) > 1_048_576:
@@ -410,8 +426,14 @@ class Dispatcher:
                 raise PolicyDenied("dispatch.cancelled", "Request was cancelled")
             if started >= deadline:
                 raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
-            capability = "tool-call" if tool_request else "inference"
-            initial_authorization = self._authorize(context, capability)
+            requires_tools = request_requires_tools(payload)
+            if not isinstance(tool_request, bool) or tool_request != requires_tools:
+                raise PolicyDenied("authorization.request_mismatch", "Tool capability flag does not match the request body")
+            capability = "tool-call" if requires_tools else "inference"
+            payload_sha256 = __import__("hashlib").sha256(payload).hexdigest()
+            intent_material = "\\0".join((context.profile_id, context.trace_id, context.purpose, capability, model, payload_sha256))
+            intent_id = __import__("hashlib").sha256(intent_material.encode("utf-8")).hexdigest()
+            initial_authorization = self._authorize(context, capability, intent_id, deadline)
             sensitivity = initial_authorization.effective_sensitivity
             if sensitivity == Sensitivity.PUBLIC:
                 first = self.policy.public_route
@@ -455,12 +477,19 @@ class Dispatcher:
                     remaining = deadline - self.clock()
                     if remaining <= 0:
                         raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
-                    current_authorization = self._authorize(context, capability)
-                    if (current_authorization.grant_id != initial_authorization.grant_id
+                    current_authorization = self._authorize(context, capability, intent_id, deadline)
+                    if (current_authorization.principal_id != initial_authorization.principal_id
+                            or current_authorization.profile_id != initial_authorization.profile_id
+                            or current_authorization.namespace != initial_authorization.namespace
+                            or current_authorization.trace_id != initial_authorization.trace_id
                             or current_authorization.policy_revision != initial_authorization.policy_revision
+                            or current_authorization.purpose != initial_authorization.purpose
+                            or current_authorization.capability != initial_authorization.capability
+                            or current_authorization.intent_id != initial_authorization.intent_id
+                            or current_authorization.lineage_sha256 != initial_authorization.lineage_sha256
                             or current_authorization.effective_sensitivity != sensitivity):
                         raise PolicyDenied("authorization.changed", "Host authorization changed during provider routing")
-                    if current_authorization.expires_at_monotonic <= self.clock():
+                    if current_authorization.expires_at_monotonic <= self.clock() or self.clock() >= deadline:
                         raise PolicyDenied("authorization.expired", "Host authorization expired before provider dispatch")
                     reservation = self.ledger.reserve(estimate, self.policy.metered_budget_usd)
                     authorization_remaining = current_authorization.expires_at_monotonic - self.clock()
