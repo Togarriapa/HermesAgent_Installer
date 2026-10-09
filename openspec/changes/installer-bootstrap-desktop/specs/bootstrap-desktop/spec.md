@@ -366,3 +366,115 @@ The implementation SHALL use the exact applicable v36 release roles, immutable p
 #### Scenario: First ingress has no source receipt yet
 - **WHEN** root resolves selected ingress controller custody
 - **THEN** actual process/module/selected ingress proof is checked independently before atomically minting the source receipt and event handle
+
+### Requirement: Official committed PM runtime identity
+The implementation SHALL resolve the exact selected official committed PM dependency environment through the v37 root runtime receipt.
+
+#### Scenario: PM source or sync receipt alone exists
+- **WHEN** actual selected runtime executable identity and source/lock/tool joins have not been verified
+- **THEN** runtime activation and functional health remain pending, without substituting a source archive digest or system Python
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Root initial compilation precedes policy session
+The implementation SHALL create and verify the exact v42 internal stage0 compilation context without requiring a policy-dependent setup session.
+
+#### Scenario: No bootstrap policy exists yet
+- **WHEN** the actual installed root actor compiles initial selected policy
+- **THEN** root internal stage0 custody authorizes fixed compilation and one-use publication handoff before normal setup session creation
+
+### Requirement: Exact first selection and live input target
+The implementation SHALL enforce v43 exact first-publication predecessor and admitted-source plus actual-process target join.
+
+#### Scenario: Admission exists before process launch
+- **WHEN** no actual managed producer and loader proof exists
+- **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge
+
+### Requirement: Root initial input before single task stdin effect
+The implementation SHALL follow v46 concrete internal coordinator sequence during the single selected launch effect.
+
+#### Scenario: Initial source delivery fails
+- **WHEN** actual loader/input custody cannot produce a verified receipt before original deadline
+- **THEN** custody closes the owned unit before stdin and never infers source after EOF
+
+### Requirement: Root secure initial identity intake
+The implementation SHALL bind the exact v47 masked intake and policy selection to the actual root stage0 transaction.
+
+#### Scenario: User journal contains a credential reference
+- **WHEN** it has no verified root vault custody/scope receipt
+- **THEN** it cannot authorize identity observation or policy publication and exact secure intake remains pending
+
+### Requirement: Verified initial identity template revision
+The implementation SHALL resolve the exact v49 immutable identity template through the actual root installed deployment closure.
+
+#### Scenario: Only a session digest exists
+- **WHEN** identity policy revision is needed
+- **THEN** root resolves actual verified template bytes rather than inventing a module constant or trusting a caller revision
+
+### Requirement: Explicit root registry phases
+The implementation SHALL distinguish v50 draft/bound identity selection and evidence lookup/one-use stdin consumption.
+
+#### Scenario: Source is queued but not delivered
+- **WHEN** root validates initial input receipt
+- **THEN** queued source alone cannot permit stdin and actual producer delivery/current binding is required
+
+### Requirement: Actual native materialization output CAS
+The implementation SHALL apply v51 exact source and compiled artifact role/closure joins.
+
+#### Scenario: Compiler produces a source and compiled digest
+- **WHEN** importing actual generated output into root CAS
+- **THEN** distinct byte/tree domains and transaction roles remain verified without substituting planning or source hashes for executable output
+
+### Requirement: Actual producer initial source take
+The implementation SHALL use v52 fixed peer-authenticated no-selector source delivery before selected task stdin.
+
+#### Scenario: Initial peer does not know a receipt identifier
+- **WHEN** actual rootselected initial input has been captured
+- **THEN** protected endpoint resolves the unique matching execution input for that peer without exposing metadata in the prompt or requiring a pending provider pair
+
+### Requirement: Verified release plan and active compilation
+The implementation SHALL apply v53 exact source template/deployed plan and active receipt compilation joins.
+
+#### Scenario: Runtime outputs become available after preparation
+- **WHEN** publishing runnable active policy
+- **THEN** root active compiler verifies actual current runtime/materialization/identity receipts rather than using an initial-only claim or caller authority rows
+
+### Requirement: Live selected native health control
+The installer SHALL begin native health observation from a root-retained live selected process control before fixture input, retaining actual native events and a separate semantic health receipt.
+
+#### Scenario: Terminal-only health presentation
+- **WHEN** only stdout or exit status exists without the required live native event closure
+- **THEN** health remains incomplete and functional acceptance is not asserted
+
+### Requirement: Exact native output byte encoding
+The installer SHALL bind generated native CAS artifacts to the fixed reviewed role encoding, source/member receipts and distinct archive/member-tree digests.
+
+#### Scenario: Alternate or unverified native output
+- **WHEN** generated output uses unknown archive members, alternate encoding or mismatched source/member hashes
+- **THEN** activation is denied and native acceptance remains pending
+
+### Requirement: Distinct native closure and archive digests
+The installer SHALL preserve the canonical closure_files tree digest for compiled_closure_sha256 and use separate archive artifact digest for CAS bytes.
+
+#### Scenario: Archive hash substituted for closure tree
+- **WHEN** a package substitutes archive bytes SHA for the selected compiled tree hash
+- **THEN** mount and binder verification reject the mismatched digest domain
+
+### Requirement: Distinct native generation joins
+The installer SHALL resolve process and native package generations separately and preserve exact candidate index identity across receipts and manifest.
+
+#### Scenario: Generation domain substitution
+- **WHEN** an observer uses package generation as live process generation
+- **THEN** peer proof admission denies the inconsistent join
+
+### Requirement: Fixed selected display and loopback startup
+The installer SHALL launch only enrolled official Desktop/display/gateway recipes with exact Xauthority mount and private loopback role/port bindings.
+
+#### Scenario: Ambient display or broad network substitution
+- **WHEN** a worker supplies display credentials, arbitrary port or unenrolled network role
+- **THEN** startup or connection denies before app bytes and remote acceptance remains pending
