@@ -58,8 +58,8 @@ class DispatchContext:
             raise PolicyDenied("context.classification", "Sensitivity must be assigned by trusted host policy")
         if not callable(self.cancelled):
             raise PolicyDenied("context.cancel", "Cancellation hook must be callable")
-        if self.deadline is not None and not math.isfinite(self.deadline):
-            raise PolicyDenied("context.deadline", "Deadline must be finite")
+        if self.deadline is not None and (isinstance(self.deadline, bool) or not isinstance(self.deadline, (int, float)) or not math.isfinite(self.deadline)):
+            raise PolicyDenied("context.deadline", "Deadline must be a finite monotonic timestamp")
 
     @property
     def effective_sensitivity(self) -> Sensitivity:
@@ -133,11 +133,15 @@ class DispatchAuthorization:
     capabilities: frozenset[str]
     effective_sensitivity: Sensitivity
     policy_revision: str
+    purpose: str
+    capability: str
+    intent_id: str
+    lineage_sha256: str
     grant_id: str
     expires_at_monotonic: float
 
 
-ContextAuthorizer = Callable[[DispatchContext, str, float], DispatchAuthorization | None]
+ContextAuthorizer = Callable[[DispatchContext, str, str, float, float, Callable[[], bool]], DispatchAuthorization | None]
 
 
 @dataclass(frozen=True, slots=True)
