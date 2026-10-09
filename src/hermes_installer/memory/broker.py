@@ -560,6 +560,12 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 raise ValueError("memory timeout is out of bounds")
             body = parse_request(payload)
             _scope(context, target, body)
+            if action not in {"enqueue", "result", "extract", "embed"}:
+                route_id = target.route_for(action)
+                if route_id is None:
+                    raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
+                if route_id not in target.approved_route_ids:
+                    raise BrokerDenied("memory route is not in the protected enrollment")
             if action not in {"enqueue", "result", "extract", "embed"} and ipc is not None:
                 raise BrokerUnavailable(
                     "raw HTTP memory transport is incompatible with fixed compound protocol")
