@@ -53,3 +53,5 @@ Protected native composition clarification: plans/amendments/2026-10-09-native-p
 RB08 selected facade schemas: planning/protected-plugin-effect-contract.json and plans/amendments/2026-10-09-plugin-facade-action-schemas-v2.md. Root Epic lifecycle/voice session receipts required; backend mapping remains separately source-reviewed. Existing RB-T09 stays open.
 
 Native resolver reader v2: planning/native-package-binding-contract.json and plans/amendments/2026-10-09-native-resolver-reader-v2.md define peer-bound path-free immutable reader and presentation-only resolver; root re-resolves every effect. Existing HI-T08/09/RB-T09 remain open; document facade schemas retain actual tool/device/native evidence gates.
+
+Fixed recipe/session clarification: plans/amendments/2026-10-09-fixed-operation-recipes-voice-sessions-v1.md defines selection-only operation_recipes and bounded root-observed voice sessions. Existing HI-T09/HW-T03/RB-T09 remain open; no caller shell/device/session authorization claims.

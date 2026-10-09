@@ -145,3 +145,10 @@ The installer SHALL expose only peer-bound selected immutable resolver records v
 #### Scenario: Caller reuses stale resolver as permission
 - **WHEN** profile generation, handler, scope or policy changed after reading resolver
 - **THEN** deny affected effect before bytes; presentation records confer no authority.
+
+### Requirement: Fixed operation and voice session selection
+The installer SHALL resolve only protected fixed operation recipes and current root-authorized device/session handles; caller inputs SHALL not select physical executable, path, environment or device. Raw captured voice SHALL be bounded ephemeral memory only.
+
+#### Scenario: Forged recipe or expired voice session
+- **WHEN** selected operation parameters escape its schema or voice session is stale, sibling-owned or lacks trusted permission
+- **THEN** reject before execution/capture and cancel owned expired resources.

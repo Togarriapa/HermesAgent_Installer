@@ -281,6 +281,31 @@
           "text": "<=16384chars"
         },
         "result": "owned bounded audio artifact receipt; no raw path/cloudfallback"
+      },
+      "open_session": {
+        "operation": "plugin.voice-pipeline.session",
+        "arguments": {
+          "session_enrollment_id": "opaque root-selected microphone/output device/local endpoint enrollment",
+          "direction": "input|output|duplex",
+          "requested_lease_seconds": "positive int<=60 (root may tighten)"
+        },
+        "result": "opaque peer/profile/generation-bound session_handle and monotonic expiry; requires trusted session-specific human microphone/output permission, no caller permission boolean"
+      },
+      "capture_audio": {
+        "operation": "plugin.voice-pipeline.session",
+        "arguments": {
+          "session_handle": "current input/duplex handle",
+          "maximum_seconds": "positive int<=30"
+        },
+        "result": "owned audio_artifact_id plus SHA/size/profile/gen/expiry provenance; root capture observes exact enrolled local device, not arbitrary file/path",
+        "capture": "In-memory bounded raw audio<=16MiB, no disk/raw persistence or network transfer; zero on cancellation/expiry/consume, maximum lifetime60s. Default no unreviewed continuous recorder; selected endpoint/source device root enrolled. Missing actual capture/permission issuer stays unavailable."
+      },
+      "close_session": {
+        "operation": "plugin.voice-pipeline.session",
+        "arguments": {
+          "session_handle": "owned session"
+        },
+        "result": "closed; owner cancellation/root expiry cleanup independent of expired effect grant, siblings cannot close"
       }
     },
     "ebook-toolchain": {
