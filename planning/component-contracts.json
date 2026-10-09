@@ -432,8 +432,8 @@
     ],
     "target_architecture": "linux/aarch64; unverified",
     "license_status": "See source_evidence; absent/NOASSERTION blocks redistribution pending review",
-    "runtime_dependencies": "loopback/auth service + allowlisted configured providers",
-    "adapter_entrypoint": "src/hermes_installer/components/omniroute.py (planned)",
+    "runtime_dependencies": "pinned source/package-lock + protected Node 26.7.0 linux-arm64 runtime + root-brokered provider effects + protected loopback/auth configuration",
+    "adapter_entrypoint": "src/hermes_installer/components/omniroute.py",
     "paths": {
       "source": "<managed_root>/sources/<identity>/<sha>",
       "environment": "<managed_root>/envs/omniroute",
@@ -460,7 +460,7 @@
       "tested_actual_target": false,
       "source_resolved": true
     },
-    "status": "specified-not-implemented",
+    "status": "adapter-and-build-profile-implemented; upstream ARM64 build, protected account admission, service configuration and brokered effect proof pending",
     "rollback_uninstall": "Ownership ledger; previous compatible generation; preserve user data by default",
     "task_ids": [
       "PR-R0068"
@@ -472,8 +472,8 @@
       "B-TARGET"
     ],
     "component_type": "routing service adapter",
-    "installation_artifacts": "pinned native ARM64 service/dependencies",
-    "functional_verification": "Send synthetic tool-call route through service and recording endpoints; paid/private fallback/loop/compression/retry denial asserted",
+    "installation_artifacts": "pinned source/package-lock, isolated Node 26.7.0 linux-arm64 catalog artifact, and native ARM64 dependency output; runtime artifact qualification pending",
+    "functional_verification": "Synthetic tool-call through the HI11 adapter and recording bridge; upstream service ARM64 and provider effect fixture remains pending",
     "blocker_scope": {
       "B-TARGET": "Actual-target verification only; portable code/adapters/fixtures/docs remain unblocked"
     },
