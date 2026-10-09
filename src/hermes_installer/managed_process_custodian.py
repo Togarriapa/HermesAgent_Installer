@@ -714,6 +714,12 @@ class ManagedProcessEffectHandler:
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
         self._lock = threading.RLock()
+        self._member_key = os.urandom(32)
+        # Root-only test harness may capture bounded manager diagnostics. This
+        # is never serialized to a worker or populated from caller text.
+        self._diagnostic_sink: Callable[[bytes], None] | None = None
+        for profile in self.profiles.values():
+            self._validate_profile(profile)
 
     def set_native_loader_observation_store(self, store: Any) -> None:
         """Install the root-owned loader observer after manager construction.
@@ -786,12 +792,6 @@ class ManagedProcessEffectHandler:
                 self._systemd_openfile_supported = False
         if not self._systemd_openfile_supported:
             raise AuthorityDenied("native.loader", "systemd v253 OpenFile support is required")
-        self._member_key = os.urandom(32)
-        # Root-only test harness may capture bounded manager diagnostics. This
-        # is never serialized to a worker or populated from caller text.
-        self._diagnostic_sink: Callable[[bytes], None] | None = None
-        for profile in self.profiles.values():
-            self._validate_profile(profile)
 
     def _prepare_native_package_mount(self, profile: ManagedProfileCustody,
                                       process_id: str) -> tuple[Path | None, NativePackageMountReceipt | None]:
@@ -1314,7 +1314,15 @@ class ManagedProcessEffectHandler:
                     payload: bytes, timeout: float, peer_pid: int,
                     peer_pidfd: int | None,
                     cancelled: Callable[[], bool]) -> Mapping[str, Any]:
-            return self.dispatch(profile, operation, context=context, authorization=authorization,
+            # Resolve the current immutable enrollment row for this handler ID.
+            # A refreshed row with the same effect target must be used for
+            # admission; a changed target remains unreachable through this
+            # already-registered handler key and is rejected by dispatch.
+            with self._lock:
+                current_profile = self.profiles.get(profile.profile_id)
+            if current_profile is None:
+                raise AuthorityDenied("process.profile", "enrolled process profile is no longer active")
+            return self.dispatch(current_profile, operation, context=context, authorization=authorization,
                                  payload=payload, timeout=timeout, peer_pid=peer_pid,
                                  peer_pidfd=peer_pidfd,
                                  cancelled=cancelled)
@@ -1340,11 +1348,35 @@ class ManagedProcessEffectHandler:
                 or peer_pid <= 0 or canonical_digest(payload) != authorization.request_digest):
             raise AuthorityDenied("process.binding", "process grant does not match the enrolled profile effect")
         if operation == "process.start":
-            return self._start(profile, context, authorization, payload, timeout, peer_pid,
-                               peer_pidfd, cancelled)
+            try:
+                return self._start(profile, context, authorization, payload, timeout, peer_pid,
+                                   peer_pidfd, cancelled)
+            except Exception as exc:
+                self._record_test_diagnostic("start-deny", exc)
+                raise
         if operation == "process.inspect":
-            return self._inspect(profile, context, payload, timeout, cancelled)
+            try:
+                return self._inspect(profile, context, payload, timeout, cancelled)
+            except Exception as exc:
+                self._record_test_diagnostic("inspect-deny", exc)
+                raise
         return self._control(profile, context, operation, payload, timeout, cancelled)
+
+    def _record_test_diagnostic(self, prefix: str, exc: Exception) -> None:
+        """Emit only bounded exception class/code/line into root-only test evidence."""
+        sink = self._diagnostic_sink
+        if sink is None:
+            return
+        code = getattr(exc, "code", "internal")
+        if not isinstance(code, str) or not re.fullmatch(r"[a-z0-9_.-]{1,64}", code):
+            code = "internal"
+        exception_type = type(exc).__name__
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", exception_type):
+            exception_type = "Exception"
+        import traceback
+        frame = traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
+        line = frame.lineno if frame is not None else 0
+        sink((prefix + ":" + code + ":" + exception_type + ":line=" + str(line)).encode("ascii"))
 
     @staticmethod
     def _json(payload: bytes) -> dict[str, Any]:
@@ -1538,7 +1570,7 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("resource.task_admission", "root task admission or prompt digest is invalid")
         if (profile.generation != task_handle.process_generation
                 or profile.enrollment_id != task_handle.process_enrollment_id
-                or self.profiles.get(profile.profile_id) is not profile
+                or self.profiles.get(profile.profile_id) != profile
                 or not isinstance(profile.operation_recipes, Mapping)
                 or task_handle.operation_id not in profile.operation_recipes
                 or task_handle.deadline_monotonic <= self.monotonic()
@@ -1895,10 +1927,31 @@ class ManagedProcessEffectHandler:
                               authorization.monotonic_expires_at)
 
         def require_live_start(parent_fd: int | None = None) -> None:
-            if (cancelled() or self.monotonic() >= launch_deadline
-                    or self.profiles.get(profile.profile_id) is not (registered_profile or profile)
-                    or (start_guard is not None and not start_guard())
-                    or (parent_fd is not None and _pidfd_exited(parent_fd))):
+            reason = None
+            if cancelled():
+                reason = "cancelled"
+            elif self.monotonic() >= launch_deadline:
+                reason = "deadline"
+            elif self.profiles.get(profile.profile_id) != (registered_profile or profile):
+                reason = "profile-generation"
+            elif start_guard is not None and not start_guard():
+                reason = "admission-currentness"
+            elif parent_fd is not None and _pidfd_exited(parent_fd):
+                reason = "parent-pidfd"
+            if reason is not None:
+                sink = self._diagnostic_sink
+                if sink is not None:
+                    # Test-only root diagnostics expose a finite reason enum,
+                    # never paths, credentials, payloads, or process data.
+                    details = ""
+                    if reason == "profile-generation":
+                        current = self.profiles.get(profile.profile_id)
+                        expected = registered_profile or profile
+                        names = getattr(type(expected), "__dataclass_fields__", {})
+                        differing = [name for name in names
+                                     if getattr(current, name, object()) != getattr(expected, name, object())]
+                        details = ":fields=" + ",".join(differing[:24])
+                    sink(("prelaunch-deny:" + reason + details).encode("ascii", "backslashreplace")[:512])
                 raise AuthorityDenied("process.start_expired", "start grant, profile enrollment or caller expired before launch")
 
         if peer_pidfd is None:
@@ -2128,7 +2181,6 @@ class ManagedProcessEffectHandler:
             if native_mount_source is not None:
                 self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.environment", "system manager environment cannot be safely cleared")
-        import re
         manager_keys = {line.split("=", 1)[0] for line in manager_env.stdout.decode("utf-8", "replace").splitlines()
                         if "=" in line and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", line.split("=", 1)[0])}
         manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
@@ -2495,8 +2547,8 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.inspect", "inspection request is malformed or stale")
         with self._lock:
             handle = self._handles.get(item["process_id"])
-        if (handle is None or handle.registered_profile is not profile
-                or self.profiles.get(profile.profile_id) is not profile or handle.stopped
+        if (handle is None or handle.registered_profile != profile
+                or self.profiles.get(profile.profile_id) != profile or handle.stopped
                 or context.principal_id != handle.principal_id
                 or context.namespace_id != handle.authority_namespace_id
                 or cancelled() or self.monotonic() >= handle.expires
@@ -2673,10 +2725,45 @@ class ManagedProcessEffectHandler:
         namespace_identity = getattr(binding, "namespace_identity", None)
         if not isinstance(profile_id, str) or not isinstance(generation, str) or not isinstance(namespace_identity, str):
             return None
+        return self._resolve_profile_namespace_lease(profile_id, generation, namespace_identity)
+
+    def resolve_observer_namespace_lease(self, profile_id: str, generation: str,
+                                         expected_namespace_identity: str
+                                         ) -> ManagedNamespaceLease | None:
+        """Return a short-lived namespace FD for one exact enrolled live process.
+
+        This is the bounded root-only seam for observers that must inspect a
+        protected service namespace. It selects no process or namespace from a
+        caller PID/path and requires the supplied identity to equal both the
+        current profile enrollment and its live manager-owned handle.
+        """
+        if (not isinstance(profile_id, str) or not profile_id
+                or not isinstance(generation, str) or not generation
+                or not isinstance(expected_namespace_identity, str)
+                or not re.fullmatch(r"mnt:[1-9][0-9]*;net:[1-9][0-9]*",
+                                    expected_namespace_identity)):
+            return None
+        registered = self.profiles.get(profile_id)
+        if registered is None or registered.generation != generation:
+            return None
+        return self._resolve_profile_namespace_lease(
+            profile_id, generation, expected_namespace_identity,
+            registered_profile=registered,
+        )
+
+    def _resolve_profile_namespace_lease(self, profile_id: str, generation: str,
+                                         namespace_identity: str, *,
+                                         registered_profile: ManagedProfileCustody | None = None
+                                         ) -> ManagedNamespaceLease | None:
         with self._lock:
+            registered = registered_profile or self.profiles.get(profile_id)
+            if (registered is None or registered.profile_id != profile_id
+                    or registered.generation != generation):
+                return None
             matches = [handle for handle in self._handles.values()
                        if handle.profile.profile_id == profile_id
                        and handle.profile.generation == generation
+                       and handle.registered_profile is registered
                        and handle.kernel_namespace_id == namespace_identity]
         if len(matches) != 1:
             return None
@@ -2684,6 +2771,7 @@ class ManagedProcessEffectHandler:
         with handle.lock:
             if (handle.stopped or handle.network_namespace_fd is None
                     or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
+                    or handle.registered_profile is not registered
                     or handle.pid not in self._pids(handle.cgroup)):
                 return None
             expected_net = int(namespace_identity.rsplit("net:", 1)[1])
@@ -2907,7 +2995,7 @@ class ManagedProcessEffectHandler:
         with self._lock:
             handle = self._handles.get(process_id)
         if (handle is None or handle.profile.generation != generation or handle.stopped
-                or self.profiles.get(handle.profile.profile_id) is not handle.registered_profile
+                or self.profiles.get(handle.profile.profile_id) != handle.registered_profile
                 or handle.native_mount_receipt is None or handle.native_mount_source is None
                 or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
                 or handle.pid not in self._pids(handle.cgroup)):

@@ -706,6 +706,15 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         self.native_store_id, self.native_digest, self.native_script = self._enroll_script(
             "native-loader", self._native_loader_progress_source(package.binding)
             + self._native_mount_probe_source())
+        recipes = dict(self.profile.operation_recipes or {})
+        recipes["native-package"] = self._operation_recipe(
+            self.native_store_id, self.native_digest, "native-package")
+        child_refs = {key: value for key, value in (self.profile.child_artifact_refs or {}).items()
+                      if key in {self.run_store_id, self.parent_store_id}}
+        child_refs[self.native_store_id] = self.native_digest
+        self.profile = replace(self.profile, operation_recipes=recipes,
+                               child_artifact_refs=child_refs)
+        self.handler.profiles[self.profile_id] = self.profile
         client, started = self._start_client(mode="native-package")
         try:
             proof = self.handler.resolve_loaded_native_package(
