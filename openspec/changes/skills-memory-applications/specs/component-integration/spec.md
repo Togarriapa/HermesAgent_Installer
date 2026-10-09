@@ -607,3 +607,10 @@ The installer SHALL separate UID0 authority journal state from service-writable 
 #### Scenario: Wrong state owner or caller build path
 - **WHEN** authority state aliases writable service data or a build request supplies an unselected path or mount token
 - **THEN** the root rejects the operation before effects; no fixture or source status proves native completion
+
+### Requirement: Immutable source materialization identity
+The installer SHALL retain original source Git link/blob/tree proof and validate compiled regular destination bytes, using either verified immutable source buffers or stable nofollow filesystem source descriptors.
+
+#### Scenario: Immutable buffer copy
+- **WHEN** root compiles the one reviewed pinned document link from verified immutable target bytes
+- **THEN** it verifies retained source content identities and actual owned destination identity without claiming a source inode observation

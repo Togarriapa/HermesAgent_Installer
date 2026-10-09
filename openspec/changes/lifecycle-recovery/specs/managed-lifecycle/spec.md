@@ -215,3 +215,10 @@ The installer SHALL derive enrollment provision and finite process control effec
 #### Scenario: Forged bootstrap intent or stale process control
 - **WHEN** caller supplies unregistered bootstrap intent, claimed roots/identity or stale/sibling control handle
 - **THEN** reject before effects, preserve prior generation/private state and require actual root target/ownership evidence.
+
+### Requirement: Actual selected service and runtime provenance
+The installer SHALL bind build service identity to a protected current service enrollment and derive bootstrap executable pins only from actual completed runtime receipts.
+
+#### Scenario: Source hash used as runtime identity
+- **WHEN** a prepared profile substitutes a source archive hash or unjoined output UID for executable/service proof
+- **THEN** root rejects execution publication and retains the original incomplete checkpoint
