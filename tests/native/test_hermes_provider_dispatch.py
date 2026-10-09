@@ -135,8 +135,6 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 (fixture_plugin / "plugin.yaml").write_text("""name: hermes-installer-native-fixture
 version: 1.0.0
 description: Native dispatch fixture
-provides_tools:
-  - fixture_echo
 """, encoding="utf-8")
                 (fixture_plugin / "schemas.py").write_text('''FIXTURE_ECHO = {
     "name": "fixture_echo",
@@ -228,7 +226,20 @@ plugins:
                      "--expected-sha=" + HERMES_PIN, "--model=" + MODEL],
                     env=worker_env, cwd=str(source), capture_output=True, text=True, timeout=75,
                 )
-                self.assertEqual(result.returncode, 0, result.stdout[-2500:] + result.stderr[-4000:])
+                request_summaries = []
+                for route_name, _model, raw_payload in transport.calls:
+                    payload_summary = json.loads(raw_payload)
+                    request_summaries.append({
+                        "route": route_name,
+                        "tool_names": [item.get("function", {}).get("name")
+                                       for item in payload_summary.get("tools", [])
+                                       if isinstance(item, dict)],
+                        "tool_result_count": sum(1 for item in payload_summary.get("messages", [])
+                                                 if isinstance(item, dict) and item.get("role") == "tool"),
+                    })
+                self.assertEqual(result.returncode, 0,
+                    result.stdout[-2500:] + result.stderr[-4000:]
+                    + " recording_requests=" + json.dumps(request_summaries, sort_keys=True))
                 self.assertIn("NATIVE_DISPATCH_OK", result.stdout)
                 self.assertEqual(len(transport.calls), 4)
                 self.assertEqual([call[0] for call in transport.calls],
@@ -353,6 +364,11 @@ def _run_native_worker():
         if agent.provider != configured_provider or agent.model != configured_model:
             raise SystemExit("Hermes native config selection mismatch: provider="
                              + str(agent.provider) + ", model=" + str(agent.model))
+        tool_names = sorted(getattr(agent, "valid_tool_names", set()))
+        print("NATIVE_TOOL_AVAILABILITY=" + json.dumps({
+            "fixture_echo": "fixture_echo" in tool_names,
+            "count": len(tool_names),
+        }, sort_keys=True))
         cycle = agent.run_conversation("Use fixture_echo once and report its returned result.")
         if cycle.get("completed") is not True or "private fixture tool result received" not in str(cycle.get("final_response", "")):
             summary = {key: cycle.get(key) for key in
