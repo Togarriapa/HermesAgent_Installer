@@ -70,7 +70,25 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-class StreamableHTTPTransport:
+
+
+def _check_dispatch_grant(service_id, context, grant) -> None:
+    from ..policy import DispatchAuthorization
+    if not isinstance(grant, DispatchAuthorization) or context is None:
+        raise TransportError("MCP host authorization is unavailable")
+    capability = f"mcp:{service_id}:"
+    import time
+    if (not grant.capability.startswith(capability)
+            or grant.principal_id != context.principal_id
+            or grant.profile_id != context.profile_id
+            or grant.namespace != context.namespace
+            or grant.trace_id != context.trace_id
+            or grant.policy_revision != context.policy_revision
+            or grant.grant_id != context.grant_id
+            or grant.lineage_sha256 != context.provenance[7:]
+            or grant.expires_at_monotonic <= time.monotonic()):
+        raise TransportError("MCP host authorization is stale or mismatched")
+\nclass StreamableHTTPTransport:
     """Origin-bound Streamable HTTP transport with DNS pinning and host grants."""
 
     requires_dispatch_grant = True
@@ -123,8 +141,15 @@ class StreamableHTTPTransport:
         method = payload.get("method")
         if method == "notifications/cancelled":
             return await self._post(payload, body, dispatch_context, dispatch_authorization, allow_cancel=True)
-        async with self._request_lock:
-            return await self._post(payload, body, dispatch_context, dispatch_authorization)
+        rid = payload.get("id")
+        if rid is not None:
+            self._active[str(rid)] = (dispatch_context, dispatch_authorization)
+        try:
+            async with self._request_lock:
+                return await self._post(payload, body, dispatch_context, dispatch_authorization)
+        finally:
+            if rid is not None:
+                self._active.pop(str(rid), None)
 
     async def _headers(self, context, grant) -> dict[str, str]:
         result = {
@@ -356,10 +381,14 @@ class StreamableHTTPTransport:
                              dispatch_authorization=None) -> None:
         if self._closed or dispatch_context is None or dispatch_authorization is None:
             return
-        # Closing the in-flight asyncio stream interrupts the actual socket read
-        # when the caller cancels. The host process/session owner remains responsible
-        # for remote server work that continues after a disconnect.
-        self._active.clear()
+        try:
+            self._check_grant(dispatch_context, dispatch_authorization)
+            payload = {"jsonrpc": "2.0", "method": "notifications/cancelled",
+                       "params": {"requestId": request_id, "reason": "caller cancelled"}}
+            await asyncio.wait_for(self._post(payload, _encode(payload), dispatch_context,
+                                              dispatch_authorization, allow_cancel=True), 2.0)
+        except Exception:
+            return
 
     async def close(self) -> None:
         self._closed = True
@@ -371,8 +400,13 @@ class StdioTransport:
     The supervisor owns executable pinning, isolated cwd/data, explicit environment,
     child custody and forced shutdown. This adapter only frames bounded MCP lines.
     """
-    def __init__(self, handle, *, timeout: float = 9.0) -> None:
+    requires_dispatch_grant = True
+
+    def __init__(self, handle, *, service_id: str, timeout: float = 9.0) -> None:
         required = ("read", "write", "wait", "stop")
+        if not service_id or not isinstance(service_id, str):
+            raise ValueError("reviewed MCP service id is required")
+        self.service_id = service_id
         if handle is None or any(not callable(getattr(handle, name, None)) for name in required):
             raise ValueError("MCP stdio requires a host-managed process handle")
         if not 0 < timeout <= 9:
@@ -385,9 +419,11 @@ class StdioTransport:
     def __repr__(self) -> str:
         return "StdioTransport(process=<host-managed>)"
 
-    async def request(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    async def request(self, payload: Mapping[str, Any], *, dispatch_context=None,
+                      dispatch_authorization=None) -> Mapping[str, Any]:
         if self._closed:
             raise TransportError("MCP stdio transport is closed")
+        _check_dispatch_grant(self.service_id, dispatch_context, dispatch_authorization)
         line = _encode(payload) + b"\\n"
         async with self._request_lock:
             try:
@@ -415,8 +451,13 @@ class StdioTransport:
             except Exception:
                 raise TransportError("MCP stdio process disconnected") from None
 
-    async def cancel_request(self, request_id: Any) -> None:
+    async def cancel_request(self, request_id: Any, *, dispatch_context=None,
+                             dispatch_authorization=None) -> None:
         if self._closed:
+            return
+        try:
+            _check_dispatch_grant(self.service_id, dispatch_context, dispatch_authorization)
+        except TransportError:
             return
         payload = {"jsonrpc": "2.0", "method": "notifications/cancelled",
                    "params": {"requestId": request_id, "reason": "caller cancelled"}}
