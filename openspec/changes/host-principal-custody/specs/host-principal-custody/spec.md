@@ -405,3 +405,11 @@ Root event context issuance SHALL require the exact active daemon/module/observe
 #### Scenario: Unverified root dispatcher role
 - **WHEN** role/module/kernel/event/body bindings are absent or stale
 - **THEN** no context or child effect is fabricated.
+
+### Requirement: Protected native MCP call binding
+
+Installer-managed native MCP calls SHALL resolve exact observed invocation/name/schema to current enrolled backend/resource and fresh protected MCP effect before bytes.
+
+#### Scenario: Native call mapping mismatch
+- **WHEN** name/schema/resource/package/peer or one-use invocation binding differs
+- **THEN** no MCP effect or credential reaches the unselected backend.
