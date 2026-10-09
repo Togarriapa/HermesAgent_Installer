@@ -16,6 +16,8 @@ class SignedAccessJwtTests(unittest.TestCase):
   return cls.jwt.encode(claims,cls.key,algorithm="RS256",headers={"kid":"fixture-kid"})
  def test_real_signature_and_fixed_claims(self):
   p=validate_access_jwt(self.token(),policy=self.policy,now=lambda:1700000010);self.assertEqual(p.subject,"subject-1");self.assertEqual(p.email,"owner@example.net")
+  with self.assertRaises(GatewayDenied):validate_access_jwt(self.token(),policy=self.policy,now=lambda:1700000060)
+  with self.assertRaises(GatewayDenied):validate_access_jwt(self.token(),policy=self.policy,now=lambda:1700000000-31)
   for token in (self.token(aud=["app-aud","other"]),self.token(iss="https://evil.cloudflareaccess.com"),self.token(email="intruder@example.net"),self.token(iat=math.inf),self.token(exp=True),self.token(nbf=1700000100)):
    with self.subTest(token=token[:20]),self.assertRaises(GatewayDenied):validate_access_jwt(token,policy=self.policy,now=lambda:1700000010)
  def test_wrong_signing_algorithm_is_denied(self):

@@ -43,7 +43,7 @@ class GatewayRuntime:
         lease.renew(principal,challenge=challenge,now=self.monotonic(),wall_now=self.clock(),policy_current=self.policy_current,requested_seconds=self.max_lease_seconds);return lease
 
 _BOOTSTRAP="""<!doctype html><meta charset=utf-8><title>Hermes Desktop</title><p id=s>Starting protected Desktop session…</p><script>
-(async()=>{try{const r=await fetch('/session',{method:'POST',cache:'no-store',credentials:'same-origin'});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-lease',x.lease_id);sessionStorage.setItem('hd-challenge',x.renewal_challenge);location.replace('/client/index.html?path='+encodeURIComponent('/client/?lease='+encodeURIComponent(x.lease_id)+'&profile=hermes-desktop'))}catch(e){document.getElementById('s').textContent='Access authorization required.'}})();
+(async()=>{try{const r=await fetch('/session',{method:'POST',cache:'no-store',credentials:'same-origin'});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-lease',x.lease_id);sessionStorage.setItem('hd-challenge',x.renewal_challenge);location.replace('/client/index.html?path='+encodeURIComponent('/client/?lease='+encodeURIComponent(x.lease_id)+'&profile=hermes-desktop&nonce='+encodeURIComponent(x.socket_nonce)))}catch(e){document.getElementById('s').textContent='Access authorization required.'}})();
 </script>"""
 _RENEW="""<script>(()=>{let busy=false;async function renew(){if(busy)return;busy=true;try{const id=sessionStorage.getItem('hd-lease'),challenge=sessionStorage.getItem('hd-challenge');if(!id||!challenge)throw Error();const r=await fetch('/renew',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({lease_id:id,challenge})});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-challenge',x.renewal_challenge)}catch(_){sessionStorage.removeItem('hd-lease');sessionStorage.removeItem('hd-challenge');location.replace('/client/bootstrap.html')}finally{busy=false}}setInterval(renew,25000);})();</script>"""
 
@@ -61,9 +61,9 @@ def create_app(runtime:GatewayRuntime):
         raise web.HTTPFound("/client/bootstrap.html")
     async def create(request):
         p=runtime.principal(request,"POST","/session")
-        if request.content_length not in (None,0):raise GatewayDenied("request body forbidden")
+        if request.content_length!=0:raise GatewayDenied("request body forbidden")
         key,lease=runtime.create_lease(p)
-        return web.json_response({"lease_id":key,"profile_id":runtime.profile_id,"renewal_challenge":lease.renewal_challenge,"expires_in":max(0,int(lease.expires_at-runtime.monotonic()))},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
+        return web.json_response({"lease_id":key,"profile_id":runtime.profile_id,"renewal_challenge":lease.renewal_challenge,"socket_nonce":lease.socket_nonce,"expires_in":max(0,int(lease.expires_at-runtime.monotonic()))},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
     async def renew(request):
         p=runtime.principal(request,"POST","/renew")
         if request.content_length is None or request.content_length>2048:raise GatewayDenied("invalid renewal body")
@@ -99,10 +99,10 @@ def create_app(runtime:GatewayRuntime):
         p=runtime.principal(request,"GET","/client/")
         if request.headers.get("Sec-WebSocket-Protocol")!="binary":raise GatewayDenied("unexpected Xpra WebSocket protocol")
         websocket_target("/stream",principal=p,host=request.headers.get("Host",""),origin=request.headers.get("Origin"),policy=runtime.policy)
-        if set(request.query)!={"lease","profile"} or request.query["profile"]!=runtime.profile_id:raise GatewayDenied("socket profile/lease binding required")
+        if set(request.query)!={"lease","profile","nonce"} or request.query["profile"]!=runtime.profile_id:raise GatewayDenied("socket profile/lease binding required")
         key=request.query["lease"];lease=runtime.leases.get(key)
         if lease is None or (lease.principal.subject,lease.principal.email)!=(p.subject,p.email):raise GatewayDenied("socket/principal mismatch")
-        lease.authorize_frame(now=runtime.monotonic())
+        lease.claim_socket(request.query["nonce"],now=runtime.monotonic())
         from yarl import URL
         up=urlsplit(runtime.upstream);wsurl=URL.build(scheme="ws",host=up.hostname,port=up.port or 80,path="/")
         async with request.app["client"].ws_connect(wsurl,protocols=("binary",),origin=runtime.upstream.rstrip("/"),timeout=3,receive_timeout=None,max_msg_size=16777216,autoping=False,autoclose=False) as upstream:

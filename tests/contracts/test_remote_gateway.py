@@ -11,7 +11,8 @@ class RemoteGatewayTests(unittest.TestCase):
   issued=1700000000;p=Principal("owner@example.net","s1",issued+120,"digest")
   lease=SocketLease.create(p,now=100,wall_now=issued,requested_seconds=600)
   self.assertEqual(lease.expires_at,160);self.assertEqual(lease.max_jwt_expiry,220)
-  lease.authorize_frame(now=159)
+  lease.authorize_frame(now=159);lease.claim_socket(lease.socket_nonce,now=159)
+  with self.assertRaises(GatewayDenied):lease.claim_socket(lease.socket_nonce,now=159)
   with self.assertRaises(GatewayDenied):lease.authorize_frame(now=160)
   # The JWT wall expiry (1700000120) never gets compared to monotonic time (100).
   lease=SocketLease.create(p,now=100,wall_now=issued,requested_seconds=600)
