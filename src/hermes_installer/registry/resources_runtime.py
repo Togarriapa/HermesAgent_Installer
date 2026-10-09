@@ -142,7 +142,11 @@ class NativePluginRuntimeContext:
     provider_dispatcher: object | None = None
     local_overlay_store: "ProfileOverlayView | None" = None
     profile_targets: SelectedHermesProfileResolver | None = None
-    plugin_effects: PluginEffectsFacade | None = None
+    # Supplied only by the trusted native bootstrap after it binds this live
+    # process to the root-selected package resolver. A missing facade leaves
+    # Plugin registrations unavailable; resource declarations cannot construct
+    # one or supply any of its authority inputs.
+    plugin_effects: "PluginEffectsFacade | None" = None
     # Opaque per-profile local voice device/session enrollment, selected by
     # the trusted host. It is never read from the Plugin manifest or tool args.
     voice_session_enrollment_id: str | None = None
@@ -177,7 +181,8 @@ class BrokeredEffectResponse(Protocol):
 class AuthorityClient(Protocol):
     def context(self, *, purpose: str, intent: str, operation: str,
                 source_contexts: Sequence[HostContext] = (),
-                final_payload_digest: str | None = None,
+                source_receipt_handles: Sequence[str] = (),
+                final_payload_digest: str,
                 trace_id: str | None = None, lease_seconds: float = 30.0,
                 cancelled: Callable[[], bool] | None = None) -> HostContext: ...
 
@@ -216,6 +221,21 @@ class NativePluginImplementation(Protocol):
 
 class PluginAdapterRegistry(Protocol):
     def resolve_plugin_adapter(self, adapter_id: str) -> NativePluginImplementation | None: ...
+
+
+class PluginEffectsFacade(Protocol):
+    """Local facade over exact root-selected plugin actions.
+
+    This is the canonical native package binding surface. Implementations
+    resolve the adapter/action, schema, operation, target and recipient from
+    the live protected package binding, then preserve trusted invocation
+    lineage while dispatching. Callers provide only action arguments and
+    optional idempotency/confirmation references, never authority metadata.
+    """
+
+    def invoke(self, adapter_id: str, action_id: str, arguments: Mapping[str, Any],
+               idempotency_key: str | None = None,
+               opaque_confirmation_attestation_id: str | None = None) -> object: ...
 
 
 class ReviewedPluginAdapterRegistry:
@@ -1024,7 +1044,8 @@ def invoke_fixed_resource_effect(
     if not source_contexts:
         raise ResourceRuntimeError("trusted Hermes invocation lineage is unavailable")
     issued = context.authority.context(
-        purpose=purpose, intent=intent, source_contexts=source_contexts,
+        purpose=purpose, intent=intent, operation=effect.operation,
+        source_contexts=source_contexts, final_payload_digest=digest,
         trace_id=None, lease_seconds=30.0, cancelled=cancelled,
     )
     grant = context.authority.authorize_effect(
