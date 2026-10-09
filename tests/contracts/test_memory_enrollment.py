@@ -16,7 +16,7 @@ def record(provider="agentmemory", variant="default", port=3111):
         "principal_id": "principal-one",
         "service_enrollment_id": f"service-{provider}-one",
         "source_revision": SOURCE_PINS[provider],
-        "service_generation": 7,
+        "service_generation": "service-gen-7",
         "namespace_identity": "namespace-one",
         "literal_loopback_port": port,
         "fixed_route_map": {

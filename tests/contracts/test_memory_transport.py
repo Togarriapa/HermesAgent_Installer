@@ -60,7 +60,7 @@ def enrollment():
         "principal_id": "principal-one",
         "service_enrollment_id": "memory-service-one",
         "source_revision": SOURCE_PINS[provider],
-        "service_generation": 8,
+        "service_generation": "generation-eight",
         "namespace_identity": "namespace-one",
         "literal_loopback_port": 3111,
         "fixed_route_map": {
@@ -109,7 +109,7 @@ class MemoryTransportTests(unittest.TestCase):
         calls = []
         ipc, client = make_ipc(Stream(response()), calls)
         result = ipc.request(context=Context(), authorization=Authorization(),
-            service_id="memory-service-one", service_generation=8,
+            service_id="memory-service-one", service_generation="generation-eight",
             provider="agentmemory", route_id="agentmemory-ready",
             session_id="trace-one", deadline_monotonic=time.monotonic()+5,
             payload=b'{"schema":1}', timeout=2, peer_pid=1001,
@@ -129,7 +129,7 @@ class MemoryTransportTests(unittest.TestCase):
         self.assertEqual(len(calls[0]["request_digest"]), 64)
 
     def test_wrong_service_generation_or_principal_denies_before_connector(self):
-        for changes in ({"service_generation": 7}, {"principal": "sibling"}):
+        for changes in ({"service_generation": "generation-seven"}, {"principal": "sibling"}):
             calls = []
             ipc, _ = make_ipc(Stream(response()), calls)
             context = Context()
