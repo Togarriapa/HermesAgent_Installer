@@ -34,9 +34,12 @@ class ComponentAdapterContract:
     def unresolved_reason(self) -> str | None:
         if not self.source_resolved or self.source_identity is None or self.revision is None:
             return "pinned source identity or revision is unresolved"
-        if self.license is None or self.license.casefold() in {"unknown", "noassertion", "none"}:
-            return "license review is required before redistribution"
         return None
+
+    @property
+    def redistribution_license_review_required(self) -> bool:
+        """Private source import may proceed; redistribution review remains explicit."""
+        return self.license is None or self.license.casefold() in {"unknown", "noassertion", "none"}
 
     def as_component_spec(self):
         """Build the source-copy spec for portable items; apps stay on their own adapters."""
