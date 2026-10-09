@@ -111,3 +111,10 @@ The installer SHALL expose only strict bounded transcript/source receipt or owne
 #### Scenario: Voice service returns raw or extra fields
 - **WHEN** result violates selected strict receipt schema or lacks actual root-observed provenance
 - **THEN** reject result and preserve exact incomplete action state without leaking raw capture.
+
+### Requirement: Selected Hermes and resource runtime recipes
+The installer SHALL resolve fixed parameter-free Hermes stage/health recipes and active protected resource job DAG/source/backend joins, retaining official PM runtime and actual functional health evidence.
+
+#### Scenario: Caller supplies bootstrap paths or source-only health
+- **WHEN** caller overrides recipe/roots/argv or only inventory/status exists without actual selected native workflow
+- **THEN** reject overrides or keep functional readiness incomplete, preserve prior generation and exact resume reason.
