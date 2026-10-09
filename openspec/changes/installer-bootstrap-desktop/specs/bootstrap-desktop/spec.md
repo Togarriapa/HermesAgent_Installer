@@ -506,3 +506,10 @@ The installer SHALL use actual root source CAS/predecessor proofs and finite sel
 #### Scenario: Unbound startup or deployment predecessor
 - **WHEN** caller state substitutes root startup admission or ignores an existing deployment pointer
 - **THEN** startup/publication denies without overwriting unowned or mismatched state
+
+### Requirement: Actual channel receipt and source selection
+The installer SHALL derive HTTP/audio input provenance from root-retained actual authenticated transport or consented device capture, and verify explicitly selected installer source before effects.
+
+#### Scenario: Caller input or status used as proof
+- **WHEN** worker input labels, microphone permission or read-only launcher status are presented as principal/effect authority
+- **THEN** admission denies the substitution

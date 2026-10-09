@@ -129,3 +129,5 @@ Prepared base/reader/release manifest v63: `plans/amendments/2026-10-10-prepared
 Raw resource event/result closure v66: `plans/amendments/2026-10-10-resource-raw-event-result-closure-v66.md`; existing RB task gates open.
 
 Resource capture schemas v67: `plans/amendments/2026-10-10-resource-capture-schema-artifacts-v67.md`; existing task/acceptance gates open.
+
+Channel retained receipts/source choice v68: `plans/amendments/2026-10-10-channel-receipts-source-selection-v68.md`; existing task gates unchanged.
