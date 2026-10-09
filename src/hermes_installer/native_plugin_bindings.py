@@ -279,6 +279,17 @@ class RootSelectedPluginEffects:
             return None
         return self._effects.get((adapter_id, action_id))
 
+    def manifest_digest_for_adapter(self, adapter_id: str) -> str | None:
+        """Return the protected source-resource digest for one selected adapter."""
+        self._require_live()
+        if not isinstance(adapter_id, str):
+            return None
+        digests = {effect.manifest_sha256 for effect in self._effects.values()
+                   if effect.adapter_id == adapter_id}
+        if len(digests) > 1:
+            raise NativePluginBindingUnavailable("root resolver splits an adapter across source manifests")
+        return next(iter(digests), None)
+
     def _require_live(self) -> None:
         if self._clock() >= self._binding.expires_monotonic:
             raise NativePluginBindingUnavailable("root native package binding expired")

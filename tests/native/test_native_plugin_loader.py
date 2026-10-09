@@ -6,8 +6,10 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import types
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
@@ -16,8 +18,10 @@ from hermes_installer.native_plugin_loader import (
     NativePluginLoadUnavailable,
     SelectedNativeAdapter,
     _manifest,
+    _require_protected_import_environment,
     _require_private_readonly_mount,
     _verify_closure,
+    bind_current_native_plugin_package,
     selected_mount_target,
 )
 
@@ -51,7 +55,7 @@ class AuthorityFixture:
         return self.resolver
 
 
-def package_fixture(tmp: Path):
+def package_fixture(tmp: Path, *, expiry: float = 50.0):
     module = b"def register(ctx, runtime_context):\n    runtime_context.seen = ctx\n"
     closure_root = tmp / "closure"
     closure_root.mkdir()
@@ -107,10 +111,9 @@ def package_fixture(tmp: Path):
         }],
     }
     resolver = {**resolver_body, "resolver_sha256": hashlib.sha256(_canonical(resolver_body)).hexdigest()}
-    selected = RootSelectedPluginEffects(
-        AuthorityFixture(resolver, closure_digest, manifest_sha), clock=lambda: 10.0,
-    )
-    return selected, manifest, manifest_bytes, closure_root, adapter
+    authority = AuthorityFixture(resolver, closure_digest, manifest_sha, expiry=expiry)
+    selected = RootSelectedPluginEffects(authority, clock=lambda: expiry - 1.0)
+    return selected, manifest, manifest_bytes, closure_root, adapter, authority
 
 
 class NativePluginLoaderTests(unittest.TestCase):
@@ -125,7 +128,7 @@ class NativePluginLoaderTests(unittest.TestCase):
     def test_exact_manifest_and_closure_are_verified_and_importable(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp = Path(temporary)
-            selected, manifest, raw, closure, adapter = package_fixture(tmp)
+            selected, manifest, raw, closure, adapter, _authority = package_fixture(tmp)
             parsed = _manifest(raw, selected=selected)
             modules = _verify_closure(tmp.resolve(), parsed)
             self.assertEqual(selected.entrypoint_sha256, hashlib.sha256(raw).hexdigest())
@@ -163,7 +166,7 @@ class NativePluginLoaderTests(unittest.TestCase):
     def test_closure_digest_detects_changed_or_extra_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp = Path(temporary)
-            selected, manifest, raw, closure, _ = package_fixture(tmp)
+            selected, manifest, raw, closure, _, _authority = package_fixture(tmp)
             parsed = _manifest(raw, selected=selected)
             os.chmod(closure / "fixture_plugin.py", 0o644)
             (closure / "fixture_plugin.py").write_bytes(b"changed")
@@ -172,7 +175,7 @@ class NativePluginLoaderTests(unittest.TestCase):
 
             with tempfile.TemporaryDirectory() as temporary2:
                 tmp2 = Path(temporary2)
-                selected2, _manifest2, raw2, closure2, _adapter2 = package_fixture(tmp2)
+                selected2, _manifest2, raw2, closure2, _adapter2, _authority2 = package_fixture(tmp2)
                 parsed2 = _manifest(raw2, selected=selected2)
                 (closure2 / "unlisted.py").write_text("x = 1\n", encoding="utf-8")
                 os.chmod(closure2 / "unlisted.py", 0o444)
@@ -181,7 +184,7 @@ class NativePluginLoaderTests(unittest.TestCase):
 
     def test_manifest_rejects_duplicate_json_keys_unselected_adapters_and_digest_drift(self):
         with tempfile.TemporaryDirectory() as temporary:
-            selected, _manifest_value, raw, _closure, _adapter = package_fixture(Path(temporary))
+            selected, _manifest_value, raw, _closure, _adapter, _authority = package_fixture(Path(temporary))
             duplicate = b'{"schema":1,"schema":1}'
             with self.assertRaises(NativePluginLoadUnavailable):
                 _manifest(duplicate, selected=selected)
@@ -195,6 +198,88 @@ class NativePluginLoaderTests(unittest.TestCase):
         loaded = SelectedNativeAdapter("fixture-plugin", module, "register", (), "a" * 64, module.register)
         with self.assertRaises(NativePluginLoadUnavailable):
             loaded.register(object(), object())
+
+    def test_bound_loader_checks_mount_resolver_and_exposes_only_selected_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tmp = Path(temporary)
+            selected, manifest, raw_manifest, closure_source, _adapter, authority = package_fixture(
+                tmp, expiry=time.monotonic() + 30.0)
+            resolver_body = {key: value for key, value in authority.resolver.items()
+                             if key != "resolver_sha256"}
+            resolver_bytes = _canonical(resolver_body)
+            target = tmp.resolve() / "mount"
+            (target / "closure").mkdir(parents=True)
+            (target / "resolver").mkdir()
+            (target / "manifest.json").write_bytes(raw_manifest)
+            (target / "closure" / "fixture_plugin.py").write_bytes(
+                (closure_source / "fixture_plugin.py").read_bytes())
+            os.chmod(target / "closure" / "fixture_plugin.py", 0o444)
+            (target / "resolver" / "resolver").write_bytes(resolver_bytes)
+            os.chmod(target / "manifest.json", 0o444)
+            os.chmod(target / "resolver" / "resolver", 0o444)
+
+            from hermes_installer import native_plugin_loader
+            original_read_text = Path.read_text
+
+            def read_text(path, *args, **kwargs):
+                if path == Path("/proc/self/mountinfo"):
+                    return f"1 0 0:1 / {target} ro,nosuid,nodev,noexec - tmpfs tmpfs ro,nosuid,nodev,noexec\n"
+                return original_read_text(path, *args, **kwargs)
+
+            with patch.object(native_plugin_loader, "selected_mount_target", return_value=target), \
+                    patch.object(native_plugin_loader, "_require_protected_import_environment"), \
+                    patch.object(Path, "read_text", read_text):
+                package = bind_current_native_plugin_package(authority)
+            try:
+                self.assertEqual(package.adapter_ids, ("fixture-plugin",))
+                self.assertEqual(package.manifest_digest_for_adapter("fixture-plugin"), "a" * 64)
+                self.assertIsNotNone(package.resolve("fixture-plugin", "fixture.read"))
+                self.assertIsNotNone(package.resolve_adapter("fixture-plugin"))
+            finally:
+                sys.modules.pop("hermes_fixture_native_plugin", None)
+
+    def test_bound_loader_rejects_mounted_resolver_digest_drift(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tmp = Path(temporary)
+            _selected, _manifest, raw_manifest, closure_source, _adapter, authority = package_fixture(
+                tmp, expiry=time.monotonic() + 30.0)
+            resolver_body = {key: value for key, value in authority.resolver.items()
+                             if key != "resolver_sha256"}
+            resolver_bytes = _canonical(resolver_body) + b" "
+            target = tmp.resolve() / "mount"
+            (target / "closure").mkdir(parents=True)
+            (target / "resolver").mkdir()
+            (target / "manifest.json").write_bytes(raw_manifest)
+            (target / "closure" / "fixture_plugin.py").write_bytes(
+                (closure_source / "fixture_plugin.py").read_bytes())
+            (target / "resolver" / "resolver").write_bytes(resolver_bytes)
+            for path in (target / "manifest.json", target / "closure" / "fixture_plugin.py",
+                         target / "resolver" / "resolver"):
+                os.chmod(path, 0o444)
+            from hermes_installer import native_plugin_loader
+            original_read_text = Path.read_text
+
+            def read_text(path, *args, **kwargs):
+                if path == Path("/proc/self/mountinfo"):
+                    return f"1 0 0:1 / {target} ro,nosuid,nodev,noexec - tmpfs tmpfs ro,nosuid,nodev,noexec\n"
+                return original_read_text(path, *args, **kwargs)
+
+            with patch.object(native_plugin_loader, "selected_mount_target", return_value=target), \
+                    patch.object(native_plugin_loader, "_require_protected_import_environment"), \
+                    patch.object(Path, "read_text", read_text):
+                with self.assertRaises(NativePluginLoadUnavailable):
+                    bind_current_native_plugin_package(authority)
+
+    def test_import_environment_rejects_path_overrides_and_user_site(self):
+        import hermes_installer.native_plugin_loader as loader
+        with patch.dict(os.environ, {"PYTHONPATH": "/tmp/untrusted"}):
+            with self.assertRaises(NativePluginLoadUnavailable):
+                _require_protected_import_environment()
+        with patch.object(loader, "sys", types.SimpleNamespace(flags=types.SimpleNamespace(no_user_site=0))), \
+                patch.object(loader.site, "ENABLE_USER_SITE", True), \
+                patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(NativePluginLoadUnavailable):
+                _require_protected_import_environment()
 
 
 if __name__ == "__main__":

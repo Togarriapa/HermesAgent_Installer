@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import site
 import stat
 import sys
 from types import MappingProxyType, ModuleType
@@ -153,6 +154,14 @@ def _require_private_readonly_mount(target: Path, mountinfo: str) -> None:
         raise NativePluginLoadUnavailable("root native package mount has shared propagation")
 
 
+def _require_protected_import_environment() -> None:
+    """Reject interpreter startup modes that add caller-controlled import roots."""
+    if ("PYTHONPATH" in os.environ or "PYTHONHOME" in os.environ
+            or getattr(sys.flags, "no_user_site", 0) != 1
+            or getattr(site, "ENABLE_USER_SITE", True) not in {False, None}):
+        raise NativePluginLoadUnavailable("Hermes runtime import environment is not protected")
+
+
 def _manifest(raw: bytes, *, selected: RootSelectedPluginEffects) -> dict[str, Any]:
     value = _json_document(raw, maximum=_MAX_ENTRYPOINT_BYTES, label="native entrypoint manifest")
     if set(value) != {"schema", "package_id", "profile_id", "generation", "closure_files", "adapters", "dependencies"}:
@@ -193,10 +202,12 @@ def _manifest(raw: bytes, *, selected: RootSelectedPluginEffects) -> dict[str, A
 
     adapters = value["adapters"]
     dependencies = value["dependencies"]
-    if not isinstance(adapters, list) or not adapters or len(adapters) > 692 or not isinstance(dependencies, list):
+    if (not isinstance(adapters, list) or not adapters or len(adapters) > 692
+            or not isinstance(dependencies, list) or len(dependencies) > 256):
         raise NativePluginLoadUnavailable("native adapter or dependency list is malformed")
     adapter_ids: set[str] = set()
     module_names: set[str] = set()
+    module_paths: set[str] = set()
     for row in adapters:
         fields = {"adapter_id", "relative_module_path", "module_name", "entrypoint_symbol",
                   "artifact_sha256", "allowed_internal_modules", "allowed_dependency_artifact_ids", "action_ids"}
@@ -206,6 +217,7 @@ def _manifest(raw: bytes, *, selected: RootSelectedPluginEffects) -> dict[str, A
         relative = _relative_path(row["relative_module_path"])
         if (not isinstance(adapter_id, str) or not _ID.fullmatch(adapter_id) or adapter_id in adapter_ids
                 or not isinstance(module_name, str) or not _MODULE.fullmatch(module_name) or module_name in module_names
+                or relative in module_paths
                 or not isinstance(row["entrypoint_symbol"], str)
                 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", row["entrypoint_symbol"])
                 or not isinstance(row["artifact_sha256"], str) or not _SHA256.fullmatch(row["artifact_sha256"])
@@ -225,6 +237,7 @@ def _manifest(raw: bytes, *, selected: RootSelectedPluginEffects) -> dict[str, A
             raise NativePluginLoadUnavailable("native adapter action list is malformed")
         adapter_ids.add(adapter_id)
         module_names.add(module_name)
+        module_paths.add(relative)
     dependency_ids: set[str] = set()
     for row in dependencies:
         if not isinstance(row, dict) or set(row) != {"artifact_id", "sha256", "module_names"}:
@@ -237,6 +250,13 @@ def _manifest(raw: bytes, *, selected: RootSelectedPluginEffects) -> dict[str, A
                 or len(set(row["module_names"])) != len(row["module_names"])):
             raise NativePluginLoadUnavailable("native dependency row is malformed")
         dependency_ids.add(artifact_id)
+    for adapter in adapters:
+        if not set(adapter["allowed_dependency_artifact_ids"]).issubset(dependency_ids):
+            raise NativePluginLoadUnavailable("native adapter names an unselected dependency artifact")
+    dependency_module_names = [name for dependency in dependencies for name in dependency["module_names"]]
+    if (len(dependency_module_names) != len(set(dependency_module_names))
+            or set(dependency_module_names) & module_names):
+        raise NativePluginLoadUnavailable("native dependency module names collide with selected adapters")
     selected_rows = selected.adapter_rows
     by_adapter: dict[str, set[str]] = {}
     for effect in selected_rows:
@@ -452,6 +472,14 @@ def bind_current_native_plugin_package(authority: object) -> SelectedNativePacka
             raise NativePluginLoadUnavailable("root-selected native mount target is not a fixed directory")
         raw_manifest = _read_regular_nofollow(root / "manifest.json", maximum=_MAX_ENTRYPOINT_BYTES)
         manifest = _manifest(raw_manifest, selected=selection)
+        resolver_bytes = _read_regular_nofollow(root / "resolver" / "resolver", maximum=2 * 1024 * 1024)
+        if hashlib.sha256(resolver_bytes).hexdigest() != selection.resolver_digest:
+            raise NativePluginLoadUnavailable("mounted native resolver digest differs from root binding")
+        mounted_resolver = _json_document(resolver_bytes, maximum=2 * 1024 * 1024,
+                                          label="mounted native resolver")
+        if _canonical(mounted_resolver) != resolver_bytes:
+            raise NativePluginLoadUnavailable("mounted native resolver is not canonical JSON")
+        _require_protected_import_environment()
         modules = _verify_closure(root, manifest)
         loaded: dict[str, SelectedNativeAdapter] = {}
         for row in manifest["adapters"]:
@@ -482,7 +510,7 @@ def bind_current_native_plugin_package(authority: object) -> SelectedNativePacka
                 raise NativePluginLoadUnavailable("pinned native adapter entrypoint is not callable")
             loaded[adapter_id] = SelectedNativeAdapter(
                 adapter_id, module, row["entrypoint_symbol"], tuple(row["action_ids"]),
-                resolver_manifest_by_adapter[adapter_id], entrypoint,
+                selection.manifest_digest_for_adapter(adapter_id) or "", entrypoint,
             )
         return SelectedNativePackage(selection, target, selection.entrypoint_sha256,
                                      MappingProxyType(loaded))
