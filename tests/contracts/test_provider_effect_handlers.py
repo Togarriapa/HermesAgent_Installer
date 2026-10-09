@@ -74,9 +74,9 @@ def _authorization(context, *, target, recipient, digest, capability="provider-i
 def _openrouter_enrollment(sensitivities=frozenset({"public"})):
     target = canonical_provider_target(OPENROUTER_MODEL)
     return ProviderEnrollment(
-        provider="openrouter", account_id="opaque-account",
+        provider="openrouter", account_id="opaque-account", principal_id="principal-test",
         target=target, recipient=PROVIDER_RECIPIENT,
-        credential_reference="vault://openrouter/account",
+        credential_ref="vault://openrouter/account",
         credential_scope="provider:openrouter:inference",
         models=frozenset({OPENROUTER_MODEL}),
         allowed_sensitivities=sensitivities,
@@ -176,7 +176,7 @@ class ProviderEffectHandlerTests(unittest.TestCase):
             _openrouter_enrollment(frozenset({"public", "private"}))
         with self.assertRaises(ValueError):
             ProviderEnrollment(
-                provider="codex", account_id="opaque-account", target="https://attacker.invalid",
+                provider="codex", account_id="opaque-account", principal_id="principal-test", target="https://attacker.invalid",
                 recipient=CODEX_RECIPIENT, credential_reference="vault://codex",
                 credential_scope="openai:codex:responses",
                 models=frozenset({"gpt-test"}), allowed_sensitivities=frozenset({"public"}),
@@ -184,7 +184,7 @@ class ProviderEffectHandlerTests(unittest.TestCase):
 
     def test_codex_route_is_fixed_and_additional_metered_fee_is_zero(self):
         enrollment = ProviderEnrollment(
-            provider="codex", account_id="opaque-codex-account",
+            provider="codex", account_id="opaque-codex-account", principal_id="principal-test",
             target=CODEX_TARGET, recipient=CODEX_RECIPIENT,
             credential_reference="vault://codex/account",
             credential_scope="openai:codex:responses",
