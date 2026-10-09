@@ -116,17 +116,17 @@ class RootTaskNativeObservationRegistry:
                 or not callable(getattr(admitted_task_registry, "resolve_admitted_task_source", None))
                 or not callable(getattr(admitted_task_registry, "resolve_admitted_task", None))):
             raise AuthorityDenied("resource.native_observer", "root task native observation dependencies are unavailable")
-        input_observer = (getattr(source_observer_registry, "native_input_observer", None)
-                          or getattr(source_observer_registry, "input_observer", None))
-        if not callable(getattr(input_observer, "resolve_task_input_receipt", None)):
-            raise AuthorityDenied("resource.native_observer", "root task input observer is unavailable")
         invocations = native_bridge_broker.provider_response_registry
         if not all(isinstance(getattr(invocations, name, None), dict)
                    for name in ("_responses", "_invocations")):
             raise AuthorityDenied("resource.native_observer", "root native response registry is unavailable")
 
         self.source_observers = source_observer_registry
-        self.input_observer = input_observer
+        # The selected execution registry needs this object to be constructed,
+        # while the selected-only input observer needs that registry. Complete
+        # the cycle with one typed, identity-checked attachment after both exist.
+        self.input_observer: Any | None = None
+        self.selected_execution_registry: Any | None = None
         self.native_bridge = native_bridge_broker
         self.admitted_tasks = admitted_task_registry
         self.process_custody = process_custody_registry
@@ -137,6 +137,31 @@ class RootTaskNativeObservationRegistry:
         self._completed_tasks: dict[str, float] = {}
         self._lock = threading.RLock()
         self._closed = False
+
+    def attach_native_input_observer(self, observer: Any,
+                                     selected_execution_registry: Any) -> None:
+        """Attach the exact selected-only input observer once after graph construction."""
+        from .native_input_observer import RootNativeInputObserver
+        from .source_observers import RootNativeExecutionSelectionRegistry
+
+        if (type(observer) is not RootNativeInputObserver
+                or type(selected_execution_registry) is not RootNativeExecutionSelectionRegistry
+                or observer.selected_execution_registry is not selected_execution_registry
+                or selected_execution_registry.task_observations is not self
+                or selected_execution_registry.source_observers is not self.source_observers
+                or observer.source_observers is not self.source_observers
+                or observer.service is not self.source_observers.service
+                or not callable(getattr(observer, "resolve_task_input_receipt", None))
+                or not isinstance(getattr(observer, "_events", None), dict)):
+            raise AuthorityDenied(
+                "resource.native_observer", "selected task input observer graph is mismatched")
+        with self._lock:
+            if (self._closed or self.input_observer is not None
+                    or self.selected_execution_registry is not None or self._runs):
+                raise AuthorityDenied(
+                    "resource.native_observer", "selected task input observer is already attached or tasks are active")
+            self.input_observer = observer
+            self.selected_execution_registry = selected_execution_registry
 
     def bind_running_task(self, admission_handle: Any, node_id: str, source: Any,
                           task_handle: Any) -> None:
@@ -238,6 +263,8 @@ class RootTaskNativeObservationRegistry:
 
         if type(task_handle) is not ManagedTaskHandle or type(initial_input) is not RootTaskInitialInputReceipt:
             raise AuthorityDenied("resource.native_input", "initial task input receipt types are invalid")
+        if self.input_observer is None or self.selected_execution_registry is None:
+            raise AuthorityDenied("resource.native_input", "selected task input observer is not attached")
         with self._lock:
             run = self._runs.get(task_handle.handle_id)
             if (run is None or run.task_handle is not task_handle or run.admission_handle is not admission
@@ -697,7 +724,7 @@ class RootTaskNativeObservationRegistry:
                 or not self._receipt_live(input_receipt, now)
                 or not self._receipt_descends_from_task(run, input_receipt)):
             return None
-        selection_registry = getattr(self.source_observers, "native_execution_selections", None)
+        selection_registry = self.selected_execution_registry
         verifier = getattr(selection_registry, "resolve_current_execution", None)
         if callable(verifier):
             try:
