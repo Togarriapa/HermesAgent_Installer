@@ -378,12 +378,12 @@ The installer SHALL satisfy this obligation: screenshot to code: Separate web ap
 The installer SHALL satisfy this obligation: scrapegraph-ai: Local library/tool adapter. Its current `pyproject.toml` requires Python `>=3.12,<4.0`; resolve an isolated runtime. Distinguish it from separately offered cloud/MCP products and billing.
 
 #### Scenario: R0093 fulfilled constraint
-- **WHEN** the selected scrapegraph-ai source tree contains a native skill, referenced helper/assets and shared root data and the importer registers it for one selected profile
+- **WHEN** the actual pinned ScrapeGraphAI local library/tool adapter runs its source graph over owned local HTML with an allowlisted compatible model fixture and isolated lock-resolved runtime
 - **THEN** scrapegraph-ai: Local library/tool adapter. Its current `pyproject.toml` requires Python `>=3.12,<4.0`; resolve an isolated runtime. Distinguish it from separately offered cloud/MCP products and billing.
 - **AND** evidence SHALL demonstrate the observable outcome using Scrape local HTML fixture into expected structured result with allowlisted model; cloud/MCP products and billing remain distinct optional items; fixture and pending/live states remain separate
 
 #### Scenario: R0093 unavailable or failed prerequisite
-- **WHEN** a scrapegraph-ai relative reference is missing or its host hook is unavailable despite portable Markdown being present
+- **WHEN** the pinned ScrapeGraphAI source, uv.lock, isolated Python/dependency/model route or actual local library operation is unavailable
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
 
 ### Requirement: R0094 source line 160
@@ -586,3 +586,17 @@ The installer SHALL use finite source-bound request/recipe/validator IDs with ro
 #### Scenario: Caller supplies scope or model launch parameters
 - **WHEN** caller attempts to replace root scope, URI, device or fixed build/inference parameters
 - **THEN** reject before backend/launch bytes and preserve exact incomplete native evidence.
+
+### Requirement: Actual pinned local component fixtures
+The installer SHALL exercise actual pinned screenshot application vision pipeline and ScrapeGraphAI local library graph with preserved dependency locks and isolated compatible runtime; synthetic image/local HTML and real upstream mock boundaries SHALL remain distinct from live vision/model/account proof.
+
+#### Scenario: Source library or lock absent despite adapter inventory
+- **WHEN** only custom protocol/parser or skill metadata exists without actual pinned upstream pipeline execution
+- **THEN** keep R0092/R0093 incomplete and report exact missing source/runtime/model fixture, never claim native functionality.
+
+### Requirement: Pinned source document link preservation
+The installer SHALL preserve original screenshot source Git mode/blob/tree proof and MAY materialize only the exact pinned in-tree document link as verified regular target bytes in separate compiled generation; source and compiled digests SHALL remain distinct.
+
+#### Scenario: Unknown or escaping source link
+- **WHEN** link differs from pinned CLAUDE.md literal AGENTS.md or target is unstable/nonregular/unverified
+- **THEN** reject compiled activation without following link or importing upstream governance, preserve exact source proof and prior generation.

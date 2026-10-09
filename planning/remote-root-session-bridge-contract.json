@@ -19,7 +19,7 @@
     "RP05"
   ],
   "root_config": {
-    "catalog": "authority.json remote_session_enrollments",
+    "catalog": "authority.json service_generations.remote_session_enrollments (active authoritative)",
     "fields": [
       "id",
       "gateway_profile_id",
@@ -40,9 +40,21 @@
       "policy_verifier_enrollment_id",
       "policy_config_digest",
       "maximum_lease_seconds",
-      "watchdog_interval_seconds"
+      "watchdog_interval_seconds",
+      "policy_revision",
+      "principal_bindings_by_subject",
+      "access_policy_binding",
+      "tunnel_runtime_binding"
     ],
-    "joins": "Root policy verifier selected account/app/policy/OTP config and distinct root-held read-only vault reference; no calleraccount/app/policy selection. Current gateway registry SO_PEERCRED/PIDFD/starttime/exe/cgroup/profilegen authenticated each RPC. NativeDesktop/connector enrollment generation exact."
+    "joins": "Root policy verifier selected account/app/policy/OTP config and distinct root-held read-only vault reference; no calleraccount/app/policy selection. Current gateway registry SO_PEERCRED/PIDFD/starttime/exe/cgroup/profilegen authenticated each RPC. NativeDesktop/connector enrollment generation exact.",
+    "types": {
+      "policy_revision": "opaque nonempty root-issued string, exact currentroot policy epoch (not int normalization-policy revision)",
+      "principal_bindings_by_subject": "strict map verified Cloudflare subject string -> {principal_id,profile_id,email}; exact rootprincipal/profile join unique and same canonicalverifiedemail, no username/sessioncallerlabel. Duplicate subject/email/profile mapping ambiguousdeny. Canonical ASCIIemail casefold enrolled only, no unverified forgedheader.",
+      "gateway_identity": "Actualroot registry kernelpeer fields in assembly hi13_digest_and_peer; uid/gid/pid/starttime/exe dev/inode/SHA/cgroup/ns/profilegen/enrollment/pidfdregistryhandle, no caller DTO assertions",
+      "access_policy_binding": "strict fields verifier_enrollment_id,account_id,application_id,policy_id,otp_identity_provider_id,otp_provider_type=onetimepin,verifier_config_digest,read_credential_reference_id; refs selected owned journalverified actualCloudflare resources. Policygrant rootverifiedcurrent app/policy/OTP/allowlist and revision; no random source IDs or networkdestinationselector.",
+      "tunnel_runtime_binding": "strict fields tunnel_enrollment_id,tunnel_id,cloudflared_profile_id,tunnel_token_reference_id,token_sink_id,origin_readiness_policy_id; joins actualselectedownedtunnel journal and protectedruntime token writer/receipt below"
+    },
+    "verifier_boundary": "RootRemoteAccessVerifier consumes authenticated isolated policy verifier CLIENT, not secretbearing FreshAccessPolicyAuthority object/vault resolver in gateway. Root selected verifier holds separateminimum-readcredential; exactGET resource allowlist/accountapp/policy/onetimepin IDs and actualcurrentdecision signed/authenticated private channel binds subject/email/tokenfingerprint/configdigest/rootnonce/policyrevision/freshlease. Root re-verifies actualJWT usingfixedHTTPSJWKS with no genericgatewayproxy. Secretreaderrootregistry selectedreference role only; gateway/Desktopnevergetreadtoken/setupmanagementtoken."
   },
   "admit": {
     "signature": "admit_remote_session(access_jwt:bytes, request:RemoteAdmissionRequest) -> opaque remote_session_handle",
@@ -155,5 +167,97 @@
     "close_signature": "close_remote_connector(remote_session_handle,connector_handle) -> {schema:1,session_id,state:closed}",
     "frame_semantics": "Root checks currentsession/lease/revocation/peer/nativegen/connectorroute plus finite sequence andframe byte bounds, internally issues/consumes fresh exactconnector.read/write/close grants withpayloadhash/readlimit; no gateway callerlocalcontext/grant. Root stream relay remains custodianowned and cancellation shutsbothdirections; bytesbase64 onlyboundedRPCserialization, no rawunboundedFD. Rootenrollment finiteframe limit<=1MiB/read, assetresponse<=2MiB unlessexactpinnedassetcatalogboundreviewed. Normalclose owner allowed afterexpiry; watchdog independent.",
     "renewal": "Frames neverrenew; root fresh HTTPchallenge updates sameowned sessionlease only afterall checks, active rootrelay observesnewlease; logout/revocationfails closesimmediatelywhenobserved withinbound."
+  },
+  "root_internal_frame_issuer": {
+    "method": "issue_remote_connector_effect",
+    "root_private_inputs": [
+      "root_registry_remote_session_record",
+      "observed_gateway_peer",
+      "operation (connector.open|read|write|close)",
+      "canonical_effect_payload_bytes",
+      "root_registry_connector_state"
+    ],
+    "semantics": "Rootprivatefactory only, no worker/context RPC or callerprofile relabel. Resolve all input record identities from active rootregistry, current actual gatewaySO_PEERCRED/PIDFD/exe/cgroup/gatewaygen, independently verifiedRemoteSession principal/nativeprofile/Desktopgen/configrevision/route/fingerprint/lease. This explicitremotecontroller->nativeprofile delegation is internal scopedruntime enrollment, not changing normal workerHostContext uid/profile. Produce root-owned InternalRemoteConnectorAuthorization with dual bindings; roothandler uses dedicatedverifiedtype, normalworker Context remains itsactualpeerprofile.",
+    "authorization_fields": [
+      "effective_principal_id",
+      "effective_native_profile_id",
+      "effective_native_generation",
+      "controller_gateway_identity_digest",
+      "controller_gateway_generation",
+      "remote_session_id",
+      "token_fingerprint",
+      "policy_revision",
+      "policy_config_digest",
+      "connector_target_id",
+      "route_id",
+      "operation",
+      "canonical_payload_sha256",
+      "sequence",
+      "one_use_nonce",
+      "issued_monotonic",
+      "expires_monotonic",
+      "service_generation_digest"
+    ],
+    "digest": "EXACT full HI07canonicalpayloadbytes including schema/enrollment/gen/deadline/etc; sessionbinding metadata additional, never smallerpreimage. Factory derives canonicalpayload fields from verifiedsession/connector state and validates equalprovidedbytes.",
+    "consumption": "Atomic per-session/connector/operation/sequence nonce reserve->consume beforebackendbytes. Crosspeer/profile/route/op/payload/gen/stalelease/replay/concurrent sameframe deny. Child read/write grants fresh eachframe, expireminimum originalremotelease/JWT/currentpolicy/process/contextbound. Failuredoesnotrevive nonce; cleanup trustedrootwatchdog/owner cancellation independent freshexpiredgrant. Dedicatedrootverification rechecks bothcontroller andeffectivebinding beforeeach effect."
+  },
+  "setup_activation": {
+    "token_writer_signature": "write_selected_tunnel_token(tunnel_enrollment_id) -> ProtectedTunnelTokenReceipt",
+    "token_source": "Root resolves selectedtunnel_token_reference_id from protectedvault token returnedby authorizedownedsetup; no caller token/path bytes, no managementtoken runtime reuse. Exactownedtunnel/account/generation association validated.",
+    "sink": "Fixed /etc/hermes-installer/tunnel-tokens/<SHA256 UTF8 tunnel_enrollment_id)>/token, parentuid0 gidselectedcloudflared group0750, fileuidselectedcloudflared service mode0400; no gateway/Desktopgroup access, no symlink/hardlink/ACL broadread. Atomic temporary createfsyncrename/inodecheck, prior token preserved rollback. cloudflared gets token filepath only, never argv/tokenbytes.",
+    "token_receipt_fields": [
+      "schema=1",
+      "receipt_id",
+      "tunnel_enrollment_id",
+      "tunnel_id",
+      "generation",
+      "sink_id",
+      "file_device",
+      "file_inode",
+      "owner_uid",
+      "mode",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "origin_health_signature": "verify_selected_remote_origin(remote_enrollment_id) -> RootOriginReadinessReceipt",
+    "origin_proof": "Root validates actualcurrentgateway/Desktop/Xpra processregistry/profilegen/pinnedrenderer/sandbox/namespace/fixedconnectorroute+listen identity, actualJWTunauthenticated asset/WS denial beforebytes, selectedvalidrootadmission nativeasset/attach positive in isolated authorizedtarget, streamcleanup/leasecontrols/secretseparation. Source/config/portopen/fixture alone cannotactivate. MissingrealCloudflareJWT/nativeworkspace remains configurelaterexactproofgap.",
+    "origin_receipt_fields": [
+      "schema=1",
+      "receipt_id",
+      "remote_enrollment_id",
+      "gateway_identity_digest",
+      "desktop_generation",
+      "connector_target_id",
+      "policy_config_digest",
+      "policy_revision",
+      "service_generation_digest",
+      "observed_assertion_ids",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "activation": "Atomicsetup journal requires currentrootoriginreadiness+protectedtokenreceipt+ownedDNS/tunnel/AccessOTPresource records beforefinalingressactivation. Resume checkpoint notsuccessfulpublicactivation; rootgen/token/peer/policychange invalidatesreceipts. Accountmutations onlyidentifiedauthorizedsetup, codefixturesneverproductionproof."
+  },
+  "gateway_role_binding": {
+    "association": "ActiveHI13row gateway_profile_id+gateway_role_artifact_id+gateway_role_sha256 IS explicitrootprotected profile-role assignment; no inferencefromargvrecipes orcallerprocess_role_artifact_hashes. Rootlookup exactassociation, no implicitprofilewildcard.",
+    "actual_role_proof_fields": [
+      "schema=1",
+      "role_proof_id",
+      "profile_id",
+      "profile_generation",
+      "role_id=remote-gateway",
+      "role_artifact_id",
+      "role_artifact_sha256",
+      "entrypoint_artifact_id",
+      "entrypoint_sha256",
+      "observed_gateway_identity_digest",
+      "root_launch_record_id",
+      "sealed_closure_receipt_id",
+      "actual_ready_event_id",
+      "service_generation_digest",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "issuer": "Rootcustody/selectedtrustedloader observer afteractualrootselectedlaunch+immutable verifiedroleentrypoint/closure and actualcurrentkernelpeer/readycontrol event. Root registryobservedroleproof comparedexactHI13row/currentprofilegen eachadmission/frame. Metadataartifactexists notexecutedroleproof; normalworkerready/hashlabels insufficient.",
+    "mapping": "No new worker/profilecallerfieldrequired; root registry storesactualrole observations keyed actualprocesshandle/profilegen andprotectedHI13 association. Missingactualroleattestation remoteunavailable withexactlauncherproofstep, not relaxexpectedhash."
   }
 }

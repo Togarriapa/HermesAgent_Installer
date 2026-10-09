@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    "R0092",
+    "R0093"
+  ],
+  "tasks": [
+    "SK-R0092",
+    "SK-R0093"
+  ],
+  "evidence": [
+    "EV-R0092",
+    "EV-R0093"
+  ],
+  "change": "skills-memory-applications",
+  "state": "specified real pinned-source fixtures; actual library/source/lock installation and execution pending",
+  "components": {
+    "screenshot-to-code": {
+      "repository": "abi/screenshot-to-code",
+      "commit": "d026163f586dfa8c5c10d28c36edd59a9d3b0e88",
+      "files": {
+        "backend/pyproject.toml": "d7bee433721d949bc95e7376961e50dd888cd39c1a5c26efa7222de04c884440",
+        "backend/poetry.lock": "b4f49ac319c479a7e152984b1a8f1fb323a6e5a8f18a71ca949ffa6a3c438d29",
+        "backend/routes/generate_code.py": "0ec0b95e15b757317dc2bb87eba2dcc302873e0b6d457831cc64dae4d927fe84"
+      },
+      "fixture": "Actual pinned separate application/pipeline entrypoint stream_code /generate-code and selected internal generation path receive synthetic owned screenshot; mock compatible vision provider at real reviewed upstream SDK boundary returns bounded deterministic generatedcode. Assert actual image-bearing provider request observed and generatedcode result from upstreampipeline, reject text-only route beforebytes, disable imagegeneration/externalfetch/background. Not a skill README/native manifest substitute or custom surrogate endpoint.",
+      "runtime": "Source+complete dependency lock preserved, separately isolated selected compatible backend runtime and reviewedroot runner/networkbroker; no browseraccount/rawprovidercredential or globalPMdowngrade. Fixturemock doesnotprove livevisionaccount/nativeARM64.",
+      "source_link_materialization": "planning/pinned-source-document-link-contract.json exactCLAUDE.md->AGENTS.md pinnedsource metadata preserved, compiledregularcopy distincttree; upstreamdocs notgovernance"
+    },
+    "scrapegraph-ai": {
+      "repository": "ScrapeGraphAI/Scrapegraph-ai",
+      "commit": "194055e203afce41ed4e70365dbc416bad756115",
+      "files": {
+        "pyproject.toml": "c88e138a741bcac006d58dd41303c4a68b48f925b929067af4b43c04bfd5b886",
+        "uv.lock": "2fd36ae40e1eda563043b7204bd32755b67078abc471c8cf29f3f48c9c309771",
+        "scrapegraphai/graphs/smart_scraper_graph.py": "1e9cd02492172c3ea629b8745d685203776351afe3f783458a5f33e1acd706dc"
+      },
+      "fixture": "Import actual pinned scrapegraphai.graphs.SmartScraperGraph; instantiate exact upstream(prompt,source,config,schema) over owned localHTML synthetic fixture; run actual graph/node chain with selected allowlisted model mock at real source-reviewed LLMboundary. Expected bounded structured result mustextract fixture values and fail wrong/missingfields/model/networkredirect/policy. Spy actual upstream graph execution, localfetch and model calls; hand-writtenparser/customHTTPgraphprotocol not proof.",
+      "runtime": "Pinned pyprojectrequires>=3.12,<4.0, uv.lock preserved; separate isolated compatible Python with actual lockwheel/native dependencyqualification. No cloud smart-scraper branch/api_key or unrelated MCPproduct/billing; no publicmodel for privateHTML, everyactualLLMdispatch rootbroker policy+zeroadditionalbudget. Library fixture distinct account/actualnative operation."
+    }
+  },
+  "source_note": "Independent pinned source/lock byte reads recorded; their presence doesnotestablish downloaded fullsource closure, dependencyinstall or functionalexecution. All third-partylicenses/whole tree helpers preserved beforeactivation. Missingactualsource/lock/runtime/fixture stays incomplete with exactresume; no skills-directory textproof."
+}
