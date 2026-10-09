@@ -12,6 +12,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import shutil
+import uuid
 from pathlib import Path
 
 from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
@@ -57,6 +59,9 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
         ).stdout.strip()
         self.assertEqual(commit, HERMES_PIN, "native source must match the selected immutable Hermes pin")
 
+        data_value = os.environ.get("HERMES_INSTALLER_DATA_ROOT", "")
+        if not data_value:
+            self.skipTest("set HERMES_INSTALLER_DATA_ROOT to the existing installer-owned data root")
         original_environment = os.environ.copy()
         inserted = False
         agent = None
@@ -65,9 +70,12 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
             installer_src = Path(__file__).resolve().parents[2] / "src"
             self.assertTrue((installer_src / "hermes_installer").is_dir())
             root.ensure()
-            plugin = materialize_hermes_provider_plugin(root, profile_relative="home", port=None, model=MODEL)
+            data_root = OwnedRoot(Path(data_value).resolve(strict=True))
+            data_root.ensure()
+            profile_relative = "profiles/hermes-installer-native-" + uuid.uuid4().hex
+            plugin = materialize_hermes_provider_plugin(data_root, profile_relative=profile_relative, port=None, model=MODEL)
             home = Path(plugin["home"])
-            materialize_hermes_profile_config(root, home_relative="home", port=int(plugin["port"]), model=MODEL)
+            materialize_hermes_profile_config(data_root, home_relative=profile_relative, port=int(plugin["port"]), model=MODEL)
             transport = RecordingTransport()
             dispatcher = Dispatcher(
                 DispatchPolicy({"public": default_public_route()}, "public"),
@@ -134,6 +142,13 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 if agent is not None:
                     agent.close()
                 gateway.close()
+                marker = home / ".hermes-installer-home-owned"
+                if home.exists():
+                    if (home.parent.resolve() != data_root.path("profiles").resolve()
+                            or marker.is_symlink()
+                            or marker.read_bytes() != b"hermes-installer-managed-home-v1\\n"):
+                        raise AssertionError("Refusing to remove a profile without the exact disposable fixture marker")
+                    shutil.rmtree(home)
                 if inserted:
                     sys.path.remove(str(source))
                 os.environ.clear()
