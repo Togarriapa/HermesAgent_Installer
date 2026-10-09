@@ -718,12 +718,14 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
             if route_id not in target.approved_route_ids:
                 raise BrokerDenied("memory route is not in the protected enrollment")
-            if compound_executor is not None and action in {"search", "capture"}:
+            if compound_executor is not None and action in {"doctor", "search", "capture"}:
                 enrollment = target.enrollment
                 recipe = enrollment.fixed_route_map.get(route_id) if enrollment is not None else None
                 if recipe is None:
                     raise BrokerUnavailable("selected memory action has no complete protected compound recipe")
-                if action == "search":
+                if action == "doctor":
+                    compound_body = {}
+                elif action == "search":
                     compound_body = {"query": _text(body.get("query"), "query", 16384),
                                      "limit": limit}
                 elif target.provider == "agentmemory":
@@ -740,6 +742,20 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 result = dict(executed)
                 result["profile_id"] = context.profile_id
                 result["namespace_id"] = context.namespace_id
+                if action == "doctor":
+                    probe = result.get("result")
+                    if not isinstance(probe, Mapping):
+                        raise BrokerUnavailable("memory doctor returned no validated probe outcome")
+                    if probe.get("service_ready") is True:
+                        status = "ready"
+                    elif probe.get("service_live") is True:
+                        status = "live_unqualified"
+                    else:
+                        status = "not_ready"
+                    result["service_status"] = status
+                    result["functional_memory_verified"] = False
+                    result["revision"] = target.source_revision
+                    result["service_generation"] = target.service_generation
                 return _reply(result)
             if ipc is None:
                 raise BrokerUnavailable("root-owned authenticated memory service connector is unavailable")

@@ -29,6 +29,18 @@ def recipe(provider, route_id):
               "body_recipe_id": "agentmemory-remember-owned-v1",
               "response_schema_id": "agentmemory-remember-result-v1", "capture_fields": [], "next_step_id": None}],
         ),
+        "agentmemory-ready": (
+            "agentmemory-ready-request-v1", "agentmemory-livez-result-v1",
+            [{"step_id": "livez", "method": "GET", "path_template": "/agentmemory/livez",
+              "body_recipe_id": "agentmemory-livez-empty-v1",
+              "response_schema_id": "agentmemory-livez-result-v1", "capture_fields": [], "next_step_id": None}],
+        ),
+        "openviking-ready": (
+            "openviking-ready-request-v1", "openviking-ready-result-v1",
+            [{"step_id": "ready", "method": "GET", "path_template": "/ready",
+              "body_recipe_id": "openviking-ready-empty-v1",
+              "response_schema_id": "openviking-ready-result-v1", "capture_fields": [], "next_step_id": None}],
+        ),
         "openviking-session-capture": (
             "openviking-capture-event-v1", "openviking-capture-result-v1",
             [
@@ -55,9 +67,9 @@ def recipe(provider, route_id):
 
 def record(provider="agentmemory", variant="default", port=3111):
     if provider == "agentmemory":
-        route_ids = ("agentmemory-search", "agentmemory-capture")
+        route_ids = ("agentmemory-ready", "agentmemory-search", "agentmemory-capture")
     elif provider == "openviking":
-        route_ids = ("openviking-session-capture",)
+        route_ids = ("openviking-ready", "openviking-session-capture")
     else:
         route_ids = ("claude-sqlite-search",) if variant == "server-v1-sqlite" else (
             "claude-postgres-search",)
@@ -147,11 +159,12 @@ class MemoryEnrollmentTests(unittest.TestCase):
         self.assertEqual(agent.service_generation, "service-gen-7")
         self.assertEqual(agent.route_for("search"), "agentmemory-search")
         self.assertEqual(agent.route_for("capture"), "agentmemory-capture")
-        self.assertIsNone(agent.route_for("doctor"))
+        self.assertEqual(agent.route_for("doctor"), "agentmemory-ready")
         self.assertIsNone(agent.route_for("restore"))
         openviking = MemoryTarget.from_enrollment(MemoryServiceEnrollment.from_protected_record(
             record("openviking", "default", 1933)))
         self.assertEqual(openviking.route_for("capture"), "openviking-session-capture")
+        self.assertEqual(openviking.route_for("doctor"), "openviking-ready")
         self.assertIsNone(openviking.route_for("delete"))
 
     def test_target_and_source_pin_are_not_caller_selectable(self):
