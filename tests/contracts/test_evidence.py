@@ -48,7 +48,7 @@ def criterion_catalog():
 
 class EvidenceContractTests(unittest.TestCase):
     def test_fixture_pass_is_reported_but_never_full_target_acceptance(self):
-        report = acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[record()])
+        report = acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[record()], verify_record=lambda _: True)
         self.assertEqual(report["state"], "pending")
         self.assertEqual(report["acceptance"][0]["fixture_state"], "pass")
         self.assertEqual(report["acceptance"][0]["target_state"], "pending")
@@ -56,9 +56,15 @@ class EvidenceContractTests(unittest.TestCase):
     def test_skip_and_config_only_cannot_be_pass_evidence(self):
         configured = record(evidence_class="configuration")
         skipped = record(evidence_id="EV-R0170", state="skipped", exit_code=None, assertions={}, artifact_sha256=None, blocker="hardware lane not enrolled")
-        report = acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[configured, skipped])
+        report = acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[configured, skipped], verify_record=lambda _: True)
         self.assertEqual(report["acceptance"][0]["state"], "pending")
         self.assertEqual(report["acceptance"][0]["target_state"], "pending")
+
+    def test_prepopulated_pass_without_trusted_verifier_remains_pending(self):
+        report = acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[record()])
+        self.assertFalse(report["evidence"][0]["trusted"])
+        self.assertEqual(report["acceptance"][0]["state"], "pending")
+        self.assertIn("not been authenticated", report["acceptance"][0]["blocker"])
 
     def test_candidate_mismatch_and_empty_catalog_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "different candidate"):
@@ -88,6 +94,7 @@ class EvidenceContractTests(unittest.TestCase):
             root = Path(directory)
             traceability = criterion_catalog()
             traceability["additional_acceptance"] = [row for row in traceability["additional_acceptance"] if row["id"] < "AC16"]
+            traceability["additional_acceptance"].append({"id": "AC16", "text": "existing Sol row", "requirement_ids": ["RB01"], "task_ids": ["RB-T01"], "evidence_ids": ["EV-RB01"]})
             (root / "traceability.json").write_text(json.dumps(traceability))
             manifests = {
                 "resources-bundle-amendment.json": {"requirements": [{"id": "RB01"}], "tasks": [{"id": "RB-T01", "requirement": "RB01", "evidence": "EV-RB01"}], "acceptance": [{"id": "AC16", "requirements": ["RB01"], "tasks": ["RB-T01"], "method": "offline native source bundle"}]},
@@ -100,6 +107,7 @@ class EvidenceContractTests(unittest.TestCase):
             additions = {row["id"]: row for row in catalog["additional_acceptance"] if row["id"] in {"AC16", "AC17", "AC18"}}
             self.assertEqual(set(additions), {"AC16", "AC17", "AC18"})
             self.assertEqual(additions["AC16"]["evidence_ids"], ["EV-RB01"])
+            self.assertEqual(additions["AC16"]["text"], "existing Sol row")
             self.assertEqual(additions["AC17"]["task_ids"], ["RP-T01"])
             self.assertEqual(additions["AC18"]["evidence_ids"], ["EV-HI01"])
 

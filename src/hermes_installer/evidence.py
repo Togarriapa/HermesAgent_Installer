@@ -8,7 +8,7 @@ from enum import StrEnum
 import hashlib
 import json
 import re
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 from pathlib import Path
 
 
@@ -146,7 +146,18 @@ def load_acceptance_catalog(planning_dir: str | Path) -> dict[str, Any]:
             })
     combined = dict(baseline)
     combined["acceptance"] = list(baseline.get("acceptance", ()))
-    combined["additional_acceptance"] = list(baseline.get("additional_acceptance", ())) + additions
+    existing_additional = {str(row.get("id")): dict(row) for row in baseline.get("additional_acceptance", ())}
+    for addition in additions:
+        acceptance_id = addition["id"]
+        if acceptance_id in existing_additional:
+            current = existing_additional[acceptance_id]
+            for key in ("requirement_ids", "task_ids", "evidence_ids"):
+                current[key] = sorted(set(current.get(key, ())) | set(addition.get(key, ())))
+            current.setdefault("text", addition["text"])
+            current.setdefault("workflow", addition["workflow"])
+        else:
+            existing_additional[acceptance_id] = addition
+    combined["additional_acceptance"] = list(existing_additional.values())
     ids = [str(item.get("id")) for item in combined["acceptance"] + combined["additional_acceptance"]]
     if len(ids) != len(set(ids)):
         raise ValueError("acceptance catalog contains duplicate IDs")
@@ -156,6 +167,7 @@ def load_acceptance_catalog(planning_dir: str | Path) -> dict[str, Any]:
 def acceptance_report(
     *, candidate_sha: str, traceability: Mapping[str, Any],
     records: Iterable[EvidenceRecord], required_acceptance_ids: Iterable[str] | None = None,
+    verify_record: Callable[[EvidenceRecord], bool] | None = None,
 ) -> dict[str, Any]:
     """Build a report that keeps fixture and live target evidence in separate lanes."""
     if not re.fullmatch(r"[0-9a-f]{40}", candidate_sha):
@@ -166,6 +178,7 @@ def acceptance_report(
     if not required.issubset(by_id):
         raise ValueError(f"acceptance catalog is incomplete: {', '.join(sorted(required - by_id.keys()))}")
     accepted_records: dict[str, EvidenceRecord] = {}
+    trusted_ids: set[str] = set()
     for item in records:
         item.validate()
         if item.candidate_sha != candidate_sha:
@@ -173,22 +186,30 @@ def acceptance_report(
         if item.evidence_id in accepted_records:
             raise ValueError(f"duplicate evidence id: {item.evidence_id}")
         accepted_records[item.evidence_id] = item
+        if verify_record is not None:
+            try:
+                if verify_record(item):
+                    trusted_ids.add(item.evidence_id)
+            except Exception:
+                # An unavailable or malfunctioning trust adapter never promotes evidence.
+                pass
 
     workflows = []
     for acceptance_id in sorted(required):
         criterion = by_id[acceptance_id]
         wanted = set(criterion.get("evidence_ids", ()))
         related = [row for row in accepted_records.values() if row.evidence_id in wanted]
-        functional = [row for row in related if row.evidence_class in {EvidenceClass.FIXTURE, EvidenceClass.NATIVE_ARM64, EvidenceClass.PHYSICAL_PI, EvidenceClass.ACCOUNT} and row.state == EvidenceState.PASS]
+        trusted_related = [row for row in related if row.evidence_id in trusted_ids]
+        functional = [row for row in trusted_related if row.evidence_class in {EvidenceClass.FIXTURE, EvidenceClass.NATIVE_ARM64, EvidenceClass.PHYSICAL_PI, EvidenceClass.ACCOUNT} and row.state == EvidenceState.PASS]
         target = [row for row in functional if row.evidence_class in {EvidenceClass.PHYSICAL_PI, EvidenceClass.ACCOUNT}]
-        failures = [row for row in related if row.state == EvidenceState.FAIL]
+        failures = [row for row in trusted_related if row.state == EvidenceState.FAIL]
         if failures:
             state = EvidenceState.FAIL
         elif wanted and wanted.issubset({row.evidence_id for row in functional}) and _target_requirements_met(acceptance_id, functional):
             state = EvidenceState.PASS
         else:
             state = EvidenceState.PENDING
-        blocker = None if state == EvidenceState.PASS else _blocker(related, wanted)
+        blocker = None if state == EvidenceState.PASS else _blocker(trusted_related, wanted)
         workflows.append({
             "acceptance_id": acceptance_id,
             "description": _safe_text(str(criterion.get("text", ""))),
@@ -197,10 +218,10 @@ def acceptance_report(
             "task_ids": list(criterion.get("task_ids", ())),
             "evidence_ids": sorted(wanted),
             "observed_evidence_ids": sorted(row.evidence_id for row in related),
-            "fixture_state": _lane_state(related, EvidenceClass.FIXTURE),
-            "native_arm64_state": _lane_state(related, EvidenceClass.NATIVE_ARM64),
-            "target_state": _lane_state(related, EvidenceClass.PHYSICAL_PI, EvidenceClass.ACCOUNT),
-            "blocker": blocker,
+            "fixture_state": _lane_state(trusted_related, EvidenceClass.FIXTURE),
+            "native_arm64_state": _lane_state(trusted_related, EvidenceClass.NATIVE_ARM64),
+            "target_state": _lane_state(trusted_related, EvidenceClass.PHYSICAL_PI, EvidenceClass.ACCOUNT),
+            "blocker": blocker if not related or trusted_related else "Evidence artifacts have not been authenticated by an enrolled verifier",
             "resume_command": next((row.resume_command for row in related if row.resume_command), None),
         })
     full = all(item["state"] == EvidenceState.PASS.value for item in workflows)
@@ -211,7 +232,7 @@ def acceptance_report(
         "state": "pass" if full else "pending",
         "full_acceptance": full,
         "acceptance": workflows,
-        "evidence": [_record_public_dict(row) for row in sorted(accepted_records.values(), key=lambda row: row.evidence_id)],
+        "evidence": [_record_public_dict(row, trusted=row.evidence_id in trusted_ids) for row in sorted(accepted_records.values(), key=lambda row: row.evidence_id)],
     }
 
 
@@ -221,7 +242,7 @@ def write_report(path: str, report: Mapping[str, Any]) -> str:
     if set(report) != top_keys:
         raise ValueError("report does not match the public evidence schema")
     acceptance_keys = {"acceptance_id", "description", "state", "requirement_ids", "task_ids", "evidence_ids", "observed_evidence_ids", "fixture_state", "native_arm64_state", "target_state", "blocker", "resume_command"}
-    record_keys = {"evidence_id", "candidate_sha", "evidence_class", "state", "platform", "target_id", "started_at", "finished_at", "command", "exit_code", "assertions", "artifact_sha256", "blocker", "resume_command"}
+    record_keys = {"evidence_id", "candidate_sha", "evidence_class", "state", "platform", "target_id", "started_at", "finished_at", "command", "exit_code", "assertions", "artifact_sha256", "blocker", "resume_command", "trusted"}
     if any(set(row) != acceptance_keys for row in report.get("acceptance", ())):
         raise ValueError("acceptance row does not match the public evidence schema")
     if any(set(row) != record_keys for row in report.get("evidence", ())):
@@ -234,10 +255,11 @@ def write_report(path: str, report: Mapping[str, Any]) -> str:
     return digest
 
 
-def _record_public_dict(row: EvidenceRecord) -> dict[str, Any]:
+def _record_public_dict(row: EvidenceRecord, *, trusted: bool) -> dict[str, Any]:
     data = asdict(row)
     data["evidence_class"] = row.evidence_class.value
     data["state"] = row.state.value
+    data["trusted"] = trusted
     return _redact_secrets(data)
 
 
