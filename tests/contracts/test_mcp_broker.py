@@ -43,33 +43,33 @@ class FakeBrokerTransport:
 class MCPBrokerTests(unittest.TestCase):
     def setUp(self):
         self.service = ProtectedMCPService(
-            "fixture", "http", frozenset({"get_state"}), "root-binding-fixture", "a" * 64,
+            "home-assistant", "http", frozenset({"get_state"}), "root-binding-fixture", "a" * 64,
             selection_arguments={"get_state": ("entity_id",)},
         )
         self.transport = FakeBrokerTransport()
         self.handler = build_mcp_handlers(
-            {"fixture": self.service},
+            {"home-assistant": self.service},
             transport_factory=lambda service, context: self.transport,
-        )[("mcp.request", "mcp:fixture:http")]
+        )[("mcp.request", "mcp:home-assistant:http")]
         self.purpose = "mcp-selected-resource-read"
 
     def invoke(self, method, params, selection="sensor.office", request_id=1, *,
                intent_selection=None, intent_params=None):
         binding_selection = selection if intent_selection is None else intent_selection
         bound_params = params if intent_params is None else intent_params
-        intent = mcp_intent("fixture", "http", request_id, method, binding_selection, bound_params)
+        intent = mcp_intent("home-assistant", "http", request_id, method, binding_selection, bound_params)
         intent_id = canonical_digest({"purpose": self.purpose, "intent": intent})
         context = SimpleNamespace(
             purpose=self.purpose, intent_id=intent_id, uid=1000, profile_id="fixture-profile",
         )
         envelope = {
-            "schema": 1, "service_id": "fixture", "request_id": request_id,
+            "schema": 1, "service_id": "home-assistant", "request_id": request_id,
             "method": method, "selection": selection, "params": params,
         }
         payload = canonical_bytes(envelope)
-        capability = "mcp:fixture:read" if method == "tools/call" else "mcp:fixture:connect"
+        capability = "mcp:home-assistant:read" if method == "tools/call" else "mcp:home-assistant:connect"
         authorization = SimpleNamespace(
-            target="mcp:fixture:http", recipient=None, request_digest=canonical_digest(payload),
+            target="mcp:home-assistant:http", recipient=None, request_digest=canonical_digest(payload),
             capability=capability, intent_id=intent_id,
         )
         return self.handler(
