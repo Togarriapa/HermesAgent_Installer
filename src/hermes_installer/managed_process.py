@@ -157,22 +157,70 @@ def _pidfd_exited(pidfd: int) -> bool:
     return bool(poller.poll(0))
 
 
+def _privileged_output(arguments: Sequence[str], *, limit: int = 65536,
+                       timeout: float = 1.5) -> bytes:
+    """Run only fixed read-only system tools through noninteractive sudo."""
+    sudo = shutil.which("sudo", path="/usr/bin:/bin")
+    if sudo is None or not 1 <= limit <= 131072 or not 0 < timeout <= 3:
+        raise ManagedProcessError("root process observation is unavailable")
+    try:
+        completed = subprocess.run(
+            [sudo, "-n", *arguments], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+            close_fds=True, timeout=timeout, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise ManagedProcessError("bounded root process observation failed") from None
+    if completed.returncode != 0 or len(completed.stdout) > limit:
+        raise ManagedProcessError("root process observation was denied or exceeded its bound")
+    return completed.stdout
+
+
+def _proc_executable_hash(pid: int) -> str:
+    path = f"/proc/{pid}/exe"
+    stat_tool = shutil.which("stat", path="/usr/bin:/bin")
+    sha_tool = shutil.which("sha256sum", path="/usr/bin:/bin")
+    if not stat_tool or not sha_tool:
+        raise ManagedProcessError("pinned process inspection tools are unavailable")
+    before = _privileged_output([stat_tool, "-Lc", "%d:%i", path], limit=128).decode("ascii").strip()
+    raw = _privileged_output([sha_tool, path], limit=256).decode("ascii").split()
+    after = _privileged_output([stat_tool, "-Lc", "%d:%i", path], limit=128).decode("ascii").strip()
+    if not re.fullmatch(r"[0-9]+:[0-9]+", before) or before != after or not raw or not re.fullmatch(r"[0-9a-f]{64}", raw[0]):
+        raise ManagedProcessError("process executable changed during inspection")
+    return raw[0]
+
+
+def _proc_inode(pid: int, namespace: str) -> int:
+    if namespace not in {"mnt", "net", "user", "pid"}:
+        raise ValueError("unsupported namespace")
+    tool = shutil.which("stat", path="/usr/bin:/bin")
+    if not tool:
+        raise ManagedProcessError("namespace inspection tool is unavailable")
+    raw = _privileged_output([tool, "-Lc", "%i", f"/proc/{pid}/ns/{namespace}"], limit=128).decode("ascii").strip()
+    if not raw.isdigit():
+        raise ManagedProcessError("namespace identity cannot be read")
+    return int(raw)
+
+
+def _protected_home_is_empty(pid: int) -> bool:
+    tool = shutil.which("find", path="/usr/bin:/bin")
+    if not tool:
+        raise ManagedProcessError("home isolation probe is unavailable")
+    result = _privileged_output(
+        [tool, f"/proc/{pid}/root/home", "-mindepth", "1", "-maxdepth", "1", "-print", "-quit"],
+        limit=4096, timeout=1.5,
+    )
+    return not result.strip()
+
 def _observe_process(pid: int, expected_cgroup: str) -> tuple[int, int, str, int]:
     pidfd = os.pidfd_open(pid, 0)
     try:
         parent, ticks = _proc_stat(pid)
         if _proc_cgroup(pid) != expected_cgroup:
             raise ManagedProcessError("process is outside the manager-owned cgroup")
-        exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
-        try:
-            opened = os.fstat(exe_fd)
-            digest = _digest_fd(exe_fd)
-            current = os.stat(f"/proc/{pid}/exe")
-            if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
-                raise ManagedProcessError("process executable changed during observation")
-        finally:
-            os.close(exe_fd)
-        if _proc_stat(pid)[1] != ticks or _proc_cgroup(pid) != expected_cgroup or _pidfd_exited(pidfd):
+        digest = _proc_executable_hash(pid)
+        if (_proc_stat(pid)[1] != ticks or _proc_cgroup(pid) != expected_cgroup
+                or _pidfd_exited(pidfd)):
             raise ManagedProcessError("process identity changed during observation")
         return parent, ticks, digest, pidfd
     except BaseException:
@@ -698,10 +746,10 @@ class ManagedProcessSupervisor:
             if actual_env != dict(spec.env_allowlist):
                 os.close(pidfd)
                 raise ManagedProcessError("actual process environment differs from the sanitized allowlist")
-            if os.stat(f"/proc/{pid}/ns/net").st_ino == os.stat("/proc/self/ns/net").st_ino:
+            if _proc_inode(pid, "net") == os.stat("/proc/self/ns/net").st_ino:
                 os.close(pidfd)
                 raise ManagedProcessError("private network namespace was not applied")
-            if os.stat(f"/proc/{pid}/ns/mnt").st_ino == os.stat("/proc/self/ns/mnt").st_ino:
+            if _proc_inode(pid, "mnt") == os.stat("/proc/self/ns/mnt").st_ino:
                 os.close(pidfd)
                 raise ManagedProcessError("private mount namespace was not applied")
             status = Path(f"/proc/{pid}/status").read_text()
@@ -715,12 +763,9 @@ class ManagedProcessSupervisor:
             if observed_groups != (service_account.pw_gid,):
                 os.close(pidfd)
                 raise ManagedProcessError("supplementary service groups were not cleared")
-            try:
-                if tuple(Path(f"/proc/{pid}/root/home").iterdir()):
-                    os.close(pidfd)
-                    raise ManagedProcessError("host home directories remain visible inside service")
-            except FileNotFoundError:
-                pass
+            if not _protected_home_is_empty(pid):
+                os.close(pidfd)
+                raise ManagedProcessError("host home directories remain visible inside service")
             identity = ProcessIdentity(unit, cgroup, pid, ticks, digest, pidfd)
             await _systemctl_async("show", "--property=Description", "--value", unit, timeout=1.0)
             spec.journal.record_owned("managed-systemd-service", unit, "active")
@@ -753,7 +798,12 @@ class ManagedProcessSupervisor:
 
     @staticmethod
     def _read_process_environment(pid: int) -> dict[str, str]:
-        raw = Path(f"/proc/{pid}/environ").read_bytes()
+        head = shutil.which("head", path="/usr/bin:/bin")
+        if head is None:
+            raise ManagedProcessError("bounded environment inspection is unavailable")
+        raw = _privileged_output([head, "-c", "65537", f"/proc/{pid}/environ"], limit=65536)
+        if len(raw) > 65536:
+            raise ManagedProcessError("process environment exceeds its safety bound")
         result = {}
         for item in raw.split(b"\\x00"):
             if item:
