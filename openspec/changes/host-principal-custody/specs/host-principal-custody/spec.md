@@ -208,3 +208,24 @@ The installer SHALL compare selected device identity generation to protected exp
 #### Scenario: Device epoch changes under live profile
 - **WHEN** hotplug or replacement changes selected device identity epoch
 - **THEN** invalidate inference enrollment/active grant and require root reattestation without sibling/all-device fallback.
+
+### Requirement: Root private observed source capture
+The installer SHALL issue qualified source receipts only through root-private actual registered observer/event joins and exact bounded observed bytes, with peer, generation, parent closure, recipient and lease bindings. Worker submitted capture SHALL remain UNKNOWN/private.
+
+#### Scenario: Worker claims tool result or authentic user input
+- **WHEN** actual registered root observer/event/invocation evidence is absent, stale or replayed
+- **THEN** deny qualified receipt before effect and preserve private unknown provenance without omitted original functionality.
+
+### Requirement: Typed remote root session wire
+The installer SHALL expose distinct one-shot asset and leased WebSocket admissions through peer-bound opaque root handles and finite typed connector operations that check current session state and fresh exact grants internally.
+
+#### Scenario: Asset handle reused for WebSocket or caller chooses connector
+- **WHEN** caller reuses consumed asset admission, selects target/path or sends frame after root lease expiry
+- **THEN** reject before bytes and close owned relay without localcontext or raw FD bypass.
+
+### Requirement: Protected runtime assembly identities
+The installer SHALL load strict root-owned active generation catalogs, verify immutable native closure/device kernel isolation, attest actual successful build output dynamically and sign the exact full connector effect payload digest.
+
+#### Scenario: Preclaimed build hash or partial effect digest
+- **WHEN** output was not actually attested after terminal success, closure/import/device identity differs or grant signs only partial payload
+- **THEN** deny activation/effect without permissive fallback and preserve truthful failure/native evidence.

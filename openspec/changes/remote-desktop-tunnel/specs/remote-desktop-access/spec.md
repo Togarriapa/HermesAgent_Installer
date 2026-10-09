@@ -188,3 +188,17 @@ The installer SHALL verify actual Access JWT and fresh root selected policy at r
 #### Scenario: Forged gateway claims or expired active stream
 - **WHEN** root JWT/policy/principal verification fails or active lease revokes/expires
 - **THEN** deny before bytes or close both stream directions within tested bounded lease and preserve setup/read/tunnel credential separation.
+
+### Requirement: Typed remote root session wire
+The installer SHALL expose distinct one-shot asset and leased WebSocket admissions through peer-bound opaque root handles and finite typed connector operations that check current session state and fresh exact grants internally.
+
+#### Scenario: Asset handle reused for WebSocket or caller chooses connector
+- **WHEN** caller reuses consumed asset admission, selects target/path or sends frame after root lease expiry
+- **THEN** reject before bytes and close owned relay without localcontext or raw FD bypass.
+
+### Requirement: Protected runtime assembly identities
+The installer SHALL load strict root-owned active generation catalogs, verify immutable native closure/device kernel isolation, attest actual successful build output dynamically and sign the exact full connector effect payload digest.
+
+#### Scenario: Preclaimed build hash or partial effect digest
+- **WHEN** output was not actually attested after terminal success, closure/import/device identity differs or grant signs only partial payload
+- **THEN** deny activation/effect without permissive fallback and preserve truthful failure/native evidence.

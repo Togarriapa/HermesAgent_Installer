@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import uuid
 from dataclasses import dataclass
@@ -37,10 +38,60 @@ CORAL_RUNTIME_STORE_IDS = {
     "tensorflow/tflite-runtime": "coral-tflite-runtime-cp39-arm64",
     "numpy/numpy": "coral-numpy-cp39-arm64",
 }
+CORAL_PACKAGE_SET_ID = "coral-cp39-runtime-v1"
+CORAL_TFLITE_WHEEL_SHA256 = "be198b7dc4401204be54a15884d9e336389790eb707439524540f5a9329fdd02"
+CORAL_NUMPY_WHEEL_SHA256 = "d5241e0a80d808d70546c697135da2c613f30e28251ff8307eb72ba696945764"
 
 
 class CoralError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class CoralPackageSetReceipt:
+    package_set_id: str
+    manifest_sha256: str
+    enrollment_id: str
+    generation: str
+    runtime_build_attestation_digest: str
+    wheel_sha256: tuple[str, ...]
+    installed_tree_sha256: str
+    status: str
+    receipt_id: str
+
+
+def install_coral_runtime_package_set(authority_client, *,
+                                      enrollment_id: str, generation: str,
+                                      manifest_sha256: str, timeout: float = 600,
+                                      cancelled: Callable[[], bool] | None = None) -> CoralPackageSetReceipt:
+    """Mint an exact one-effect grant and install only the protected Coral set."""
+    from hermes_installer.authority.package_sets import install_package_set, package_set_request
+    from hermes_installer.authority.types import AuthorityDenied
+
+    if (not isinstance(enrollment_id, str) or not enrollment_id
+            or not isinstance(generation, str) or not generation
+            or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not 0 < timeout <= 600):
+        raise ValueError("Coral package-set enrollment, generation and bounded timeout are required")
+    try:
+        target, _payload, digest = package_set_request(package_set_id=CORAL_PACKAGE_SET_ID,
+            manifest_sha256=manifest_sha256, enrollment_id=enrollment_id, generation=generation)
+        context = authority_client.context(purpose="hermes-bootstrap",
+            intent="install-coral-runtime-package-set", operation="package.install",
+            final_payload_digest=digest, lease_seconds=float(timeout), cancelled=cancelled)
+        authorization = authority_client.authorize_effect(context, capability="hermes-bootstrap",
+            target=target, recipient=None, request_digest=digest, retry_index=0,
+            cancelled=cancelled)
+        receipt = install_package_set(authority_client, authorization,
+            package_set_id=CORAL_PACKAGE_SET_ID, manifest_sha256=manifest_sha256,
+            enrollment_id=enrollment_id, generation=generation, timeout=timeout,
+            cancelled=cancelled)
+    except (AuthorityDenied, AttributeError, TypeError, ValueError) as exc:
+        raise CoralError(f"root package-set effect denied: {exc}") from exc
+    return CoralPackageSetReceipt(receipt.package_set_id, receipt.manifest_sha256,
+        receipt.enrollment_id, receipt.generation, receipt.runtime_build_attestation_digest,
+        tuple(receipt.wheel_sha256), receipt.installed_tree_sha256, receipt.status,
+        receipt.broker_receipt_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,12 +102,75 @@ class CoralDevice:
     product_id: str
     device_node: str | None
     access_status: str
+    sysfs_path: str | None = None
+    device_major: int | None = None
+    device_minor: int | None = None
+    device_inode: int | None = None
+    interface_identity: str | None = None
+    interface_sysfs_path: str | None = None
+    driver_identity: str | None = None
 
     @property
     def delegate_selector(self) -> str:
         if self.transport == "usb":
             return "usb:0"
         return "pci:0"
+
+    @property
+    def identity_sha256(self) -> str:
+        """Stable selected-device identity; never treats a transport enum as identity."""
+        payload = {
+            "transport": self.transport,
+            "address": self.address,
+            "vendor_id": self.vendor_id,
+            "product_id": self.product_id,
+            "sysfs_path": self.sysfs_path,
+            "device_node": self.device_node,
+            "device_major": self.device_major,
+            "device_minor": self.device_minor,
+            "device_inode": self.device_inode,
+            "interface_identity": self.interface_identity,
+            "interface_sysfs_path": self.interface_sysfs_path,
+            "driver_identity": self.driver_identity,
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                                           ensure_ascii=True).encode("ascii")).hexdigest()
+
+    def host_binding_request(self) -> dict[str, object]:
+        """Return the exact identity a root enrollment must bind to a private worker."""
+        if (self.device_node is None or self.sysfs_path is None
+                or type(self.device_major) is not int or type(self.device_minor) is not int
+                or type(self.device_inode) is not int):
+            raise CoralError("Coral device lacks a complete kernel identity for root-owned binding")
+        if self.transport == "usb" and (not self.interface_identity or not self.interface_sysfs_path):
+            raise CoralError("Coral USB device lacks the exact interface identity required for root-owned binding")
+        if self.transport == "pcie" and not self.driver_identity:
+            raise CoralError("Coral PCIe device lacks the bound driver identity required for root-owned binding")
+        if self.transport not in {"usb", "pcie"}:
+            raise CoralError("Coral transport is not enrolled for root-owned binding")
+        return {
+            "schema": 1,
+            "transport": "pci" if self.transport == "pcie" else "usb",
+            "physical_identity": self.address,
+            "address": self.address,
+            "vendor_id": self.vendor_id,
+            "product_id": self.product_id,
+            "sysfs_path": self.sysfs_path,
+            "device_node": self.device_node,
+            "device_major": self.device_major,
+            "device_minor": self.device_minor,
+            "device_inode": self.device_inode,
+            "major": self.device_major,
+            "minor": self.device_minor,
+            "inode": self.device_inode,
+            "interface_identity": self.interface_identity,
+            "interface_sysfs_path": self.interface_sysfs_path,
+            "driver_identity": self.driver_identity,
+            "driver": self.driver_identity,
+            # This digest is a local observation check only. Root custody creates
+            # the generation-bound DeviceIdentity.selection_digest independently.
+            "observed_identity_sha256": self.identity_sha256,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,9 +202,29 @@ def probe_coral_devices(*, sys_root: Path = Path("/sys"), dev_root: Path = Path(
                 if not bus.is_file() or not address.is_file():
                     continue
                 node = dev_root / "bus" / "usb" / bus.read_text().strip() / address.read_text().strip()
-                found.append(CoralDevice("usb", entry.name, vendor, product,
-                    str(node) if node.exists() else None,
-                    "accessible" if node.exists() and os.access(node, os.R_OK | os.W_OK) else "permission_denied"))
+                node_info = None
+                try:
+                    node_info = node.lstat()
+                except OSError:
+                    pass
+                is_device = node_info is not None and stat.S_ISCHR(node_info.st_mode)
+                interface_entries = sorted((sys_root / "bus" / "usb" / "devices").glob(entry.name + ":*"))
+                for interface in interface_entries:
+                    try:
+                        interface_id = interface.name
+                        if not re.fullmatch(re.escape(entry.name) + r":[0-9]+\.[0-9]+", interface_id):
+                            continue
+                        (interface / "bInterfaceNumber").read_text(encoding="ascii").strip()
+                        interface_path = str(interface.resolve(strict=True))
+                    except (OSError, UnicodeError):
+                        continue
+                    found.append(CoralDevice("usb", entry.name, vendor, product,
+                        str(node) if is_device else None,
+                        "accessible" if is_device and os.access(node, os.R_OK | os.W_OK) else "permission_denied",
+                        str(entry.resolve(strict=True)), os.major(node_info.st_rdev) if is_device else None,
+                        os.minor(node_info.st_rdev) if is_device else None,
+                        node_info.st_ino if is_device else None,
+                        interface_id, interface_path))
     pci_root = sys_root / "bus" / "pci" / "devices"
     if pci_root.is_dir():
         for entry in sorted(pci_root.iterdir()):
@@ -101,9 +235,23 @@ def probe_coral_devices(*, sys_root: Path = Path("/sys"), dev_root: Path = Path(
                 continue
             if vendor == PCI_VENDOR and product == PCI_DEVICE:
                 node = dev_root / "apex_0"
+                node_info = None
+                try:
+                    node_info = node.lstat()
+                except OSError:
+                    pass
+                is_device = node_info is not None and stat.S_ISCHR(node_info.st_mode)
+                driver_link = entry / "driver"
+                try:
+                    driver_identity = driver_link.resolve(strict=True).name if driver_link.is_symlink() else None
+                except OSError:
+                    driver_identity = None
                 found.append(CoralDevice("pcie", entry.name, vendor, product,
-                    str(node) if node.exists() else None,
-                    "accessible" if node.exists() and os.access(node, os.R_OK | os.W_OK) else "driver_or_permission_pending"))
+                    str(node) if is_device else None,
+                    "accessible" if is_device and os.access(node, os.R_OK | os.W_OK) else "driver_or_permission_pending",
+                    str(entry.resolve(strict=True)), os.major(node_info.st_rdev) if is_device else None,
+                    os.minor(node_info.st_rdev) if is_device else None,
+                    node_info.st_ino if is_device else None, driver_identity=driver_identity))
     return tuple(found)
 
 
@@ -292,19 +440,16 @@ def _run_managed_command(run_command: Callable[..., object], argv: Sequence[str]
     return str(output)
 
 
-def provision_coral_python(component_root: Path, *, selected: bool, catalog=None,
-                           staging_root: Path | None = None, expected_uid: int = 0) -> Path:
-    """Fail closed until a reviewed package-set install target exists for both exact wheels."""
+def provision_coral_python(*, selected: bool, authority_client,
+                           enrollment_id: str, generation: str,
+                           manifest_sha256: str, timeout: float = 600,
+                           cancelled: Callable[[], bool] | None = None) -> CoralPackageSetReceipt:
+    """Install the selected protected runtime through the root package broker."""
     if not selected:
         raise PermissionError("the isolated Coral runtime must be selected before provisioning")
-    if catalog is None or staging_root is None:
-        raise CoralError("Coral runtime provisioning requires its protected artifact-catalog receipts")
-    resolve_coral_runtime_artifacts(catalog, staging_root, expected_uid=expected_uid)
-    raise CoralError(
-        "Coral activation remains unavailable: host package.install accepts one enrolled ZIP wheelhouse, "
-        "but the reviewed NumPy and TFLite artifacts are separate official wheels; obtain a Sol-approved "
-        "package-set target bound to the isolated CPython 3.9 runtime before building or installing"
-    )
+    return install_coral_runtime_package_set(authority_client,
+        enrollment_id=enrollment_id, generation=generation,
+        manifest_sha256=manifest_sha256, timeout=timeout, cancelled=cancelled)
 
 def download_official_sample(destination: Path, *, selected: bool = False, cancel=None, catalog=None,
                              staging_root: Path | None = None, expected_uid: int = 0) -> Path:
@@ -388,6 +533,7 @@ class CoralInferenceEvidence:
     elapsed_seconds: float | None
     python_version: str
     architecture: str
+    device_identity_sha256: str
     failure_reason: str | None = None
 
     def to_json(self) -> str:
@@ -396,7 +542,10 @@ class CoralInferenceEvidence:
 
 
 def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
-                              *, sample_path: Path, runtime_path: Path) -> CoralInferenceEvidence:
+                              *, sample_path: Path, runtime_path: Path,
+                              root_selection_digest: str) -> CoralInferenceEvidence:
+    if not re.fullmatch(r"[0-9a-f]{64}", root_selection_digest):
+        raise CoralError("root-attested generation-bound device selection digest is required")
     _verify_sample(sample_path)
     if runtime_path.is_symlink() or not runtime_path.is_file():
         raise ArtifactError("selected Edge TPU runtime library must be a regular non-symlink file")
@@ -405,6 +554,9 @@ def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
         raise ArtifactError("evidence does not identify the pinned official compiled Coral model")
     if raw.get("transport") != device.transport or raw.get("device_address") != device.address:
         raise ArtifactError("inference evidence does not match the selected physical Coral device")
+    identity = raw.get("device_identity_sha256")
+    if identity != root_selection_digest or not isinstance(identity, str):
+        raise ArtifactError("inference evidence does not match the root-attested device selection digest")
     delegate_loaded = raw.get("delegate_loaded") is True
     delegate_used = raw.get("delegate_used") is True
     performed = raw.get("inference_performed") is True
@@ -435,7 +587,7 @@ def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
         device.vendor_id, device.product_id, CORAL_SAMPLE_SHA256, runtime_sha,
         str(raw.get("runtime_version", "")), str(raw.get("delegate_library", "libedgetpu.so.1")),
         True, True, delegated_ops, True, output_sha, elapsed,
-        str(raw.get("python_version", "")), str(raw.get("architecture", "")))
+        str(raw.get("python_version", "")), str(raw.get("architecture", "")), identity)
 
 
 def _sha256(path: Path) -> str:

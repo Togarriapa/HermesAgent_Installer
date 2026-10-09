@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from hermes_installer.codex_responses import (
@@ -11,6 +13,19 @@ from hermes_installer.codex_responses import (
     normalize_responses_request,
 )
 from hermes_installer.policy import PolicyDenied
+from hermes_installer.provider_effect_handlers import canonical_provider_request
+
+
+def _normalization_policy():
+    module = Path(inspect.getsourcefile(canonical_provider_request))
+    record = {"id": "siwc-output-unsupported-v1", "revision": 1,
+              "route_schema_id": "siwc-responses-preview-v1",
+              "output_limit_mode": "unsupported-field-reject", "output_limit_ceiling": None,
+              "canonicalizer_artifact_id": "provider-canonicalizer-v1",
+              "canonicalizer_sha256": hashlib.sha256(module.read_bytes()).hexdigest()}
+    record["normalization_policy_sha256"] = hashlib.sha256(
+        json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return record
 
 
 class FakeAuthority:
@@ -20,6 +35,7 @@ class FakeAuthority:
         self.issued = []
         self.verified = []
         self.calls = []
+        self.native_calls = []
 
     def authorize_effect(self, context, *, capability, target, recipient, request_digest, retry_index):
         binding = (capability, target, recipient, request_digest, retry_index)
@@ -50,6 +66,14 @@ class FakeAuthority:
             body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":9,"output_tokens":4}}}\n\n',
             headers={"Content-Type": "text/event-stream", "Retry-After": "2", "Set-Cookie": "secret"})
 
+    def dispatch_native_request(self, handle, normalized_payload, *, retry_index, timeout, cancelled=None):
+        if self.fail_dispatch:
+            raise RuntimeError("fake bridge failure")
+        self.native_calls.append((handle, normalized_payload, retry_index, timeout, cancelled))
+        return SimpleNamespace(status=200,
+            body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":9,"output_tokens":4}}}\n\n',
+            headers={"Content-Type": "text/event-stream"})
+
 
 def context(sensitivity="private", lease=20, final_payload_digest=None):
     return SimpleNamespace(principal_id="fixture", profile_id="codex-enabled",
@@ -69,6 +93,25 @@ def request(**extra):
 
 
 class CodexResponsesTests(unittest.TestCase):
+    def test_native_event_uses_single_atomic_bridge_and_requires_exact_handle(self):
+        authority = FakeAuthority()
+        transport = CodexResponsesTransport(authority)
+        payload = request()
+        normalized, _model, _tools = normalize_responses_request(payload)
+        response = transport.dispatch_native_event(
+            "a" * 48, payload, retry_index=2, timeout=4,
+            normalization_policy=_normalization_policy(),
+        )
+        self.assertEqual((response.status, response.input_tokens, response.output_tokens), (200, 9, 4))
+        self.assertEqual(len(authority.native_calls), 1)
+        self.assertEqual(authority.native_calls[0][:3], ("a" * 48, normalized, 2))
+        self.assertEqual(authority.calls, [])
+        for invalid in ("short", "x" * 129, "x" * 48 + "!"):
+            with self.subTest(handle=invalid), self.assertRaises(PolicyDenied):
+                transport.dispatch_native_event(invalid, payload,
+                                                normalization_policy=_normalization_policy())
+        self.assertEqual(len(authority.native_calls), 1)
+
     def test_fixed_responses_target_binds_canonical_payload_and_tool_capability(self):
         authority = FakeAuthority()
         transport = CodexResponsesTransport(authority)

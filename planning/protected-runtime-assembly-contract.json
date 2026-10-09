@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    "HI07",
+    "HI08",
+    "HI09",
+    "HI11",
+    "HI13",
+    "HW02",
+    "HW03"
+  ],
+  "tasks": [
+    "HI-T07",
+    "HI-T08",
+    "HI-T09",
+    "HI-T11",
+    "HI-T13",
+    "HW-T02",
+    "HW-T03"
+  ],
+  "state": "assembly schema; actual root/native/kernel/build evidence pending",
+  "inspected_loader": {
+    "commit": "0fd1b166530f49a21f4b8b46dc033909c8b1f9b4",
+    "paths": [
+      "src/hermes_installer/authority/enrollment.py",
+      "src/hermes_installer/protected_enrollment.py"
+    ],
+    "finding": "authority strict outer schema lacks service/build/device catalogs; existing from_verified_records accepts independently authenticated root records; preknown build output SHA circular"
+  },
+  "outer_storage": {
+    "file": "/etc/hermes-installer/authority.json",
+    "new_required_key": "service_generations",
+    "record_fields": [
+      "schema=1",
+      "generation_id",
+      "service_records",
+      "protected_devices",
+      "protected_build_records",
+      "native_packages",
+      "memory_enrollments",
+      "operation_parameter_schemas",
+      "generation_digest"
+    ],
+    "types": "single selected generation record; each catalog is bounded list<=1024 strict existing inner source-backed records, duplicates/unknown fields rejected. generation_id opaque rootissued string. Empty lists valid only affected actions explicitly unavailable.",
+    "digest": "SHA256 UTF-8 canonical sorted compact ensure_ascii=false/no newline JSON of entire service_generations object EXCLUDING generation_digest. Includes schema,generation_id and every entire nested record/list, list order exactly preserved. No partial inner list/hash substitutes. Root protected file regular uid0 mode0600, no symlink, all parentsuid0 no group/worldwrite; reject duplicateJSONkeys/max8MiB. Digest detects drift not signature/admin resistance; root ownership authenticates loader source. No fake signatures or worker manifest hashes.",
+    "joins": "Root loader verifiesgenerationdigest then supplies exactrecords to ProtectedEnrollmentCatalog.from_verified_records, ProtectedDeviceCatalog, ProtectedBuildCatalog. nativepackages join exactserviceprofile/generation; memory joins profile/stringservicegen/intownerepoch; operation_parameters exactschemaIDs. Deviceepoch separately expected_device_generation. Buildprecondition generation matches selectedrecipe; postbuild receipt only rootregistry produced. Every rootbinding/currentpolicy invalidates old handles on cataloggeneration/digestchange.",
+    "previous_fixed_files": "Previously defined native-packages.json and operation-parameters.json formats remain supported only as root-owned staging/import source for generation creation; active authority loader uses canonical service_generations snapshot, no second mutable independent fallback. If mirrors supplied, exact content/hash equality with selected nested catalog required. Native source observer catalog remains rootselected source_issuers from exact prior nativefile schema, bound observer digest to selected generation before admission. No delete/rewrite earlier amendment."
+  },
+  "device_kernel_enforcement": {
+    "profile_fields": [
+      "device_enrollment_id",
+      "expected_device_generation"
+    ],
+    "resolved_launch_fields": [
+      "selected_device_identity_digest",
+      "device_generation",
+      "device_major",
+      "device_minor",
+      "device_inode",
+      "device_transport",
+      "device_filter_artifact_id",
+      "device_filter_sha256",
+      "private_dev_mount_receipt_id"
+    ],
+    "mechanism": "Root private mount namespace filtered /dev with only safeprocessnodes + exactselected TPU node bind; root-attached cgroupv2 BPF_CGROUP_DEVICE defaultdeny hardware, exact type/major/minor rw allow selectedTPU plus enumeratedsafeprocessnodes, deny mknod. No workerCAP_SYS_ADMIN/SYS_RAWIO/MKNOD/NET_ADMIN/BPF, device namespace creation or cgroup writes. Root installs and verifies filter attachment/program identity before worker exec, launches atomic suspended/handshake until custody sealed. No PrivateDevices=no/wildcard USB/apex/devicecontroller illusion.",
+    "policy_fields": [
+      "filter_artifact_id",
+      "filter_sha256",
+      "safe_device_allowlist",
+      "selected_device_enrollment_id",
+      "expected_device_generation",
+      "private_dev_root_id"
+    ],
+    "safe_device_allowlist": "Finite rootselectedactual char nodes null/zero/random/urandom and only needed ownedpty nodes; exact major/minor/access observed, no ttyconsole or wildcardallptyhardware. Filter denies others regardless path/hardlink/FD open attempt; root does not pass unrelated opendeviceFD.",
+    "proof": "Actual Linux attachment/cgroup/PIDFD/mount/device identity, selecteddeviceopen/inferencepositive, unselecteddevice/hardware/mknod/filterdetach/cgroupescape/reusednode negatives. Unsupportedkernel/BPF/filter/rootmount blocksCoral no permissivefallback. Devicehotplug invalidates/stop before reenrollment."
+  },
+  "build_attestation": {
+    "prebuild_record_change": "Replace required_outputs path->preknownsha with output_specs finite records below; no actual output SHA/size claimed before build. Rootselected recipe/source/toolchain/builder/constraints hash immutable.",
+    "output_spec_fields": [
+      "relative_path",
+      "kind=file|tree",
+      "maximum_bytes",
+      "executable_role",
+      "target_facts"
+    ],
+    "colibri_outputs": [
+      {
+        "relative_path": "c/colibri",
+        "kind": "file",
+        "maximum_bytes": 67108864,
+        "executable_role": "colibri-engine",
+        "target_facts": {
+          "elf_class": 64,
+          "elf_machine": "EM_AARCH64",
+          "os": "linux",
+          "required_runtime_dependencies": [
+            "libgomp.so.1",
+            "libm",
+            "libc"
+          ],
+          "instruction_policy": "actual target compatible ARM64 flags; no x86 default or unmeasured CPUflags"
+        }
+      }
+    ],
+    "cpython_outputs": [
+      {
+        "relative_path": "runtime/bin/python3.9",
+        "kind": "file",
+        "maximum_bytes": 67108864,
+        "executable_role": "coral-cpython39",
+        "target_facts": {
+          "elf_class": 64,
+          "elf_machine": "EM_AARCH64",
+          "python_version": "3.9.25",
+          "soabi": "cpython-39-aarch64-linux-gnu",
+          "debug": false,
+          "glibc_minimum": "2.34 for selected TFLite wheel"
+        }
+      },
+      {
+        "relative_path": "runtime/lib/python3.9",
+        "kind": "tree",
+        "maximum_bytes": 268435456,
+        "executable_role": "cpython-stdlib-and-extension-closure",
+        "target_facts": {
+          "python_version": "3.9.25",
+          "target": "linux-aarch64",
+          "all_native_extensions": "ELF64EM_AARCH64, actual dependency closure verified"
+        }
+      }
+    ],
+    "source_evidence": [
+      {
+        "path": "JustVugg/colibri@bf2442915d6e3dd4cdfd2eb9c2a3d2aa44a25850/c/Makefile",
+        "sha256": "10666421bde71dabbe69f02624434c477321caae655144c2057814182b6e7604",
+        "facts": "all/colibri targets compile colibri.c->colibri; Linuxaarch64 -fopenmp/ARMflags branch"
+      },
+      {
+        "path": "JustVugg/colibri@bf2442915d6e3dd4cdfd2eb9c2a3d2aa44a25850/c/setup.sh",
+        "sha256": "1f1b7e8fdc727cc1d37e31403e949de3ae869e5add6eac963bcd8822330492cb",
+        "facts": "make colibri, libgomp compileprobe; absent glm_tiny remains optionalsource selftest, not acceptance"
+      }
+    ],
+    "facts_note": "Exact CPythonversion from existingofficial3.9.25 sourcepin; SOABI/nondebug/LinuxARM64 and glibc2.34 are selected output constraints, actual runtime introspection/ELF/libc must prove them, not assumed buildresult. Colibri libgomp actual resolved dependency hash+owner/path closure attested, dependencyname alone notproof. No model substitute/GLMweight download.",
+    "postbuild_receipt_fields": [
+      "schema=1",
+      "receipt_id",
+      "build_target_id",
+      "build_generation",
+      "service_generation_digest",
+      "recipe_digest",
+      "source_artifact_id",
+      "source_sha256",
+      "toolchain_artifact_id",
+      "toolchain_sha256",
+      "builder_artifact_id",
+      "builder_sha256",
+      "process_identity_digest",
+      "terminal_success_record_id",
+      "output_records",
+      "issued_monotonic",
+      "expires_monotonic",
+      "receipt_digest",
+      "root_signature"
+    ],
+    "output_record_fields": [
+      "relative_path",
+      "kind",
+      "sha256",
+      "size_bytes",
+      "executable_role",
+      "observed_target_facts",
+      "tree_file_manifest_sha256"
+    ],
+    "receipt_digest": "Canonical full receipt fields excluding receipt_digest/root_signature same UTF8sortedcompact encoding; root signs digest with enrolled root receipt keyID context. Actual observation only after terminalsuccess, stable no-symlink ownedoutput/Fs snapshots. Failure/cancel has no successfulreceipt. Runtime/package enrollment binds recipe+source/toolchain/outputconstraints upfront and resolves exactnew rootreceipt_id+digest afterbuild; no circular preknowncompiledSHA. Revoke/generation/changedoutput invalidatesreceipt; prior workingoutput preserved."
+  },
+  "native_entrypoint_manifest": {
+    "schema_fields": [
+      "schema=1",
+      "package_id",
+      "profile_id",
+      "generation",
+      "closure_files",
+      "adapters",
+      "dependencies"
+    ],
+    "closure_file_fields": [
+      "relative_path",
+      "sha256",
+      "size_bytes",
+      "mode"
+    ],
+    "adapter_fields": [
+      "adapter_id",
+      "relative_module_path",
+      "module_name",
+      "entrypoint_symbol",
+      "artifact_sha256",
+      "allowed_internal_modules",
+      "allowed_dependency_artifact_ids",
+      "action_ids"
+    ],
+    "dependency_fields": [
+      "artifact_id",
+      "sha256",
+      "module_names"
+    ],
+    "paths": "Relative normalizedPOSIX paths, no absolute/empty/dotdot/symlink/hardlink/specialfile, duplicate/casecollision reject. module_name dottedPythonidentifier, relative_module_path pinned .py/modulepackage path underclosure. entrypoint_symbol fixedregister or explicitreviewedcallable inmanifest, notcaller. allowedimports exactfinite internalmodules/dependencycatalogmodules; no discovery/user/PYTHONPATH/callerimport. Actualclosure includes fullsourcehelper/assets andlicense/content requirements, no minimalshim claim.",
+    "digest": "entrypoint_artifact_id resolves canonical JSON manifest bytes sortedkeyscompactUTF8ensure_asciifalse/no newline; entrypoint_sha256 actualbytesSHA. closure_files sortedrelativepath complete immutable tree, closure digest SHA256canonicalclosure_files list, compiled_closure_sha256 mustbindexacttree manifest; packaged archiveSHA separately catalog artifact bytes, no conflation. Eachadapter artifact_sha256 matches listedmodulefile; dependencies actualrootcatalog artifacts.",
+    "fixed_mount": "Rootderives in-service mount target /run/hermes-installer/native/<SHA256UTF8 package_id+NUL+profile_id+NUL+generation+NUL+compiled_closure_sha256)>; servicemountID maps onlythatfixedpath, root-private read-only bind+noexec exceptexplicitreviewedentrypoint executable role, nosuid/nodev/private propagation. Rootchecks allfiles/tree beforemount, observedmountreceipt binds actual namespace/inode/flags/treegen; caller gets onlybinder/resolver, never arbitrarypath choice."
+  },
+  "hi13_digest_and_peer": {
+    "effect_digest": "HI13 root callback must SHA256 EXACT same canonical full finalHI07effect payload bytes used by connector._auth, no smaller sessionbinding object. connector.open preimage fields schema,enrollment_id,generation,target_id,action,approved_route_id,session_id,deadline; read/write/close exactfullrespectivepayloadfields inclhandle/gen/sequence/bytehash-or-readlimit/deadline. Root derives everyfield fromverifiedsession+enrollment, admissionbinding additional metadata neverreplacementdigest. CanonicalsortedcompactUTF8ensureasciifalse/noline, duplicatekeysreject.",
+    "gateway_identity_fields": [
+      "uid",
+      "gid",
+      "pid",
+      "pid_starttime_ticks",
+      "executable_device",
+      "executable_inode",
+      "executable_sha256",
+      "cgroup_id",
+      "mount_namespace_inode",
+      "network_namespace_inode",
+      "profile_id",
+      "profile_generation",
+      "enrollment_id",
+      "pidfd_registry_handle"
+    ],
+    "identity": "Typedroot registry observation only, PIDFD notserializedfd; callerfields forbidden. SO_PEERCRED actualIPCpeer joins currentregistry everycallback, allstablekernel/exe/profilegen values checked. Pending context rootmetadata notcallerproof."
+  },
+  "derived_invocation_context": {
+    "root_result_response": "BrokeredEffectResponse carries boundedactualresult/stream plus producer_context_handle only afterroot observes exactprovider/tool/memoryresultboundconsumedrequest/fullclosure. Rootprivateobservedissuer stores response_digest andclosedstreamterminalstate; partialfailedresult retainsprivate failureprovenance notsuccess.",
+    "producer_delivery": "Rootselectedpeer-bound receiptchannel from HI11 producer/gateway mapping, gateway opaque response header transportlookup cannotmint ortransfercontext. Root bindsactualproducerPIDFD/profile/gen. get_invocation_contexts(opaque_invocation_handle)->boundedopaqueparenthandles is authenticatedsamepeer lookup onlyrootregisteredinvocation, no model/toolarguments/role/label authority. Loaderpatchedactualboundary carries rootissuedopaque handles to selectedeffect calls; consumedrequestneverresurrected, each childnewgrant.",
+    "state": "Actualobserver/channel notimplemented remainsexplicitunavailable; no synthesizedparents."
+  }
+}

@@ -75,11 +75,28 @@
   "renew": {
     "signature": "renew_remote_session(handle, access_jwt:bytes, renewal_nonce) -> renewed bounded lease",
     "operation": "remote.session.renew",
-    "semantics": "Root issues one-use renewal nonce from owned session; separate fresh Access-protected HTTP renewal submits actual token and root redoes JWT, allowlist/current policy and subject/profile/session/host/origin/config/target-generation checks. WebSocket frames cannot renew. New lease never retroactively authorizes expired stream; expired/revoked session closes and new admission required. Same verified principal/currentrootallowedtoken transition only; stale/replayed/crosssessionnonce denied."
+    "semantics": "Root issues one-use renewal nonce from owned session; separate fresh Access-protected HTTP renewal submits actual token and root redoes JWT, allowlist/current policy and subject/profile/session/host/origin/config/target-generation checks. WebSocket frames cannot renew. New lease never retroactively authorizes expired stream; expired/revoked session closes and new admission required. Same verified principal/currentrootallowedtoken transition only; stale/replayed/crosssessionnonce denied.",
+    "challenge_signature": "challenge_remote_session(handle) -> {schema:1,session_id,renewal_nonce,expires_monotonic}; operation remote.session.challenge, exact rootowned peer/session only, one outstanding finite nonce<=30s and originallease, no expiredsessionresurrection",
+    "response_fields": [
+      "schema=1",
+      "remote_session_handle",
+      "session_id",
+      "lease_expires_monotonic",
+      "jwt_expires_monotonic",
+      "policy_verified_monotonic",
+      "policy_revision",
+      "policy_config_digest"
+    ],
+    "response_semantics": "Same owned session handle/ID after atomic fresh verification/nonce consume, original expiredhandle denies; changed rootpolicy/gateway/Desktop identity invalidates before renewal. Response cannot chooseconnectorroute/target/principal."
   },
   "close": {
     "operation": "remote.session.close",
-    "semantics": "Owned authenticated gateway cancellation or rootwatchdog close; expiry/revoke cleanup independent of ability to issue fresh expired grant; sibling closes denied."
+    "semantics": "Owned authenticated gateway cancellation or rootwatchdog close; expiry/revoke cleanup independent of ability to issue fresh expired grant; sibling closes denied.",
+    "response_fields": [
+      "schema=1",
+      "session_id",
+      "state=closed"
+    ]
   },
   "protected_state": [
     "opaque_nonce",
@@ -105,5 +122,38 @@
   "connector_binding": "Root remote-session handle consumed/resolved by connector session admission, root internally issues exact HI12 connector grants bound verified principal/fingerprint/profile/native+gatewaygeneration/session/route/sequence/originallease. Caller local HostContext cannot authorize remote session independently. Every frame checks rootcurrentstate; no transferable selfsignedgatewaytoken/intent. Active bidirectional streams/watchers canceled on expiration/revocation/logout/identity/config/generation/process/token/app/policy changes.",
   "limits": "maximum lease<=60s, watchdog<=5s, expiry minimum JWT/currentpolicy/remotelease/connector/process bound. Fresh policy signature alone is not token/session revocation proof; actual Cloudflare fresh-edge renewal denial on revoked policy/token/session required. If providerrevocation checks unavailable, no activation/renewal and exact resume evidence; bounded<=60s enforcement not instant claim. Admission JWT<=16KiB, strict route request<=8KiB; no raw JWT/token secrets inargv/logs/evidence.",
   "credentials": "Managementsetup token never remote runtime; policyminimumread reference only isolated rootverifier; protectedtunneltokenfile only cloudflared; gateway/Desktop receive neitherread nor management secret. JWT IPCover rootselected authenticated private AF_UNIX bounded frame only, no bearer persist/log/export.",
-  "evidence": "EV-HI13 actual two-process gateway/root positive verified Access session and nativeconnector bytes plus forgedJWT/emailheaders/selfsignedclaims/wrongaudienceissueralgorithm/allowlist/subjectprofile/configdigest/generation/sibling/replay/expiredlease denied before allasset/pixel/inputbytes. Actual activeWS logout/revocation/freshrenewal/cancel closes<=60s (+watchdog observed bound); setup/read/tunnel secrets absent gateway/Desktop. FixtureJWT/policy evidence distinct from actual enrolledCloudflare/native proof."
+  "evidence": "EV-HI13 actual two-process gateway/root positive verified Access session and nativeconnector bytes plus forgedJWT/emailheaders/selfsignedclaims/wrongaudienceissueralgorithm/allowlist/subjectprofile/configdigest/generation/sibling/replay/expiredlease denied before allasset/pixel/inputbytes. Actual activeWS logout/revocation/freshrenewal/cancel closes<=60s (+watchdog observed bound); setup/read/tunnel secrets absent gateway/Desktop. FixtureJWT/policy evidence distinct from actual enrolledCloudflare/native proof.",
+  "typed_responses": {
+    "opaque_form": "Random root-generated256-bit nonce base64url unpadded string43characters; lookup only, root peer/profile/generation/state checks every use. No JWT/context/signature/credentials inside handle.",
+    "admit_response_fields": [
+      "schema=1",
+      "remote_session_handle",
+      "session_id",
+      "admission_kind=one-shot-asset|leased-websocket",
+      "principal_binding_id",
+      "profile_id",
+      "gateway_generation",
+      "desktop_generation",
+      "route_id",
+      "issued_monotonic",
+      "lease_expires_monotonic",
+      "jwt_expires_monotonic",
+      "policy_verified_monotonic",
+      "policy_revision",
+      "policy_config_digest"
+    ],
+    "identity": "principal_binding_id opaque rootprincipal mapping, no calleremail/subjectauthority; rootstate retains verified email/subject/fingerprint, response need not expose them. session_id opaque correlation only, handle bound actualgatewaypeer. Alltimes finite rootclock values; maxlease<=60s.",
+    "asset": "one-shot asset admission can open exactly one fixedroot selectedGET/HEAD route, replay/concurrency denied, expires no laterJWT/policy/lease; assetbody bounded cataloglimits. It cannot attachWS orrenew intoWS.",
+    "websocket": "Leased handle binds exact fixedWSroute and one connector, originallease cannot extend viaframes; renewal separate challenge. Persistent session holds cancellation/journal state, not standingpermissions."
+  },
+  "connector_api": {
+    "open_signature": "open_remote_connector(remote_session_handle) -> {schema:1,session_id,connector_handle,generation,route_id,expires_monotonic}",
+    "open_operation": "remote.connector.open (root internally authorizes exact connector.open under HI12)",
+    "selection": "Root derives target/route/process/netns/profile/nativegen from admitted state; no caller URL/port/path/target/display. Once per asset/session, same peer only. Typed root-stream handle, no exposed unrestricted connected FD/proxy.",
+    "read_signature": "read_remote_connector(remote_session_handle,connector_handle,sequence,maximum_bytes) -> {schema:1,session_id,sequence,data_bytes,eof,expires_monotonic}",
+    "write_signature": "write_remote_connector(remote_session_handle,connector_handle,sequence,data_bytes) -> {schema:1,session_id,sequence,accepted_bytes,expires_monotonic}",
+    "close_signature": "close_remote_connector(remote_session_handle,connector_handle) -> {schema:1,session_id,state:closed}",
+    "frame_semantics": "Root checks currentsession/lease/revocation/peer/nativegen/connectorroute plus finite sequence andframe byte bounds, internally issues/consumes fresh exactconnector.read/write/close grants withpayloadhash/readlimit; no gateway callerlocalcontext/grant. Root stream relay remains custodianowned and cancellation shutsbothdirections; bytesbase64 onlyboundedRPCserialization, no rawunboundedFD. Rootenrollment finiteframe limit<=1MiB/read, assetresponse<=2MiB unlessexactpinnedassetcatalogboundreviewed. Normalclose owner allowed afterexpiry; watchdog independent.",
+    "renewal": "Frames neverrenew; root fresh HTTPchallenge updates sameowned sessionlease only afterall checks, active rootrelay observesnewlease; logout/revocationfails closesimmediatelywhenobserved withinbound."
+  }
 }

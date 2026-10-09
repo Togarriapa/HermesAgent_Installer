@@ -231,7 +231,7 @@ class VerifiedProbe:
     state: EvidenceState
     started_at: str
     finished_at: str
-    exit_code: int
+    exit_code: int | None
     assertions: Mapping[str, bool | None]
     blocker: str | None
     request_sha256: str
@@ -302,7 +302,7 @@ def verify_operator_result(
     required = {
         "schema_version", "request_id", "request_sha256", "acceptance_id", "evidence_id",
         "candidate_sha", "target_id", "platform", "owner", "authorization_reference",
-        "started_at", "finished_at", "exit_code", "argv_sha256", "cwd_sha256",
+        "started_at", "finished_at", "exit_code", "timed_out", "argv_sha256", "cwd_sha256",
         "environment_names", "stdout_sha256", "stderr_sha256", "stdout_bytes", "stderr_bytes",
         "output_truncated", "assertions", "effects",
     }
@@ -345,8 +345,15 @@ def verify_operator_result(
         raise ValueError("effects must be a bounded list of stable effect IDs, never free-form output")
     if result_value["owner"] != target.owner:
         raise PermissionError("operator attestation does not match the enrolled target owner")
-    if not isinstance(result_value["exit_code"], int) or isinstance(result_value["exit_code"], bool):
-        raise ValueError("exit_code must be an integer")
+    timed_out = result_value["timed_out"]
+    if not isinstance(timed_out, bool):
+        raise ValueError("timed_out must be a boolean")
+    exit_code = result_value["exit_code"]
+    if timed_out:
+        if exit_code is not None:
+            raise ValueError("a timed-out probe must not invent an exit_code")
+    elif not isinstance(exit_code, int) or isinstance(exit_code, bool):
+        raise ValueError("a completed probe must provide an integer exit_code")
 
     started = _timestamp(result_value["started_at"], "started_at")
     finished = _timestamp(result_value["finished_at"], "finished_at")
@@ -360,8 +367,9 @@ def verify_operator_result(
     result_sha = _sha(result_json)
     state = EvidenceState.PASS
     blocker = None
-    exit_code = result_value["exit_code"]
-    if exit_code != 0:
+    if timed_out:
+        state, blocker = EvidenceState.PENDING, "Target probe timed out before producing a completed result"
+    elif exit_code != 0:
         state, blocker = EvidenceState.FAIL, f"Target probe exited with status {exit_code}"
     elif any(value is False for value in assertions.values()):
         state, blocker = EvidenceState.FAIL, "Required target assertions were observed false: " + ", ".join(sorted(key for key, value in assertions.items() if value is False))

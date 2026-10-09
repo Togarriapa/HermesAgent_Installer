@@ -13,6 +13,7 @@ HERMES_COMMIT = "7085fbf7753266fc4943c55ac04926186bc90005"
 INSTALL_SCRIPT_BLOB = "055c725f114db694db751f34fd312e70f5ed90d8"
 INSTALL_SCRIPT_SHA256 = "034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86"
 INSTALL_SCRIPT_ARTIFACT_ID = "hermes-install-script-7085fbf77532"
+INSTALL_SCRIPT_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/7085fbf7753266fc4943c55ac04926186bc90005/scripts/install.sh"
 _DIAGNOSTIC_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*"),
     re.compile(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)\s*[:=]\s*)[^\s,;]+"),
@@ -90,52 +91,49 @@ class HermesBootstrap:
         self.install_dir = data_root.path("generations/hermes-agent-" + HERMES_COMMIT[:12])
         self.hermes_home = data_root.path("profiles/default")
         self.private_home = data_root.path("runtime/bootstrap-home")
+        self.script_path = data_root.path("cache/hermes-install-" + HERMES_COMMIT[:12] + ".sh")
         self.operation = "hermes-agent:" + HERMES_COMMIT
         self.custody = BootstrapCustody(authority_client, journal=state,
                                         journal_operation=self.operation)
         self._active_diagnostic: str | None = None
         self._upstream_log_offset: int | None = None
         self._last_artifact_receipt_id: str | None = None
-        self.script_store_id: str | None = None
 
-    def _stage_script_artifact(self) -> str:
+    def _script_bytes(self) -> bytes:
         try:
             if self.network is not None:
-                # Fixture-only source seam. Production receives an opaque store
-                # ID from the protected artifact broker and never handles bytes.
+                # Test-only artifact fixture adapter; production uses the fixed
+                # artifact.fetch verb and never accepts a caller-provided URL.
                 response = self.network.fetch_artifact(artifact_id=INSTALL_SCRIPT_ARTIFACT_ID,
                     sha256=INSTALL_SCRIPT_SHA256, max_bytes=128 * 1024)
                 body = response.body
                 if response.status != 200:
                     raise BootstrapError("Pinned official Hermes installer artifact was not available")
                 self._last_artifact_receipt_id = str(getattr(response, "receipt_id", "fixture"))
-                if (git_blob_sha1(body) != self.expected_script_blob
-                        or not body.startswith(b"#!/usr/bin/env bash\n") or len(body) > 128 * 1024):
-                    raise BootstrapError("Pinned official Hermes installer content did not match its Git object identity")
-                digest = hashlib.sha256(body).hexdigest()
-                self.script_store_id = f"artifact:{INSTALL_SCRIPT_ARTIFACT_ID}:{digest}"
             else:
-                self.script_store_id, self._last_artifact_receipt_id = self.custody.fetch_artifact(
+                body, self._last_artifact_receipt_id = self.custody.fetch_artifact(
                     artifact_id=INSTALL_SCRIPT_ARTIFACT_ID, sha256=INSTALL_SCRIPT_SHA256,
                     max_bytes=128 * 1024)
         except BootstrapError:
             raise
         except Exception:
             raise BootstrapError("Pinned host download broker is unavailable or denied the official installer artifact") from None
-        if not self.script_store_id:
-            raise BootstrapError("Pinned official Hermes artifact broker did not return an immutable store reference")
-        return self.script_store_id
+        if git_blob_sha1(body) != self.expected_script_blob:
+            raise BootstrapError("Pinned official Hermes installer content did not match its Git object identity")
+        if not body.startswith(b"#!/usr/bin/env bash\n") or len(body) > 128 * 1024:
+            raise BootstrapError("Pinned official Hermes installer format or size is invalid")
+        return body
 
     def prepare(self) -> None:
         self.data_root.ensure()
         for relative in ("generations", "profiles", "runtime", "runtime/bootstrap-home", "runtime/bootstrap-home/share",
                          "runtime/bootstrap-home/config", "runtime/bootstrap-home/cache", "cache"):
             self.data_root.path(relative).mkdir(parents=True, exist_ok=True, mode=0o700)
-        store_id = self._stage_script_artifact()
+        content = self._script_bytes()
+        _write_private(self.script_path, content)
         self.state.event(self.operation, "download-broker", "artifact_staged", {
             "artifact_id": INSTALL_SCRIPT_ARTIFACT_ID,
             "sha256": INSTALL_SCRIPT_SHA256,
-            "store_id": store_id,
             "receipt_id": self._last_artifact_receipt_id,
         })
         self.hermes_home.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -162,8 +160,9 @@ class HermesBootstrap:
 
     def _run_process(self, args: list[str], *, timeout: float, capture: bool = False, diagnostic_path: str | None = None) -> tuple[int, bytes]:
         bash = Path("/bin/bash").resolve(strict=True)
-        if not bash.is_file() or not self.script_store_id:
+        if not bash.is_file() or not self.script_path.is_file() or self.script_path.is_symlink():
             raise BootstrapError("Pinned Hermes installer inputs are unavailable for the managed process")
+        script_digest = hashlib.sha256(self.script_path.read_bytes()).hexdigest()
         upstream_log = self.hermes_home / "logs" / "install.log"
         self._upstream_log_offset = 0
         try:
@@ -175,13 +174,17 @@ class HermesBootstrap:
         step = args[args.index("--stage") + 1] if "--stage" in args else "manifest"
         try:
             result = self.custody.run_process(executable=bash,
-                artifact_root=bash.parent, cwd=self.data_root.root,
-                data_root=self.data_root.root, argv=[str(bash), self.script_store_id, *args],
+                artifact_root=self.data_root.root, cwd=self.data_root.root,
+                data_root=self.data_root.root, argv=[str(bash), str(self.script_path), *args],
                 env_allowlist=self._environment(), timeout=timeout,
-                child_artifact_refs={self.script_store_id: INSTALL_SCRIPT_SHA256})
+                child_artifact_hashes={str(self.script_path.resolve(strict=True)): script_digest})
         except Exception as exc:
+            self._record_process_exception(exc, step)
             self.state.event(self.operation, step, "custody_denied", {
                 "error_type": type(exc).__name__, "diagnostic": diagnostic_path or self._active_diagnostic,
+                "process_id": getattr(exc, "process_id", None),
+                "generation": getattr(exc, "generation", None),
+                "cleanup_verified": getattr(exc, "cleanup_verified", None),
                 "resume": "hermes-installer resume",
             })
             raise BootstrapError(
@@ -200,7 +203,62 @@ class HermesBootstrap:
             "cleanup_verified": result.cleanup_verified,
             "diagnostic": diagnostic_path or self._active_diagnostic,
         })
+        self._record_process_receipt(result, step)
         return result.exit_code, result.stdout if capture else b""
+
+    def _record_process_receipt(self, result: object, stage: str) -> None:
+        process_id = getattr(result, "process_id", None)
+        generation = getattr(result, "generation", None)
+        cleanup_verified = getattr(result, "cleanup_verified", None)
+        timed_out = getattr(result, "timed_out", None)
+        if isinstance(process_id, str) and process_id and len(process_id) <= 128:
+            self.state.record_owned("process", process_id,
+                "stopped" if cleanup_verified is True else "active")
+        if isinstance(generation, str) and generation and len(generation) <= 128:
+            self.state.event(self.operation, stage, "process_generation_receipt", {
+                "process_id": process_id if isinstance(process_id, str) else None,
+                "generation": generation,
+            })
+        self.state.event(self.operation, stage,
+            "process_cleanup_verified" if cleanup_verified is True else "process_cleanup_unverified", {
+                "process_id": process_id if isinstance(process_id, str) else None,
+                "generation": generation if isinstance(generation, str) else None,
+                "receipt_id": getattr(result, "receipt_id", None),
+                "cleanup_verified": cleanup_verified is True,
+                "timed_out": timed_out is True,
+            })
+        if not isinstance(process_id, str) or not process_id or cleanup_verified is not True:
+            raise BootstrapError(
+                "Host custody did not verify process cleanup; the stage was not accepted. "
+                "Resume only after the protected process handle is stopped and verified."
+            )
+        if timed_out is True:
+            raise BootstrapError("Managed Hermes stage exceeded its deadline; verified cleanup completed. Use hermes-installer resume.")
+
+    def _record_process_exception(self, exc: BaseException, stage: str) -> None:
+        process_id = getattr(exc, "process_id", None)
+        generation = getattr(exc, "generation", None)
+        cleanup_verified = getattr(exc, "cleanup_verified", None)
+        receipt_id = getattr(exc, "receipt_id", None)
+        if (not isinstance(process_id, str) and not isinstance(generation, str)
+                and isinstance(receipt_id, str) and receipt_id and len(receipt_id) <= 128
+                and cleanup_verified is not True):
+            # A start may have taken effect even when its response could not be
+            # parsed into an opaque process handle. Keep uninstall blocked until
+            # an operator recovers that exact host receipt.
+            self.state.record_owned("process", "unresolved-start:" + receipt_id, "active")
+        elif not isinstance(process_id, str) and not isinstance(generation, str):
+            return
+        if isinstance(process_id, str) and process_id and len(process_id) <= 128:
+            self.state.record_owned("process", process_id,
+                "stopped" if cleanup_verified is True else "active")
+        self.state.event(self.operation, stage, "process_effect_failed", {
+            "error_type": type(exc).__name__,
+            "process_id": process_id if isinstance(process_id, str) else None,
+            "generation": generation if isinstance(generation, str) else None,
+            "receipt_id": receipt_id if isinstance(receipt_id, str) else None,
+            "cleanup_verified": cleanup_verified is True,
+        })
 
     def _append_captured(self, line: str, diagnostic: bytearray, limit: int,
                          lock: threading.Lock, truncated: threading.Event) -> None:
@@ -341,7 +399,7 @@ class HermesBootstrap:
     def _existing_source_is_resumable(self, previous: dict[str, object] | None) -> bool:
         if self.install_dir.is_symlink():
             return False
-        owned = any(row["resource_id"] == str(self.install_dir) and row["state"] == "active"
+        owned = any(row["resource_id"] == str(self.install_dir) and row["state"] in {"active", "staged", "installed"}
                     for row in self.state.owned("hermes-generation"))
         marker = self.install_dir.parent / ("." + self.install_dir.name + ".owned")
         if marker.exists() or marker.is_symlink():
@@ -400,10 +458,14 @@ class HermesBootstrap:
                 artifact_root=self.install_dir, cwd=self.install_dir,
                 data_root=self.data_root.root, argv=argv, env_allowlist=env,
                 timeout=timeout)
-        except Exception:
+        except Exception as exc:
+            self._record_process_exception(exc, "managed-process")
             self.state.event(self.operation, "managed-process", "custody_denied", {
                 "executable": executable.name,
                 "diagnostic": diagnostic_path,
+                "process_id": getattr(exc, "process_id", None),
+                "generation": getattr(exc, "generation", None),
+                "cleanup_verified": getattr(exc, "cleanup_verified", None),
                 "resume": "hermes-installer resume",
             })
             raise BootstrapError(
@@ -418,6 +480,7 @@ class HermesBootstrap:
             "cleanup_verified": result.cleanup_verified,
             "diagnostic": diagnostic_path,
         })
+        self._record_process_receipt(result, "managed-process")
         return result.exit_code, result.stdout
 
     def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 600) -> BootstrapReport:
@@ -440,7 +503,7 @@ class HermesBootstrap:
             raise OwnershipError("Pinned source generation already exists without a resumable installer checkpoint; it was preserved")
         done = self._completed_stages()
         self.install_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.state.record_owned("hermes-generation", str(self.install_dir), "active")
+        self.state.record_owned("hermes-generation", str(self.install_dir), "staged")
         self._write_generation_marker()
         statuses: list[StageStatus] = []
         skipped = {"setup", "gateway"}
@@ -469,6 +532,7 @@ class HermesBootstrap:
             try:
                 code, _ = self.runner(args, timeout=timeout_per_stage, capture=True)
             except BaseException as exc:
+                self._record_process_exception(exc, stage)
                 self.state.checkpoint(self.operation, "cancelled:" + stage if isinstance(exc, KeyboardInterrupt) else "failed:" + stage, {
                     "commit": HERMES_COMMIT, "stage": stage, "generation": str(self.install_dir),
                     "diagnostic": relative_diagnostic, "error": type(exc).__name__,
@@ -531,6 +595,7 @@ class HermesBootstrap:
             try:
                 code, _ = self.desktop_builder(timeout=timeout_per_stage)
             except BaseException as exc:
+                self._record_process_exception(exc, "desktop-product-build")
                 cancelled = isinstance(exc, KeyboardInterrupt)
                 status = "cancelled:desktop-product-build" if cancelled else "failed:desktop-product-build"
                 self.state.checkpoint(self.operation, status, {
@@ -565,6 +630,7 @@ class HermesBootstrap:
             "commit": HERMES_COMMIT, "generation": str(self.install_dir), "desktop_built": desktop_built,
             "configuration_state": "pending: provider and gateway setup were safely skipped",
         })
+        self.state.record_owned("hermes-generation", str(self.install_dir), "installed")
         return BootstrapReport(HERMES_COMMIT, str(self.install_dir), str(self.hermes_home), tuple(statuses),
             True, desktop_built, "pending: configure a supported provider and user-session services",
             "hermes-installer resume")

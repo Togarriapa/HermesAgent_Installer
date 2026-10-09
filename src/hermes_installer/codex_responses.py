@@ -300,6 +300,73 @@ class CodexResponsesTransport:
     def __repr__(self) -> str:
         return "CodexResponsesTransport(authority=<host broker>, token=<host vault>)"
 
+    def dispatch_native_event(self, native_event_handle: str, payload: bytes, *,
+                              retry_index: int = 0, timeout: float = 30.0,
+                              normalization_policy: Mapping[str, object] | None = None,
+                              cancelled: Callable[[], bool] = lambda: False) -> ProviderResponse:
+        """Dispatch a Hermes request through the atomic HI11 root event bridge.
+
+        This entrypoint is for an enrolled Hermes producer/gateway pair. The
+        opaque handle is only a one-use lookup key; it cannot select an account,
+        target, sensitivity or capability. The root canonicalizes against its
+        protected provider enrollment and performs the effect atomically.
+        """
+        bridge = self._authority
+        if bridge is None or not callable(getattr(bridge, "dispatch_native_request", None)):
+            raise PolicyDenied("authorization.unavailable", "Root-owned native provider event bridge is unavailable")
+        if (not isinstance(native_event_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", native_event_handle)):
+            raise PolicyDenied("context.handle_unavailable", "A valid opaque native event handle is required")
+        if type(retry_index) is not int or not 0 <= retry_index <= 100:
+            raise PolicyDenied("request.retry", "Codex native retry index is outside its bound")
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0.1 <= timeout <= 30):
+            raise PolicyDenied("request.deadline", "Codex request deadline is outside its hard bound")
+        if cancelled():
+            raise PolicyDenied("dispatch.cancelled", "Codex request was cancelled")
+        from .provider_effect_handlers import NormalizationPolicy, ProviderHandlerDenied
+        try:
+            NormalizationPolicy.from_record(normalization_policy, provider="codex")
+        except ProviderHandlerDenied:
+            raise PolicyDenied("provider.normalization_policy",
+                               "Root-selected SIWC normalization policy is unavailable") from None
+        body, _model, _uses_tools = normalize_responses_request(payload)
+        try:
+            result = bridge.dispatch_native_request(
+                native_event_handle, body, retry_index=retry_index,
+                timeout=float(timeout), cancelled=cancelled,
+            )
+        except Exception:
+            if cancelled():
+                raise PolicyDenied("dispatch.cancelled", "Codex request was cancelled") from None
+            raise PolicyDenied("provider.broker", "Root-owned Codex native event bridge rejected the request") from None
+        status, response_body, headers = (
+            getattr(result, "status", None), getattr(result, "body", None),
+            getattr(result, "headers", {}),
+        )
+        if (type(status) is not int or not 100 <= status <= 599
+                or not isinstance(response_body, bytes) or len(response_body) > MAX_RESPONSE_BYTES
+                or not isinstance(headers, Mapping)):
+            raise PolicyDenied("response.bounds", "Host broker returned an invalid Codex response")
+        safe_headers = {"Content-Type": "application/json"}
+        content_type = headers.get("Content-Type", "application/json")
+        if isinstance(content_type, str) and content_type.split(";", 1)[0].strip().casefold() in {
+                "application/json", "text/event-stream"}:
+            safe_headers["Content-Type"] = content_type
+        retry_after = headers.get("Retry-After")
+        if retry_after is not None:
+            try:
+                seconds = float(retry_after)
+                if math.isfinite(seconds) and 0 <= seconds <= 60:
+                    safe_headers["Retry-After"] = str(int(seconds)) if seconds.is_integer() else str(seconds)
+            except (TypeError, ValueError, OverflowError):
+                pass
+        input_tokens = output_tokens = 0
+        if 200 <= status < 300:
+            input_tokens, output_tokens = validate_responses_sse(
+                response_body, safe_headers.get("Content-Type", ""))
+        return ProviderResponse(status, response_body, safe_headers, input_tokens, output_tokens)
+
     def __call__(self, host_context: object, payload: bytes, *, retry_index: int = 0,
                  timeout: float = 30.0,
                  cancelled: Callable[[], bool] = lambda: False) -> ProviderResponse:
