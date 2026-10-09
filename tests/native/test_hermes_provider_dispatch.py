@@ -355,7 +355,13 @@ def _run_native_worker():
                              + str(agent.provider) + ", model=" + str(agent.model))
         cycle = agent.run_conversation("Use fixture_echo once and report its returned result.")
         if cycle.get("completed") is not True or "private fixture tool result received" not in str(cycle.get("final_response", "")):
-            raise SystemExit("native AIAgent tool cycle did not complete with the fixture result")
+            summary = {key: cycle.get(key) for key in
+                       ("completed", "failed", "partial", "error", "final_response", "api_calls")
+                       if key in cycle}
+            if isinstance(summary.get("final_response"), str):
+                summary["final_response"] = summary["final_response"][:500]
+            raise SystemExit("native AIAgent tool cycle did not complete: "
+                             + json.dumps(summary, sort_keys=True))
         primary = agent.client.chat.completions.create(
             model=model, messages=[{"role": "user", "content": "native primary fixture"}],
             max_tokens=24,

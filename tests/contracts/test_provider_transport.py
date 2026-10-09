@@ -97,19 +97,48 @@ class ProviderTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyDenied, "credential"):
             fixture_gate.verify_credential("rotated-secret")
 
-        resolved, networks = [], []
+        resolved, network_factories = [], []
         def network_factory(**kwargs):
-            network = RecordingNetwork(**kwargs)
-            networks.append(network)
-            return network
+            network_factories.append(kwargs)
+            return RecordingNetwork(**kwargs)
         transport = OpenRouterTransport(ref, secret_reader=lambda value: resolved.append(value) or "rotated-secret",
             network_factory=network_factory, eligibility=fixture_gate)
         with self.assertRaisesRegex(PolicyDenied, "credential"):
             transport(default_public_route(), MODEL, b'{"messages":[{"role":"user","content":"hi"}]}',
                 output_token_limit=8, timeout=2, trace_id="bound-key")
         self.assertEqual(resolved, [ref])
+        self.assertEqual(network_factories, [])
+
+
+    def test_credential_rotation_after_success_denies_before_second_network_factory(self):
+        ref = "file:///secure/provider-token"
+        values = iter(["fixture-secret-r", "rotated-secret"])
+        resolved, networks = [], []
+        def secret_reader(value):
+            resolved.append(value)
+            return next(values)
+        def factory(**kwargs):
+            network = RecordingNetwork(**kwargs)
+            networks.append(network)
+            return network
+        evidence = EligibilityEvidence.create(account_id="fixture", checked_at=1000,
+            lifetime_seconds=60, free_account=True, effective_plugins_disabled=True,
+            approved_model=MODEL, evidence_source="synthetic-test-only",
+            credential_ref=ref, credential="fixture-secret-r",
+            policy_snapshot_sha256="e" * 64)
+        gate = AccountEligibilityGate(model=MODEL, credential_ref=ref,
+            evidence=evidence, clock=lambda: 1001, allow_test_evidence=True)
+        transport = OpenRouterTransport(ref, secret_reader=secret_reader,
+            network_factory=factory, eligibility=gate)
+        payload = b'{"messages":[{"role":"user","content":"hi"}]}'
+        transport(default_public_route(), MODEL, payload, output_token_limit=8,
+            timeout=2, trace_id="rotation-first")
+        with self.assertRaisesRegex(PolicyDenied, "credential"):
+            transport(default_public_route(), MODEL, payload, output_token_limit=8,
+                timeout=2, trace_id="rotation-second")
+        self.assertEqual(resolved, [ref, ref])
         self.assertEqual(len(networks), 1)
-        self.assertEqual(networks[0].calls, [])
+        self.assertEqual(len(networks[0].calls), 1)
 
     def test_fixed_endpoint_secret_and_response_usage(self):
         transport,networks=self.make()

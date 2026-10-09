@@ -42,16 +42,15 @@ class OpenRouterTransport:
         return "OpenRouterTransport(credential_ref=<redacted>, key=<redacted>)"
 
     def _credential(self) -> str:
-        with self._credential_lock:
-            if self._api_key is None:
-                try:
-                    value = self._secret_reader(self._credential_ref)
-                except Exception:
-                    raise CredentialError("Provider credential reference could not be resolved") from None
-                if not isinstance(value, str) or not value or len(value) > 4096 or any(ord(c) < 32 for c in value):
-                    raise CredentialError("Provider credential reference is invalid")
-                self._api_key = value
-            return self._api_key
+        # Resolve each dispatch so key rotation invalidates the policy snapshot.
+        # Never cache a credential across a potentially rotated secret reference.
+        try:
+            value = self._secret_reader(self._credential_ref)
+        except Exception:
+            raise CredentialError("Provider credential reference could not be resolved") from None
+        if not isinstance(value, str) or not value or len(value) > 4096 or any(ord(c) < 32 for c in value):
+            raise CredentialError("Provider credential reference is invalid")
+        return value
 
     def _verified_credential(self) -> str:
         value = self._credential()
@@ -85,6 +84,9 @@ class OpenRouterTransport:
         # Provider policy/Dispatcher has already clamped max_tokens to the user's
         # approved output limit. This adapter applies an upper ceiling as a final
         # endpoint-level guard; per-request tighter limits remain in the JSON.
+        # Compare the freshly resolved secret against the bound snapshot before
+        # constructing any network client or opening a socket.
+        credential = self._verified_credential()
         try:
             network = self._network_factory(deadline_seconds=timeout, socket_timeout=min(4.0, timeout),
                                             max_response_bytes=MAX_RESPONSE_BYTES)
@@ -92,7 +94,7 @@ class OpenRouterTransport:
                 OPENROUTER_ENDPOINT + "/chat/completions",
                 method="POST",
                 headers={
-                    "Authorization": "Bearer " + self._verified_credential(),
+                    "Authorization": "Bearer " + credential,
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                     "X-Client-Request-Id": trace_id,
