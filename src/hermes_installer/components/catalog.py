@@ -34,6 +34,7 @@ class ImportedSkill:
     discoverable: bool
     hook_status: str
     license: str | None
+    redistribution_allowed: bool = False
 
 
 class ComponentCatalog:
@@ -109,9 +110,12 @@ class ComponentCatalog:
                 if target.is_symlink() or not (target / "import-manifest.json").is_file():
                     raise PermissionError("existing source generation is foreign or incomplete")
                 prior = json.loads((target / "import-manifest.json").read_text(encoding="utf-8"))
-                if prior.get("sha256") != digest or tuple(prior.get("files", ())) != files:
+                if (prior.get("sha256") != digest or tuple(prior.get("files", ())) != files
+                        or prior.get("redistribution_allowed") is not False
+                        or prior.get("redistribution_review_status") != "pending_verified_rights"):
                     raise PermissionError("pinned source generation conflicts with existing owned data")
-                return ImportedSkill(spec.id, target, files, digest, False, False, "pending_source_revision_and_hook_verification", spec.license)
+                return ImportedSkill(spec.id, target, files, digest, False, False,
+                                     "pending_source_revision_and_hook_verification", spec.license, False)
             stage = Path(tempfile.mkdtemp(prefix=".import-", dir=root))
             os.chmod(stage, 0o700)
             try:
@@ -133,7 +137,10 @@ class ComponentCatalog:
                     "schema": 1, "component": spec.id, "source_url": spec.source_url,
                     "revision": spec.revision, "license": spec.license,
                     "sha256": digest, "files": files,
-                    "redistribution_allowed": bool(spec.license),
+                    # A manifest's SPDX/label is an assertion, not evidence of
+                    # rights to redistribute the complete imported source.
+                    "redistribution_allowed": False,
+                    "redistribution_review_status": "pending_verified_rights",
                 }
                 manifest_path = stage / "import-manifest.json"
                 fd = os.open(manifest_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o444)
@@ -152,7 +159,8 @@ class ComponentCatalog:
                 shutil.rmtree(stage, ignore_errors=True)
                 raise
         # Copying content alone is not native discovery or hook verification.
-        return ImportedSkill(spec.id, target, files, digest, False, False, "pending_source_revision_and_hook_verification", spec.license)
+        return ImportedSkill(spec.id, target, files, digest, False, False,
+                             "pending_source_revision_and_hook_verification", spec.license, False)
 
     @staticmethod
     def mark_discovered(imported: ImportedSkill, native_discovery: Callable[[Path], bool]) -> ImportedSkill:

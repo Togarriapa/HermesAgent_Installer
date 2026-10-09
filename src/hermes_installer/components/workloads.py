@@ -1,41 +1,86 @@
-"""Bounded, on-demand scheduling for optional component runtimes.
+"""Bounded on-demand dispatch for installer-registered component workloads.
 
-The injected runner must be the installer managed-process supervisor. This
-module never creates a subprocess, worker, coordinator, or credential channel.
+Requests contain only a fixed workload ID and its narrow parameters. They
+never carry executable, argv, environment, limits, or capability declarations.
+The injected runner receives reviewed ``ComponentInvocation`` values only.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
+from types import MappingProxyType
 from threading import Lock
 from typing import Callable, Mapping
+
+from hermes_installer.components.application_handlers import (
+    ComponentInvocation,
+    build_graphify_code_fixture,
+)
+from hermes_installer.components.browser_use import build_browser_use_fixture_invocation
 
 
 @dataclass(frozen=True, slots=True)
 class Workload:
+    """Untrusted request shape; executable policy is resolved from the registry."""
+
     id: str
-    argv: tuple[str, ...]
-    environment: Mapping[str, str] = field(default_factory=dict)
-    capabilities: frozenset[str] = frozenset()
-    memory_mb: int = 512
-    timeout_seconds: int = 120
-    mode: str = "on_demand"
-    network_scope: str = "deny"
-    metered_cost_usd: Decimal = Decimal("0")
-    account_requirement: str | None = None
-    credential_references: tuple[str, ...] = ()
-    starts_at_boot: bool = False
-    replaces_coordinator: bool = False
+    arguments: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class _Definition:
+    argument_names: frozenset[str]
+    capabilities: frozenset[str]
+    memory_mb: int
+    timeout_seconds: int
+    network_scope: str
+    account_requirement: str | None
+    metered_cost_usd: Decimal
+    build: Callable[[Mapping[str, object], Mapping[str, str], Mapping[str, str]], tuple[ComponentInvocation, ...]]
+
+
+def _browser_fixture(args, runtime_roots, work_roots):
+    url = args.get("fixture_url")
+    if not isinstance(url, str):
+        raise ValueError("browser-fixture requires a literal loopback fixture_url")
+    invocation = build_browser_use_fixture_invocation(
+        runtime_roots["browser-use"], url, work_roots["browser-use"]
+    )
+    return (invocation,)
+
+
+def _graphify_fixture(args, runtime_roots, work_roots):
+    if args:
+        raise ValueError("graphify-code-fixture takes no caller-controlled paths")
+    return build_graphify_code_fixture(
+        runtime_roots["graphify"], work_roots["graphify-fixture"], work_roots["graphify"]
+    )
+
+
+_REGISTERED: Mapping[str, _Definition] = MappingProxyType({
+    "browser-fixture": _Definition(
+        frozenset({"fixture_url"}),
+        frozenset({"component.browser-use.local-fixture", "network:localhost"}),
+        2048, 180, "localhost", None, Decimal("0"), _browser_fixture,
+    ),
+    "graphify-code-fixture": _Definition(
+        frozenset(),
+        frozenset({"component.graphify.read-fixture", "component.graphify.write-private-work", "component.graphify.read-private-work"}),
+        1024, 120, "deny", None, Decimal("0"), _graphify_fixture,
+    ),
+})
 
 
 class WorkloadScheduler:
-    """Check capabilities, accounts, resource bounds, and spend before launch."""
+    """Resolve fixed workload recipes before checking grants and dispatching."""
 
     def __init__(
         self,
-        run: Callable,
+        run: Callable[[ComponentInvocation], object],
         granted: frozenset[str],
         *,
+        runtime_roots: Mapping[str, str],
+        work_roots: Mapping[str, str],
         memory_budget_mb: int,
         max_workers: int = 1,
         metered_budget_usd: Decimal = Decimal("0"),
@@ -46,11 +91,13 @@ class WorkloadScheduler:
         if not isinstance(metered_budget_usd, Decimal) or not metered_budget_usd.is_finite() or metered_budget_usd < 0:
             raise ValueError("metered budget must be a finite non-negative amount")
         self.run = run
-        self.granted = granted
+        self.granted = frozenset(granted)
+        self.runtime_roots = dict(runtime_roots)
+        self.work_roots = dict(work_roots)
         self.memory_budget_mb = memory_budget_mb
         self.max_workers = max_workers
         self.metered_budget_usd = metered_budget_usd
-        self.eligible_accounts = eligible_accounts
+        self.eligible_accounts = frozenset(eligible_accounts)
         self._active = 0
         self._metered_spend = Decimal("0")
         self._lock = Lock()
@@ -60,55 +107,52 @@ class WorkloadScheduler:
         with self._lock:
             return self._metered_spend
 
-    def execute(self, work: Workload) -> object:
-        if work.mode != "on_demand" or work.starts_at_boot:
-            raise PermissionError("component workloads must start only on explicit demand")
-        if work.replaces_coordinator:
-            raise PermissionError("component workloads cannot replace the Hermes coordinator")
-        if not work.id or not work.argv or any(not value or "\x00" in value for value in work.argv):
-            raise ValueError("workload requires a fixed, NUL-free argv")
-        if work.timeout_seconds <= 0 or work.timeout_seconds > 3600:
-            raise TimeoutError("workload timeout is outside the one-hour policy ceiling")
-        if work.memory_mb <= 0 or work.memory_mb > self.memory_budget_mb:
-            raise MemoryError("workload exceeds the reserved memory budget")
-        if work.network_scope != "deny":
-            network_capability = f"network:{work.network_scope}"
-            if network_capability not in work.capabilities:
-                raise PermissionError("network-enabled work requires an explicit scoped capability")
-        missing = work.capabilities - self.granted
+    def execute(self, request: Workload) -> object:
+        if not isinstance(request, Workload):
+            raise TypeError("workload request must use the typed Workload request")
+        definition = _REGISTERED.get(request.id)
+        if definition is None:
+            raise PermissionError("workload ID is not in the installer-owned registry")
+        if not isinstance(request.arguments, Mapping) or set(request.arguments) != definition.argument_names:
+            raise ValueError("workload parameters do not match its fixed registered recipe")
+        missing = definition.capabilities - self.granted
         if missing:
             raise PermissionError("capability denied: " + ", ".join(sorted(missing)))
-        if work.account_requirement and work.account_requirement not in self.eligible_accounts:
+        if definition.memory_mb > self.memory_budget_mb:
+            raise MemoryError("workload exceeds the reserved memory budget")
+        if definition.account_requirement and definition.account_requirement not in self.eligible_accounts:
             raise PermissionError("required account is not eligible for this workload")
-        if not isinstance(work.metered_cost_usd, Decimal) or not work.metered_cost_usd.is_finite() or work.metered_cost_usd < 0:
-            raise ValueError("workload metered cost must be finite and non-negative")
-        for key, value in work.environment.items():
-            if not key.isidentifier() or not isinstance(value, str) or "\x00" in value:
-                raise ValueError("workload environment contains an invalid entry")
-            normalized = "".join(character for character in key.casefold() if character.isalnum())
-            if any(marker in normalized for marker in ("token", "secret", "password", "passwd", "apikey", "credential", "authorization")):
-                raise ValueError("workload secrets must be supplied by protected credential reference")
-        if any(not reference or "\x00" in reference for reference in work.credential_references):
-            raise ValueError("credential references must be non-empty opaque identifiers")
+        if self._metered_spend + definition.metered_cost_usd > self.metered_budget_usd:
+            raise PermissionError("workload exceeds the remaining metered budget")
+
+        # Command construction is reviewed code with roots supplied by the
+        # trusted installer. The request cannot select an executable or path.
+        invocations = definition.build(request.arguments, self.runtime_roots, self.work_roots)
+        if (not invocations or len(invocations) > 4
+                or any(not isinstance(item, ComponentInvocation) for item in invocations)):
+            raise RuntimeError("registered workload builder returned invalid invocations")
+        if any(item.timeout_seconds > definition.timeout_seconds
+               or item.memory_limit_mb > definition.memory_mb
+               or item.network not in {"deny", definition.network_scope}
+               or item.component_id not in {"browser-use", "graphify"}
+               or not set(item.capability_scopes).issubset(definition.capabilities)
+               for item in invocations):
+            raise PermissionError("registered invocation exceeds its workload policy")
 
         with self._lock:
             if self._active >= self.max_workers:
                 raise RuntimeError("workload concurrency limit reached")
-            if self._metered_spend + work.metered_cost_usd > self.metered_budget_usd:
+            if self._metered_spend + definition.metered_cost_usd > self.metered_budget_usd:
                 raise PermissionError("workload exceeds the remaining metered budget")
             self._active += 1
-            # Reserve the estimate before launch, and retain it after failures
-            # because the remote provider may already have charged the request.
-            self._metered_spend += work.metered_cost_usd
+            self._metered_spend += definition.metered_cost_usd
         try:
-            return self.run(
-                work.argv,
-                dict(work.environment),
-                timeout=work.timeout_seconds,
-                memory_mb=work.memory_mb,
-                network_scope=work.network_scope,
-                credential_references=work.credential_references,
-            )
+            result = None
+            for invocation in invocations:
+                result = self.run(invocation)
+                if not isinstance(result, Mapping) or result.get("exit_code") != 0:
+                    raise RuntimeError("registered workload stage failed; dependent stages were not launched")
+            return result
         finally:
             with self._lock:
                 self._active -= 1
