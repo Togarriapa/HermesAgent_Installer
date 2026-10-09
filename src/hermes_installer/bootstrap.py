@@ -265,8 +265,13 @@ class HermesBootstrap:
         hermes = self.install_dir / ".hermes" / "bin" / "hermes"
         if not hermes.is_file() or hermes.is_symlink():
             raise BootstrapError("Pinned Hermes CLI entrypoint is unavailable for the source Desktop build")
+        desktop_env = self._environment()
+        desktop_env["HERMES_DESKTOP_HERMES_ROOT"] = str(self.install_dir)
+        desktop_env["HERMES_DESKTOP_USER_DATA_DIR"] = str(self.data_root.path("runtime/desktop-user-data"))
+        desktop_env["HERMES_DESKTOP_APP_NAME"] = "Hermes Installer Candidate"
+        Path(desktop_env["HERMES_DESKTOP_USER_DATA_DIR"]).mkdir(parents=True,exist_ok=True,mode=0o700)
         proc = subprocess.Popen([str(hermes), "desktop", "--build-only", "--source"], cwd=self.install_dir,
-            env=self._environment(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            env=desktop_env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, shell=False, close_fds=True, start_new_session=True)
         try:
             return proc.wait(timeout=timeout), b""

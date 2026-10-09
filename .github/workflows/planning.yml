@@ -5,6 +5,21 @@ on:
 permissions:
   contents: read
 jobs:
+
+  runtime-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Compile installer modules
+        run: python -m compileall -q src
+      - name: Run runtime contract and failure tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests/contracts -v
+
   planning:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
