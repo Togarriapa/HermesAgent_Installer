@@ -572,3 +572,10 @@ The installer SHALL resolve native package from actual enrolled peer and SHALL a
 #### Scenario: Caller chooses package or reuses compound grant
 - **WHEN** caller claims alternate package/scope or repeats one consumed authorization across steps
 - **THEN** reject before bytes and retain owned cleanup journal with no sibling deletion.
+
+### Requirement: Fixed memory compound wire
+The installer SHALL enforce canonical typed memory compound write envelopes with root-derived HTTP frames and atomic root current-step state, separate from stream protocols.
+
+#### Scenario: Forged HTTP frame or skipped compound step
+- **WHEN** caller submits arbitrary HTTP bytes, wrong job/step or reused frame grant
+- **THEN** reject before backend bytes with owned failure/cleanup journal and no sibling scope mutation.

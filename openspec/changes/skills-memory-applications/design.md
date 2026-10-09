@@ -48,3 +48,5 @@ Prestart sanitized reviewed services, verify bounded actual readiness before sel
 SK01 / SK-T01 route identity clarification: see plans/amendments/2026-10-09-memory-route-identities-v2.md and planning/memory-service-connector-contract.json. Stable per-backend Claude approved_route_ids join distinct outer effect and connector targets; no inferred missing health/delete or variant fallback. Existing task remains open.
 
 Selected binding/memory recipes v4: plans/amendments/2026-10-09-selected-native-binding-memory-recipes-v4.md defines root no-argument peer-selected package and fixed compound route steps with fresh child grants, no caller path/provenance or reused outer grant. Existing HI-T08/09/SK-T01 remain open.
+
+Memory compound wire v5: plans/amendments/2026-10-09-memory-compound-wire-v5.md and memory-service-connector-contract.json specify canonical body envelope/root serializer/stateful finite steps; no worker HTTPframe/scope/step authority and fresh grants each step. Existing tasks remain open.

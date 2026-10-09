@@ -186,6 +186,23 @@
       "selection": "commit/extract fixed enrolled recipe selected before admission with fresh background consent/private eligible provider; never caller dynamic path. Returned session scoped sameprofile/store/current owner gen; response validated source schema."
     },
     "admission": "Outer memory effect admits immutable bounded compound job; each step has fresh child-specific exact connector grant/digest/sequence/route under original lease. Never reuse one outer grant per request; abort on failure/revoke/expiry, journal owned created session for bounded reviewed cleanup, no sibling session purge.",
-    "scope": "Endpoint-specific root body recipe forces AgentMemory project/agentId/user/account/session scope, rejects caller override fields; source schema strict and actual configured vault header/auth field root-held. OpenViking root trusted/API key; Claude selected backend root key. No secret bytes worker args/env/receipts. Actual body serializer/schema must match selected pinned API before enrollment, absent unavailable."
+    "scope": "Endpoint-specific root body recipe forces AgentMemory project/agentId/user/account/session scope, rejects caller override fields; source schema strict and actual configured vault header/auth field root-held. OpenViking root trusted/API key; Claude selected backend root key. No secret bytes worker args/env/receipts. Actual body serializer/schema must match selected pinned API before enrollment, absent unavailable.",
+    "connector_protocol": {
+      "mode": "fixed-memory-compound-json-v1 (separate from Xpra/Colibri raw stream modes)",
+      "open": "Existing connector.open exact target/route grant additionally binds opaque admitted compound_job_handle and expected_step_id; root resolves immutable selected recipe/job/current step/profile/gen/lease. Caller cannot construct or replace job state.",
+      "write_envelope_fields": [
+        "schema=1",
+        "handle_id",
+        "generation",
+        "sequence",
+        "compound_job_handle",
+        "step_id",
+        "body"
+      ],
+      "body": "Canonical typed JSON object validated against selected protected body_recipe_id/request_schema; root forces account/profile/store fields and builds fixed HTTP method/path/headers/auth. No caller complete HTTP frame/URL/method/header/credential/path accepted in compound mode. Payload digest hashes complete canonical envelope including step ID/body.",
+      "state": "Root tracks current step/sequence/inflight/consumption per admitted job; atomic fresh grant reserve before bytes. Root parses bounded source-schema response and captures owned session ID internally, transitions only successful create->append->fixed-finalize; forged/skipped/repeated/concurrent step denied. Separate root open/write/read/close authorization remains HI12; opening nextstep requires fresh grants under original job lease, no outer grant reuse.",
+      "recipe_resolution": "Root protected fixed_route_map and reviewed serializer body recipes; root catalog schema IDs resolve immutable installed validators. Caller body only exact allowed contentfields; object scope IDs/path/auth/commit selection derived from job enrollment. Actual recipe/schema pin missing stays unavailable.",
+      "result": "Bounded typed response/artifact and root-observed result receipt; no arbitrary response-controlled next URL/session scope. Error marks failed/ambiguous, no automatic replay; owned cleanup journal only."
+    }
   }
 }

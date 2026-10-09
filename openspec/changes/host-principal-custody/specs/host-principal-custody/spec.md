@@ -180,3 +180,10 @@ The installer SHALL validate exact canonical resolver/policy document digest pre
 #### Scenario: Self hash or wrapper bytes substituted
 - **WHEN** digest uses wrong preimage or archive/module identity in place of canonical document
 - **THEN** reject enrollment before effects; verified presentation does not confer authority.
+
+### Requirement: Fixed memory compound wire
+The installer SHALL enforce canonical typed memory compound write envelopes with root-derived HTTP frames and atomic root current-step state, separate from stream protocols.
+
+#### Scenario: Forged HTTP frame or skipped compound step
+- **WHEN** caller submits arbitrary HTTP bytes, wrong job/step or reused frame grant
+- **THEN** reject before backend bytes with owned failure/cleanup journal and no sibling scope mutation.
