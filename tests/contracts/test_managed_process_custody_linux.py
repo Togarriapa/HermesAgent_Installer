@@ -614,6 +614,14 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             self.assertEqual(origin_identity.pid_starttime_ticks, process_handle.start_ticks)
             self.assertEqual(origin_identity.executable_sha256, self.digest)
             self.assertEqual(origin_identity.cgroup_id, started["cgroup"])
+            exact_handle_lease = self.handler.resolve_owned_process_handle(process_handle)
+            self.assertIsNotNone(exact_handle_lease,
+                "exact manager-owned handle did not resolve to its PIDFD identity lease")
+            self.assertEqual(exact_handle_lease.process_id, process_handle.process_id)
+            self.assertEqual(exact_handle_lease.pid, process_handle.pid)
+            self.assertEqual(exact_handle_lease.start_ticks, process_handle.start_ticks)
+            self.assertNotEqual(exact_handle_lease.pidfd, process_handle.child_pidfd)
+            exact_handle_lease.close()
             identity_lease = self.handler.resolve_active_process_handle(
                 self.profile_id, self.profile.generation)
             self.assertIsNotNone(identity_lease,
