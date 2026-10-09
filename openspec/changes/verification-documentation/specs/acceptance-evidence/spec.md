@@ -683,4 +683,8 @@ The executable verifier SHALL bind actual selected installer target/current cand
 
 #### Scenario: Fixture or candidate drift
 - **WHEN** a result is fixture-only, incomplete or differs from current enrolled target/candidate
+<<<<<<< HEAD
+ - **THEN** acceptance remains pending and no claimed success is exported.
+=======
 - **THEN** acceptance remains pending and no claimed success is exported.
+>>>>>>> 46aa4ae11bebcbb67ce8199cacfa8294c73b6fe5
