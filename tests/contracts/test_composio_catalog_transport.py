@@ -66,7 +66,7 @@ class Authority:
         assert grant in self.used
         self.receipts.append((grant, http_status, response_body))
         n = len(self.receipts)
-        return f"req-{n}", f"resp-{n}"
+        return f"exchange-{n}"
 
 
 class Network:
@@ -110,8 +110,7 @@ def test_transport_is_fixed_https_root_authorized_and_receipted():
     assert method == "GET" and body is None and timeout <= 15 and max_bytes == 2 * 1024 * 1024
     assert headers == {"x-api-key": "synthetic-secret-never-log", "accept": "application/json"}
     assert response["items"] == []
-    assert response.request_receipt_handle == "req-1"
-    assert response.response_receipt_handle == "resp-1"
+    assert response.exchange_receipt_handle == "exchange-1"
     assert auth.receipts[0][1] == 200
 
 

@@ -64,11 +64,10 @@ class ComposioCatalogTransportDenied(PermissionError):
 
 @dataclass(frozen=True, slots=True)
 class ComposioCatalogResponse(Mapping[str, Any]):
-    """Parsed response plus opaque root source-receipt handles."""
+    """Parsed response plus one root exchange receipt for its paired bytes."""
 
     document: Mapping[str, Any]
-    request_receipt_handle: str
-    response_receipt_handle: str
+    exchange_receipt_handle: str
     http_status: int
 
     def __getitem__(self, key: str) -> Any:
@@ -86,7 +85,7 @@ class _ComposioSetupAuthority(Protocol):
                               trigger_slug: str | None = None) -> object: ...
     def resolve_project_credential(self, grant: object) -> str: ...
     def record_catalog_exchange(self, grant: object, *, http_status: int,
-                                response_body: bytes) -> tuple[str, str]: ...
+                                response_body: bytes) -> str: ...
 
 
 class _Network(Protocol):
@@ -278,7 +277,7 @@ class RootComposioCatalogTransport:
         if type(status) is not int or not isinstance(body, bytes) or len(body) > max_response_bytes:
             raise ComposioCatalogTransportDenied("Composio catalog response exceeded its bound")
         try:
-            request_handle, response_handle = self._authority.record_catalog_exchange(
+            exchange_handle = self._authority.record_catalog_exchange(
                 grant, http_status=status, response_body=body)
         except Exception:
             raise ComposioCatalogTransportDenied("root could not retain catalog source receipts") from None
@@ -320,7 +319,6 @@ class RootComposioCatalogTransport:
                         raise ComposioCatalogTransportDenied("Composio catalog contains a duplicate trigger slug")
                     self._seen_slugs.add(slug_value)
                     self._listed_slugs.add(slug_value)
-        if (not isinstance(request_handle, str) or not request_handle
-                or not isinstance(response_handle, str) or not response_handle):
+        if not isinstance(exchange_handle, str) or not exchange_handle:
             raise ComposioCatalogTransportDenied("root source receipt handles are invalid")
-        return ComposioCatalogResponse(document, request_handle, response_handle, status)
+        return ComposioCatalogResponse(document, exchange_handle, status)

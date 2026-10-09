@@ -110,13 +110,11 @@ def test_polling_trigger_type_can_still_use_authenticated_webhook_delivery():
 
 def test_actual_root_source_receipt_handles_are_bound_into_selected_catalog_receipt():
     class RootResponse(dict):
-        request_receipt_handle: str
-        response_receipt_handle: str
+        exchange_receipt_handle: str
 
         def __init__(self, doc, n):
             super().__init__(doc)
-            self.request_receipt_handle = f"root-request-{n}"
-            self.response_receipt_handle = f"root-response-{n}"
+            self.exchange_receipt_handle = f"root-exchange-{n}"
 
     class ReceiptedRootGet(RecordingRootGet):
         def get_json(self, **kwargs):
@@ -125,8 +123,7 @@ def test_actual_root_source_receipt_handles_are_bound_into_selected_catalog_rece
 
     broker = ReceiptedRootGet()
     _, receipt = discovery(broker).select(ROW["slug"])
-    assert receipt.source_request_receipt_handles == ("root-request-1", "root-request-2")
-    assert receipt.source_response_receipt_handles == ("root-response-1", "root-response-2")
+    assert receipt.source_exchange_receipt_handles == ("root-exchange-1", "root-exchange-2")
 
 
 def test_unlisted_slug_never_becomes_an_arbitrary_path():

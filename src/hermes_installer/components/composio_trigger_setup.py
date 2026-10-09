@@ -72,8 +72,7 @@ class ComposioTriggerCatalogReceipt:
     selected_slug: str
     schema_sha256: str
     catalog_sha256: str
-    source_request_receipt_handles: tuple[str, ...] = ()
-    source_response_receipt_handles: tuple[str, ...] = ()
+    source_exchange_receipt_handles: tuple[str, ...] = ()
     request_policy_artifact_id: str = COMPOSIO_CATALOG_POLICY_ID
     request_policy_sha256: str = COMPOSIO_CATALOG_POLICY_SHA256
     source: str = "composio-v3.1-authenticated-trigger-catalog"
@@ -156,7 +155,7 @@ class ComposioWhatsAppTriggerDiscovery:
         self._credential_reference_id = credential_reference_id
         self._toolkit_version = toolkit_version
         self._monotonic = monotonic
-        self._source_receipts: list[tuple[str, str]] = []
+        self._source_receipts: list[str] = []
 
     def _get_json(self, *, path: str, query: Mapping[str, Any], deadline: float) -> Mapping[str, Any]:
         remaining = deadline - self._monotonic()
@@ -169,16 +168,13 @@ class ComposioWhatsAppTriggerDiscovery:
                 usage="composio-trigger-discovery",
                 max_response_bytes=_MAX_RESPONSE_BYTES,
                 timeout_seconds=min(_MAX_DEADLINE_SECONDS, remaining))
-            request_handle = getattr(result, "request_receipt_handle", None)
-            response_handle = getattr(result, "response_receipt_handle", None)
-            if (request_handle is not None or response_handle is not None):
-                if (not isinstance(request_handle, str) or not request_handle
-                        or not isinstance(response_handle, str) or not response_handle
-                        or any(request_handle == old[0] or response_handle == old[1]
-                               for old in self._source_receipts)):
+            exchange_handle = getattr(result, "exchange_receipt_handle", None)
+            if exchange_handle is not None:
+                if (not isinstance(exchange_handle, str) or not exchange_handle
+                        or exchange_handle in self._source_receipts):
                     raise ComposioTriggerSetupUnavailable(
-                        "root Composio source receipt handles are invalid or replayed")
-                self._source_receipts.append((request_handle, response_handle))
+                        "root Composio exchange receipt handle is invalid or replayed")
+                self._source_receipts.append(exchange_handle)
             return result
         except ComposioTriggerSetupUnavailable:
             raise
@@ -245,16 +241,13 @@ class ComposioWhatsAppTriggerDiscovery:
         confirmed = _parse_trigger(raw, toolkit_version=self._toolkit_version)
         if confirmed.slug != selected.slug or confirmed.schema_sha256 != selected.schema_sha256:
             raise ComposioTriggerSetupUnavailable("Composio trigger schema changed during setup; rediscover")
-        request_handles = tuple(item[0] for item in self._source_receipts)
-        response_handles = tuple(item[1] for item in self._source_receipts)
+        exchange_handles = tuple(self._source_receipts)
         catalog_digest = _sha({
             "rows": [(item.slug, item.schema_sha256) for item in catalog],
-            "source_request_receipt_handles": request_handles,
-            "source_response_receipt_handles": response_handles,
+            "source_exchange_receipt_handles": exchange_handles,
         }, maximum=_MAX_RESPONSE_BYTES)
         receipt = ComposioTriggerCatalogReceipt(
             toolkit_version=self._toolkit_version, selected_slug=selected.slug,
             schema_sha256=selected.schema_sha256, catalog_sha256=catalog_digest,
-            source_request_receipt_handles=request_handles,
-            source_response_receipt_handles=response_handles)
+            source_exchange_receipt_handles=exchange_handles)
         return confirmed, receipt
