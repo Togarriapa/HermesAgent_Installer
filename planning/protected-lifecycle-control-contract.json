@@ -544,7 +544,14 @@
           ],
           "transport": "Root registry creates sealed memfd fixed child FD3 containing canonical UTF8 JSON {schema:1,handoff_handle,nonce}<=4096 bytes, root0600 and F_SEAL_WRITE|F_SEAL_GROW|F_SEAL_SHRINK|F_SEAL_SEAL. It retains actual descriptor inode/content SHA in private record. Root reexec_selected_bootstrap(handoff) duplicates only this descriptor to FD3 across os.execve in SAME PID, closes unrelated FDs, uses actual private registry-resolved selected executable/source entry and sanitized environment. No candidate/runtime/receipt identity from argv or env; no generic worker FD context. Fixed bootstrap entry reads FD3 only; descriptor is lookup transport, not authorization.",
           "take": "take_current_reexec_handoff()->RootBootstrapRuntimeHandoff root-local no selectors; verifies FD3 seals/dev/inode/exact retained bytes, nonce, actual same PID/start_ticks/UID0, selected source/runtime receipts and current actual executable hash/inode/module origins; only expected exe transition admitted, original process cannot consume before verified reexec. Atomic pending->consumed once, lease<=600/original acquisition expiry, foreign process/replay/different executable denies. Returned private record supplies exact candidate/distribution/runtime to actor verifier/build; no caller handle can mint identity.",
-          "cleanup": "Registry closes retained PIDFD and memfd when consumed/expired/failed; root journal retains private audit digests only. exec failure revokes handoff and wipes temporary message; does not activate service/policy. Root actor proof still mandatory after take before release publication."
+          "cleanup": "Registry closes retained PIDFD and memfd when consumed/expired/failed; root journal retains private audit digests only. exec failure revokes handoff and wipes temporary message; does not activate service/policy. Root actor proof still mandatory after take before release publication.",
+          "candidate_type_join": {
+            "canonical_type": "Existing hermes_installer.root_setup.VerifiedRootBootstrapCandidateSelection minted only by RootBootstrapCandidateSelectionRegistry.resolve(actual RootSetupExplicitChoices). No new opaque candidate selection wire handle; v78 candidate_selection_handle wording is superseded by this typed root-only proof/snapshot.",
+            "issuer_fields": "Add root-observed controller_pid,controller_start_ticks,controller_uid=0,controller_session_id,tty_device,tty_inode,tty_rdev,issued_monotonic,expires_monotonic to existing candidate_git_sha,input_origin=root_tty_explicit,choice_sha256 proof. Actual root registry reads held controlling TTY and kernel process at choice issuance; source Git SHA is nonsecret, tty permission is not Authentik principal identity.",
+            "consume": "RootBootstrapCandidateSelectionRegistry.consume_verified_selection(selection:VerifiedRootBootstrapCandidateSelection)->RootBootstrapCandidateSelectionSnapshot root-local: exact retained object identity/issuer seal/current actual controller PID/start/session/TTY/lease, atomic once. Root selection resolve must retain proof pending handoff consumption, not discard issuer record after returning it. No caller fields/TTY/PID accepted.",
+            "handoff_signature": "create_for_current_process(distribution_handle,interpreter_receipt_handle,selection:VerifiedRootBootstrapCandidateSelection)->RootBootstrapRuntimeHandoff. Consumes existing registry typed proof exactly once, verifies source receipt candidate match; stores canonical selection snapshot SHA and actual fields in SAME root handoff record. Public handoff DTO uses candidate_selection_sha256, not candidate_selection_handle; after reexec source binding comes retained record, no resurrected in-process seal.",
+            "controller": "Handoff retains actual original controller PIDFD and TTY descriptor identity/lease; fixed FD3 transition record binds these facts. Same-PID exec preserves start/session; current source actor root proof remains separate mandatory check after take. No new grant/session/catalog."
+          }
         }
       }
     }
@@ -1056,5 +1063,23 @@
       "service_record": "Render unchanged v30 record with actual existing root NSS/principal/roots/transaction bindings; prepared runtime fields null. Existing identity-policy principal binding must exactly match selected actual receipt, no substitute principal.",
       "typed_enum": "receipt_field retains artifact_id|sha256|generation|receipt_handle plus only official-pm-runtime: catalog_executable_path|executable_artifact_id|executable_sha256|runtime_artifact_ids|package_runtime_records; native-compiled-closure: child_artifact_refs. Root phase-aware parser/resolver validates role-specific enum and type, not arbitrary getter/path. field_bindings and receipt_bindings remain exact {field_path,receipt_role,receipt_field}."
     }
+  },
+  "closed_root_plan_template_selection": {
+    "artifact_id": "installer-root-setup-plan-template-v1",
+    "source_relative_path": "plans/amendments/2026-10-10-closed-root-plan-template-selection-v81/root-setup-plan-template-v1.json",
+    "installed_relative_path": "templates/root-setup-plan-template-v1.json",
+    "roles": [
+      "template"
+    ],
+    "sha256": "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5",
+    "size_bytes": 920,
+    "template_artifact_ids": [
+      "installer-bootstrap-compiler-template-v1",
+      "installer-authentik-policy-template-v1",
+      "installer-prepared-authority-base-template-v1",
+      "installer-bootstrap-receipt-bindings-template-v1",
+      "installer-composio-whatsapp-catalog-read-policy-v1"
+    ],
+    "projection": "Supersedes v53 two-template selection only, preserves other v53 manifest fields. RootInstalledReleaseBuilder installs these exact latest reviewed template bytes and every referenced actual template artifact/hash in sealed full release manifest/catalog. Initial compiler reads exact list; factory equality uses this literal order. Policy reader/template selection has no effect/account readiness authority. Actual deployed root plan artifact installer-root-setup-plan-v1 remains distinct compiler output from this source template; artifact_selection all-reviewed-verified-release-catalog-ids remains sorted exact currentcatalog IDs, no missing Resources proof or fake runtime output IDs."
   }
 }
