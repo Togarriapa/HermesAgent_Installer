@@ -128,13 +128,27 @@ def _skill_file(item: ResolvedResource, source_path: str, source_document: Mappi
     if not _SKILL_NAME.fullmatch(name):
         raise RegistryError(f"skill name cannot be represented as a Hermes skill: {name}")
     spec = item.effective_spec or item.resource.body
-    procedure = spec.get("procedure")
-    if isinstance(procedure, str):
-        body = procedure.strip()
-    elif isinstance(procedure, (list, tuple)) and all(isinstance(x, str) for x in procedure):
-        body = "\n".join(f"{index}. {line.strip()}" for index, line in enumerate(procedure, 1) if line.strip())
-    else:
-        raise RegistryError(f"skill procedure has no native text representation: {name}")
+    # Resource skills use several reviewed content shapes (procedure,
+    # workflow, instructions, principles, verification, and structured policy
+    # fields). Render each effective field into the native skill body instead
+    # of silently dropping non-procedure forms. The complete YAML remains below
+    # as a lossless record for fields that are not prose.
+    body_sections = []
+    for field, value in spec.items():
+        if field in {"extends", "requires"}:
+            continue
+        heading = str(field).replace("_", " ").replace("-", " ").title()
+        if isinstance(value, str):
+            rendered = value.strip()
+        elif isinstance(value, (list, tuple)) and all(isinstance(part, str) for part in value):
+            rendered = "\n".join(f"- {part.strip()}" for part in value if part.strip())
+        else:
+            rendered = "```yaml\n" + yaml.safe_dump(value, sort_keys=False, allow_unicode=True).rstrip() + "\n```"
+        if rendered:
+            body_sections.append(f"## {heading}\n\n{rendered}")
+    body = "\n\n".join(body_sections)
+    if not body:
+        body = "## Complete registry procedure\n\n```yaml\n" + yaml.safe_dump(dict(spec), sort_keys=False, allow_unicode=True).rstrip() + "\n```"
     metadata = source_document.get("metadata", {})
     description = metadata.get("description", "") if isinstance(metadata, Mapping) else ""
     if not isinstance(description, str) or not description.strip():
