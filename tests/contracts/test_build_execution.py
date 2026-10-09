@@ -37,6 +37,8 @@ class Profile:
     target_id = "colibri-source-build:start"
     generation = "generation-1"
     service_generation_digest = "a" * 64
+    build_service_enrollment_id = "builder-service-1"
+    build_service_generation = "service-generation-1"
     source_artifact_id = "colibri-source"
     source_sha256 = "1" * 64
     toolchain_artifact_id = "aarch64-sysroot"
@@ -139,9 +141,13 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
                                        path=path, tree_files=(), tree_manifest_sha256=manifest)
 
         class Catalog:
-            def resolve(self, target_id, generation):
+            def resolve_service(self, target_id, generation, services):
                 assert target_id == profile.target_id and generation == profile.generation
-                return profile
+                assert services is service_catalog
+                return profile, SimpleNamespace(
+                    enrollment_id=profile.build_service_enrollment_id,
+                    generation=profile.build_service_generation,
+                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
 
         class Launcher:
             seen = False
@@ -182,9 +188,11 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
             nonce="nonce-1", context_digest="b" * 64, signature="sig",
             enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
         launcher = Launcher()
+        service_catalog = object()
         service = RootBuildExecutionService(
             build_catalog=Catalog(), artifact_catalog=Artifacts(), artifact_staging_root=base,
             launcher=launcher, fact_inspector=FixtureInspector(), authority_key=b"k" * 32,
+            service_catalog=service_catalog,
             store=make_store(base / "cas"), expected_uid=os.getuid())
         response = service(context=context, authorization=authorization, payload=payload,
                            timeout=60, peer_pid=42, peer_pidfd=7, cancelled=lambda: False)
@@ -226,8 +234,11 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
                                        tree_manifest_sha256=hashlib.sha256(b"[]").hexdigest())
 
         class Catalog:
-            def resolve(self, _target_id, _generation):
-                return profile
+            def resolve_service(self, _target_id, _generation, _services):
+                return profile, SimpleNamespace(
+                    enrollment_id=profile.build_service_enrollment_id,
+                    generation=profile.build_service_generation,
+                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
 
         class Launcher:
             def run_selected_build(self, inputs, **_kwargs):
@@ -256,10 +267,12 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
             nonce="nonce-1", context_digest="b" * 64, signature="sig",
             enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
         store = make_store(base / "cas")
+        service_catalog = object()
         service = RootBuildExecutionService(
             build_catalog=Catalog(), artifact_catalog=Artifacts(), artifact_staging_root=base,
             launcher=Launcher(), fact_inspector=FixtureInspector(corrupt=True),
-            authority_key=b"k" * 32, store=store, expected_uid=os.getuid())
+            authority_key=b"k" * 32, service_catalog=service_catalog,
+            store=store, expected_uid=os.getuid())
 
         with pytest.raises(AuthorityDenied):
             service(context=context, authorization=authorization, payload=payload,
@@ -267,6 +280,21 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
 
         assert list(output_root.iterdir()) == []
         assert not (store.root / "current").exists()
+
+
+def test_output_cleanup_rejects_replaced_job_root_instead_of_succeeding():
+    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+        base = Path(temp)
+        target = base / "target"
+        target.mkdir(mode=0o700)
+        replaced = base / "job-output"
+        replaced.symlink_to(target, target_is_directory=True)
+
+        with pytest.raises(AuthorityDenied):
+            RootBuildExecutionService._remove_job_output_root(replaced, os.getuid())
+
+        assert target.is_dir()
+        assert replaced.is_symlink()
 
 
 def filled_output(root):

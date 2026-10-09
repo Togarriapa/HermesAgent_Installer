@@ -125,6 +125,8 @@ def _plain(value: Any) -> Any:
 def _recipe_digest(profile: Any) -> str:
     return hashlib.sha256(_canonical({
         "target_id": profile.target_id, "generation": profile.generation,
+        "build_service_enrollment_id": profile.build_service_enrollment_id,
+        "build_service_generation": profile.build_service_generation,
         "source_artifact_id": profile.source_artifact_id, "source_sha256": profile.source_sha256,
         "toolchain_artifact_id": profile.toolchain_artifact_id,
         "toolchain_sha256": profile.toolchain_sha256,
@@ -146,6 +148,8 @@ class ResolvedBuildInputs:
     target_id: str
     generation: str
     service_generation_digest: str
+    build_service_enrollment_id: str
+    build_service_generation: str
     enrollment_id: str
     operation_id: str
     selection_digest: str
@@ -436,7 +440,10 @@ class LinuxBuildOutputFactInspector:
         if "aarch64" not in recipe_text or "-fopenmp" not in recipe_text + setup_text:
             raise AuthorityDenied("build.source_evidence", "Colibri ARM64/OpenMP build branch is absent")
         unsafe = ("-march=native", "-mcpu=native", "-mtune=native", "-mavx", "-msse", "-mavx2")
-        invocation_values = [*profile.argv_recipe, *profile.environment.values()]
+        invocation_values = [
+            node["literal"] for node in profile.argv_recipe
+            if isinstance(node, Mapping) and set(node) == {"literal"}
+        ] + list(profile.environment.values())
         if any(any(flag in value.lower() for flag in unsafe) for value in [*invocation_values, recipe_text, setup_text]):
             raise AuthorityDenied("build.source_evidence", "build recipe enables unmeasured host CPU instructions")
         build_text = recipe_text + " " + setup_text + " " + " ".join(invocation_values)
@@ -1307,6 +1314,7 @@ class RootBuildExecutionService:
     def __init__(self, *, build_catalog: FixedBuildCatalog, artifact_catalog: Any,
                  artifact_staging_root: Path, launcher: FixedBuildJobLauncher,
                  fact_inspector: BuildOutputFactInspector, authority_key: bytes,
+                 service_catalog: Any,
                  store: ContentAddressedBuildStore | None = None, expected_uid: int = 0,
                  monotonic: Callable[[], float] = time.monotonic):
         if type(expected_uid) is not int or os.geteuid() != expected_uid:
@@ -1314,6 +1322,7 @@ class RootBuildExecutionService:
         if not artifact_staging_root.is_absolute():
             raise AuthorityDenied("build.artifacts", "artifact staging root must be absolute")
         self.catalog = build_catalog
+        self.services = service_catalog
         self.artifacts = artifact_catalog
         self.artifact_staging_root = artifact_staging_root
         self.launcher = launcher
@@ -1343,8 +1352,17 @@ class RootBuildExecutionService:
                 or context.generation != request["generation"]
                 or authorization.generation != request["generation"]):
             raise AuthorityDenied("build.binding", "grant does not bind this fixed build operation")
-        profile = self.catalog.resolve(target, request["generation"])
+        resolver = getattr(self.catalog, "resolve_service", None)
+        if not callable(resolver) or self.services is None:
+            raise AuthorityDenied("build.service", "root service enrollment join is unavailable")
+        profile, service_profile = resolver(target, request["generation"], self.services)
         if (profile.target_id != target or profile.generation != request["generation"]
+                or profile.build_service_enrollment_id != service_profile.enrollment_id
+                or profile.build_service_generation != service_profile.generation
+                or type(service_profile.service_uid) is not int
+                or type(service_profile.service_gid) is not int
+                or profile.output_owner_uid != service_profile.service_uid
+                or service_profile.service_uid <= 0 or service_profile.service_gid <= 0
                 or not re.fullmatch(r"[0-9a-f]{64}", profile.service_generation_digest)):
             raise AuthorityDenied("build.binding", "root catalog selected another build profile")
         deadline = self.monotonic() + timeout
@@ -1439,6 +1457,7 @@ class RootBuildExecutionService:
             raise
         return ResolvedBuildInputs(
             profile.target_id, profile.generation, profile.service_generation_digest,
+            profile.build_service_enrollment_id, profile.build_service_generation,
             enrollment_id, operation_id, selection_digest,
             source.artifact_id, source.sha256, source.path,
             tuple(source.tree_files), source.tree_manifest_sha256,
@@ -1452,9 +1471,15 @@ class RootBuildExecutionService:
     @staticmethod
     def _remove_job_output_root(path: Path, owner_uid: int) -> None:
         try:
-            ContentAddressedBuildStore._check_owned_directory(path, owner_uid, mode=0o700)
-        except (OSError, AuthorityDenied):
+            path.lstat()
+        except FileNotFoundError:
             return
+        except OSError:
+            raise AuthorityDenied("build.output_cleanup", "unique build output root cannot be inspected") from None
+        # Cleanup failure must fail the build before the receipt's current-index
+        # rename. In particular, never interpret changed ownership or a symlink
+        # substitution as if the output root had already been removed.
+        ContentAddressedBuildStore._check_owned_directory(path, owner_uid, mode=0o700)
         # This path is a uniquely created child of the protected enrolled output
         # root. Do not follow links while clearing the build-owned job output.
         for current, dirs, files in os.walk(path, topdown=False, followlinks=False):
