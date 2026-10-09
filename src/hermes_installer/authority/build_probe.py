@@ -26,10 +26,14 @@ from .types import AuthorityDenied
 _PROBE_TIMEOUT_SECONDS = 15.0
 _PROBE_OUTPUT_LIMIT = 4096
 _PYTHON_RELATIVE_PATH = "runtime/bin/python3.9"
+_PROBE_READY_MARKER = b"HERMES_BUILD_PROBE_READY_V1\n"
 _PROBE_FIELDS = frozenset({"python_version", "soabi", "debug", "glibc_version"})
 _PROBE_MOUNT = "/run/hermes-installer/build/output"
 _PROBE_SCRIPT = (
-    "import sys;"
+    "import sys\n"
+    "sys.stderr.write('HERMES_BUILD_PROBE_READY_V1\\n')\n"
+    "sys.stderr.flush()\n"
+    "if sys.stdin.buffer.read(1)!=b'\\x01':raise SystemExit(78)\n"
     f"sys.path[:0]=[{_PROBE_MOUNT!r}+'/runtime/lib/python3.9',"
     f"{_PROBE_MOUNT!r}+'/runtime/lib/python3.9/lib-dynload'];"
     "import sysconfig,ctypes,json;"
@@ -60,6 +64,7 @@ class ManagedBuildProbeResult:
     start_ticks: int
     exit_code: int
     cleanup_verified: bool
+    startup_gate_verified: bool
     cgroup_id: str
     mount_namespace_inode: int
     network_namespace_inode: int
@@ -225,6 +230,7 @@ class RootManagedCPython39Probe:
             "uid", "gid", "pid", "start_ticks", "exit_code", "cleanup_verified", "cgroup_id",
             "mount_namespace_inode", "network_namespace_inode", "output_root_id",
             "output_root_device", "output_root_inode", "executable_sha256", "executable_size_bytes",
+            "startup_gate_verified",
             "bounded_log_digest", "log_bytes", "stdout",
         )
         if any(not hasattr(probe, key) for key in expected_fields):
@@ -244,7 +250,7 @@ class RootManagedCPython39Probe:
                 or type(probe.gid) is not int or probe.gid != build_inputs.output_owner_gid
                 or type(probe.pid) is not int or probe.pid <= 1 or type(probe.start_ticks) is not int
                 or probe.start_ticks <= 0 or type(probe.exit_code) is not int or probe.exit_code != 0
-                or probe.cleanup_verified is not True
+                or probe.cleanup_verified is not True or probe.startup_gate_verified is not True
                 or not isinstance(probe.cgroup_id, str) or not probe.cgroup_id
                 or probe.cgroup_id == build_result.cgroup_id
                 or type(probe.mount_namespace_inode) is not int or probe.mount_namespace_inode <= 0
@@ -282,6 +288,7 @@ class RootManagedCPython39Probe:
                 "process_id": probe.process_id, "generation": probe.generation,
                 "uid": probe.uid, "gid": probe.gid, "pid": probe.pid, "start_ticks": probe.start_ticks,
                 "exit_code": probe.exit_code, "cleanup_verified": probe.cleanup_verified,
+                "startup_gate_verified": probe.startup_gate_verified,
                 "cgroup_id": probe.cgroup_id,
                 "mount_namespace_inode": probe.mount_namespace_inode,
                 "network_namespace_inode": probe.network_namespace_inode,

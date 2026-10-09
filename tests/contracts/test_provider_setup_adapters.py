@@ -112,6 +112,25 @@ class ProviderSetupAdapterTests(unittest.TestCase):
         self.assertEqual(result.state, "pending")
         self.assertIn("key was not stored", result.message)
 
+    def test_test_connection_repeats_only_read_only_probe_and_never_stores_or_enables_route(self):
+        events = []
+
+        class Probe:
+            def check_reference(self, reference, *, secret_resolver):
+                events.append(("probe", reference, secret_resolver(reference)))
+                return __import__("hermes_installer.provider_setup_adapters", fromlist=["OpenRouterProbeResult"]).OpenRouterProbeResult(
+                    True, True, True, True, True, True, 2048, 256, "a" * 20)
+
+        adapter = build_provider_setup_adapter(probe_factory=Probe,
+            credential_reference="secret://openrouter/account/key",
+            secret_resolver=lambda reference: "fixture-private-key")
+        result = adapter.test_connection({"components": {"providers": False}})
+
+        self.assertEqual(events, [("probe", "secret://openrouter/account/key", "fixture-private-key")])
+        self.assertEqual(result.state, "pending")
+        self.assertIn("account-specific admission", result.message)
+        self.assertNotIn("fixture-private-key", repr(result))
+
     def test_duplicate_json_keys_and_nonzero_prices_fail_closed(self):
         duplicate = HTTPResult(200, {"Content-Type": "application/json"},
                                b'{"data":{"creator_user_id":"a","creator_user_id":"b"}}')
