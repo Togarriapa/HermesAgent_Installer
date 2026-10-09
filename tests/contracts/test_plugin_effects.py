@@ -134,6 +134,26 @@ def test_dispatch_binds_canonical_envelope_to_one_use_authority_grant():
     assert context_args["source_receipt_handles"] == ()
 
 
+def test_dispatch_accepts_typed_root_contexts_dto_and_passes_only_receipt_handles():
+    # The authority's immutable NativeInvocationContexts DTO omits the
+    # wire-only schema field after from_wire() has validated it.
+    def typed_contexts(**kwargs):
+        return SimpleNamespace(
+            invocation_handle="h" * 32,
+            source_receipt_handles=("r" * 32,),
+            parent_closure_digest="c" * 64,
+            arguments_sha256=kwargs["arguments_sha256"],
+            expires_monotonic=time.monotonic() + 10,
+        )
+
+    client, _, authority = dispatcher(invocation_contexts=typed_contexts)
+    client.invoke("web", "retrieve-public-web-content", {"url": "https://example.com"})
+
+    context_args = authority.calls[0][1]
+    assert context_args["source_receipt_handles"] == ("r" * 32,)
+    assert "source_contexts" not in context_args
+
+
 def test_invocation_lineage_is_action_and_canonical_argument_bound():
     observed = []
 
@@ -203,6 +223,17 @@ def test_identity_manifest_operation_or_target_tampering_fails_closed():
 def test_empty_provenance_and_authority_context_mismatch_never_perform():
     authority = Authority()
     client, _, _ = dispatcher(authority=authority, invocation_contexts=lambda **_: None)
+    with pytest.raises(PluginEffectUnavailable, match="lineage"):
+        client.invoke("web", "retrieve-public-web-content", {"url": "https://example.com"})
+    assert authority.calls == []
+
+    bad_lineage = SimpleNamespace(
+        schema=True, invocation_handle="i" * 32, source_receipt_handles=(),
+        parent_closure_digest="c" * 64,
+        arguments_sha256=hashlib.sha256(b'{"url":"https://example.com"}').hexdigest(),
+        expires_monotonic=time.monotonic() + 10,
+    )
+    client, _, authority = dispatcher(invocation_contexts=lambda **_: bad_lineage)
     with pytest.raises(PluginEffectUnavailable, match="lineage"):
         client.invoke("web", "retrieve-public-web-content", {"url": "https://example.com"})
     assert authority.calls == []
