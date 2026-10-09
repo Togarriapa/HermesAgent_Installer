@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import math
+import re
 import secrets
 import threading
 import time
@@ -422,8 +423,12 @@ class RemoteConnectorEffectAuthority:
                         "action": "open", "approved_route_id": binding.route_id,
                         "session_id": binding.session_id, "deadline": binding.lease_expires_monotonic}
         else:
+            if (not isinstance(binding.connector_handle, str)
+                    or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", binding.connector_handle) is None):
+                raise _deny("remote.connector-payload", "current connector handle is unavailable")
             required = {"schema": 1, "target_id": binding.target_id,
                         "route_id": binding.route_id, "session_id": binding.session_id,
+                        "connector_id": binding.connector_handle,
                         "generation": binding.native_generation, "sequence": sequence,
                         "deadline": binding.frame_deadline_monotonic}
             if not required.items() <= body.items():

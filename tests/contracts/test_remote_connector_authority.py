@@ -164,6 +164,37 @@ class RemoteConnectorEffectAuthorityContracts(unittest.TestCase):
                 peer_uid=1002, peer_pid=200, peer_pidfd=8)
         self.assertEqual(self.hi12.consumed, [])
 
+    def test_read_write_close_bind_the_current_connector_id_and_frame_sequence(self):
+        import base64
+        cases = (
+            ("connector.read", {"max_bytes": 32}, 32),
+            ("connector.write", {"data_b64": base64.b64encode(b"abc").decode()}, 3),
+            ("connector.close", {}, 0),
+        )
+        for operation, extra, maximum in cases:
+            with self.subTest(operation=operation):
+                frame_binding = replace(self.binding, next_sequence=7)
+                self.current_binding = frame_binding
+                body = {"schema": 1, "target_id": frame_binding.target_id,
+                        "route_id": frame_binding.route_id,
+                        "connector_id": frame_binding.connector_handle,
+                        "session_id": frame_binding.session_id,
+                        "generation": frame_binding.native_generation,
+                        "deadline": frame_binding.frame_deadline_monotonic,
+                        "sequence": 7, **extra}
+                payload = canonical_bytes(body)
+                auth = self.authority.issue_remote_connector_effect(
+                    frame_binding, operation, payload, 7, maximum,
+                    peer_uid=1002, peer_pid=200, peer_pidfd=8)
+                self.assertTrue(self.authority.consume_remote_connector_effect(
+                    auth, frame_binding, operation, payload, 7,
+                    peer_uid=1002, peer_pid=200, peer_pidfd=8))
+                wrong = canonical_bytes({**body, "connector_id": "sibling-stream-id-0123456789012345678"})
+                with self.assertRaises(AuthorityDenied):
+                    self.authority.issue_remote_connector_effect(
+                        frame_binding, operation, wrong, 7, maximum,
+                        peer_uid=1002, peer_pid=200, peer_pidfd=8)
+
     def test_expiry_and_cancellation_deny_before_hi12_issue_or_spend(self):
         expired = replace(self.binding, frame_deadline_monotonic=self.now - 1)
         self.current_binding = expired
