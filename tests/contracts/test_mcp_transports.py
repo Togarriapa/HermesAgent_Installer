@@ -199,6 +199,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
         service_record = ProtectedMCPService(
             service_id="fixture", channel="http", allowed_tools=frozenset({"get_state"}),
             transport_binding_id="fixture-binding", reviewed_revision="a" * 64,
+            selection_arguments={"get_state": ("entity_id",)},
         )
         transport_factory = lambda _service, _context: FixtureNetwork(transport)
         handlers = build_mcp_handlers({"fixture": service_record},
