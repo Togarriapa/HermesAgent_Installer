@@ -85,7 +85,7 @@ class ProviderEnrollment:
             raise ValueError("provider enrollment is not supported")
         if not self.account_id or len(self.account_id) > 256 or not self.principal_id or len(self.principal_id) > 256:
             raise ValueError("an enrolled opaque account ID is required")
-        if not self.credential_ref or len(self.credential_reference) > 2048:
+        if not self.credential_ref or len(self.credential_ref) > 2048:
             raise ValueError("a protected credential reference is required")
         if not self.credential_scope or len(self.credential_scope) > 128:
             raise ValueError("a protected credential scope is required")
@@ -256,7 +256,7 @@ class _FixedProviderHandler:
             raise ProviderHandlerDenied("provider.expired", "Provider grant expired before network dispatch")
         try:
             token = self._vault.resolve_reference(
-                enrollment.credential_reference, peer_uid=context.uid,
+                enrollment.credential_ref, peer_uid=context.uid,
                 required_scope=enrollment.credential_scope,
                 principal_id=enrollment.principal_id)
         except Exception:
@@ -275,7 +275,7 @@ class _FixedProviderHandler:
             capability=capability, model=model, request_digest=digest,
             retry_index=retry_index,
             additional_metered_fee_usd=enrollment.additional_metered_fee_usd,
-            credential_reference=enrollment.credential_reference,
+            credential_ref=enrollment.credential_ref,
         )
         if cancelled() or time.monotonic() >= authorization.monotonic_expires_at:
             raise ProviderHandlerDenied("provider.expired", "Provider grant expired before network dispatch")
