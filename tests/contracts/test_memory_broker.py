@@ -7,7 +7,7 @@ from pathlib import Path
 
 from hermes_installer.memory.broker import (
     BrokerDenied, DurableMemoryQueue, MemoryTarget, build_memory_handlers,
-    canonical, ROUTES,
+    canonical, ROUTES, build_memory_runtime,
 )
 
 
@@ -156,6 +156,37 @@ class MemoryBrokerTests(unittest.TestCase):
             with queue._db() as db:
                 stored = db.execute("SELECT event FROM jobs WHERE id=?", (receipt,)).fetchone()[0]
             self.assertIn(b"synthetic", bytes(stored))
+
+
+    def test_root_runtime_binds_typed_consent_to_current_owner_epoch(self):
+        class SignedConsent:
+            def to_wire(self):
+                return {"consent_id":"runtime-consent","signature":"root-signed"}
+        class Authority:
+            def create_background_consent(self, **_):
+                return SignedConsent()
+            def perform_memory_effect(self, **_):
+                raise AssertionError("runtime must not start a background worker")
+        t = target("p1", "n1", "service-one")
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = build_memory_runtime({("p1","n1","agentmemory"):t},
+                Authority(), root_data_dir=Path(directory)/"runtime")
+            self.assertTrue(runtime["consent_ready"])
+            self.assertTrue(callable(runtime["consent_active"]))
+            self.assertIsNone(runtime["ipc"])
+            self.assertEqual(runtime["engines"], {})
+            runtime["owner_ledger"].set_owner("p1", "agentmemory")
+            context = Context()
+            receipt = runtime["queue"].enqueue(target=t, context=context, body={
+                "schema":1,"profile":"p1","namespace":"n1","event":"turn",
+                "session_id":"synthetic","user_content":"synthetic source",
+                "assistant_content":"synthetic reply"})
+            self.assertTrue(runtime["consent_active"]("runtime-consent"))
+            runtime["owner_ledger"].set_owner("p1", None)
+            self.assertFalse(runtime["consent_active"]("runtime-consent"))
+            self.assertEqual(runtime["queue"].revoke_owner("p1","agentmemory",1),1)
+            self.assertFalse(runtime["consent_active"]("runtime-consent"))
+            self.assertEqual(runtime["queue"].result(context,receipt)["status"],"failed")
 
     def test_pinned_provider_routes_and_payloads_match_upstream_contracts(self):
         # Fixed routes were checked against each provider's exact enrolled source.
