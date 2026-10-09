@@ -19,6 +19,7 @@ class NativePluginAdapterContract:
     adapter_id: str
     resource_id: str
     component_adapter_id: str | None
+    handler_available: bool
     status: str
     blocker: str | None
 
@@ -52,8 +53,9 @@ NATIVE_PLUGIN_ADAPTERS = tuple(
         adapter_id=plugin_id,
         resource_id=plugin_id,
         component_adapter_id=None,
-        status="typed-adapter-registry-required",
-        blocker="No one-to-one reviewed seed-source crosswalk or registered native handler yet",
+        handler_available=(plugin_id == "resource-overlay-store"),
+        status=("reviewed-local-profile-handler" if plugin_id == "resource-overlay-store" else "typed-adapter-registry-required"),
+        blocker=(None if plugin_id == "resource-overlay-store" else "No one-to-one reviewed seed-source crosswalk or registered native handler yet"),
     )
     for plugin_id in _PLUGIN_IDS
 )
@@ -83,6 +85,11 @@ def resolve_native_plugin_adapter(adapter_id: str) -> NativePluginAdapterContrac
         return _PLUGIN_BY_ID[adapter_id]
     except (KeyError, TypeError):
         raise KeyError(f"unknown native Plugin adapter ID {adapter_id!r}") from None
+
+
+def native_plugin_handler_available(adapter_id: str) -> bool:
+    """Pure readiness hint for registry generation; never implies activation."""
+    return resolve_native_plugin_adapter(adapter_id).handler_available
 
 
 def create_native_plugin_handler(adapter_id: str, runtime_context: NativePluginRuntimeContext):
@@ -157,6 +164,9 @@ class ResourceOverlayStoreImplementation:
                 return {"found": False, "record_id": record_id}
             body = getattr(value, "value", None)
             revision = getattr(value, "revision", None)
+            deleted = getattr(value, "deleted", False)
+            if deleted:
+                return {"found": False, "record_id": record_id}
             if not isinstance(body, bytes) or len(body) > _MAX_OVERLAY_BYTES or not isinstance(revision, str):
                 raise RuntimeError("overlay store returned an invalid bounded value")
             return {"found": True, "record_id": record_id, "value_base64": base64.b64encode(body).decode("ascii"), "revision": revision}
@@ -176,7 +186,7 @@ class ResourceOverlayStoreImplementation:
             expected = fields.get("expected_revision")
             if expected is not None and (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected)):
                 raise ValueError("expected_revision must be a SHA-256 revision or null")
-            revision = view.write(record_id, body, expected)
+            revision = view.write(record_id, body, expected_revision=expected)
             if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
                 raise RuntimeError("overlay store returned an invalid revision")
             return {"record_id": record_id, "revision": revision}
@@ -195,7 +205,7 @@ class ResourceOverlayStoreImplementation:
             expected = fields.get("expected_revision")
             if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
                 raise ValueError("delete requires the exact current SHA-256 revision")
-            tombstone = view.delete(record_id, expected)
+            tombstone = view.delete(record_id, expected_revision=expected)
             if not isinstance(tombstone, str) or not re.fullmatch(r"[0-9a-f]{64}", tombstone):
                 raise RuntimeError("overlay store returned an invalid tombstone revision")
             return {"record_id": record_id, "deleted_revision": tombstone}

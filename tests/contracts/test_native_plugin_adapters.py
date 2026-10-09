@@ -10,6 +10,7 @@ from hermes_installer.components.native_plugins import (
     create_native_plugin_handler,
     resolve_native_plugin_adapter,
     RESOURCE_OVERLAY_STORE_IMPLEMENTATION,
+    native_plugin_handler_available,
 )
 
 
@@ -35,6 +36,8 @@ class NativePluginAdapterTests(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         for plugin_id in ids:
             self.assertEqual(resolve_native_plugin_adapter(plugin_id).resource_id, plugin_id)
+        self.assertTrue(native_plugin_handler_available("resource-overlay-store"))
+        self.assertFalse(native_plugin_handler_available("agent-live-wallet"))
 
     def test_missing_handler_fails_closed_before_activation(self):
         ctx = _Context()
@@ -73,7 +76,7 @@ class NativePluginAdapterTests(unittest.TestCase):
             def read(self, record_id):
                 return self.values.get(record_id)
 
-            def write(self, record_id, value, expected_revision):
+            def write(self, record_id, value, *, expected_revision):
                 current = self.values.get(record_id)
                 if (current.revision if current else None) != expected_revision:
                     raise RuntimeError("overlay compare-and-swap conflict")
@@ -85,7 +88,7 @@ class NativePluginAdapterTests(unittest.TestCase):
             def history(self, record_id):
                 return tuple(self.versions.get(record_id, ()))
 
-            def delete(self, record_id, expected_revision):
+            def delete(self, record_id, *, expected_revision):
                 current = self.values.get(record_id)
                 if current is None or current.revision != expected_revision:
                     raise RuntimeError("overlay compare-and-swap conflict")
