@@ -183,9 +183,14 @@ class RegistryResolver:
             required.extend(f"{dependency_kind.value}/{identity}@{expr}" for identity, expr in
                             (self._selector(x) for x in selectors))
         caps=spec.get("capabilities",[])
-        if not isinstance(caps,(list,tuple)) or any(not isinstance(cap,str) or not cap for cap in caps):
-            raise RegistryError("capabilities must be a list of nonempty strings")
-        return Resource(raw.identity,kind,raw.version,dict(spec),raw.selected_revision,tuple(required),inherited,frozenset(caps),raw.content_digest)
+        if isinstance(caps,(list,tuple)):
+            if any(not isinstance(cap,str) or not cap for cap in caps): raise RegistryError("capabilities list contains an invalid entry")
+            flat_caps=frozenset(caps)
+        elif isinstance(caps,Mapping):
+            if any(not isinstance(key,str) or not key for key in caps): raise RegistryError("structured capability keys must be nonempty strings")
+            flat_caps=frozenset()
+        else: raise RegistryError("capabilities must be a list or structured mapping")
+        return Resource(raw.identity,kind,raw.version,dict(spec),raw.selected_revision,tuple(required),inherited,flat_caps,raw.content_digest)
 
     @staticmethod
     def _references(spec: Mapping[str,Any], own_kind: ResourceKind):
@@ -299,7 +304,10 @@ class RegistryResolver:
                 or lease.expires_at - lease.issued_at > 3600 or not lease.policy_revision or not lease.grant_id):
                 raise RegistryError(f"missing/stale/mismatched host lease for {item.resource.id}")
             allowed=item.resource.capabilities & host & lease.capabilities
-            result.append(AuthorizedResource(item,lease,frozenset(allowed),tuple(sorted(item.resource.capabilities-allowed))))
+            denied=set(item.resource.capabilities-allowed)
+            if isinstance(item.resource.body.get("capabilities"),Mapping) and item.resource.body.get("capabilities"):
+                denied.add("structured-capabilities-require-host-policy-adapter")
+            result.append(AuthorizedResource(item,lease,frozenset(allowed),tuple(sorted(denied))))
         return tuple(result)
 
     def activate(self,resources: Iterable[AuthorizedResource], *, configure,health_check,runtime_revision: str):

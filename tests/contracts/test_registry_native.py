@@ -20,6 +20,13 @@ class NativeRegistryTests(unittest.TestCase):
   bundle=next(item for item in result.resources if item.resource.kind.value=="bundles")
   self.assertIn("profiles/traditional-remedies-researcher"," ".join(bundle.dependencies))
   self.assertGreater(len(result.resources),1)
+ def test_quality_overlay_applies_to_effective_body_not_flat_capability_authority(self):
+  result=self.registry.discover_all()
+  matches=[item for item in result.resources if item.applied_overlays]
+  self.assertTrue(matches)
+  structured=[item for item in result.resources if isinstance((item.effective_spec or {}).get("capabilities"),dict)]
+  self.assertTrue(structured)
+  self.assertTrue(all(not item.resource.capabilities for item in structured))
  def test_materialization_applies_policy_without_claiming_authority(self):
   files=self.registry.materialize()
   self.assertEqual(len(files),692)
