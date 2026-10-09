@@ -51,7 +51,7 @@ def result_value(request, enrolled, **changes):
         "platform": enrolled.platform, "owner": enrolled.owner,
         "authorization_reference": enrolled.authorization_reference,
         "started_at": start.isoformat(), "finished_at": datetime.now(timezone.utc).isoformat(),
-        "exit_code": 0,
+        "exit_code": 0, "timed_out": False,
         "argv_sha256": hashlib.sha256(json.dumps({"argv": request["argv"]}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest(),
         "cwd_sha256": hashlib.sha256(request["cwd"].encode()).hexdigest(),
         "environment_names": ["HOME", "PATH"],
@@ -297,6 +297,17 @@ class OperatorEvidenceTests(unittest.TestCase):
             finished_at=datetime.now(timezone.utc).isoformat())
         with self.assertRaisesRegex(ValueError, "timeout"):
             verify_operator_result(request, bad_result, enrolled)
+
+    def test_timeout_is_pending_and_does_not_invent_exit_or_assertions(self):
+        enrolled = target()
+        request = request_value(enrolled)
+        result = result_value(request, enrolled, exit_code=None, timed_out=True,
+            assertions={name: None for name in request["expected_assertions"]})
+        verified = verify_operator_result(request, result, enrolled)
+        self.assertEqual(EvidenceState.PENDING, verified.state)
+        self.assertIsNone(verified.exit_code)
+        self.assertIn("timed out", verified.blocker)
+        self.assertTrue(all(value is None for value in verified.assertions.values()))
 
 
 if __name__ == "__main__":

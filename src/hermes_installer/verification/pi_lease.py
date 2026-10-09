@@ -209,7 +209,7 @@ def build_pi_contract_test_request(
     cwd = lease.staging_root
     if str(PurePosixPath(cwd)) != cwd:
         raise ValueError("test working directory must be normalized")
-    timeout = min(120, int((expires - issued_at).total_seconds()))
+    timeout = min(300, int((expires - issued_at).total_seconds()))
     if timeout < 1:
         raise PermissionError("Pi probe lease has insufficient time remaining")
     return build_probe_request(

@@ -111,7 +111,7 @@ class TargetWorkflowTests(unittest.TestCase):
                 "target_id": enrolled.target_id, "platform": enrolled.platform, "owner": enrolled.owner,
                 "authorization_reference": enrolled.authorization_reference,
                 "started_at": started.isoformat(), "finished_at": finished.isoformat(),
-                "exit_code": 0,
+                "exit_code": 0, "timed_out": False,
                 "argv_sha256": hashlib.sha256(json.dumps({"argv": request["argv"]}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest(),
                 "cwd_sha256": hashlib.sha256(request["cwd"].encode()).hexdigest(),
                 "environment_names": ["HOME"], "stdout_sha256": hashlib.sha256(b"ok").hexdigest(),

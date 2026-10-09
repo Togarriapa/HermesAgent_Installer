@@ -102,7 +102,7 @@ class PiLeaseTests(unittest.TestCase):
         self.assertEqual("f" * 40, value["candidate_sha"])
         self.assertEqual(lease.manifest_sha256, value["target_manifest_sha256"])
         self.assertEqual(("PATH", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE"), request.environment_allowlist)
-        self.assertEqual(120, request.timeout_seconds)
+        self.assertEqual(300, request.timeout_seconds)
         self.assertEqual(self.observation.staging_root, request.cwd)
         self.assertEqual(("-X", "tracemalloc=5", "-m", "unittest"), request.argv[1:5])
         self.assertNotIn(request.argv[0].rsplit("/", 1)[-1], {"sh", "bash", "dash", "zsh"})
