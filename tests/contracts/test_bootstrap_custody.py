@@ -45,7 +45,9 @@ class BootstrapCustodyContractTests(unittest.TestCase):
         self.assertEqual(receipt, "artifact-receipt")
         context_call = next(call for call in client.calls if call[0] == "context")
         self.assertEqual(context_call[1]["purpose"], "hermes-bootstrap")
+        self.assertEqual(context_call[1]["operation"], "artifact.fetch")
         grant_call = next(call for call in client.calls if call[0] == "authorize")
+        self.assertEqual(grant_call[1]["capability"], "installer-bootstrap")
         self.assertEqual(grant_call[1]["target"], f"artifact:hermes-installer-fixture:{digest}")
         request = json.dumps({"schema": 1, "artifact_id": "hermes-installer-fixture",
             "sha256": digest, "max_bytes": 1024}, sort_keys=True,
@@ -134,8 +136,13 @@ class BootstrapCustodyContractTests(unittest.TestCase):
                 self.assertEqual(client.context_count, 3)
                 self.assertEqual([call[0] for call in client.control_calls],
                                  ["process.status", "process.read"])
-                self.assertTrue(all(call[1] == f"hermes-profile-control:profile-a:{data_root.resolve()}" for call in client.control_calls))
-                self.assertTrue(all(grant["capability"] == "hermes-bootstrap" for grant in client.grants))
+                self.assertEqual([call[1] for call in client.control_calls], [
+                    f"hermes-profile-control:profile-a:{data_root.resolve()}:status",
+                    f"hermes-profile-control:profile-a:{data_root.resolve()}:read",
+                ])
+                self.assertEqual([grant["capability"] for grant in client.grants], [
+                    "hermes-profile-invoke", "hermes-process-control", "hermes-process-control",
+                ])
                 status_payload = client.control_calls[0][2]
                 self.assertEqual(client.grants[1]["request_digest"], canonical_digest(status_payload))
         finally:

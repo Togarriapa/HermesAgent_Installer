@@ -192,9 +192,12 @@ class ManagedProcessOperationRecipeTests(unittest.TestCase):
 class ManagedProcessAdmissionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="hermes-managed-process-")
-        self.root = Path(self.temp.name)
-        self.owned = OwnedRoot(self.root)
+        self.owned = OwnedRoot(Path(self.temp.name))
         self.owned.ensure()
+        # OwnedRoot canonicalizes the approved macOS /var alias to /private/var.
+        # Build every fixture path from that same canonical root so tests exercise
+        # the validator rather than failing on a lexical alias mismatch.
+        self.root = self.owned.root
         self.artifact = self.root / "artifacts" / "test"
         self.data = self.root / "profiles" / "test"
         self.artifact.mkdir(parents=True)
