@@ -18,6 +18,7 @@ from hermes_installer.components.plugin_channel_provenance import (
     AudioIngressSelection, ChannelIngressDenied, HttpIngressSelection,
     _canonical_body,
 )
+from .types import SourceReceipt
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +76,8 @@ class RootSelectedHttpIngressObserver:
     def __init__(self, selection: HttpIngressSelection, selection_handle: object,
                  listener: SelectedHttpListener, identity_verifier: SelectedHttpIdentityVerifier,
                  *, controller_identity_digest: str, service_generation_digest: str,
-                 route_id: str, body_schema_validator, monotonic=time.monotonic):
+                 route_id: str, body_schema_validator, monotonic=time.monotonic,
+                 source_receipt_resolver=None, source_receipt_validator=None):
         if not isinstance(selection, HttpIngressSelection):
             raise TypeError("selected HTTP ingress enrollment is required")
         for name in ("take_authenticated_request",):
@@ -92,8 +94,11 @@ class RootSelectedHttpIngressObserver:
         self.controller_identity_digest = controller_identity_digest
         self.service_generation_digest = service_generation_digest
         self.route_id, self.body_schema_validator = route_id, body_schema_validator
+        self.source_receipt_resolver = source_receipt_resolver
+        self.source_receipt_validator = source_receipt_validator
         self.monotonic = monotonic
         self._proofs: dict[str, _HttpProof] = {}
+        self._resolved_receipt_proofs: set[str] = set()
 
     def observe_selected_http_ingress(self, selection_handle: object,
                                       root_request_record: object) -> object:
@@ -158,6 +163,29 @@ class RootSelectedHttpIngressObserver:
     def consume(self, proof: object) -> None:
         if isinstance(proof, _HttpProof):
             self._proofs.pop(proof.proof_handle, None)
+            self._resolved_receipt_proofs.discard(proof.proof_handle)
+
+    def consume_source_receipts(self, proof: object) -> tuple[SourceReceipt, ...]:
+        """Resolve and validate actual authority-signed parent receipts once.
+
+        A caller-provided receipt object is never accepted. The root resolver
+        maps the proof's opaque observer handles to retained AuthorityService
+        receipts and the root validator checks signatures/currentness.
+        """
+        if not isinstance(proof, _HttpProof) or proof.proof_handle in self._resolved_receipt_proofs:
+            raise ChannelIngressDenied("HTTP source-receipt closure is not available or was already consumed")
+        if self.source_receipt_resolver is None or not callable(self.source_receipt_validator):
+            raise ChannelIngressDenied("root HTTP receipt lookup and signature verifier are not enrolled")
+        self.validate_http_observation(self.selection, proof, now_monotonic=self.monotonic())
+        handles = (proof.subject.receipt_handle, proof.request_receipt_handle)
+        rows = self.source_receipt_resolver(handles)
+        if (not isinstance(rows, tuple) or not rows or len(rows) > 64
+                or any(not isinstance(item, SourceReceipt) for item in rows)
+                or len({item.receipt_id for item in rows}) != len(rows)
+                or not all(self.source_receipt_validator(item) for item in rows)):
+            raise ChannelIngressDenied("HTTP upstream source receipts are absent, invalid or stale")
+        self._resolved_receipt_proofs.add(proof.proof_handle)
+        return tuple(sorted(rows, key=lambda item: item.receipt_id))
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,7 +228,8 @@ class RootSelectedAudioIngressObserver:
     def __init__(self, selection: AudioIngressSelection, selection_handle: object,
                  capture_authority: RootAudioCaptureAuthority, *,
                  controller_identity_digest: str, service_generation_digest: str,
-                 monotonic=time.monotonic):
+                 monotonic=time.monotonic, source_receipt_resolver=None,
+                 source_receipt_validator=None):
         if not isinstance(selection, AudioIngressSelection):
             raise TypeError("selected audio ingress enrollment is required")
         for name in ("take_selected_capture", "current_selected_capture"):
@@ -212,8 +241,11 @@ class RootSelectedAudioIngressObserver:
         self.capture_authority = capture_authority
         self.controller_identity_digest = controller_identity_digest
         self.service_generation_digest = service_generation_digest
+        self.source_receipt_resolver = source_receipt_resolver
+        self.source_receipt_validator = source_receipt_validator
         self.monotonic = monotonic
         self._proofs: dict[str, _AudioProof] = {}
+        self._resolved_receipt_proofs: set[str] = set()
 
     def observe_selected_audio_ingress(self, selection_handle: object,
                                       root_capture_record: object) -> object:
@@ -253,6 +285,24 @@ class RootSelectedAudioIngressObserver:
     def consume(self, proof: object) -> None:
         if isinstance(proof, _AudioProof):
             self._proofs.pop(proof.proof_handle, None)
+            self._resolved_receipt_proofs.discard(proof.proof_handle)
+
+    def consume_source_receipts(self, proof: object) -> tuple[SourceReceipt, ...]:
+        """Resolve actual signed consent/capture parents exactly once."""
+        if not isinstance(proof, _AudioProof) or proof.proof_handle in self._resolved_receipt_proofs:
+            raise ChannelIngressDenied("audio source-receipt closure is not available or was already consumed")
+        if self.source_receipt_resolver is None or not callable(self.source_receipt_validator):
+            raise ChannelIngressDenied("root audio receipt lookup and signature verifier are not enrolled")
+        self.validate_audio_observation(self.selection, proof, now_monotonic=self.monotonic())
+        handles = (proof.receipt.consent_receipt_handle, proof.receipt.capture_receipt_handle)
+        rows = self.source_receipt_resolver(handles)
+        if (not isinstance(rows, tuple) or not rows or len(rows) > 64
+                or any(not isinstance(item, SourceReceipt) for item in rows)
+                or len({item.receipt_id for item in rows}) != len(rows)
+                or not all(self.source_receipt_validator(item) for item in rows)):
+            raise ChannelIngressDenied("audio upstream source receipts are absent, invalid or stale")
+        self._resolved_receipt_proofs.add(proof.proof_handle)
+        return tuple(sorted(rows, key=lambda item: item.receipt_id))
 
     def _validate_receipt(self, receipt: object) -> None:
         if (not isinstance(receipt, SelectedAudioCaptureReceipt)

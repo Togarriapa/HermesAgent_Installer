@@ -233,6 +233,8 @@ def test_concrete_root_http_observer_binds_listener_jwt_current_session_and_body
     ingress = producer.observe(selected_request)
     assert ingress.payload == body
     assert producer.validate_claims(ingress.proof)
+    with pytest.raises(ChannelIngressDenied, match="receipt lookup"):
+        observer.consume_source_receipts(ingress.proof)
     observer.consume(ingress.proof)
     assert not producer.validate_claims(ingress.proof)
 
@@ -262,5 +264,7 @@ def test_concrete_root_audio_observer_requires_current_device_consent_receipt():
     ingress = producer.observe(root_capture)
     assert json.loads(ingress.payload)["audio_artifact_id"] == "artifact-001"
     assert producer.validate_claims(ingress.proof)
+    with pytest.raises(ChannelIngressDenied, match="receipt lookup"):
+        root.consume_source_receipts(ingress.proof)
     root.consume(ingress.proof)
     assert not producer.validate_claims(ingress.proof)
