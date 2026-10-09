@@ -34,3 +34,7 @@ Implement foundation tasks before dependent obligations. Stage artifacts and rev
 ## Open Questions
 
 Live target/account values and pending source selections are tracked in planning/blockers.json. The architecture supports source overrides and configure-later without deleting these requirements. New technical scope choices require a separate Sol-reviewed append-only amendment, never edits to the frozen baseline.
+
+## Reproducible Coral sample refinement
+
+Read plans/amendments/2026-10-09-coral-sample-v1.md and planning/coral-sample-artifact-metadata.json. Use the pinned official compiled MobileNetV2 sample after byte/digest verification, requiring real selected-delegate execution and delegated-operation evidence. Quantized zero input is a synthetic execution fixture, not a classification-accuracy benchmark. The source pin establishes no native runtime/device result and keeps all existing target tests open.

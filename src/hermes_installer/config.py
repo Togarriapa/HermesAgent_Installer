@@ -18,7 +18,7 @@ class ConfigError(ValueError):
 _TOP_LEVEL = {"schema_version", "timezone", "paths", "components", "privacy", "remote_desktop"}
 _PATHS = {"data_root", "state_root", "cache_root", "model_root"}
 _PRIVACY = {"additional_metered_budget"}
-_REMOTE_FIELDS = {"hostname", "allowed_emails", "management_token_ref", "zone_id"}
+_REMOTE_FIELDS = {"hostname", "allowed_emails", "management_token_ref", "policy_read_token_ref", "zone_id"}
 _COMPONENTS = {"hermes_agent", "hermes_desktop", "registry", "providers", "memory", "mcp", "colibri", "coral", "remote_desktop"}
 _HOSTNAME = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*\Z")
 _EMAIL = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+\Z")
@@ -85,6 +85,8 @@ def validate_config(data: Any) -> InstallerConfig:
             raise ConfigError("remote_desktop.allowed_emails must contain valid addresses when a hostname is configured")
     if "management_token_ref" in remote and (not isinstance(remote["management_token_ref"], str) or not remote["management_token_ref"].startswith(_SECRET_REF_PREFIXES)):
         raise ConfigError("remote_desktop.management_token_ref must use keyring://, secret://, file://, or env://, never a token value")
+    if "policy_read_token_ref" in remote and (not isinstance(remote["policy_read_token_ref"], str) or not remote["policy_read_token_ref"].startswith(_SECRET_REF_PREFIXES)):
+        raise ConfigError("remote_desktop.policy_read_token_ref must use keyring://, secret://, file://, or env://, never a token value")
     if "zone_id" in remote and (not isinstance(remote["zone_id"], str) or not remote["zone_id"].strip()):
         raise ConfigError("remote_desktop.zone_id must be a non-empty discovered Cloudflare zone id")
     if components.get("remote_desktop"):
