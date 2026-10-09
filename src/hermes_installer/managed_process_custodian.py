@@ -251,6 +251,9 @@ class ManagedProcessEffectHandler:
         self._finished: dict[str, tuple[str, float]] = {}
         self._starting: set[str] = set()
         self._lock = threading.RLock()
+        # Root-only test harness may capture bounded manager diagnostics. This
+        # is never serialized to a worker or populated from caller text.
+        self._diagnostic_sink: Callable[[bytes], None] | None = None
         for profile in self.profiles.values():
             self._validate_profile(profile)
 
@@ -636,6 +639,14 @@ class ManagedProcessEffectHandler:
                 if identity:
                     break
                 if launcher.poll() is not None:
+                    sink = self._diagnostic_sink
+                    if sink is not None and launcher.stderr is not None:
+                        try:
+                            diagnostic = launcher.stderr.read(2048)
+                        except (OSError, ValueError):
+                            diagnostic = b""
+                        if diagnostic:
+                            sink(diagnostic[:2048])
                     raise AuthorityDenied("process.launcher_early_exit", "service exited before admission")
                 time.sleep(.025)
             if identity is None:

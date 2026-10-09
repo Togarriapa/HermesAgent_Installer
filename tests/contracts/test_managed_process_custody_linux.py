@@ -144,6 +144,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         self.server_errors: list[BaseException] = []
         self.server_thread: threading.Thread | None = None
         self.handler: ManagedProcessEffectHandler | None = None
+        self.manager_diagnostics: list[bytes] = []
 
         self._useradd(self.service_user)
         self.user_created = True
@@ -208,6 +209,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
                                                 systemctl=self.systemctl,
                                                 artifact_resolver=self._resolve_artifact)
         self.handler = handlers
+        self.handler._diagnostic_sink = self.manager_diagnostics.append
         handler_map = handlers.handlers()
         service = AuthorityService(
             signing_key=os.urandom(32), key_id="ci-kernel-fixture",
@@ -362,7 +364,9 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             event = json.loads(line)
         except json.JSONDecodeError:
             stderr = client.stderr.read() if client.poll() is not None else ""
-            self.fail(f"unprivileged AuthorityClient failed before readiness: {stderr[-1200:]} {line[-400:]}")
+            diagnostics = b"\n".join(self.manager_diagnostics).decode("utf-8", "replace")
+            self.fail(f"unprivileged AuthorityClient failed before readiness: {stderr[-1200:]} {line[-400:]} "
+                      f"root-manager-diagnostic={diagnostics[-2048:]}")
         self.assertEqual(event.get("event"), "denied" if expect_denial else "started", event)
         return client, event
 
