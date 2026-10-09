@@ -371,24 +371,35 @@ class RootResourceTaskRunner:
         deadline_monotonic: float,
     ) -> None:
         required = (
-            "task_handle_id", "terminal_receipt_id", "job_id", "node_id",
-            "backend_enrollment_id", "resource_generation", "profile_generation",
+            "task_handle", "terminal_receipt_handle", "job_id", "node_id",
+            "admission_id", "admission_handle_id", "backend_enrollment_id",
+            "operation_id", "task_body_recipe_id", "task_request_schema_id",
+            "resource_generation", "profile_id", "process_generation",
             "process_id", "exit_code", "timed_out", "cancelled", "cleanup_verified",
             "cgroup_empty", "main_pidfd_gone", "descendants_gone", "launcher_reaped",
             "stdout", "stderr", "stdout_sha256", "stderr_sha256", "output_complete",
             "schema", "state", "observed_monotonic", "stdout_size_bytes",
-            "stderr_size_bytes", "parent_closure_digest",
+            "stderr_size_bytes", "parent_closure_digest", "native_loader_ready_event_id",
         )
         if not isinstance(terminal, RootTaskTerminalReceipt) or any(
                 not hasattr(terminal, name) for name in required):
             raise AuthorityDenied("resource.task_terminal", "root task terminal receipt is malformed")
         if (terminal.schema != 1
-                or terminal.task_handle_id != managed_handle.handle_id
+                or terminal.task_handle != managed_handle.handle_id
+                or terminal.process_id != managed_handle.process_id
                 or terminal.job_id != task.job_id or terminal.node_id != task.node_id
+                or terminal.admission_id != task.admission_id
+                or terminal.admission_handle_id != admission.handle_id
                 or terminal.backend_enrollment_id != task.backend_enrollment_id
+                or terminal.profile_id != admission.profile_id
+                or terminal.operation_id != task.operation_id
+                or terminal.task_body_recipe_id != task.task_body_recipe_id
+                or terminal.task_request_schema_id != task.task_request_schema_id
                 or terminal.resource_generation != task.resource_generation
-                or terminal.profile_generation != task.process_generation
+                or terminal.process_generation != task.process_generation
                 or terminal.parent_closure_digest != task.parent_closure_digest
+                or not isinstance(terminal.native_loader_ready_event_id, str)
+                or not terminal.native_loader_ready_event_id
                 or terminal.state != "completed" or terminal.exit_code != 0
                 or terminal.timed_out or terminal.cancelled
                 or not terminal.cleanup_verified or not terminal.cgroup_empty
@@ -399,8 +410,8 @@ class RootResourceTaskRunner:
                     "timed_out", "cancelled", "cleanup_verified", "cgroup_empty",
                     "main_pidfd_gone", "descendants_gone", "launcher_reaped", "output_complete",
                 ))
-                or not isinstance(terminal.terminal_receipt_id, str)
-                or not terminal.terminal_receipt_id
+                or not isinstance(terminal.terminal_receipt_handle, str)
+                or not terminal.terminal_receipt_handle
                 or not isinstance(terminal.cgroup_identity, str) or not terminal.cgroup_identity
                 or not isinstance(terminal.process_id, str) or not terminal.process_id
                 or not isinstance(terminal.stdout, bytes) or not isinstance(terminal.stderr, bytes)
