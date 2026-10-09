@@ -179,7 +179,7 @@ class WyomingVoicePlugin:
         if not isinstance(transcript, str) or len(transcript) > 4000:
             raise PluginAdapterError("local STT returned an invalid transcript")
         del audio
-        return {"transcript": transcript, "session_id": session_id}
+        return {"transcript": transcript}
 
     def speak(self, *, text: str) -> dict[str, bool]:
         _bounded_text(text, "text", 4000)
