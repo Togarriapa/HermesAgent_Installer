@@ -561,14 +561,16 @@ def build_package_set_handlers(catalog: ArtifactCatalog, staging_root: Path | st
                     context, authorization, "package.install", authorization_check, cancelled),
                 before_activation=lambda: _revalidate_effect(
                     context, authorization, "package.install", authorization_check, cancelled))
-            return _json_response({"package_set_id": _spec.package_set_id,
-                                   "manifest_sha256": _spec.manifest_sha256,
-                                   "enrollment_id": _spec.enrollment_id,
-                                   "generation": _spec.generation,
-                                   "runtime_build_attestation_digest": _spec.runtime_build_attestation_digest,
-                                   "wheel_sha256": [wheel.artifact_sha256 for wheel in _spec.wheel_entries],
-                                   "installed_tree_sha256": tree_digest,
-                                   "status": "installed"})
+            response = dict(_json_response({"package_set_id": _spec.package_set_id,
+                                            "manifest_sha256": _spec.manifest_sha256,
+                                            "enrollment_id": _spec.enrollment_id,
+                                            "generation": _spec.generation,
+                                            "runtime_build_attestation_digest": _spec.runtime_build_attestation_digest,
+                                            "wheel_sha256": [wheel.artifact_sha256 for wheel in _spec.wheel_entries],
+                                            "installed_tree_sha256": tree_digest,
+                                            "status": "installed"}))
+            response["receipt_id"] = f"package-set:{_spec.package_set_id}:{_spec.manifest_sha256}"
+            return response
 
         handlers[("package.install", target)] = install_handler
     return MappingProxyType(handlers)
