@@ -24,7 +24,7 @@ class _Policy:
 
 
 class NativeBridgeBrokerContracts(unittest.TestCase):
-    def test_private_native_request_cannot_be_declassified_and_handle_is_consumed(self):
+    def test_worker_submitted_request_is_not_promoted_to_observed_source(self):
         producer = PrincipalBinding(1201, "principal:producer", "profile:producer",
                                     "namespace:producer", frozenset({"provider-inference"}))
         gateway = PrincipalBinding(1202, "principal:gateway", "profile:gateway",
@@ -84,31 +84,16 @@ class NativeBridgeBrokerContracts(unittest.TestCase):
         gateway_read, gateway_write = os.pipe()
         try:
             raw = b'{"messages":[{"role":"user","content":"private"}]}'
-            prepared = service._dispatch(producer.uid, 41001, producer_read,
-                "prepare_native_event", {
-                    "schema": 1, "payload": base64.b64encode(raw).decode("ascii"),
+            with self.assertRaises(AuthorityDenied) as denied:
+                service._dispatch(producer.uid, 41001, producer_read,
+                    "prepare_native_event", {
+                "schema": 1, "payload": base64.b64encode(raw).decode("ascii"),
                 "parent_receipt_handles": [], "purpose": "native-hermes-chat",
                     "intent_id": "intent:fixture", "trace_id": "trace:fixture", "retry_index": 0,
-                }, cancelled=lambda: False)
-            event_key = prepared["native_event_handle"]
-            normalized = raw
-            with self.assertRaises(AuthorityDenied) as denied:
-                service._dispatch(gateway.uid, 41002, gateway_read,
-                    "dispatch_native_request", {
-                        "schema": 1, "native_event_handle": event_key,
-                        "normalized_payload": base64.b64encode(normalized).decode("ascii"),
-                        "retry_index": 0,
                     }, cancelled=lambda: False)
-            self.assertIn(denied.exception.code, {"effect.denied", "effect.unavailable"})
+            self.assertEqual(denied.exception.code, "native.observer_unavailable")
             self.assertEqual(outbound, [])
-            with self.assertRaises(AuthorityDenied) as replay:
-                service._dispatch(gateway.uid, 41002, gateway_read,
-                    "dispatch_native_request", {
-                        "schema": 1, "native_event_handle": event_key,
-                        "normalized_payload": base64.b64encode(normalized).decode("ascii"),
-                        "retry_index": 0,
-                    }, cancelled=lambda: False)
-            self.assertEqual(replay.exception.code, "native.replay")
+            self.assertEqual(service._source_receipt_handles, {})
         finally:
             for fd in (producer_read, producer_write, gateway_read, gateway_write):
                 os.close(fd)

@@ -75,6 +75,11 @@ class OfflinePackageSetLinuxTests(unittest.TestCase):
         service_gid = 65534
         with tempfile.TemporaryDirectory(prefix="hermes-package-set-fixture-", dir="/run") as temp:
             root = Path(temp)
+            # The dropped service identity must be able to traverse the
+            # installer-owned test fixture parent, as it can traverse real
+            # root-owned /var/lib ancestors. Keep the parent non-writable to
+            # untrusted identities; the venv itself remains service-owned.
+            root.chmod(0o711)
             runtime = root / "python"
             shutil.copy2(sys.executable, runtime)
             runtime.chmod(0o755)
@@ -146,7 +151,7 @@ class OfflinePackageSetLinuxTests(unittest.TestCase):
                     time.monotonic() + 120, lambda: False,
                     before_process=lambda: None, before_activation=lambda: None,
                 )
-            self.assertEqual(destination.owner().pw_uid, service_uid)
+            self.assertEqual(destination.stat().st_uid, service_uid)
             self.assertEqual(len(digest), 64)
             python = destination / "bin/python"
             check = subprocess.run(
