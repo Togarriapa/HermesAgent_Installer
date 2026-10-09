@@ -828,5 +828,31 @@
     "resolve": "ManagedProcessEffectHandler.resolve_task_stdin_write(task_handle,receipt_handle)->RootTaskStdinWriteReceipt; stable non-consuming retained root registry lookup validates exact process/task/input receipt/generation/hash/size and lease. Caller DTO or boolean is not proof.",
     "joins": "ManagedTaskHandle and subsequent immutable RootTaskTerminalReceipt carry stdin_write_receipt_handle issued before terminal. RootTaskNativeObservationRegistry resolves actual custody receipt and requires same task, process, initial-input receipt, exact stdin SHA/size, active service generation and EOF before companion success. Companion links existing terminal; never rewrite terminal. Registry audit lookup does not reconsume initial input or authorize another write.",
     "frozen_handle_phases": "ManagedTaskHandle remains the same frozen identity passed to pre-stdin coordinator and returned after EOF. stdin_write_receipt_handle is a read-only manager-backed property/lookup, null before actual successful write/EOF and nonnull afterward; no mutable caller holder, replacement handle or fabricated pre-stdin receipt. Custody root retained task record is authoritative. Terminal issued after EOF stores actual receipt handle; completion independently resolves retained custody receipt. Stable handle identity and once-resolved source semantics remain unchanged."
+  },
+  "composio_catalog_setup_authority": {
+    "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+    "registry": "RootComposioSetupSelectionAuthority",
+    "constructor": "from_root_setup(verified_release,current_actor_verifier,initial_or_normal_session_registry,root_credential_vault,root_journal)",
+    "API": "authorize_whatsapp_catalog_read(session_handle,*,project_id,project_api_key_reference,principal_selection_receipt_handle,toolkit_version)->RootComposioCatalogReadAuthorization; root-local actual explicit setup choices only",
+    "fields": {
+      "schema": "literal1",
+      "authorization_handle": "opaque str",
+      "session_handle": "opaque str",
+      "transaction_handle": "opaque str",
+      "plan_sha256": "lowercase SHA256",
+      "principal_id": "actual verified selected principal",
+      "project_id": "bounded selected Composio project ID",
+      "credential_reference_id": "existing root vault ref only",
+      "required_scope": "literal composio-project-catalog-read",
+      "operation": "literal composio.whatsapp.catalog.read",
+      "target": "composio:whatsapp:catalog:<exact selected toolkit version>",
+      "toolkit_version": "exact preserved selected pin",
+      "request_policy_sha256": "actual fixed reader policy artifact hash",
+      "issued_monotonic": "finite float",
+      "expires_monotonic": "finite float"
+    },
+    "vault": "RootCredentialVault.resolve_reference(reference,peer_uid=0,required_scope=composio-project-catalog-read,principal_id=verified principal). Project API key ref must belong exact selected project/principal/scope; webhook verification secret is a different ref/role and cannot satisfy this selection. No key bytes in DTO/logs/journal.",
+    "effect": "Actual fixed root reader only GET official /api/v3.1/triggers_types toolkit_slugs=whatsapp toolkit_versions exact selected version limit<=50/cursor, then GET returned slug detail. Existing bounds and source artifact derivation apply. This separate setup authorization never comes from bootstrap enrollment.provision or confers upsert/subscription/account/channel activation/message permission. Root actual selected catalog request+response receipt and derived type artifact required; unknown slug remains pending until authenticated discovery.",
+    "lifecycle": "Authorize exact current root actor/session/principal/explicit project choice, lease<=30s/original session, fresh one-use grant per actual request/page/detail; recheck current vault scope/project/session before bytes. Revocation/expiry/crossproject/crossprincipal/version change/replay deny. No caller method/URL/header or generic Composio HTTP proxy. No live external writes/test messages."
   }
 }

@@ -464,3 +464,24 @@ The installer SHALL preserve the canonical closure_files tree digest for compile
 #### Scenario: Archive hash substituted for closure tree
 - **WHEN** a package substitutes archive bytes SHA for the selected compiled tree hash
 - **THEN** mount and binder verification reject the mismatched digest domain
+
+### Requirement: Distinct native generation joins
+The installer SHALL resolve process and native package generations separately and preserve exact candidate index identity across receipts and manifest.
+
+#### Scenario: Generation domain substitution
+- **WHEN** an observer uses package generation as live process generation
+- **THEN** peer proof admission denies the inconsistent join
+
+### Requirement: Fixed selected display and loopback startup
+The installer SHALL launch only enrolled official Desktop/display/gateway recipes with exact Xauthority mount and private loopback role/port bindings.
+
+#### Scenario: Ambient display or broad network substitution
+- **WHEN** a worker supplies display credentials, arbitrary port or unenrolled network role
+- **THEN** startup or connection denies before app bytes and remote acceptance remains pending
+
+### Requirement: Actual root key and selected catalog authority
+The installer SHALL derive first-publication key identity and authenticated selected catalog reads from actual root custody/session receipts, preserving distinct source producer roles.
+
+#### Scenario: Generic bootstrap authority substituted
+- **WHEN** bootstrap enrollment authorization is presented as Composio catalog or channel effect permission
+- **THEN** the separate selected catalog authority denies the substitution

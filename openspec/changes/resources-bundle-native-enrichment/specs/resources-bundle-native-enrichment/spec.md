@@ -373,3 +373,10 @@ The installer SHALL retain the same frozen task handle while resolving actual st
 #### Scenario: Pre-stdin receipt lookup
 - **WHEN** the coordinator receives the actual task handle before writing input
 - **THEN** no successful write receipt is available until custody observes complete write and EOF
+
+### Requirement: Actual root key and selected catalog authority
+The installer SHALL derive first-publication key identity and authenticated selected catalog reads from actual root custody/session receipts, preserving distinct source producer roles.
+
+#### Scenario: Generic bootstrap authority substituted
+- **WHEN** bootstrap enrollment authorization is presented as Composio catalog or channel effect permission
+- **THEN** the separate selected catalog authority denies the substitution
