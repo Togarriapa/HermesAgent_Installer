@@ -67,7 +67,8 @@
         "license": "BSD3-Clause; PyPI distribution bundles additional dependency licenses retained in wheel",
         "catalog_artifact_id": "exact already protected artifact catalog ID resolved by root for this identity+digest, recorded before enrollment"
       }
-    ]
+    ],
+    "lifecycle": "These actual runtime_build_attestation_digest/runtime_executable_sha256 fields belong ONLY to postbuild activated manifest; not pre-buildselection. Root resolves new verified successful buildreceipt andactualexeSHA then emits new signed/protected package manifest andexacttargetSHA atomically. No placeholder/predictedhash."
   },
   "root_install": [
     "authenticate peer/enrollment/generation and fresh one-use installer effect before package effects",
@@ -84,5 +85,29 @@
     "missing/substituted wheel/hash/runtime/ABI/glibc/generation/private root/path/pipargs denial before effects",
     "network-denied install, ENOSPC/interruption/recovery preserves prior component/host/Hermes runtime",
     "actual target TPU delegate inference separately R0042/HW-F03/AC09; imports/sampleCPU/fixture install are not delegate proof"
-  ]
+  ],
+  "prebuild_selection": {
+    "fields": [
+      "schema=1",
+      "package_set_id",
+      "enrollment_id",
+      "generation",
+      "runtime_build_target_id",
+      "runtime_build_recipe_digest",
+      "runtime_source_artifact_id",
+      "runtime_source_sha256",
+      "runtime_toolchain_artifact_id",
+      "runtime_toolchain_sha256",
+      "runtime_output_constraints_digest",
+      "abi",
+      "target_glibc_min",
+      "service_uid",
+      "venv_root_id",
+      "wheel_entries",
+      "reviewed_installer_artifact_id",
+      "policy_revision"
+    ],
+    "state": "selected-awaiting-build; package.install unavailable untilrootreceiptactivation",
+    "activation": "Root validates actual terminal-success receipt source/toolchain/recipe/output constraints/currentgen/pins, resolves observed executableSHA and attestation digest, constructs activated protectedmanifest actualruntimeartifact identity. Atomic newservicegeneration+manifest+exactpackageeffecttarget; invalidateoldpreparedcontexts/grants. Failedbuild/installpreserves prioractivegeneration andpendingselectionjournal. No unbounddynamicdigestacceptedagainststaticmanifest."
+  }
 }
