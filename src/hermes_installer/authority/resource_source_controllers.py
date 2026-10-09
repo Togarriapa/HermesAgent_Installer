@@ -144,6 +144,20 @@ class RootResourceJobContextRequest:
     canonical_payload_sha256: str
     service_generation_digest: str
     authority_epoch: str
+    issuer_token: object = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RootResourceContextReservation:
+    """Validated root-local snapshot consumed once by the event context issuer."""
+
+    request: RootResourceJobContextRequest = field(repr=False)
+    record: Any = field(repr=False)
+    enrollment: Any = field(repr=False)
+    node: Any = field(repr=False)
+    backend: Any = field(repr=False)
+    role: RootControllerRoleEnrollment
+    controller_proof: Any = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,8 +236,10 @@ class RootResourceControllerRegistry:
         self._lock = threading.RLock()
         self._events: dict[str, _RootEventRecord] = {}
         self._used: set[tuple[str, str]] = set()
+        self._pending_context_requests: dict[int, RootResourceJobContextRequest] = {}
         self._event_ids_seen: set[tuple[str, str, str]] = set()
         self._ingress_token = object()
+        self._context_issuer_token = object()
         self._event_bytes = 0
 
     def _select_role(self, *, observer_id: str, controller_kind: str,
@@ -509,6 +525,7 @@ class RootResourceControllerRegistry:
             operation=operation, canonical_payload_sha256=digest,
             service_generation_digest=self.service_generation_digest,
             authority_epoch=self.service.authority_epoch,
+            issuer_token=self._context_issuer_token,
         )
         use_key = (record.handle.handle, node_id)
         with self._lock:
@@ -519,8 +536,15 @@ class RootResourceControllerRegistry:
             # Reserve before calling authority so concurrent/reentrant attempts
             # cannot duplicate a grant. Failure remains consumed by design.
             self._used.add(use_key)
+            if len(self._pending_context_requests) >= _MAX_ROOT_EVENT_COUNT:
+                import os
+                os.close(controller.pidfd)
+                raise AuthorityDenied("resource.context", "root context request capacity is full")
+            self._pending_context_requests[id(request)] = request
         issuer = getattr(self.service, "issue_resource_job_context", None)
         if not callable(issuer):
+            with self._lock:
+                self._pending_context_requests.pop(id(request), None)
             import os
             os.close(controller.pidfd)
             raise AuthorityDenied("resource.context", "root event context issuer is unavailable")
@@ -530,11 +554,71 @@ class RootResourceControllerRegistry:
                 raise AuthorityDenied("resource.context", "root event issuer returned an invalid grant pair")
             return result
         finally:
+            with self._lock:
+                self._pending_context_requests.pop(id(request), None)
             import os
             try:
                 os.close(controller.pidfd)
             except OSError:
                 pass
+
+    def consume_context_request(
+        self, request: RootResourceJobContextRequest,
+    ) -> RootResourceContextReservation | None:
+        """Consume an exact instance-minted request before the service signs it."""
+        if not isinstance(request, RootResourceJobContextRequest):
+            return None
+        with self._lock:
+            if (request.issuer_token is not self._context_issuer_token
+                    or self._pending_context_requests.pop(id(request), None) is not request):
+                return None
+        try:
+            from .types import canonical_digest
+            if (request.authority_epoch != self.service.authority_epoch
+                    or request.service_generation_digest != self.service.service_generation_digest
+                    or request.root_event.authority_epoch != self.service.authority_epoch
+                    or request.controller.service_generation_digest != request.service_generation_digest
+                    or request.controller.controller_kind != self._source_controller_kind(
+                        request.root_event.source_kind)):
+                return None
+            record, enrollment, node, backend = self._resolve_event_node(
+                request.root_event, request.node.node_id)
+            if (record.handle is not request.root_event
+                    or record.payload != request.event_payload
+                    or record.event_fields != request.event_fields
+                    or record.parent_context is not request.parent_context
+                    or record.parent_receipts != request.parent_receipts
+                    or enrollment != request.resource_enrollment
+                    or node != request.node or backend != request.backend
+                    or self.selected_specs.get((enrollment.resource_id, enrollment.generation))
+                       != record.selected_spec):
+                return None
+            role = self._select_role(
+                observer_id=record.handle.source_observer_enrollment_id,
+                controller_kind=self._source_controller_kind(record.handle.source_kind),
+                backend_id=backend.backend_id, operation=node.effect)
+            if (request.controller.controller_role_artifact_id != role.role_module_artifact_id
+                    or request.controller.controller_role_sha256 != role.role_module_sha256
+                    or request.controller.controller_generation != role.controller_generation
+                    or request.operation != node.effect):
+                return None
+            recipe = enrollment.body_recipes.get(node.body_recipe_id)
+            if recipe is None:
+                return None
+            body = recipe.render(
+                backend=backend, scope_bindings=enrollment.scope_bindings,
+                validators=enrollment.validators, event_fields=record.event_fields,
+                parent_results={},
+            )
+            if (canonical_digest(body) != request.canonical_payload_sha256
+                    or request.controller.expires_monotonic <= self.service.monotonic()
+                    or (record.handle.handle, node.node_id) not in self._used):
+                return None
+            return RootResourceContextReservation(
+                request=request, record=record, enrollment=enrollment, node=node,
+                backend=backend, role=role, controller_proof=request.controller)
+        except Exception:
+            return None
 
     @staticmethod
     def _source_controller_kind(source_kind: str) -> str:
@@ -610,6 +694,7 @@ class RootResourceControllerRegistry:
             self._events.clear()
             self._event_bytes = 0
             self._used.clear()
+            self._pending_context_requests.clear()
             self._event_ids_seen.clear()
 
     def _prune_locked(self, now: float) -> int:
