@@ -77,15 +77,6 @@ class OpenRouterTransport:
                  request_digest: str = "", retry_index: int = 0) -> ProviderResponse:
         # Direct HTTPS is reserved for explicit synthetic fixture injection. Live
         # traffic requires a signed one-use grant and the fixed host egress broker.
-        if effect_grant is None:
-            # Eligibility is checked first so a missing or revoked account policy
-            # remains the precise denial; a valid account still cannot enable
-            # direct worker networking outside synthetic fixtures.
-            self._eligibility.require_eligible(model=model, credential_ref=self._credential_ref)
-            if not self._allow_direct_fixture_transport:
-                raise PolicyDenied("authorization.unavailable", "Direct provider network access is disabled; host broker is required")
-        elif self._authority_client is None:
-            raise PolicyDenied("authorization.unavailable", "Root-owned provider egress broker is unavailable")
         if route.name != "openrouter-nemotron-free" or route.endpoint.rstrip("/") != OPENROUTER_ENDPOINT:
             raise PolicyDenied("route.endpoint", "Route is not the pinned public OpenRouter endpoint")
         if route.maximum_sensitivity.value != 0 or not route.free_only:
@@ -97,6 +88,14 @@ class OpenRouterTransport:
         if not trace_id or len(trace_id) > 128 or any(ord(c) < 33 for c in trace_id):
             raise PolicyDenied("request.trace", "Provider trace identifier is invalid")
         body = self._request_body(payload, model, output_token_limit)
+        if effect_grant is None:
+            # Eligibility is checked before credentials or network setup. Valid
+            # account evidence alone cannot enable direct worker networking.
+            self._eligibility.require_eligible(model=model, credential_ref=self._credential_ref)
+            if not self._allow_direct_fixture_transport:
+                raise PolicyDenied("authorization.unavailable", "Direct provider network access is disabled; host broker is required")
+        elif self._authority_client is None:
+            raise PolicyDenied("authorization.unavailable", "Root-owned provider egress broker is unavailable")
         if effect_grant is not None:
             expected_target = canonical_provider_target(model)
             expected_digest = __import__("hashlib").sha256(body).hexdigest()
