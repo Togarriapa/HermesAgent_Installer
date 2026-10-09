@@ -235,10 +235,11 @@ def test_protected_resource_job_index_rejects_wrong_observer_origin_or_action():
 
 
 def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
+    import json
     import time
 
     from hermes_installer.authority.resource_jobs import (
-        ResourceJobAuthority, RootResourceProcessReceipt, _JobEvent,
+        ResourceJobAuthority, RootResourceProcessReceipt,
     )
     from hermes_installer.authority.service import AuthorityService
     from hermes_installer.authority.types import (
@@ -285,14 +286,21 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
     task_adapter.launcher = service
     observed_handles = []
     observed_sources = []
+    observed_tasks = []
     authority = None
 
     def launcher(handle, node_id):
         observed_handles.append(handle)
         authority.consume_task_handle(handle, node_id)
         observed_sources.append(authority.resolve_admitted_task_source(handle, node_id))
+        observed_tasks.append(authority.resolve_admitted_task(handle, node_id))
         with pytest.raises(AuthorityDenied, match="one-use"):
             authority.resolve_admitted_task_source(handle, node_id)
+        controller = authority.resolve_admitted_task_controller(handle, node_id)
+        assert controller.pid == 1234 and controller.controller_kind == "worker"
+        assert controller.subject_principal_id == enrollment.principal_id
+        assert controller.service_generation_digest == service.service_generation_digest
+        os.close(controller.pidfd)
         authority.start_task_handle(handle, node_id)
         return RootResourceProcessReceipt(
             job_id=handle.job_id, node_id=handle.node_id,
@@ -343,6 +351,31 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
         signature="source-signature", enrollment_id="source-enrollment",
         native_process_identity="native-process", parent_receipt_ids=(), nonce="source-nonce",
     )
+    import os
+
+    class FixtureSourceObservers:
+        def resolve_live_source_producer(self, receipt_id, *, profile_id, generation,
+                                         native_process_identity, expires_monotonic):
+            assert (receipt_id, profile_id, generation, native_process_identity) == (
+                source_receipt.receipt_id, source_receipt.profile_id,
+                source_receipt.process_generation, source_receipt.native_process_identity,
+            )
+            return SimpleNamespace(
+                receipt_id=receipt_id, pid=1234, pidfd=os.open("/dev/null", os.O_RDONLY),
+                uid=source_receipt.uid, profile_id=profile_id, generation=generation,
+                expires_monotonic=expires_monotonic, authority_epoch="test-epoch",
+                observer_enrollment_id="observer-1", source_action_id="source-action",
+                channel_id="schedule-1",
+                identity=SimpleNamespace(native_process_identity=native_process_identity),
+                loaded_package_proof=SimpleNamespace(
+                    role_artifact_id="native-role-artifact",
+                    role_sha256=hashlib.sha256(b"native-role").hexdigest(),
+                ),
+            )
+
+    service._source_receipt_handles = {"opaque-root-receipt-handle-00000001": source_receipt}
+    service.source_observer_registry = FixtureSourceObservers()
+    service.service_generation_digest = hashlib.sha256(b"service-generation").hexdigest()
     parent_context = HostContext(
         principal_id=enrollment.principal_id, profile_id=enrollment.profile_id,
         namespace_id="namespace-1", uid=501, purpose="resource-job-test", intent_id="intent-1",
@@ -364,26 +397,32 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
         "parent_receipt_ids": (), "parent_closure_digest": canonical_digest(()),
         "issued_monotonic": now(), "expires_monotonic": now() + 30,
     }
-    event = _JobEvent(
-        enrollment, admission, ("source-receipt-1",), Sensitivity.PRIVATE,
-        lineage, {}, {}, parent_context, (source_receipt,), source_capsule_lineage,
-    )
+    authority._event_fields_by_job[admission.job_id] = (bytearray(b"{}"), admission.expires_monotonic)
+    authority._source_closures_by_job[admission.job_id] = (
+        parent_context, (source_receipt,), source_capsule_lineage, admission.expires_monotonic)
+    event = authority._event(admission.job_id, enrollment)
     result = authority._launch_profile_task(child, event, enrollment.backends["backend-1"], 30.0, lambda: False)
     assert result["receipt_id"] == "root-result-receipt"
     assert len(observed_handles) == 1
     assert observed_handles[0].attempt_index == 0
     assert observed_handles[0].task_payload == b'{"prompt":"perform the selected action"}'
     source = observed_sources[0]
-    assert source.event is event
-    assert source.parent_context is parent_context
-    assert source.source_receipt_ids == ("source-receipt-1",)
-    assert source.task.task_payload_sha256 == observed_handles[0].task_payload_sha256
-    assert source.task.stdin_sha256 == hashlib.sha256(b"perform the selected action").hexdigest()
-    assert source.task.stdin_size_bytes == len(b"perform the selected action")
-    assert source.task.task_payload == observed_handles[0].task_payload
-    assert source.event.source_capsule_lineage["event_record_id"] == "event-record-1"
-    with pytest.raises(TypeError):
-        source.event.event_fields["injected"] = True
+    assert source.source_context_handle
+    assert source.verified_source_receipt_handles == ("opaque-root-receipt-handle-00000001",)
+    assert source.signed_receipt_wires == (json.dumps(
+        source_receipt.to_wire(), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8"),)
+    assert source.lineage_hash == lineage
+    assert source.sensitivity is Sensitivity.PRIVATE
+    assert source.controller_binding_handle
+    assert source.parent_closure_digest == observed_handles[0].parent_closure_digest
+    assert observed_tasks[0].admission_id == observed_handles[0].child_admission_id
+    assert observed_tasks[0].task_payload_sha256 == observed_handles[0].task_payload_sha256
+    assert observed_tasks[0].task_payload_bytes == observed_handles[0].task_payload
+    assert observed_tasks[0].stdin_sha256 == hashlib.sha256(b"perform the selected action").hexdigest()
+    assert observed_tasks[0].stdin_size_bytes == len(b"perform the selected action")
+    assert observed_tasks[0].source_context_handle == source.source_context_handle
+    assert "task_payload" not in observed_tasks[0].__dataclass_fields__
     with pytest.raises(AuthorityDenied, match="forged, replayed, or consumed"):
         authority.consume_task_handle(observed_handles[0], "node-1")
     with pytest.raises(AuthorityDenied, match="consumed root handle"):
