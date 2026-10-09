@@ -261,12 +261,14 @@ class HermesBootstrap:
         self.install_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.state.record_owned("hermes-generation", str(self.install_dir), "active")
         self._write_generation_marker()
-        statuses: list[StageStatus] =
+        statuses: list[StageStatus] = []
         skipped = {"setup", "gateway"}
+        desktop_output = self.install_dir / "apps" / "desktop" / "release" / "linux-arm64-unpacked"
         for stage in EXPECTED_STAGES:
             if done.get(stage) in {"complete", "skipped"}:
-                statuses.append(StageStatus(stage, done[stage]))
-                continue
+                if stage != "products" or not include_desktop or desktop_output.is_dir():
+                    statuses.append(StageStatus(stage, done[stage]))
+                    continue
             if stage == "products" and not include_desktop:
                 extra: list[str] = []
             else:
