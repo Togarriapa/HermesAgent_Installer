@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import shutil
+import uuid
 import subprocess
 import sys
 import tempfile
@@ -21,6 +23,8 @@ from hermes_installer.managed_process import (
     _proc_cgroup,
     _proc_stat,
     _validate_spec,
+    ManagedProcessSupervisor,
+    provision_service_identity,
 )
 from hermes_installer.state import Journal, OwnedRoot
 
@@ -190,6 +194,93 @@ def _make_pipe_spec(parent: unittest.TestCase) -> ManagedProcessSpec:
         service_identity="pipe-fixture", service_user="hermes-test", startup_deadline_monotonic=time.monotonic()+5,
         max_lifetime_seconds=30,
     )
+
+
+class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
+    """Exercise the real system manager when the Linux runner provides one."""
+    @classmethod
+    def setUpClass(cls) -> None:
+        if not sys.platform.startswith("linux") or not shutil.which("sudo"):
+            raise unittest.SkipTest("Linux systemd with noninteractive sudo is required")
+        probe = subprocess.run(
+            ["sudo", "-n", "/usr/bin/systemctl", "--system", "show-environment"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=3, check=False,
+        )
+        if probe.returncode:
+            raise unittest.SkipTest("system manager is not available in this CI runner")
+        cls.profile_id = "ci-" + str(uuid.uuid4())
+        cls.temp = tempfile.TemporaryDirectory(prefix="hermes-systemd-custody-")
+        cls.root = Path(cls.temp.name)
+        cls.owned = OwnedRoot(cls.root)
+        cls.owned.ensure()
+        cls.artifact = cls.root / "artifacts"
+        cls.data = cls.root / "profile"
+        self_path = Path(sys.executable).resolve()
+        cls.artifact.mkdir(mode=0o755)
+        cls.data.mkdir(mode=0o755)
+        cls.work = cls.data / "work"
+        cls.work.mkdir(mode=0o755)
+        cls.executable = cls.artifact / "python"
+        shutil.copyfile(self_path, cls.executable)
+        cls.executable.chmod(0o755)
+        cls.journal = Journal(cls.root / "journal.sqlite")
+        cls.operation = "ci-custody-" + uuid.uuid4().hex[:12]
+        cls.service_user, cls.service_uid, cls.service_gid = provision_service_identity(
+            cls.owned, cls.journal, cls.profile_id, cls.operation)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if hasattr(cls, "temp"):
+            cls.temp.cleanup()
+        if hasattr(cls, "service_user"):
+            subprocess.run(
+                ["sudo", "-n", "/usr/sbin/userdel", cls.service_user],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5, check=False,
+            )
+
+    def test_manager_applies_private_namespaces_and_kills_stubborn_descendant(self) -> None:
+        with tempfile.NamedTemporaryFile(prefix="hermes-host-private-", dir=Path.home()) as host_secret:
+            sentinel = str(Path(host_secret.name))
+            code = (
+                "import json,os,signal,socket,subprocess,sys,time; "
+                "sentinel=sys.argv[1]; result={}; "
+                "try_read=False; "
+                "exec('try:\n open(sentinel, \'rb\').read(1); try_read=True\nexcept OSError: pass'); "
+                "result['home_hidden']=not try_read; "
+                "try:\n socket.socket(socket.AF_INET,socket.SOCK_STREAM); result['inet_denied']=False\n"
+                "except OSError: result['inet_denied']=True; "
+                "child=subprocess.Popen([sys.executable,'-c',"
+                "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'],"
+                "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True); "
+                "print(json.dumps(result),flush=True); time.sleep(25)"
+            )
+            spec = ManagedProcessSpec(
+                executable=self.executable, argv=(str(self.executable), "-c", code, sentinel),
+                artifact_sha256=hashlib.sha256(self.executable.read_bytes()).hexdigest(),
+                artifact_root=self.artifact, owned_root=self.owned, cwd=self.work, data_root=self.data,
+                env_allowlist={"HOME": "/hermes", "PATH": "/usr/bin:/bin", "LANG": "C"},
+                journal_operation=self.operation, journal=self.journal, service_identity="ci-isolation",
+                service_user=self.service_user, startup_deadline_monotonic=time.monotonic()+10,
+                max_lifetime_seconds=30,
+            )
+            async def exercise() -> None:
+                handle = await ManagedProcessSupervisor().start(spec)
+                try:
+                    output = await handle.read(4096, timeout=5)
+                    result = json.loads(output.decode())
+                    self.assertEqual(result, {"home_hidden": True, "inet_denied": True})
+                    deadline = time.monotonic() + 3
+                    while len(handle._cgroup_pids()) < 2 and time.monotonic() < deadline:
+                        await asyncio.sleep(.05)
+                    self.assertGreaterEqual(len(handle._cgroup_pids()), 2)
+                    await handle.stop("integration test", timeout=5)
+                    self.assertFalse(handle._cgroup_pids())
+                finally:
+                    if not handle._closed:
+                        await handle.stop("integration cleanup", timeout=5)
+            asyncio.run(exercise())
 
 
 if __name__ == "__main__":
