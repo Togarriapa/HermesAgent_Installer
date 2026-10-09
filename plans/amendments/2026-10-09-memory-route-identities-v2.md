@@ -1,0 +1,3 @@
+# Memory route identities v2
+
+Additive Sol clarification of SK01 / SK-T01 / EV-SK01, preserving prior source-backed memory-service-connectors-v1 and original scope. planning/memory-service-connector-contract.json now assigns stable opaque Claude route IDs per exact backend variant. SQLite has no delete route; worker has no assumed health route. Missing required actions remain incomplete. Outer memory:<provider>:<action> effect target and profile connector target are distinct protected identities joined by root enrollment, never interchangeable. Both require the same current profile/owner generation, action/digest/private closure and finite route. All tasks/target acceptance remain open.
