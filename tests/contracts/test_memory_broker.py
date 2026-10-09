@@ -77,7 +77,7 @@ def call(handler, context, action, value, *, digest_override=None, provider="age
 
 
 class MemoryBrokerTests(unittest.TestCase):
-    def test_fixed_handler_resolves_distinct_service_from_host_context(self):
+    def test_legacy_raw_service_connector_is_never_called(self):
         t1, t2 = target("p1", "n1", "service-one"), target("p2", "n2", "service-two")
         ipc = IPC()
         owner = lambda profile: (None, 0)
@@ -106,7 +106,7 @@ class MemoryBrokerTests(unittest.TestCase):
         self.assertEqual(denied_scope["status"], 403)
         self.assertEqual(ipc.calls, [])
 
-    def test_missing_signed_session_id_denied_before_connector_bytes(self):
+    def test_legacy_transport_unavailable_even_when_context_lacks_trace_id(self):
         t = target("p1", "n1", "service-one")
         ipc = IPC()
         handlers = build_memory_handlers(
@@ -242,7 +242,7 @@ class MemoryBrokerTests(unittest.TestCase):
                     root_data_dir=Path(directory) / "runtime",
                     connector_factory=lambda **_: IPC())
 
-    def test_pinned_provider_routes_and_payloads_match_upstream_contracts(self):
+    def test_pinned_route_catalog_is_distinct_from_unavailable_raw_transport(self):
         # Fixed routes were checked against each provider's exact enrolled source.
         self.assertEqual(ROUTE_IDS["agentmemory"]["doctor"], "memory.agentmemory.livez.v1")
         self.assertEqual(ROUTE_IDS["agentmemory"]["delete"], "memory.agentmemory.forget.v1")
