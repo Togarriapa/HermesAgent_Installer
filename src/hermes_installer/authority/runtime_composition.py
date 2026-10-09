@@ -34,8 +34,11 @@ class RootAuthorityRuntime:
     body_recipes: Mapping[str, Any]
     scope_bindings: Mapping[str, Any]
     validators: Mapping[str, Any]
+    source_observer_unavailable_reason: str | None
     job_enrollments: Mapping[tuple[str, str], Any]
+    memory_runtime: Any | None
     job_authority: Any | None
+    build_execution_service: Any | None
 
     @property
     def process_manager(self) -> Any:
@@ -77,6 +80,18 @@ class RootAuthorityRuntime:
         return getattr(self.service, "native_runtime_observer", None)
 
     @property
+    def native_loader_observation_store(self) -> Any | None:
+        return getattr(self.service, "native_loader_observation_store", None)
+
+    @property
+    def gateway_boundary_observer(self) -> Any | None:
+        return getattr(self.service, "gateway_boundary_observer", None)
+
+    @property
+    def native_window_observer(self) -> Any | None:
+        return getattr(self.service, "native_window_observer", None)
+
+    @property
     def remote_session_authority(self) -> Any | None:
         return self.service.remote_session_authority
 
@@ -87,15 +102,42 @@ class RootAuthorityRuntime:
         if callable(prune):
             prune()
 
+    def revoke_native_process(self, process_id: str, generation: str | None = None) -> None:
+        """Revoke loader proofs when the root process manager retires a process."""
+        store = self.native_loader_observation_store
+        revoke = getattr(store, "revoke_process", None)
+        if callable(revoke):
+            revoke(process_id, generation)
+
     def close(self) -> None:
         """Close attached root observers and stop the active remote lease worker."""
-        for component in (self.native_runtime_observer, self.source_observer_registry):
+        errors: list[BaseException] = []
+        for component in (self.native_runtime_observer, self.source_observer_registry,
+                          self.native_loader_observation_store,
+                          self.gateway_boundary_observer, self.native_window_observer):
             close = getattr(component, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except BaseException as exc:
+                    errors.append(exc)
+        directories = (self.memory_runtime.get("state_directories", {})
+                       if isinstance(self.memory_runtime, Mapping) else {})
+        for directory in directories.values() if isinstance(directories, Mapping) else ():
+            close = getattr(directory, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except BaseException as exc:
+                    errors.append(exc)
         stop = getattr(self.remote_session_authority, "stop_watchdog", None)
         if callable(stop):
-            stop()
+            try:
+                stop()
+            except BaseException as exc:
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     def resolve_native_package(self, package_id: str, generation: str) -> Any:
         return self.bindings.resolve_native_package(package_id, generation)
@@ -186,6 +228,155 @@ def compose_root_authority_runtime(
             or service.service_generation_digest != enrollment.protected_enrollment_digest):
         raise AuthorityDenied("authority.composition", "runtime bindings do not match this service epoch and catalog")
 
+    source_observer_unavailable_reason: str | None = None
+    if service.source_observer_registry is None:
+        observer_enrollments = getattr(bindings, "source_observer_enrollments", None)
+        if not isinstance(observer_enrollments, Mapping) or not observer_enrollments:
+            source_observer_unavailable_reason = "no active protected source-observer enrollment is selected"
+        elif getattr(service, "native_loader_observation_store", None) is not None:
+            source_observer_unavailable_reason = (
+                "a loader observation store is already installed without its matching source registry"
+            )
+        else:
+            from .source_observers import SourceObserverEnrollment
+
+            if any(not isinstance(value, SourceObserverEnrollment)
+                   or key != value.observer_enrollment_id
+                   for key, value in observer_enrollments.items()):
+                source_observer_unavailable_reason = (
+                    "source-observer candidates are not complete typed protected joins"
+                )
+            else:
+                manager = bindings.process_manager
+                broker = getattr(service, "native_bridge_broker", None)
+                from .native_bridge import NativeBridgeBroker
+
+                if (not callable(getattr(manager, "set_native_loader_observation_store", None))
+                        or not callable(getattr(manager, "is_owned_active_process_handle", None))
+                        or not callable(getattr(manager, "resolve_live_peer", None))
+                        or not callable(getattr(manager, "resolve_native_package_for_peer", None))):
+                    source_observer_unavailable_reason = (
+                        "root process manager lacks the registered native loader OpenFile custody hooks"
+                    )
+                elif getattr(manager, "native_loader_observation_store", None) is not None:
+                    source_observer_unavailable_reason = (
+                        "root process manager already owns a loader store outside this service composition"
+                    )
+                elif (not isinstance(broker, NativeBridgeBroker)
+                      or getattr(broker, "service", None) is not service
+                      or not callable(getattr(broker, "resolve_pending_pair_for_context", None))
+                      or not callable(getattr(broker, "peer_role_artifact_resolver", None))
+                      or not callable(getattr(bindings, "resolve_native_bridge_role_artifact", None))
+                      or not isinstance(getattr(broker, "bridges", None), Mapping)
+                      or not isinstance(getattr(broker, "observer_delivery_bindings", None), Mapping)):
+                    source_observer_unavailable_reason = (
+                        "active native bridge lacks its protected pending-pair and delivery-role resolver"
+                    )
+                elif (not broker.bridges
+                      or dict(broker.bridges) != dict(bindings.native_bridges)
+                      or set(broker.observer_delivery_bindings) != set(broker.bridges)):
+                    source_observer_unavailable_reason = (
+                        "active native bridges lack complete protected observer delivery bindings"
+                    )
+                elif (not callable(getattr(bindings, "resolve_native_package", None))
+                      or not isinstance(getattr(bindings, "source_observer_enrollments", None), Mapping)
+                      or not callable(getattr(service, "attach_source_observer_registry", None))):
+                    source_observer_unavailable_reason = (
+                        "active native package catalog or root source registry attachment is unavailable"
+                    )
+                else:
+                    from .native_bridge import RootObserverDeliveryBinding
+
+                    delivery_bindings_ready = True
+                    for bridge_id, bridge in broker.bridges.items():
+                        rows = broker.observer_delivery_bindings.get(bridge_id)
+                        protected_rows = getattr(bridge, "observer_delivery_bindings", None)
+                        protected_projection = tuple(
+                            (getattr(item, "observer_enrollment_id", None),
+                             getattr(item, "delivery_role", None))
+                            for item in protected_rows
+                        ) if isinstance(protected_rows, tuple) else None
+                        if (not isinstance(rows, tuple) or not rows
+                                or protected_projection != tuple(
+                                    (item.observer_enrollment_id, item.delivery_role) for item in rows
+                                )
+                                or any(not isinstance(row, RootObserverDeliveryBinding)
+                                       or row.delivery_role not in {"producer", "gateway"}
+                                       or row.observer_enrollment_id not in observer_enrollments
+                                       for row in rows)
+                                or len({row.observer_enrollment_id for row in rows}) != len(rows)):
+                            delivery_bindings_ready = False
+                            break
+                        for row in rows:
+                            observer = observer_enrollments[row.observer_enrollment_id]
+                            peer_role = row.delivery_role
+                            if (observer.profile_id != getattr(bridge, f"{peer_role}_profile_id", None)
+                                    or observer.generation != getattr(bridge, f"{peer_role}_generation", None)
+                                    or observer.principal_id != getattr(bridge, f"{peer_role}_principal_id", None)
+                                    or observer.producer_uid != getattr(bridge, f"{peer_role}_uid", None)):
+                                delivery_bindings_ready = False
+                                break
+                        if not delivery_bindings_ready:
+                            break
+                    if not delivery_bindings_ready:
+                        source_observer_unavailable_reason = (
+                            "native bridge delivery rows do not join exact active source observer peers"
+                        )
+                if source_observer_unavailable_reason is None:
+                    # These are actual root constructors, not callback
+                    # declarations. Store and registry remain uninstalled if
+                    # any protected join or custody constructor rejects.
+                    from .native_custody_proof import (
+                        RootNativeLoaderObservationStore,
+                        active_native_catalog_resolver,
+                        attach_root_source_observers,
+                        native_bridge_source_target_selector,
+                    )
+
+                    try:
+                        store = RootNativeLoaderObservationStore(
+                            manager,
+                            active_native_catalog_resolver(
+                                bindings,
+                                service_generation_digest=service.service_generation_digest,
+                            ),
+                            clock=service.monotonic,
+                            source_target_selector=native_bridge_source_target_selector(
+                                broker, clock=service.monotonic,
+                            ),
+                        )
+                    except (TypeError, ValueError, AuthorityDenied):
+                        source_observer_unavailable_reason = (
+                            "active native loader catalog or pending-pair proof resolver rejected composition"
+                        )
+                    else:
+                        registry = attach_root_source_observers(
+                            service=service,
+                            observer_enrollments=observer_enrollments,
+                            process_resolver=manager.resolve_live_peer,
+                            package_resolver=bindings.resolve_native_package,
+                            loader_observations=store,
+                        )
+                        try:
+                            manager.set_native_loader_observation_store(store)
+                        except BaseException:
+                            try:
+                                registry.close()
+                            except BaseException:
+                                pass
+                            try:
+                                store.close()
+                            except BaseException:
+                                pass
+                            service.source_observer_registry = None
+                            if getattr(service, "source_receipt_delivery", None) is registry:
+                                service.source_receipt_delivery = None
+                            try:
+                                del service.native_loader_observation_store
+                            except AttributeError:
+                                pass
+                            raise
+
     from .resource_jobs import (
         ResourceJobAuthority, index_resource_job_records,
         parse_resource_backend_records, parse_resource_body_recipes,
@@ -212,6 +403,188 @@ def compose_root_authority_runtime(
         source_issuers=issuer_records,
         source_observers=observer_records,
     )
+
+    memory_runtime = None
+    if enrollment.memory_enrollments:
+        if (bindings.enrollment_catalog is None
+                or not callable(getattr(bindings, "resolve_root_journal", None))
+                or bindings.process_manager is not service.process_effect_handler):
+            raise AuthorityDenied(
+                "authority.composition",
+                "active memory enrollments require the protected service catalog, journal resolver, and shared process custody",
+            )
+        from hermes_installer.memory.broker import build_memory_handlers, build_memory_runtime
+        from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+
+        memory_targets: dict[tuple[str, str, str], Any] = {}
+        by_profile_generation: dict[tuple[str, str], Any] = {}
+        for item in enrollment.memory_enrollments.values():
+            if not isinstance(item, MemoryServiceEnrollment):
+                raise AuthorityDenied("authority.composition", "active memory enrollment is not a typed protected record")
+            principal_resolver = getattr(bindings, "resolve_selected_native_principal", None)
+            catalog_digest = getattr(bindings.enrollment_catalog, "digest", None)
+            if not callable(principal_resolver) or not isinstance(catalog_digest, str):
+                raise AuthorityDenied("authority.composition", "active memory principal binding resolver is unavailable")
+            try:
+                principal = principal_resolver(
+                    item.profile_id, item.service_generation, catalog_digest,
+                )
+            except Exception:
+                raise AuthorityDenied("authority.composition", "active memory principal is stale or absent") from None
+            if (getattr(principal, "principal_id", None) != item.principal_id
+                    or getattr(principal, "profile_id", None) != item.profile_id
+                    or getattr(principal, "namespace_id", None) != item.namespace_identity
+                    or service.profile_generations.get(item.profile_id) != item.service_generation):
+                raise AuthorityDenied("authority.composition", "memory enrollment differs from its selected authority principal")
+            target_key = (item.profile_id, item.namespace_identity, item.provider)
+            prior_target = memory_targets.get(target_key)
+            if prior_target is not None and prior_target != item:
+                raise AuthorityDenied("authority.composition", "active memory target enrollment is ambiguous")
+            memory_targets[target_key] = item
+            profile_key = (item.profile_id, item.service_generation)
+            prior_enrollment = by_profile_generation.get(profile_key)
+            if prior_enrollment is not None and prior_enrollment != item:
+                raise AuthorityDenied("authority.composition", "active memory profile generation resolves ambiguously")
+            by_profile_generation[profile_key] = item
+
+        def resolve_memory_enrollment(profile_id: str, generation: str) -> Any:
+            selected = by_profile_generation.get((profile_id, generation))
+            if selected is None:
+                raise AuthorityDenied("memory.unavailable", "memory enrollment is not active in this generation")
+            return selected
+
+        memory_runtime = build_memory_runtime(
+            memory_targets, service,
+            root_journal_resolver=bindings.resolve_root_journal,
+            expected_active_generation_digest=enrollment.protected_enrollment_digest,
+            vault=vault, service_catalog=bindings.enrollment_catalog,
+            process_manager=bindings.process_manager,
+            enrollment_resolver=resolve_memory_enrollment,
+        )
+        if memory_runtime.get("state_root_ready") is True:
+            step_authority = memory_runtime.get("step_authority")
+            # Derive only fixed handlers whose selected route has a complete
+            # protected compound recipe and a corresponding unique HI12 rule.
+            # Capture remains unavailable until a root-observed event joins it.
+            generated = build_memory_handlers(
+                targets=memory_runtime["targets"],
+                owner_state=memory_runtime["owner_state"],
+                queue=memory_runtime["queue"], ipc=memory_runtime["ipc"],
+                engines=memory_runtime["engines"],
+                eligibility=memory_runtime["eligibility"],
+                maximum_timeout=memory_runtime["maximum_timeout"],
+                compound_executor=memory_runtime["compound_executor"],
+            )
+            for key, handler in generated.items():
+                operation, target = key
+                if operation != "memory.search":
+                    continue
+                target_entry = next((value for value in memory_runtime["targets"].values()
+                                     if "memory:" + value.provider + ":search" == target), None)
+                route_id = target_entry.route_for("search") if target_entry is not None else None
+                connector_key = (("connector.open", target_entry.enrollment.target_id)
+                                 if target_entry is not None and target_entry.enrollment is not None
+                                 else None)
+                installed_connector = (service.handlers.get(connector_key)
+                                       if connector_key is not None else None)
+                internal_handler = (getattr(step_authority, "handle_connector_open", None)
+                                    if step_authority is not None else None)
+                same_connector = (
+                    installed_connector is internal_handler
+                    or (getattr(installed_connector, "__self__", None) is step_authority
+                        and getattr(installed_connector, "__func__", None)
+                        is getattr(internal_handler, "__func__", None))
+                )
+                if (route_id is None or route_id not in target_entry.enrollment.fixed_route_map
+                        or service.memory_step_effect_authority is not step_authority
+                        or not same_connector
+                        or not callable(internal_handler)
+                        or not any(rule.operation == operation and rule.target == target
+                                   for rule in service.rules.values())):
+                    continue
+                if key in service.handlers:
+                    raise AuthorityDenied("authority.composition", "active memory route duplicates an installed handler")
+                service.handlers[key] = handler
+
+    build_execution_service = None
+    build_catalog = getattr(bindings, "build_catalog", None)
+    build_store = getattr(bindings, "build_store", None)
+    process_manager = bindings.process_manager
+    if (build_catalog is not None and build_store is not None
+            and bindings.enrollment_catalog is not None
+            and isinstance(enrollment.artifact_staging_directory, Path)
+            and callable(getattr(bindings, "resolve_build_process_profile", None))):
+        # The root store and process manager are the same protected instances
+        # already held by RootRuntimeBindings; no second store, key, or manager
+        # is created here. Without a root CPython probe, handlers() exposes
+        # Colibri only and leaves Coral unavailable.
+        from .build_execution import (
+            LinuxBuildOutputFactInspector, ProtectedBuildArtifactRootResolver,
+            RootBuildExecutionService,
+        )
+        from hermes_installer.managed_process_custodian import ManagedBuildJobRunner
+
+        artifact_roots = ProtectedBuildArtifactRootResolver(
+            artifact_catalog, enrollment.artifact_staging_directory,
+            owner_uid=vault.expected_uid,
+        )
+        inspector = LinuxBuildOutputFactInspector(
+            toolchain_root_resolver=artifact_roots.toolchain_root,
+            source_root_resolver=artifact_roots.source_root,
+            runtime_probe=None,
+            owner_uid=vault.expected_uid,
+        )
+        candidate_build_execution_service = RootBuildExecutionService(
+            build_catalog=build_catalog,
+            service_catalog=bindings.enrollment_catalog,
+            artifact_catalog=artifact_catalog,
+            artifact_staging_root=enrollment.artifact_staging_directory,
+            launcher=ManagedBuildJobRunner(
+                process_manager,
+                process_profile_resolver=bindings.resolve_build_process_profile,
+            ),
+            fact_inspector=inspector,
+            store=build_store,
+            expected_uid=vault.expected_uid,
+            monotonic=service.monotonic,
+        )
+        installed_build_routes = 0
+        for key, handler in candidate_build_execution_service.handlers().items():
+            operation, target = key
+            # A catalog profile alone is not activation. Install only if the
+            # active service snapshot also grants this exact selected route.
+            selected = False
+            if not any(rule.operation == operation and rule.target == target
+                       for rule in service.rules.values()):
+                continue
+            for protected_build_row in enrollment.protected_build_records:
+                if not isinstance(protected_build_row, Mapping):
+                    continue
+                generation = protected_build_row.get("generation")
+                if (protected_build_row.get("target_id") != target
+                        or not isinstance(generation, str) or not generation):
+                    continue
+                try:
+                    profile = build_catalog.resolve(target, generation)
+                    service_profile = bindings.enrollment_catalog.resolve(
+                        profile.build_service_enrollment_id,
+                        profile.build_service_generation,
+                    )
+                except Exception:
+                    continue
+                if (service_profile.profile_id in service.profile_generations
+                        and service.profile_generations[service_profile.profile_id]
+                        == service_profile.generation):
+                    selected = True
+                    break
+            if not selected:
+                continue
+            if key in service.handlers:
+                raise AuthorityDenied("authority.composition", "build route duplicates an installed handler")
+            service.handlers[key] = handler
+            installed_build_routes += 1
+        if installed_build_routes:
+            build_execution_service = candidate_build_execution_service
 
     job_authority = None
     if jobs:
@@ -258,5 +631,7 @@ def compose_root_authority_runtime(
         body_recipes=MappingProxyType(dict(recipes)),
         scope_bindings=MappingProxyType(dict(scope_bindings)),
         validators=MappingProxyType(dict(validators)),
-        job_enrollments=MappingProxyType(dict(jobs)), job_authority=job_authority,
+        source_observer_unavailable_reason=source_observer_unavailable_reason,
+        job_enrollments=MappingProxyType(dict(jobs)), memory_runtime=memory_runtime,
+        job_authority=job_authority, build_execution_service=build_execution_service,
     )

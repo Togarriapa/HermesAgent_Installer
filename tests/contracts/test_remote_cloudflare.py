@@ -32,16 +32,19 @@ class RemoteProvisionerTests(unittest.TestCase):
  def receipts(self):
   from hermes_installer.authority.remote_origin import _canonical
   signer=HMACReceiptSigner(b"t"*32);now=time.monotonic()
-  origin=RootOriginReadinessReceipt(1,"origin-receipt","remote-enrollment","a"*64,"desktop-generation","xpra-native","b"*64,"policy-revision","c"*64,"ppppppppppppppppppppppppppppppppppppppppppp",("probe:http","probe:websocket"),now,now+20,b"")
+  origin=RootOriginReadinessReceipt(1,"origin-receipt","remote-enrollment","a"*64,"desktop-generation","xpra-native","b"*64,"policy-revision","c"*64,"p"*43,("probe:http","probe:websocket"),now,now+20,b"")
+  origin=RootOriginReadinessReceipt(1,"origin-receipt","remote-enrollment","a"*64,"desktop-generation","xpra-native","b"*64,"policy-revision","c"*64,"p"*43,("probe:http","probe:websocket"),now,now+20,b"")
   origin=RootOriginReadinessReceipt(*[getattr(origin,f) for f in ("schema","receipt_id","remote_enrollment_id","gateway_identity_digest","desktop_generation","connector_target_id","policy_config_digest","policy_revision","service_generation_digest","probe_receipt_handle","observed_assertion_ids","issued_monotonic","expires_monotonic")],signer.sign(origin.payload()))
   def writer(enrollment,token,*,account_id,tunnel_id,generation,setup_transaction_handle):
+   if setup_transaction_handle!="setup-handle-"+"x"*32:raise AssertionError("setup transaction binding missing")
    receipt=ProtectedTunnelTokenReceipt(1,"token-receipt",enrollment,tunnel_id,generation,"sink",1,2,0,0o400,now,now+20,b"")
    return ProtectedTunnelTokenReceipt(*[getattr(receipt,f) for f in ("schema","receipt_id","tunnel_enrollment_id","tunnel_id","generation","sink_id","file_device","file_inode","owner_uid","mode","issued_monotonic","expires_monotonic")],signer.sign(receipt.payload()))
   return signer,origin,writer
  def activation(self,p,writer=None,origin=None,signer=None):
   default_signer,default_origin,default_writer=self.receipts()
   signer=signer or default_signer;origin=origin or default_origin;writer=writer or default_writer
-  return p.provision_protected(runtime_token_writer=writer,setup_transaction_handle="S"*43,
+  return p.provision_protected(runtime_token_writer=writer,
+      setup_transaction_handle="setup-handle-"+"x"*32,
       tunnel_enrollment_id="tunnel-enrollment",tunnel_generation="cloudflared-generation",
       remote_enrollment_id="remote-enrollment",origin_receipt=origin,receipt_signer=signer)
  def activate(self,p,writer=None):
@@ -81,6 +84,18 @@ class RemoteProvisionerTests(unittest.TestCase):
   api=Recorder();p,_=self.make(api,"op-no-sink")
   with self.assertRaisesRegex(CloudflareError,"Protected writer"):
    p.provision_protected()
+  self.assertEqual(api.calls,[])
+ def test_missing_or_malformed_setup_transaction_handle_has_no_effects(self):
+  api=Recorder();p,_=self.make(api,"op-no-transaction")
+  signer,origin,writer=self.receipts()
+  with self.assertRaisesRegex(CloudflareError,"Protected writer"):
+   p.provision_protected(runtime_token_writer=writer,
+       tunnel_enrollment_id="tunnel-enrollment",tunnel_generation="cloudflared-generation",
+       remote_enrollment_id="remote-enrollment",origin_receipt=origin,receipt_signer=signer)
+  with self.assertRaisesRegex(CloudflareError,"Protected writer"):
+   p.provision_protected(runtime_token_writer=writer,setup_transaction_handle="short",
+       tunnel_enrollment_id="tunnel-enrollment",tunnel_generation="cloudflared-generation",
+       remote_enrollment_id="remote-enrollment",origin_receipt=origin,receipt_signer=signer)
   self.assertEqual(api.calls,[])
  def test_expired_root_origin_receipt_never_publishes_dns(self):
   api=Recorder();p,_=self.make(api,"op2")
