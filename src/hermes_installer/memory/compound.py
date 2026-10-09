@@ -110,6 +110,7 @@ def build_memory_request(*, provider: str, route_id: str, recipe: Mapping[str, A
                          step: Mapping[str, Any], body: Mapping[str, Any],
                          scope_bindings: Mapping[str, Any],
                          captures: Mapping[str, str] | None = None,
+                         trusted_event: Mapping[str, Any] | None = None,
                          maximum_bytes: int = _MAX_BODY) -> MemoryServiceRequest:
     """Serialize one source-pinned recipe step; called only inside root custody.
 
@@ -159,16 +160,57 @@ def build_memory_request(*, provider: str, route_id: str, recipe: Mapping[str, A
                    "limit": _positive_limit(body["limit"]), "target_uri": target_uri,
                    "telemetry": False}
     elif provider == "openviking" and route_id == "openviking-session-capture":
-        # Session create/append/finalize bodies differ by step and require source
-        # response schemas. The executor rejects unknown IDs instead of turning
-        # the outer body into arbitrary HTTP or choosing commit/extract itself.
-        if body_recipe not in {
-            "openviking-create-owned-session-v1",
-            "openviking-append-captured-event-v1",
-            "openviking-finalize-private-v1",
-        }:
-            raise MemoryRecipeUnavailable("OpenViking compound step recipe is not enrolled")
-        raise MemoryRecipeUnavailable("OpenViking capture step serializer awaits pinned request validators")
+        if body_recipe == "openviking-create-owned-session-v1":
+            if body:
+                raise MemoryRecipeDenied("OpenViking create accepts no caller-selected session fields")
+            new_session = _opaque(captures.get("new_session_id"),
+                                  "root-generated OpenViking session ID")
+            payload = {"session_id": new_session, "auto_commit_policy": None,
+                       "telemetry": False}
+        elif body_recipe == "openviking-append-captured-event-v1":
+            if set(body) != {"content"} or not isinstance(trusted_event, Mapping):
+                raise MemoryRecipeDenied("append requires one content field and a root-captured event")
+            event_fields = {"content", "role", "peer_id", "created_at", "turn_id",
+                            "message_kind", "source_message_ids"}
+            if set(trusted_event) - event_fields:
+                raise MemoryRecipeDenied("root event contains fields outside the fixed append recipe")
+            content = _nonempty_text(body["content"], "content", _MAX_TEXT)
+            if content != trusted_event.get("content"):
+                raise MemoryRecipeDenied("append content differs from root-captured source bytes")
+            role = trusted_event.get("role")
+            if role not in {"user", "assistant"}:
+                raise MemoryRecipeDenied("captured role is not an allowed native conversation role")
+            payload = {"role": role, "content": content, "telemetry": False}
+            peer = trusted_event.get("peer_id")
+            if peer is not None:
+                payload["peer_id"] = _opaque(peer, "captured peer ID")
+            message_kind = trusted_event.get("message_kind")
+            if message_kind is not None:
+                if message_kind not in {"user_query", "assistant_step", "tool_transport", "checkpoint"}:
+                    raise MemoryRecipeDenied("captured message kind is not supported")
+                payload["message_kind"] = message_kind
+            for key in ("created_at", "turn_id"):
+                value = trusted_event.get(key)
+                if value is not None:
+                    payload[key] = _nonempty_text(value, f"captured {key}", 128)
+            source_ids = trusted_event.get("source_message_ids")
+            if source_ids is not None:
+                if (not isinstance(source_ids, (list, tuple)) or len(source_ids) > 100
+                        or any(not isinstance(item, str) or not _ID.fullmatch(item)
+                               for item in source_ids)):
+                    raise MemoryRecipeDenied("captured source message IDs are invalid")
+                payload["source_message_ids"] = list(source_ids)
+        elif body_recipe == "openviking-finalize-private-v1":
+            if body:
+                raise MemoryRecipeDenied("finalize accepts no caller-selected operation fields")
+            action = _opaque(captures.get("finalize_action"), "root-selected finalize action")
+            if action not in {"commit", "extract"}:
+                raise MemoryRecipeDenied("finalize action is outside the fixed recipe")
+            if scope_bindings.get("private_provider_route_ref") is None:
+                raise MemoryRecipeUnavailable("private extraction route is not enrolled")
+            payload = {} if action == "extract" else {"keep_recent_count": 0, "telemetry": False}
+        else:
+            raise MemoryRecipeUnavailable("OpenViking session recipe is not enrolled")
     else:
         raise MemoryRecipeUnavailable("selected provider/action body recipe has no reviewed serializer")
 
@@ -209,20 +251,33 @@ def validate_compound_envelope(data: bytes, *, maximum_bytes: int = _MAX_BODY) -
 
 
 def validate_step_outcome(*, route_id: str, step_id: str, status: int,
-                          value: Any) -> MemoryStepOutcome:
+                          value: Any, expected_session_id: str | None = None) -> MemoryStepOutcome:
     """Validate only known response families and root-captured identifiers."""
     if type(status) is not int or not 200 <= status < 300 or not isinstance(value, dict):
         raise MemoryRecipeUnavailable("memory service response is not a successful JSON object")
     if route_id == "openviking-session-capture":
         if step_id == "create":
-            if value.get("status") != "ok" or not isinstance(value.get("result"), dict):
+            result = value.get("result")
+            if value.get("status") != "ok" or not isinstance(result, dict):
                 raise MemoryRecipeUnavailable("OpenViking create response failed source schema")
-            session_id = value["result"].get("session_id")
-            session_id = _opaque(session_id, "OpenViking created session ID")
+            session_id = _opaque(result.get("session_id"), "OpenViking created session ID")
+            if expected_session_id is not None and session_id != expected_session_id:
+                raise MemoryRecipeDenied("OpenViking returned a different session than root requested")
             return MemoryStepOutcome({"status": "ok"}, {"session_id": session_id})
-        if step_id in {"append", "finalize"}:
-            if value.get("status") != "ok":
-                raise MemoryRecipeUnavailable("OpenViking session step did not report success")
+        if step_id == "append":
+            result = value.get("result")
+            if value.get("status") != "ok" or not isinstance(result, dict):
+                raise MemoryRecipeUnavailable("OpenViking append response failed source schema")
+            session_id = _opaque(result.get("session_id"), "OpenViking append session ID")
+            if expected_session_id is None or session_id != expected_session_id:
+                raise MemoryRecipeDenied("OpenViking append response crossed the captured session")
+            for key in ("message_count", "pending_tokens"):
+                if type(result.get(key)) is not int or result[key] < 0:
+                    raise MemoryRecipeUnavailable("OpenViking append response counters are invalid")
+            return MemoryStepOutcome({"status": "ok"}, {})
+        if step_id == "finalize":
+            if value.get("status") != "ok" or not isinstance(value.get("result"), dict):
+                raise MemoryRecipeUnavailable("OpenViking finalize response failed source schema")
             return MemoryStepOutcome({"status": "ok"}, {})
     if route_id.startswith("agentmemory-"):
         # Pinned REST routes forward function payloads from the upstream
@@ -341,6 +396,17 @@ class MemoryRouteRecipe:
                 "openviking-find-result-v1",
                 (("find", "POST", "/api/v1/search/find",
                   "openviking-find-owned-v1", "openviking-find-result-v1", (), None),)),
+            "openviking-session-capture": ("default", "openviking-capture-event-v1",
+                "openviking-capture-result-v1",
+                (("create", "POST", "/api/v1/sessions",
+                  "openviking-create-owned-session-v1", "openviking-create-result-v1",
+                  ("session_id",), "append"),
+                 ("append", "POST", "/api/v1/sessions/{root-captured-owned-session-id}/messages",
+                  "openviking-append-captured-event-v1", "openviking-append-result-v1",
+                  (), "finalize"),
+                 ("finalize", "POST", "/api/v1/sessions/{root-captured-owned-session-id}/{root-selected-commit-or-extract}",
+                  "openviking-finalize-private-v1", "openviking-finalize-result-v1",
+                  (), None)),),
         }
         expected = catalog.get(route_id)
         if expected is None:
