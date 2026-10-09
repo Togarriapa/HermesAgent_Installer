@@ -31,6 +31,7 @@ from .bootstrap_enrollment import (
     BootstrapEnrollmentError,
     BootstrapEnrollmentPending,
     EnrollmentReceipt,
+    VerifiedCommittedEnrollment,
     RootSetupSessionHandle,
     RootSetupSessionStore,
     VerifiedRootSetupAuthorization,
@@ -793,11 +794,124 @@ class RootSetupPrincipalSelectionRegistry:
             raise BootstrapEnrollmentPending("reviewed principal capability selection changed")
         return receipt
 
+    def adopt_initial_publication(
+        self, *, normal_session_store: RootSetupSessionStore,
+        normal_session_handle: RootSetupSessionHandle,
+        authenticated_identity_receipt_handle: str,
+    ) -> tuple["RootSetupPrincipalSelectionRegistry", str]:
+        """Re-observe and rebind the stage-zero identity to the new setup session.
+
+        The compiler handoff is resolved by its concrete registry. The original
+        selection is used only to pin the subject and root-vault reference; a new
+        Authentik observation and capability selection are required for the live
+        normal session before a new scoped selection handle is minted.
+        """
+        if self._session_mode != "initial-compilation" or not isinstance(normal_session_store, RootSetupSessionStore):
+            raise BootstrapEnrollmentPending("principal adoption requires the original stage-zero registry and concrete setup store")
+        if not _is_initial_compilation_registry(self.setup_session_store):
+            raise BootstrapEnrollmentPending("stage-zero principal issuer is no longer available")
+        from .bootstrap_runtime_factory import RootInitialPublicationHandoff
+        initial_registry = self.setup_session_store
+        try:
+            handoff = initial_registry.resolve_adopted_handoff(normal_session_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("normal setup session has no current adopted stage-zero handoff") from None
+        if (not isinstance(handoff, RootInitialPublicationHandoff)
+                or not isinstance(handoff.principal_selection_receipt_handle, str)):
+            raise BootstrapEnrollmentPending("published setup did not bind an initial principal selection")
+        old_handle = handoff.principal_selection_receipt_handle
+        old_selection = self._read_selection(old_handle)
+        if (old_selection.setup_session_id != handoff.compilation_session_handle
+                or old_selection.transaction_handle != handoff.compilation_transaction_handle
+                or old_selection.plan_digest != handoff.plan_sha256
+                or self._is_consumed(old_handle)):
+            raise BootstrapEnrollmentPending("stage-zero principal selection is stale, consumed, or mismatched")
+        proof = _current_principal_setup_context(normal_session_store, normal_session_handle, "setup")
+        fresh = self.identity_resolver.resolve_authenticated_identity(
+            authenticated_identity_receipt_handle, normal_session_handle,
+            _capability_authorization(proof))
+        _validate_identity_receipt(fresh, authenticated_identity_receipt_handle)
+        if (fresh.setup_session_id != proof.session_id
+                or fresh.transaction_handle != proof.transaction_handle
+                or fresh.plan_digest != proof.plan_digest
+                or fresh.authentik_subject_id != old_selection.authentik_subject_id
+                or fresh.actor_credential_ref != old_selection.actor_credential_ref):
+            raise BootstrapEnrollmentPending("fresh setup identity does not match the published Authentik subject and vault reference")
+        normal_registry = RootSetupPrincipalSelectionRegistry.from_root_setup(
+            normal_session_store, self.identity_resolver, self.capability_selection, self.root_journal)
+        lock = _exclusive_registry_lock(self.receipt_root, self.root_journal)
+        try:
+            adopted_path = self.receipt_root / f"adopted-{old_handle}.json"
+            if adopted_path.exists() or self._is_consumed(old_handle):
+                raise BootstrapEnrollmentPending("stage-zero principal selection handoff was already used")
+            # Reservation precedes minting so a crash cannot make the original
+            # handle reusable. A stale reservation requires explicit root recovery.
+            _exclusive_json(adopted_path, {
+                "schema": SCHEMA, "receipt_id": old_handle,
+                "initial_session_id": handoff.compilation_session_handle,
+                "normal_setup_session_id": proof.session_id,
+                "normal_transaction_handle": proof.transaction_handle,
+                "normal_plan_digest": proof.plan_digest,
+                "fresh_identity_receipt_handle": authenticated_identity_receipt_handle,
+                "state": "reserved", "issued_monotonic": time.monotonic(),
+            })
+            new_handle = normal_registry.select_principal(
+                normal_session_handle, authenticated_identity_receipt_handle)
+            value = _read_json(adopted_path)
+            if (not isinstance(value, dict) or value.get("state") != "reserved"
+                    or value.get("receipt_id") != old_handle):
+                raise BootstrapEnrollmentPending("principal adoption reservation changed")
+            value["state"] = "adopted"
+            value["new_principal_selection_receipt_handle"] = new_handle
+            _atomic_json(adopted_path, value)
+            return normal_registry, new_handle
+        finally:
+            os.close(lock)
+
+    def resolve_adopted_initial_principal(
+        self, normal_session_store: RootSetupSessionStore,
+        normal_session_handle: RootSetupSessionHandle,
+    ) -> VerifiedRootSetupPrincipalSelection:
+        """Resolve the one root-journaled stage-zero adoption for this session.
+
+        The new selection is revalidated against the live normal setup session,
+        current Authentik identity, and reviewed capability selector on every
+        call. Callers receive no filesystem path or raw stage-zero handle.
+        """
+        if (self._session_mode != "setup"
+                or not isinstance(self.setup_session_store, RootSetupSessionStore)
+                or normal_session_store is not self.setup_session_store):
+            raise BootstrapEnrollmentPending("adopted principal lookup requires its concrete normal root session store")
+        proof = _current_principal_setup_context(
+            normal_session_store, normal_session_handle, "setup")
+        matches: list[Mapping[str, Any]] = []
+        for path in self.receipt_root.glob("adopted-*.json"):
+            try:
+                value = _read_json(path)
+            except FileNotFoundError:
+                continue
+            if (isinstance(value, dict) and value.get("schema") == SCHEMA
+                    and value.get("state") == "adopted"
+                    and value.get("normal_setup_session_id") == proof.session_id):
+                matches.append(value)
+        if len(matches) != 1:
+            raise BootstrapEnrollmentPending("normal root setup session has no unique adopted principal selection")
+        adoption = matches[0]
+        handle = adoption.get("new_principal_selection_receipt_handle")
+        if (not isinstance(handle, str) or not _HANDLE.fullmatch(handle)
+                or adoption.get("normal_transaction_handle") != proof.transaction_handle
+                or adoption.get("normal_plan_digest") != proof.plan_digest):
+            raise BootstrapEnrollmentPending("adopted principal selection does not match the current setup transaction")
+        return self.resolve_selected_principal(
+            handle, normal_session_handle, proof.transaction_handle, proof.plan_digest)
+
     def consume_selected_principal(
         self, receipt_handle: str, setup_session_handle: RootSetupSessionHandle,
         transaction_handle: str, plan_digest: str, activation_receipt: EnrollmentReceipt,
     ) -> VerifiedRootSetupPrincipalSelection:
         """Consume only after the matching committed activation CAS receipt."""
+        if self._session_mode != "setup" or not isinstance(self.setup_session_store, RootSetupSessionStore):
+            raise BootstrapEnrollmentPending("principal activation requires the adopted normal setup-session registry")
         if (not isinstance(activation_receipt, EnrollmentReceipt)
                 or activation_receipt.state != "committed"
                 or activation_receipt.transaction_handle != transaction_handle
@@ -805,6 +919,16 @@ class RootSetupPrincipalSelectionRegistry:
                 or not re.fullmatch(r"[0-9a-f]{64}", activation_receipt.generation_digest)
                 or activation_receipt.expires_monotonic <= time.monotonic()):
             raise BootstrapEnrollmentPending("principal receipt consumption requires the committed current activation receipt")
+        authorization = _current_setup_proof(self.setup_session_store, setup_session_handle)
+        verified_commit = self.setup_session_store.verify_committed_receipt(
+            activation_receipt, authorization)
+        if (not isinstance(verified_commit, VerifiedCommittedEnrollment)
+                or not secrets.compare_digest(verified_commit._store_seal,
+                                              self.setup_session_store._instance_seal)
+                or verified_commit.setup_session_id != authorization.setup_session_id
+                or verified_commit.plan_digest != plan_digest
+                or verified_commit.receipt != activation_receipt):
+            raise BootstrapEnrollmentPending("principal receipt consumption requires root-verified durable activation CAS")
         lock = _exclusive_registry_lock(self.receipt_root, self.root_journal)
         try:
             receipt = self.resolve_selected_principal(
