@@ -1165,7 +1165,7 @@ class ResourceJobAuthority:
             recipient_ceiling.intersection_update(receipt.recipient_ceiling)
         return RootAdmittedTaskSource(
             source_context_handle=context_handle,
-            verified_source_receipt_handles=tuple(sorted(opaque_receipt_handles)),
+            verified_source_receipt_handles=tuple(opaque_receipt_handles),
             signed_receipt_wires=tuple(signed_wires), lineage_hash=event.lineage_hash,
             sensitivity=event.sensitivity, recipient_ceiling=tuple(sorted(recipient_ceiling)),
             principal_id=enrollment.principal_id, profile_id=enrollment.profile_id,
