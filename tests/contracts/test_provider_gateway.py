@@ -131,7 +131,14 @@ class ProviderGatewayTests(unittest.TestCase):
 
         root=OwnedRoot(Path(self.temp.name)/"unowned"); root.ensure()
         plugin=root.path("profiles/test/plugins/model-providers/"+LOCAL_PROVIDER_NAME)
-        plugin.mkdir(parents=True,mode=0o700)
+        plugin.parent.mkdir(parents=True,mode=0o700)
+        current=plugin.parent
+        while current != root.path("."):
+            current.chmod(0o700)
+            if current == root.path("profiles"):
+                break
+            current=current.parent
+        plugin.mkdir(mode=0o700)
         entry=plugin/"__init__.py"
         entry.write_text("# user plugin")
         with self.assertRaisesRegex(OwnershipError,"ownership"):
