@@ -540,9 +540,6 @@ def build_plugin_effects_facade(*, authority: PluginAuthority,
     selects an action. The AuthorityClient still re-resolves the root grant for
     every effect and consumes its one-use authorization before performing it.
     """
-    binder = getattr(authority, "bind_selected_native_package", None)
-    if not callable(binder):
-        raise PluginEffectUnavailable("root native-package binding is unavailable")
     if not callable(getattr(invocation_contexts, "__call__", None)):
         raise PluginEffectUnavailable("root trusted invocation-context provider is unavailable")
     identity_digest = getattr(identity, "content_digest", None)
@@ -559,6 +556,9 @@ def build_plugin_effects_facade(*, authority: PluginAuthority,
             bind_current_native_plugin_package,
         )
         if selected_package is None:
+            binder = getattr(authority, "bind_selected_native_package", None)
+            if not callable(binder):
+                raise ValueError("root native-package binding is unavailable")
             selected = bind_current_native_plugin_package(authority)
         elif isinstance(selected_package, SelectedNativePackage):
             selected = selected_package
