@@ -148,6 +148,8 @@ class BootstrapCustodyContractTests(unittest.TestCase):
                     ["process.start", "process.status", "process.read"])
                 self.assertEqual(effect_contexts[0]["final_payload_digest"], canonical_digest(client.launch))
                 self.assertEqual(effect_contexts[1]["final_payload_digest"], canonical_digest(status_payload))
+                self.assertTrue(all(item["source_receipt_handles"] == ("start-receipt",)
+                    for item in effect_contexts[1:]))
         finally:
             if prior is None:
                 sys.modules.pop("hermes_installer.authority", None)
