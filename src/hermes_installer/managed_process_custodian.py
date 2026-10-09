@@ -1374,9 +1374,13 @@ class ManagedProcessEffectHandler:
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", exception_type):
             exception_type = "Exception"
         import traceback
-        frame = traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
-        line = frame.lineno if frame is not None else 0
-        sink((prefix + ":" + code + ":" + exception_type + ":line=" + str(line)).encode("ascii"))
+        frames = traceback.extract_tb(exc.__traceback__)[-5:] if exc.__traceback__ else []
+        frame_path = ",".join(f"{frame.name}:{frame.lineno}" for frame in frames)
+        # Function names and source line numbers contain no request values or
+        # host paths, and make root-only fixture failures actionable.
+        if not re.fullmatch(r"[A-Za-z0-9_.,:< >-]{0,384}", frame_path):
+            frame_path = "unavailable"
+        sink((prefix + ":" + code + ":" + exception_type + ":frames=" + frame_path).encode("ascii"))
 
     @staticmethod
     def _json(payload: bytes) -> dict[str, Any]:
