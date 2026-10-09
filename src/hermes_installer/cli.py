@@ -157,6 +157,12 @@ def _run_setup(args: argparse.Namespace) -> CommandResult:
                     account_states["remote_desktop_access"] = enrollment.access_state
                     account_states["remote_desktop_policy_read"] = enrollment.policy_read_state
                     account_states["remote_desktop_route"] = enrollment.route_state
+                    if enrollment.component_installable is True:
+                        installable_config = dict(config_output)
+                        installable_components = dict(installable_config.get("components", {}))
+                        installable_components["remote_desktop"] = True
+                        installable_config["components"] = installable_components
+                        config_output = asdict(validate_config(installable_config))
                     if enrollment.state == "failed":
                         state_name = "failed"
                     elif enrollment.state != "ready" and state_name == "ready":
@@ -211,9 +217,14 @@ def _run_setup(args: argparse.Namespace) -> CommandResult:
             details = {"selected_components": dict(result.selected_components),
                 "account_states": account_states, "next_steps": next_steps,
                 "config": config_output, "saved_config": str(saved_path) if saved_path else None}
+            exit_code = result.exit_code
+            if state_name == "pending" and exit_code == 0:
+                exit_code = 4
+            elif state_name == "failed" and exit_code == 0:
+                exit_code = 1
             return CommandResult("setup", state, message,
-                (Finding("setup.wizard", result.message, state, details),),
-                result.resume_command or resume, result.exit_code)
+                (Finding("setup.wizard", message, state, details),),
+                result.resume_command or resume, exit_code)
     except (OSError, OwnershipError, RuntimeError, ValueError, ConfigError) as exc:
         return CommandResult("setup", OutcomeState.FAILED, str(exc), exit_code=2)
 

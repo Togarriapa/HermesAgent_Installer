@@ -153,6 +153,7 @@ class CliLifecycleTests(unittest.TestCase):
             wizard = SimpleNamespace(state="pending", selected_components={"remote_desktop":True},
                 config={"schema_version":1,"paths":{"state_root":str(root/"state")},
                     "remote_desktop":{"hostname":"desktop.example.test",
+                        "allowed_emails":["owner@example.test"],
                         "management_token_ref":"file:///private/token-ref",
                         "policy_read_token_ref":"file:///private/read-ref"}},
                 message="Remote setup pending", resume_command="hermes-installer setup",
@@ -177,6 +178,7 @@ class CliLifecycleTests(unittest.TestCase):
             self.assertEqual(result.state,OutcomeState.PENDING)
             self.assertEqual(result.message,"Access is verified; route activation awaits an enrolled origin.")
             self.assertEqual(result.findings[0].details["account_states"]["remote_desktop_access"],"ready")
+            self.assertTrue(result.findings[0].details["config"]["components"]["remote_desktop"])
             self.assertEqual(Journal(root/"state"/"journal.sqlite3").operation("installer:setup-command")["status"],"pending")
 
     def test_interactive_setup_without_tty_has_no_filesystem_effect(self):
