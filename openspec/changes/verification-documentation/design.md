@@ -36,3 +36,8 @@ Implement foundation tasks before dependent obligations. Stage artifacts and rev
 ## Open Questions
 
 Live target/account values and pending source selections are tracked in planning/blockers.json. The architecture supports source overrides and configure-later without deleting these requirements. New technical scope choices require a separate Sol-reviewed append-only amendment, never edits to the frozen baseline.
+
+
+## Supplemental evidence profile decision
+
+The verifier profile registry covers the exact current evidence IDs, including EV-RB06, EV-HI10, EV-HW01, EV-RB07, and EV-PR01. Each profile names the concrete requirement dimensions, rather than accepting a generic caller-supplied success flag. EV-RB06 also asserts a public, fixed-service, bounded metadata read with hostile destinations and activation denied. Profile presence proves coverage only; target and account observations remain pending unless every required assertion is observed true, the exact result is retained, and an enrolled verifier authenticates it. Unattempted dimensions use null and remain pending; an observed false or nonzero exit remains a failure.

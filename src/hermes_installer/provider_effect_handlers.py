@@ -209,7 +209,7 @@ def _canonical_request(enrollment: ProviderEnrollment, payload: bytes) -> tuple[
 def _safe_headers(headers: Mapping[str, str]) -> dict[str, str]:
     result = {"Content-Type": "application/json"}
     content_type = headers.get("Content-Type") or headers.get("content-type")
-    if isinstance(content_type, str) and content_type in {"application/json", "text/event-stream"}:
+    if isinstance(content_type, str) and content_type.split(";", 1)[0].strip().casefold() in {"application/json", "text/event-stream"}:
         result["Content-Type"] = content_type
     retry_after = headers.get("Retry-After") or headers.get("retry-after")
     if isinstance(retry_after, str) and len(retry_after) <= 32:
