@@ -36,8 +36,9 @@ class RemoteConfigTests(unittest.TestCase):
         self.assertNotIn("sensitive",repr(setup))
         class NoMatch(FakeClient):
             def discover_zones(self, hostname): return ()
+        prompts=iter(["home.example.uk","a@example.uk"])
         with self.assertRaisesRegex(RemoteConfigError,"No accessible active Cloudflare zone"):
-            collect_remote_setup(interactive=True,input_fn=lambda _: "home.example.uk",hidden_reader=lambda _: "t",client_factory=NoMatch)
+            collect_remote_setup(interactive=True,input_fn=lambda _: next(prompts),hidden_reader=lambda _: "t",client_factory=NoMatch)
     def test_noninteractive_requires_secure_reference(self):
         with self.assertRaises(RemoteConfigError):
             collect_remote_setup(interactive=False,config={"hostname":"home.example.uk","allowed_emails":["a@example.uk"],"management_token":"inline"},client_factory=FakeClient)

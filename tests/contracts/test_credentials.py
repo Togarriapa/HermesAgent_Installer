@@ -1,5 +1,6 @@
 from __future__ import annotations
-import os, tempfile, unittest
+import io, os, tempfile, unittest
+from unittest.mock import patch
 from pathlib import Path
 from hermes_installer.credentials import CredentialError, read_hidden_token, resolve_secret
 
@@ -32,6 +33,10 @@ class CredentialTests(unittest.TestCase):
     def test_encoded_separator_and_nul_are_rejected(self):
         for reference in ("file:///tmp/%2Fetc%2Fpasswd","file:///tmp/%00"):
             with self.assertRaises(CredentialError): resolve_secret(reference)
+    def test_default_hidden_input_fails_without_tty(self):
+        with patch("hermes_installer.credentials.sys.stdin",io.StringIO("")):
+            with self.assertRaisesRegex(CredentialError,"requires a terminal"):
+                read_hidden_token()
     def test_inline_values_are_not_secret_references(self):
         with self.assertRaises(CredentialError): resolve_secret("plaintext")
 
