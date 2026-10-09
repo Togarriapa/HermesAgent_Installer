@@ -48,3 +48,5 @@ Installed release/native assembly v33: `plans/amendments/2026-10-09-installed-re
 Native candidate index delivery v38: `plans/amendments/2026-10-09-native-candidate-index-delivery-v38.md`; exact compiled member/receipt joins preserve open tasks.
 
 Native schema artifact joins v39: `plans/amendments/2026-10-09-native-schema-artifact-joins-v39.md`; exact selected schema source mapping, original tasks remain pending.
+
+Candidate toolset envelope v41: `plans/amendments/2026-10-09-native-candidate-toolset-envelope-v41.md`; exact source-backed owner/envelope metadata, tasks stay open.

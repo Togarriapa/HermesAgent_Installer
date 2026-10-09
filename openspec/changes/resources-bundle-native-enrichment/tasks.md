@@ -95,3 +95,5 @@ Native candidate index delivery v38: `plans/amendments/2026-10-09-native-candida
 Native schema artifact joins v39: `plans/amendments/2026-10-09-native-schema-artifact-joins-v39.md`; exact selected schema source mapping, original tasks remain pending.
 
 Audio/HTTP native input transport v40: `plans/amendments/2026-10-09-native-input-audio-http-channels-v40.md`; original5 channels retain required pending scope.
+
+Candidate toolset envelope v41: `plans/amendments/2026-10-09-native-candidate-toolset-envelope-v41.md`; exact source-backed owner/envelope metadata, tasks stay open.

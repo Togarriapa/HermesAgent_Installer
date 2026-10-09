@@ -544,11 +544,14 @@
         "argument_schema",
         "result_schema",
         "native_schema_sha256",
-        "observer_enrollment_ids"
+        "observer_enrollment_ids",
+        "native_server_name",
+        "description"
       ],
       "encoding": "schema1 canonical UTF8 JSON sorted keys/compact separators/ensure_ascii=false/no newline/duplicate or unknown keys denied;<=1024 candidates,unique native_tool_name and adapter/action pair. Embedded argument/result schemas finite reviewed JSON schemas from compiled selected action catalog; native_schema_sha256 hashes canonical argument_schema exact bytes. Index document SHA is manifest candidate_index.sha256, separate resolver/entrypoint/source digest domains.",
       "compiler": "Root native materializer creates exact index from active selected package/action/MCP/observer joins, records separate CAS output receipt role native-candidate-index and closure manifest member; session.resolve_materialization_receipt returns this additional role for activation. Root pinned adapter/schema bytes must be verified, no inferred schema/cache or arbitrary JSON refs/imports.",
-      "loader": "read_native_candidate_index(binding) root-selected fixed mount reader verifies binder closure/entrypoint/resolver pins, candidate manifest member and index profile/package/generation/resolver match. Presentation only; every effect still re-resolved root. Missing member yields precise native pre-discovery pending, not fallback discovery."
+      "loader": "read_native_candidate_index(binding) root-selected fixed mount reader verifies binder closure/entrypoint/resolver pins, candidate manifest member and index profile/package/generation/resolver match. Presentation only; every effect still re-resolved root. Missing member yields precise native pre-discovery pending, not fallback discovery.",
+      "hermes_envelope": "Root MCP native_server_name is exact selected native_mcp_tool_bindings.native_server_name; other installer compiled candidates use fixed hermes-installer toolset owner. Never parse it from native_tool_name. description bounded <=4096 characters from actual selected reviewed action/schema artifact; if no description supplied use literal Protected installer action. Hermes envelope is {name:native_tool_name,description,parameters:argument_schema}; native_schema_sha256 remains SHA256 canonical argument_schema only, not envelope or result schema. Exact trusted index includes server/description so worker does not query ambient config/cache."
     },
     "schema_artifact_catalog": {
       "active_key": "service_generations.native_schema_artifacts",

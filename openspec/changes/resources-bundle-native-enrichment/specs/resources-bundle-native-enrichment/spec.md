@@ -289,3 +289,10 @@ The implementation SHALL use the distinct selected capture/JWT/session provenanc
 #### Scenario: Microphone permission exists
 - **WHEN** actual selected scoped capture is authorized
 - **THEN** input remains UNKNOWN/private and no human identity or public clearance is inferred from device permission
+
+### Requirement: Explicit protected native toolset owner
+The implementation SHALL obtain native server/toolset ownership and presentation description from the verified candidate index.
+
+#### Scenario: Tool name resembles a different server
+- **WHEN** registering a protected native candidate
+- **THEN** ownership follows the explicit root-selected server field and parameters-only schema digest, without parsing its name
