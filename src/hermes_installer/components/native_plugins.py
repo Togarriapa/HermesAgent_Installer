@@ -66,7 +66,7 @@ _PLUGIN_BLOCKERS = {
     "codex": "Unavailable: no host-owned Codex authentication provider, assigned-workspace identity or bounded task runner is injected. Resume when the trusted host runtime supplies these without copying credentials into plugin state.",
     "composio": "Unavailable: no user-authorized Composio connection, per-profile toolkit allowlist or runtime credential-vault reference is enrolled. Resume after the user selects toolkits and connects the account through its protected OAuth flow.",
     "ebook-toolchain": "The bounded EPUB builder is implemented; native tools remain unavailable until root supplies rights-attested source material and approved per-profile output roots. DRM removal and arbitrary shell stay denied.",
-    "epic-kanban": "A local ephemeral-board adapter is implemented; native tools remain unavailable until root supplies a profile-bound board store. GitHub Projects remains separate and requires an enrolled project scope.",
+    "epic-kanban": "Reviewed local-board handler exists; activation requires a profile-bound ephemeral board store. GitHub Projects remains separate and requires an enrolled project scope.",
     "financial-data-hub": "Reviewed read-only handler exists; activation requires user-consented per-provider accounts and namespaced host-vault refs. Payment, trading, signing and transfer operations remain excluded.",
     "financial-execution-gateway": "Reviewed fixed execution handler exists; activation requires provider adapters, independently enrolled account scopes, duplicate protection and a fresh one-shot confirmation verifier. No standing or autonomous financial actions.",
     "github": "Unavailable: no host credential-vault reference, repository scope or reviewed fixed GitHub effect catalog is injected. Resume after selecting an account/repository and enrolling least-privilege scopes; write operations require separate task authorization and post-write verification.",
@@ -74,8 +74,8 @@ _PLUGIN_BLOCKERS = {
     "kobo-bridge": "A no-overwrite EPUB export primitive is implemented; native tools remain unavailable until root supplies an enrolled model/device resolver, approved USB-root custody and explicit non-DRM transfer consent. Account scraping and notebook writes remain denied.",
     "mcp-registry": "Handler is implemented; public reads still require root `registry-read` enrollment and the protected installer loader before native discovery/invocation.",
     "resource-overlay-store": "Encrypted backup is unavailable until lifecycle provides a host-managed encrypted backup/restore API; local private CAS read/write/history/delete remains profile-scoped.",
-    "voice-pipeline": "A session-bound local Wyoming/Piper adapter is implemented; native tools remain unavailable until root enrolls local endpoints and injects the current-session microphone/audio boundary. Cloud fallback and raw-audio persistence remain denied.",
-    "web": "A bounded public-HTTPS adapter is implemented; native tools remain unavailable until root injects a direct one-hop TLS reader that proves destination IP and disables inherited proxies. Authenticated actions and credential-bearing requests remain denied.",
+    "voice-pipeline": "Reviewed session-bound local Wyoming/Piper handler exists; activation requires root-enrolled local endpoints and the current-session microphone/audio boundary. Cloud fallback and raw-audio persistence remain denied.",
+    "web": "Reviewed bounded public-HTTPS handler exists; activation requires root-injected direct one-hop TLS reader that proves destination IP and disables inherited proxies. Authenticated actions and credential-bearing requests remain denied.",
 }
 
 # Plugin resources are source identities from the user's preserved registry,
@@ -90,7 +90,7 @@ NATIVE_PLUGIN_ADAPTERS = tuple(
             "resource-overlay-store", "mcp-registry", "agent37-discovery",
             "agent-live-wallet", "agent-sandbox-wallet", "authentik-authorization",
             "cloudflare-homelab", "financial-data-hub", "financial-execution-gateway",
-            "homelab-ops-broker",
+            "homelab-ops-broker", "epic-kanban", "voice-pipeline", "web",
         }),
         status=("reviewed-local-profile-handler" if plugin_id == "resource-overlay-store"
                 else "reviewed-root-brokered-public-read" if plugin_id in {"mcp-registry", "agent37-discovery"}
@@ -100,6 +100,7 @@ NATIVE_PLUGIN_ADAPTERS = tuple(
                 else "reviewed-scoped-financial-handler" if plugin_id in {
                     "agent-live-wallet", "agent-sandbox-wallet", "financial-data-hub", "financial-execution-gateway",
                 }
+                else "reviewed-profile-service-handler" if plugin_id in {"epic-kanban", "voice-pipeline", "web"}
                 else "typed-adapter-registry-required"),
         blocker=_PLUGIN_BLOCKERS[plugin_id],
     )
@@ -436,4 +437,7 @@ def resolve_native_plugin_implementation(adapter_id: str) -> NativePluginImpleme
     if adapter_id in {"authentik-authorization", "cloudflare-homelab", "homelab-ops-broker"}:
         from hermes_installer.components.plugin_homelab import resolve_homelab_plugin_implementation
         return resolve_homelab_plugin_implementation(adapter_id)
+    if adapter_id in {"epic-kanban", "voice-pipeline", "web"}:
+        from hermes_installer.components.plugin_local_voice_web import PLUGIN_IMPLEMENTATIONS
+        return PLUGIN_IMPLEMENTATIONS.get(adapter_id)
     return None

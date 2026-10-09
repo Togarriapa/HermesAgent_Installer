@@ -14,9 +14,12 @@ def test_available_resource_plugins_resolve_concrete_implementations():
         "agent-sandbox-wallet",
         "authentik-authorization",
         "cloudflare-homelab",
+        "epic-kanban",
         "financial-data-hub",
         "financial-execution-gateway",
         "homelab-ops-broker",
+        "voice-pipeline",
+        "web",
     }
     for adapter_id in expected:
         assert native_plugin_handler_available(adapter_id)
@@ -25,8 +28,7 @@ def test_available_resource_plugins_resolve_concrete_implementations():
 
 def test_unenrolled_or_unimplemented_plugins_do_not_resolve_handlers():
     expected_unavailable = {
-        "codex", "composio", "ebook-toolchain", "epic-kanban", "github",
-        "kobo-bridge", "voice-pipeline", "web",
+        "codex", "composio", "ebook-toolchain", "github", "kobo-bridge",
     }
     for adapter_id in expected_unavailable:
         assert not native_plugin_handler_available(adapter_id)
