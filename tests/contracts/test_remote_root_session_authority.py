@@ -12,8 +12,9 @@ from jwt.utils import base64url_encode
 
 from hermes_installer.authority.remote_sessions import (
     RemoteAdmissionRequest, RemoteConnectorAuthorization, RemoteGatewayIdentity,
-    RemotePrincipalBinding, RemoteRuntimeState, RemoteSessionAuthority,
-    RemoteSessionEnrollment, RootRemoteAccessVerifier, _principal_mapping_digest,
+    RemoteLease, RemotePrincipalBinding, RemoteRuntimeState, RemoteSessionAuthority,
+    RemoteSessionEnrollment, RemoteSessionHandle, RootRemoteAccessVerifier,
+    _bounded_deadline, _principal_mapping_digest,
 )
 from hermes_installer.authority.types import AuthorityDenied
 from hermes_installer.authority.types import canonical_digest
@@ -235,6 +236,17 @@ class RemoteRootSessionAuthorityTests(unittest.TestCase):
             self.authority.renew_remote_session(
                 handle, self.token(), challenge.renewal_nonce,
                 peer_uid=1002, peer_pid=200, peer_pidfd=8)
+
+    def test_renewal_deadline_rounding_never_exceeds_sixty_seconds(self):
+        # This representable monotonic value makes `start + 60 - start` equal
+        # 60.00000000000001 on CPython; cap downward before minting the lease.
+        start = 63.0973294985805
+        expiry = _bounded_deadline(start, 60.0)
+        self.assertLessEqual(expiry - start, 60.0)
+        lease = RemoteLease(1, RemoteSessionHandle(secrets.token_urlsafe(32)),
+                            "remote-session-1", expiry, expiry + 1,
+                            start, POLICY_REVISION, CONFIG_DIGEST)
+        self.assertLessEqual(lease.lease_expires_monotonic - lease.policy_verified_monotonic, 60.0)
 
     def test_wrong_subject_revokes_active_stream_and_watchdog_closes_generation_drift(self):
         admitted = self.admit()

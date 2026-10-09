@@ -44,6 +44,7 @@ _OPERATIONS = frozenset({
     "process.start", "process.status", "process.read",
     "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.job.admit", "resource.job.child.admit",
     "resource.orchestrator.recruit", "process.inspect", "connector.open",
     "connector.read", "connector.write", "connector.close",
     "native.event.prepare", "native.request.dispatch",
@@ -199,6 +200,20 @@ class AuthorityClient:
         generic enrolled worker is not a trusted source issuer.
         """
         raise AuthorityDenied("source.issuer", "generic worker source capture is not an enrolled issuer")
+
+    def take_source_receipt(self, receipt_handle: str) -> str:
+        """Take one already-issued receipt handle over the authenticated peer socket.
+
+        The root delivery registry decides whether this process is the
+        enrolled recipient. This method never creates receipt claims.
+        """
+        if not isinstance(receipt_handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", receipt_handle):
+            raise AuthorityDenied("source.delivery", "source receipt handle is malformed")
+        result = self._rpc("source.receipt.take", {"schema": 1, "receipt_handle": receipt_handle})
+        if (not isinstance(result, dict) or set(result) != {"schema", "receipt_handle"}
+                or result.get("schema") != 1 or result.get("receipt_handle") != receipt_handle):
+            raise AuthorityDenied("source.delivery", "root returned a mismatched source receipt handle")
+        return receipt_handle
 
     def remote_sessions(self) -> Any:
         """Return typed HI13 calls over this client's authenticated Unix RPC.
