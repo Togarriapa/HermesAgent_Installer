@@ -9,6 +9,7 @@ import struct
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 from hermes_installer.authority.remote_origin import (
@@ -20,6 +21,7 @@ from hermes_installer.authority.remote_origin import (
     RemoteOriginControlSocketResolver,
     RemoteOriginDenied,
     RemoteOriginProbeBinding,
+    RootOriginProbeRegistry,
     RemoteSetupWriterBinding,
     SelectedRemoteOrigin,
     SelectedRemoteOriginControlSocket,
@@ -296,6 +298,33 @@ class RemoteOriginPrivateProbeTests(unittest.TestCase):
             finally:
                 control.close()
                 app.close()
+
+    def test_action_child_binds_connector_and_advances_only_after_complete_effects(self):
+        now = __import__("time").monotonic
+        registry = RootOriginProbeRegistry(HMACReceiptSigner(b"R" * 32))
+        parent_handle = "P" * 43
+        registry._handles[parent_handle] = SimpleNamespace(
+            state="running", expires=now() + 20, action_sequence=0)
+        asset_id = hashlib.sha256(
+            b"hermes-client-asset-v1\0/client/index.html").hexdigest()
+        child = registry.authorize_action(parent_handle, "asset-get", asset_id)
+        action = registry.resolve_action(child)
+        self.assertEqual((action.action, action.asset_id, action.next_sequence),
+                         ("asset-get", asset_id, 0))
+        self.assertTrue(registry.advance_connector_effect(child, "connector.open", 0, "C" * 43))
+        self.assertEqual(registry.resolve_action(child).next_sequence, 0)
+        self.assertTrue(registry.advance_connector_effect(child, "connector.read", 0, "C" * 43))
+        self.assertEqual(registry.resolve_action(child).next_sequence, 1)
+        self.assertTrue(registry.advance_connector_effect(child, "connector.close", 1, "C" * 43))
+        with self.assertRaises(RemoteOriginDenied):
+            registry.resolve_action(child)
+
+        stale_child = registry.authorize_action(parent_handle, "asset-get", asset_id)
+        registry.advance_connector_effect(stale_child, "connector.open", 0, "D" * 43)
+        with self.assertRaises(RemoteOriginDenied):
+            registry.advance_connector_effect(stale_child, "connector.close", 1, "E" * 43)
+        with self.assertRaises(RemoteOriginDenied):
+            registry.resolve_action(stale_child)
 
 
 if __name__ == "__main__":
