@@ -947,5 +947,19 @@
     "resolve_call": "RootPMRuntimeReceiptRegistry.resolve_runtime(runtime_receipt_handle,transaction_handle,prepared_generation_id)->VerifiedPMRuntimeSelection",
     "runtime_identity": "Only actual PM committed_venv(project_root) and venv_python(committed_venv) after successful sync; root reopens nofollow and verifies held directory/current inode/owner/mode/executable SHA, selected source/lock/tool artifacts and observed managed process Python version3.14.7 implementation/cache_tag/SOABI/machine. Actual installed executable SHA is observed postprovision, never equal archiveSHA by assumption. Root private VerifiedPMRuntimeSelection contains Path for materializer/activation only; exported receipt has no filesystem path or secret.",
     "bootstrap_join": "Actual RootSetupSessionStore+RootSetupArtifactFetcher root-first acquisition, RootArtifactReceiptRegistry, prepared enrollment and RootMaterializationReceiptRegistry are constructor dependencies. Root factory compiler/activation consumes verified runtime receipt plus native output closure, never raw process status. Resolve validates current session/transaction/source/root/lease/receipt instance/revocation. Actual native target qualification remains pending; payload acquisition and PM sync not health acceptance."
+  },
+  "literal_bootstrap_receipt_binding_source": {
+    "artifact_id": "installer-bootstrap-receipt-bindings-template-v1",
+    "source_relative_path": "plans/amendments/2026-10-10-literal-bootstrap-receipt-bindings-v72/bootstrap-receipt-bindings-template-v1.json",
+    "installed_relative_path": "templates/bootstrap-receipt-bindings-template-v1.json",
+    "roles": [
+      "template"
+    ],
+    "sha256": "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609",
+    "size_bytes": 10195,
+    "renderer": "Initial compiler wraps unchanged v30 service record in this exact source envelope. Only closed root_binding vocabulary is resolved. No inferred role table or default artifact ID. selected_source_roles resolves exact unique catalog role pin; selected_receipts resolves actual typed current-transaction PM/native/health receipts. Unavailable receipt leaves field null and no active service record. NSS/identity/roots use existing root-held v30 bindings, never runtime worker values.",
+    "typed_fields": "Extend existing receipt_field vocabulary ONLY by this literal role-specific typed list. catalog_executable_path comes exclusively from private RootOfficialPMRuntimeRegistry resolver revalidating committed PM venv executable; never a receipt wire path. runtime_artifact_ids/package_runtime_records come from same exact actual PM receipt. child_artifact_refs comes from RootMaterializationReceiptRegistry current selected closure/entrypoint/resolver/index/overlay receipts, not one archive hash pretending to attest all children.",
+    "output_kinds": "pm-runtime and native-health are exact existing typed receipt kinds; source-archive retains existing source receipt kind even script/lock source role. Add candidate-index-json to approved parser vocabulary. Source/script/lock rules cannot activate runtime.",
+    "release_root_id": "VerifiedInstallerReleaseReceipt root_id is literal installer-release:<candidate_git_sha>; deployment resolver verifies exact selected root path/dev/inode/release manifest before exposing it. artifact_store ID installer-root-artifact-store-v1 is fixed root setup CAS from installed deployment selection, not source archive path."
   }
 }
