@@ -17,6 +17,9 @@ from typing import Callable, Mapping, Protocol, Sequence
 
 from hermes_installer.models.artifacts import ArtifactManifest, MODEL_ID, MODEL_REVISION
 from hermes_installer.models.downloads import DownloadCancelled, StoragePlan, StorageReserve, estimate_storage
+from hermes_installer.models.build_pipeline import (
+    COLIBRI_BUILD, NativeBuildReceipt, run_fixed_native_build,
+)
 
 COLIBRI_REVISION = "bf2442915d6e3dd4cdfd2eb9c2a3d2aa44a25850"
 COLIBRI_URL = "https://github.com/JustVugg/colibri.git"
@@ -211,6 +214,20 @@ def build_colibri_arm64(source: Path, *, expected_revision: str = COLIBRI_REVISI
     return BuildEvidence(expected_revision, "aarch64", _sha256(binary), elf, True,
                          next((line.strip() for line in linked.stdout.splitlines() if "libgomp.so" in line), "libgomp.so"),
                          self_test_line, self_test_status)
+
+
+def request_colibri_arm64_build(authority_client, *, enrollment_id: str,
+                                generation: str, timeout: float = 600,
+                                cancelled: Callable[[], bool] | None = None) -> NativeBuildReceipt:
+    """Run the enrolled source build through root custody; never accepts a local path/argv."""
+    from hermes_installer.authority.types import AuthorityDenied
+
+    try:
+        return run_fixed_native_build(authority_client, operation_id=COLIBRI_BUILD,
+            enrollment_id=enrollment_id, generation=generation, timeout=timeout,
+            cancelled=cancelled)
+    except (AuthorityDenied, AttributeError, TypeError, ValueError, OSError) as exc:
+        raise ColibriError(f"root-managed Colibri ARM64 build did not produce a verified receipt: {exc}") from exc
 
 
 def _read_meminfo(path: Path) -> tuple[int | None, int | None]:
