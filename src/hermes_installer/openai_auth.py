@@ -186,7 +186,7 @@ class ChatGPTPlanAuth:
         }
         try:
             tokens = self.transport.post_form(TOKEN_ENDPOINT, form, timeout=15)
-            access, refresh, id_token, scopes, expires = _token_response(tokens)
+            access, refresh, id_token, scopes, expires = _token_response(tokens, now=self.clock())
             claims = self.verify_id_token(id_token, attempt.nonce, client_id)
         except OAuthAttemptError:
             raise
