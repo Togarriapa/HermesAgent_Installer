@@ -373,3 +373,17 @@ The implementation SHALL resolve the exact selected official committed PM depend
 #### Scenario: PM source or sync receipt alone exists
 - **WHEN** actual selected runtime executable identity and source/lock/tool joins have not been verified
 - **THEN** runtime activation and functional health remain pending, without substituting a source archive digest or system Python
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Root initial compilation precedes policy session
+The implementation SHALL create and verify the exact v42 internal stage0 compilation context without requiring a policy-dependent setup session.
+
+#### Scenario: No bootstrap policy exists yet
+- **WHEN** the actual installed root actor compiles initial selected policy
+- **THEN** root internal stage0 custody authorizes fixed compilation and one-use publication handoff before normal setup session creation

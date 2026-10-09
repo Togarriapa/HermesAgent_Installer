@@ -229,3 +229,10 @@ The installer SHALL satisfy this obligation: Missing required dependencies must 
 #### Scenario: R0061 unavailable or failed prerequisite
 - **WHEN** a catalog fixture contains a missing incompatible selector, inheritance cycle, unauthorized operation or conflicting overlay
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Root observed selected audio and HTTP ingress
+The implementation SHALL use the distinct selected capture/JWT/session provenance schemas of v40 under existing native-input semantics.
+
+#### Scenario: Microphone permission exists
+- **WHEN** actual selected scoped capture is authorized
+- **THEN** input remains UNKNOWN/private and no human identity or public clearance is inferred from device permission

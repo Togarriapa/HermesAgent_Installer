@@ -443,7 +443,8 @@
         "expires_monotonic"
       ],
       "roles": "resources-source-bundle|native-compiled-closure|native-entrypoint-manifest|native-action-resolver|native-boundary-overlay; each exact fixed role admits one output per transaction, duplicate/crossrole conflict denied. source_receipt_handles includes distinct actual Hermes and Resources proofs as applicable. output_kind source-archive|compiled-closure|entrypoint-json|resolver-json|boundary-overlay, compatible exact role only.",
-      "catalog": "Root registry resolve actual held immutable CAS object via current session verified artifact catalog/materialized-output catalog with actual compiled bytes/SHA/size/tree/owner/mode. Newly compiled artifact records published only by pinned reviewed root compiler and exact finite output manifest, no worker arbitrary artifact enrollment or sourceSHA as compiledSHA. Caller native receipt handle is lookup-only one-use session binding."
+      "catalog": "Root registry resolve actual held immutable CAS object via current session verified artifact catalog/materialized-output catalog with actual compiled bytes/SHA/size/tree/owner/mode. Newly compiled artifact records published only by pinned reviewed root compiler and exact finite output manifest, no worker arbitrary artifact enrollment or sourceSHA as compiledSHA. Caller native receipt handle is lookup-only one-use session binding.",
+      "native_candidate_index_role": "Additive native-candidate-index exact separate compiled closure member/manifest pin per native-package-binding-contract protected_pre_discovery.index_delivery; no digest-domain conflation. Root materialization registry returns actual one-use CAS receipt same prepared transaction before activation."
     },
     "resources_source": {
       "artifact_id": "resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83",
@@ -539,6 +540,47 @@
       "records": "Root setup selection adds policy_generation strict {id,publication_sha256,root_path,device,inode,publication_receipt_handle}; all included selection catalog digest. root_path fixed derivation above, never caller parameter. bootstrap_policies relative paths and compiled artifact_catalog resolve through that verified policy generation, while launcher/interpreter/module/plan/template remain under verified base release root. No immutable base release file rewritten.",
       "transaction": "Resolve root-owned one-use compiler publication handle; validate current session/plan/source receipts/actual template/compiled strict schemas and predecessor catalog digest. Create private staged directory, write fsync exact policy/catalog/descriptor/selection, validate actual bytes and held inode again, seal/rename generation; atomically CAS root-setup-selection.json last with parent fsync. RootSetupPublicationReceipt binds generation ID/digest/current file hashes/rootinode/input receipt handles and predecessor. Concurrent mismatch preserves prior selection and leaves staged owned generation journaled for safe resume.",
       "phases": "Prepared and active each new publication digest/ID; stable setup transaction persists. Prepared service records may empty, active values require actual runtime/closure pins, health final enablement separate. Compiler/factory consume typed publication receipt and selected generation only; no raw worker authority row publication."
+    },
+    "stage0_compilation": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "class": "RootInitialCompilationRegistry",
+      "constructor": "from_installed_release(verified_release_receipt,installed_actor_verifier,root_journal)",
+      "call": "begin_initial_compilation(explicit_choices)->RootInitialCompilationSession; compiler.compile_initial_policy(choices) calls it internally, never takes caller session/transaction IDs",
+      "session_fields": [
+        "schema",
+        "compilation_session_handle",
+        "compilation_transaction_handle",
+        "verified_release_receipt_handle",
+        "actor_observation_receipt_handle",
+        "plan_artifact_id",
+        "plan_sha256",
+        "closed_template_artifact_id",
+        "closed_template_sha256",
+        "choices_sha256",
+        "source_catalog_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "creation": "Stage0 context requires actual current root actor/installed release/selected immutable plan/template/sourcecatalog/explicit bounded choice observations, not existing policy or active worker. Root random256bit handles, retained actorPIDFD/rootregistryinstance/currentepoch, max session300s. No global import capability/caller-created IDs. It grants only compile/identity-read/selected artifact fetch/publish initial fixed stages; not arbitrary worker effects or Cloudflare runtime.",
+      "principal_api": "observe_selected_authentik_identity(stage0_session_handle,policy_selection_handle) and select_principal(stage0_session_handle,identity_receipt_handle) accept root-registry-verified RootInitialCompilationSession in initial phase; exact v35 identity checks/receipt fields remain, setup_session_id identifies stage0 session until handoff and phase is retained private registry. This overload uses typed registry resolver, not arbitrary string accepted as setup. Post-policy API remains normal setup-session binding.",
+      "store_call": "compiler_publication_registry.store_compilation(stage0_session,compiled_publication)->opaque publication_handle; verifies exact actual compilation/template/choice/source/principal receipts and stores bytes root-private. No RootSetupSessionStore dependency for initial publication.",
+      "publisher": "RootSetupPolicyGenerationPublisher authenticates actual initial registry/session/currentactor/publicationhandle; existing publish(handle,expected_catalog_sha256) remains. from_root_setup registry dependency is initial compilation registry for initial mode, normal setup-session registry for later active publication; distinct typed mode, no duck-typed caller object. Atomic v36 layout/CAS unchanged.",
+      "handoff_fields": [
+        "schema",
+        "handoff_handle",
+        "compilation_session_handle",
+        "compilation_transaction_handle",
+        "publication_receipt_handle",
+        "publication_sha256",
+        "plan_sha256",
+        "choices_sha256",
+        "principal_selection_receipt_handle",
+        "artifact_receipt_handles",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "handoff_api": "RootInitialCompilationRegistry.finish_publication(publication_receipt)->opaque handoff_handle; RootSetupSessionStore.begin_from_initial_publication(handoff_handle)->RootSetupSessionHandle. Both root-local same actualactor/release/target/plan and immutable actualpublication currentselection proof required. Atomically consume handoff once, issue NEW normal setup_session_id/transaction_handle and record predecessor compilation IDs/input receipt closure. Transfer receipt custody by explicit registry linkage, never re-mint artifacts from caller bytes; old stage0 capabilities revoked.",
+      "pending": "Null/unverified principal selection gives pending original identity choice before concretepolicypublication; no syntheticprincipal. Interrupted stage0 remains its own journaled transaction and resumes after actualactor/release revalidation, not fabricated normal setup session. Missing selected principal may still sourceverify/rootprepare within explicitstage0 scopes without publishing invalid concreteidentity policy."
     }
   },
   "official_pm_runtime": {
