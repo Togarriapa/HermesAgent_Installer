@@ -62,6 +62,8 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
         agent = None
         with tempfile.TemporaryDirectory(prefix="hermes-native-dispatch-") as temporary:
             root = OwnedRoot(Path(temporary) / "owned")
+            installer_src = Path(__file__).resolve().parents[2] / "src"
+            self.assertTrue((installer_src / "hermes_installer").is_dir())
             root.ensure()
             plugin = materialize_hermes_provider_plugin(root, profile_relative="home", port=None, model=MODEL)
             home = Path(plugin["home"])
@@ -84,6 +86,9 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                     LOCAL_KEY_ENV: FIXTURE_KEY,
                     "PYTHONDONTWRITEBYTECODE": "1",
                     "PATH": "/usr/bin:/bin",
+                    # Hermes may re-exec its selected Python after preparation;
+                    # preserve only this exact installer module path.
+                    "PYTHONPATH": str(installer_src),
                 })
                 sys.path.insert(0, str(source))
                 inserted = True
@@ -96,10 +101,12 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
 
                 from run_agent import AIAgent
                 agent = AIAgent(
-                    provider=LOCAL_PROVIDER_NAME, model=MODEL, quiet_mode=True,
+                    quiet_mode=True,
                     enabled_toolsets=[], skip_context_files=True, load_soul_identity=False,
                     skip_memory=True, skip_background_review=True,
                 )
+                self.assertEqual(agent.provider, LOCAL_PROVIDER_NAME)
+                self.assertEqual(agent.model, MODEL)
                 primary = agent.client.chat.completions.create(
                     model=MODEL, messages=[{"role": "user", "content": "native primary fixture"}],
                     max_tokens=24,
@@ -109,7 +116,7 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 from agent.auxiliary_client import call_llm
                 auxiliary = call_llm(
                     task="title_generation",
-                    main_runtime={"provider": LOCAL_PROVIDER_NAME, "model": MODEL},
+                    main_runtime=None,
                     messages=[{"role": "user", "content": "native auxiliary fixture"}],
                     max_tokens=24, timeout=5,
                 )
