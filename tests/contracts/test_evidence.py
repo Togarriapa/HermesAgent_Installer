@@ -39,6 +39,9 @@ def criterion_catalog():
         "additional_acceptance": [
             {"id": f"AC{i:02d}", "text": f"criterion {i}", "evidence_ids": [f"EV-R{195+i:04d}"]}
             for i in range(13, 16)
+        ] + [
+            {"id": f"AC{i:02d}", "text": f"criterion {i}", "evidence_ids": [f"EV-AMENDMENT-{i:02d}"]}
+            for i in range(16, 19)
         ],
     }
 
@@ -51,15 +54,15 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertEqual(report["acceptance"][0]["target_state"], "pending")
 
     def test_skip_and_config_only_cannot_be_pass_evidence(self):
-        with self.assertRaisesRegex(ValueError, "pass requires"):
-            record(evidence_class="configuration")
+        configured = record(evidence_class="configuration")
         skipped = record(state="skipped", exit_code=None, assertions={}, artifact_sha256=None, blocker="hardware lane not enrolled")
-        report = acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[skipped])
+        report = acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[configured, skipped])
         self.assertEqual(report["acceptance"][0]["state"], "pending")
+        self.assertEqual(report["acceptance"][0]["target_state"], "pending")
 
     def test_candidate_mismatch_and_empty_catalog_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "different candidate"):
-            acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[record(candidate_sha="c" * 40)])
+            acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[record(candidate_sha="c" * 40)], required_acceptance_ids=["AC01"])
         with self.assertRaisesRegex(ValueError, "catalog is incomplete"):
             acceptance_report(candidate_sha=SHA, traceability={"acceptance": [], "additional_acceptance": []}, records=[])
 
