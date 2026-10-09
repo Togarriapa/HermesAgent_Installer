@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 from hermes_installer.state import OwnedRoot, process_lock
+from hermes_installer.components.skill_refs import audit_skill_references
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,7 @@ class ImportedSkill:
     discoverable: bool
     hook_status: str
     license: str | None
+    redistribution_allowed: bool = False
 
 
 class ComponentCatalog:
@@ -87,9 +89,16 @@ class ComponentCatalog:
         spec = self.resolve(name)
         if spec.kind not in {"skill", "instruction_collection", "reference"}:
             raise ValueError("component is not a portable skill tree")
-        owned.ensure()
         source = source.resolve(strict=True)
         files, digest = self.manifest(source)
+        reference_audit = audit_skill_references(source)
+        if reference_audit.problems:
+            first = reference_audit.problems[0]
+            raise ValueError(
+                f"broken skill reference in {first.source_path}:{first.line}: "
+                f"{first.target!r} ({first.reason})"
+            )
+        owned.ensure()
         root = owned.path(f"sources/{spec.id}")
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
         revision = spec.revision.lower()
@@ -101,9 +110,12 @@ class ComponentCatalog:
                 if target.is_symlink() or not (target / "import-manifest.json").is_file():
                     raise PermissionError("existing source generation is foreign or incomplete")
                 prior = json.loads((target / "import-manifest.json").read_text(encoding="utf-8"))
-                if prior.get("sha256") != digest or tuple(prior.get("files", ())) != files:
+                if (prior.get("sha256") != digest or tuple(prior.get("files", ())) != files
+                        or prior.get("redistribution_allowed") is not False
+                        or prior.get("redistribution_review_status") != "pending_verified_rights"):
                     raise PermissionError("pinned source generation conflicts with existing owned data")
-                return ImportedSkill(spec.id, target, files, digest, False, False, "pending_source_revision_and_hook_verification", spec.license)
+                return ImportedSkill(spec.id, target, files, digest, False, False,
+                                     "pending_source_revision_and_hook_verification", spec.license, False)
             stage = Path(tempfile.mkdtemp(prefix=".import-", dir=root))
             os.chmod(stage, 0o700)
             try:
@@ -125,7 +137,10 @@ class ComponentCatalog:
                     "schema": 1, "component": spec.id, "source_url": spec.source_url,
                     "revision": spec.revision, "license": spec.license,
                     "sha256": digest, "files": files,
-                    "redistribution_allowed": bool(spec.license),
+                    # A manifest's SPDX/label is an assertion, not evidence of
+                    # rights to redistribute the complete imported source.
+                    "redistribution_allowed": False,
+                    "redistribution_review_status": "pending_verified_rights",
                 }
                 manifest_path = stage / "import-manifest.json"
                 fd = os.open(manifest_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o444)
@@ -144,7 +159,8 @@ class ComponentCatalog:
                 shutil.rmtree(stage, ignore_errors=True)
                 raise
         # Copying content alone is not native discovery or hook verification.
-        return ImportedSkill(spec.id, target, files, digest, False, False, "pending_source_revision_and_hook_verification", spec.license)
+        return ImportedSkill(spec.id, target, files, digest, False, False,
+                             "pending_source_revision_and_hook_verification", spec.license, False)
 
     @staticmethod
     def mark_discovered(imported: ImportedSkill, native_discovery: Callable[[Path], bool]) -> ImportedSkill:
