@@ -27,6 +27,9 @@ from hermes_installer.memory.compound import (
     validate_step_outcome,
 )
 from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+from hermes_installer.authority.types import (
+    EffectAuthorization, HostContext, canonical_digest,
+)
 from hermes_installer.state import OwnedRoot, process_lock
 
 
@@ -48,7 +51,92 @@ class MemoryStepEffect(Protocol):
                  source_context_wire: bytes,
                  consent_wire: bytes | None, job_handle: str,
                  sequence: int, deadline_monotonic: float,
+                 binding: "MemoryStepBinding",
                  cancelled: Callable[[], bool]) -> tuple[int, bytes]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryStepBinding:
+    """Complete root-derived authorization binding for one reserved step."""
+
+    profile_id: str
+    namespace_id: str
+    provider: str
+    service_enrollment_id: str
+    service_generation: str
+    memory_owner_generation: int
+    target_id: str
+    approved_route_id: str
+    recipe_sha256: str
+    job_handle: str
+    step_id: str
+    sequence: int
+    deadline_monotonic: float
+    source_context_sha256: str
+    consent_id: str | None
+    consent_sha256: str | None
+    parent_grant_id: str
+    parent_context_digest: str
+    parent_request_digest: str
+    compound_envelope_sha256: str
+    service_request_sha256: str
+
+
+def _recipe_digest(recipe: MemoryRouteRecipe) -> str:
+    return canonical_digest({
+        "approved_route_id": recipe.approved_route_id,
+        "backend_variant": recipe.backend_variant,
+        "steps": [{"step_id": step.step_id, "method": step.method,
+                   "path_template": step.path_template,
+                   "body_recipe_id": step.body_recipe_id,
+                   "response_schema_id": step.response_schema_id,
+                   "capture_fields": list(step.capture_fields),
+                   "next_step_id": step.next_step_id}
+                  for step in recipe.steps],
+        "request_schema_id": recipe.request_schema_id,
+        "result_schema_id": recipe.result_schema_id,
+        "scope_bindings": dict(recipe.scope_bindings),
+        "credential_reference_id": recipe.credential_reference_id,
+        "maximum_seconds": recipe.maximum_seconds,
+        "maximum_bytes": recipe.maximum_bytes,
+    })
+
+
+def _validate_parent(enrollment: MemoryServiceEnrollment, recipe: MemoryRouteRecipe,
+                     source_context_wire: bytes, parent: Any,
+                     parent_request_payload: bytes) -> tuple[HostContext, str]:
+    if not isinstance(parent, EffectAuthorization) or not isinstance(parent_request_payload, bytes):
+        raise MemoryExecutionDenied("a consumed typed parent effect authorization is required")
+    try:
+        context = HostContext.from_wire(json.loads(source_context_wire.decode("utf-8")))
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        raise MemoryExecutionDenied("signed parent source context is malformed") from None
+    action = "search" if "search" in recipe.approved_route_id else "capture"
+    capability = "memory-retrieval" if action == "search" else "memory-capture"
+    target = f"memory:{enrollment.provider}:{action}"
+    operation = f"memory.{action}"
+    digest = hashlib.sha256(parent_request_payload).hexdigest()
+    context_digest = canonical_digest({**context.claims(), "signature": context.signature})
+    if (context.profile_id != enrollment.profile_id
+            or context.namespace_id != enrollment.namespace_identity
+            or context.principal_id != enrollment.principal_id
+            or context.operation != operation
+            or context.final_payload_digest != digest
+            or parent.profile_id != context.profile_id
+            or parent.namespace_id != context.namespace_id
+            or parent.principal_id != context.principal_id
+            or parent.uid != context.uid
+            or parent.operation != operation
+            or parent.capability != capability
+            or parent.target != target
+            or parent.context_digest != context_digest
+            or parent.request_digest != digest
+            or parent.final_payload_digest != digest
+            or parent.source_receipts != context.source_receipts
+            or parent.lineage_hash != context.lineage_hash
+            or parent.sensitivity != context.sensitivity):
+        raise MemoryExecutionDenied("parent grant, source context, and selected memory action differ")
+    return context, digest
 
 
 def _canonical_map(value: Mapping[str, Any], maximum: int) -> bytes:
@@ -112,6 +200,12 @@ class MemoryCompoundLedger:
                     );
                     CREATE INDEX IF NOT EXISTS compound_jobs_owner
                       ON compound_jobs(profile, provider, owner_generation, state);
+                    CREATE TABLE IF NOT EXISTS compound_bindings (
+                        handle TEXT PRIMARY KEY, target_id TEXT NOT NULL,
+                        recipe_sha256 TEXT NOT NULL, parent_grant_id TEXT NOT NULL,
+                        parent_context_digest TEXT NOT NULL,
+                        parent_request_digest TEXT NOT NULL
+                    );
                 """)
                 # Monotonic deadlines are not meaningful after process restart.
                 # Interrupted network effects are ambiguous and must never replay.
@@ -135,6 +229,9 @@ class MemoryCompoundLedger:
               recipe: MemoryRouteRecipe, request_body: Mapping[str, Any],
               source_context_wire: bytes | Mapping[str, Any],
               consent_wire: bytes | Mapping[str, Any] | None,
+              target_id: str, recipe_sha256: str,
+              parent_grant_id: str, parent_context_digest: str,
+              parent_request_digest: str,
               deadline_monotonic: float, maximum_bytes: int) -> MemoryJob:
         if recipe.approved_route_id not in enrollment.fixed_route_map or enrollment.fixed_route_map[recipe.approved_route_id] != recipe:
             raise MemoryExecutionDenied("memory route recipe differs from protected enrollment")
@@ -162,6 +259,9 @@ class MemoryCompoundLedger:
                                     if enrollment.provider == "openviking"
                                     and recipe.approved_route_id == "openviking-session-capture"
                                     else {}, 16 * 1024), None, None))
+                db.execute("INSERT INTO compound_bindings VALUES(?,?,?,?,?,?)",
+                    (handle, target_id, recipe_sha256, parent_grant_id,
+                     parent_context_digest, parent_request_digest))
                 db.commit()
             finally:
                 db.close()
@@ -209,6 +309,41 @@ class MemoryCompoundLedger:
             finally:
                 db.close()
         return bytes(source), None if consent is None else bytes(consent), self.get(handle)
+
+    def verify_step_binding(self, binding: MemoryStepBinding) -> None:
+        """Recheck the active reservation immediately before an effect."""
+        with process_lock(self.lock_path):
+            db = self._connect()
+            try:
+                row = db.execute("""
+                    SELECT j.profile,j.namespace,j.provider,j.service_generation,
+                           j.owner_generation,j.route_id,j.state,j.sequence,j.deadline,
+                           j.source_context,j.consent,j.inflight_step,j.inflight_sequence,
+                           b.target_id,b.recipe_sha256,b.parent_grant_id,
+                           b.parent_context_digest,b.parent_request_digest
+                    FROM compound_jobs j JOIN compound_bindings b ON b.handle=j.handle
+                    WHERE j.handle=?
+                """, (binding.job_handle,)).fetchone()
+            finally:
+                db.close()
+        if row is None:
+            raise MemoryExecutionDenied("memory compound binding is not in the root ledger")
+        source = bytes(row[9])
+        consent = None if row[10] is None else bytes(row[10])
+        if (row[0] != binding.profile_id or row[1] != binding.namespace_id
+                or row[2] != binding.provider or row[3] != binding.service_generation
+                or row[4] != binding.memory_owner_generation or row[5] != binding.approved_route_id
+                or row[6] != "active" or row[7] != binding.sequence
+                or row[8] != binding.deadline_monotonic or time.monotonic() >= row[8]
+                or row[11] != binding.step_id or row[12] != binding.sequence
+                or row[13] != binding.target_id or row[14] != binding.recipe_sha256
+                or row[15] != binding.parent_grant_id
+                or row[16] != binding.parent_context_digest
+                or row[17] != binding.parent_request_digest
+                or hashlib.sha256(source).hexdigest() != binding.source_context_sha256
+                or (None if consent is None else hashlib.sha256(consent).hexdigest())
+                    != binding.consent_sha256):
+            raise MemoryExecutionDenied("memory step binding is stale, revoked, or differs from durable state")
 
     def commit_step(self, handle: str, *, step_id: str, sequence: int,
                     step_index: int, captures: Mapping[str, str], final: bool) -> MemoryJob:
@@ -289,7 +424,7 @@ class MemoryCompoundExecutor:
 
     def execute(self, *, enrollment: MemoryServiceEnrollment, recipe: MemoryRouteRecipe,
                 body: Mapping[str, Any], source_context_wire: bytes | Mapping[str, Any],
-                parent_authorization: Any,
+                parent_authorization: Any, parent_request_payload: bytes,
                 consent_wire: bytes | Mapping[str, Any] | None = None,
                 trusted_event: Mapping[str, Any] | None = None,
                 cancelled: Callable[[], bool] = lambda: False) -> Mapping[str, Any]:
@@ -297,8 +432,17 @@ class MemoryCompoundExecutor:
             raise MemoryExecutionUnavailable("root-owned authenticated memory connector is not installed")
         if enrollment.fixed_route_map.get(recipe.approved_route_id) != recipe:
             raise MemoryExecutionDenied("memory recipe does not match the selected service enrollment")
+        source_wire = _wire(source_context_wire, 256 * 1024, "source context")
+        context, parent_digest = _validate_parent(
+            enrollment, recipe, source_wire, parent_authorization, parent_request_payload)
+        recipe_digest = _recipe_digest(recipe)
+        target_id = enrollment.target_id
         job = self.ledger.admit(enrollment=enrollment, recipe=recipe, request_body=body,
-            source_context_wire=source_context_wire, consent_wire=consent_wire,
+            source_context_wire=source_wire, consent_wire=consent_wire,
+            target_id=target_id, recipe_sha256=recipe_digest,
+            parent_grant_id=parent_authorization.grant_id,
+            parent_context_digest=parent_authorization.context_digest,
+            parent_request_digest=parent_digest,
             deadline_monotonic=time.monotonic() + recipe.maximum_seconds,
             maximum_bytes=recipe.maximum_bytes)
         try:
@@ -348,6 +492,39 @@ class MemoryCompoundExecutor:
                                           sequence=sequence, state="failed")
                     raise
                 payload_digest = hashlib.sha256(compound_envelope).hexdigest()
+                service_request_digest = canonical_digest({
+                    "method": request.method, "path": request.path,
+                    "headers": list(request.headers),
+                    "body_sha256": hashlib.sha256(request.body).hexdigest(),
+                })
+                consent_data = {} if consent is None else json.loads(consent.decode("utf-8"))
+                consent_id = consent_data.get("consent_id") if isinstance(consent_data, dict) else None
+                if consent_id is not None and not isinstance(consent_id, str):
+                    raise MemoryExecutionDenied("persisted consent identity is malformed")
+                binding = MemoryStepBinding(
+                    profile_id=enrollment.profile_id,
+                    namespace_id=enrollment.namespace_identity,
+                    provider=enrollment.provider,
+                    service_enrollment_id=enrollment.service_enrollment_id,
+                    service_generation=enrollment.service_generation,
+                    memory_owner_generation=enrollment.memory_owner_generation,
+                    target_id=target_id,
+                    approved_route_id=recipe.approved_route_id,
+                    recipe_sha256=recipe_digest,
+                    job_handle=job.handle,
+                    step_id=step.step_id,
+                    sequence=sequence,
+                    deadline_monotonic=job.deadline_monotonic,
+                    source_context_sha256=hashlib.sha256(source).hexdigest(),
+                    consent_id=consent_id,
+                    consent_sha256=None if consent is None else hashlib.sha256(consent).hexdigest(),
+                    parent_grant_id=parent_authorization.grant_id,
+                    parent_context_digest=parent_authorization.context_digest,
+                    parent_request_digest=parent_digest,
+                    compound_envelope_sha256=payload_digest,
+                    service_request_sha256=service_request_digest,
+                )
+                self.ledger.verify_step_binding(binding)
                 try:
                     status, response_body = self.effect(
                         enrollment=enrollment, recipe=recipe, step_id=step.step_id,
@@ -358,7 +535,8 @@ class MemoryCompoundExecutor:
                         parent_authorization=parent_authorization,
                         source_context_wire=source,
                         consent_wire=consent, job_handle=job.handle, sequence=sequence,
-                        deadline_monotonic=job.deadline_monotonic, cancelled=cancelled)
+                        deadline_monotonic=job.deadline_monotonic,
+                        binding=binding, cancelled=cancelled)
                     if not isinstance(response_body, bytes) or len(response_body) > enrollment.limits["response_bytes"]:
                         raise MemoryRecipeUnavailable("memory connector response exceeds enrolled bounds")
                     try:

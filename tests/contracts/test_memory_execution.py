@@ -1,6 +1,8 @@
 """Durable one-use root memory compound transitions (SK01 / SK-T01)."""
 import tempfile
 import unittest
+import hashlib
+import time
 from pathlib import Path
 
 from hermes_installer.authority.memory_execution import (
@@ -12,6 +14,10 @@ from hermes_installer.authority.memory_execution import (
 from hermes_installer.memory.compound import MemoryRouteRecipe, MemoryRouteStep
 from hermes_installer.memory.broker import DurableMemoryQueue
 from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+from hermes_installer.authority.types import (
+    EffectAuthorization, HostContext, Sensitivity, canonical_digest,
+)
+from hermes_installer.memory.compound import canonical_json
 
 
 def enrolled():
@@ -49,16 +55,59 @@ def enrolled():
     return enrollment, recipe
 
 
+def parent_effect(enrollment, route_id, body):
+    action = "search" if "search" in route_id else "capture"
+    capability = "memory-retrieval" if action == "search" else "memory-capture"
+    operation = f"memory.{action}"
+    target = f"memory:{enrollment.provider}:{action}"
+    payload = canonical_json({"schema": 1, **body})
+    digest = hashlib.sha256(payload).hexdigest()
+    now = time.monotonic()
+    context = HostContext(
+        principal_id=enrollment.principal_id, profile_id=enrollment.profile_id,
+        namespace_id=enrollment.namespace_identity, uid=1001,
+        purpose=f"memory-{action}", intent_id="memory-intent",
+        trace_id="memory-trace", sensitivity=Sensitivity.PRIVATE,
+        lineage_hash=hashlib.sha256(b"source-lineage").hexdigest(),
+        policy_revision="policy-one", capabilities=frozenset({capability}),
+        issued_at_monotonic=now, monotonic_expires_at=now + 30,
+        nonce="context-nonce", grant_id="context-grant", signature="test-signature",
+        final_payload_digest=digest, operation=operation,
+    )
+    grant = EffectAuthorization(
+        principal_id=context.principal_id, profile_id=context.profile_id,
+        namespace_id=context.namespace_id, uid=context.uid, purpose=context.purpose,
+        sensitivity=context.sensitivity, trace_id=context.trace_id,
+        policy_revision=context.policy_revision, lineage_hash=context.lineage_hash,
+        capability=capability, intent_id=context.intent_id, target=target,
+        recipient=None, request_digest=digest, retry_index=0,
+        issued_at_monotonic=now, monotonic_expires_at=now + 30,
+        grant_id="parent-grant", nonce="parent-nonce",
+        context_digest=canonical_digest({**context.claims(), "signature": context.signature}),
+        signature="test-signature", final_payload_digest=digest, operation=operation,
+    )
+    return context, grant, payload
+
+
+def admit(ledger, enrollment, recipe, body, *, consent=None):
+    context, grant, payload = parent_effect(enrollment, recipe.approved_route_id,
+        {"query": body.get("query", "synthetic"), "limit": body.get("limit", 1)})
+    return ledger.admit(enrollment=enrollment, recipe=recipe,
+        request_body=body, source_context_wire=context.to_wire(), consent_wire=consent,
+        target_id=enrollment.target_id,
+        recipe_sha256=canonical_digest({"recipe": recipe.approved_route_id}),
+        parent_grant_id=grant.grant_id, parent_context_digest=grant.context_digest,
+        parent_request_digest=hashlib.sha256(payload).hexdigest(),
+        deadline_monotonic=time.monotonic() + 10, maximum_bytes=4096)
+
+
 class MemoryCompoundLedgerTests(unittest.TestCase):
     def test_step_is_reserved_once_and_completion_erases_source_payload(self):
         with tempfile.TemporaryDirectory() as directory:
             ledger = MemoryCompoundLedger(Path(directory) / "owned")
             enrollment, recipe = enrolled()
-            job = ledger.admit(enrollment=enrollment, recipe=recipe,
-                request_body={"query": "synthetic restart fact", "limit": 4},
-                source_context_wire=b'{"signature":"root-proof"}', consent_wire=None,
-                deadline_monotonic=__import__("time").monotonic() + 10,
-                maximum_bytes=4096)
+            job = admit(ledger, enrollment, recipe,
+                {"query": "synthetic restart fact", "limit": 4})
             source, _, _ = ledger.begin_step(job.handle, expected_sequence=1,
                 step_id="search", expected_step_id="search")
             self.assertTrue(source)
@@ -77,11 +126,9 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             ledger = MemoryCompoundLedger(Path(directory) / "owned")
             enrollment, recipe = enrolled()
-            job = ledger.admit(enrollment=enrollment, recipe=recipe,
-                request_body={"query": "private synthetic text", "limit": 2},
-                source_context_wire=b'{"signature":"root-proof"}', consent_wire=b'{"consent_id":"c"}',
-                deadline_monotonic=__import__("time").monotonic() + 10,
-                maximum_bytes=4096)
+            job = admit(ledger, enrollment, recipe,
+                {"query": "private synthetic text", "limit": 2},
+                consent=b'{"consent_id":"c"}')
             self.assertEqual(ledger.revoke_owner("profile-one", "agentmemory", 3), 1)
             revoked = ledger.get(job.handle)
             self.assertEqual(revoked.state, "revoked")
@@ -97,11 +144,7 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
                                        consent_issuer=lambda **_kwargs: None)
             ledger = MemoryCompoundLedger(root)
             enrollment, recipe = enrolled()
-            job = ledger.admit(enrollment=enrollment, recipe=recipe,
-                request_body={"query": "synthetic", "limit": 1},
-                source_context_wire=b'{"signature":"root-proof"}', consent_wire=None,
-                deadline_monotonic=__import__("time").monotonic() + 10,
-                maximum_bytes=4096)
+            job = admit(ledger, enrollment, recipe, {"query": "synthetic", "limit": 1})
             self.assertEqual(queue.path, ledger.path)
             queue.revoke_owner("profile-one", "agentmemory", 3)
             self.assertEqual(ledger.get(job.handle).state, "revoked")
@@ -111,11 +154,7 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
             root = Path(directory) / "owned"
             ledger = MemoryCompoundLedger(root)
             enrollment, recipe = enrolled()
-            job = ledger.admit(enrollment=enrollment, recipe=recipe,
-                request_body={"query": "synthetic", "limit": 1},
-                source_context_wire=b'{"signature":"root-proof"}', consent_wire=None,
-                deadline_monotonic=__import__("time").monotonic() + 10,
-                maximum_bytes=4096)
+            job = admit(ledger, enrollment, recipe, {"query": "synthetic", "limit": 1})
             ledger.begin_step(job.handle, expected_sequence=1,
                 step_id="search", expected_step_id="search")
             restarted = MemoryCompoundLedger(root)
@@ -135,19 +174,28 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
 
             executor = MemoryCompoundExecutor(
                 MemoryCompoundLedger(Path(directory) / "owned"), effect)
+            body = {"query": "private fact", "limit": 5}
+            context, grant, payload = parent_effect(enrollment, recipe.approved_route_id, body)
             result = executor.execute(enrollment=enrollment, recipe=recipe,
-                body={"query": "private fact", "limit": 5},
-                source_context_wire=b'{"signature":"root-proof"}',
-                parent_authorization=object())
+                body=body, source_context_wire=context.to_wire(),
+                parent_authorization=grant, parent_request_payload=payload)
             self.assertEqual(result["status"], "ok")
             self.assertEqual(observed["request_path"], "/agentmemory/smart-search")
             self.assertEqual(observed["request_method"], "POST")
-            self.assertEqual(observed["request_headers"], (("Content-Type", "application/json"),))
+            self.assertEqual(observed["request_headers"], (
+                ("accept", "application/json"), ("content-type", "application/json")))
             self.assertEqual(observed["request_body"],
                 b'{"agentId":"profile-one","limit":5,"project":"project-one","query":"private fact"}')
             self.assertEqual(len(observed["request_digest"]), 64)
             self.assertIn(b'"step_id":"search"', observed["compound_envelope"])
             self.assertIsNotNone(observed["parent_authorization"])
+            binding = observed["binding"]
+            self.assertEqual(binding.parent_grant_id, grant.grant_id)
+            self.assertEqual(binding.target_id, enrollment.target_id)
+            self.assertEqual(binding.service_generation, enrollment.service_generation)
+            self.assertEqual(binding.sequence, 1)
+            self.assertEqual(binding.step_id, "search")
+            self.assertEqual(binding.compound_envelope_sha256, observed["request_digest"])
 
     def test_malformed_service_result_marks_compound_ambiguous_without_replay(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -160,13 +208,27 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
 
             ledger = MemoryCompoundLedger(Path(directory) / "owned")
             executor = MemoryCompoundExecutor(ledger, effect)
+            body = {"query": "private fact", "limit": 5}
+            context, grant, payload = parent_effect(enrollment, recipe.approved_route_id, body)
             with self.assertRaises(MemoryRecipeUnavailable):
                 executor.execute(enrollment=enrollment, recipe=recipe,
-                    body={"query": "private fact", "limit": 5},
-                    source_context_wire=b'{"signature":"root-proof"}',
-                    parent_authorization=object())
+                    body=body, source_context_wire=context.to_wire(),
+                    parent_authorization=grant, parent_request_payload=payload)
             self.assertEqual(len(called), 1)
             self.assertEqual(ledger.get(called[0]).state, "ambiguous")
+
+    def test_parent_grant_must_bind_exact_memory_action_and_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            enrollment, recipe = enrolled()
+            body = {"query": "private fact", "limit": 5}
+            context, grant, payload = parent_effect(enrollment, recipe.approved_route_id, body)
+            other = canonical_json({"schema": 1, "query": "changed", "limit": 5})
+            executor = MemoryCompoundExecutor(MemoryCompoundLedger(Path(directory) / "owned"),
+                                               lambda **_kwargs: self.fail("effect before binding"))
+            with self.assertRaises(MemoryExecutionDenied):
+                executor.execute(enrollment=enrollment, recipe=recipe,
+                    body=body, source_context_wire=context.to_wire(),
+                    parent_authorization=grant, parent_request_payload=other)
 
 
 if __name__ == "__main__":

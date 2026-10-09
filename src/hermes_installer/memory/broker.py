@@ -718,6 +718,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     enrollment=enrollment, recipe=recipe, body=compound_body,
                     source_context_wire=source_context_wire,
                     parent_authorization=authorization,
+                    parent_request_payload=payload,
                     cancelled=cancelled)
                 result = dict(executed)
                 result["profile_id"] = context.profile_id
