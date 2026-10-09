@@ -82,6 +82,10 @@ class ReadOnlyAdapter:
         if getattr(client, "service_id", None) not in (None, service.id):
             raise ValueError("MCP client is bound to a different service")
         self.service, self.client, self.selection = service, client, selection
+        authority = getattr(client, "authority_client", None)
+        self._allowed_tools = (frozenset(getattr(client, "allowed_tools", ()))
+                               if service.id == "home-assistant" and type(authority) is AuthorityClient
+                               else frozenset(service.allowed_tools))
         self._functional = False
         self._enabled = False
         self._last_failure: str | None = None
@@ -107,7 +111,7 @@ class ReadOnlyAdapter:
             "authorized": self._authorization_ready(),
             "discovered": ready,
             "tools": tuple(sorted(getattr(client, "discovered_tools", frozenset()) &
-                                  self.service.allowed_tools)),
+                                  self._allowed_tools)),
             "functionally_tested": self._functional,
             "enabled": self._enabled,
             "last_failure": self._last_failure,
@@ -130,7 +134,7 @@ class ReadOnlyAdapter:
             result = self.status()
             result["status"] = self._last_failure
             return result
-        self.client.allowed_tools = frozenset(self.client.allowed_tools & self.service.allowed_tools)
+        self.client.allowed_tools = frozenset(self.client.allowed_tools & self._allowed_tools)
         # Even allowlisted names are rejected unless the server advertises the
         # MCP read-only hint. The static list remains the authoritative ceiling.
         accepted = {}
