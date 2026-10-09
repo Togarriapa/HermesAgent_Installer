@@ -54,7 +54,20 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
     def test_real_primary_and_auxiliary_entrypoints_route_through_local_gate(self):
         source_value = os.environ.get("HERMES_AGENT_SOURCE_ROOT", "")
         if not source_value:
-            self.skipTest("set HERMES_AGENT_SOURCE_ROOT to the exact selected Hermes source checkout")
+            # PM's selected interpreter lives below the installer data root.
+            # Hermes may sanitize custom environment variables during re-exec;
+            # derive the source only from that private marked root.
+            for candidate in Path(sys.executable).resolve().parents:
+                marker = candidate / ".hermes-installer-owned"
+                if (candidate.name == "data" and marker.is_file()
+                        and not marker.is_symlink()
+                        and marker.read_bytes() == b"schema=1\\n"
+                        and candidate.stat().st_uid == os.geteuid()
+                        and candidate.stat().st_mode & 0o077 == 0):
+                    source_value = str(candidate / "generations" / ("hermes-agent-" + HERMES_PIN[:12]))
+                    break
+        if not source_value:
+            self.skipTest("selected PM interpreter is not below a validated installer data root")
         source = Path(source_value).resolve(strict=True)
         commit = subprocess.run(
             ["git", "-C", str(source), "rev-parse", "HEAD"],
