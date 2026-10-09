@@ -914,14 +914,25 @@ class ManagedProcessEffectHandler:
 
     def _stop_partial(self, unit: str, launcher: subprocess.Popen[bytes]) -> None:
         if unit.startswith("hermes-installer-"):
-            self._ctl(["kill", "--kill-whom=all", "--signal=SIGKILL", unit], 1)
-            self._ctl(["stop", unit], 1)
+            cgroup = f"/system.slice/{unit}"
+            for command in (["kill", "--kill-whom=all", "--signal=SIGKILL", unit],
+                            ["stop", unit]):
+                try:
+                    self._ctl(command, 1)
+                except AuthorityDenied:
+                    # systemd returns failure when --collect already removed
+                    # a transient unit. Treat that as clean only when the
+                    # exact registered system.slice cgroup is absent/empty.
+                    if self._pids(cgroup):
+                        raise AuthorityDenied("process.cleanup", "partial unit cgroup could not be stopped") from None
         if launcher.poll() is None:
             launcher.kill()
         try:
             launcher.wait(timeout=1.0)
         except subprocess.TimeoutExpired:
             raise AuthorityDenied("process.cleanup", "partial root service launcher did not reap") from None
+        if unit.startswith("hermes-installer-") and self._pids(f"/system.slice/{unit}"):
+            raise AuthorityDenied("process.cleanup", "partial unit cgroup remains populated")
 
 
 def build_managed_process_handlers(profiles: Mapping[str, ManagedProfileCustody], **kwargs: Any):
