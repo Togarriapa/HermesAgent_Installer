@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
+import json
+import math
 import secrets
 import threading
 import time
@@ -114,12 +117,115 @@ def _token_response(value: Mapping[str, object], *, inherited_scopes: frozenset[
     return access, refresh, identity, scopes, (time.time() if now is None else now) + lifetime
 
 
+def _decode_jwt_part(part: str) -> bytes:
+    if not isinstance(part, str) or len(part) > 16_384:
+        raise OAuthAttemptError("OpenAI ID token is malformed")
+    try:
+        return base64.b64decode(part + "=" * ((4 - len(part) % 4) % 4),
+                                altchars=b"-_", validate=True)
+    except Exception:
+        raise OAuthAttemptError("OpenAI ID token is malformed") from None
+
+
+def _json_object(raw: bytes) -> Mapping[str, object]:
+    def unique_pairs(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON member")
+            value[key] = item
+        return value
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_pairs)
+    except Exception:
+        raise OAuthAttemptError("OpenAI ID token contains invalid claims") from None
+    if not isinstance(value, dict):
+        raise OAuthAttemptError("OpenAI ID token contains invalid claims")
+    return value
+
+
+class OpenAIIDTokenVerifier:
+    """Small RS256/OIDC verifier using only the issuer's fixed discovery and JWKS endpoints."""
+
+    def __init__(self, transport: OAuthTransport, *, clock: Callable[[], float] = time.time):
+        self.transport, self.clock = transport, clock
+
+    def __call__(self, token: str, expected_nonce: str, audience: str) -> Mapping[str, object]:
+        if not isinstance(token, str) or len(token) > 32_768 or not isinstance(audience, str):
+            raise OAuthAttemptError("OpenAI ID token is malformed")
+        parts = token.split(".")
+        if len(parts) != 3:
+            raise OAuthAttemptError("OpenAI ID token is malformed")
+        header, claims = _json_object(_decode_jwt_part(parts[0])), _json_object(_decode_jwt_part(parts[1]))
+        if header.get("alg") != "RS256" or header.get("crit") or not isinstance(header.get("kid"), str):
+            raise OAuthAttemptError("OpenAI ID token uses an unsupported signing key")
+        try:
+            discovery = self.transport.get_json(DISCOVERY_ENDPOINT, timeout=10)
+            if not isinstance(discovery, Mapping) or discovery.get("issuer") != ISSUER:
+                raise OAuthAttemptError("OpenAI identity issuer metadata is invalid")
+            jwks_uri = discovery.get("jwks_uri")
+            if jwks_uri != ISSUER + "/.well-known/jwks.json":
+                raise OAuthAttemptError("OpenAI identity key endpoint is not approved")
+            jwks = self.transport.get_json(jwks_uri, timeout=10)
+            keys = jwks.get("keys") if isinstance(jwks, Mapping) else None
+        except OAuthAttemptError:
+            raise
+        except Exception:
+            raise OAuthAttemptError("OpenAI identity signing keys could not be loaded") from None
+        if not isinstance(keys, list) or len(keys) > 32:
+            raise OAuthAttemptError("OpenAI identity signing keys are malformed")
+        matches = [key for key in keys if isinstance(key, Mapping) and key.get("kid") == header["kid"]]
+        if len(matches) != 1:
+            raise OAuthAttemptError("OpenAI ID token signing key was not found")
+        key = matches[0]
+        if key.get("kty") != "RSA" or key.get("use", "sig") != "sig" or key.get("alg", "RS256") != "RS256":
+            raise OAuthAttemptError("OpenAI identity signing key is not valid for RS256")
+        try:
+            modulus_bytes = _decode_jwt_part(key["n"])
+            exponent_bytes = _decode_jwt_part(key["e"])
+            modulus, exponent = int.from_bytes(modulus_bytes, "big"), int.from_bytes(exponent_bytes, "big")
+            signature = _decode_jwt_part(parts[2])
+            if modulus.bit_length() < 2048 or modulus.bit_length() > 8192 or exponent < 3 or exponent % 2 == 0:
+                raise ValueError("key size")
+            width = (modulus.bit_length() + 7) // 8
+            if len(signature) != width:
+                raise ValueError("signature width")
+            encoded = pow(int.from_bytes(signature, "big"), exponent, modulus).to_bytes(width, "big")
+            digest_info = bytes.fromhex("3031300d060960864801650304020105000420") + hashlib.sha256(
+                (parts[0] + "." + parts[1]).encode("ascii")).digest()
+            padding_len = width - len(digest_info) - 3
+            expected = b"\x00\x01" + b"\xff" * padding_len + b"\x00" + digest_info
+            if padding_len < 8 or not hmac.compare_digest(encoded, expected):
+                raise ValueError("signature")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise OAuthAttemptError("OpenAI ID token signature is invalid") from None
+
+        now = self.clock()
+        subject, issuer = claims.get("sub"), claims.get("iss")
+        token_aud = claims.get("aud")
+        audiences = {token_aud} if isinstance(token_aud, str) else set(token_aud) if isinstance(token_aud, list) else set()
+        expiry, not_before, issued = claims.get("exp"), claims.get("nbf", 0), claims.get("iat", now)
+        if (issuer != ISSUER or audience not in audiences or not isinstance(subject, str) or not subject
+                or isinstance(expiry, bool) or not isinstance(expiry, (int, float)) or not math.isfinite(expiry)
+                or expiry <= now or isinstance(not_before, bool) or not isinstance(not_before, (int, float))
+                or not_before > now or isinstance(issued, bool) or not isinstance(issued, (int, float))
+                or issued > now + 60):
+            raise OAuthAttemptError("OpenAI ID token issuer, audience or lifetime is invalid")
+        azp = claims.get("azp")
+        if (len(audiences) > 1 and azp != audience) or (azp is not None and azp != audience):
+            raise OAuthAttemptError("OpenAI ID token authorized party is invalid")
+        if expected_nonce and (not isinstance(claims.get("nonce"), str)
+                               or not hmac.compare_digest(claims["nonce"], expected_nonce)):
+            raise OAuthAttemptError("OpenAI ID token nonce did not match")
+        return claims
+
+
 class ChatGPTPlanAuth:
     """OAuth code+PKCE integration for eligible ChatGPT-plan Responses calls."""
 
     def __init__(self, *, host_id: str, agent_name: str, transport: OAuthTransport,
                  vault: HostCredentialVault,
-                 verify_id_token: Callable[[str, str, str], Mapping[str, object]],
+                 verify_id_token: Callable[[str, str, str], Mapping[str, object]] | None = None,
                  clock: Callable[[], float] = time.time):
         try:
             canonical_host_id = "urn:uuid:" + str(uuid.UUID(host_id.removeprefix("urn:uuid:")))
@@ -130,7 +236,8 @@ class ChatGPTPlanAuth:
         if not agent_name or len(agent_name) > 128:
             raise ValueError("a stable application name is required")
         self.host_id, self.agent_name = host_id, agent_name
-        self.transport, self.vault, self.verify_id_token = transport, vault, verify_id_token
+        self.transport, self.vault = transport, vault
+        self.verify_id_token = verify_id_token or OpenAIIDTokenVerifier(transport, clock=clock)
         self.clock = clock
         self._locks_guard = threading.Lock()
         self._account_locks: dict[str, threading.Lock] = {}
