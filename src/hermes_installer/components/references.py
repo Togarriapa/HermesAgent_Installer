@@ -6,11 +6,14 @@ catalog entries.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from dataclasses import dataclass
+from pathlib import Path
 from pathlib import PurePosixPath
-from typing import Mapping
+from typing import Mapping, Any
 
 from hermes_installer.components.adapters import resolve_component_adapter
+from hermes_installer.components.source_bundle import ComponentSourceError, VerifiedComponentSource
 
 
 REFERENCE_CATALOGS = frozenset({
@@ -46,6 +49,99 @@ class ReferenceSearchResult:
     hits: tuple[ReferenceHit, ...]
     scanned_files: int
     complete: bool
+
+
+@dataclass(frozen=True, slots=True)
+class InstalledReferenceCatalog:
+    """A reference index bound to an immutable installer-owned generation."""
+
+    component_id: str
+    source_url: str
+    revision: str
+    root: Path
+    generation_digest: str
+    redistribution_license_review_required: bool
+    _store: Any
+
+    def search(self, query: str, *, limit: int = 20) -> ReferenceSearchResult:
+        """Verify the owned generation, then search bounded local source text."""
+        identity = f"component-{self.component_id}-{self.revision[:12]}"
+        try:
+            actual_root, manifest, digest = self._store._verify(identity)
+        except Exception as exc:
+            raise ReferenceSearchError("installed reference generation failed its ownership/integrity check") from exc
+        if actual_root != self.root or digest != self.generation_digest:
+            raise ReferenceSearchError("installed reference generation identity changed")
+        files: dict[str, bytes] = {}
+        complete_source = True
+        total = 0
+        for name, metadata in sorted(manifest["files"].items()):
+            path = PurePosixPath(name)
+            if path.suffix.casefold() not in _TEXT_SUFFIXES:
+                continue
+            # Generation manifests bind hashes and modes, not sizes. Read one
+            # bounded file at a time and avoid retaining a large catalog copy.
+            try:
+                if path.is_absolute() or ".." in path.parts or path.as_posix() != name:
+                    raise ReferenceSearchError("installed reference generation contains an unsafe path")
+                file_path = actual_root / name
+                file_size = file_path.stat().st_size
+                if file_size > _MAX_TEXT_FILE or total + file_size > _MAX_TOTAL_TEXT:
+                    complete_source = False
+                    continue
+                body = file_path.read_bytes()
+            except OSError:
+                raise ReferenceSearchError("installed reference file could not be read safely") from None
+            files[name] = body
+            total += len(body)
+        result = search_reference_catalog(self.component_id, files, query, limit=limit)
+        if not complete_source and result.complete:
+            return replace(result, complete=False)
+        return result
+
+
+def install_reference_catalog(source: VerifiedComponentSource, store: object) -> InstalledReferenceCatalog:
+    """Stage one pinned reference source privately and return its real local search adapter.
+
+    A `NOASSERTION` or unresolved license never prevents private profile-local
+    import, but remains visible as a redistribution review requirement.
+    """
+    if not isinstance(source, VerifiedComponentSource):
+        raise ReferenceSearchError("reference catalog installation requires a verified pinned source")
+    if source.component_id not in REFERENCE_CATALOGS:
+        raise ReferenceSearchError("source is not one of the selected reference catalogs")
+    contract = resolve_component_adapter(source.component_id)
+    if source.source_identity != contract.source_identity or source.revision != contract.revision:
+        raise ReferenceSearchError("reference source identity differs from the reviewed source pin")
+    source_files = {name: body for name, body in source.files.items() if name != "INSTALLER-SOURCE-PROVENANCE.json"}
+    source_modes = {name: mode for name, mode in source.file_modes.items() if name in source_files}
+    from hermes_installer.registry.source import _git_tree
+    try:
+        tree, _ = _git_tree(source_files, source_modes)
+    except Exception as exc:
+        raise ReferenceSearchError("reference source tree is invalid") from exc
+    if tree != source.source_tree_sha:
+        raise ReferenceSearchError("reference source files differ from the pinned Git tree")
+    try:
+        root = source.stage(store).resolve(strict=True)
+        if root.is_symlink() or not root.is_relative_to(store.root.resolve(strict=True)):
+            raise ReferenceSearchError("reference generation escaped installer-owned data")
+        actual_root, manifest, digest = store._verify(source.generation_id)
+    except ReferenceSearchError:
+        raise
+    except (AttributeError, OSError, ComponentSourceError, ValueError) as exc:
+        raise ReferenceSearchError("reference catalog could not be staged and verified") from exc
+    if actual_root != root or set(manifest["files"]) != set(source.files):
+        raise ReferenceSearchError("staged reference generation differs from its verified source")
+    return InstalledReferenceCatalog(
+        component_id=source.component_id,
+        source_url=contract.selected_source_url,
+        revision=contract.revision or "",
+        root=root,
+        generation_digest=digest,
+        redistribution_license_review_required=source.redistribution_license_review_required,
+        _store=store,
+    )
 
 
 def search_reference_catalog(
