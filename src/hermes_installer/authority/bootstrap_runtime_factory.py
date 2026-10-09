@@ -1,0 +1,1850 @@
+"""Installed root setup assembly for the first Hermes service generation.
+
+The selection file, release tree, artifact catalog and bootstrap-policy document
+are all read from the root deployment trust source. This module deliberately
+does not accept caller supplied policy rows, paths, hashes or ``EnrollmentPolicy``
+objects. Runtime activation accepts only setup-scoped receipt handles that the
+same root registry resolves to immutable CAS objects.
+"""
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import os
+import pwd
+import re
+import secrets
+import stat
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Mapping
+
+from ..artifacts import ArtifactCatalog, load_protected_catalog
+from ..hermes_source import HERMES_SOURCE_ARTIFACT_ID
+from .bootstrap_enrollment import (
+    BootstrapEnrollmentError,
+    BootstrapEnrollmentPending,
+    BootstrapEnrollmentRequest,
+    EnrollmentPolicy,
+    EnrollmentReceipt,
+    InstalledRootSetupActorVerifier,
+    RootArtifactReceiptRegistry,
+    RootBootstrapEnrollment,
+    RootSetupActorVerifier,
+    RootSetupSessionHandle,
+    RootSetupSessionStore,
+    ServiceIdentity,
+    SystemIdentityAdapter,
+    VerifiedArtifactReceipt,
+    VerifiedRootSetupAuthorization,
+    VerifiedRootSetupPlan,
+    _canonical,
+    _ensure_root_directory,
+    _secure_directory_identity,
+    _open_immutable_release_root,
+    _read_secure_root_bytes,
+    _unique_pairs,
+    _validate_sha256,
+    _verify_release_file_at,
+)
+
+
+_SELECTION_PATH = Path("/etc/hermes-installer/root-setup-selection.json")
+_SELECTION_ID = "installer-root-setup-selection-v1"
+_PLAN_ID = "installer-root-setup-plan-v1"
+_LAUNCHER_ID = "installer-root-setup-launcher-v1"
+_INTERPRETER_ID = "installer-root-setup-interpreter-v1"
+_CATALOG_ID = "installer-protected-artifact-catalog-v1"
+_POLICY_ID = "installer-bootstrap-policy-v1"
+_TEMPLATE_ID = "installer-bootstrap-compiler-template-v1"
+_IDENTITY_TEMPLATE_ID = "installer-authentik-policy-template-v1"
+_PLAN_TEMPLATE_ID = "installer-root-setup-plan-template-v1"
+_POLICY_GENERATION_ID = "installer-bootstrap-policy-generation-v1"
+_SERVICE_PARENT_ROOT = "/var/lib/hermes-installer/services/hermes-agent-native-v1"
+_STORE_ID = "installer-bootstrap-artifact-store-v1"
+_JOURNAL_ID = "installer-authority-journal-v1"
+_GEN = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
+_ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
+_SHA = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def _fail(message: str) -> None:
+    raise BootstrapEnrollmentPending(message)
+
+
+@dataclass(frozen=True, slots=True)
+class _Selection:
+    installer_release_commit: str
+    release_root: Path
+    release_root_id: str
+    deployment_receipt_sha256: str
+    release_device: int
+    release_inode: int
+    policy_generation: Mapping[str, Any]
+    policy_root: Path
+    policy_device: int
+    policy_inode: int
+    selection_digest: str
+    launcher: Mapping[str, Any]
+    interpreter: Mapping[str, Any]
+    modules: tuple[Mapping[str, Any], ...]
+    plans: tuple[Mapping[str, Any], ...]
+    artifact_catalog: Mapping[str, Any]
+    artifact_store: Mapping[str, Any]
+    bootstrap_policies: tuple[Mapping[str, Any], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedRootBootstrapPolicy:
+    """Parsed policy bytes pinned by the installed selection catalog."""
+
+    artifact_id: str
+    sha256: str
+    plan_artifact_id: str
+    source_artifact_id: str
+    identity_policy: Mapping[str, Any]
+    root_policy: Mapping[str, Any]
+    authority_base_template: Mapping[str, Any]
+    service_record_templates: tuple[Mapping[str, Any], ...]
+    catalog_selections: Mapping[str, tuple[Mapping[str, Any], ...]]
+    receipt_binding_rules: tuple[Mapping[str, Any], ...]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootRuntimeArtifactReceipt:
+    """Opaque root-minted reference to one verified setup CAS object."""
+
+    role: str
+    artifact_id: str
+    sha256: str
+    generation: str
+    receipt_handle: str
+    size_bytes: int
+    _seal: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedInstallationBinding:
+    """Opaque session binding; never exposes service or journal paths."""
+
+    _session: "RootBootstrapSession" = field(repr=False)
+    _seal: str = field(repr=False)
+
+    def authorize_native_materialization(
+            self, *, enrollment_id: str, service_generation: str,
+            resource_profile_id: str) -> NativeMaterializationSelection:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentError("installation binding does not belong to its root setup session")
+        selected = self._session._authorize_native_materialization(
+            enrollment_id=enrollment_id, service_generation=service_generation,
+            resource_profile_id=resource_profile_id)
+        from .native_materialization import NativeMaterializationSelection
+        return NativeMaterializationSelection(
+            enrollment_id=selected.enrollment_id,
+            service_generation=selected.service_generation,
+            service_profile_id=selected.service_profile_id,
+            protected_enrollment_digest=selected.protected_enrollment_digest,
+            service_uid=selected.service_uid, service_gid=selected.service_gid,
+            home_root_id=selected.home_root_id, data_root_id=selected.data_root_id,
+            source_artifact_id=selected.source_artifact_id,
+            source_receipt_handle=selected.source_receipt_handle)
+
+    def resolve_private_roots(self, selection: Any) -> "_RootPrivateInstallationRoots":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentError("installation binding does not belong to its root setup session")
+        return self._session._resolve_private_installation_roots(selection)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _BoundNativeSelection:
+    enrollment_id: str
+    service_generation: str
+    service_profile_id: str
+    protected_enrollment_digest: str
+    service_uid: int
+    service_gid: int
+    home_root_id: str
+    data_root_id: str
+    source_artifact_id: str
+    source_receipt_handle: str
+    _session_id: str = field(repr=False)
+    _seal: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _RootPrivateInstallationRoots:
+    home_root: Path
+    data_root: Path
+    journal_root: Path
+    hermes_source_tree: Path
+
+
+@dataclass(frozen=True, slots=True)
+class RootSetupChoices:
+    """Root UI choices accepted by stage zero; no policy rows or paths."""
+
+    mode: str
+    target_account_name: str
+    selected_principal_binding_receipt_handle: str | None
+    selected_component_ids: tuple[str, ...]
+    owned_adoption_receipt_handles: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedIdentityPolicyTemplate:
+    artifact_id: str
+    sha256: str
+    policy_revision: str
+    identity_effect_authority: bool
+    identity_read_paths: tuple[str, ...]
+    max_identity_lease_seconds: int
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootInitialCompilationSession:
+    schema: int
+    phase: str
+    compilation_session_handle: str
+    compilation_transaction_handle: str
+    verified_release_receipt_handle: str
+    actor_observation_receipt_handle: str
+    plan_artifact_id: str
+    plan_sha256: str
+    closed_template_artifact_id: str
+    closed_template_sha256: str
+    choices_sha256: str
+    source_catalog_sha256: str
+    expected_predecessor_catalog_sha256: str | None
+    issued_monotonic: float
+    expires_monotonic: float
+    _choices: RootSetupChoices = field(repr=False)
+    _release: Any = field(repr=False)
+    _actor: Any = field(repr=False)
+    _root_journal_root: Mapping[str, Any] = field(repr=False)
+    _seal: str = field(repr=False)
+
+    @property
+    def principal_selection_receipt_handle(self) -> str | None:
+        return self._choices.selected_principal_binding_receipt_handle
+
+
+@dataclass(frozen=True, slots=True)
+class PendingInitialCompilation:
+    state: str
+    compilation_session: RootInitialCompilationSession
+    next_step: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class CompiledRootSetupPublication:
+    """One-use strict bytes produced from a stage-zero session and sealed facts."""
+
+    schema: int
+    policy_bytes: bytes
+    artifact_catalog_bytes: bytes
+    selection_document: Mapping[str, Any]
+    source_receipt_handles: tuple[str, ...]
+    _session: RootInitialCompilationSession = field(repr=False)
+    _seal: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _RootCompilerPublicationClaim:
+    publication_handle: str
+    session: RootInitialCompilationSession
+    transaction_handle: str
+    plan_artifact_id: str
+    plan_sha256: str
+    bootstrap_policy_artifact_id: str
+    bootstrap_policy_sha256: str
+    selection_catalog_sha256: str
+    release_commit: str
+    root_journal_root_id: str
+    observed_root_receipt_handle: str
+    policy_bytes: bytes
+    artifact_catalog_bytes: bytes
+    selection_document: Mapping[str, Any]
+    source_receipt_handles: tuple[str, ...]
+    template_artifact_id: str
+    template_sha256: str
+    choices_sha256: str
+    source_catalog_sha256: str
+    expected_predecessor_catalog_sha256: str | None
+    _seal: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootInitialPublicationHandoff:
+    schema: int
+    handoff_handle: str
+    compilation_session_handle: str
+    compilation_transaction_handle: str
+    publication_receipt_handle: str
+    publication_sha256: str
+    plan_sha256: str
+    choices_sha256: str
+    principal_selection_receipt_handle: str | None
+    artifact_receipt_handles: tuple[str, ...]
+    issued_monotonic: float
+    expires_monotonic: float
+    normal_setup_session_id: str | None = None
+    normal_transaction_handle: str | None = None
+    _publication_receipt: Any = field(default=None, repr=False)
+    _initial_session: RootInitialCompilationSession | None = field(default=None, repr=False)
+    _registry_seal: str = field(default="", repr=False)
+
+
+class InstalledBootstrapPolicyResolver:
+    """Resolve the strict extended selection and its exact deployed policy."""
+
+    def __init__(self, selection_path: Path = _SELECTION_PATH):
+        if not selection_path.is_absolute():
+            raise ValueError("installed root selection path must be absolute")
+        self.selection_path = selection_path
+        self._selection: _Selection | None = None
+        self._catalog: ArtifactCatalog | None = None
+        self._plans: dict[str, VerifiedRootSetupPlan] = {}
+        self._policies: dict[str, VerifiedRootBootstrapPolicy] = {}
+
+    @property
+    def catalog(self) -> ArtifactCatalog:
+        if self._catalog is None:
+            self._load_selection()
+        assert self._catalog is not None
+        return self._catalog
+
+    @property
+    def artifact_root(self) -> Path:
+        selection = self._load_selection()
+        journal = Path("/var/lib/hermes-installer/authority-journal")
+        if selection.artifact_store["journal_root_id"] != _JOURNAL_ID:
+            _fail("selected bootstrap artifact store names an unsupported journal root")
+        if (selection.artifact_store["root_id"] != _STORE_ID
+                or selection.artifact_store["relative_path"] != "bootstrap-artifacts"
+                or selection.artifact_store["owner_uid"] != 0
+                or selection.artifact_store["owner_gid"] != 0
+                or selection.artifact_store["mode"] != 0o700):
+            _fail("installed root selection has no fixed root-owned bootstrap artifact store")
+        return journal / "bootstrap-artifacts"
+
+    @property
+    def journal_root(self) -> Path:
+        selection = self._load_selection()
+        if selection.artifact_store["journal_root_id"] != _JOURNAL_ID:
+            _fail("installed root selection has no fixed authority journal root")
+        return Path("/var/lib/hermes-installer/authority-journal")
+
+    def resolve(self, artifact_id: str) -> VerifiedRootSetupPlan:
+        if artifact_id != _PLAN_ID:
+            _fail("root setup plan is not the fixed reviewed installer plan")
+        selection = self._load_selection()
+        if artifact_id in self._plans:
+            return self._plans[artifact_id]
+        plan_rows = [row for row in selection.plans if row["artifact_id"] == artifact_id]
+        if len(plan_rows) != 1:
+            _fail("fixed root setup plan is absent or ambiguous in the installed selection")
+        row = plan_rows[0]
+        root_fd = _open_immutable_release_root(selection.release_root,
+                                               selection.release_device,
+                                               selection.release_inode)
+        try:
+            launcher_path, launcher_sha = self._fixed_file(
+                selection.launcher, _LAUNCHER_ID, selection.release_root, root_fd)
+            interpreter_path, interpreter_sha = self._fixed_file(
+                selection.interpreter, _INTERPRETER_ID, selection.release_root, root_fd)
+            modules: list[tuple[str, Path, str]] = []
+            for module in selection.modules:
+                path = self._verified_relative(module, module["artifact_id"], selection.release_root, root_fd)
+                modules.append((module["module_name"], path, module["sha256"]))
+            plan_path = self._verified_relative(row, artifact_id, selection.release_root, root_fd)
+            del plan_path
+            plan = VerifiedRootSetupPlan(
+                artifact_id=artifact_id, digest=row["sha256"],
+                launcher_artifact_id=_LAUNCHER_ID, launcher_sha256=launcher_sha,
+                launcher_path=launcher_path, interpreter_path=interpreter_path,
+                interpreter_sha256=interpreter_sha, module_closure=tuple(modules),
+                allowed_artifact_ids=tuple(row["allowed_artifact_ids"]),
+            )
+        finally:
+            os.close(root_fd)
+        self._plans[artifact_id] = plan
+        return plan
+
+    def resolve_policy(self, plan_artifact_id: str) -> VerifiedRootBootstrapPolicy:
+        if plan_artifact_id != _PLAN_ID:
+            _fail("bootstrap policy requires the fixed selected root setup plan")
+        selection = self._load_selection()
+        if plan_artifact_id in self._policies:
+            return self._policies[plan_artifact_id]
+        plan_rows = [row for row in selection.plans if row["artifact_id"] == plan_artifact_id]
+        policy_rows = [row for row in selection.bootstrap_policies if row["artifact_id"] == _POLICY_ID]
+        if len(plan_rows) != 1 or len(policy_rows) != 1:
+            _fail("installed root selection lacks one selected bootstrap policy")
+        plan_row, policy_row = plan_rows[0], policy_rows[0]
+        if (plan_row.get("bootstrap_policy_artifact_id") != _POLICY_ID
+                or policy_row["relative_path"] != "plans/bootstrap-policy-v1.json"):
+            _fail("selected root plan does not join the fixed bootstrap policy source")
+        self.resolve(_PLAN_ID)
+        root_fd = self._open_policy_generation(selection)
+        try:
+            policy_path = self._verified_relative(policy_row, _POLICY_ID,
+                                                  selection.policy_root, root_fd)
+        finally:
+            os.close(root_fd)
+        raw = self._read_release_file(policy_path, maximum=2 * 1024 * 1024,
+                                      expected_sha256=policy_row["sha256"])
+        doc = self._json(raw, "installed bootstrap policy")
+        if raw != _canonical(doc, ensure_ascii=False):
+            _fail("installed bootstrap policy bytes are not canonical UTF-8 JSON")
+        policy = self._parse_policy(doc, policy_row["sha256"], plan_row, selection)
+        self._policies[plan_artifact_id] = policy
+        return policy
+
+    def _load_selection(self) -> _Selection:
+        if self._selection is not None:
+            return self._selection
+        if os.geteuid() != 0 or not self._linux():
+            _fail("installed root bootstrap selection is available only to the Linux root launcher")
+        raw = _read_secure_root_bytes(self.selection_path, 2 * 1024 * 1024, 0o600)
+        doc = self._json(raw, "installed root selection")
+        fields = {"schema", "selection_id", "installer_release_commit", "release_root", "policy_generation",
+                  "launcher", "interpreter", "module_closure", "plans", "catalog_sha256",
+                  "artifact_catalog", "artifact_store", "bootstrap_policies"}
+        if (set(doc) != fields or type(doc["schema"]) is not int or doc["schema"] != 1
+                or doc["selection_id"] != _SELECTION_ID
+                or not isinstance(doc["installer_release_commit"], str)
+                or not re.fullmatch(r"[0-9a-f]{40}", doc["installer_release_commit"])):
+            _fail("installed root setup selection has an unsupported strict schema")
+        digest = doc["catalog_sha256"]
+        _validate_sha256(digest, "root setup selection")
+        unsigned = {key: item for key, item in doc.items() if key != "catalog_sha256"}
+        if not secrets.compare_digest(hashlib.sha256(_canonical(unsigned, ensure_ascii=False)).hexdigest(), digest):
+            _fail("installed root setup selection catalog digest is invalid")
+        release = doc["release_root"]
+        if (not isinstance(release, dict)
+                or set(release) != {"root_id", "absolute_path", "device", "inode", "deployment_receipt_sha256"}
+                or not isinstance(release["root_id"], str) or not _GEN.fullmatch(release["root_id"])
+                or not isinstance(release["absolute_path"], str)
+                or not Path(release["absolute_path"]).is_absolute()
+                or type(release["device"]) is not int or release["device"] < 0
+                or type(release["inode"]) is not int or release["inode"] < 1):
+            _fail("installed root release custody identity is malformed")
+        _validate_sha256(release["deployment_receipt_sha256"], "release deployment receipt")
+        root = Path(release["absolute_path"])
+        generation = doc["policy_generation"]
+        generation_fields = {"id", "publication_sha256", "root_path", "device", "inode",
+                             "publication_receipt_handle"}
+        if (not isinstance(generation, dict) or set(generation) != generation_fields
+                or generation["id"] != "installer-bootstrap-policy-generation-v1"
+                or not isinstance(generation["publication_sha256"], str)
+                or not _SHA.fullmatch(generation["publication_sha256"])
+                or generation["root_path"] != str(Path("/var/lib/hermes-installer/policy-generations") /
+                                                   generation["publication_sha256"])
+                or type(generation["device"]) is not int or generation["device"] < 0
+                or type(generation["inode"]) is not int or generation["inode"] < 1
+                or not isinstance(generation["publication_receipt_handle"], str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", generation["publication_receipt_handle"])):
+            _fail("installed root policy-generation selection is malformed")
+        policy_root = Path(generation["root_path"])
+        policy_device, policy_inode = generation["device"], generation["inode"]
+        if (not isinstance(doc["module_closure"], list) or not doc["module_closure"]
+                or len(doc["module_closure"]) > 1024
+                or not isinstance(doc["plans"], list) or not 1 <= len(doc["plans"]) <= 16
+                or not isinstance(doc["bootstrap_policies"], list)
+                or not 1 <= len(doc["bootstrap_policies"]) <= 16):
+            _fail("installed root setup selection row bounds are invalid")
+        launcher = self._selection_row(doc["launcher"], {"artifact_id", "relative_path", "sha256"})
+        interpreter = self._selection_row(doc["interpreter"], {"artifact_id", "relative_path", "sha256"})
+        if launcher["artifact_id"] != _LAUNCHER_ID or interpreter["artifact_id"] != _INTERPRETER_ID:
+            _fail("installed launcher or interpreter has an unsupported fixed role")
+        modules = []
+        for row in doc["module_closure"]:
+            item = self._selection_row(row, {"module_name", "artifact_id", "relative_path", "sha256"})
+            if not isinstance(item["module_name"], str) or not re.fullmatch(
+                    r"[A-Za-z_][A-Za-z0-9_.]{0,191}", item["module_name"]):
+                _fail("installed root module closure contains an invalid module name")
+            modules.append(item)
+        plans = []
+        plan_fields = {"artifact_id", "relative_path", "sha256", "baseline_tag_object",
+                       "baseline_commit", "baseline_tree_sha256", "amendment_manifest_sha256",
+                       "allowed_artifact_ids", "bootstrap_policy_artifact_id"}
+        for row in doc["plans"]:
+            item = self._selection_row(row, plan_fields)
+            if (item["baseline_tag_object"] != "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8"
+                    or item["baseline_commit"] != "653ac5fbc7a02613c9951859a7d794599603459b"
+                    or not isinstance(item["allowed_artifact_ids"], list)
+                    or not item["allowed_artifact_ids"] or len(item["allowed_artifact_ids"]) > 256
+                    or len(set(item["allowed_artifact_ids"])) != len(item["allowed_artifact_ids"])):
+                _fail("installed root plan provenance or artifact allowlist is malformed")
+            for artifact in item["allowed_artifact_ids"]:
+                if not isinstance(artifact, str) or not _ID.fullmatch(artifact):
+                    _fail("selected plan artifact allowlist contains an invalid ID")
+            plans.append(item)
+        policies = []
+        for row in doc["bootstrap_policies"]:
+            policies.append(self._selection_row(row, {"artifact_id", "relative_path", "sha256"}))
+        if len({row["artifact_id"] for row in [launcher, interpreter, *modules, *plans, *policies]}) != 2 + len(modules) + len(plans) + len(policies):
+            _fail("installed root setup selection contains duplicate artifact IDs")
+        if len({row["relative_path"] for row in [launcher, interpreter, *modules, *plans, *policies]}) != 2 + len(modules) + len(plans) + len(policies):
+            _fail("installed root setup selection contains duplicate relative paths")
+        artifact_catalog = self._selection_row(doc["artifact_catalog"], {"artifact_id", "relative_path", "sha256"})
+        if (artifact_catalog["artifact_id"] != _CATALOG_ID
+                or artifact_catalog["relative_path"] != "catalog/artifacts.json"):
+            _fail("installed root artifact catalog is not the fixed selected catalog")
+        store = doc["artifact_store"]
+        store_fields = {"root_id", "journal_root_id", "relative_path", "owner_uid", "owner_gid", "mode"}
+        if not isinstance(store, dict) or set(store) != store_fields:
+            _fail("installed root bootstrap artifact store row is malformed")
+        self._load_catalog(policy_root, policy_device, policy_inode, artifact_catalog, tuple(plans))
+        self._selection = _Selection(doc["installer_release_commit"], root, release["root_id"],
+                                     release["deployment_receipt_sha256"],
+                                     release["device"], release["inode"],
+                                     generation, policy_root, policy_device, policy_inode,
+                                     digest, launcher, interpreter, tuple(modules), tuple(plans),
+                                     artifact_catalog, store, tuple(policies))
+        return self._selection
+
+    def _load_catalog(self, root: Path, device: int, inode: int,
+                      row: Mapping[str, Any], plans: tuple[Mapping[str, Any], ...]) -> None:
+        root_fd = self._open_policy_generation_path(root, device, inode)
+        try:
+            path = self._verified_relative(row, _CATALOG_ID, root, root_fd)
+        finally:
+            os.close(root_fd)
+        raw = self._read_release_file(path, maximum=16 * 1024 * 1024,
+                                      expected_sha256=row["sha256"])
+        if not secrets.compare_digest(hashlib.sha256(raw).hexdigest(), row["sha256"]):
+            _fail("installed artifact catalog bytes do not match the root selection pin")
+        try:
+            self._catalog = load_protected_catalog(path, expected_uid=0)
+        except Exception:
+            _fail("installed protected artifact catalog failed strict parsing")
+        for plan in plans:
+            if any(artifact_id not in self._catalog.artifacts for artifact_id in plan["allowed_artifact_ids"]):
+                _fail("selected root plan allows an artifact absent from the exact protected catalog")
+
+    @staticmethod
+    def _open_policy_generation(selection: _Selection) -> int:
+        return InstalledBootstrapPolicyResolver._open_policy_generation_path(
+            selection.policy_root, selection.policy_device, selection.policy_inode)
+
+    @staticmethod
+    def _open_policy_generation_path(path: Path, device: int, inode: int) -> int:
+        if (path.parent != Path("/var/lib/hermes-installer/policy-generations")
+                or not _SHA.fullmatch(path.name)):
+            _fail("selected policy generation path is not the fixed content-addressed location")
+        fd = _open_immutable_release_root(path, device, inode)
+        info = os.fstat(fd)
+        if info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o555:
+            os.close(fd)
+            _fail("selected policy generation is not sealed root-owned 0555 custody")
+        return fd
+
+    def _parse_policy(self, doc: Any, digest: str, plan_row: Mapping[str, Any],
+                      selection: _Selection) -> VerifiedRootBootstrapPolicy:
+        fields = {"schema", "id", "source_artifact_id", "identity_policy", "root_policy",
+                  "authority_base_template", "service_record_templates", "catalog_selections",
+                  "receipt_binding_rules"}
+        if (not isinstance(doc, dict) or set(doc) != fields or type(doc["schema"]) is not int
+                or doc["schema"] != 1 or doc["id"] != _POLICY_ID
+                or plan_row["bootstrap_policy_artifact_id"] != _POLICY_ID):
+            _fail("installed bootstrap policy document does not match the selected strict schema")
+        _validate_sha256(digest, "installed bootstrap policy")
+        source_id = doc["source_artifact_id"]
+        if source_id != HERMES_SOURCE_ARTIFACT_ID or source_id not in plan_row["allowed_artifact_ids"]:
+            _fail("bootstrap policy does not select the pinned official Hermes source")
+        identity_fields = {"service_profile_id", "principal_id", "service_account_name",
+                           "exclusive_group_name", "uid_allocation"}
+        identity = doc["identity_policy"]
+        if (not isinstance(identity, dict) or set(identity) != identity_fields
+                or any(not isinstance(identity[key], str) or not _ID.fullmatch(identity[key])
+                       for key in identity_fields)
+                or identity["uid_allocation"] != "root-dedicated-account"
+                or identity["service_account_name"] != identity["exclusive_group_name"]):
+            _fail("bootstrap service identity policy is incomplete or unsupported")
+        root_fields = {"journal_root_id", "service_home_root_id", "service_work_root_id",
+                       "service_data_root_id", "service_parent_root"}
+        roots = doc["root_policy"]
+        root_ids = ("journal_root_id", "service_home_root_id", "service_work_root_id", "service_data_root_id")
+        if (not isinstance(roots, dict) or set(roots) != root_fields
+                or any(not isinstance(roots[key], str) or not _ID.fullmatch(roots[key])
+                       for key in root_ids)
+                or len({roots[key] for key in root_ids}) != len(root_ids)
+                or roots["journal_root_id"] != _JOURNAL_ID
+                or roots["service_parent_root"] != _SERVICE_PARENT_ROOT):
+            _fail("bootstrap service root policy does not use the selected private root layout")
+        base = doc["authority_base_template"]
+        self._validate_authority_base_template(base)
+        templates = doc["service_record_templates"]
+        if not isinstance(templates, list) or not 1 <= len(templates) <= 64:
+            _fail("bootstrap service-record template list is empty or oversized")
+        normalized_templates = []
+        for row in templates:
+            if not isinstance(row, dict) or set(row) != {"id", "record", "receipt_bindings"}:
+                _fail("bootstrap service-record template envelope is malformed")
+            if not isinstance(row["id"], str) or not _ID.fullmatch(row["id"]):
+                _fail("bootstrap service-record template ID is malformed")
+            record = row["record"]
+            if not isinstance(record, dict):
+                _fail("bootstrap service-record template body is malformed")
+            if (record.get("profile_id") != identity["service_profile_id"]
+                    or record.get("principal_id") != identity["principal_id"]
+                    or record.get("service_user") != identity["service_account_name"]):
+                _fail("bootstrap service template does not join its selected identity policy")
+            bindings = row["receipt_bindings"]
+            if not isinstance(bindings, list) or len(bindings) > 256:
+                _fail("bootstrap receipt-binding list is malformed")
+            normalized = []
+            seen_paths: set[tuple[Any, ...]] = set()
+            for binding in bindings:
+                if not isinstance(binding, dict) or set(binding) != {"field_path", "receipt_role", "receipt_field"}:
+                    _fail("bootstrap receipt binding does not match the strict binding schema")
+                path = binding["field_path"]
+                if (not isinstance(path, list) or not path
+                        or any(type(part) not in {str, int} or type(part) is int and part < 0 for part in path)
+                        or not isinstance(binding["receipt_role"], str)
+                        or binding["receipt_role"] not in {
+                            "official-agent-source", "official-installer-script", "official-pm-lock",
+                            "official-pm-runtime", "native-launcher", "installed-agent-closure",
+                            "resources-source-bundle", "native-compiled-closure",
+                            "native-entrypoint-manifest", "native-action-resolver",
+                            "native-boundary-overlay", "native-health"}
+                        or not isinstance(binding["receipt_field"], str)
+                        or binding["receipt_field"] not in {"artifact_id", "sha256", "generation", "receipt_handle"}):
+                    _fail("bootstrap receipt binding role, path, or field is unsupported")
+                frozen_path = tuple(path)
+                if frozen_path in seen_paths:
+                    _fail("bootstrap receipt bindings target a duplicate field")
+                seen_paths.add(frozen_path)
+                normalized.append({**binding, "field_path": list(path)})
+            normalized_templates.append({"id": row["id"], "record": copy.deepcopy(record),
+                                         "receipt_bindings": tuple(normalized)})
+        selection_fields = {"protected_devices", "protected_build_records", "native_packages",
+                            "memory_enrollments", "operation_parameter_schemas", "source_issuers",
+                            "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
+                            "resource_body_recipes", "resource_scope_bindings", "resource_validators",
+                            "root_journal_roots"}
+        catalogs = doc["catalog_selections"]
+        if not isinstance(catalogs, dict) or set(catalogs) != selection_fields:
+            _fail("bootstrap catalog selections do not cover the exact enrollment schema")
+        clean_catalogs = {}
+        for name, rows in catalogs.items():
+            if not isinstance(rows, list) or len(rows) > 1024 or any(not isinstance(row, dict) for row in rows):
+                _fail("bootstrap catalog selection rows are malformed")
+            clean_catalogs[name] = tuple(copy.deepcopy(rows))
+        if any(clean_catalogs[name] for name in selection_fields - {"root_journal_roots"}):
+            # Nonempty secondary catalogs need their own exact nested-schema
+            # validator and selected policy receipts. The current bootstrap
+            # policy supports only the finite service profile and source set.
+            _fail("bootstrap policy requests an unimplemented protected catalog enrollment")
+        binding_rules = self._validate_receipt_binding_rules(
+            doc["receipt_binding_rules"], plan_row["allowed_artifact_ids"])
+        return VerifiedRootBootstrapPolicy(
+            artifact_id=_POLICY_ID, sha256=digest, plan_artifact_id=plan_row["artifact_id"],
+            source_artifact_id=source_id, identity_policy=dict(identity), root_policy=dict(roots),
+            authority_base_template=copy.deepcopy(base),
+            service_record_templates=tuple(normalized_templates),
+            catalog_selections=clean_catalogs, receipt_binding_rules=tuple(copy.deepcopy(binding_rules)),
+        )
+
+    @staticmethod
+    def _validate_receipt_binding_rules(value: Any,
+                                        allowed_plan_artifacts: list[str]) -> list[dict[str, Any]]:
+        """Validate the finite role/output/phase join before any receipt is used."""
+        roles = {
+            "official-agent-source", "official-installer-script", "official-pm-lock",
+            "official-pm-runtime", "resources-source-bundle", "native-compiled-closure",
+            "native-entrypoint-manifest", "native-action-resolver", "native-boundary-overlay",
+            "native-health",
+        }
+        outputs = {"source-archive", "compiled-closure", "entrypoint-json",
+                   "resolver-json", "boundary-overlay"}
+        phases = {"prepared-source", "runnable", "functional-health"}
+        if not isinstance(value, list) or len(value) > 256:
+            _fail("bootstrap receipt binding rules are malformed")
+        result: list[dict[str, Any]] = []
+        seen_roles: set[str] = set()
+        for row in value:
+            if not isinstance(row, dict) or set(row) != {
+                    "receipt_role", "allowed_artifact_ids", "allowed_output_kinds",
+                    "required_phase", "field_bindings"}:
+                _fail("bootstrap receipt binding rule has unknown or missing fields")
+            role = row["receipt_role"]
+            ids, kinds, phase, bindings = (row["allowed_artifact_ids"],
+                                           row["allowed_output_kinds"],
+                                           row["required_phase"], row["field_bindings"])
+            if (not isinstance(role, str) or role not in roles or role in seen_roles or not isinstance(ids, list)
+                    or not ids or len(ids) > 256
+                    or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in ids)
+                    or len(set(ids)) != len(ids)
+                    or not isinstance(kinds, list) or not kinds
+                    or any(not isinstance(item, str) or item not in outputs for item in kinds)
+                    or len(set(kinds)) != len(kinds)
+                    or not isinstance(phase, str) or phase not in phases
+                    or not isinstance(bindings, list) or len(bindings) > 256):
+                _fail("bootstrap receipt binding rule values are malformed")
+            if role in {"official-agent-source", "official-installer-script", "official-pm-lock",
+                        "official-pm-runtime", "resources-source-bundle"}:
+                if any(item not in allowed_plan_artifacts for item in ids):
+                    _fail("source receipt rule allows an artifact outside the selected plan")
+            if role == "native-health" and phase != "functional-health":
+                _fail("native health receipt can bind only functional-health fields")
+            if role != "native-health" and phase == "functional-health":
+                _fail("functional-health phase is reserved for native health receipts")
+            clean_bindings = []
+            for binding in bindings:
+                if (not isinstance(binding, dict)
+                        or set(binding) != {"field_path", "receipt_role", "receipt_field"}
+                        or binding["receipt_role"] != role
+                        or not isinstance(binding["field_path"], list) or not binding["field_path"]
+                        or any(type(part) not in {str, int} or type(part) is int and part < 0
+                               for part in binding["field_path"])
+                        or not isinstance(binding["receipt_field"], str)
+                        or binding["receipt_field"] not in {"artifact_id", "sha256", "generation", "receipt_handle"}):
+                    _fail("bootstrap receipt rule field binding is malformed or cross-role")
+                clean_bindings.append(copy.deepcopy(binding))
+            result.append({"receipt_role": role, "allowed_artifact_ids": list(ids),
+                           "allowed_output_kinds": list(kinds), "required_phase": phase,
+                           "field_bindings": clean_bindings})
+            seen_roles.add(role)
+        return result
+
+    @staticmethod
+    def _validate_authority_base_template(value: Any) -> None:
+        required = {"schema", "key_id", "principals", "rules", "authentik", "process_profiles",
+                    "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers",
+                    "native_bridges", "normalization_policies", "delegations", "service_generations"}
+        if (not isinstance(value, dict) or set(value) != required or type(value["schema"]) is not int
+                or value["schema"] != 1 or not isinstance(value["key_id"], str) or not value["key_id"]
+                or any(not isinstance(value[name], dict) for name in required - {"schema", "key_id"})):
+            _fail("bootstrap authority-base template does not match the protected authority schema")
+        if any(value[name] for name in ("principals", "rules", "process_profiles", "provider_enrollments",
+                                        "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges",
+                                        "normalization_policies", "delegations", "service_generations")):
+            _fail("bootstrap authority base cannot pre-enable services or worker authority")
+
+    @staticmethod
+    def _selection_row(value: Any, keys: set[str]) -> dict[str, Any]:
+        if not isinstance(value, dict) or set(value) != keys:
+            _fail("installed root selection row has unknown or missing fields")
+        if "artifact_id" in value and (not isinstance(value["artifact_id"], str) or not _ID.fullmatch(value["artifact_id"])):
+            _fail("installed root selection artifact ID is malformed")
+        if "sha256" in value:
+            _validate_sha256(value["sha256"], "installed root selection file")
+        if "relative_path" in value:
+            path = value["relative_path"]
+            if (not isinstance(path, str) or not path or path.startswith("/") or "\\" in path
+                    or any(part in {"", ".", ".."} for part in path.split("/"))):
+                _fail("installed root selection path is not normalized and relative")
+        return dict(value)
+
+    @classmethod
+    def _verified_relative(cls, row: Mapping[str, Any], artifact_id: str, root: Path, root_fd: int) -> Path:
+        if row.get("artifact_id") != artifact_id:
+            _fail("installed root selection row has the wrong fixed artifact role")
+        cls._selection_row(dict(row), set(row))
+        relative = row["relative_path"]
+        _verify_release_file_at(root_fd, relative, row["sha256"])
+        return root.joinpath(*relative.split("/"))
+
+    @classmethod
+    def _fixed_file(cls, row: Mapping[str, Any], artifact_id: str, root: Path, root_fd: int) -> tuple[Path, str]:
+        if set(row) != {"artifact_id", "relative_path", "sha256"}:
+            _fail("installed root launcher or interpreter row is malformed")
+        path = cls._verified_relative(row, artifact_id, root, root_fd)
+        info = path.stat(follow_symlinks=False)
+        if not info.st_mode & 0o111:
+            _fail("installed root launcher or interpreter is not executable")
+        return path, row["sha256"]
+
+    @staticmethod
+    def _read_release_file(path: Path, *, maximum: int,
+                           expected_sha256: str | None = None) -> bytes:
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                    or info.st_mode & 0o222 or info.st_size > maximum):
+                _fail("installed release artifact is not an immutable root-owned regular file")
+            chunks = []
+            total = 0
+            while True:
+                block = os.read(fd, min(131072, maximum + 1 - total))
+                if not block:
+                    break
+                chunks.append(block)
+                total += len(block)
+                if total > maximum:
+                    _fail("installed release artifact exceeds its read bound")
+            after = os.fstat(fd)
+            if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != (
+                    info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns):
+                _fail("installed release artifact changed during read")
+            raw = b"".join(chunks)
+            if (expected_sha256 is not None
+                    and not secrets.compare_digest(hashlib.sha256(raw).hexdigest(), expected_sha256)):
+                _fail("installed release bytes changed after the selected pin was verified")
+            return raw
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _json(raw: bytes, label: str) -> Any:
+        try:
+            return json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                              parse_constant=lambda _x: (_ for _ in ()).throw(ValueError()))
+        except (UnicodeError, json.JSONDecodeError, ValueError):
+            _fail(f"{label} is malformed JSON")
+
+    @staticmethod
+    def _linux() -> bool:
+        return os.name == "posix" and Path("/proc/sys/kernel/ostype").exists()
+
+
+class RootInitialCompilationRegistry:
+    """Issue root-local, short-lived stage-zero compilation contexts."""
+
+    def __init__(self, release: Any, actor: Any, root_journal: Path):
+        from .installer_release import RootActorObservation, VerifiedInstallerReleaseReceipt
+        if (not isinstance(release, VerifiedInstallerReleaseReceipt)
+                or not isinstance(actor, RootActorObservation)
+                or not isinstance(root_journal, Path) or not root_journal.is_absolute()
+                or root_journal != Path("/var/lib/hermes-installer/authority-journal")):
+            raise BootstrapEnrollmentPending("stage-zero compiler requires sealed release, actor and fixed journal")
+        if os.geteuid() != 0 or not InstalledBootstrapPolicyResolver._linux():
+            raise BootstrapEnrollmentPending("stage-zero compilation requires installed Linux root authority")
+        actor.verify_current(release)
+        self.release, self.actor, self.root_journal = release, actor, root_journal
+        _ensure_root_directory(root_journal)
+        self._journal_identity = _secure_directory_identity(root_journal)
+        self._actor_receipt_root = root_journal / "initial-compilation-actors"
+        _ensure_root_directory(self._actor_receipt_root)
+        self._seal = secrets.token_hex(32)
+        self._sessions: dict[str, RootInitialCompilationSession] = {}
+        self.actor_verifier = InstalledRootSetupActorVerifier()
+        self._publications: dict[str, tuple[RootInitialCompilationSession, CompiledRootSetupPublication,
+                                            str, bool]] = {}
+        self._handoffs: dict[str, Mapping[str, Any]] = {}
+        self._adopted_handoffs: dict[str, RootInitialPublicationHandoff] = {}
+        self._session_store: Any | None = None
+
+    @classmethod
+    def from_installed_release(cls, verified_release_receipt: Any,
+                               installed_actor_verifier: Any,
+                               root_journal: Path) -> "RootInitialCompilationRegistry":
+        return cls(verified_release_receipt, installed_actor_verifier, root_journal)
+
+    def begin_initial_compilation(self, explicit_choices: RootSetupChoices) -> RootInitialCompilationSession:
+        choices = self._validate_choices(explicit_choices)
+        if choices.mode != "install":
+            raise BootstrapEnrollmentPending("repair and resume require the currently installed root selection")
+        self._validate_release_closure()
+        now = time.monotonic()
+        session_handle = secrets.token_hex(32)
+        transaction_handle = secrets.token_hex(32)
+        release_handle = secrets.token_hex(32)
+        actor_handle = secrets.token_hex(32)
+        template, _template_bytes = self._release_file(_TEMPLATE_ID)
+        source_catalog, _catalog_bytes = self._release_file(_CATALOG_ID)
+        choice_body = {
+            "mode": choices.mode, "target_account_name": choices.target_account_name,
+            "selected_principal_binding_receipt_handle": choices.selected_principal_binding_receipt_handle,
+            "selected_component_ids": list(choices.selected_component_ids),
+            "owned_adoption_receipt_handles": list(choices.owned_adoption_receipt_handles),
+        }
+        session = RootInitialCompilationSession(
+            1, "initial-compilation", session_handle, transaction_handle, release_handle, actor_handle,
+            self.release.selected_plan_artifact_id, self.release.selected_plan_sha256,
+            _TEMPLATE_ID, template.sha256,
+            hashlib.sha256(_canonical(choice_body, ensure_ascii=False)).hexdigest(),
+            source_catalog.sha256, None, now, now + 300.0, choices,
+            self.release, self.actor, MappingProxyType(self._root_journal_row()), self._seal,
+        )
+        self._sessions[session_handle] = session
+        self._write_actor_receipt(session)
+        return session
+
+    def resolve_initial_session(self, compilation_session_handle: str) -> RootInitialCompilationSession:
+        if not isinstance(compilation_session_handle, str) or not re.fullmatch(r"[0-9a-f]{64}", compilation_session_handle):
+            raise BootstrapEnrollmentPending("stage-zero compilation session handle is malformed")
+        session = self._sessions.get(compilation_session_handle)
+        if session is None:
+            raise BootstrapEnrollmentPending("stage-zero compilation session is absent or belongs to another registry")
+        self.verify_initial_session(session)
+        return session
+
+    def resolve_setup_plan(self, session: RootInitialCompilationSession) -> VerifiedRootSetupPlan:
+        """Return the exact installed plan bound to a live stage-zero session."""
+        self.verify_initial_session(session)
+        files = {row.artifact_id: row for row in self.release.files}
+        launcher = files.get(_LAUNCHER_ID)
+        interpreter = files.get(_INTERPRETER_ID)
+        selected = files.get(session.plan_artifact_id)
+        modules = [row for row in self.release.files if "module" in row.roles]
+        if launcher is None or interpreter is None or selected is None or not modules:
+            raise BootstrapEnrollmentPending("installed release lacks the exact setup executable closure")
+        module_closure = []
+        for row in modules:
+            if not row.relative_path.startswith("src/") or not row.relative_path.endswith(".py"):
+                raise BootstrapEnrollmentPending("selected release module path is not importable source")
+            module_name = row.artifact_id.removeprefix("installer-module:")
+            if module_name == row.artifact_id:
+                raise BootstrapEnrollmentPending("installed module artifact has no canonical import identity")
+            module_closure.append((module_name, self.release.release_root / row.relative_path, row.sha256))
+        return VerifiedRootSetupPlan(
+            artifact_id=session.plan_artifact_id, digest=session.plan_sha256,
+            launcher_artifact_id=_LAUNCHER_ID, launcher_sha256=launcher.sha256,
+            launcher_path=self.release.release_root / launcher.relative_path,
+            interpreter_path=self.release.release_root / interpreter.relative_path,
+            interpreter_sha256=interpreter.sha256, module_closure=tuple(module_closure),
+            allowed_artifact_ids=tuple(self._allowed_plan_artifact_ids(session)))
+
+    def resolve_actor_plan(self, stage0_session_handle: str) -> VerifiedRootSetupPlan:
+        session = self.resolve_initial_session(stage0_session_handle)
+        return self.resolve_setup_plan(session)
+
+    def resolve_identity_policy_template(self, stage0_session_handle: str) -> VerifiedIdentityPolicyTemplate:
+        session = self.resolve_initial_session(stage0_session_handle)
+        descriptor, raw = self._release_file(_IDENTITY_TEMPLATE_ID)
+        value = self._json(raw, "selected Authentik identity policy template")
+        expected_paths = ("/api/v3/core/users/me/", "/api/v3/core/groups/{root_observed_group_id}/")
+        if (descriptor.relative_path != "templates/authentik-policy-template-v1.json"
+                or descriptor.sha256 != "617f78fc4a692de6a22dd69456fd92b874c9bc82e0869f3817910c953bd2ceb8"
+                or not isinstance(value, dict)
+                or set(value) != {"id", "identity_effect_authority", "identity_read_paths",
+                                  "max_identity_lease_seconds", "policy_revision", "schema"}
+                or value["id"] != _IDENTITY_TEMPLATE_ID or type(value["schema"]) is not int
+                or value["schema"] != 1
+                or value["identity_effect_authority"] is not False
+                or value["identity_read_paths"] != list(expected_paths)
+                or type(value["max_identity_lease_seconds"]) is not int
+                or value["max_identity_lease_seconds"] != 30
+                or value["policy_revision"] != "authentik-policy-v1"):
+            raise BootstrapEnrollmentPending("installed identity policy template differs from reviewed v49 bytes")
+        self.verify_initial_session(session)
+        return VerifiedIdentityPolicyTemplate(
+            _IDENTITY_TEMPLATE_ID, descriptor.sha256, value["policy_revision"],
+            False, expected_paths, 30)
+
+    def _allowed_plan_artifact_ids(self, session: RootInitialCompilationSession) -> tuple[str, ...]:
+        descriptor, raw = self._release_file(session.plan_artifact_id)
+        value = self._json(raw, "selected installer plan")
+        fields = {"schema", "id", "candidate_git_sha", "baseline_tag", "baseline_tag_object",
+                  "baseline_commit", "baseline_tree_sha256", "amendment_manifest_sha256",
+                  "allowed_artifact_ids", "bootstrap_policy_artifact_id", "template_artifact_ids",
+                  "initial_acceptance_ids"}
+        allowed = value.get("allowed_artifact_ids") if isinstance(value, dict) else None
+        expected_acceptance = [f"AC{number:02d}" for number in range(1, 19)]
+        if (not isinstance(value, dict) or set(value) != fields
+                or type(value.get("schema")) is not int or value.get("schema") != 1
+                or value.get("id") != session.plan_artifact_id
+                or value.get("candidate_git_sha") != self.release.release_commit
+                or value.get("baseline_tag") != "hermes-installer-plan-2026-10-09-v1"
+                or value.get("baseline_tag_object") != self.release.baseline_tag_object
+                or value.get("baseline_commit") != self.release.baseline_commit
+                or value.get("baseline_tree_sha256") != self.release.baseline_tree_sha256
+                or value.get("amendment_manifest_sha256") != self.release.amendment_manifest_sha256
+                or value.get("bootstrap_policy_artifact_id") != _POLICY_ID
+                or value.get("template_artifact_ids") != [_TEMPLATE_ID, _IDENTITY_TEMPLATE_ID]
+                or value.get("initial_acceptance_ids") != expected_acceptance
+                or not isinstance(allowed, list) or not 1 <= len(allowed) <= 4096
+                or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in allowed)
+                or allowed != sorted(set(allowed))):
+            raise BootstrapEnrollmentPending("selected installed plan has no exact allowlist")
+        catalog = self._json(self._release_file(_CATALOG_ID)[1], "installed artifact catalog")
+        if not isinstance(catalog, dict) or not isinstance(catalog.get("artifacts"), list):
+            raise BootstrapEnrollmentPending("selected release artifact catalog is malformed")
+        catalog_ids = {row.get("artifact_id") for row in catalog["artifacts"]
+                       if isinstance(row, dict) and isinstance(row.get("sha256"), str)
+                       and _SHA.fullmatch(row["sha256"])}
+        allowed_ids = tuple(allowed)
+        if (any(not isinstance(item, str) or not _ID.fullmatch(item) or item not in catalog_ids
+                for item in allowed_ids)
+                or allowed_ids != tuple(sorted(catalog_ids))):
+            raise BootstrapEnrollmentPending("selected plan allowlist does not join the installed artifact catalog")
+        return allowed_ids
+
+    def verify_initial_session(self, session: RootInitialCompilationSession) -> None:
+        if (not isinstance(session, RootInitialCompilationSession)
+                or session.phase != "initial-compilation"
+                or self._sessions.get(session.compilation_session_handle) is not session
+                or not secrets.compare_digest(session._seal, self._seal)
+                or session._release is not self.release or session._actor is not self.actor
+                or session.expires_monotonic <= time.monotonic()):
+            raise BootstrapEnrollmentPending("stage-zero compilation context is stale or belongs to another root registry")
+        parent_info = os.stat(_SELECTION_PATH.parent, follow_symlinks=False)
+        if (stat.S_ISLNK(parent_info.st_mode) or not stat.S_ISDIR(parent_info.st_mode)
+                or parent_info.st_uid != 0):
+            raise BootstrapEnrollmentPending("initial root selection parent is not a root-owned directory")
+        try:
+            selection_info = os.stat(_SELECTION_PATH, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISLNK(selection_info.st_mode) or not stat.S_ISREG(selection_info.st_mode):
+                raise BootstrapEnrollmentPending("unexpected root selection object blocks initial setup")
+            raise BootstrapEnrollmentPending("initial setup requires verified absence of an existing root selection")
+        self.actor.verify_current(self.release)
+        self._validate_release_closure()
+        actor_receipt = _read_secure_root_bytes(
+            self._actor_receipt_root / f"{session.actor_observation_receipt_handle}.json", 64 * 1024, 0o600)
+        if self._json(actor_receipt, "stage-zero actor observation") != self._actor_receipt_document(session):
+            raise BootstrapEnrollmentPending("stage-zero actor observation journal receipt changed")
+        current = _secure_directory_identity(self.root_journal)
+        if (current.st_dev, current.st_ino) != (session._root_journal_root["device"],
+                                                session._root_journal_root["inode"]):
+            raise BootstrapEnrollmentPending("stage-zero root authority journal identity changed")
+
+    def _actor_receipt_document(self, session: RootInitialCompilationSession) -> dict[str, Any]:
+        actor = self.actor
+        actor_closure = {
+            "launcher": list(actor.launcher), "interpreter": list(actor.interpreter),
+            "module_origins": [list(row) for row in actor.module_origins],
+            "namespace_inodes": [list(row) for row in actor.namespace_inodes],
+            "isolated_import_facts": list(actor.isolated_import_facts),
+        }
+        return {
+            "schema": 1, "receipt_handle": session.actor_observation_receipt_handle,
+            "phase": "initial-compilation", "compilation_session_handle": session.compilation_session_handle,
+            "compilation_transaction_handle": session.compilation_transaction_handle,
+            "release_commit": self.release.release_commit,
+            "deployment_receipt_sha256": self.release.deployment_receipt_sha256,
+            "plan_artifact_id": session.plan_artifact_id, "plan_sha256": session.plan_sha256,
+            "template_artifact_id": session.closed_template_artifact_id,
+            "template_sha256": session.closed_template_sha256,
+            "source_catalog_sha256": session.source_catalog_sha256,
+            "actor_pid": actor.pid, "actor_uid": actor.uid, "actor_gid": actor.gid,
+            "actor_start_time": actor.start_time,
+            "actor_closure_sha256": hashlib.sha256(_canonical(actor_closure, ensure_ascii=False)).hexdigest(),
+            "journal_root": dict(session._root_journal_root),
+            "issued_monotonic": session.issued_monotonic,
+            "expires_monotonic": session.expires_monotonic,
+        }
+
+    def _write_actor_receipt(self, session: RootInitialCompilationSession) -> None:
+        _atomic_root_file(
+            self._actor_receipt_root / f"{session.actor_observation_receipt_handle}.json",
+            _canonical(self._actor_receipt_document(session), ensure_ascii=False), 0o600)
+
+    def store_compilation(self, session: RootInitialCompilationSession,
+                          compiled: CompiledRootSetupPublication) -> str:
+        """Store compiler bytes behind a root-only one-use publication handle."""
+        self.verify_initial_session(session)
+        if (not isinstance(compiled, CompiledRootSetupPublication) or compiled.schema != 1
+                or compiled._session is not session
+                or not secrets.compare_digest(compiled._seal, self._seal)
+                or not isinstance(compiled.policy_bytes, bytes)
+                or not isinstance(compiled.artifact_catalog_bytes, bytes)
+                or not isinstance(compiled.selection_document, Mapping)
+                or not isinstance(compiled.source_receipt_handles, tuple)):
+            raise BootstrapEnrollmentError("compiled publication is not owned by this stage-zero compiler")
+        document = dict(compiled.selection_document)
+        fields = {"schema", "selection_id", "installer_release_commit", "release_root", "launcher",
+                  "interpreter", "module_closure", "plans", "catalog_sha256", "artifact_catalog",
+                  "artifact_store", "bootstrap_policies"}
+        if set(document) != fields or document.get("schema") != 1 or document.get("selection_id") != _SELECTION_ID:
+            raise BootstrapEnrollmentError("compiled root selection has unknown or missing fields")
+        if (document.get("installer_release_commit") != self.release.release_commit
+                or document.get("release_root", {}).get("absolute_path") != str(self.release.release_root)
+                or document.get("release_root", {}).get("device") != self.release.root_device
+                or document.get("release_root", {}).get("inode") != self.release.root_inode
+                or document.get("release_root", {}).get("deployment_receipt_sha256")
+                   != self.release.deployment_receipt_sha256):
+            raise BootstrapEnrollmentError("compiled selection does not bind the current sealed release")
+        plan_rows = document.get("plans")
+        if not isinstance(plan_rows, list) or len(plan_rows) != 1 or not isinstance(plan_rows[0], dict):
+            raise BootstrapEnrollmentError("compiled selection must contain only its verified setup plan")
+        plan = plan_rows[0]
+        plan_file = next((row for row in self.release.files
+                          if row.artifact_id == session.plan_artifact_id), None)
+        plan_fields = {"artifact_id", "relative_path", "sha256", "baseline_tag_object", "baseline_commit",
+                       "baseline_tree_sha256", "amendment_manifest_sha256", "allowed_artifact_ids",
+                       "bootstrap_policy_artifact_id"}
+        expected_allowed = self._allowed_plan_artifact_ids(session)
+        if (plan_file is None or set(plan) != plan_fields or plan["artifact_id"] != session.plan_artifact_id
+                or plan["relative_path"] != plan_file.relative_path
+                or plan["sha256"] != session.plan_sha256 or plan["bootstrap_policy_artifact_id"] != _POLICY_ID
+                or plan["baseline_tag_object"] != self.release.baseline_tag_object
+                or plan["baseline_commit"] != self.release.baseline_commit
+                or plan["baseline_tree_sha256"] != self.release.baseline_tree_sha256
+                or plan["amendment_manifest_sha256"] != self.release.amendment_manifest_sha256
+                or plan["allowed_artifact_ids"] != list(expected_allowed)):
+            raise BootstrapEnrollmentError("compiled root plan does not exactly join its selected release")
+        policy_sha = hashlib.sha256(compiled.policy_bytes).hexdigest()
+        policy_rows = document.get("bootstrap_policies")
+        if (not isinstance(policy_rows, list) or len(policy_rows) != 1
+                or policy_rows[0] != {"artifact_id": _POLICY_ID,
+                                      "relative_path": "plans/bootstrap-policy-v1.json",
+                                      "sha256": policy_sha}):
+            raise BootstrapEnrollmentError("compiled selection does not pin the exact policy bytes")
+        source_catalog = self._json(self._release_file(_CATALOG_ID)[1], "installed artifact catalog")
+        if (not isinstance(source_catalog, dict) or set(source_catalog) != {"schema", "artifacts", "packages"}
+                or source_catalog.get("schema") != 1 or not isinstance(source_catalog.get("artifacts"), list)):
+            raise BootstrapEnrollmentError("selected release artifact catalog is malformed")
+        allowed_catalog_ids = {row.get("artifact_id") for row in source_catalog["artifacts"]
+                               if isinstance(row, dict)}
+        if (not plan["allowed_artifact_ids"]
+                or any(item not in allowed_catalog_ids for item in plan["allowed_artifact_ids"])):
+            raise BootstrapEnrollmentError("compiled plan allowlist does not join the installed artifact catalog")
+        selection_digest = document.get("catalog_sha256")
+        unsigned = {key: value for key, value in document.items() if key != "catalog_sha256"}
+        if (not isinstance(selection_digest, str) or not _SHA.fullmatch(selection_digest)
+                or hashlib.sha256(_canonical(unsigned, ensure_ascii=False)).hexdigest() != selection_digest):
+            raise BootstrapEnrollmentError("compiled selection catalog digest is invalid")
+        if any(not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
+               for handle in compiled.source_receipt_handles):
+            raise BootstrapEnrollmentError("compiled source receipt handle is malformed")
+        handle = secrets.token_hex(32)
+        self._publications[handle] = (session, compiled, selection_digest, False)
+        return handle
+
+    def claim_compilation(self, publication_handle: str,
+                          expected_selection_catalog_sha256: str | None) -> _RootCompilerPublicationClaim:
+        row = self._publications.get(publication_handle)
+        if row is None or row[3]:
+            raise BootstrapEnrollmentPending("compiler publication handle is absent or already claimed")
+        session, compiled, digest, _claimed = row
+        self.verify_initial_session(session)
+        if expected_selection_catalog_sha256 is not None and not _SHA.fullmatch(expected_selection_catalog_sha256):
+            raise BootstrapEnrollmentError("publication predecessor catalog digest is malformed")
+        if expected_selection_catalog_sha256 != session.expected_predecessor_catalog_sha256:
+            raise BootstrapEnrollmentError("publication predecessor differs from the stage-zero observed selection")
+        self._publications[publication_handle] = (session, compiled, digest, True)
+        policy = self._json(compiled.policy_bytes, "compiled bootstrap policy")
+        if not isinstance(policy, dict) or policy.get("id") != _POLICY_ID:
+            raise BootstrapEnrollmentError("compiler bytes are not the fixed bootstrap policy document")
+        plan = dict(compiled.selection_document["plans"][0])
+        return _RootCompilerPublicationClaim(
+            publication_handle, session, session.compilation_transaction_handle,
+            session.plan_artifact_id, session.plan_sha256, _POLICY_ID,
+            hashlib.sha256(compiled.policy_bytes).hexdigest(), digest, self.release.release_commit,
+            _JOURNAL_ID, session.actor_observation_receipt_handle, compiled.policy_bytes,
+            compiled.artifact_catalog_bytes, copy.deepcopy(dict(compiled.selection_document)),
+            compiled.source_receipt_handles, session.closed_template_artifact_id,
+            session.closed_template_sha256, session.choices_sha256, session.source_catalog_sha256,
+            expected_selection_catalog_sha256, self._seal,
+        )
+
+    def verify_current_compilation(self, claim: _RootCompilerPublicationClaim) -> None:
+        if (not isinstance(claim, _RootCompilerPublicationClaim)
+                or not secrets.compare_digest(claim._seal, self._seal)):
+            raise BootstrapEnrollmentError("compiler claim is not owned by this root registry")
+        self.verify_initial_session(claim.session)
+        row = self._publications.get(claim.publication_handle)
+        if row is None or row[0] is not claim.session or not row[3]:
+            raise BootstrapEnrollmentPending("compiler publication claim is stale")
+
+    def release_compilation(self, publication_handle: str) -> None:
+        row = self._publications.get(publication_handle)
+        if row is not None and row[3]:
+            self._publications[publication_handle] = (*row[:3], False)
+
+    def complete_publication(self, receipt: Any) -> str:
+        from .setup_policy_publication import RootSetupPublicationReceipt
+        if not isinstance(receipt, RootSetupPublicationReceipt):
+            raise BootstrapEnrollmentError("initial publication requires a publisher-minted receipt")
+        matches = [(handle, row) for handle, row in self._publications.items()
+                   if row[0].compilation_transaction_handle == receipt.transaction_handle and row[3]]
+        if len(matches) != 1:
+            raise BootstrapEnrollmentPending("publication receipt does not join one current compiler claim")
+        publication_handle, (session, compiled, _digest, _claimed) = matches[0]
+        self.verify_initial_session(session)
+        if (receipt.transaction_handle != session.compilation_transaction_handle
+                or receipt.policy_sha256 != hashlib.sha256(compiled.policy_bytes).hexdigest()
+                or receipt.artifact_catalog_sha256 != hashlib.sha256(compiled.artifact_catalog_bytes).hexdigest()
+                or receipt.input_receipt_handles != (session.actor_observation_receipt_handle,
+                                                     *compiled.source_receipt_handles)
+                or receipt.previous_selection_catalog_sha256 is not None
+                or receipt.state != "prepared"):
+            raise BootstrapEnrollmentPending("publication receipt does not bind the exact compiled generation")
+        handoff_handle = secrets.token_hex(32)
+        handoff = RootInitialPublicationHandoff(
+            1, handoff_handle, session.compilation_session_handle,
+            session.compilation_transaction_handle, receipt.receipt_handle,
+            receipt.publication_sha256, session.plan_sha256, session.choices_sha256,
+            session._choices.selected_principal_binding_receipt_handle,
+            compiled.source_receipt_handles, time.monotonic(), session.expires_monotonic,
+            _publication_receipt=receipt, _initial_session=session, _registry_seal=self._seal)
+        self._handoffs[handoff_handle] = {"publication_receipt": receipt,
+                                         "publication_receipt_handle": receipt.receipt_handle,
+                                         "session": session,
+                                         "typed": handoff,
+                                         "compilation_session_handle": session.compilation_session_handle,
+                                         "compilation_transaction_handle": session.compilation_transaction_handle,
+                                         "plan_sha256": session.plan_sha256,
+                                         "choices_sha256": session.choices_sha256,
+                                         "principal_selection_receipt_handle":
+                                             session._choices.selected_principal_binding_receipt_handle,
+                                         "artifact_receipt_handles": compiled.source_receipt_handles}
+        self._publications.pop(publication_handle, None)
+        self._sessions.pop(session.compilation_session_handle, None)
+        return handoff_handle
+
+    def finish_publication(self, receipt: Any) -> str:
+        return self.complete_publication(receipt)
+
+    def resolve_handoff_for_receipt(self, publication_receipt_handle: str) -> str:
+        if not isinstance(publication_receipt_handle, str) or not _ID.fullmatch(publication_receipt_handle):
+            raise BootstrapEnrollmentError("publication receipt handle is malformed")
+        matches = [handle for handle, row in self._handoffs.items()
+                   if row["publication_receipt_handle"] == publication_receipt_handle]
+        if len(matches) != 1:
+            raise BootstrapEnrollmentPending("initial publication handoff is absent or already adopted")
+        handle = matches[0]
+        row = self._handoffs[handle]
+        session = row["session"]
+        if session.expires_monotonic <= time.monotonic():
+            self._handoffs.pop(handle, None)
+            raise BootstrapEnrollmentPending("initial publication handoff expired")
+        self.actor.verify_current(self.release)
+        receipt = row["publication_receipt"]
+        try:
+            current = _read_secure_root_bytes(_SELECTION_PATH, 2 * 1024 * 1024, 0o600)
+            document = InstalledBootstrapPolicyResolver._json(current, "published root selection")
+        except (OSError, BootstrapEnrollmentPending):
+            raise BootstrapEnrollmentPending("initial publication selection is not currently installed") from None
+        generation = document.get("policy_generation") if isinstance(document, dict) else None
+        if (not isinstance(generation, dict)
+                or generation.get("publication_sha256") != receipt.publication_sha256
+                or document.get("catalog_sha256") != receipt.current_selection_catalog_sha256):
+            raise BootstrapEnrollmentPending("initial publication is not the currently selected root generation")
+        return handle
+
+    def resolve_handoff(self, handoff_handle: str) -> RootInitialPublicationHandoff:
+        row = self._handoffs.get(handoff_handle)
+        if row is None:
+            raise BootstrapEnrollmentPending("initial publication handoff is absent or already adopted")
+        typed = row["typed"]
+        if (not isinstance(typed, RootInitialPublicationHandoff)
+                or not secrets.compare_digest(typed._registry_seal, self._seal)
+                or typed.expires_monotonic <= time.monotonic()):
+            raise BootstrapEnrollmentPending("initial publication handoff is expired or unsealed")
+        self.resolve_handoff_for_receipt(typed.publication_receipt_handle)
+        return typed
+
+    def adopt_handoff(self, handoff_handle: str, normal_session_handle: RootSetupSessionHandle,
+                      session_store: RootSetupSessionStore) -> RootInitialPublicationHandoff:
+        from .bootstrap_enrollment import RootSetupSessionStore as StoreType
+        if not isinstance(session_store, StoreType):
+            raise BootstrapEnrollmentError("initial handoff requires the concrete installed root session store")
+        handoff = self.resolve_handoff(handoff_handle)
+        live = session_store._live(normal_session_handle)
+        authorization = session_store._proof(live)
+        initial = handoff._initial_session
+        if (initial is None or authorization.plan_artifact_id != initial.plan_artifact_id
+                or authorization.plan_digest != initial.plan_sha256
+                or authorization.mode != initial._choices.mode):
+            raise BootstrapEnrollmentPending("new setup session does not join the exact stage-zero handoff")
+        if self._session_store is not None and self._session_store is not session_store:
+            raise BootstrapEnrollmentError("handoff registry is already bound to another root setup store")
+        self._session_store = session_store
+        adopted = RootInitialPublicationHandoff(
+            handoff.schema, handoff.handoff_handle, handoff.compilation_session_handle,
+            handoff.compilation_transaction_handle, handoff.publication_receipt_handle,
+            handoff.publication_sha256, handoff.plan_sha256, handoff.choices_sha256,
+            handoff.principal_selection_receipt_handle, handoff.artifact_receipt_handles,
+            handoff.issued_monotonic, handoff.expires_monotonic,
+            normal_session_handle.session_id, authorization.transaction_handle,
+            handoff._publication_receipt, initial, self._seal)
+        self._handoffs.pop(handoff_handle, None)
+        self._adopted_handoffs[normal_session_handle.session_id] = adopted
+        return adopted
+
+    def resolve_adopted_handoff(self, normal_session_handle: RootSetupSessionHandle) -> RootInitialPublicationHandoff:
+        if self._session_store is None:
+            raise BootstrapEnrollmentPending("no root setup handoff has been adopted")
+        live = self._session_store._live(normal_session_handle)
+        authorization = self._session_store._proof(live)
+        adopted = self._adopted_handoffs.get(normal_session_handle.session_id)
+        if (adopted is None or adopted.normal_transaction_handle != authorization.transaction_handle
+                or adopted.normal_setup_session_id != normal_session_handle.session_id
+                or adopted.expires_monotonic <= time.monotonic()
+                or not secrets.compare_digest(adopted._registry_seal, self._seal)):
+            raise BootstrapEnrollmentPending("normal setup session has no current adopted initial handoff")
+        self.actor.verify_current(self.release)
+        return adopted
+
+    def _root_journal_row(self) -> Mapping[str, Any]:
+        info = _secure_directory_identity(self.root_journal)
+        return {
+            "root_id": _JOURNAL_ID, "absolute_path": str(self.root_journal),
+            "owner_uid": 0, "owner_gid": 0, "mode": 0o700,
+            "device": info.st_dev, "inode": info.st_ino,
+            "generation": f"journal-{info.st_dev:x}-{info.st_ino:x}",
+            "purpose": "authority-journal",
+        }
+
+    def _validate_release_closure(self) -> None:
+        from .installer_release import InstallerReleaseError
+        try:
+            self.actor.verify_current(self.release)
+            files = {row.artifact_id: row for row in self.release.files}
+            required_ids = (_LAUNCHER_ID, _INTERPRETER_ID, _PLAN_ID, _CATALOG_ID,
+                            _PLAN_TEMPLATE_ID,
+                            _TEMPLATE_ID, _IDENTITY_TEMPLATE_ID)
+            if any(artifact_id not in files for artifact_id in required_ids):
+                raise BootstrapEnrollmentPending("installed release closure is missing a fixed setup input")
+            template = files[_TEMPLATE_ID]
+            identity_template = files[_IDENTITY_TEMPLATE_ID]
+            plan_template = files[_PLAN_TEMPLATE_ID]
+            plan = files[self.release.selected_plan_artifact_id]
+            catalog = files[_CATALOG_ID]
+            if (template.sha256 != "27854f8f8c67ce42832f020dbfd96512607e39576b27e484598ff397cb9432e5"
+                    or template.relative_path != "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json"
+                    or plan.sha256 != self.release.selected_plan_sha256
+                    or "plan" not in plan.roles or "artifact-catalog" not in catalog.roles):
+                raise BootstrapEnrollmentPending("installed release does not include the exact selected compiler inputs")
+            if (identity_template.sha256 != "617f78fc4a692de6a22dd69456fd92b874c9bc82e0869f3817910c953bd2ceb8"
+                    or identity_template.relative_path != "templates/authentik-policy-template-v1.json"):
+                raise BootstrapEnrollmentPending("installed release lacks the exact selected identity-policy template")
+            if (plan_template.sha256 != "9f96befca8dba54a8251df80ccbed236809e9affbf1116efed42e06a7b92ac31"
+                    or plan_template.relative_path != "templates/root-setup-plan-template-v1.json"
+                    or "template" not in plan_template.roles):
+                raise BootstrapEnrollmentPending("installed release lacks the exact v53 setup-plan template")
+        except InstallerReleaseError:
+            raise BootstrapEnrollmentPending("installed release or root actor changed during stage-zero compilation") from None
+
+    def _release_file(self, artifact_id: str) -> Any:
+        self._validate_release_closure()
+        descriptor = {row.artifact_id: row for row in self.release.files}.get(artifact_id)
+        if descriptor is None:
+            raise BootstrapEnrollmentPending("required compiler artifact is absent from the installed release")
+        fd = self.release.open_file(artifact_id)
+        try:
+            info = os.fstat(fd)
+            if info.st_size != descriptor.size_bytes or not stat.S_ISREG(info.st_mode):
+                raise BootstrapEnrollmentPending("installed compiler input is not the selected regular file")
+            raw = bytearray()
+            while len(raw) <= 16 * 1024 * 1024:
+                block = os.read(fd, min(131072, 16 * 1024 * 1024 + 1 - len(raw)))
+                if not block:
+                    break
+                raw.extend(block)
+            if len(raw) != descriptor.size_bytes or hashlib.sha256(raw).hexdigest() != descriptor.sha256:
+                raise BootstrapEnrollmentPending("installed compiler input bytes differ from release receipt")
+            return descriptor, bytes(raw)
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _validate_choices(value: Any) -> RootSetupChoices:
+        if not isinstance(value, RootSetupChoices):
+            raise BootstrapEnrollmentError("stage-zero setup choices must use the fixed typed schema")
+        if (value.mode not in {"install", "repair", "resume"}
+                or not isinstance(value.target_account_name, str)
+                or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", value.target_account_name)):
+            raise BootstrapEnrollmentError("stage-zero mode or target account choice is malformed")
+        try:
+            account = pwd.getpwnam(value.target_account_name)
+        except KeyError:
+            raise BootstrapEnrollmentPending("selected local target account does not exist") from None
+        if account.pw_uid <= 0 or account.pw_gid <= 0:
+            raise BootstrapEnrollmentError("stage-zero setup cannot target root")
+        principal = value.selected_principal_binding_receipt_handle
+        if principal is not None and (not isinstance(principal, str)
+                                      or not re.fullmatch(r"[0-9a-f]{64}", principal)):
+            raise BootstrapEnrollmentError("selected principal receipt handle is malformed")
+        if (not isinstance(value.selected_component_ids, tuple) or len(value.selected_component_ids) > 256
+                or any(not isinstance(item, str) or not _ID.fullmatch(item)
+                       for item in value.selected_component_ids)
+                or len(set(value.selected_component_ids)) != len(value.selected_component_ids)
+                or not isinstance(value.owned_adoption_receipt_handles, tuple)
+                or len(value.owned_adoption_receipt_handles) > 256
+                or any(not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", item)
+                       for item in value.owned_adoption_receipt_handles)
+                or len(set(value.owned_adoption_receipt_handles)) != len(value.owned_adoption_receipt_handles)):
+            raise BootstrapEnrollmentError("stage-zero selected component or adoption references are malformed")
+        return value
+
+
+class RootSetupPolicyFactory:
+    """Construct prepared and runnable EnrollmentPolicy values from pinned bytes."""
+
+    def __init__(self, resolver: InstalledBootstrapPolicyResolver):
+        self.resolver = resolver
+
+    def prepare(self, authorization: VerifiedRootSetupAuthorization) -> EnrollmentPolicy:
+        policy = self.resolver.resolve_policy(authorization.plan_artifact_id)
+        roots = policy.root_policy
+        parent = Path(roots["service_parent_root"])
+        self._root_journal_join(authorization)
+        return EnrollmentPolicy(
+            service_profile_id=policy.identity_policy["service_profile_id"],
+            principal_id=policy.identity_policy["principal_id"],
+            generation_id="prepared-" + secrets.token_hex(16),
+            source_artifact_id=policy.source_artifact_id,
+            records=(), activation_state="prepared",
+            authority_base=copy.deepcopy(policy.authority_base_template),
+            home_root=parent / "home", work_root=parent / "work", data_root=parent / "data",
+            root_journal_roots=(dict(authorization.root_journal_root),),
+        )
+
+    def activate_runnable(self, authorization: VerifiedRootSetupAuthorization,
+                          identity: ServiceIdentity,
+                          receipts: Mapping[str, RootRuntimeArtifactReceipt], *,
+                          seal: str) -> EnrollmentPolicy:
+        policy = self.resolver.resolve_policy(authorization.plan_artifact_id)
+        self._root_journal_join(authorization)
+        if not receipts:
+            _fail("runnable activation requires actual root-resolved runtime and launcher receipts")
+        rows = []
+        generation = "active-" + secrets.token_hex(16)
+        parent = Path(policy.root_policy["service_parent_root"])
+        roots = (parent / "home", parent / "work", parent / "data")
+        for template in policy.service_record_templates:
+            record = copy.deepcopy(template["record"])
+            record["generation"] = generation
+            record["service_uid"] = identity.uid
+            record["service_gid"] = identity.gid
+            record["service_user"] = identity.name
+            record["roots"] = {
+                "home_id": policy.root_policy["service_home_root_id"],
+                "work_id": policy.root_policy["service_work_root_id"],
+                "data_id": policy.root_policy["service_data_root_id"],
+                "home": str(roots[0]), "work": str(roots[1]), "data": str(roots[2]),
+            }
+            for binding in template["receipt_bindings"]:
+                role = binding["receipt_role"]
+                receipt = receipts.get(role)
+                rule = next((item for item in policy.receipt_binding_rules
+                             if item["receipt_role"] == role), None)
+                if (rule is None or rule["required_phase"] != "runnable"
+                        or not isinstance(receipt, RootRuntimeArtifactReceipt)
+                        or not secrets.compare_digest(receipt._seal, seal)
+                        or receipt.role != role or not _ID.fullmatch(receipt.artifact_id)
+                        or receipt.artifact_id not in rule["allowed_artifact_ids"]
+                        or not _SHA.fullmatch(receipt.sha256)
+                        or receipt.generation != authorization.transaction_handle):
+                    _fail(f"required root runtime receipt for {role} is absent or not transaction-bound")
+                value = getattr(receipt, binding["receipt_field"])
+                self._set_template_field(record, binding["field_path"], value)
+            rows.append(record)
+        selection = policy.catalog_selections
+        return EnrollmentPolicy(
+            service_profile_id=policy.identity_policy["service_profile_id"],
+            principal_id=policy.identity_policy["principal_id"],
+            generation_id=generation, source_artifact_id=policy.source_artifact_id,
+            records=tuple(rows),
+            protected_devices=selection["protected_devices"],
+            protected_build_records=selection["protected_build_records"],
+            native_packages=selection["native_packages"],
+            memory_enrollments=selection["memory_enrollments"],
+            operation_parameter_schemas=selection["operation_parameter_schemas"],
+            source_issuers=selection["source_issuers"], resource_jobs=selection["resource_jobs"],
+            remote_session_enrollments=selection["remote_session_enrollments"],
+            resource_backend_enrollments=selection["resource_backend_enrollments"],
+            resource_body_recipes=selection["resource_body_recipes"],
+            resource_scope_bindings=selection["resource_scope_bindings"],
+            resource_validators=selection["resource_validators"],
+            root_journal_roots=(dict(authorization.root_journal_root),), activation_state="active",
+            authority_base=copy.deepcopy(policy.authority_base_template),
+            home_root=roots[0], work_root=roots[1], data_root=roots[2],
+        )
+
+    @staticmethod
+    def record_functional_health(_active_receipt: EnrollmentReceipt, _health_receipt: Any) -> None:
+        # Functional enablement is intentionally delegated to the lifecycle's
+        # root health-receipt journal consumer; this factory never turns a
+        # caller status or run exit code into health authority.
+        _fail("functional-health receipt consumption belongs to the installed root lifecycle observer")
+
+    @staticmethod
+    def _root_journal_join(authorization: VerifiedRootSetupAuthorization) -> None:
+        row = authorization.root_journal_root
+        fields = {"root_id", "absolute_path", "owner_uid", "owner_gid", "mode",
+                  "device", "inode", "generation", "purpose"}
+        if (not isinstance(row, Mapping) or set(row) != fields or row.get("root_id") != _JOURNAL_ID
+                or row.get("absolute_path") != "/var/lib/hermes-installer/authority-journal"
+                or row.get("owner_uid") != 0 or row.get("owner_gid") != 0
+                or row.get("mode") != 0o700 or type(row.get("device")) is not int
+                or row.get("device") < 0 or type(row.get("inode")) is not int
+                or row.get("inode") <= 0 or not isinstance(row.get("generation"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", row["generation"])
+                or row.get("purpose") != "authority-journal"):
+            _fail("setup session has no current selected root journal identity")
+
+    @staticmethod
+    def _set_template_field(record: Any, path: list[str | int], value: Any) -> None:
+        current = record
+        for segment in path[:-1]:
+            if isinstance(segment, int):
+                if not isinstance(current, list) or segment >= len(current):
+                    _fail("receipt binding path does not resolve inside the reviewed service template")
+                current = current[segment]
+            else:
+                if not isinstance(current, dict) or segment not in current:
+                    _fail("receipt binding path does not resolve inside the reviewed service template")
+                current = current[segment]
+        final = path[-1]
+        if isinstance(final, int):
+            if not isinstance(current, list) or final >= len(current):
+                _fail("receipt binding index is outside the reviewed service template")
+            current[final] = value
+        else:
+            if not isinstance(current, dict) or final not in current or current[final] is not None:
+                _fail("receipt binding must replace one explicit null template slot")
+            current[final] = value
+
+
+class RootBootstrapRuntimeFactory:
+    """Production root-owned assembly for setup, prepared enrollment and activation."""
+
+    def __init__(self, *, _release: Any | None = None, _actor: Any | None = None):
+        if os.getuid() != 0 or os.geteuid() != 0 or not InstalledBootstrapPolicyResolver._linux():
+            raise BootstrapEnrollmentPending("root bootstrap runtime exists only in the installed Linux root process")
+        from .installer_release import (InstalledRootReleaseVerifier,
+                                        RootActorObservation,
+                                        VerifiedInstallerReleaseReceipt)
+        if _release is None and _actor is None:
+            _release, _actor = InstalledRootReleaseVerifier.from_current_root_process()
+        if (not isinstance(_release, VerifiedInstallerReleaseReceipt)
+                or not isinstance(_actor, RootActorObservation)):
+            raise BootstrapEnrollmentPending("root runtime requires sealed installed-release and actor observations")
+        _actor.verify_current(_release)
+        self._release = _release
+        self._actor = _actor
+        self.resolver = InstalledBootstrapPolicyResolver(_SELECTION_PATH)
+        # Resolving the catalog authenticates the installed catalog bytes before
+        # any root store or session object is constructed.
+        try:
+            catalog = self.resolver.catalog
+            self._bind_verified_release()
+            self.resolver.resolve_policy(_PLAN_ID)
+        except Exception:
+            self._actor.close()
+            self._release.close()
+            raise
+        journal_root = self.resolver.journal_root
+        artifact_root = self.resolver.artifact_root
+        _ensure_root_directory(journal_root)
+        _ensure_root_directory(artifact_root)
+        store_policy = self.resolver._load_selection().artifact_store
+        artifact_info = artifact_root.lstat()
+        if (artifact_info.st_uid != store_policy["owner_uid"]
+                or artifact_info.st_gid != store_policy["owner_gid"]
+                or stat.S_IMODE(artifact_info.st_mode) != store_policy["mode"]):
+            raise BootstrapEnrollmentError("selected root artifact CAS directory ownership or mode is invalid")
+        receipt_registry = RootArtifactReceiptRegistry(
+            journal_root / "bootstrap-receipts", catalog=catalog, artifact_root=artifact_root)
+        self.session_store = RootSetupSessionStore(
+            plan_resolver=self.resolver,
+            actor_verifier=InstalledRootSetupActorVerifier(),
+            receipt_registry=receipt_registry,
+            session_root=journal_root / "setup-sessions",
+            transaction_root=journal_root / "bootstrap-transactions",
+            authority_path=Path("/etc/hermes-installer/authority.json"),
+        )
+        self.policy_factory = RootSetupPolicyFactory(self.resolver)
+        self._catalog = catalog
+        self._receipt_registry = receipt_registry
+        self._seal = secrets.token_hex(32)
+        self._sessions: dict[str, RootBootstrapSession] = {}
+
+    @classmethod
+    def from_installed(cls) -> "RootBootstrapRuntimeFactory":
+        return cls()
+
+    def _bind_verified_release(self) -> None:
+        self._actor.verify_current(self._release)
+        selection = self.resolver._load_selection()
+        if (selection.installer_release_commit != self._release.release_commit
+                or selection.release_root != self._release.release_root
+                or selection.release_device != self._release.root_device
+                or selection.release_inode != self._release.root_inode
+                or selection.deployment_receipt_sha256 != self._release.deployment_receipt_sha256):
+            raise BootstrapEnrollmentPending("root selection is not joined to the current sealed release")
+        release_files = {row.artifact_id: row for row in self._release.files}
+        for row, artifact_id in ((selection.launcher, _LAUNCHER_ID),
+                                 (selection.interpreter, _INTERPRETER_ID)):
+            source = release_files.get(artifact_id)
+            if (source is None or row["relative_path"] != source.relative_path
+                    or row["sha256"] != source.sha256):
+                raise BootstrapEnrollmentPending("selected root executable differs from the sealed release")
+        for row in selection.modules:
+            source = release_files.get(row["artifact_id"])
+            if source is None or row["relative_path"] != source.relative_path or row["sha256"] != source.sha256:
+                raise BootstrapEnrollmentPending("selected root module differs from the sealed release")
+        plans = [row for row in selection.plans if row["artifact_id"] == self._release.selected_plan_artifact_id]
+        if (len(plans) != 1 or plans[0]["sha256"] != self._release.selected_plan_sha256
+                or plans[0]["baseline_tag_object"] != self._release.baseline_tag_object
+                or plans[0]["baseline_commit"] != self._release.baseline_commit
+                or plans[0]["baseline_tree_sha256"] != self._release.baseline_tree_sha256
+                or plans[0]["amendment_manifest_sha256"] != self._release.amendment_manifest_sha256):
+            raise BootstrapEnrollmentPending("selected setup plan provenance differs from the sealed release")
+        if _PLAN_ID != self._release.selected_plan_artifact_id:
+            raise BootstrapEnrollmentPending("installed release selected an unsupported setup plan")
+        self.resolver.resolve(_PLAN_ID)
+
+    def close(self) -> None:
+        self._actor.close()
+        self._release.close()
+
+    def begin(self, mode: str, target_account_name: str) -> "RootBootstrapSession":
+        self._actor.verify_current(self._release)
+        handle = self.session_store.begin_local(mode=mode, selected_plan_artifact_id=_PLAN_ID,
+                                                target_account_name=target_account_name)
+        try:
+            live = self.session_store._live(handle)
+            authorization = self.session_store._proof(live)
+            policy = self.resolver.resolve_policy(authorization.plan_artifact_id)
+            identity_policy = policy.identity_policy
+            marker = Path("/var/lib/hermes-installer/identities") / f"{identity_policy['service_account_name']}.json"
+            identity = SystemIdentityAdapter(marker, name=identity_policy["service_account_name"])
+            transaction = RootBootstrapEnrollment(
+                policy_resolver=lambda _request, proof: self.policy_factory.prepare(proof),
+                receipt_resolver=self._receipt_resolver,
+                identity=identity,
+                authority_path=Path("/etc/hermes-installer/authority.json"),
+                transaction_root=self.session_store.transaction_root,
+                artifact_root=self.session_store.receipt_registry.artifact_root,
+                root_journal_path=self.session_store.session_root.parent,
+            )
+            session = RootBootstrapSession(self, handle, authorization, policy, identity,
+                                           transaction, seal=self._seal)
+            self._sessions[handle.session_id] = session
+            return session
+        except Exception:
+            self.session_store.close_session(handle)
+            raise
+
+    def _receipt_resolver(self, handle: str, *, setup_authorization: VerifiedRootSetupAuthorization) -> VerifiedArtifactReceipt:
+        artifact_id, digest = self._receipt_registry.lookup(handle, setup_authorization)
+        selected_plan = self.resolver.resolve(setup_authorization.plan_artifact_id)
+        if artifact_id not in selected_plan.allowed_artifact_ids:
+            raise BootstrapEnrollmentPending("root setup receipt artifact is outside the selected plan allowlist")
+        value = self._read_receipt(handle)
+        try:
+            spec = self._catalog._artifact(artifact_id, digest)
+            resolved = self._catalog.resolve(artifact_id, digest,
+                                             self._receipt_registry.artifact_root, expected_uid=0)
+        except Exception:
+            raise BootstrapEnrollmentPending("root setup receipt no longer resolves to its selected immutable CAS object") from None
+        if (set(value) != {"schema", "handle", "receipt_id", "setup_session_id",
+                           "transaction_handle", "target_id", "operation_target_id",
+                           "plan_digest", "operator_uid", "artifact_role", "artifact_id",
+                           "sha256", "size_bytes"}
+                or value.get("schema") != 1 or value.get("handle") != handle
+                or value.get("setup_session_id") != setup_authorization.setup_session_id
+                or value.get("transaction_handle") != setup_authorization.transaction_handle
+                or value.get("target_id") != setup_authorization.target_id
+                or value.get("plan_digest") != setup_authorization.plan_digest
+                or value.get("operator_uid") != setup_authorization.operator_uid
+                or value.get("artifact_id") != artifact_id or value.get("sha256") != digest
+                or value.get("size_bytes") != resolved.size_bytes
+                or not isinstance(value.get("receipt_id"), str) or not value["receipt_id"]):
+            raise BootstrapEnrollmentError("root setup receipt does not match its CAS object")
+        return VerifiedArtifactReceipt(value["receipt_id"], artifact_id, digest,
+                                       resolved.path, spec.max_bytes)
+
+    def _read_receipt(self, handle: str) -> Mapping[str, Any]:
+        path = self._receipt_registry.root / f"{handle}.json"
+        raw = _read_secure_root_bytes(path, 16 * 1024, 0o600)
+        value = self.resolver._json(raw, "root artifact receipt")
+        if not isinstance(value, dict) or value.get("handle") != handle:
+            raise BootstrapEnrollmentError("root artifact receipt record is malformed")
+        return value
+
+
+class RootBootstrapSession:
+    """Live root session facade; close always releases its PIDFD."""
+
+    def __init__(self, factory: RootBootstrapRuntimeFactory, handle: RootSetupSessionHandle,
+                 authorization: VerifiedRootSetupAuthorization, policy: VerifiedRootBootstrapPolicy,
+                 identity: SystemIdentityAdapter, transaction: RootBootstrapEnrollment, *, seal: str):
+        self._factory = factory
+        self._handle = handle
+        self._authorization = authorization
+        self._policy = policy
+        self._identity = identity
+        self._transaction = transaction
+        self._seal = seal
+        self._runtime_receipts: dict[str, RootRuntimeArtifactReceipt] = {}
+        self._last_receipt: EnrollmentReceipt | None = None
+        self._closed = False
+        self._source_receipt_handle: str | None = None
+        self._source_handoff: Any | None = None
+        self._source_provisioner = self._make_source_provisioner()
+        self._selected_installation = RootSelectedInstallationBinding(self, seal)
+        self._client = factory.session_store.bootstrap_client(
+            handle, transaction, source_receipt_provider=self._source_receipt)
+
+    @property
+    def policy(self) -> VerifiedRootBootstrapPolicy:
+        return self._policy
+
+    @property
+    def selected_installation(self) -> RootSelectedInstallationBinding:
+        self._check_live()
+        if self._last_receipt is None or self._last_receipt.state != "prepared":
+            raise BootstrapEnrollmentPending("selected installation binding requires committed prepared custody")
+        return self._selected_installation
+
+    def provision(self) -> EnrollmentReceipt:
+        self._check_live()
+        if self._last_receipt is not None:
+            raise BootstrapEnrollmentError("root setup preparation has already been published")
+        receipt = self._client.provision((), self._authorization.transaction_handle)
+        if receipt.state != "prepared" or receipt.enrollment_ids:
+            raise BootstrapEnrollmentError("first setup did not publish the required empty prepared generation")
+        self._last_receipt = receipt
+        self._refresh_authorization()
+        return receipt
+
+    def resolve_runtime_receipt(self, role: str, receipt_handle: str,
+                                generation: str) -> RootRuntimeArtifactReceipt:
+        """Mint a runtime receipt only from a current transaction-scoped CAS handle."""
+        self._check_live()
+        rule = next((item for item in self._policy.receipt_binding_rules
+                     if item["receipt_role"] == role), None)
+        if rule is None or rule["required_phase"] != "runnable":
+            raise BootstrapEnrollmentError("runtime receipt role is not a reviewed first-setup role")
+        if not isinstance(generation, str) or generation != self._authorization.transaction_handle:
+            raise BootstrapEnrollmentError("runtime receipt generation is not bound to this setup transaction")
+        artifact_id, digest = self._factory._receipt_registry.lookup(receipt_handle, self._authorization)
+        if artifact_id not in rule["allowed_artifact_ids"]:
+            raise BootstrapEnrollmentError("runtime receipt artifact is outside its exact selected role")
+        resolved = self._factory._catalog.resolve(artifact_id, digest,
+                                                  self._factory._receipt_registry.artifact_root, expected_uid=0)
+        receipt = RootRuntimeArtifactReceipt(role, artifact_id, digest, generation, receipt_handle,
+                                             resolved.size_bytes, self._factory._seal)
+        self._runtime_receipts[role] = receipt
+        return receipt
+
+    def activate_runnable(self, receipts: Mapping[str, RootRuntimeArtifactReceipt]) -> EnrollmentReceipt:
+        self._check_live()
+        self._refresh_authorization()
+        if self._last_receipt is None or self._last_receipt.state != "prepared":
+            raise BootstrapEnrollmentPending("runnable activation requires the committed prepared transaction")
+        if set(receipts) != set(self._runtime_receipts) or any(
+                receipts.get(role) is not self._runtime_receipts[role] for role in self._runtime_receipts):
+            raise BootstrapEnrollmentError("activation receipts were not minted by this live root setup session")
+        policy = self._factory.policy_factory.activate_runnable(
+            self._authorization, self._identity.ensure(), receipts, seal=self._factory._seal)
+        self._runtime_receipts = dict(receipts)
+        # Root policy and record construction remain captured in this trusted
+        # transaction. The phase switch occurs only after verified receipts.
+        self._transaction.policy_resolver = lambda _request, proof: policy
+        self._transaction.record_builder = None
+        receipt = self._client.provision(tuple(item.receipt_handle for item in receipts.values()),
+                                        self._authorization.transaction_handle)
+        if receipt.state != "committed" or not receipt.enrollment_ids:
+            raise BootstrapEnrollmentPending("root selected runtime receipts did not create a runnable generation")
+        self._last_receipt = receipt
+        self._refresh_authorization()
+        return receipt
+
+    def _authorize_native_materialization(
+            self, *, enrollment_id: str, service_generation: str,
+            resource_profile_id: str) -> _BoundNativeSelection:
+        self._check_live()
+        if self._last_receipt is None or self._last_receipt.state != "prepared":
+            raise BootstrapEnrollmentPending("native materialization requires a committed prepared generation")
+        if (not isinstance(enrollment_id, str) or not _ID.fullmatch(enrollment_id)
+                or not isinstance(service_generation, str)
+                or not isinstance(resource_profile_id, str) or not _ID.fullmatch(resource_profile_id)):
+            raise BootstrapEnrollmentError("native materialization selection identifiers are malformed")
+        if (service_generation != self._last_receipt.generation_id
+                or resource_profile_id != self._policy.identity_policy["service_profile_id"]):
+            raise BootstrapEnrollmentError("native materialization does not match the current prepared policy")
+        matches = [item["record"] for item in self._policy.service_record_templates
+                   if item["record"].get("enrollment_id") == enrollment_id]
+        if len(matches) != 1:
+            raise BootstrapEnrollmentError("native materialization enrollment is not uniquely selected by policy")
+        identity = self._identity.ensure()
+        source_receipt = self._source_receipt(self._authorization)
+        return _BoundNativeSelection(
+            enrollment_id=enrollment_id, service_generation=self._last_receipt.generation_id,
+            service_profile_id=resource_profile_id,
+            protected_enrollment_digest=self._last_receipt.generation_digest,
+            service_uid=identity.uid, service_gid=identity.gid,
+            home_root_id=self._policy.root_policy["service_home_root_id"],
+            data_root_id=self._policy.root_policy["service_data_root_id"],
+            source_artifact_id=self._policy.source_artifact_id,
+            source_receipt_handle=source_receipt,
+            _session_id=self._handle.session_id, _seal=self._seal,
+        )
+
+    def _resolve_private_installation_roots(
+            self, selection: Any) -> _RootPrivateInstallationRoots:
+        self._check_live()
+        if (not isinstance(selection, _BoundNativeSelection)
+                or selection._session_id != self._handle.session_id
+                or not secrets.compare_digest(selection._seal, self._seal)
+                or self._last_receipt is None
+                or selection.protected_enrollment_digest != self._last_receipt.generation_digest
+                or self._last_receipt.state != "prepared"):
+            raise BootstrapEnrollmentError("native materialization authorization is stale or belongs to another session")
+        if self._source_handoff is None:
+            raise BootstrapEnrollmentPending("verified Hermes source tree is not provisioned for this session")
+        parent = Path(self._policy.root_policy["service_parent_root"])
+        return _RootPrivateInstallationRoots(
+            home_root=parent / "home", data_root=parent / "data",
+            journal_root=self._factory.session_store.session_root.parent / "native-materialization",
+            hermes_source_tree=self._source_handoff.source.tree_path,
+        )
+
+    def record_functional_health(self, _active_receipt: EnrollmentReceipt, _health_receipt: Any) -> None:
+        self._check_live()
+        raise BootstrapEnrollmentPending("functional health requires the root-native health observer receipt consumer")
+
+    def _make_source_provisioner(self) -> Any:
+        from ..hermes_source import PinnedHermesSourceProvisioner
+        from .bootstrap_enrollment import RootLocalCatalogArtifactFetcher
+        fetcher = RootLocalCatalogArtifactFetcher(
+            catalog=self._factory._catalog,
+            artifact_root=self._factory._receipt_registry.artifact_root,
+            session_store=self._factory.session_store, session_handle=self._handle,
+        )
+        return PinnedHermesSourceProvisioner(
+            fetcher=fetcher, catalog=self._factory._catalog,
+            artifact_root=self._factory._receipt_registry.artifact_root,
+            receipt_registry=self._factory._receipt_registry, expected_uid=0,
+        )
+
+    def _source_receipt(self, proof: VerifiedRootSetupAuthorization) -> str:
+        self._check_live()
+        if proof != self._authorization:
+            raise BootstrapEnrollmentError("source request does not match this live root setup authorization")
+        if self._source_receipt_handle is None:
+            self._source_handoff = self._source_provisioner.provision(proof)
+            self._source_receipt_handle = self._source_handoff.receipt_handle
+        return self._source_receipt_handle
+
+    def _refresh_authorization(self) -> None:
+        live = self._factory.session_store._live(self._handle)
+        self._authorization = self._factory.session_store._proof(live)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._factory.session_store.close_session(self._handle)
+        self._factory._sessions.pop(self._handle.session_id, None)
+        self._closed = True
+
+    def _check_live(self) -> None:
+        if self._closed:
+            raise BootstrapEnrollmentPending("root setup session is closed")
+        self._factory.session_store._live(self._handle)
+
+    def __enter__(self) -> "RootBootstrapSession":
+        self._check_live()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.close()
+
+
+# Public root setup composition surface. setup_principal uses local imports of
+# this module for the typed stage-zero context, so the re-export is deliberately
+# placed after the factory/session definitions to avoid an import cycle.
+from .setup_principal import (  # noqa: E402
+    AuthentikIdentityReceipt,
+    RootSetupAuthentikIdentityObserver,
+    RootSetupIdentityIntake,
+    RootSetupPrincipalSelectionRegistry,
+    VerifiedRootSetupPrincipalSelection,
+)
