@@ -352,6 +352,28 @@ class RootTaskNativeObservationRegistry:
             self._issued[receipt.native_execution_receipt_handle] = receipt
         return receipt
 
+    def cancel_task_input(self, task_handle: Any, initial_input_receipt: Any) -> None:
+        """Stop observations when custody rejects the already-bound input phase."""
+        from ..managed_process_custodian import ManagedTaskHandle
+        from ..registry.resource_jobs import RootTaskInitialInputReceipt
+
+        if (type(task_handle) is not ManagedTaskHandle
+                or type(initial_input_receipt) is not RootTaskInitialInputReceipt):
+            raise AuthorityDenied("resource.native_cancel", "task input cancellation reference is malformed")
+        with self._lock:
+            run = self._runs.get(task_handle.handle_id)
+            if (run is None or run.task_handle is not task_handle
+                    or run.initial_input_receipt is not initial_input_receipt
+                    or initial_input_receipt.task_handle != task_handle.handle_id):
+                raise AuthorityDenied("resource.native_cancel", "task input receipt is unknown or already consumed")
+            self._runs.pop(task_handle.handle_id, None)
+            self._completed_tasks[task_handle.handle_id] = run.deadline
+            run.stop.set()
+        if run.watcher is not None and run.watcher is not threading.current_thread():
+            run.watcher.join(timeout=1.0)
+            if run.watcher.is_alive():
+                raise AuthorityDenied("resource.native_timeout", "cancelled task native observer did not stop")
+
     def verify_receipt(self, receipt: RootTaskNativeExecutionReceipt) -> bool:
         """Check exact in-memory issuance; a copied or reconstructed DTO is not accepted."""
         if type(receipt) is not RootTaskNativeExecutionReceipt:

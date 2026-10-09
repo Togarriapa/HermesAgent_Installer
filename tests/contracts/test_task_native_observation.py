@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from hermes_installer.managed_process_custodian import ManagedTaskHandle
 from hermes_installer.authority.task_native_observation import (
     RootTaskNativeObservationRegistry,
 )
@@ -125,6 +126,35 @@ def test_issued_receipt_expires_and_close_revokes_pending_receipts():
     registry._completed_tasks[pending.task_handle] = 20.0
     registry.close()
     assert registry.verify_receipt(pending) is False
+
+
+def test_cancel_task_input_stops_watcher_and_rejects_replay():
+    registry = _registry({})
+    handle_args = dict(handle_id="t" * 40, generation="profile-generation-a")
+    if "process_id" in ManagedTaskHandle.__dataclass_fields__:
+        handle_args["process_id"] = "process-a"
+    task_handle = ManagedTaskHandle(**handle_args)
+    receipt = RootTaskInitialInputReceipt(
+        schema=1, receipt_handle="r" * 40, task_handle=task_handle.handle_id,
+        admission_id="admission-1", node_id="node-a", process_id="process-a",
+        process_generation="profile-generation-a", selected_execution_handle="s" * 40,
+        source_receipt_handle="c" * 40, producer_context_delivery_handle="c" * 40,
+        native_loader_ready_event_id="l" * 40, stdin_sha256="a" * 64,
+        stdin_size_bytes=3, parent_closure_digest="b" * 64,
+        service_generation_digest="c" * 64, resource_generation="resource-gen-1",
+        issued_monotonic=1.0, expires_monotonic=20.0,
+    )
+    run = SimpleNamespace(task_handle=task_handle, initial_input_receipt=receipt,
+                          deadline=20.0, stop=threading.Event(), watcher=None)
+    run.watcher = threading.Thread(target=run.stop.wait)
+    run.watcher.start()
+    registry._runs[task_handle.handle_id] = run
+
+    registry.cancel_task_input(task_handle, receipt)
+    assert not run.watcher.is_alive()
+    assert task_handle.handle_id not in registry._runs
+    with pytest.raises(AuthorityDenied):
+        registry.cancel_task_input(task_handle, receipt)
 
 
 def test_model_receipt_requires_complete_task_source_ancestry():
