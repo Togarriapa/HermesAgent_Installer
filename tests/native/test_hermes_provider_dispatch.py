@@ -222,8 +222,21 @@ def _run_native_worker():
     from providers import get_provider_profile
     provider_name = "hermes-installer-dispatch"
     profile = get_provider_profile(provider_name)
-    if profile is None or profile.default_aux_model != model:
+    if profile is None:
         raise SystemExit("managed Hermes provider profile was not discovered")
+    if profile.default_aux_model != model:
+        raise SystemExit("managed Hermes provider auxiliary model mismatch")
+    from hermes_cli.config import load_config_readonly
+    config = load_config_readonly()
+    model_config = config.get("model") if isinstance(config.get("model"), dict) else {}
+    provider_configs = config.get("providers") if isinstance(config.get("providers"), dict) else {}
+    print("NATIVE_CONFIG_SELECTION=" + json.dumps({
+        "model_provider": model_config.get("provider"),
+        "model_default": model_config.get("default"),
+        "configured_provider_ids": sorted(str(key) for key in provider_configs),
+        "plugin_name": profile.name,
+        "plugin_aux_model": profile.default_aux_model,
+    }, sort_keys=True))
     from run_agent import AIAgent
     agent = None
     try:
@@ -232,7 +245,8 @@ def _run_native_worker():
             load_soul_identity=False, skip_memory=True, skip_background_review=True,
         )
         if agent.provider != provider_name or agent.model != model:
-            raise SystemExit("Hermes native config did not select the managed provider")
+            raise SystemExit("Hermes native config selection mismatch: provider="
+                             + str(agent.provider) + ", model=" + str(agent.model))
         primary = agent.client.chat.completions.create(
             model=model, messages=[{"role": "user", "content": "native primary fixture"}],
             max_tokens=24,
