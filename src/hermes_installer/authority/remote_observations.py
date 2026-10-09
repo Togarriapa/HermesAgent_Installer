@@ -109,6 +109,8 @@ class RootProcessCustody(Protocol):
     def inspect_enrolled_process(self, profile_id: str, generation: str) -> Any: ...
     def resolve_live_peer(self, pid: int, pidfd: int, *,
                           profile_id: str, generation: str) -> Any: ...
+    def resolve_observer_namespace_lease(self, profile_id: str, generation: str,
+                                        expected_namespace_identity: str) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,24 +273,45 @@ class GatewayBoundaryObserver:
         identity = self._current_identity(row.gateway_profile_id, row.gateway_generation,
                                           gateway_proof)
         listeners = _observe_loopback_listener(identity, row.listener_port)
-        ledger_before = _connector_byte_snapshot(self._ledger, capability)
-        facts: dict[str, GatewayBoundaryHTTPFact] = {}
-        for name in ("unauthenticated", "arbitrary-route", "shell-route", "full-host-desktop"):
-            if float(self._now()) >= expiry:
-                raise RemoteObservationUnavailable("gateway boundary probe exceeded its root lease")
-            raw_request = _http_request(row.hostname, self._PATHS[name])
-            response, raw_response = _loopback_http(row.listener_port, raw_request, self._timeout)
-            if response.status not in {403, 404}:
-                raise RemoteObservationUnavailable(f"selected gateway did not deny the fixed {name} route")
-            facts[name] = GatewayBoundaryHTTPFact(
-                status_code=response.status, application_bytes=0,
-                request_sha256=hashlib.sha256(raw_request).hexdigest(),
-                response_sha256=hashlib.sha256(raw_response).hexdigest())
-            # Any partial byte movement through the actual root HI07/HI12 connector
-            # invalidates this denial regardless of what HTTP status was returned.
-            current = _connector_byte_snapshot(self._ledger, capability)
-            if current != ledger_before:
-                raise RemoteObservationUnavailable("connector bytes/effects changed during a denial request")
+        lease_resolver = getattr(self._custody, "resolve_observer_namespace_lease", None)
+        if not callable(lease_resolver):
+            raise RemoteObservationUnavailable("root observer namespace lease resolver is unavailable")
+        namespace_identity = f"mnt:{identity['mount_namespace_inode']};net:{identity['network_namespace_inode']}"
+        try:
+            namespace_lease = lease_resolver(row.gateway_profile_id, row.gateway_generation,
+                                             namespace_identity)
+        except Exception:
+            namespace_lease = None
+        if (namespace_lease is None
+                or getattr(namespace_lease, "generation", None) != row.gateway_generation
+                or getattr(namespace_lease, "namespace_identity", None) != namespace_identity
+                or getattr(namespace_lease, "namespace_fd", -1) < 0):
+            if namespace_lease is not None:
+                namespace_lease.close()
+            raise RemoteObservationUnavailable("selected gateway has no exact live root namespace lease")
+        try:
+            ledger_before = _connector_byte_snapshot(self._ledger, capability)
+            facts: dict[str, GatewayBoundaryHTTPFact] = {}
+            for name in ("unauthenticated", "arbitrary-route", "shell-route", "full-host-desktop"):
+                if float(self._now()) >= expiry:
+                    raise RemoteObservationUnavailable("gateway boundary probe exceeded its root lease")
+                raw_request = _http_request(row.hostname, self._PATHS[name])
+                response, raw_response = _loopback_http(
+                    row.listener_port, raw_request, self._timeout,
+                    namespace_fd=namespace_lease.namespace_fd)
+                if response.status not in {403, 404}:
+                    raise RemoteObservationUnavailable(f"selected gateway did not deny the fixed {name} route")
+                facts[name] = GatewayBoundaryHTTPFact(
+                    status_code=response.status, application_bytes=0,
+                    request_sha256=hashlib.sha256(raw_request).hexdigest(),
+                    response_sha256=hashlib.sha256(raw_response).hexdigest())
+                # Any partial byte movement through the actual root HI07/HI12 connector
+                # invalidates this denial regardless of what HTTP status was returned.
+                current = _connector_byte_snapshot(self._ledger, capability)
+                if current != ledger_before:
+                    raise RemoteObservationUnavailable("connector bytes/effects changed during a denial request")
+        finally:
+            namespace_lease.close()
         self._current_identity(row.gateway_profile_id, row.gateway_generation, gateway_proof)
         issued = float(self._now())
         unsigned = GatewayBoundaryObservation(
@@ -313,9 +336,6 @@ class GatewayBoundaryObserver:
         facts = _verify_custody_process(identity, expected, now=float(self._now()))
         pidfd = _verify_linux_pid(identity)
         os.close(pidfd)
-        if os.stat("/proc/self/ns/net").st_ino != facts["network_namespace_inode"]:
-            raise RemoteObservationUnavailable(
-                "root observer is outside the selected gateway network namespace; no loopback claim made")
         return facts
 
     def close(self) -> None:
@@ -382,7 +402,9 @@ def _verify_custody_process(identity: Any, expected: Any, *, now: float) -> dict
             or not identity.pidfd_registry_handle or identity.expires_monotonic <= now):
         raise RemoteObservationUnavailable("root gateway process proof is stale or malformed")
     return {"pid": int(identity.pid), "start": int(identity.pid_starttime_ticks),
-            "uid": int(identity.uid), "network_namespace_inode": int(identity.network_namespace_inode)}
+            "uid": int(identity.uid),
+            "mount_namespace_inode": int(identity.mount_namespace_inode),
+            "network_namespace_inode": int(identity.network_namespace_inode)}
 
 
 def _proc_starttime(pid: int) -> int:
@@ -462,11 +484,14 @@ def _http_request(host: str, path: str) -> bytes:
             "Accept: */*\r\n\r\n").encode("ascii")
 
 
-def _loopback_http(port: int, request: bytes, timeout: float) -> tuple[_HTTPResponse, bytes]:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+def _loopback_http(port: int, request: bytes, timeout: float, *,
+                   namespace_fd: int | None = None) -> tuple[_HTTPResponse, bytes]:
+    sock = (_connect_in_namespace(namespace_fd, port, timeout) if namespace_fd is not None
+            else socket.socket(socket.AF_INET, socket.SOCK_STREAM))
     sock.settimeout(timeout)
     try:
-        sock.connect(("127.0.0.1", port))
+        if namespace_fd is None:
+            sock.connect(("127.0.0.1", port))
         if sock.getpeername()[0] != "127.0.0.1":
             raise RemoteObservationUnavailable("gateway probe escaped the selected IPv4 loopback")
         sock.sendall(request)
@@ -498,6 +523,56 @@ def _loopback_http(port: int, request: bytes, timeout: float) -> tuple[_HTTPResp
         raise RemoteObservationUnavailable("bounded gateway loopback request failed") from None
     finally:
         sock.close()
+
+
+def _connect_in_namespace(namespace_fd: int, port: int, timeout: float) -> socket.socket:
+    """Connect from the selected namespace in an isolated thread, then restore it."""
+    if not hasattr(os, "setns") or namespace_fd < 0:
+        raise RemoteObservationUnavailable("Linux network namespace entry is unavailable")
+    try:
+        worker_namespace_fd = os.dup(namespace_fd)
+    except OSError:
+        raise RemoteObservationUnavailable("selected namespace lease descriptor is unavailable") from None
+    result: list[socket.socket] = []
+    failure: list[BaseException] = []
+    done = threading.Event()
+
+    def worker() -> None:
+        original = None
+        sock = None
+        try:
+            original = os.open("/proc/self/ns/net", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            os.setns(worker_namespace_fd, getattr(os, "CLONE_NEWNET", 0))
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM | getattr(socket, "SOCK_CLOEXEC", 0))
+            sock.settimeout(timeout)
+            sock.connect(("127.0.0.1", port))
+            result.append(sock)
+            sock = None
+        except BaseException as exc:
+            failure.append(exc)
+        finally:
+            if sock is not None:
+                sock.close()
+            if original is not None:
+                try:
+                    os.setns(original, getattr(os, "CLONE_NEWNET", 0))
+                except BaseException as exc:
+                    failure.append(exc)
+                os.close(original)
+            os.close(worker_namespace_fd)
+            done.set()
+
+    thread = threading.Thread(target=worker, name="hermes-root-gateway-netns-probe", daemon=True)
+    thread.start()
+    if not done.wait(timeout + 0.25):
+        raise RemoteObservationUnavailable("selected namespace connect exceeded its bounded deadline")
+    if failure:
+        for sock in result:
+            sock.close()
+        raise RemoteObservationUnavailable("selected namespace loopback connection failed") from None
+    if len(result) != 1:
+        raise RemoteObservationUnavailable("selected namespace loopback connection returned no socket")
+    return result[0]
 
 
 def _observe_loopback_listener(identity: Mapping[str, int], port: int) -> tuple[str, ...]:
