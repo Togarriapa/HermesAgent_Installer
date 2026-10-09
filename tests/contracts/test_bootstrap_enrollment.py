@@ -50,9 +50,9 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             _validate_service_generations(changed)
 
     def test_request_accepts_only_opaque_bounded_handles_and_intent(self):
-        _validate_request(BootstrapEnrollmentRequest(("receipt:opaque-1",), "install pinned Hermes"))
+        _validate_request(BootstrapEnrollmentRequest(("receipt:opaque-1",), "transaction:opaque-1"))
         with self.assertRaises(BootstrapEnrollmentError):
-            _validate_request(BootstrapEnrollmentRequest(("/etc/passwd",), "install"))
+            _validate_request(BootstrapEnrollmentRequest(("/etc/passwd",), "transaction:opaque-1"))
         # Caller path/executable/UID fields are deliberately not part of the DTO.
         self.assertEqual(set(BootstrapEnrollmentRequest.__dataclass_fields__),
                          {"artifact_receipt_handles", "operation_intent"})

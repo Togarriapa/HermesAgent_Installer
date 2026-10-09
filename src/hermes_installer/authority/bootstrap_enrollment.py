@@ -16,6 +16,7 @@ import stat
 import subprocess
 import re
 import fcntl
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -71,6 +72,9 @@ class EnrollmentPolicy:
     native_packages: tuple[Mapping[str, Any], ...] = ()
     memory_enrollments: tuple[Mapping[str, Any], ...] = ()
     operation_parameter_schemas: tuple[Mapping[str, Any], ...] = ()
+    source_issuers: tuple[Mapping[str, Any], ...] = ()
+    resource_jobs: tuple[Mapping[str, Any], ...] = ()
+    remote_session_enrollments: tuple[Mapping[str, Any], ...] = ()
     authority_base: Mapping[str, Any] | None = None
     home_root: Path = Path("/var/lib/hermes-installer/services/default/home")
     work_root: Path = Path("/var/lib/hermes-installer/services/default/work")
@@ -79,13 +83,16 @@ class EnrollmentPolicy:
 
 @dataclass(frozen=True, slots=True)
 class EnrollmentReceipt:
-    enrollment_id: str
+    schema: int
+    transaction_handle: str
+    provision_receipt_handle: str
     generation_id: str
     generation_digest: str
-    service_uid: int
-    service_gid: int
-    transaction_id: str
-    receipt_digest: str
+    previous_generation_digest: str | None
+    state: str
+    enrollment_ids: tuple[str, ...]
+    issued_monotonic: float
+    expires_monotonic: float
 
 
 class IdentityAdapter(Protocol):
@@ -171,6 +178,7 @@ class RootBootstrapEnrollment:
     def __init__(self, *, policy_resolver: Callable[[BootstrapEnrollmentRequest], EnrollmentPolicy],
                  receipt_resolver: ReceiptResolver, identity: IdentityAdapter,
                  record_builder: Callable[[EnrollmentPolicy, ServiceIdentity], tuple[Mapping[str, Any], ...]] | None = None,
+                 authority_builder: Callable[[Mapping[str, Any] | None, EnrollmentPolicy, ServiceIdentity], Mapping[str, Any]] | None = None,
                  authority_path: Path = Path("/etc/hermes-installer/authority.json"),
                  transaction_root: Path = Path("/var/lib/hermes-installer/bootstrap-transactions"),
                  artifact_root: Path = Path("/var/lib/hermes-installer/artifacts"),
@@ -180,6 +188,7 @@ class RootBootstrapEnrollment:
         self.receipt_resolver = receipt_resolver
         self.identity = identity
         self.record_builder = record_builder
+        self.authority_builder = authority_builder
         self.authority_path = authority_path
         self.transaction_root = transaction_root
         self.artifact_root = artifact_root
@@ -212,10 +221,15 @@ class RootBootstrapEnrollment:
             authority = dict(self.authority_loader(self.authority_path))
         else:
             previous = None
-            if policy.authority_base is None:
+            if policy.authority_base is None and self.authority_builder is None:
                 raise BootstrapEnrollmentPending("root-selected base authority enrollment policy is required")
-            authority = dict(policy.authority_base)
-            _validate_authority_base(authority)
+            authority = None if policy.authority_base is None else dict(policy.authority_base)
+            if authority is not None:
+                _validate_authority_base(authority)
+        previous_generation_digest = (
+            authority.get("service_generations", {}).get("generation_digest")
+            if previous is not None and isinstance(authority.get("service_generations"), dict) else None
+        )
         if "service_generations" not in authority:
             raise BootstrapEnrollmentError("root authority file does not accept service-generation publication")
         transaction_id = secrets.token_hex(16)
@@ -229,16 +243,29 @@ class RootBootstrapEnrollment:
         staged_artifacts: list[Path] = []
         previous_authority: bytes | None = None
         published_generation_digest: str | None = None
+        provision_receipt_handle = secrets.token_hex(24)
+        request_digest = hashlib.sha256(_canonical({
+            "schema": 1, "artifact_receipt_handles": list(request.artifact_receipt_handles),
+            "operation_intent": request.operation_intent,
+        })).hexdigest()
+        artifact_receipt_digests = tuple(hashlib.sha256(_canonical({
+            "receipt_id": item.receipt_id, "artifact_id": item.artifact_id,
+            "sha256": item.sha256, "maximum_bytes": item.maximum_bytes,
+        })).hexdigest() for item in receipts)
         if previous is not None:
             _atomic_root_file(backup, previous, 0o600)
         _write_journal(journal, transaction_id, "preparing", created_roots, staged_artifacts,
                        roots=candidate_roots,
-                       backup=backup if previous is not None else None, identity=identity)
+                       backup=backup if previous is not None else None, identity=identity,
+                       provision_receipt_handle=provision_receipt_handle,
+                       request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
         try:
             identity = self.identity.ensure()
             _write_journal(journal, transaction_id, "preparing", created_roots, staged_artifacts,
                            roots=candidate_roots,
-                           backup=backup if previous is not None else None, identity=identity)
+                           backup=backup if previous is not None else None, identity=identity,
+                           provision_receipt_handle=provision_receipt_handle,
+                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
             for root in (policy.home_root, policy.work_root, policy.data_root):
                 if root in created_roots or not root.is_absolute():
                     raise BootstrapEnrollmentError("service roots are invalid or duplicated")
@@ -248,11 +275,17 @@ class RootBootstrapEnrollment:
                 _write_journal(journal, transaction_id, "preparing", created_roots, staged_artifacts,
                                roots=candidate_roots,
                                backup=backup if previous is not None else None,
-                               identity=identity)
+                               identity=identity, provision_receipt_handle=provision_receipt_handle,
+                               request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
             if self.record_builder is not None:
                 policy = replace(policy, records=tuple(self.record_builder(policy, identity)))
                 _validate_policy(policy)
             service = _verify_service_records(policy, identity)
+            if self.authority_builder is not None:
+                authority = dict(self.authority_builder(authority, policy, identity))
+                _validate_authority_base(authority)
+            if authority is None:
+                raise BootstrapEnrollmentPending("root-selected base authority enrollment policy is required")
             # Artifacts remain root-owned and content-addressed. Receipt source paths
             # come only from the root resolver; bytes are rehashed during copy.
             _ensure_root_directory(self.artifact_root)
@@ -267,7 +300,8 @@ class RootBootstrapEnrollment:
                     _write_journal(journal, transaction_id, "preparing", created_roots, staged_artifacts,
                                    roots=candidate_roots,
                                    backup=backup if previous is not None else None,
-                                   identity=identity)
+                                   identity=identity, provision_receipt_handle=provision_receipt_handle,
+                                   request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
                 installed.append({"receipt_id": receipt.receipt_id,
                                   "artifact_id": receipt.artifact_id,
                                   "sha256": receipt.sha256,
@@ -283,20 +317,28 @@ class RootBootstrapEnrollment:
             _write_journal(journal, transaction_id, "committing", created_roots, staged_artifacts,
                            roots=candidate_roots,
                            backup=backup if previous is not None else None,
-                           identity=identity, generation_digest=published_generation_digest)
+                           identity=identity, generation_digest=published_generation_digest,
+                           provision_receipt_handle=provision_receipt_handle,
+                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
             self.authority_writer(self.authority_path, encoded)
             _write_journal(journal, transaction_id, "committed", created_roots, staged_artifacts,
-                           roots=(policy.home_root, policy.work_root, policy.data_root),
+                           roots=candidate_roots,
                            backup=backup if previous is not None else None,
-                           identity=identity, generation_digest=published_generation_digest)
-            backup.unlink()
-            enrollment_id = service.enrollment_id
-            body = {"schema": 1, "enrollment_id": enrollment_id,
-                    "generation_id": service_generations["generation_id"],
-                    "generation_digest": service_generations["generation_digest"],
-                    "service_uid": identity.uid, "service_gid": identity.gid,
-                    "transaction_id": transaction_id}
-            return EnrollmentReceipt(**{**body, "receipt_digest": hashlib.sha256(_canonical(body)).hexdigest()})
+                           identity=identity, generation_digest=published_generation_digest,
+                           provision_receipt_handle=provision_receipt_handle,
+                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
+            if previous is not None:
+                backup.unlink()
+            issued = time.monotonic()
+            return EnrollmentReceipt(
+                    schema=1, transaction_handle=request.operation_intent,
+                    provision_receipt_handle=provision_receipt_handle,
+                    generation_id=service_generations["generation_id"],
+                    generation_digest=service_generations["generation_digest"],
+                    previous_generation_digest=previous_generation_digest,
+                    state="committed", enrollment_ids=(service.enrollment_id,),
+                    issued_monotonic=issued, expires_monotonic=issued + 300.0,
+                )
         except Exception:
             if (published_generation_digest is not None
                     and _current_generation_digest(self.authority_path) == published_generation_digest):
@@ -314,7 +356,9 @@ class RootBootstrapEnrollment:
             _write_journal(journal, transaction_id, "rolled_back", created_roots, staged_artifacts,
                            roots=candidate_roots,
                            backup=backup if previous is not None else None,
-                           identity=identity, generation_digest=published_generation_digest)
+                           identity=identity, generation_digest=published_generation_digest,
+                           provision_receipt_handle=provision_receipt_handle,
+                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
             if backup.exists() and _root_file_ok(backup):
                 backup.unlink()
             raise
@@ -375,7 +419,10 @@ class RootBootstrapEnrollment:
                            roots=tuple(Path(p) for p in journal.get("roots", [])),
                            backup=Path(journal["backup"]) if journal.get("backup") else None,
                            identity=identity,
-                           generation_digest=journal.get("generation_digest"))
+                           generation_digest=journal.get("generation_digest"),
+                           provision_receipt_handle=journal.get("provision_receipt_handle"),
+                           request_digest=journal.get("request_digest"),
+                           artifact_receipt_digests=tuple(journal.get("artifact_receipt_digests", [])))
             backup_text = journal.get("backup", "")
             if backup_text:
                 backup = Path(backup_text)
@@ -461,11 +508,11 @@ def _current_generation_digest(path: Path) -> str | None:
 def _validate_request(request: BootstrapEnrollmentRequest) -> None:
     if (not isinstance(request, BootstrapEnrollmentRequest)
             or not isinstance(request.artifact_receipt_handles, tuple)
-            or len(request.artifact_receipt_handles) > 32
+            or len(request.artifact_receipt_handles) > 64
             or any(not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", value)
                    for value in request.artifact_receipt_handles)
-            or not isinstance(request.operation_intent, str) or not request.operation_intent
-            or len(request.operation_intent) > 256):
+            or not isinstance(request.operation_intent, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", request.operation_intent)):
         raise BootstrapEnrollmentError("bootstrap enrollment request is malformed")
 
 
@@ -711,7 +758,10 @@ def _write_journal(path: Path, transaction_id: str, state: str,
                    created_roots: list[Path], artifacts: list[Path], *,
                    roots: tuple[Path, ...] = (),
                    backup: Path | None = None, identity: ServiceIdentity | None = None,
-                   generation_digest: str | None = None) -> None:
+                   generation_digest: str | None = None,
+                   provision_receipt_handle: str | None = None,
+                   request_digest: str | None = None,
+                   artifact_receipt_digests: tuple[str, ...] = ()) -> None:
     _atomic_root_file(path, _canonical({"schema": 1, "transaction_id": transaction_id,
                                         "state": state, "created_roots": [str(p) for p in created_roots],
                                         "roots": [str(p) for p in roots],
@@ -720,7 +770,10 @@ def _write_journal(path: Path, transaction_id: str, state: str,
                                         "identity": None if identity is None else {
                                             "name": identity.name, "uid": identity.uid,
                                             "gid": identity.gid, "created": identity.created},
-                                        "generation_digest": generation_digest}))
+                                        "generation_digest": generation_digest,
+                                        "provision_receipt_handle": provision_receipt_handle,
+                                        "request_digest": request_digest,
+                                        "artifact_receipt_digests": list(artifact_receipt_digests)}))
 
 
 def _unique_pairs(pairs):
