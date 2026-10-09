@@ -41,3 +41,19 @@ Follow planning/protected-resource-job-contract.json. This operationalizes origi
 resource.job.admit consumes one exact fresh parent admission for the root reviewed immutable DAG and creates a bounded protected job ledger. It does not return reusable child authority. resource.job.child.admit atomically admits each eligible node with complete inherited source/result receipts, reduced capability/recipient scope and fresh one-use child effect grant for exact selected action/target/final payload/retry. Existing one-child perform_delegated_effect remains one-use; do not loop/reuse its parent grant. Root maintains node state, dependency satisfaction, finite graph/concurrency/aggregate budget/deadline, and invalidates pending/running child grants on generation change/revocation/cancel. Retries need distinct fresh grants and unchanged complete lineage. Unknown/private content never routes public because of schedule/background/bundle labels.
 
 Fixed wire operations/targets and positive/negative evidence are in the JSON contract. Native adapters must actually invoke selected backend handlers, not only write schedule definitions or construct Python fixture objects. Register resources disabled unless user selected/configured; original topology and all692 functional obligations preserved. Account/hardware/native acceptance remains separate and open.
+
+## Protected original plugin effects (RB08)
+
+RB08 / RB-T09 / EV-RB08 are defined by planning/protected-plugin-effect-contract.json. All pinned manifest capabilities and deny/confirmation/privacy constraints remain mandatory. Root-selected finite schemas, exact operations/targets and immutable handler identity resolve accounts/endpoints/paths/secrets; no generic HTTP, shell or model-issued authority. Runtime external writes require separately trusted task/user-order authority, not deployment consent. Financial and destructive actions require one-shot exact-final-payload confirmation; durable idempotency and ambiguity reconciliation prevent replay.
+
+See planning/protected-plugin-effect-contract.json and plans/amendments/2026-10-09-protected-plugin-effects-v1.md. RB-T09 evidence EV-RB08 distinguishes implementation from actual native/account acceptance.
+
+Protected native composition clarification: plans/amendments/2026-10-09-native-package-binding-v1.md, planning/native-package-binding-contract.json and native-cross-process-bridge-contract.json define root-selected immutable package/resolver, observed source channels and shared route normalization. Existing HI-T08/09/11, RB-T09 and PR-F03/PR-T01 remain open; no caller provenance or late payload mutation.
+
+RB08 selected facade schemas: planning/protected-plugin-effect-contract.json and plans/amendments/2026-10-09-plugin-facade-action-schemas-v2.md. Root Epic lifecycle/voice session receipts required; backend mapping remains separately source-reviewed. Existing RB-T09 stays open.
+
+Native resolver reader v2: planning/native-package-binding-contract.json and plans/amendments/2026-10-09-native-resolver-reader-v2.md define peer-bound path-free immutable reader and presentation-only resolver; root re-resolves every effect. Existing HI-T08/09/RB-T09 remain open; document facade schemas retain actual tool/device/native evidence gates.
+
+Fixed recipe/session clarification: plans/amendments/2026-10-09-fixed-operation-recipes-voice-sessions-v1.md defines selection-only operation_recipes and bounded root-observed voice sessions. Existing HI-T09/HW-T03/RB-T09 remain open; no caller shell/device/session authorization claims.
+
+Native protected config v3: plans/amendments/2026-10-09-native-protected-config-v3.md specifies strict native-packages.json package/issuer joins and separate canonical normalization-policy/module hashes. Existing HI08/09/11/RB08/provider tasks remain open; config presence is not actual observer/native evidence.

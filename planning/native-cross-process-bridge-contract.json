@@ -11,7 +11,8 @@
     "operation": "native.event.prepare",
     "request": [
       "schema=1",
-      "source_receipt_handles",
+      "payload_bytes",
+      "parent_receipt_handles",
       "purpose",
       "intent_id",
       "trace_id",
@@ -27,12 +28,13 @@
       "credential",
       "sensitivity_label"
     ],
-    "validation": "same-peer producer identity/enrollment/profile/generation and complete root-observed source closure; host derives normalized final request from captured bytes using same protected canonicalizer as gateway",
+    "validation": "root itself captures exact complete SDK request envelope bytes from authenticated producer, joins complete immutable parent receipt ancestry, and derives normalized final provider request with protected selected canonicalizer; messages-only snapshot is source ancestry, not sufficient final effect body",
     "response": [
       "native_event_handle",
       "expires_monotonic"
     ],
-    "authority": "opaque handle is lookup reference only, unusable except by fixed host-selected gateway peer"
+    "authority": "opaque handle is lookup reference only, unusable except by fixed host-selected gateway peer",
+    "python_signature": "prepare_native_event(payload: bytes, *, parent_receipt_handles=(), purpose, intent_id, trace_id, retry_index=0) -> opaque native_event_handle"
   },
   "gateway_api": {
     "method": "dispatch_native_request",
@@ -46,7 +48,8 @@
     "validation": "authenticate actual gateway SO_PEERCRED + PIDFD/starttime/executable digest/profile/enrollment/generation; require exact protected mapping from producer to gateway, normalized payload digest and retry index match",
     "semantics": "single root RPC atomically claims handle, validates full source closure/current policy/account/zero budget/lease, internally issues fresh context+one-use effect and invokes fixed provider handler; caller receives no transferable grant",
     "effect_operation": "provider.dispatch fixed target/recipient/capability derived only from protected enrollment and canonical payload",
-    "response": "bounded eligible provider result/stream or exact redacted error; no secret/context credential leakage"
+    "response": "bounded eligible provider result/stream or exact redacted error; no secret/context credential leakage",
+    "python_signature": "dispatch_native_request(handle, normalized_payload: bytes, retry_index=0) -> bounded result/stream"
   },
   "protected_handle_state": [
     "handle_nonce",
@@ -88,5 +91,72 @@
     "retry",
     "childdelegation"
   ],
-  "evidence": "actual two enrolled separate processes native positive flow plus wrong gateway PID/exe/gen, producer replacement, digest/canonicalizer mismatch, dropped parents, concurrent reuse, retry replay, expired/revoked lease, private-public bypass before external bytes"
+  "evidence": "actual two enrolled separate processes native positive flow plus wrong gateway PID/exe/gen, producer replacement, digest/canonicalizer mismatch, dropped parents, concurrent reuse, retry replay, expired/revoked lease, private-public bypass before external bytes",
+  "receipt_lifetime": "source.capture immutable peer-bound receipt may remain as provenance parent until its bounded lease; retaining ancestry is not permission to repeat effect. prepare_native_event captures a NEW exact complete request envelope and bridge admission per attempt. Failed/retried request does not destroy audit ancestry or revive consumed bridge; each new bridge/attempt includes full closure and fresh root retry admission.",
+  "protected_authority_config": {
+    "field": "native_bridges",
+    "entries": [
+      "id",
+      "producer_profile_id",
+      "gateway_profile_id",
+      "canonicalizer_artifact_id",
+      "canonicalizer_sha256",
+      "approved_operation"
+    ],
+    "approved_operation": "provider.dispatch only for current native provider bridge",
+    "joins": "producer/gateway profiles join root principals/process_profiles for UID/executable/artifact/profile generation; provider_enrollments derive exact fixed target/recipient/capability/model/account",
+    "constraints": "unique exact bridge per selected producer profile/operation; distinct enrolled role processes; strict finite schema and no wildcard/caller destination; missing/ambiguous joins failclosed",
+    "dynamic_identity": "root process registry resolves currently live PIDFD/starttime/cgroup/exe digest/generation for BOTH peers per prepare/dispatch; config never stores caller-selected PID as authority",
+    "digest_note": "canonicalizer digest is actual protected installed artifact, not invented in planning; absent pin leaves bridge unavailable"
+  },
+  "api_body_definition": "Complete SDK envelope means all supported API BODY fields (model/messages/input/tools/stream/response format and route-supported controls), not transport-only headers, timeout or SDK retry objects. Reject caller extra_headers, bind only root opaque bridge header, enforce root deadline and disable implicit SDK retries. Every retry has new root admission/capture. SIWC rejects its documented unsupported body fields.",
+  "normalization_policy": {
+    "enrollment_fields": [
+      "normalization_policy_id",
+      "normalization_policy_sha256",
+      "normalization_policy_revision",
+      "route_schema_id",
+      "output_limit_mode",
+      "output_limit_ceiling"
+    ],
+    "modes": [
+      "reject-over-ceiling",
+      "clamp-to-ceiling",
+      "unsupported-field-reject"
+    ],
+    "semantics": "Root selected canonicalizer applies exact same protected policy before prepare digest and gateway effect. No independent late gateway mutation. Any policy revision invalidates old prepared handles. Ceiling is selected per compatible route, not inferred globally;4096 is permitted only as explicitly enrolled compatible-route bound. SIWC unsupported max_output_tokens stays rejected; never inject it. Caller values cannot widen protected limit.",
+    "evidence": "At/below/above ceiling producer and gateway byte equality, absent/altered policy or route schema denies, changed policy invalidates pending bridge; unsupported SIWC fields reject before bytes.",
+    "protected_records": {
+      "file": "/etc/hermes-installer/authority.json",
+      "top_level_key": "normalization_policies",
+      "record_fields": [
+        "id",
+        "revision",
+        "route_schema_id",
+        "output_limit_mode",
+        "output_limit_ceiling",
+        "canonicalizer_artifact_id",
+        "canonicalizer_sha256",
+        "normalization_policy_sha256"
+      ],
+      "digest": "normalization_policy_sha256 is SHA256 of canonical sorted compact JSON of preceding record fields EXCLUDING normalization_policy_sha256; canonicalizer_sha256 separately hashes exact installed reviewed canonicalizer bytes. Do not silently conflate module hash and policy hash.",
+      "selected_records": [
+        {
+          "id": "provider-output-reject-4096-v1",
+          "revision": 1,
+          "route_schema_id": "provider-chat-compatible-v1",
+          "output_limit_mode": "reject-over-ceiling",
+          "output_limit_ceiling": 4096
+        },
+        {
+          "id": "siwc-output-unsupported-v1",
+          "revision": 1,
+          "route_schema_id": "siwc-responses-preview-v1",
+          "output_limit_mode": "unsupported-field-reject",
+          "output_limit_ceiling": null
+        }
+      ],
+      "binding": "native_bridges join exact normalization policy ID/revision/hash and installed canonicalizer identity; policy missing route support/actual full artifact SHA unavailable. Same module can serve both records only if reviewed code implements both exact schemas. No planning partial digest is actual artifact pin."
+    }
+  }
 }

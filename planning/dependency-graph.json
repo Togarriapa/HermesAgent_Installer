@@ -118,7 +118,8 @@
       "SK-F01",
       "BD-F01",
       "RG-F01",
-      "PR-F01"
+      "PR-F01",
+      "SK-T01"
     ],
     "SK-F03": [
       "SK-F01",
@@ -1136,7 +1137,8 @@
       "PR-F01"
     ],
     "PR-R0130": [
-      "PR-F01"
+      "PR-F01",
+      "PR-T02"
     ],
     "SK-R0131": [
       "SK-F01"
@@ -2182,7 +2184,8 @@
     "RB-T06": [
       "RB-T05",
       "RB-T07",
-      "RB-T08"
+      "RB-T08",
+      "RB-T09"
     ],
     "RP-T01": [
       "RT-F01"
@@ -2250,7 +2253,8 @@
       "HI-T08",
       "HI-T09",
       "HI-T10",
-      "HI-T11"
+      "HI-T11",
+      "HI-T12"
     ],
     "HI-T07": [
       "HI-T01",
@@ -2312,6 +2316,31 @@
       "HI-T02",
       "HI-T09",
       "BD-F01"
+    ],
+    "PR-T02": [
+      "PR-F01",
+      "HI-T01",
+      "HI-T09"
+    ],
+    "HI-T12": [
+      "HI-T03",
+      "HI-T07",
+      "HI-T09"
+    ],
+    "SK-T01": [
+      "HI-T07",
+      "HI-T08",
+      "HI-T09",
+      "HI-T12",
+      "PR-F01"
+    ],
+    "RB-T09": [
+      "RB-T02",
+      "RB-T03",
+      "HI-T03",
+      "HI-T08",
+      "HI-T09",
+      "HI-T12"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."

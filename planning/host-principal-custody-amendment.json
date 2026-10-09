@@ -115,6 +115,15 @@
       "then": "root denies before bytes; valid paired identities use exact final digest/full source closure and consume each attempt once",
       "task_id": "HI-T11",
       "evidence_id": "EV-HI11"
+    },
+    {
+      "id": "HI12",
+      "name": "Operation-bound fixed effect rules",
+      "text": "Protected effect rules SHALL key exact capability, operation and enrolled target together; grants SHALL bind the same tuple and canonical payload. Shared targets SHALL not imply cross-operation permission. Connector frame operations SHALL each use fresh one-use bounded grants without extending original stream lease; trusted expiry/revocation cleanup SHALL remain independent.",
+      "when": "same service target has open/read/write/close rules or caller changes operation under a prior target grant",
+      "then": "root evaluates only exact enrolled operation tuple and consumes bounded frame grant; wrong operation/replay denies and expiry cleanup still closes the stream",
+      "task_id": "HI-T12",
+      "evidence_id": "EV-HI12"
     }
   ],
   "tasks": [
@@ -289,6 +298,21 @@
       "target_acceptance_complete": false,
       "verification": "actual two-process native source dispatch plus peer/exe/generation/digest/closure/replay/retry/lease negatives before effects",
       "docs": "docs/host-principal-custody.md"
+    },
+    {
+      "id": "HI-T12",
+      "requirement_ids": [
+        "HI12"
+      ],
+      "depends_on": [
+        "HI-T03",
+        "HI-T07",
+        "HI-T09"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false,
+      "verification": "actual same-target multi-operation positive and wrong operation/legacy pair/duplicate/replay/frame digest/deadline tests; cleanup after expired authority",
+      "docs": "docs/host-principal-custody.md"
     }
   ],
   "acceptance": {
@@ -312,7 +336,8 @@
       "HI08",
       "HI09",
       "HI10",
-      "HI11"
+      "HI11",
+      "HI12"
     ]
   },
   "change_dependencies": [
@@ -323,6 +348,7 @@
   ],
   "refinement_amendments": [
     "plans/amendments/2026-10-09-fixed-process-inspection-v1.md",
-    "plans/amendments/2026-10-09-native-cross-process-bridge-v1.md"
+    "plans/amendments/2026-10-09-native-cross-process-bridge-v1.md",
+    "plans/amendments/2026-10-09-operation-bound-effect-rules-v1.md"
   ]
 }

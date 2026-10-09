@@ -108,3 +108,68 @@ Cross-process native source handoff SHALL use root-issued one-use bridge state b
 
 - **WHEN** separate gateway resolves a native source reference with different PID/generation/payload or replays an attempt
 - **THEN** root denies before bytes; valid paired identities use exact final digest/full source closure and consume each attempt once
+
+#### Scenario: Incomplete request envelope or retry reuse
+
+- **WHEN** producer captures messages without full SDK fields or reuses a prior bridge on retry
+- **THEN** root rejects final effect mismatch/replay before bytes; a new complete request capture and fresh one-use bridge preserves full bounded parent ancestry
+
+### Requirement: Operation-bound fixed effect rules (HI12)
+
+Protected effect rules SHALL key exact capability, operation and enrolled target together; grants SHALL bind the same tuple and canonical payload. Shared targets SHALL not imply cross-operation permission. Connector frame operations SHALL each use fresh one-use bounded grants without extending original stream lease; trusted expiry/revocation cleanup SHALL remain independent.
+
+#### Scenario: Same target different operation
+
+- **WHEN** same service target has open/read/write/close rules or caller changes operation under a prior target grant
+- **THEN** root evaluates only exact enrolled operation tuple and consumes bounded frame grant; wrong operation/replay denies and expiry cleanup still closes the stream
+
+### Requirement: Protected native enrollment proof (HI10/HI11 refinement)
+
+Desktop renderer and native bridge enrollment SHALL use actual protected installed artifact digests and unambiguous root-owned identity/policy mappings. Inspector attestation SHALL derive fresh role-specific process/sandbox/relaunch/window evidence; missing pins, caller booleans or main-process-only proof SHALL leave native exposure incomplete.
+
+#### Scenario: Missing renderer or bridge canonicalizer pin
+
+- **WHEN** protected enrollment lacks actual renderer/monitor/patch/canonicalizer digest or identity join is ambiguous
+- **THEN** root denies affected native exposure/dispatch with exact incomplete evidence and never substitutes caller-provided claims
+
+### Requirement: Protected native composition
+The installer SHALL bind actual native producer package/adapter closure through immutable root-selected profile generation and observed issuer channels, and SHALL apply the same protected route normalization policy before final request digest and gateway effect. Caller registration/labels SHALL not establish provenance.
+
+#### Scenario: Mutable package or divergent normalization
+- **WHEN** native closure, peer generation, issuer provenance or route-normalized final payload differs from protected enrollment
+- **THEN** deny before effect bytes and retain exact incomplete implementation/native evidence state.
+
+### Requirement: Protected resolver reader
+The installer SHALL expose only peer-bound selected immutable resolver records via path-free native.resolver.read and SHALL re-resolve current protected effect enrollment on every dispatch.
+
+#### Scenario: Caller reuses stale resolver as permission
+- **WHEN** profile generation, handler, scope or policy changed after reading resolver
+- **THEN** deny affected effect before bytes; presentation records confer no authority.
+
+### Requirement: Fixed operation and voice session selection
+The installer SHALL resolve only protected fixed operation recipes and current root-authorized device/session handles; caller inputs SHALL not select physical executable, path, environment or device. Raw captured voice SHALL be bounded ephemeral memory only.
+
+#### Scenario: Forged recipe or expired voice session
+- **WHEN** selected operation parameters escape its schema or voice session is stale, sibling-owned or lacks trusted permission
+- **THEN** reject before execution/capture and cancel owned expired resources.
+
+### Requirement: Native protected configuration identities
+The installer SHALL validate strict root-owned package/issuer catalogs and distinct canonical normalization-policy and installed module hashes with actual current enrollment joins.
+
+#### Scenario: Partial hash or unobserved configured issuer
+- **WHEN** policy/module digest is missing or source observer only exists as configuration text
+- **THEN** keep affected native effect unavailable and require actual identity/observer evidence.
+
+### Requirement: Fixed recipe parameter grammar
+The installer SHALL validate only bounded root-selected scalar parameter schemas and exact literal/parameter argv tokens, one element each, with no interpolation or caller physical resource selection.
+
+#### Scenario: Caller injects path or extra parameter
+- **WHEN** parameter is untyped, unbounded, extra or outside exact scalar grammar
+- **THEN** reject before launch without shell expansion or alternate recipe fallback.
+
+### Requirement: Selected package and compound memory admission
+The installer SHALL resolve native package from actual enrolled peer and SHALL authorize each fixed compound memory step separately under same bounded root-owned admission and source lineage.
+
+#### Scenario: Caller chooses package or reuses compound grant
+- **WHEN** caller claims alternate package/scope or repeats one consumed authorization across steps
+- **THEN** reject before bytes and retain owned cleanup journal with no sibling deletion.

@@ -13,3 +13,15 @@ Model: GPT-6 Luna development from Sol amendment. Additive mapping: planning/res
 - [ ] 7.1 `RB-T07` Implement RB06 fixed registry.read metadata adapters; prerequisites RB-T02, RB-T03, HI-T03, HI-T08, HI-T09. Evidence EV-RB06: bounded positive metadata reads plus arbitrary URL/method/redirect/private query/oversize/pagination negatives and separate actual native plugin invocation. Preserve no install/publish/execute/activation and keep target acceptance open.
 
 - [ ] 8.1 `RB-T08` Implement RB07 protected selected cron/webhook/channel event issuer and bounded bundle DAG job/child admission; prerequisites RB-T02, RB-T03, HI-T03, HI-T08, HI-T09. Evidence EV-RB07: native/backend positive jobs plus forged timer/HMAC/replay/account/private lineage/reused child grant/cycle/concurrency/generation-revoke negatives; no outbound installation-test message and distinct fixture/target states.
+
+- [ ] 9.1 `RB-T09` Implement RB08 protected original plugin effect catalog; prerequisites RB-T02, RB-T03, HI-T03, HI-T08, HI-T09, HI-T12. Evidence EV-RB08: actual native selected backend effects plus scope/digest/confirmation/replay/duplicate/ambiguity/private recipient negatives; all original plugin obligations and target/account acceptance remain open.
+
+Protected native composition clarification: plans/amendments/2026-10-09-native-package-binding-v1.md, planning/native-package-binding-contract.json and native-cross-process-bridge-contract.json define root-selected immutable package/resolver, observed source channels and shared route normalization. Existing HI-T08/09/11, RB-T09 and PR-F03/PR-T01 remain open; no caller provenance or late payload mutation.
+
+RB08 selected facade schemas: planning/protected-plugin-effect-contract.json and plans/amendments/2026-10-09-plugin-facade-action-schemas-v2.md. Root Epic lifecycle/voice session receipts required; backend mapping remains separately source-reviewed. Existing RB-T09 stays open.
+
+Native resolver reader v2: planning/native-package-binding-contract.json and plans/amendments/2026-10-09-native-resolver-reader-v2.md define peer-bound path-free immutable reader and presentation-only resolver; root re-resolves every effect. Existing HI-T08/09/RB-T09 remain open; document facade schemas retain actual tool/device/native evidence gates.
+
+Fixed recipe/session clarification: plans/amendments/2026-10-09-fixed-operation-recipes-voice-sessions-v1.md defines selection-only operation_recipes and bounded root-observed voice sessions. Existing HI-T09/HW-T03/RB-T09 remain open; no caller shell/device/session authorization claims.
+
+Native protected config v3: plans/amendments/2026-10-09-native-protected-config-v3.md specifies strict native-packages.json package/issuer joins and separate canonical normalization-policy/module hashes. Existing HI08/09/11/RB08/provider tasks remain open; config presence is not actual observer/native evidence.
