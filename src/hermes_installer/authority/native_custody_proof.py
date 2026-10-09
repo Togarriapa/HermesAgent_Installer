@@ -126,6 +126,181 @@ class ResolvedTargetPeer:
     identity: Any
 
 
+@dataclass(frozen=True, slots=True)
+class LiveNativeInputTarget:
+    """Root-selected initial native input target with an owned PIDFD duplicate.
+
+    The target is not a source receipt or effect grant. Its ``pidfd`` belongs
+    to the caller and must be closed after input observation completes.
+    """
+
+    schema: int
+    process_id: str
+    profile_id: str
+    generation: str
+    peer_pid: int
+    peer_pidfd: int
+    live_peer_identity: Any
+    loaded_package_proof: LoadedPackageClosureProof
+    service_generation_digest: str
+    expires_monotonic: float
+
+
+class RootNativeInputTargetResolver:
+    """Resolve an initial-input target from an exact root execution selection.
+
+    The selection registry validates the complete admission/process join and
+    returns its exact current DTO. The process manager then resolves the
+    manager-issued ``ManagedTaskHandle`` to a current process lease; no PID or
+    profile selector is accepted here. The active observer row and the store's
+    root-observed loaded-package proof complete the input target.
+    """
+
+    def __init__(self, *, selection_registry: Any, custody_resolver: Any,
+                 observer_enrollments: Mapping[str, Any],
+                 loader_observations: "RootNativeLoaderObservationStore"):
+        from .source_observers import SourceObserverEnrollment
+
+        if (not callable(getattr(selection_registry, "resolve_current_execution", None))
+                or not callable(getattr(custody_resolver, "resolve_managed_task_process_handle", None))
+                or not callable(getattr(custody_resolver, "resolve_owned_process_handle", None))
+                or not callable(getattr(custody_resolver, "resolve_live_peer", None))
+                or not isinstance(observer_enrollments, Mapping) or not observer_enrollments
+                or not isinstance(loader_observations, RootNativeLoaderObservationStore)
+                or any(not isinstance(key, str) or not isinstance(value, SourceObserverEnrollment)
+                       or key != value.observer_enrollment_id
+                       for key, value in observer_enrollments.items())):
+            raise ValueError("native input target requires the active task registry, custody lease, and observer joins")
+        self.selection_registry = selection_registry
+        self.custody_resolver = custody_resolver
+        self.observer_enrollments = dict(observer_enrollments)
+        self.loader_observations = loader_observations
+
+    def resolve_selected_native_input_target(self, selected_execution: Any) -> LiveNativeInputTarget:
+        """Resolve the exact root-selected task/health/Desktop native peer.
+
+        ``resolve_current_execution`` is a non-consuming root-registry lookup:
+        it rejects fabricated/stale DTOs and returns the exact active selection
+        only after rechecking its admission and process-handle join.
+        """
+        resolver = self.selection_registry.resolve_current_execution
+        try:
+            selected = resolver(selected_execution)
+        except Exception:
+            raise AuthorityDenied("native.input.selection", "root native execution selection is stale") from None
+        if selected is None or selected is not selected_execution:
+            raise AuthorityDenied("native.input.selection", "root native execution selection is unavailable")
+        required_text = (
+            "selection_handle", "kind", "profile_id", "generation",
+            "native_package_id", "native_package_generation", "observer_enrollment_id",
+            "source_action_id", "service_generation_digest",
+        )
+        if (getattr(selected, "schema", None) != 1
+                or any(not isinstance(getattr(selected, name, None), str)
+                       or not getattr(selected, name) for name in required_text)
+                or selected.kind not in {"resource-task", "native-health", "desktop-input"}
+                or type(getattr(selected, "expires_monotonic", None)) not in (int, float)
+                or not math.isfinite(selected.expires_monotonic)
+                or self.loader_observations.clock() >= selected.expires_monotonic):
+            raise AuthorityDenied("native.input.selection", "root native execution selection is malformed or expired")
+        observer = self.observer_enrollments.get(selected.observer_enrollment_id)
+        if (observer is None or observer.source_kind != "native-input"
+                or observer.profile_id != selected.profile_id
+                or observer.generation != selected.generation
+                or observer.package_id != selected.native_package_id
+                or observer.source_action_id != selected.source_action_id):
+            raise AuthorityDenied("native.input.observer", "selected execution has no exact active input observer")
+        process_handle = getattr(selected, "process_handle", None)
+        if (getattr(selected, "execution_handle", None) is None
+                or process_handle is None):
+            raise AuthorityDenied("native.input.process", "selected execution has no manager task handle")
+        try:
+            if selected.kind == "resource-task":
+                lease = self.custody_resolver.resolve_managed_task_process_handle(process_handle)
+            else:
+                lease = self.custody_resolver.resolve_owned_process_handle(process_handle)
+        except Exception:
+            raise AuthorityDenied("native.input.process", "selected manager task is no longer active") from None
+        if lease is None:
+            raise AuthorityDenied("native.input.process", "selected manager task has no active process lease")
+        target_fd = -1
+        try:
+            now = self.loader_observations.clock()
+            peer_pid = getattr(lease, "pid", None)
+            borrowed_pidfd = getattr(lease, "pidfd", None)
+            process_id = getattr(lease, "process_id", None)
+            lease_profile = getattr(lease, "profile_id", None)
+            lease_generation = getattr(lease, "generation", None)
+            lease_expiry = getattr(lease, "expires_monotonic", None)
+            if (process_id != process_handle.process_id
+                    or lease_profile != selected.profile_id
+                    or lease_generation != selected.generation
+                    or type(peer_pid) is not int or peer_pid <= 0
+                    or type(borrowed_pidfd) is not int or borrowed_pidfd < 0
+                    or type(lease_expiry) not in (int, float)
+                    or not math.isfinite(lease_expiry)
+                    or not now < lease_expiry):
+                raise AuthorityDenied("native.input.process", "selected task process lease differs from its root join")
+            identity = self.custody_resolver.resolve_live_peer(
+                peer_pid, borrowed_pidfd, profile_id=selected.profile_id,
+                generation=selected.generation,
+            )
+            if (identity is None
+                    or getattr(identity, "profile_id", None) != selected.profile_id
+                    or getattr(identity, "generation", None) != selected.generation
+                    or getattr(identity, "kernel_uid", None) != getattr(lease, "uid", None)
+                    or getattr(identity, "start_ticks", None) != getattr(lease, "start_ticks", None)
+                    or getattr(identity, "cgroup_identity", None) != getattr(lease, "cgroup_identity", None)
+                    or getattr(identity, "namespace_identity", None) != (
+                        f"mnt:{getattr(lease, 'mount_namespace_inode', None)};"
+                        f"net:{getattr(lease, 'network_namespace_inode', None)}")
+                    or getattr(identity, "executable_sha256", None) != getattr(lease, "executable_sha256", None)):
+                raise AuthorityDenied("native.input.process", "selected task kernel identity is stale or substituted")
+            target_fd = os.dup(borrowed_pidfd)
+            if (RootNativeLoaderObservationStore._pidfd_target(target_fd) != peer_pid
+                    or RootNativeLoaderObservationStore._pidfd_exited(target_fd)):
+                raise AuthorityDenied("native.input.process", "selected task exited while its PIDFD was retained")
+            retained_identity = self.custody_resolver.resolve_live_peer(
+                peer_pid, target_fd, profile_id=selected.profile_id,
+                generation=selected.generation,
+            )
+            if retained_identity is None or retained_identity != identity:
+                raise AuthorityDenied("native.input.process", "selected task changed while its PIDFD was retained")
+            proof = self.loader_observations.resolve_loaded_package_closure(
+                LivePeerProcess(peer_pid, target_fd, retained_identity), observer,
+            )
+            if (not isinstance(proof, LoadedPackageClosureProof)
+                    or proof.profile_id != selected.profile_id
+                    or proof.generation != selected.generation
+                    or proof.package_id != selected.native_package_id
+                    or proof.service_generation_digest != selected.service_generation_digest
+                    or proof.target_peer_identity != retained_identity
+                    or proof.expires_monotonic <= now):
+                raise AuthorityDenied("native.input.closure", "selected task lacks its exact current loaded-package proof")
+            expiry = min(float(selected.expires_monotonic), float(lease_expiry),
+                         float(proof.expires_monotonic))
+            if not now < expiry:
+                raise AuthorityDenied("native.input.expired", "selected native input target has no remaining lease")
+            result = LiveNativeInputTarget(
+                schema=1, process_id=process_id, profile_id=selected.profile_id,
+                generation=selected.generation, peer_pid=peer_pid, peer_pidfd=target_fd,
+                live_peer_identity=retained_identity, loaded_package_proof=proof,
+                service_generation_digest=selected.service_generation_digest,
+                expires_monotonic=expiry,
+            )
+            target_fd = -1
+            return result
+        finally:
+            if target_fd >= 0:
+                try:
+                    os.close(target_fd)
+                except OSError:
+                    pass
+            close = getattr(lease, "close", None)
+            if callable(close):
+                close()
+
+
 def native_bridge_source_target_selector(broker: Any,
                                           clock: Callable[[], float] = time.monotonic
                                           ) -> Callable[[Any, HostContext], Any]:
@@ -630,7 +805,7 @@ class RootNativeLoaderObservationStore:
         with self._lock:
             if self._closed or process_id in self._by_process:
                 self._close_entry(entry)
-                _cleanup_loader_path(None, entry.socket_path, entry.socket_directory)
+                _close_loader_path(None, entry.socket_path, entry.socket_directory)
                 raise AuthorityDenied("native.loader", "loader launch is retired or duplicated")
             self._launches[handle] = entry
             self._by_process[process_id] = handle
@@ -936,7 +1111,7 @@ class RootNativeLoaderObservationStore:
             entry.listener_socket = None
             entry.parent_socket = channel
             listener.close()
-            _cleanup_loader_path(None, entry.socket_path, entry.socket_directory)
+            _close_loader_path(None, entry.socket_path, entry.socket_directory)
             return
 
     def _recv_exact(self, entry: _LaunchObservation, length: int,
@@ -1094,7 +1269,7 @@ class RootNativeLoaderObservationStore:
             os.close(entry.child_pidfd)
         except OSError:
             pass
-        _cleanup_loader_path(None, entry.socket_path, entry.socket_directory)
+        _close_loader_path(None, entry.socket_path, entry.socket_directory)
 
 
 def _pidfd_poll(pidfd: int) -> bool:

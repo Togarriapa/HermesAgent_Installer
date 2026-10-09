@@ -77,6 +77,14 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
 
         store = RootNativeLoaderObservationStore(
             fixture.handler, active_loader_selection, source_target_selector=lambda *_args: None)
+        previous_store = fixture.handler.native_loader_observation_store
+        if previous_store is not None:
+            # The cancellation/expiry case admits two sequential tasks through
+            # one fixture manager. The earlier task is terminal before this
+            # helper runs again, so retire its loader observer before replacing
+            # the selected package/generation closure for the next task.
+            previous_store.close()
+            fixture.handler.native_loader_observation_store = None
         fixture.handler.set_native_loader_observation_store(store)
 
         task_payload = json.dumps({"prompt": prompt}, sort_keys=True,
@@ -161,10 +169,11 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
             f"_entrypoint={binding.entrypoint_sha256!r}\n"
             f"_resolver={binding.resolver_sha256!r}\n"
             "for _seq,_phase in enumerate(('entrypoint-imported','actions-registered','ready')):\n"
+            "    _actions=[] if _seq==0 else ['ci-native-action']\n"
             "    _record={'schema':1,'launch_nonce':_nonce.decode('ascii'),'sequence':_seq,"
             "'phase':_phase,'package_id':_package,'generation':_generation,"
             "'entrypoint_sha256':_entrypoint,'resolver_sha256':_resolver,"
-            "'registered_action_ids':['ci-native-action']}\n"
+            "'registered_action_ids':_actions}\n"
             "    _body=json.dumps(_record,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')\n"
             "    _sock.sendall(struct.pack('!I',len(_body))+_body)\n"
             "_sock.close()\n"
@@ -183,6 +192,18 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
         handle, task, exact, _, parent_fd = self._admit_and_start(
             suffix="positive", script=script, prompt=prompt)
         try:
+            process_lease = fixture.handler.resolve_managed_task_process_handle(handle)
+            self.assertIsNotNone(process_lease,
+                "active task handle did not resolve to its root-registered process")
+            self.assertEqual(process_lease.process_id, handle.process_id)
+            self.assertEqual(process_lease.generation, handle.generation)
+            self.assertEqual(process_lease.uid, fixture.uid)
+            self.assertEqual(process_lease.pid, fixture.handler._handles[handle.process_id].pid)
+            self.assertNotEqual(process_lease.pidfd,
+                fixture.handler._handles[handle.process_id].child_pidfd)
+            process_lease.close()
+            self.assertIsNone(fixture.handler.resolve_managed_task_process_handle(
+                type(handle)(handle.handle_id, "stale-generation", handle.process_id)))
             terminal = fixture.handler.wait_owned_task_terminal(
                 handle, deadline_monotonic=task.deadline_monotonic, cancelled=lambda: False)
         finally:

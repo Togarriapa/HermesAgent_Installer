@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import base64
+import pwd
 import sys
 import tempfile
 import time
@@ -23,8 +24,8 @@ from hermes_installer.authority.types import (
 
 
 def _test_temp_parent() -> str:
-    # Linux root-owned fixtures use /tmp's root-owned sticky parent; Darwin
-    # exposes the equivalent through its /private alias.
+    # Darwin exposes its root-owned sticky temp directory at /private/tmp; Linux
+    # uses /tmp. Never make Linux tests depend on a Darwin-only alias.
     return "/private/tmp" if sys.platform == "darwin" else "/tmp"
 
 
@@ -44,8 +45,9 @@ def _test_builder_uid() -> int:
 def _owned_output_root(path: Path) -> Path:
     path.mkdir(mode=0o700, exist_ok=True)
     owner_uid = _test_builder_uid()
-    if path.stat().st_uid != owner_uid:
-        os.chown(path, owner_uid, -1)
+    owner_gid = pwd.getpwuid(owner_uid).pw_gid
+    if (path.stat().st_uid, path.stat().st_gid) != (owner_uid, owner_gid):
+        os.chown(path, owner_uid, owner_gid)
     path.chmod(0o700)
     return path
 def constraints():
@@ -81,6 +83,7 @@ class Profile:
     max_lifetime_seconds = 600
     output_root_id = "build-output"
     output_owner_uid = _test_builder_uid()
+    output_owner_gid = pwd.getpwuid(output_owner_uid).pw_gid
     output_specs = constraints()
 
     def __init__(self, output_root: Path):
@@ -182,7 +185,7 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
                 return profile, SimpleNamespace(
                     enrollment_id=profile.build_service_enrollment_id,
                     generation=profile.build_service_generation,
-                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
+                    service_uid=profile.output_owner_uid, service_gid=profile.output_owner_gid)
 
         class Launcher:
             seen = False

@@ -9,10 +9,16 @@ import time
 import unittest
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from hermes_installer.authority.native_custody_proof import (
     LivePeerProcess,
+    LiveNativeInputTarget,
+    LoadedPackageClosureProof,
+    _LaunchObservation,
     NativeLoaderSelection,
+    RootNativeInputTargetResolver,
     RootNativeLoaderObservationStore,
     active_native_catalog_resolver,
     attach_root_source_observers,
@@ -23,7 +29,9 @@ from hermes_installer.authority.native_custody_proof import (
 )
 from hermes_installer.authority.source_observers import SourceObserverEnrollment
 from hermes_installer.authority.types import AuthorityDenied, HostContext, Sensitivity, canonical_digest
-from hermes_installer.managed_process_custodian import LivePeerIdentity, NativePackageMountReceipt
+from hermes_installer.managed_process_custodian import (
+    LivePeerIdentity, ManagedTaskHandle, NativePackageMountReceipt,
+)
 
 
 _ENTRY = "d" * 64
@@ -214,6 +222,31 @@ class ProgressWireContracts(unittest.TestCase):
         self.assertEqual(record.phase, "entrypoint-imported")
         with self.assertRaises(AuthorityDenied):
             _parse_progress(b'{"schema":1,"schema":1}')
+
+    def test_revoked_launch_cleanup_closes_fd_and_unlinks_private_socket(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "launch"
+            directory.mkdir(mode=0o700)
+            socket_path = directory / "progress.sock"
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(str(socket_path))
+            listener.listen(1)
+            child_pidfd = os.open("/dev/null", os.O_RDONLY)
+            entry = _LaunchObservation(
+                handle="test-handle", owned_process_handle=None, selection=None,
+                listener_socket=listener, parent_socket=None,
+                socket_path=socket_path, socket_directory=directory,
+                child_pid=1, child_pidfd=child_pidfd, child_uid=1, child_gid=1,
+                child_start_ticks=1, child_cgroup="test", child_namespace="mnt:1;net:1",
+                launch_nonce="N" * 43, deadline=1.0,
+            )
+
+            RootNativeLoaderObservationStore._close_entry(entry)
+
+            self.assertFalse(socket_path.exists())
+            self.assertFalse(directory.exists())
+            with self.assertRaises(OSError):
+                os.fstat(child_pidfd)
         with self.assertRaises(AuthorityDenied):
             _parse_progress(self._frame(0, "entrypoint-imported")[:-1] + b" ")
 
@@ -443,6 +476,133 @@ class RootLoaderObservationContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.store.receive_loader_progress(self.launch_handle, lambda: False)
 
+    def test_initial_input_target_joins_exact_task_selection_current_lease_and_ready_proof(self):
+        self.store.receive_loader_progress(self.launch_handle, lambda: False)
+        observer = _observer(producer_uid=self.uid)
+        process_handle = ManagedTaskHandle("task-handle", "generation-1", "owned-process")
+        execution = SimpleNamespace(
+            schema=1, selection_handle="selection-handle", kind="resource-task",
+            execution_handle=object(), process_handle=process_handle,
+            profile_id="producer-profile", generation="generation-1",
+            native_package_id="package-1", native_package_generation="generation-1",
+            observer_enrollment_id=observer.observer_enrollment_id,
+            source_action_id=observer.source_action_id,
+            service_generation_digest=_GENERATION_DIGEST,
+            expires_monotonic=time.monotonic() + 10,
+        )
+
+        class _SelectionRegistry:
+            def resolve_current_execution(_self, candidate):
+                if candidate is not execution:
+                    raise AuthorityDenied("native.input.selection", "stale selection")
+                return execution
+
+        class _Lease:
+            def __init__(_self):
+                _self.pidfd = os.dup(self.child_pidfd)
+                _self.process_id = "owned-process"
+                _self.profile_id = "producer-profile"
+                _self.generation = "generation-1"
+                _self.pid = self.child.pid
+                _self.uid = self.uid
+                _self.start_ticks = self.identity.start_ticks
+                _self.cgroup_identity = self.identity.cgroup_identity
+                _self.executable_sha256 = self.identity.executable_sha256
+                _self.mount_namespace_inode = int(self.identity.namespace_identity.split(";")[0].split(":")[1])
+                _self.network_namespace_inode = int(self.identity.namespace_identity.split(";")[1].split(":")[1])
+                _self.expires_monotonic = time.monotonic() + 10
+                _self.closed = False
+
+            def close(_self):
+                if not _self.closed:
+                    _self.closed = True
+                    os.close(_self.pidfd)
+
+        leases = []
+
+        class _Manager:
+            def resolve_managed_task_process_handle(_self, candidate):
+                if candidate is not process_handle:
+                    return None
+                lease = _Lease()
+                leases.append(lease)
+                return lease
+
+            def resolve_owned_process_handle(_self, _candidate):
+                return None
+
+            def resolve_live_peer(_self, *args, **kwargs):
+                return self.custody.resolve_live_peer(*args, **kwargs)
+
+        resolver = RootNativeInputTargetResolver(
+            selection_registry=_SelectionRegistry(), custody_resolver=_Manager(),
+            observer_enrollments={observer.observer_enrollment_id: observer},
+            loader_observations=self.store,
+        )
+        target = resolver.resolve_selected_native_input_target(execution)
+        try:
+            self.assertIsInstance(target, LiveNativeInputTarget)
+            self.assertEqual(target.schema, 1)
+            self.assertEqual(target.process_id, "owned-process")
+            self.assertEqual(target.profile_id, "producer-profile")
+            self.assertEqual(target.generation, "generation-1")
+            self.assertEqual(target.peer_pid, self.child.pid)
+            self.assertNotEqual(target.peer_pidfd, self.child_pidfd)
+            self.assertEqual(target.loaded_package_proof.package_id, "package-1")
+            self.assertEqual(target.loaded_package_proof.loader_ready_event_id,
+                             self.store._launches[self.launch_handle].ready_event_id)
+            self.assertEqual(target.service_generation_digest, _GENERATION_DIGEST)
+            self.assertTrue(leases[0].closed)
+            with self.assertRaises(OSError):
+                os.fstat(leases[0].pidfd)
+        finally:
+            os.close(target.peer_pidfd)
+
+    def test_initial_input_target_rejects_fabricated_selection_and_wrong_observer(self):
+        self.store.receive_loader_progress(self.launch_handle, lambda: False)
+        observer = _observer(producer_uid=self.uid)
+        process_handle = ManagedTaskHandle("task-handle", "generation-1", "owned-process")
+        execution = SimpleNamespace(
+            schema=1, selection_handle="selection-handle", kind="resource-task",
+            execution_handle=object(), process_handle=process_handle,
+            profile_id="producer-profile", generation="generation-1",
+            native_package_id="package-1", native_package_generation="generation-1",
+            observer_enrollment_id=observer.observer_enrollment_id,
+            source_action_id=observer.source_action_id,
+            service_generation_digest=_GENERATION_DIGEST,
+            expires_monotonic=time.monotonic() + 10,
+        )
+
+        class _SelectionRegistry:
+            def resolve_current_execution(_self, candidate):
+                if candidate is not execution:
+                    raise AuthorityDenied("native.input.selection", "stale selection")
+                return execution
+
+        class _Manager:
+            def resolve_managed_task_process_handle(_self, _candidate):
+                raise AssertionError("stale or wrong observer selection reached custody")
+
+            def resolve_owned_process_handle(_self, _candidate):
+                raise AssertionError("stale or wrong observer selection reached custody")
+
+            def resolve_live_peer(_self, *args, **kwargs):
+                return self.custody.resolve_live_peer(*args, **kwargs)
+
+        resolver = RootNativeInputTargetResolver(
+            selection_registry=_SelectionRegistry(), custody_resolver=_Manager(),
+            observer_enrollments={observer.observer_enrollment_id: replace(
+                observer, source_action_id="wrong.action")},
+            loader_observations=self.store,
+        )
+        with self.assertRaises(AuthorityDenied):
+            resolver.resolve_selected_native_input_target(execution)
+        fabricated_fields = dict(vars(execution))
+        fabricated_fields["selection_handle"] = "fabricated-selection"
+        fabricated = SimpleNamespace(**fabricated_fields)
+        with self.assertRaises(AuthorityDenied):
+            resolver.resolve_selected_native_input_target(fabricated)
+
     def test_mount_receipt_alone_is_not_a_loader_ready_proof(self):
         observer = _observer(producer_uid=self.uid)
         peer = LivePeerProcess(self.child.pid, self.child_pidfd, self.identity)
@@ -533,6 +693,176 @@ class RootLoaderObservationContracts(unittest.TestCase):
             os.fstat(pair_holder[0].producer.pidfd)
         self.assertGreater(os.fstat(selected.pidfd).st_ino, 0)
         os.close(selected.pidfd)
+
+
+class NativeInputTargetResolverContracts(unittest.TestCase):
+    def _fixture(self, *, wrong_observer_action=False, kind="resource-task"):
+        from hermes_installer.authority.native_custody_proof import RootNativeInputTargetResolver
+
+        profile_id = "producer-profile"
+        generation = "generation-1"
+        process_id = "owned-process"
+        pid = 4242
+        uid = 2222
+        identity = LivePeerIdentity(
+            profile_id, generation, uid, 12, _ROLE, "input-cgroup", "mnt:42;net:43",
+        )
+        observer = _observer(producer_uid=uid)
+        if wrong_observer_action:
+            observer = replace(observer, source_action_id="other.action")
+        process_handle = (ManagedTaskHandle("managed-task", generation, process_id)
+                          if kind == "resource-task"
+                          else SimpleNamespace(process_id=process_id))
+        execution = SimpleNamespace(
+            schema=1, selection_handle="root-selection", kind=kind,
+            execution_handle=object(), process_handle=process_handle,
+            profile_id=profile_id, generation=generation,
+            native_package_id="package-1", native_package_generation=generation,
+            observer_enrollment_id=observer.observer_enrollment_id,
+            source_action_id="action.input", service_generation_digest=_GENERATION_DIGEST,
+            expires_monotonic=time.monotonic() + 15,
+        )
+        proof = LoadedPackageClosureProof(
+            schema=1, proof_id="proof-id", package_id="package-1",
+            profile_id=profile_id, generation=generation,
+            compiled_closure_sha256=_CLOSURE, entrypoint_sha256=_ENTRY,
+            resolver_sha256=_RESOLVER, mount_namespace_inode=42,
+            mount_id="mount-id", mount_target_digest="f" * 64,
+            mount_flags=("nodev", "nosuid", "ro"), source_root_device=1,
+            source_root_inode=2, target_peer_identity=identity,
+            loader_role_artifact_id="loader-role", loader_role_sha256=_ROLE,
+            loader_ready_event_id="ready-id", observed_entrypoint_action_ids=("action.input",),
+            issued_monotonic=time.monotonic(), expires_monotonic=time.monotonic() + 12,
+            service_generation_digest=_GENERATION_DIGEST,
+        )
+        store = object.__new__(RootNativeLoaderObservationStore)
+        store.clock = time.monotonic
+        store.resolve_loaded_package_closure = lambda peer, selected_observer: (
+            proof if peer.identity == identity and selected_observer is observer else None
+        )
+
+        class _SelectionRegistry:
+            def resolve_current_execution(_self, candidate):
+                if candidate is not execution:
+                    raise AuthorityDenied("native.input.selection", "stale execution selection")
+                return execution
+
+        leases = []
+
+        class _Lease:
+            def __init__(_self):
+                _self.pidfd = os.open("/dev/null", os.O_RDONLY)
+                _self.process_id = process_id
+                _self.profile_id = profile_id
+                _self.generation = generation
+                _self.pid = pid
+                _self.uid = uid
+                _self.start_ticks = identity.start_ticks
+                _self.cgroup_identity = identity.cgroup_identity
+                _self.executable_sha256 = identity.executable_sha256
+                _self.mount_namespace_inode = 42
+                _self.network_namespace_inode = 43
+                _self.expires_monotonic = time.monotonic() + 10
+                _self.closed = False
+
+            def close(_self):
+                if not _self.closed:
+                    _self.closed = True
+                    os.close(_self.pidfd)
+
+        class _Manager:
+            def resolve_managed_task_process_handle(_self, candidate):
+                if kind != "resource-task" or candidate is not process_handle:
+                    return None
+                lease = _Lease()
+                leases.append(lease)
+                return lease
+
+            def resolve_owned_process_handle(_self, candidate):
+                if kind == "resource-task" or candidate is not process_handle:
+                    return None
+                lease = _Lease()
+                leases.append(lease)
+                return lease
+
+            def resolve_live_peer(_self, peer_pid, _peer_pidfd, *, profile_id, generation):
+                return identity if (peer_pid == pid and profile_id == identity.profile_id
+                                   and generation == identity.generation) else None
+
+        manager = _Manager()
+        target_resolver = RootNativeInputTargetResolver(
+            selection_registry=_SelectionRegistry(), custody_resolver=manager,
+            observer_enrollments={observer.observer_enrollment_id: observer},
+            loader_observations=store,
+        )
+        return target_resolver, execution, proof, leases
+
+    def test_root_selected_task_target_owns_only_its_pidfd_duplicate(self):
+        resolver, execution, proof, leases = self._fixture()
+        with mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_target", return_value=4242), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_exited", return_value=False):
+            target = resolver.resolve_selected_native_input_target(execution)
+        try:
+            self.assertIsInstance(target, LiveNativeInputTarget)
+            self.assertEqual(target.loaded_package_proof, proof)
+            self.assertEqual(target.peer_pid, 4242)
+            self.assertEqual(target.profile_id, "producer-profile")
+            self.assertNotEqual(target.peer_pidfd, leases[0].pidfd)
+            self.assertTrue(leases[0].closed)
+            with self.assertRaises(OSError):
+                os.fstat(leases[0].pidfd)
+        finally:
+            os.close(target.peer_pidfd)
+
+    def test_root_selected_health_target_uses_exact_owned_process_handle(self):
+        resolver, execution, proof, leases = self._fixture(kind="native-health")
+        with mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_target", return_value=4242), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_exited", return_value=False):
+            target = resolver.resolve_selected_native_input_target(execution)
+        try:
+            self.assertEqual(target.loaded_package_proof, proof)
+            self.assertEqual(target.process_id, execution.process_handle.process_id)
+            self.assertTrue(leases[0].closed)
+        finally:
+            os.close(target.peer_pidfd)
+
+    def test_target_denies_stale_namespace_and_expired_loader_proof_and_closes_lease(self):
+        resolver, execution, proof, leases = self._fixture()
+        stale_identity = replace(proof.target_peer_identity, namespace_identity="mnt:99;net:99")
+        with mock.patch.object(resolver.custody_resolver, "resolve_live_peer", return_value=stale_identity), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_target", return_value=4242), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_exited", return_value=False):
+            with self.assertRaises(AuthorityDenied):
+                resolver.resolve_selected_native_input_target(execution)
+        self.assertTrue(leases[0].closed)
+
+        resolver, execution, proof, leases = self._fixture()
+        expired_proof = replace(proof, expires_monotonic=time.monotonic() - 1)
+        with mock.patch.object(resolver.loader_observations, "resolve_loaded_package_closure",
+                               return_value=expired_proof), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_target", return_value=4242), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_exited", return_value=False):
+            with self.assertRaises(AuthorityDenied):
+                resolver.resolve_selected_native_input_target(execution)
+        self.assertTrue(leases[0].closed)
+
+    def test_root_selected_task_target_rejects_unregistered_selection_and_observer_mismatch(self):
+        resolver, execution, _proof, leases = self._fixture()
+        fabricated_fields = dict(vars(execution))
+        fabricated_fields["selection_handle"] = "fabricated"
+        fabricated = SimpleNamespace(**fabricated_fields)
+        with mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_target", return_value=4242), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_exited", return_value=False):
+            with self.assertRaises(AuthorityDenied):
+                resolver.resolve_selected_native_input_target(fabricated)
+        self.assertEqual(leases, [])
+
+        resolver, execution, _proof, leases = self._fixture(wrong_observer_action=True)
+        with mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_target", return_value=4242), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_exited", return_value=False):
+            with self.assertRaises(AuthorityDenied):
+                resolver.resolve_selected_native_input_target(execution)
+        self.assertEqual(leases, [])
 
 
 if __name__ == "__main__":

@@ -247,3 +247,38 @@ The implementation SHALL apply the exact root registry, principal-selection and 
 #### Scenario: Static selection lacks actual runtime proof
 - **WHEN** an actual current role, display, source event or terminal execution receipt is absent
 - **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence
+
+### Requirement: Installed closure and native construction joins
+The implementation SHALL use the applicable exact root release and native assembly joins in the v33 amendment before activating selected runtime behavior.
+
+#### Scenario: First input precedes provider pending pair
+- **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
+- **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors
+
+### Requirement: Noncircular root observation receipts
+The implementation SHALL use exact v35 initial identity and terminal companion joins applicable to this change.
+
+#### Scenario: Companion proof follows immutable terminal
+- **WHEN** root custody has issued the actual terminal receipt
+- **THEN** root native registry binds a separate verified companion receipt without fabricating or modifying custody evidence
+
+### Requirement: Noncircular immutable first-stage publication
+The implementation SHALL use the exact applicable v36 release roles, immutable policy publication and pre-event root ingress custody joins.
+
+#### Scenario: First ingress has no source receipt yet
+- **WHEN** root resolves selected ingress controller custody
+- **THEN** actual process/module/selected ingress proof is checked independently before atomically minting the source receipt and event handle
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Native schema artifact provenance
+The implementation SHALL resolve exact selected argument/result schema artifacts through v39 protected package/action joins.
+
+#### Scenario: Tool name exists without selected schema bytes
+- **WHEN** no verified selected schema artifact resolves
+- **THEN** the candidate remains unavailable without inferring schema from the name or ordinary cache

@@ -228,6 +228,7 @@ class AuthorityService:
         self.source_observer_registry = source_observer_registry
         self.native_runtime_observer = native_runtime_observer
         self.native_invocation_registry = native_invocation_registry
+        self.native_input_delivery_registry = None
         self.native_mcp_dispatcher = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
@@ -313,6 +314,17 @@ class AuthorityService:
                 or not callable(getattr(dispatcher, "dispatch_native_mcp", None))):
             raise AuthorityDenied("native.mcp", "root native MCP dispatcher binding is invalid")
         self.native_mcp_dispatcher = dispatcher
+
+    def attach_native_input_delivery_registry(self, registry: Any) -> None:
+        """Attach the fixed selected-input queue/consumer once during assembly."""
+        from .source_observers import RootNativeInputDeliveryRegistry
+
+        if (self.native_input_delivery_registry is not None
+                or type(registry) is not RootNativeInputDeliveryRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "take_selected_native_input", None))):
+            raise AuthorityDenied("native.input.take", "root selected input delivery registry is invalid")
+        self.native_input_delivery_registry = registry
 
     def attach_memory_step_effect_authority(self, authority: Any) -> None:
         """Attach the root-only memory compound step issuer exactly once."""
@@ -628,7 +640,9 @@ class AuthorityService:
             raise AuthorityDenied("resource.task_start", "managed process task start is unavailable")
         result = start(
             profile, context, authorization, selection_payload,
-            task_handle=task, exact_stdin=exact_stdin,
+            task_admission=task, admission_handle=admission,
+            node_id=task.node_id, admitted_source=source,
+            exact_stdin=exact_stdin,
             expected_stdin_sha256=task.stdin_sha256,
             peer_pid=controller.pid, peer_pidfd=controller.pidfd,
             timeout=min(float(timeout), max(0.001, expiry - now)), cancelled=cancelled,
@@ -1212,6 +1226,10 @@ class AuthorityService:
             return self._dispatch_native_invocation(
                 operation, uid, peer_pid, peer_pidfd, payload,
             )
+        if operation == "native.input.take":
+            return self._dispatch_native_input_take(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
         if operation == "native.response.take":
             registry = self.native_invocation_registry
             if registry is None or peer_pidfd is None:
@@ -1419,6 +1437,50 @@ class AuthorityService:
         return {"status": status, "body": base64.b64encode(body).decode("ascii"),
                 "headers": dict(headers), "receipt_id": receipt_id,
                 **({"source_receipt_handle": source_handle} if source_handle is not None else {})}
+
+    def _dispatch_native_input_take(self, peer_uid: int, peer_pid: int,
+                                   peer_pidfd: int | None, payload: Any, *,
+                                   cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Take only the queued input selected for this live authenticated peer."""
+        from .source_observers import NativeInitialInputDelivery
+
+        registry = self.native_input_delivery_registry
+        if (registry is None or peer_pidfd is None
+                or not isinstance(payload, dict) or set(payload) != {"schema"}
+                or type(payload.get("schema")) is not int or payload["schema"] != 1):
+            raise AuthorityDenied("native.input.take", "selected native input delivery is unavailable")
+        if cancelled():
+            raise AuthorityDenied("native.input.take", "selected native input request was cancelled")
+        try:
+            delivery = registry.take_selected_native_input(
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.input.take", "selected native input lookup failed") from None
+        if delivery is None:
+            return {"schema": 1, "state": "pending"}
+        if type(delivery) is not NativeInitialInputDelivery:
+            raise AuthorityDenied("native.input.take", "root input registry returned an invalid delivery")
+        result = delivery.to_wire()
+        expected = {"schema", "source_receipt_handle", "selected_execution_handle",
+                    "input_sha256", "input_size_bytes", "expires_monotonic"}
+        if (not isinstance(result, Mapping) or set(result) != expected
+                or type(result.get("schema")) is not int or result["schema"] != 1
+                or not isinstance(result.get("source_receipt_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["source_receipt_handle"])
+                or not isinstance(result.get("selected_execution_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["selected_execution_handle"])
+                or not isinstance(result.get("input_sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", result["input_sha256"])
+                or type(result.get("input_size_bytes")) is not int
+                or not 1 <= result["input_size_bytes"] <= 1_048_576
+                or isinstance(result.get("expires_monotonic"), bool)
+                or type(result.get("expires_monotonic")) not in (int, float)
+                or not self.monotonic() < result["expires_monotonic"] <= self.monotonic() + 30.0):
+            raise AuthorityDenied("native.input.take", "root input delivery fields exceed their bounds")
+        return dict(result)
 
     def _dispatch_process_control(self, uid: int, peer_pid: int,
                                   peer_pidfd: int | None, payload: Any, *,

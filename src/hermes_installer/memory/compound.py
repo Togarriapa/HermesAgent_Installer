@@ -155,11 +155,13 @@ def build_memory_request(*, provider: str, route_id: str, recipe: Mapping[str, A
     elif provider == "openviking" and route_id == "openviking-find" and body_recipe == "openviking-find-owned-v1":
         if set(body) != {"query", "limit"}:
             raise MemoryRecipeDenied("OpenViking find accepts only query and limit")
-        # The provider project reference is opaque enrollment metadata, not
-        # an OpenViking URI. Until the protected resolver supplies a validated
-        # root-owned viking:// target, do not serialize a guessed search scope.
-        raise MemoryRecipeUnavailable(
-            "root-owned OpenViking target URI resolver is not enrolled")
+        # The upstream home alias resolves against the authenticated request
+        # identity. It avoids caller-supplied user IDs and never searches
+        # shared resources or skills. `read_content` and telemetry stay off.
+        payload = {"query": _nonempty_text(body["query"], "query", 16384),
+                   "target_uri": "viking://~/memories", "context_type": "memory",
+                   "limit": _positive_limit(body["limit"]), "read_content": False,
+                   "telemetry": False}
     elif provider == "openviking" and route_id == "openviking-session-capture":
         if body_recipe == "openviking-create-owned-session-v1":
             if body:
@@ -252,7 +254,8 @@ def validate_compound_envelope(data: bytes, *, maximum_bytes: int = _MAX_BODY) -
 
 
 def validate_step_outcome(*, route_id: str, step_id: str, status: int,
-                          value: Any, expected_session_id: str | None = None) -> MemoryStepOutcome:
+                          value: Any, expected_session_id: str | None = None,
+                          scope_bindings: Mapping[str, Any] | None = None) -> MemoryStepOutcome:
     """Validate only known response families and root-captured identifiers."""
     if type(status) is not int or not 200 <= status < 300 or not isinstance(value, dict):
         raise MemoryRecipeUnavailable("memory service response is not a successful JSON object")
@@ -319,8 +322,61 @@ def validate_step_outcome(*, route_id: str, step_id: str, status: int,
             raise MemoryRecipeUnavailable("AgentMemory created memory title is invalid")
         return MemoryStepOutcome({"success": True, "id": memory_id}, {"memory_id": memory_id})
     if route_id == "openviking-find":
-        raise MemoryRecipeUnavailable(
-            "OpenViking find result validator is not enrolled for the selected source schema")
+        if step_id != "find" or value.get("status") != "ok":
+            raise MemoryRecipeUnavailable("OpenViking find response failed source schema")
+        result = value.get("result")
+        if not isinstance(result, dict):
+            raise MemoryRecipeUnavailable("OpenViking find result is not an object")
+        allowed_result = {"memories", "resources", "skills", "total", "query_plan", "query_results"}
+        if set(result) - allowed_result or not {"memories", "resources", "skills", "total"} <= set(result):
+            raise MemoryRecipeUnavailable("OpenViking find result fields differ from the pinned schema")
+        for key in ("query_plan", "query_results"):
+            if key in result and result[key] is not None:
+                raise MemoryRecipeUnavailable("OpenViking find unexpectedly returned search-only metadata")
+        memories, resources, skills = result["memories"], result["resources"], result["skills"]
+        total = result["total"]
+        if (not isinstance(memories, list) or len(memories) > 100
+                or not isinstance(resources, list) or resources
+                or not isinstance(skills, list) or skills
+                or type(total) is not int or total < len(memories) or total > 10000):
+            raise MemoryRecipeUnavailable("OpenViking find result scope or bounds are invalid")
+        if not isinstance(scope_bindings, Mapping):
+            raise MemoryRecipeUnavailable("OpenViking authenticated user scope is unavailable")
+        user_id = _opaque(scope_bindings.get("backend_agent_ref"), "OpenViking user scope")
+        prefix = f"viking://user/{user_id}/memories/"
+        records = []
+        for hit in memories:
+            fields = {"uri", "context_type", "level", "abstract", "overview",
+                      "category", "score", "match_reason"}
+            if (not isinstance(hit, dict) or set(hit) - fields - {"content"}
+                    or not fields - {"overview"} <= set(hit) or "content" in hit):
+                raise MemoryRecipeUnavailable("OpenViking memory hit differs from the pinned schema")
+            uri = hit["uri"]
+            if (not isinstance(uri, str) or not uri.startswith(prefix)
+                    or len(uri.encode("utf-8")) > 4096 or any(ch in uri for ch in "\\?#%")
+                    or any(ord(ch) < 0x20 for ch in uri)):
+                raise MemoryRecipeUnavailable("OpenViking returned a URI outside the authenticated memory root")
+            suffix = uri[len(prefix):]
+            segments = suffix.split("/")
+            if not suffix or any(segment in {"", ".", ".."} for segment in segments):
+                raise MemoryRecipeUnavailable("OpenViking returned a malformed memory URI")
+            if hit["context_type"] != "memory" or type(hit["level"]) is not int or hit["level"] not in (0, 1, 2):
+                raise MemoryRecipeUnavailable("OpenViking returned a non-memory context")
+            abstract = hit["abstract"]
+            if not isinstance(abstract, str) or len(abstract.encode("utf-8")) > 8192:
+                raise MemoryRecipeUnavailable("OpenViking abstract is invalid or exceeds its bound")
+            overview = hit.get("overview")
+            if overview is not None and (not isinstance(overview, str) or len(overview.encode("utf-8")) > 32768):
+                raise MemoryRecipeUnavailable("OpenViking overview exceeds its bound")
+            for key in ("category", "match_reason"):
+                if not isinstance(hit[key], str) or len(hit[key].encode("utf-8")) > 4096:
+                    raise MemoryRecipeUnavailable("OpenViking context metadata is invalid")
+            score = hit["score"]
+            if type(score) not in (int, float) or not math.isfinite(score):
+                raise MemoryRecipeUnavailable("OpenViking search score is invalid")
+            display = abstract or overview or ""
+            records.append({"id": uri, "source": "openviking", "text": display[:8192]})
+        return MemoryStepOutcome({"records": records}, {})
     raise MemoryRecipeUnavailable("selected route has no semantic response validator")
 
 
