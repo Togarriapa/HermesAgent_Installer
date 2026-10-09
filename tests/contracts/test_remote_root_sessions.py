@@ -125,6 +125,23 @@ class RootSessionAdapterTests(unittest.TestCase):
             client.renew(handle=admitted.handle, session_id=admitted.session_id,
                          access_jwt="renewed.jwt", renewal_nonce=challenge.renewal_nonce)
 
+    def test_renewal_lease_is_anchored_to_policy_read_time(self):
+        class LateLease(FakeAuthority):
+            def renew_remote_session(self, handle, token, nonce):
+                return types.SimpleNamespace(schema=1, session_id="root-session-1",
+                                             remote_session_handle=handle,
+                                             lease_expires_monotonic=72.0,
+                                             jwt_expires_monotonic=90.0,
+                                             policy_verified_monotonic=11.0)
+
+        client = RootRemoteSessionClient(LateLease(), "desk.example.net", "https://desk.example.net",
+                                         frozenset({"xpra-http"}), "xpra-websocket", monotonic=lambda: 12.0)
+        admitted = client.admit(access_jwt="first.jwt", action="websocket-attach", route_id="xpra-websocket")
+        challenge = client.challenge(admitted.handle)
+        with self.assertRaises(RootSessionDenied):
+            client.renew(handle=admitted.handle, session_id=admitted.session_id,
+                         access_jwt="renewed.jwt", renewal_nonce=challenge.renewal_nonce)
+
     def test_invalid_root_response_is_denied(self):
         class Bad(FakeAuthority):
             def admit_remote_session(self, token, request):

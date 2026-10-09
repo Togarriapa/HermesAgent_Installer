@@ -180,7 +180,8 @@ class RootRemoteSessionClient:
         jwt_expiry = _finite(getattr(response, "jwt_expires_monotonic", None), "renewed JWT expiry")
         verified = _finite(getattr(response, "policy_verified_monotonic", None), "renewed policy time")
         now = self.monotonic()
-        if expiry <= now or expiry > now + 60 or expiry > jwt_expiry or verified > now + 0.05:
+        if (expiry <= now or expiry > now + 60 or expiry > jwt_expiry or
+                verified > now + 0.05 or expiry <= verified or expiry > verified + 60):
             raise RootSessionDenied("renewed root lease is stale or exceeds its bound")
         return expiry
 
