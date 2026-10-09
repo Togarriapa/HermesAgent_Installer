@@ -270,6 +270,13 @@ class ManagedTaskHandle:
     handle_id: str
     generation: str
     process_id: str
+    _stdin_write_receipt: list[str | None] = field(default_factory=lambda: [None],
+                                                  repr=False, compare=False)
+
+    @property
+    def stdin_write_receipt_handle(self) -> str | None:
+        """Manager-backed receipt handle, absent until the actual write/EOF."""
+        return self._stdin_write_receipt[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +323,7 @@ class RootTaskTerminalReceipt:
     # Native execution observations are issued by the companion registry and
     # remain separate from this immutable custody terminal receipt.
     native_execution_receipt_handle: str | None = None
+    stdin_write_receipt_handle: str | None = None
 
     @property
     def task_handle_id(self) -> str:
@@ -341,6 +349,10 @@ class _ManagedTaskState:
     cancelled: Callable[[], bool]
     selection_payload: bytes
     admission_handle_id: str
+    initial_input_receipt_handle: str | None = None
+    service_generation_digest: str | None = None
+    root_handle: ManagedTaskHandle | None = None
+    stdin_write_receipt: Any | None = None
     input_closed: bool = False
     stdout: bytearray = field(default_factory=bytearray)
     stderr: bytearray = field(default_factory=bytearray)
@@ -731,6 +743,7 @@ class ManagedProcessEffectHandler:
                  artifact_resolver: Callable[[str, str], Any] | None = None,
                  native_package_resolver: Callable[[str, str], ManagedNativePackageMount | None] | None = None,
                  native_loader_observation_store: Any | None = None,
+                 task_input_coordinator: Any | None = None,
                  task_admission_current: Callable[[RootAdmittedTask, bytes], bool] | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if not profiles or any(key != item.profile_id for key, item in profiles.items()):
@@ -742,6 +755,7 @@ class ManagedProcessEffectHandler:
         self.artifact_resolver = artifact_resolver
         self.native_package_resolver = native_package_resolver
         self.native_loader_observation_store = native_loader_observation_store
+        self.task_input_coordinator = None
         self._systemd_openfile_supported: bool | None = None
         self.task_admission_current = task_admission_current
         self._handles: dict[str, _Handle] = {}
@@ -749,6 +763,7 @@ class ManagedProcessEffectHandler:
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
         self._task_terminal_receipts: dict[str, tuple[str, RootTaskTerminalReceipt, float]] = {}
+        self._task_stdin_write_receipts: dict[str, tuple[str, Any, float]] = {}
         self._lock = threading.RLock()
         self._member_key = os.urandom(32)
         # Root-only test harness may capture bounded manager diagnostics. This
@@ -756,6 +771,20 @@ class ManagedProcessEffectHandler:
         self._diagnostic_sink: Callable[[bytes], None] | None = None
         for profile in self.profiles.values():
             self._validate_profile(profile)
+        if task_input_coordinator is not None:
+            self.set_task_input_coordinator(task_input_coordinator)
+
+    def set_task_input_coordinator(self, coordinator: Any) -> None:
+        """Install the concrete root-native pre-stdin coordinator once."""
+        from hermes_installer.authority.native_observer_wiring import RootTaskInputCoordinator
+        if type(coordinator) is not RootTaskInputCoordinator:
+            raise ValueError("task input coordinator must be the concrete root runtime coordinator")
+        with self._lock:
+            if self.task_input_coordinator is not None:
+                raise ValueError("task input coordinator is already installed")
+            if getattr(coordinator, "process_custody", None) is not self:
+                raise ValueError("task input coordinator is bound to another process manager")
+            self.task_input_coordinator = coordinator
 
     def set_native_loader_observation_store(self, store: Any) -> None:
         """Install the root-owned loader observer after manager construction.
@@ -1589,7 +1618,9 @@ class ManagedProcessEffectHandler:
 
     def start_selected_task(self, profile: ManagedProfileCustody, context: HostContext,
                             authorization: EffectAuthorization, selection_payload: bytes, *,
-                            task_handle: RootAdmittedTask, exact_stdin: bytes,
+                            task_admission: RootAdmittedTask,
+                            admission_handle: Any, node_id: str, admitted_source: Any,
+                            exact_stdin: bytes,
                             expected_stdin_sha256: str, peer_pid: int,
                             peer_pidfd: int, timeout: float,
                             cancelled: Callable[[], bool]) -> ManagedTaskHandle:
@@ -1600,6 +1631,7 @@ class ManagedProcessEffectHandler:
         admission. The request carries only a selected recipe id; executable,
         argv, environment and roots are resolved from the protected profile.
         """
+        task_handle = task_admission
         if (not isinstance(task_handle, RootAdmittedTask)
                 or not isinstance(exact_stdin, bytes) or len(exact_stdin) > 262144
                 or not isinstance(expected_stdin_sha256, str)
@@ -1647,6 +1679,9 @@ class ManagedProcessEffectHandler:
                 or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
                 or not math.isfinite(timeout) or not 0 < timeout <= 600):
             raise AuthorityDenied("resource.task_binding", "selected task, grant, profile or parent is stale")
+        coordinator = self.task_input_coordinator
+        if coordinator is None:
+            raise AuthorityDenied("resource.task_input", "root pre-stdin input coordinator is unavailable")
         try:
             if len(task_handle.task_payload_bytes) > 262144:
                 raise ValueError("task body exceeds its bound")
@@ -1674,6 +1709,20 @@ class ManagedProcessEffectHandler:
                 or selection.get("stdin_sha256") != task_handle.stdin_sha256
                 or selection.get("stdin_size_bytes") != task_handle.stdin_size_bytes):
             raise AuthorityDenied("resource.task_selection", "task recipe selection is not the admitted fixed operation")
+        from hermes_installer.registry.resource_jobs import (
+            RootResourceJobAdmissionHandle, RootAdmittedTaskSource, RootTaskInitialInputReceipt,
+        )
+        if (type(admission_handle) is not RootResourceJobAdmissionHandle
+                or type(admitted_source) is not RootAdmittedTaskSource
+                or node_id != task_handle.node_id
+                or admission_handle.handle_id != selection.get("admission_handle")
+                or admission_handle.child_admission_id != task_handle.admission_id
+                or admission_handle.node_id != node_id
+                or admission_handle.process_enrollment_id != profile.enrollment_id
+                or admission_handle.process_generation != profile.generation
+                or admission_handle.task_payload_sha256 != task_handle.task_payload_sha256
+                or admission_handle.parent_closure_digest != task_handle.parent_closure_digest):
+            raise AuthorityDenied("resource.task_admission", "root task admission source binding is invalid")
         recipe = profile.operation_recipes[task_handle.operation_id]
         if not isinstance(recipe, Mapping) or recipe.get("stdin_mode") != "bounded-typed-bytes":
             raise AuthorityDenied("resource.task_stdin", "selected recipe does not admit one bounded stdin frame")
@@ -1707,12 +1756,65 @@ class ManagedProcessEffectHandler:
             with self._lock:
                 self._task_handles[opaque_id] = state
             root_handle = ManagedTaskHandle(opaque_id, profile.generation, handle.process_id)
+            state.root_handle = root_handle
+            receipt = coordinator.prepare_initial_input(
+                task_admission=task_handle, admission_handle=admission_handle,
+                node_id=node_id, source=admitted_source, managed_task_handle=root_handle,
+                exact_stdin=exact_stdin,
+                timeout=max(0.001, min(task_deadline - self.monotonic(), timeout)),
+                cancelled=cancelled,
+            )
+            if type(receipt) is not RootTaskInitialInputReceipt:
+                raise AuthorityDenied("resource.task_input", "coordinator returned an invalid input receipt")
+            resolved_receipt = coordinator.resolve_initial_input_receipt(
+                receipt.receipt_handle, task_handle=root_handle,
+                stdin_sha256=expected_stdin_sha256,
+                stdin_size_bytes=len(exact_stdin),
+            )
+            if (resolved_receipt is not receipt
+                    or receipt.task_handle != root_handle.handle_id
+                    or receipt.admission_id != task_handle.admission_id
+                    or receipt.node_id != node_id
+                    or receipt.process_id != handle.process_id
+                    or receipt.process_generation != profile.generation
+                    or receipt.stdin_sha256 != expected_stdin_sha256
+                    or receipt.stdin_size_bytes != len(exact_stdin)
+                    or receipt.parent_closure_digest != task_handle.parent_closure_digest
+                    or receipt.resource_generation != task_handle.resource_generation
+                    or receipt.native_loader_ready_event_id != handle.native_loader_ready_event_id
+                    or receipt.issued_monotonic > self.monotonic()
+                    or receipt.expires_monotonic <= self.monotonic()
+                    or cancelled()
+                    or not self._task_admission_is_current(task_handle, selection_payload)):
+                raise AuthorityDenied("resource.task_input", "initial input receipt does not bind this live task")
+            state.initial_input_receipt_handle = receipt.receipt_handle
+            state.service_generation_digest = receipt.service_generation_digest
+            consumed_receipt = coordinator.consume_initial_input_receipt(
+                receipt.receipt_handle, task_handle=root_handle,
+                stdin_sha256=expected_stdin_sha256,
+                stdin_size_bytes=len(exact_stdin),
+            )
+            if (consumed_receipt is not receipt or cancelled()
+                    or self.monotonic() >= state.deadline
+                    or not self._task_admission_is_current(task_handle, selection_payload)):
+                raise AuthorityDenied("resource.task_input", "initial input receipt expired before stdin")
             self.write_initial_task_stdin_and_close(root_handle, exact_stdin)
             if (not self._task_admission_is_current(task_handle, selection_payload)
                     or self.monotonic() >= state.deadline or cancelled()):
                 raise AuthorityDenied("resource.task_expired", "task admission expired while receiving stdin")
             return root_handle
         except BaseException as start_error:
+            # The coordinator owns any captured source/input observation. If
+            # custody rejects it before the one-time write completes, revoke
+            # that exact receipt before stopping the process so no pre-input
+            # observer lease survives an aborted launch.
+            if "receipt" in locals() and "root_handle" in locals():
+                revoke = getattr(coordinator, "revoke_initial_input_receipt", None)
+                if callable(revoke):
+                    try:
+                        revoke(receipt.receipt_handle, task_handle=root_handle)
+                    except Exception:
+                        pass
             if "opaque_id" in locals():
                 with self._lock:
                     self._task_handles.pop(opaque_id, None)
@@ -1752,7 +1854,10 @@ class ManagedProcessEffectHandler:
                 or len(exact_bytes) != state.admission.stdin_size_bytes):
             raise AuthorityDenied("resource.task_stdin", "stdin differs from the consumed admission")
         with state.lock:
-            if state.input_closed or handle.launcher.stdin is None or handle.stopped:
+            if (state.input_closed or handle.launcher.stdin is None or handle.stopped
+                    or state.initial_input_receipt_handle is None
+                    or state.service_generation_digest is None
+                    or state.root_handle is not task_handle):
                 raise AuthorityDenied("resource.task_stdin", "task stdin is already closed or unavailable")
             fd = handle.launcher.stdin.fileno()
             offset = 0
@@ -1780,8 +1885,45 @@ class ManagedProcessEffectHandler:
                     offset += count
                 if state.output_overflow:
                     raise AuthorityDenied("resource.task_output", "task exceeded its bounded output before stdin EOF")
+            # Perform one final nonblocking drain before closing stdin. This
+            # keeps output backpressure bounded while making EOF a distinct,
+            # observed custody transition.
+            pending_reads = [stream.fileno() for stream, eof in (
+                (handle.launcher.stdout, state.stdout_eof),
+                (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof]
+            self._drain_task_streams(state, pending_reads, timeout=0)
+            if state.output_overflow:
+                raise AuthorityDenied("resource.task_output", "task exceeded its bounded output before stdin EOF")
             handle.launcher.stdin.close()
             state.input_closed = True
+            from hermes_installer.registry.resource_jobs import RootTaskStdinWriteReceipt
+            issued = self.monotonic()
+            receipt = RootTaskStdinWriteReceipt(
+                schema=1, receipt_handle=uuid.uuid4().hex,
+                task_handle=task_handle.handle_id, process_id=handle.process_id,
+                process_generation=state.admission.process_generation,
+                initial_input_receipt_handle=state.initial_input_receipt_handle,
+                stdin_sha256=state.admission.stdin_sha256,
+                stdin_size_bytes=offset, sequence=0,
+                write_complete=(offset == len(exact_bytes)), drained=True,
+                stdin_closed=handle.launcher.stdin.closed,
+                service_generation_digest=state.service_generation_digest,
+                issued_monotonic=issued,
+                expires_monotonic=min(state.deadline, handle.expires, issued + 30.0),
+            )
+            if (not receipt.write_complete or not receipt.stdin_closed
+                    or len(exact_bytes) != receipt.stdin_size_bytes):
+                raise AuthorityDenied("resource.task_stdin", "stdin write or EOF proof is incomplete")
+            with self._lock:
+                for receipt_id, (_task_id, _receipt, expires) in tuple(self._task_stdin_write_receipts.items()):
+                    if expires <= issued:
+                        self._task_stdin_write_receipts.pop(receipt_id, None)
+                if len(self._task_stdin_write_receipts) >= 4096:
+                    raise AuthorityDenied("resource.task_receipts", "stdin write receipt registry is full")
+                self._task_stdin_write_receipts[receipt.receipt_handle] = (
+                    task_handle, receipt, receipt.expires_monotonic)
+            state.stdin_write_receipt = receipt
+            task_handle._stdin_write_receipt[0] = receipt.receipt_handle
             return offset
 
     def wait_owned_task_terminal(self, task_handle: ManagedTaskHandle, *,
@@ -1791,6 +1933,8 @@ class ManagedProcessEffectHandler:
         state = self._resolve_task_handle(task_handle)
         if not state.input_closed:
             raise AuthorityDenied("resource.task_stdin", "task has not received its one stdin frame and EOF")
+        if state.stdin_write_receipt is None:
+            raise AuthorityDenied("resource.task_stdin", "task has no root-issued stdin write receipt")
         if (isinstance(deadline_monotonic, bool) or not isinstance(deadline_monotonic, (int, float))
                 or not math.isfinite(deadline_monotonic)):
             raise AuthorityDenied("resource.task_deadline", "task wait deadline is invalid")
@@ -1865,7 +2009,8 @@ class ManagedProcessEffectHandler:
                     observed_monotonic=self.monotonic(),
                     stdout_size_bytes=len(state.stdout), stderr_size_bytes=len(state.stderr),
                     parent_closure_digest=admission.parent_closure_digest,
-                    native_loader_ready_event_id=handle.native_loader_ready_event_id)
+                    native_loader_ready_event_id=handle.native_loader_ready_event_id,
+                    stdin_write_receipt_handle=state.stdin_write_receipt.receipt_handle)
                 if not clean:
                     raise AuthorityDenied("resource.task_cleanup", "task terminal cleanup was not proven")
                 state.consumed = True
@@ -1911,12 +2056,36 @@ class ManagedProcessEffectHandler:
                 raise AuthorityDenied("resource.task_receipt", "task terminal receipt is stale or mismatched")
             return receipt
 
+    def resolve_task_stdin_write(self, task_handle: ManagedTaskHandle,
+                                 receipt_handle: str) -> Any:
+        """Return the exact retained successful write/EOF receipt object."""
+        from hermes_installer.registry.resource_jobs import RootTaskStdinWriteReceipt
+        if (type(task_handle) is not ManagedTaskHandle
+                or not isinstance(receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", receipt_handle)):
+            raise AuthorityDenied("resource.task_stdin_receipt", "stdin write receipt selector is malformed")
+        with self._lock:
+            entry = self._task_stdin_write_receipts.get(receipt_handle)
+            if entry is None:
+                raise AuthorityDenied("resource.task_stdin_receipt", "stdin write receipt is unavailable")
+            retained_task_handle, receipt, expires = entry
+            if (retained_task_handle is not task_handle or expires <= self.monotonic()
+                    or type(receipt) is not RootTaskStdinWriteReceipt
+                    or receipt.task_handle != task_handle.handle_id
+                    or receipt.process_id != task_handle.process_id
+                    or receipt.process_generation != task_handle.generation
+                    or task_handle.stdin_write_receipt_handle != receipt_handle):
+                self._task_stdin_write_receipts.pop(receipt_handle, None)
+                raise AuthorityDenied("resource.task_stdin_receipt", "stdin write receipt is stale or mismatched")
+            return receipt
+
     def _resolve_task_handle(self, task_handle: ManagedTaskHandle) -> _ManagedTaskState:
         if not isinstance(task_handle, ManagedTaskHandle):
             raise AuthorityDenied("resource.task_handle", "root task handle has the wrong type")
         with self._lock:
             state = self._task_handles.get(task_handle.handle_id)
         if (state is None or state.consumed or task_handle.generation != state.admission.process_generation
+                or state.root_handle is not task_handle
                 or state.handle.process_id not in self._handles
                 or state.handle.stopped):
             raise AuthorityDenied("resource.task_handle", "root task handle is stale or consumed")

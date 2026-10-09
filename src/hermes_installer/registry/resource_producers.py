@@ -122,4 +122,3 @@ class AuthenticatedChannelIngress:
             _identifier(value, field)
         if not isinstance(self.content, bytes) or not 1 <= len(self.content) <= 1_048_576:
             raise ResourceObservationError("channel content is empty or exceeds the one MiB bound")
-
