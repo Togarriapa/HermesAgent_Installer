@@ -127,5 +127,25 @@
         "remaining": 6
       }
     }
+  },
+  "ci": {
+    "candidate": "b1022e35211db294b69f1f4c04911e4ef12cb581",
+    "planning_job": {
+      "id": 113918025295,
+      "result": "pass",
+      "url": "https://github.com/Togarriapa/HermesAgent_Installer/actions/runs/37959384183/job/113918025295"
+    },
+    "remote_security_run": {
+      "id": 37959384142,
+      "result": "pass"
+    },
+    "runtime_contracts": {
+      "result": "failed",
+      "tests_run": 183,
+      "errors": 1,
+      "skipped": 13,
+      "error": "NativeRegistryTests.setUpClass: native.py _declared_roots raises Catalog discovery contract is not supported",
+      "scope": "Inherited unchanged runtime at base ccddc8; delegated to Luna native registry owner. Planning pass does not establish full CI or runtime acceptance."
+    }
   }
 }
