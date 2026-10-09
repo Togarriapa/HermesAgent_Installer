@@ -651,7 +651,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 else:
                     raise BrokerUnavailable("OpenViking pinned API has no per-memory delete operation")
             elif action in {"export","backup","restore"}:
-                if action not in ROUTE_IDS[target.provider]:
+                if target.route_for(action) is None:
                     raise BrokerUnavailable(target.provider+" has no pinned safe "+action+" API")
                 if action=="restore":
                     if not target.dedicated_store:
@@ -662,7 +662,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     request={"profile_id":context.profile_id,"namespace_id":context.namespace_id}
             else:
                 raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
-            route_id=ROUTE_IDS[target.provider].get(action)
+            route_id=target.route_for(action)
             if route_id is None:
                 raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
             if route_id not in target.approved_route_ids:
@@ -699,7 +699,13 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 deadline_monotonic=time.monotonic()+timeout, payload=canonical(request),
                 timeout=timeout, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                 cancelled=cancelled)
-            result=_result(raw_result)
+            response_status = getattr(raw_result, "status", 200)
+            response_body = getattr(raw_result, "body", raw_result)
+            if not 200 <= int(response_status) < 300:
+                if int(response_status) in {401, 403, 404}:
+                    raise BrokerDenied("memory service denied the enrolled operation")
+                raise BrokerUnavailable("memory service returned a non-success status")
+            result=_result(response_body)
             if action=="search":
                 if target.provider=="openviking":
                     hits=result.get("memories",[])
