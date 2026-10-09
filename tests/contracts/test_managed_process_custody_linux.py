@@ -431,7 +431,14 @@ time.sleep(30)
             assert client.stdout is not None
             ready, _, _ = __import__("select").select([client.stdout], [], [], 20)
             self.assertTrue(ready, "client did not return its cleanup receipt")
-            result = json.loads(client.stdout.readline())
+            receipt_line = client.stdout.readline()
+            if not receipt_line:
+                client.wait(timeout=5)
+                error_output = client.stderr.read(8192) if client.stderr is not None else ""
+                diagnostics = b"\n".join(self.manager_diagnostics).decode("utf-8", "replace")
+                self.fail(f"managed client exited before cleanup receipt (rc={client.returncode}); "
+                          f"stderr={error_output[-4096:]!r}; root-manager-diagnostic={diagnostics[-2048:]}")
+            result = json.loads(receipt_line)
             self.assertEqual(result.get("event"), "stopped", result)
             child_effects = json.loads(result["stdout"])
             self.assertEqual(child_effects["environment_exact"], True)
