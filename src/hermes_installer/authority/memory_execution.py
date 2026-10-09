@@ -822,6 +822,14 @@ class RootMemoryStepEffectAuthority:
         enrollment, recipe, step, request, job, source, consent = self._revalidate_step(
             binding, canonical_connector_payload_bytes, serialized_service_request_sha256,
             cancelled=cancelled)
+        if source.signature == "verified-in-service":
+            # Re-issue the exact claims as a root signature for AuthorityService's
+            # fresh child-context issuer. This is permitted only after the
+            # original signed parent grant was verified/consumed by the broker
+            # and the durable reservation's parent binding was revalidated.
+            source = HostContext.from_wire(self.service._signed_context(
+                source, self.service._sign(source.claims())))
+            self.service._verify_context_signature(source)
         if enrollment.target_id not in self._registered:
             raise MemoryExecutionUnavailable("no protected HI12 connector.open rule is installed for memory")
         remaining = min(float(timeout), binding["deadline_monotonic"] - self.monotonic(),
