@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import tempfile
+import unittest
+from unittest.mock import patch
+from pathlib import Path
+
+from hermes_installer.artifacts import ArtifactCatalog, _artifact_from_record
+from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.hermes_source import (
+    HERMES_SOURCE_ARTIFACT_ID,
+    HERMES_SOURCE_BYTES,
+    HERMES_SOURCE_COMMIT,
+    HERMES_SOURCE_NORMALIZATION_SHA256,
+    HERMES_SOURCE_SHA256,
+    HERMES_SOURCE_TREE_MANIFEST_SHA256,
+    HERMES_SOURCE_TREE_SHA1,
+    _git_tree_sha1,
+    _load_normalization_manifest,
+    materialize_pinned_hermes_source,
+    register_pinned_hermes_source_receipt,
+    VerifiedHermesSource,
+)
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class HermesSourceImportTests(unittest.TestCase):
+    def test_protected_catalog_contains_exact_complete_source_pin(self):
+        raw = json.loads((ROOT / "src/hermes_installer/authority/artifact-catalog.json").read_text())
+        record = next(item for item in raw["artifacts"] if item["artifact_id"] == HERMES_SOURCE_ARTIFACT_ID)
+        spec = _artifact_from_record(record)
+        self.assertEqual(spec.sha256, HERMES_SOURCE_SHA256)
+        self.assertEqual(spec.size_bytes, HERMES_SOURCE_BYTES)
+        self.assertEqual(len(spec.tree_files), 17_973)
+        self.assertEqual(spec.tree_manifest_sha256, HERMES_SOURCE_TREE_MANIFEST_SHA256)
+        self.assertEqual(spec.archive_root, "hermes-agent-7085fbf7753266fc4943c55ac04926186bc90005/")
+
+    def test_store_reference_must_be_exact_before_accessing_catalog(self):
+        with self.assertRaises(AuthorityDenied):
+            materialize_pinned_hermes_source(ArtifactCatalog.from_records(()),
+                "artifact:caller-selected:00000000", "/nonexistent", expected_uid=os.getuid())
+
+    def test_cancellation_prevents_source_resolution_before_any_import(self):
+        store_id = f"artifact:{HERMES_SOURCE_ARTIFACT_ID}:{HERMES_SOURCE_SHA256}"
+        with self.assertRaises(AuthorityDenied) as caught:
+            materialize_pinned_hermes_source(ArtifactCatalog.from_records(()), store_id,
+                "/nonexistent", expected_uid=os.getuid(), cancelled=lambda: True)
+        self.assertEqual(caught.exception.code, "source.cancelled")
+
+    def test_pinned_line_ending_manifest_is_hashed_and_complete(self):
+        rows = _load_normalization_manifest()
+        self.assertEqual(len(rows), 37)
+        self.assertEqual(HERMES_SOURCE_NORMALIZATION_SHA256,
+                         hashlib.sha256((ROOT / "src/hermes_installer/authority/hermes-source-normalization.json").read_bytes()).hexdigest())
+
+    def test_git_tree_identity_reconstructs_known_upstream_object(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "dir").mkdir()
+            (root / "a.txt").write_bytes(b"hello\n")
+            script = root / "dir/run.sh"
+            script.write_bytes(b"#!/bin/sh\necho ok\n")
+            script.chmod(0o755)
+            self.assertEqual(_git_tree_sha1(root, {}), "73c9649eac820b650904a7b7f8d6a3a706e9475c")
+            self.assertNotEqual(_git_tree_sha1(root, {}), HERMES_SOURCE_TREE_SHA1)
+
+    def test_registry_receives_only_verified_pinned_store_identity(self):
+        source = VerifiedHermesSource(HERMES_SOURCE_ARTIFACT_ID, HERMES_SOURCE_SHA256,
+            HERMES_SOURCE_BYTES, HERMES_SOURCE_COMMIT, HERMES_SOURCE_TREE_SHA1,
+            HERMES_SOURCE_TREE_MANIFEST_SHA256, HERMES_SOURCE_NORMALIZATION_SHA256,
+            Path("/root-private/archive"), Path("/root-private/tree"))
+
+        class Registry:
+            called = None
+
+            def mint(self, **kwargs):
+                self.called = kwargs
+                return "opaque-setup-handle"
+
+        registry = Registry()
+        store_id = f"artifact:{HERMES_SOURCE_ARTIFACT_ID}:{HERMES_SOURCE_SHA256}"
+        setup_authorization = object()
+        with patch("hermes_installer.hermes_source.materialize_pinned_hermes_source", return_value=source):
+            handoff = register_pinned_hermes_source_receipt(
+                object(), store_id, "effect-receipt-123", "/root-private/cas", registry,
+                setup_authorization, expected_uid=os.getuid())
+        self.assertEqual(handoff.receipt_handle, "opaque-setup-handle")
+        self.assertEqual(registry.called, {
+            "store_id": store_id, "receipt_id": "effect-receipt-123",
+            "setup_authorization": setup_authorization,
+        })
+        self.assertEqual(handoff.source.git_tree_sha1, HERMES_SOURCE_TREE_SHA1)
+
+
+if __name__ == "__main__":
+    unittest.main()
