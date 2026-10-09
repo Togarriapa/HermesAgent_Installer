@@ -46,3 +46,14 @@ GitHub Actions for `a63fdea0b2fe673e136385b4d552b34d449aaac3` completed successf
 - Remote security fixtures: run 37962716108.
 
 This is implementation evidence for resources-bundle-native-enrichment RB-T02 and resource-registry-import RG-F03. It does not mark any OpenSpec runtime acceptance task complete.
+
+
+## Read-only CLI crosswalk contract
+
+On 2026-10-09, the Pi checkout advanced to installer commit `1aa6a772b77c7f7dd476961e044d4a414b07b594`. The CLI now reports native profile and skill roots and explicitly records that this read-only status command does not probe target discovery.
+
+Command:
+
+`PYTHONPATH=src python3 -m unittest discover -s tests/contracts -p 'test_cli_lifecycle.py'`
+
+Result: 4 tests, 1.363 seconds, exit 0. The new contract test verifies `resources status` remains pending, reports `HERMES_HOME/profiles/<profile_id>/` and `HERMES_HOME/skills/<skill_id>/SKILL.md`, and does not claim target discovery or verification. This adds RB-T06 evidence only for truthful CLI reporting; live runtime acceptance remains open.
