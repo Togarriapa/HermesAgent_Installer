@@ -3025,15 +3025,20 @@ class ManagedBuildJobRunner:
                     missing_proof.append("exit_code_" + str(exit_code))
                 output = bytes(log).decode("utf-8", "replace").casefold()
                 diagnostic_sources = [output]
+                diagnostic_bytes = [bytes(log)]
                 if exit_code == 226:
                     try:
-                        journal = subprocess.run(["/usr/bin/journalctl", "--no-pager", "-n", "12",
-                            "-o", "cat", "--unit=" + unit], stdin=subprocess.DEVNULL,
+                        journal = subprocess.run(["/usr/bin/journalctl", "--no-pager", "-n", "200",
+                            "-o", "cat", "--since=-30s"], stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
                             timeout=.75, check=False)
                         if journal.returncode == 0 and len(journal.stdout) <= 16384:
-                            diagnostic_sources.append(journal.stdout.decode("utf-8", "replace").casefold())
+                            unit_lines = [line for line in journal.stdout.splitlines() if job_id.encode() in line]
+                            if unit_lines:
+                                selected = b"\n".join(unit_lines)
+                                diagnostic_bytes.append(selected)
+                                diagnostic_sources.append(selected.decode("utf-8", "replace").casefold())
                     except (OSError, subprocess.TimeoutExpired):
                         pass
                 for needle, category in (
@@ -3055,7 +3060,7 @@ class ManagedBuildJobRunner:
                     # Root-only injected diagnostic sink for isolated fixture
                     # tests; normal production assembly leaves this unset.
                     with contextlib.suppress(Exception):
-                        self._diagnostic_observer(bytes(log))
+                        self._diagnostic_observer(b"\n".join(diagnostic_bytes))
                 raise AuthorityDenied("build.cleanup", "terminal proof is incomplete: " + ",".join(missing_proof))
             finished = manager.monotonic()
             proc_id = job_id
