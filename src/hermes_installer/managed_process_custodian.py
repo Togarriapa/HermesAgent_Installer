@@ -713,7 +713,14 @@ class ManagedProcessEffectHandler:
         self._task_handles: dict[str, _ManagedTaskState] = {}
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
+        self._task_terminal_receipts: dict[str, tuple[str, RootTaskTerminalReceipt, float]] = {}
         self._lock = threading.RLock()
+        self._member_key = os.urandom(32)
+        # Root-only test harness may capture bounded manager diagnostics. This
+        # is never serialized to a worker or populated from caller text.
+        self._diagnostic_sink: Callable[[bytes], None] | None = None
+        for profile in self.profiles.values():
+            self._validate_profile(profile)
 
     def set_native_loader_observation_store(self, store: Any) -> None:
         """Install the root-owned loader observer after manager construction.
@@ -786,12 +793,6 @@ class ManagedProcessEffectHandler:
                 self._systemd_openfile_supported = False
         if not self._systemd_openfile_supported:
             raise AuthorityDenied("native.loader", "systemd v253 OpenFile support is required")
-        self._member_key = os.urandom(32)
-        # Root-only test harness may capture bounded manager diagnostics. This
-        # is never serialized to a worker or populated from caller text.
-        self._diagnostic_sink: Callable[[bytes], None] | None = None
-        for profile in self.profiles.values():
-            self._validate_profile(profile)
 
     def _prepare_native_package_mount(self, profile: ManagedProfileCustody,
                                       process_id: str) -> tuple[Path | None, NativePackageMountReceipt | None]:
@@ -1159,7 +1160,12 @@ class ManagedProcessEffectHandler:
     def _remove_native_staging(stage: Path) -> None:
         if stage.parent != Path("/run/hermes-installer/native-staging"):
             raise AuthorityDenied("native.cleanup", "native staging path is outside fixed custody")
-        info = stage.lstat()
+        try:
+            info = stage.lstat()
+        except FileNotFoundError:
+            # Several bounded preparation failures unwind through both their
+            # local exception branch and the outer launch-finally block.
+            return
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
             raise AuthorityDenied("native.cleanup", "native staging tree custody changed")
         ManagedProcessEffectHandler._umount_native_staging(stage)
@@ -1314,7 +1320,15 @@ class ManagedProcessEffectHandler:
                     payload: bytes, timeout: float, peer_pid: int,
                     peer_pidfd: int | None,
                     cancelled: Callable[[], bool]) -> Mapping[str, Any]:
-            return self.dispatch(profile, operation, context=context, authorization=authorization,
+            # Resolve the current immutable enrollment row for this handler ID.
+            # A refreshed row with the same effect target must be used for
+            # admission; a changed target remains unreachable through this
+            # already-registered handler key and is rejected by dispatch.
+            with self._lock:
+                current_profile = self.profiles.get(profile.profile_id)
+            if current_profile is None:
+                raise AuthorityDenied("process.profile", "enrolled process profile is no longer active")
+            return self.dispatch(current_profile, operation, context=context, authorization=authorization,
                                  payload=payload, timeout=timeout, peer_pid=peer_pid,
                                  peer_pidfd=peer_pidfd,
                                  cancelled=cancelled)
@@ -1340,11 +1354,39 @@ class ManagedProcessEffectHandler:
                 or peer_pid <= 0 or canonical_digest(payload) != authorization.request_digest):
             raise AuthorityDenied("process.binding", "process grant does not match the enrolled profile effect")
         if operation == "process.start":
-            return self._start(profile, context, authorization, payload, timeout, peer_pid,
-                               peer_pidfd, cancelled)
+            try:
+                return self._start(profile, context, authorization, payload, timeout, peer_pid,
+                                   peer_pidfd, cancelled)
+            except Exception as exc:
+                self._record_test_diagnostic("start-deny", exc)
+                raise
         if operation == "process.inspect":
-            return self._inspect(profile, context, payload, timeout, cancelled)
+            try:
+                return self._inspect(profile, context, payload, timeout, cancelled)
+            except Exception as exc:
+                self._record_test_diagnostic("inspect-deny", exc)
+                raise
         return self._control(profile, context, operation, payload, timeout, cancelled)
+
+    def _record_test_diagnostic(self, prefix: str, exc: Exception) -> None:
+        """Emit only bounded exception class/code/line into root-only test evidence."""
+        sink = self._diagnostic_sink
+        if sink is None:
+            return
+        code = getattr(exc, "code", "internal")
+        if not isinstance(code, str) or not re.fullmatch(r"[a-z0-9_.-]{1,64}", code):
+            code = "internal"
+        exception_type = type(exc).__name__
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", exception_type):
+            exception_type = "Exception"
+        import traceback
+        frames = traceback.extract_tb(exc.__traceback__)[-5:] if exc.__traceback__ else []
+        frame_path = ",".join(f"{frame.name}:{frame.lineno}" for frame in frames)
+        # Function names and source line numbers contain no request values or
+        # host paths, and make root-only fixture failures actionable.
+        if not re.fullmatch(r"[A-Za-z0-9_.,:< >-]{0,384}", frame_path):
+            frame_path = "unavailable"
+        sink((prefix + ":" + code + ":" + exception_type + ":frames=" + frame_path).encode("ascii"))
 
     @staticmethod
     def _json(payload: bytes) -> dict[str, Any]:
@@ -1794,9 +1836,45 @@ class ManagedProcessEffectHandler:
                 state.consumed = True
                 with self._lock:
                     self._task_handles.pop(task_handle.handle_id, None)
+                    now = self.monotonic()
+                    for receipt_id, (_task_id, _receipt, expires) in tuple(self._task_terminal_receipts.items()):
+                        if expires <= now:
+                            self._task_terminal_receipts.pop(receipt_id, None)
+                    if len(self._task_terminal_receipts) >= 4096:
+                        raise AuthorityDenied("resource.task_receipts", "terminal receipt registry is full")
+                    self._task_terminal_receipts[result.terminal_receipt_handle] = (
+                        task_handle.handle_id, result, now + 30.0)
                 return result
             except BaseException:
                 raise
+
+    def resolve_task_terminal(self, task_handle_id: str,
+                              terminal_receipt_handle: str) -> RootTaskTerminalReceipt:
+        """Resolve the exact recent terminal object produced by this manager.
+
+        This root-internal lookup lets the task-native observer join terminal
+        facts without reconstructing them or accepting a caller-produced DTO.
+        Its consumer owns one-use semantics; the bounded receipt remains
+        available only until its short resolver lease or profile generation
+        ends.
+        """
+        if (not isinstance(task_handle_id, str) or not re.fullmatch(r"[0-9a-f]{32}", task_handle_id)
+                or not isinstance(terminal_receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", terminal_receipt_handle)):
+            raise AuthorityDenied("resource.task_receipt", "task terminal receipt selector is malformed")
+        with self._lock:
+            entry = self._task_terminal_receipts.get(terminal_receipt_handle)
+            if entry is None:
+                raise AuthorityDenied("resource.task_receipt", "task terminal receipt is unavailable")
+            bound_task_id, receipt, expires = entry
+            profile = self.profiles.get(receipt.profile_id)
+            if (bound_task_id != task_handle_id or expires <= self.monotonic()
+                    or profile is None or profile.generation != receipt.process_generation
+                    or receipt.task_handle != task_handle_id
+                    or receipt.terminal_receipt_handle != terminal_receipt_handle):
+                self._task_terminal_receipts.pop(terminal_receipt_handle, None)
+                raise AuthorityDenied("resource.task_receipt", "task terminal receipt is stale or mismatched")
+            return receipt
 
     def _resolve_task_handle(self, task_handle: ManagedTaskHandle) -> _ManagedTaskState:
         if not isinstance(task_handle, ManagedTaskHandle):
@@ -1911,7 +1989,15 @@ class ManagedProcessEffectHandler:
                 if sink is not None:
                     # Test-only root diagnostics expose a finite reason enum,
                     # never paths, credentials, payloads, or process data.
-                    sink(("prelaunch-deny:" + reason).encode("ascii"))
+                    details = ""
+                    if reason == "profile-generation":
+                        current = self.profiles.get(profile.profile_id)
+                        expected = registered_profile or profile
+                        names = getattr(type(expected), "__dataclass_fields__", {})
+                        differing = [name for name in names
+                                     if getattr(current, name, object()) != getattr(expected, name, object())]
+                        details = ":fields=" + ",".join(differing[:24])
+                    sink(("prelaunch-deny:" + reason + details).encode("ascii", "backslashreplace")[:512])
                 raise AuthorityDenied("process.start_expired", "start grant, profile enrollment or caller expired before launch")
 
         if peer_pidfd is None:
@@ -2141,7 +2227,6 @@ class ManagedProcessEffectHandler:
             if native_mount_source is not None:
                 self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.environment", "system manager environment cannot be safely cleared")
-        import re
         manager_keys = {line.split("=", 1)[0] for line in manager_env.stdout.decode("utf-8", "replace").splitlines()
                         if "=" in line and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", line.split("=", 1)[0])}
         manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
@@ -2686,10 +2771,45 @@ class ManagedProcessEffectHandler:
         namespace_identity = getattr(binding, "namespace_identity", None)
         if not isinstance(profile_id, str) or not isinstance(generation, str) or not isinstance(namespace_identity, str):
             return None
+        return self._resolve_profile_namespace_lease(profile_id, generation, namespace_identity)
+
+    def resolve_observer_namespace_lease(self, profile_id: str, generation: str,
+                                         expected_namespace_identity: str
+                                         ) -> ManagedNamespaceLease | None:
+        """Return a short-lived namespace FD for one exact enrolled live process.
+
+        This is the bounded root-only seam for observers that must inspect a
+        protected service namespace. It selects no process or namespace from a
+        caller PID/path and requires the supplied identity to equal both the
+        current profile enrollment and its live manager-owned handle.
+        """
+        if (not isinstance(profile_id, str) or not profile_id
+                or not isinstance(generation, str) or not generation
+                or not isinstance(expected_namespace_identity, str)
+                or not re.fullmatch(r"mnt:[1-9][0-9]*;net:[1-9][0-9]*",
+                                    expected_namespace_identity)):
+            return None
+        registered = self.profiles.get(profile_id)
+        if registered is None or registered.generation != generation:
+            return None
+        return self._resolve_profile_namespace_lease(
+            profile_id, generation, expected_namespace_identity,
+            registered_profile=registered,
+        )
+
+    def _resolve_profile_namespace_lease(self, profile_id: str, generation: str,
+                                         namespace_identity: str, *,
+                                         registered_profile: ManagedProfileCustody | None = None
+                                         ) -> ManagedNamespaceLease | None:
         with self._lock:
+            registered = registered_profile or self.profiles.get(profile_id)
+            if (registered is None or registered.profile_id != profile_id
+                    or registered.generation != generation):
+                return None
             matches = [handle for handle in self._handles.values()
                        if handle.profile.profile_id == profile_id
                        and handle.profile.generation == generation
+                       and handle.registered_profile is registered
                        and handle.kernel_namespace_id == namespace_identity]
         if len(matches) != 1:
             return None
@@ -2697,6 +2817,7 @@ class ManagedProcessEffectHandler:
         with handle.lock:
             if (handle.stopped or handle.network_namespace_fd is None
                     or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
+                    or handle.registered_profile is not registered
                     or handle.pid not in self._pids(handle.cgroup)):
                 return None
             expected_net = int(namespace_identity.rsplit("net:", 1)[1])
