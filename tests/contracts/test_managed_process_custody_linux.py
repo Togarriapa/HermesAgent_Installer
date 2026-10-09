@@ -137,6 +137,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         self.user_created = False
         self.runtime_dirs_created: list[Path] = []
         self.etc_dirs_created: list[Path] = []
+        self.mount_block_dirs_created: list[Path] = []
         self.home_secret: Path | None = None
         self.credential_path: Path | None = None
         self.socket_path: Path | None = None
@@ -152,6 +153,24 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         self.uid, self.gid = account.pw_uid, account.pw_gid
         if self.uid <= 0 or self.gid <= 0 or os.getgrouplist(self.service_user, self.gid) != [self.gid]:
             self.fail("fixture account is not a unique, dedicated UID/GID")
+
+        # The production unit masks this protected state root by path. A clean
+        # GitHub runner may not have installed the product yet, so create only
+        # this empty root-owned mount target for the duration of the isolated
+        # root integration test. Without it systemd correctly refuses the unit
+        # with 226/NAMESPACE rather than silently accepting a missing mask.
+        blocked_root = Path("/var/lib/hermes-installer")
+        try:
+            blocked_info = blocked_root.lstat()
+        except FileNotFoundError:
+            blocked_root.mkdir(mode=0o755)
+            os.chown(blocked_root, 0, 0)
+            os.chmod(blocked_root, 0o755)
+            self.mount_block_dirs_created.append(blocked_root)
+        else:
+            if (not stat.S_ISDIR(blocked_info.st_mode) or stat.S_ISLNK(blocked_info.st_mode)
+                    or blocked_info.st_uid != 0 or blocked_info.st_mode & 0o022):
+                self.fail("protected state mount target has unexpected custody")
 
         self.stage = Path(tempfile.mkdtemp(prefix="hermes-custody-ci-", dir="/run"))
         self.stage.chmod(0o755)
@@ -566,6 +585,11 @@ time.sleep(30)
         if self.home_secret is not None:
             self.home_secret.unlink(missing_ok=True)
         for directory in reversed(self.etc_dirs_created):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        for directory in reversed(self.mount_block_dirs_created):
             try:
                 directory.rmdir()
             except OSError:
