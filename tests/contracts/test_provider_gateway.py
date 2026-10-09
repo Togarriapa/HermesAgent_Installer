@@ -10,7 +10,7 @@ import urllib.request
 import unittest
 from pathlib import Path
 
-from hermes_installer.policy import BudgetLedger, DispatchAuthorization, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
+from hermes_installer.policy import BudgetLedger, DispatchAuthorization, DispatchContext, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
 from hermes_installer.provider_gateway import (GatewayError, LOCAL_KEY_ENV, LOCAL_PROVIDER_NAME, LocalProviderGateway, materialize_hermes_provider_plugin, materialize_hermes_profile_config)
 from hermes_installer.state import OwnedRoot
 
@@ -19,12 +19,22 @@ MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
 TOKEN="local-fixture-token-value-0123456789abcdef"
 
 
+def fixture_context(*, profile_id, purpose, sensitivity, trace_id, cancelled, tool_request):
+    return DispatchContext(
+        profile_id=profile_id, purpose=purpose, sensitivity=sensitivity, trace_id=trace_id,
+        cancelled=cancelled, principal_id="fixture-principal", namespace=profile_id,
+        provenance="sha256:" + "f" * 64, capabilities=frozenset({"inference", "tool-call"}),
+        policy_revision="fixture-revision", grant_id="fixture-context-grant",
+        lease_expires_at=time.monotonic() + 60,
+    )
+
+
 def synthetic_authorizer(context, capability, intent_id, now, timeout, cancelled):
     import uuid
-    return DispatchAuthorization("fixture-principal", context.profile_id, context.profile_id,
-        context.trace_id, frozenset({"inference", "tool-call"}),
-        context.effective_sensitivity, "fixture-revision", context.purpose,
-        capability, intent_id, "f" * 64, str(uuid.uuid4()), now + min(60, timeout))
+    return DispatchAuthorization(context.principal_id, context.profile_id, context.namespace,
+        context.trace_id, context.capabilities, context.effective_sensitivity,
+        context.policy_revision, context.purpose, capability, intent_id,
+        context.provenance[7:], str(uuid.uuid4()), min(context.lease_expires_at, now + min(60, timeout)))
 
 
 class RecordingTransport:
@@ -41,7 +51,7 @@ class ProviderGatewayTests(unittest.TestCase):
         root=OwnedRoot(Path(self.temp.name)/"owned");root.ensure()
         self.transport=RecordingTransport()
         self.dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),self.transport,context_authorizer=synthetic_authorizer)
-        self.gateway=LocalProviderGateway(self.dispatcher,token=TOKEN,profile_id="public-demo",sensitivity=Sensitivity.PUBLIC,model=MODEL,max_output_tokens=32)
+        self.gateway=LocalProviderGateway(self.dispatcher,token=TOKEN,profile_id="public-demo",sensitivity=Sensitivity.PUBLIC,model=MODEL,max_output_tokens=32,context_factory=fixture_context)
         self.port=self.gateway.start()
         self.addCleanup(self.gateway.close)
         self.addCleanup(self.temp.cleanup)
@@ -73,7 +83,7 @@ class ProviderGatewayTests(unittest.TestCase):
         blocker.listen()
         self.addCleanup(blocker.close)
         gateway = LocalProviderGateway(self.dispatcher, token=TOKEN, profile_id="public-demo",
-            sensitivity=Sensitivity.PUBLIC, model=MODEL, port=selected)
+            sensitivity=Sensitivity.PUBLIC, model=MODEL, port=selected, context_factory=fixture_context)
         with self.assertRaises(OSError):
             gateway.start()
         self.assertIsNone(gateway._server)
@@ -138,7 +148,7 @@ class ProviderGatewayTests(unittest.TestCase):
         self.assertEqual(self.transport.calls,[])
 
     def test_http_cannot_downgrade_trusted_private_profile_or_choose_public_model(self):
-        private=LocalProviderGateway(self.dispatcher,token=TOKEN,profile_id="private-session",sensitivity=Sensitivity.PRIVATE,model=MODEL)
+        private=LocalProviderGateway(self.dispatcher,token=TOKEN,profile_id="private-session",sensitivity=Sensitivity.PRIVATE,model=MODEL,context_factory=fixture_context)
         private_port=private.start()
         self.addCleanup(private.close)
         req=urllib.request.Request(f"http://127.0.0.1:{private_port}/v1/chat/completions",
@@ -225,7 +235,7 @@ class ProviderGatewayTests(unittest.TestCase):
         transport=RecordingTransport()
         dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),transport,context_authorizer=synthetic_authorizer)
         gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="slow",sensitivity=Sensitivity.PUBLIC,
-                                     model=MODEL,read_timeout_seconds=0.15,max_connections=1)
+                                     model=MODEL,read_timeout_seconds=0.15,max_connections=1,context_factory=fixture_context)
         port=gateway.start()
         self.addCleanup(gateway.close)
         with socket.create_connection(("127.0.0.1",port),timeout=2) as sock:
@@ -246,7 +256,7 @@ class ProviderGatewayTests(unittest.TestCase):
         root=OwnedRoot(Path(self.temp.name)/"limited"); root.ensure()
         dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),RecordingTransport(),context_authorizer=synthetic_authorizer)
         gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="limited",sensitivity=Sensitivity.PUBLIC,
-                                     model=MODEL,read_timeout_seconds=1,max_connections=1)
+                                     model=MODEL,read_timeout_seconds=1,max_connections=1,context_factory=fixture_context)
         port=gateway.start()
         self.addCleanup(gateway.close)
         first=socket.create_connection(("127.0.0.1",port),timeout=2)
@@ -278,7 +288,7 @@ class ProviderGatewayTests(unittest.TestCase):
         root=OwnedRoot(Path(self.temp.name)/"cancel"); root.ensure()
         downstream=CancellableTransport()
         dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),downstream,context_authorizer=synthetic_authorizer)
-        gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="cancel",sensitivity=Sensitivity.PUBLIC,model=MODEL)
+        gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="cancel",sensitivity=Sensitivity.PUBLIC,model=MODEL,context_factory=fixture_context)
         port=gateway.start()
         self.addCleanup(gateway.close)
         outcome=[]
