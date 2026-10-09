@@ -192,6 +192,66 @@ class _ProtectedNativeActionResolver:
         )
 
 
+def _build_native_bridge_candidate(
+    *, service: AuthorityService, enrollment: ProtectedEnrollment,
+    bindings: RootRuntimeBindings, vault: RootCredentialVault,
+) -> tuple[Any, Any]:
+    """Build the root broker from exact provider and bridge enrollments.
+
+    The provider response registry is attached later, after the live source
+    observer exists. The broker itself is a concrete cycle-breaking object;
+    it is never attached to the service unless the response registry also
+    passes the provider owner’s full validation.
+    """
+    from .native_bridge import NativeBridgeBroker, RootObserverDeliveryBinding
+    from .provider_runtime_composition import build_provider_runtime_selection
+    from hermes_installer.provider_effect_handlers import canonical_provider_request
+
+    bridges = bindings.native_bridges
+    if (not isinstance(bridges, Mapping) or not bridges
+            or dict(bridges) != dict(enrollment.native_bridges)):
+        raise AuthorityDenied("native.broker", "active bridge rows are absent or stale")
+    selection = build_provider_runtime_selection(
+        service=service, enrollment=enrollment, bindings=bindings,
+        bridges=bridges, provider_handlers=service.handlers, vault=vault,
+        source_observer_enrollments=bindings.source_observer_enrollments,
+    )
+    digests = {bridge.canonicalizer_sha256 for bridge in bridges.values()}
+    if len(digests) != 1:
+        raise AuthorityDenied("native.broker", "selected bridges do not share one reviewed canonicalizer")
+    delivery_map: dict[str, tuple[Any, ...]] = {}
+    for bridge_id, bridge in bridges.items():
+        raw_rows = getattr(bridge, "observer_delivery_bindings", None)
+        if not isinstance(raw_rows, tuple) or not raw_rows:
+            raise AuthorityDenied("native.broker", "selected bridge has no protected delivery rows")
+        rows = tuple(
+            RootObserverDeliveryBinding(
+                observer_enrollment_id=row.observer_enrollment_id,
+                delivery_role=row.delivery_role,
+            )
+            for row in raw_rows
+        )
+        if (any(row.observer_enrollment_id not in bindings.source_observer_enrollments
+                for row in rows)
+                or len({row.observer_enrollment_id for row in rows}) != len(rows)):
+            raise AuthorityDenied("native.broker", "bridge delivery rows do not join active observer records")
+        delivery_map[bridge_id] = rows
+    process_resolver = getattr(bindings.process_manager, "resolve_live_peer", None)
+    role_resolver = getattr(bindings, "resolve_native_bridge_role_artifact", None)
+    if not callable(process_resolver) or not callable(role_resolver):
+        raise AuthorityDenied("native.broker", "selected bridge process or role resolver is unavailable")
+    broker = NativeBridgeBroker(
+        service=service, bridges=bridges, process_resolver=process_resolver,
+        canonicalizer=canonical_provider_request,
+        root_selected_enrollments=selection.root_selected_enrollments_by_bridge,
+        canonicalizer_sha256=next(iter(digests)),
+        observer_delivery_bindings=delivery_map,
+        peer_role_artifact_resolver=role_resolver,
+        monotonic=service.monotonic,
+    )
+    return broker, selection
+
+
 @dataclass(frozen=True, slots=True)
 class RootAuthorityRuntime:
     """Concrete root-owned catalog joins for one AuthorityService epoch."""
@@ -440,10 +500,43 @@ def compose_root_authority_runtime(
         raise AuthorityDenied("authority.composition", "runtime bindings do not match this service epoch and catalog")
 
     source_observer_unavailable_reason: str | None = None
+    source_receipt_runtime = None
+    schema_catalog = None
+    action_resolver = None
+    broker_candidate = getattr(service, "native_bridge_broker", None)
+    provider_selection = None
+    if service.source_observer_registry is None:
+        # Root schema receipts and the bridge candidate are assembled before
+        # source observers, breaking the actual provider/source dependency
+        # cycle without publishing a partially attached broker.
+        if enrollment.native_bridges:
+            try:
+                from .source_artifact_receipts import build_root_schema_receipt_runtime
+                from hermes_installer.mcp.native_schema_catalog import NativeMCPProtectedSchemaCatalog
+
+                source_receipt_runtime = build_root_schema_receipt_runtime(bindings, enrollment)
+                schema_catalog = NativeMCPProtectedSchemaCatalog.from_protected_records(
+                    enrollment.native_schema_artifact_records,
+                    read_artifact=source_receipt_runtime.verifier.read_artifact,
+                    verify_source_receipt=source_receipt_runtime.verifier.verify_source_receipt,
+                )
+                action_resolver = _ProtectedNativeActionResolver(
+                    bindings, schema_catalog,
+                    service_generation_digest=service.service_generation_digest,
+                )
+                broker_candidate, provider_selection = _build_native_bridge_candidate(
+                    service=service, enrollment=enrollment, bindings=bindings, vault=vault,
+                )
+            except Exception:
+                source_observer_unavailable_reason = (
+                    "active provider schemas, source derivation, live admission, or bridge broker did not join"
+                )
     if service.source_observer_registry is None:
         observer_enrollments = getattr(bindings, "source_observer_enrollments", None)
         if not isinstance(observer_enrollments, Mapping) or not observer_enrollments:
             source_observer_unavailable_reason = "no active protected source-observer enrollment is selected"
+        elif source_observer_unavailable_reason is not None:
+            pass
         elif getattr(service, "native_loader_observation_store", None) is not None:
             source_observer_unavailable_reason = (
                 "a loader observation store is already installed without its matching source registry"
@@ -459,7 +552,7 @@ def compose_root_authority_runtime(
                 )
             else:
                 manager = bindings.process_manager
-                broker = getattr(service, "native_bridge_broker", None)
+                broker = broker_candidate
                 from .native_bridge import NativeBridgeBroker
 
                 if (not callable(getattr(manager, "set_native_loader_observation_store", None))
@@ -570,6 +663,18 @@ def compose_root_authority_runtime(
                         )
                         try:
                             manager.set_native_loader_observation_store(store)
+                            if (broker_candidate is not None and provider_selection is not None
+                                    and source_receipt_runtime is not None
+                                    and schema_catalog is not None and action_resolver is not None):
+                                from .provider_runtime_composition import attach_provider_response_registry
+
+                                attach_provider_response_registry(
+                                    service=service, broker=broker_candidate,
+                                    selection=provider_selection,
+                                    source_observers=registry,
+                                    process_resolver=manager.resolve_live_peer,
+                                    action_resolver=action_resolver,
+                                )
                         except BaseException:
                             try:
                                 registry.close()
