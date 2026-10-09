@@ -26,6 +26,8 @@ _BUILD_ENV = frozenset({"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "SOURC
                         "CC", "CXX", "AR", "RANLIB", "CFLAGS", "CPPFLAGS", "LDFLAGS", "MAKEFLAGS"})
 _PROFILE_ENV = frozenset({"HOME", "PATH", "LANG", "LC_ALL", "DISPLAY", "WAYLAND_DISPLAY",
                           "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "TMPDIR"})
+_FIXED_OPERATIONS = frozenset({"process.start", "process.status", "process.read", "process.write",
+                               "process.stop", "process.inspect", "connector.open", "package.install"})
 
 
 def _canonical(value: Any) -> bytes:
@@ -288,6 +290,34 @@ class ProtectedEnrollmentCatalog:
             runtime_executable=executable, venv_root=venv,
         )
 
+    def resolve_connector_route(self, enrollment_id: str, generation: str,
+                                target_id: str, route_id: str) -> "ConnectorRouteBinding":
+        profile = self.resolve(enrollment_id, generation)
+        target = _id(target_id, "connector target")
+        route = _id(route_id, "connector route")
+        if target not in {"xpra-native", "colibri-main"} or route not in profile.target_route_ids:
+            raise EnrollmentDenied("connector target or route is outside protected enrollment")
+        if target == "xpra-native" and profile.profile_id != "hermes-desktop":
+            raise EnrollmentDenied("Xpra target is not bound to the enrolled Desktop profile")
+        if target == "colibri-main" and "colibri" not in profile.profile_id:
+            raise EnrollmentDenied("Colibri target is not bound to its enrolled service profile")
+        return ConnectorRouteBinding(profile.profile_id, profile.generation,
+                                     profile.namespace_identity, target, route)
+
+    def resolve_operation(self, enrollment_id: str, generation: str,
+                          operation: str) -> OperationBinding:
+        profile = self.resolve(enrollment_id, generation)
+        verb = _id(operation, "operation")
+        if verb not in _FIXED_OPERATIONS:
+            raise EnrollmentDenied("operation is not in the fixed host-service interface")
+        target = profile.operation_targets.get(verb)
+        if target is None:
+            raise EnrollmentDenied("operation is not enrolled for this service generation")
+        return OperationBinding(profile.enrollment_id, profile.generation, profile.profile_id,
+                                profile.principal_id, verb, target, profile.service_uid,
+                                profile.service_gid, profile.authority_endpoint_id,
+                                profile.namespace_identity)
+
 
 def _system_glibc_version() -> str:
     try:
@@ -309,20 +339,6 @@ def _version_at_least(actual: str, required: str) -> bool:
     width = max(len(left), len(right))
     return left + (0,) * (width - len(left)) >= right + (0,) * (width - len(right))
 
-    def resolve_connector_route(self, enrollment_id: str, generation: str,
-                                target_id: str, route_id: str) -> "ConnectorRouteBinding":
-        profile = self.resolve(enrollment_id, generation)
-        target = _id(target_id, "connector target")
-        route = _id(route_id, "connector route")
-        if target not in {"xpra-native", "colibri-main"} or route not in profile.target_route_ids:
-            raise EnrollmentDenied("connector target or route is outside protected enrollment")
-        if target == "xpra-native" and profile.profile_id != "hermes-desktop":
-            raise EnrollmentDenied("Xpra target is not bound to the enrolled Desktop profile")
-        if target == "colibri-main" and "colibri" not in profile.profile_id:
-            raise EnrollmentDenied("Colibri target is not bound to its enrolled service profile")
-        return ConnectorRouteBinding(profile.profile_id, profile.generation,
-                                     profile.namespace_identity, target, route)
-
 
 @dataclass(frozen=True, slots=True)
 class ConnectorRouteBinding:
@@ -332,6 +348,21 @@ class ConnectorRouteBinding:
     namespace_identity: str
     target_id: str
     route_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class OperationBinding:
+    """Root-enrolled operation target; contains no caller-selected resource path."""
+    enrollment_id: str
+    generation: str
+    profile_id: str
+    principal_id: str
+    operation: str
+    target_id: str
+    service_uid: int
+    service_gid: int
+    authority_endpoint_id: str
+    namespace_identity: str
 
 
 def _parse_profile(item: Any) -> HostServiceProfile:
@@ -366,6 +397,8 @@ def _parse_profile(item: Any) -> HostServiceProfile:
         raise EnrollmentDenied("protected launch or operation policy is malformed")
     if set(env) - _PROFILE_ENV or any(re.search(r"token|secret|credential|password|api[_-]?key", key, re.I) for key in env):
         raise EnrollmentDenied("profile environment contains an unapproved or credential-like variable")
+    if set(targets) - _FIXED_OPERATIONS:
+        raise EnrollmentDenied("protected operation map contains an unreviewed operation")
     packages = {}
     package_fields = {"runtime_artifact_id", "runtime_build_attestation_digest", "runtime_executable_sha256",
                       "runtime_build_output", "abi", "target_glibc_min", "venv_root_id", "policy_revision", "runtime_executable",
@@ -401,7 +434,9 @@ def _parse_profile(item: Any) -> HostServiceProfile:
                    _absolute(roots["work"], "work"), _absolute(roots["data"], "data"), uid, gid),
         _id(item["authority_endpoint_id"], "authority endpoint ID"),
         _id(item["namespace_identity"], "namespace identity"), _id(item["socket_policy_id"], "socket policy ID"),
-        tuple(_id(route, "target route ID") for route in routes), MappingProxyType(dict(targets)),
+        tuple(_id(route, "target route ID") for route in routes),
+        MappingProxyType({_id(key, "operation"): _id(value, "operation target")
+                          for key, value in targets.items()}),
         tuple(recipe), MappingProxyType(dict(env)),
         item["max_lifetime_seconds"], item["memory_max_bytes"],
         item["cpu_quota_percent"], item["io_weight"],
