@@ -356,6 +356,7 @@ class MCPClient:
             try:
                 context = await asyncio.wait_for(asyncio.to_thread(
                     authority.context, purpose=purpose, intent=intent,
+                    operation="mcp.stdio" if channel == "stdio" else "mcp.request",
                     final_payload_digest=digest,
                     lease_seconds=min(30.0, remaining), cancelled=cancellation.is_set,
                 ), remaining)
