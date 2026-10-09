@@ -234,3 +234,124 @@ def validate_step_outcome(*, route_id: str, step_id: str, status: int,
             raise MemoryRecipeUnavailable("OpenViking find response failed source schema")
         return MemoryStepOutcome(value["result"], {})
     raise MemoryRecipeUnavailable("selected route has no semantic response validator")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryRouteStep:
+    step_id: str
+    method: str
+    path_template: str
+    body_recipe_id: str
+    response_schema_id: str
+    capture_fields: tuple[str, ...]
+    next_step_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryRouteRecipe:
+    approved_route_id: str
+    backend_variant: str
+    steps: tuple[MemoryRouteStep, ...]
+    request_schema_id: str
+    result_schema_id: str
+    scope_bindings: Mapping[str, Any]
+    credential_reference_id: str
+    maximum_seconds: int
+    maximum_bytes: int
+
+    @classmethod
+    def from_protected_record(cls, route_id: str, raw: Mapping[str, Any], *,
+                              backend_variant: str, limits: Mapping[str, int]) -> "MemoryRouteRecipe":
+        required = {
+            "approved_route_id", "backend_variant", "steps", "request_schema_id",
+            "result_schema_id", "scope_bindings", "credential_reference_id",
+            "maximum_seconds", "maximum_bytes",
+        }
+        if not isinstance(raw, Mapping) or set(raw) != required:
+            raise MemoryRecipeDenied("protected route fields differ from SK01")
+        if raw["approved_route_id"] != route_id or raw["backend_variant"] != backend_variant:
+            raise MemoryRecipeDenied("route ID or backend variant differs from enrollment")
+        if type(raw["maximum_seconds"]) is not int or type(raw["maximum_bytes"]) is not int:
+            raise MemoryRecipeDenied("route limits must be integers")
+        if (not 1 <= raw["maximum_seconds"] <= min(60, limits.get("whole_compound_timeout_seconds", 0))
+                or not 1 <= raw["maximum_bytes"] <= min(_MAX_BODY, limits.get("request_bytes", 0))):
+            raise MemoryRecipeDenied("route limits exceed enrollment")
+        credential = _opaque(raw["credential_reference_id"], "vault credential reference")
+        scope = raw["scope_bindings"]
+        scope_keys = {"profile_id", "service_generation", "memory_owner_generation",
+                      "backend_project_ref", "backend_agent_ref", "backend_session_ref",
+                      "private_provider_route_ref", "credential_reference_id"}
+        if not isinstance(scope, Mapping) or set(scope) != scope_keys:
+            raise MemoryRecipeDenied("root-bound scope schema is incomplete")
+        for key in ("profile_id", "service_generation", "backend_project_ref",
+                    "backend_agent_ref", "credential_reference_id"):
+            _opaque(scope[key], key)
+        if scope["credential_reference_id"] != credential:
+            raise MemoryRecipeDenied("route and scope vault references differ")
+        if type(scope["memory_owner_generation"]) is not int or scope["memory_owner_generation"] < 1:
+            raise MemoryRecipeDenied("owner generation must be positive")
+        for key in ("backend_session_ref", "private_provider_route_ref"):
+            value = scope[key]
+            if value is not None:
+                _opaque(value, key)
+        raw_steps = raw["steps"]
+        if not isinstance(raw_steps, (list, tuple)) or not 1 <= len(raw_steps) <= 16:
+            raise MemoryRecipeDenied("route must contain one through sixteen ordered steps")
+        steps = []
+        for item in raw_steps:
+            fields = {"step_id", "method", "path_template", "body_recipe_id",
+                      "response_schema_id", "capture_fields", "next_step_id"}
+            if not isinstance(item, Mapping) or set(item) != fields:
+                raise MemoryRecipeDenied("step fields differ from SK01")
+            step_id = _opaque(item["step_id"], "step ID")
+            method, path = item["method"], item["path_template"]
+            if method not in _ALLOWED_METHODS or not isinstance(path, str) or not path.startswith("/"):
+                raise MemoryRecipeDenied("step method or path is invalid")
+            body_id = _opaque(item["body_recipe_id"], "body recipe ID")
+            response_id = _opaque(item["response_schema_id"], "response schema ID")
+            captures = item["capture_fields"]
+            if not isinstance(captures, (list, tuple)) or any(
+                not isinstance(value, str) or not _ID.fullmatch(value) for value in captures
+            ):
+                raise MemoryRecipeDenied("step capture field list is invalid")
+            next_id = item["next_step_id"]
+            if next_id is not None:
+                _opaque(next_id, "next step ID")
+            steps.append(MemoryRouteStep(step_id, method, path, body_id, response_id,
+                                         tuple(captures), next_id))
+        if len({item.step_id for item in steps}) != len(steps):
+            raise MemoryRecipeDenied("step IDs must be unique")
+        for i, item in enumerate(steps):
+            expected_next = steps[i + 1].step_id if i + 1 < len(steps) else None
+            if item.next_step_id != expected_next:
+                raise MemoryRecipeDenied("steps are not a closed ordered sequence")
+        # This exact subset has complete request-body serializers and pinned
+        # route schemas. Other provider variants stay unavailable until their
+        # own semantic request/response validators are implemented.
+        catalog = {
+            "agentmemory-search": ("default", "agentmemory-search-request-v1",
+                "agentmemory-search-result-v1",
+                (("search", "POST", "/agentmemory/smart-search",
+                  "agentmemory-search-owned-v1", "agentmemory-search-result-v1", (), None),)),
+            "agentmemory-capture": ("default", "agentmemory-capture-request-v1",
+                "agentmemory-remember-result-v1",
+                (("capture", "POST", "/agentmemory/remember",
+                  "agentmemory-remember-owned-v1", "agentmemory-remember-result-v1", (), None),)),
+            "openviking-find": ("default", "openviking-find-request-v1",
+                "openviking-find-result-v1",
+                (("find", "POST", "/api/v1/search/find",
+                  "openviking-find-owned-v1", "openviking-find-result-v1", (), None),)),
+        }
+        expected = catalog.get(route_id)
+        if expected is None:
+            raise MemoryRecipeUnavailable("route has no complete reviewed serializer")
+        expected_variant, request_id, result_id, step_rows = expected
+        actual = tuple((item.step_id, item.method, item.path_template, item.body_recipe_id,
+                        item.response_schema_id, item.capture_fields, item.next_step_id)
+                       for item in steps)
+        if (backend_variant != expected_variant or raw["request_schema_id"] != request_id
+                or raw["result_schema_id"] != result_id or actual != step_rows):
+            raise MemoryRecipeDenied("route recipe differs from the pinned schema catalog")
+        return cls(route_id, backend_variant, tuple(steps), request_id, result_id,
+                   MappingProxyType(dict(scope)), credential,
+                   raw["maximum_seconds"], raw["maximum_bytes"])
