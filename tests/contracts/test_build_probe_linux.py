@@ -52,6 +52,11 @@ class BuildProbeLinuxTests(unittest.TestCase):
                 "shutil.copyfile('/run/hermes-installer/build/builder',target)\n"
                 "target.chmod(0o755)\n"
                 "print('fixture-output-ready',flush=True)\n"
+                # A successful build receipt includes live MainPID, PIDFD,
+                # cgroup and namespace observations. Keep this tiny fixture
+                # process alive long enough for the real manager to capture
+                # those facts; an instant exit is correctly unattestable.
+                "import time; time.sleep(1.0)\n"
             )
             code_arg = "exec(__import__('base64').b64decode('" + base64.b64encode(code.encode()).decode() + "'))"
             fixture.inputs.argv_recipe = (
