@@ -182,6 +182,35 @@ class ProviderEffectHandlerTests(unittest.TestCase):
                 models=frozenset({"gpt-test"}), allowed_sensitivities=frozenset({"public"}),
             )
 
+    def test_codex_uses_only_broker_enrolled_official_responses_endpoint(self):
+        enrollment = ProviderEnrollment(
+            provider="codex", account_id="opaque-codex-account",
+            principal_id="principal-test", target=CODEX_TARGET,
+            recipient=CODEX_RECIPIENT, credential_ref="vault://codex/account",
+            credential_scope="openai:codex:responses",
+            models=frozenset({"gpt-test"}),
+            allowed_sensitivities=frozenset({"public"}),
+        )
+        handlers = build_provider_handlers(
+            enrollments={(CODEX_TARGET, CODEX_RECIPIENT): enrollment},
+            admission=self.admission, vault=self.vault, network_factory=Network,
+        )
+        handler = handlers[("provider.dispatch", CODEX_TARGET)]
+        payload = b'{"input":"hello","model":"gpt-test"}'
+        from hermes_installer.codex_responses import normalize_responses_request
+        body, _model, _tools = normalize_responses_request(payload)
+        context = _context()
+        digest = __import__("hashlib").sha256(body).hexdigest()
+        grant = _authorization(context, target=CODEX_TARGET,
+                               recipient=CODEX_RECIPIENT, digest=digest)
+        response = handler(context=context, authorization=grant,
+                           payload=body, timeout=2.0, peer_pid=88,
+                           cancelled=lambda: False)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(Network.calls[0][0], CODEX_ENDPOINT)
+        self.assertEqual(self.admission.calls[-1]["provider"], "codex")
+        self.assertEqual(self.vault.calls[-1][2], "openai:codex:responses")
+
     def test_codex_route_is_fixed_and_additional_metered_fee_is_zero(self):
         enrollment = ProviderEnrollment(
             provider="codex", account_id="opaque-codex-account", principal_id="principal-test",
