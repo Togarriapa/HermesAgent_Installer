@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol
 if TYPE_CHECKING:
     from hermes_installer.authority.types import EffectAuthorization, HostContext
 from hermes_installer.state import OwnedRoot, process_lock
+from hermes_installer.memory.owner_ledger import SQLiteOwnerLedger
 
 MAX_REQUEST = 256 * 1024
 MAX_RESPONSE = 1024 * 1024
@@ -485,6 +486,50 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
                         timeout=timeout,peer_pid=peer_pid,cancelled=cancelled)
             result[binding]=dispatch
     return result
+
+def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTarget],
+        authority_service: Any, *, root_data_dir: Path = Path("/var/lib/hermes-installer/memory"),
+        vault: Any = None) -> dict[str, Any]:
+    """Assemble the static root runtime from protected enrollment only.
+
+    The authority daemon passes its root-signed consent issuer. Service IPC and
+    private model engines are deliberately absent until the process custodian
+    enrolls authenticated per-service IPC and eligible local/private runtimes.
+    In that state handlers are still real, bounded handlers and data-plane
+    operations truthfully return unavailable; no service is started or lazily
+    installed here. The vault argument is reserved for the future root-only
+    connector and is intentionally never read by worker-facing code.
+    """
+    targets = dict(protected_targets)
+    for key, target in targets.items():
+        if not isinstance(target, MemoryTarget) or key != (
+                target.profile_id, target.namespace_id, target.provider):
+            raise ValueError("memory runtime accepts only exact protected MemoryTarget entries")
+    ledger = SQLiteOwnerLedger(root_data_dir / "owner-ledger")
+    owner_state = ledger.get_owner_state
+    consent_issuer = getattr(authority_service, "create_background_consent", None)
+    effect_runner = getattr(authority_service, "perform_memory_effect", None)
+    consent_active = callable(consent_issuer) and callable(effect_runner)
+    queue = None
+    if consent_active:
+        queue = DurableMemoryQueue(root_data_dir / "queue", owner_state=owner_state,
+                                   consent_issuer=consent_issuer)
+    def eligibility(target: MemoryTarget, stage: str, context: HostContext) -> bool:
+        # Enabling this requires a fresh protected policy decision and an
+        # explicitly enrolled private-local route at every operation boundary.
+        return False
+    return {
+        "targets": targets,
+        "owner_state": owner_state,
+        "queue": queue,
+        "ipc": None,
+        "engines": {},
+        "eligibility": eligibility,
+        "maximum_timeout": 20.0,
+        "consent_active": consent_active,
+        "background_effect": effect_runner if callable(effect_runner) else None,
+    }
+
 
 class MemoryJobWorker:
     """Single durable worker; authority callback fresh-authorizes each stage."""
