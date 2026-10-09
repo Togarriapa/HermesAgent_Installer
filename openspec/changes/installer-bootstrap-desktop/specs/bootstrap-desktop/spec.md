@@ -464,3 +464,10 @@ The installer SHALL preserve the canonical closure_files tree digest for compile
 #### Scenario: Archive hash substituted for closure tree
 - **WHEN** a package substitutes archive bytes SHA for the selected compiled tree hash
 - **THEN** mount and binder verification reject the mismatched digest domain
+
+### Requirement: Distinct native generation joins
+The installer SHALL resolve process and native package generations separately and preserve exact candidate index identity across receipts and manifest.
+
+#### Scenario: Generation domain substitution
+- **WHEN** an observer uses package generation as live process generation
+- **THEN** peer proof admission denies the inconsistent join
