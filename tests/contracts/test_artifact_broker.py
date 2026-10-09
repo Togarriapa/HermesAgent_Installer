@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import tarfile
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -56,14 +57,24 @@ class ArtifactBrokerContracts(unittest.TestCase):
             **kwargs,
         )
 
-    @staticmethod
-    def request(spec: ArtifactSpec):
+    def request(self, spec: ArtifactSpec):
         payload = json.dumps({"schema": 1, "artifact_id": spec.artifact_id,
                               "sha256": spec.sha256, "max_bytes": spec.max_bytes},
                              sort_keys=True, separators=(",", ":")).encode()
         grant = SimpleNamespace(target=f"artifact:{spec.artifact_id}:{spec.sha256}",
-                                request_digest=canonical_digest(payload))
+                                request_digest=canonical_digest(payload),
+                                monotonic_expires_at=time.monotonic() + 20,
+                                policy_revision="policy-1", principal_id="principal",
+                                profile_id="profile", namespace_id="namespace", uid=self.uid,
+                                retry_index=0)
         return grant, payload
+
+    @staticmethod
+    def context(grant):
+        return SimpleNamespace(monotonic_expires_at=grant.monotonic_expires_at,
+                               policy_revision=grant.policy_revision,
+                               principal_id=grant.principal_id, profile_id=grant.profile_id,
+                               namespace_id=grant.namespace_id, uid=grant.uid)
 
     def test_fetch_streams_checks_pin_and_returns_receipt_not_artifact_bytes(self):
         data = b"installer fixture payload"
@@ -78,7 +89,7 @@ class ArtifactBrokerContracts(unittest.TestCase):
         handlers = build_artifact_handlers(catalog, self.root, expected_uid=self.uid, opener=opener)
         grant, payload = self.request(spec)
         response = handlers[("artifact.fetch", grant.target)](
-            context=None, authorization=grant, payload=payload, timeout=20,
+            context=self.context(grant), authorization=grant, payload=payload, timeout=20,
             peer_pid=1, cancelled=lambda: False)
         body = json.loads(response["body"])
         self.assertEqual(response["status"], 200)
@@ -113,7 +124,7 @@ class ArtifactBrokerContracts(unittest.TestCase):
         handlers = build_artifact_handlers(catalog, self.root, expected_uid=self.uid, opener=opener)
         grant, payload = self.request(spec)
         handlers[("artifact.fetch", grant.target)](
-            context=None, authorization=grant, payload=payload, timeout=5,
+            context=self.context(grant), authorization=grant, payload=payload, timeout=5,
             peer_pid=1, cancelled=lambda: False)
         self.assertEqual(seen, ["bytes=4-"])
         self.assertEqual(catalog.resolve(spec.artifact_id, spec.sha256, self.root,
@@ -136,11 +147,11 @@ class ArtifactBrokerContracts(unittest.TestCase):
         def cancelled():
             nonlocal calls
             calls += 1
-            return calls > 1
+            return calls > 4
 
         with self.assertRaises(AuthorityDenied) as denied:
             handlers[("artifact.fetch", grant.target)](
-                context=None, authorization=grant, payload=payload, timeout=5,
+                context=self.context(grant), authorization=grant, payload=payload, timeout=5,
                 peer_pid=1, cancelled=cancelled)
         self.assertEqual(denied.exception.code, "artifact.cancelled")
         partial = self.root / "objects" / spec.artifact_id / spec.sha256 / "source.bin.part"
@@ -165,20 +176,92 @@ class ArtifactBrokerContracts(unittest.TestCase):
                              "sha256": spec.sha256, "max_bytes": spec.max_bytes,
                              "url": "https://attacker.test/"}, sort_keys=True,
                             separators=(",", ":")).encode()
-        grant = SimpleNamespace(target=grant.target, request_digest=canonical_digest(forged))
+        grant = SimpleNamespace(**{**grant.__dict__, "request_digest": canonical_digest(forged)})
         with self.assertRaises(AuthorityDenied):
             handlers[("artifact.fetch", grant.target)](
-                context=None, authorization=grant, payload=forged, timeout=5,
+                context=self.context(grant), authorization=grant, payload=forged, timeout=5,
                 peer_pid=1, cancelled=lambda: False)
         self.assertEqual(invoked, [])
 
         grant, payload = self.request(spec)
         with self.assertRaises(AuthorityDenied) as denied:
             handlers[("artifact.fetch", grant.target)](
-                context=None, authorization=grant, payload=payload, timeout=5,
+                context=self.context(grant), authorization=grant, payload=payload, timeout=5,
                 peer_pid=1, cancelled=lambda: False)
         self.assertEqual(denied.exception.code, "artifact.digest")
         self.assertFalse((self.root / "objects" / spec.artifact_id / spec.sha256 / spec.filename).exists())
+
+    def test_cancellation_during_preparation_denies_before_network_open(self):
+        data = b"prepared payload"
+        spec = self.spec(data)
+        catalog = ArtifactCatalog.from_records((spec,))
+        opened = []
+        handlers = build_artifact_handlers(
+            catalog, self.root, expected_uid=self.uid,
+            opener=lambda *args, **kwargs: opened.append(True),
+        )
+        grant, payload = self.request(spec)
+        checks = 0
+
+        def cancelled():
+            nonlocal checks
+            checks += 1
+            return checks > 1
+
+        with self.assertRaises(AuthorityDenied) as denied:
+            handlers[("artifact.fetch", grant.target)](
+                context=self.context(grant), authorization=grant, payload=payload,
+                timeout=5, peer_pid=1, cancelled=cancelled)
+        self.assertEqual(denied.exception.code, "effect.cancelled")
+        self.assertEqual(opened, [])
+
+    def test_expired_grant_cannot_resume_or_publish_partial_bytes(self):
+        data = b"abcdefghij"
+        spec = self.spec(data)
+        partial = self.root / "objects" / spec.artifact_id / spec.sha256 / "source.bin.part"
+        partial.parent.mkdir(parents=True, mode=0o700)
+        partial.write_bytes(data[:4])
+        partial.chmod(0o600)
+        catalog = ArtifactCatalog.from_records((spec,))
+        opened = []
+        handlers = build_artifact_handlers(
+            catalog, self.root, expected_uid=self.uid,
+            opener=lambda *args, **kwargs: opened.append(True),
+        )
+        grant, payload = self.request(spec)
+        grant.monotonic_expires_at = time.monotonic() - 1
+        with self.assertRaises(AuthorityDenied) as denied:
+            handlers[("artifact.fetch", grant.target)](
+                context=self.context(grant), authorization=grant, payload=payload,
+                timeout=5, peer_pid=1, cancelled=lambda: False)
+        self.assertEqual(denied.exception.code, "grant.stale")
+        self.assertEqual(partial.read_bytes(), data[:4])
+        self.assertEqual(opened, [])
+
+    def test_generation_revalidation_denies_immediately_before_connect(self):
+        data = b"pinned payload"
+        spec = self.spec(data)
+        catalog = ArtifactCatalog.from_records((spec,))
+        opened = []
+        rechecked = []
+
+        def authorization_check(context, authorization, *, operation, request_digest, retry_index):
+            rechecked.append((operation, request_digest, retry_index))
+            raise AuthorityDenied("grant.stale", "policy generation changed")
+
+        handlers = build_artifact_handlers(
+            catalog, self.root, expected_uid=self.uid,
+            opener=lambda *args, **kwargs: opened.append(True),
+            authorization_check=authorization_check,
+        )
+        grant, payload = self.request(spec)
+        with self.assertRaises(AuthorityDenied) as denied:
+            handlers[("artifact.fetch", grant.target)](
+                context=self.context(grant), authorization=grant, payload=payload,
+                timeout=5, peer_pid=1, cancelled=lambda: False)
+        self.assertEqual(denied.exception.code, "grant.stale")
+        self.assertEqual(rechecked, [("artifact.fetch", grant.request_digest, 0)])
+        self.assertEqual(opened, [])
 
     def test_catalog_loader_rejects_mutable_or_unpinned_catalog(self):
         record = {
@@ -199,6 +282,27 @@ class ArtifactBrokerContracts(unittest.TestCase):
         path.chmod(0o644)
         with self.assertRaises(AuthorityDenied):
             load_protected_catalog(path, expected_uid=self.uid)
+
+    def test_reviewed_seed_catalog_loads_exact_source_and_toolchain_pins(self):
+        source = Path(__file__).parents[2] / "src/hermes_installer/authority/artifact-catalog.json"
+        target = self.base / "reviewed-catalog.json"
+        target.write_bytes(source.read_bytes())
+        target.chmod(0o600)
+        catalog = load_protected_catalog(target, expected_uid=self.uid)
+        expected = {
+            "hermes-pm-python314-linux-arm64": "30f1cc489be654477d895b441e196bb080738bf0456da82080ad4ab66a22d80f",
+            "hermes-pm-uv-linux-arm64": "bb66cb52e7b1823aed1183630d8d8e5c958840d584a4c55ec10a4cfc168dcca2",
+            "hermes-pm-node-linux-arm64": "afc7a004018485092ac8985b817b0d5684472bd9472e0b57d2ab88737e50090d",
+            "coral-python39-source": "00e07d7c0f2f0cc002432d1ee84d2a40dae404a99303e3f97701c10966c91834",
+            "coral-tflite-runtime-cp39-arm64": "be198b7dc4401204be54a15884d9e336389790eb707439524540f5a9329fdd02",
+            "coral-numpy-cp39-arm64": "d5241e0a80d808d70546c697135da2c613f30e28251ff8307eb72ba696945764",
+            "coral-compiled-sample": "4315ee115507aab28c78809c0f384e5296527dd6a5dd53a1751b3eb9c91db6aa",
+        }
+        for artifact_id, digest in expected.items():
+            self.assertEqual(catalog.artifacts[artifact_id].sha256, digest)
+        self.assertEqual(len(catalog.artifacts["coral-python39-source"].tree_files), 4266)
+        self.assertEqual(catalog.artifacts["hermes-pm-node-linux-arm64"].archive_format, "tar.xz")
+        self.assertFalse(catalog.packages)
 
     def test_package_install_enrollment_requires_tree_and_exact_artifact_digest(self):
         spec = self.spec(b"archive")
@@ -233,7 +337,7 @@ class ArtifactBrokerContracts(unittest.TestCase):
         handlers = build_artifact_handlers(catalog, self.root, expected_uid=self.uid, opener=opener)
         grant, payload = self.request(spec)
         handlers[("artifact.fetch", grant.target)](
-            context=None, authorization=grant, payload=payload, timeout=5,
+            context=self.context(grant), authorization=grant, payload=payload, timeout=5,
             peer_pid=1, cancelled=lambda: False)
         materialized = catalog.materialize_tree(spec.artifact_id, spec.sha256, self.root,
                                                 expected_uid=self.uid)
@@ -243,6 +347,51 @@ class ArtifactBrokerContracts(unittest.TestCase):
                          set(tree_bytes))
         self.assertTrue(all(path.stat().st_mode & 0o222 == 0 for path in materialized.path.rglob("*") if path.is_file()))
         self.assertTrue(materialized.path.joinpath("install.sh").stat().st_mode & 0o111)
+
+    def test_tar_xz_materialization_preserves_only_enrolled_internal_symlinks(self):
+        target = b"python runtime"
+        link = "python3.14"
+        archive_bytes = io.BytesIO()
+        with tarfile.open(fileobj=archive_bytes, mode="w:xz") as archive:
+            link_info = tarfile.TarInfo("runtime/bin/python")
+            link_info.type = tarfile.SYMTYPE
+            link_info.linkname = link
+            archive.addfile(link_info)
+            file_info = tarfile.TarInfo("runtime/bin/python3.14")
+            file_info.size = len(target)
+            file_info.mode = 0o755
+            archive.addfile(file_info, io.BytesIO(target))
+        raw = archive_bytes.getvalue()
+        tree = (
+            TreeFile("bin/python", hashlib.sha256(link.encode()).hexdigest(), len(link),
+                     kind="symlink", link_target=link),
+            TreeFile("bin/python3.14", hashlib.sha256(target).hexdigest(), len(target), True),
+        )
+        spec = ArtifactSpec("python-runtime-fixture", "3.14", hashlib.sha256(raw).hexdigest(),
+                            "https://downloads.example.test/python.tar.xz", len(raw), len(raw),
+                            filename="python.tar.xz", tree_files=tree, archive_format="tar.xz",
+                            archive_root="runtime/", max_tree_bytes=1024)
+        catalog = ArtifactCatalog.from_records((spec,))
+        handlers = build_artifact_handlers(catalog, self.root, expected_uid=self.uid,
+                                           opener=lambda request, **kwargs: _Response(raw))
+        grant, payload = self.request(spec)
+        handlers[("artifact.fetch", grant.target)](
+            context=self.context(grant), authorization=grant, payload=payload, timeout=5,
+            peer_pid=1, cancelled=lambda: False)
+        resolved = catalog.materialize_store_id(f"artifact:{spec.artifact_id}:{spec.sha256}",
+                                                self.root, expected_uid=self.uid)
+        link_path = resolved.path / "bin/python"
+        self.assertTrue(link_path.is_symlink())
+        self.assertEqual(os.readlink(link_path), link)
+        self.assertEqual(link_path.read_bytes(), target)
+        self.assertEqual(len(resolved.tree_files), 2)
+
+        with self.assertRaises(ValueError):
+            ArtifactSpec("unsafe-tree", "1", spec.sha256, spec.source_url, len(raw), len(raw),
+                         tree_files=(TreeFile("bin", hashlib.sha256(b"runtime").hexdigest(), 7,
+                                              kind="symlink", link_target="runtime"),
+                                     tree[1]), archive_format="tar.xz", archive_root="runtime/",
+                         max_tree_bytes=1024)
 
     def test_tar_archive_requires_and_strips_only_enrolled_root_prefix(self):
         content = b"pinned source"
@@ -269,7 +418,7 @@ class ArtifactBrokerContracts(unittest.TestCase):
         handlers = build_artifact_handlers(catalog, self.root, expected_uid=self.uid, opener=opener)
         grant, payload = self.request(spec)
         handlers[("artifact.fetch", grant.target)](
-            context=None, authorization=grant, payload=payload, timeout=5,
+            context=self.context(grant), authorization=grant, payload=payload, timeout=5,
             peer_pid=1, cancelled=lambda: False)
         resolved = catalog.materialize_tree(spec.artifact_id, spec.sha256, self.root,
                                             expected_uid=self.uid)

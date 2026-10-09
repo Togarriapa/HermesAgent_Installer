@@ -10,6 +10,7 @@ import hashlib
 import json
 import errno
 import os
+import posixpath
 import re
 import shutil
 import signal
@@ -46,6 +47,8 @@ class TreeFile:
     sha256: str
     size_bytes: int
     executable: bool = False
+    kind: str = "file"
+    link_target: str | None = None
 
     def __post_init__(self) -> None:
         _safe_relative(self.path)
@@ -54,6 +57,21 @@ class TreeFile:
             raise ValueError("tree file size is invalid")
         if type(self.executable) is not bool:
             raise ValueError("tree file executable flag is invalid")
+        if self.kind == "file":
+            if self.link_target is not None:
+                raise ValueError("regular tree files cannot declare a link target")
+        elif self.kind == "symlink":
+            if (self.executable or not isinstance(self.link_target, str)
+                    or not self.link_target or "\\" in self.link_target or "\x00" in self.link_target
+                    or self.link_target.startswith("/")
+                    or posixpath.normpath(posixpath.join(posixpath.dirname(self.path), self.link_target)).startswith("../")
+                    or posixpath.normpath(posixpath.join(posixpath.dirname(self.path), self.link_target)) == ".."):
+                raise ValueError("tree symlink must use a safe in-root relative target")
+            target = self.link_target.encode("utf-8")
+            if self.size_bytes != len(target) or hashlib.sha256(target).hexdigest() != self.sha256:
+                raise ValueError("tree symlink digest and size must bind its exact target")
+        else:
+            raise ValueError("tree entry kind is unsupported")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,10 +118,19 @@ class ArtifactSpec:
         paths = [entry.path for entry in self.tree_files]
         if len(paths) != len(set(paths)):
             raise ValueError("artifact tree has duplicate paths")
-        if self.archive_format not in {None, "zip", "tar.gz"}:
+        if len(paths) > _MAX_FILES:
+            raise ValueError("artifact tree exceeds its file-count bound")
+        symlink_paths = {item.path for item in self.tree_files if item.kind == "symlink"}
+        for item in self.tree_files:
+            parent = PurePosixPath(item.path).parent
+            while parent != PurePosixPath("."):
+                if parent.as_posix() in symlink_paths:
+                    raise ValueError("tree entry cannot be nested beneath an enrolled symlink")
+                parent = parent.parent
+        if self.archive_format not in {None, "zip", "tar.gz", "tar.xz"}:
             raise ValueError("artifact archive format is unsupported")
         if self.archive_root is not None:
-            if (self.archive_format != "tar.gz" or not isinstance(self.archive_root, str)
+            if (self.archive_format not in {"tar.gz", "tar.xz"} or not isinstance(self.archive_root, str)
                     or not self.archive_root.endswith("/")
                     or _safe_relative(self.archive_root[:-1]).as_posix() != self.archive_root[:-1]):
                 raise ValueError("archive root must be a normalized tar directory prefix")
@@ -154,6 +181,15 @@ class ResolvedArtifact:
     archive_format: str | None = None
     archive_root: str | None = None
     max_tree_bytes: int = 0
+
+    @property
+    def tree_manifest_sha256(self) -> str:
+        """Hash the exact sorted content-tree contract for copy verification."""
+        rows = [{"path": row.path, "sha256": row.sha256,
+                 "size_bytes": row.size_bytes, "executable": row.executable}
+                for row in sorted(self.tree_files, key=lambda item: item.path)]
+        body = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(body).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,10 +281,10 @@ class ArtifactCatalog:
 def load_protected_catalog(path: Path | str, *, expected_uid: int = 0) -> ArtifactCatalog:
     """Load a strict catalog from a root-owned, non-writable JSON file."""
     file_path = Path(path)
-    _secure_file(file_path, expected_uid, max_bytes=4 * 1024 * 1024)
+    _secure_file(file_path, expected_uid, max_bytes=16 * 1024 * 1024)
     try:
         raw = file_path.read_bytes()
-        if len(raw) > 4 * 1024 * 1024:
+        if len(raw) > 16 * 1024 * 1024:
             raise ValueError
         doc = json.loads(raw, object_pairs_hook=_unique_object)
         if (not isinstance(doc, dict) or set(doc) != {"schema", "artifacts", "packages"}
@@ -262,7 +298,8 @@ def load_protected_catalog(path: Path | str, *, expected_uid: int = 0) -> Artifa
 
 
 def build_artifact_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
-                            *, expected_uid: int = 0, opener: Callable[..., Any] | None = None
+                            *, expected_uid: int = 0, opener: Callable[..., Any] | None = None,
+                            authorization_check: Callable[..., Any] | None = None
                             ) -> Mapping[tuple[str, str], Callable[..., Mapping[str, Any]]]:
     """Build exact fixed-verb handlers for the protected authority service."""
     root = _secure_directory(Path(staging_root), expected_uid)
@@ -274,13 +311,19 @@ def build_artifact_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
         target = f"artifact:{spec.artifact_id}:{spec.sha256}"
 
         def fetch_handler(*, context: HostContext, authorization: EffectAuthorization,
-                          payload: bytes, timeout: float, peer_pid: int,
+                          payload: bytes, timeout: float, peer_pid: int, peer_pidfd: int | None = None,
                           cancelled: Callable[[], bool], _spec: ArtifactSpec = spec) -> Mapping[str, Any]:
-            del context, peer_pid
+            del peer_pid, peer_pidfd
             expected = {"schema": 1, "artifact_id": _spec.artifact_id,
                         "sha256": _spec.sha256, "max_bytes": _spec.max_bytes}
             _check_grant_payload(authorization, payload, expected, f"artifact:{_spec.artifact_id}:{_spec.sha256}")
-            resolved = _fetch_artifact(_spec, root, expected_uid, fetcher, timeout, cancelled)
+            _check_effect_live(context, authorization, cancelled)
+            resolved = _fetch_artifact(
+                _spec, root, expected_uid, fetcher, timeout, cancelled,
+                before_connect=lambda: _revalidate_effect(
+                    context, authorization, "artifact.fetch", authorization_check,
+                    cancelled),
+            )
             receipt = {"artifact_id": resolved.artifact_id, "version": resolved.version,
                        "sha256": resolved.sha256, "size_bytes": resolved.size_bytes,
                        "store_id": f"artifact:{resolved.artifact_id}:{resolved.sha256}"}
@@ -292,9 +335,9 @@ def build_artifact_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
         target = f"package:{package.package_id}:{package.version}:{package.artifact_sha256}"
 
         def install_handler(*, context: HostContext, authorization: EffectAuthorization,
-                            payload: bytes, timeout: float, peer_pid: int,
+                            payload: bytes, timeout: float, peer_pid: int, peer_pidfd: int | None = None,
                             cancelled: Callable[[], bool], _package: PackageSpec = package) -> Mapping[str, Any]:
-            del context, peer_pid
+            del peer_pid, peer_pidfd
             expected = {"schema": 1, "package_id": _package.package_id,
                         "version": _package.version,
                         "artifact_sha256": _package.artifact_sha256}
@@ -307,8 +350,13 @@ def build_artifact_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
                                         artifact.sha256, artifact.size_bytes,
                                         artifact_spec.tree_files, artifact_spec.archive_format,
                                         artifact_spec.archive_root, artifact_spec.max_tree_bytes)
+            _revalidate_effect(context, authorization, "package.install",
+                               authorization_check, cancelled)
             installed = _install_wheelhouse(_package, artifact, expected_uid,
-                                             min(timeout, _package.install_timeout_seconds), cancelled)
+                                             min(timeout, _package.install_timeout_seconds), cancelled,
+                                             before_process=lambda: _revalidate_effect(
+                                                 context, authorization, "package.install",
+                                                 authorization_check, cancelled))
             return _json_response({"package_id": _package.package_id,
                                    "version": _package.version,
                                    "artifact_sha256": _package.artifact_sha256,
@@ -322,7 +370,8 @@ def build_artifact_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
 
 def _fetch_artifact(spec: ArtifactSpec, root: Path, expected_uid: int,
                     opener: Callable[..., Any], timeout: float,
-                    cancelled: Callable[[], bool]) -> ResolvedArtifact:
+                    cancelled: Callable[[], bool],
+                    before_connect: Callable[[], None]) -> ResolvedArtifact:
     final = root / "objects" / spec.artifact_id / spec.sha256 / spec.filename
     if final.exists():
         return ArtifactCatalog({spec.artifact_id: spec}, {}).resolve(spec.artifact_id, spec.sha256, root,
@@ -354,7 +403,10 @@ def _fetch_artifact(spec: ArtifactSpec, root: Path, expected_uid: int,
     if offset:
         headers["Range"] = f"bytes={offset}-"
     request = urllib.request.Request(spec.source_url, headers=headers, method="GET")
-    remaining_timeout = max(0.05, deadline - time.monotonic())
+    before_connect()
+    remaining_timeout = min(timeout, deadline - time.monotonic())
+    if remaining_timeout <= 0:
+        raise AuthorityDenied("artifact.timeout", "artifact fetch lease expired before network access")
     try:
         response = opener(request, timeout=remaining_timeout, allowed_hosts=frozenset(spec.redirect_hosts))
     except (OSError, urllib.error.URLError, TimeoutError) as exc:
@@ -462,7 +514,8 @@ def _fetch_artifact(spec: ArtifactSpec, root: Path, expected_uid: int,
 
 def _install_wheelhouse(package: PackageSpec, artifact: ResolvedArtifact,
                         expected_uid: int, timeout: float,
-                        cancelled: Callable[[], bool]) -> Path:
+                        cancelled: Callable[[], bool],
+                        before_process: Callable[[], None]) -> Path:
     runtime_root = _secure_directory(Path(package.environment_root), expected_uid)
     python = Path(package.python_executable)
     python = _secure_executable(python, expected_uid)
@@ -489,7 +542,8 @@ def _install_wheelhouse(package: PackageSpec, artifact: ResolvedArtifact,
         python_command = python.resolve(strict=True)
         _secure_executable(python_command, expected_uid)
         _run_fixed([str(python_command), "-m", "venv", "--copies", str(temporary_env)], cwd=work,
-                   timeout=timeout, cancelled=cancelled, expected_uid=expected_uid)
+                   timeout=timeout, cancelled=cancelled, expected_uid=expected_uid,
+                   before_exec=before_process)
         env_python = temporary_env / "bin" / "python"
         if not env_python.is_file():
             raise AuthorityDenied("package.runtime", "isolated Python runtime did not create its interpreter")
@@ -502,8 +556,9 @@ def _install_wheelhouse(package: PackageSpec, artifact: ResolvedArtifact,
         _run_fixed([str(env_python.resolve(strict=True)), "-m", "pip", "install", "--no-index",
                     "--find-links", str(source), "--require-hashes", "--no-deps",
                     "--only-binary=:all:", "--no-input", "--no-cache-dir",
-                    "--disable-pip-version-check", "-r", str(manifest)], cwd=work,
-                   timeout=timeout, cancelled=cancelled, expected_uid=expected_uid, env=env)
+                   "--disable-pip-version-check", "-r", str(manifest)], cwd=work,
+                   timeout=timeout, cancelled=cancelled, expected_uid=expected_uid, env=env,
+                   before_exec=before_process)
         marker = temporary_env / ".hermes-package.json"
         marker.write_text(json.dumps({"package_id": package.package_id,
                                       "version": package.version,
@@ -534,7 +589,7 @@ def _extract_checked_wheelhouse(artifact: ResolvedArtifact, destination: Path) -
     _extract_archive(artifact.path, artifact.archive_format, artifact.archive_root, artifact.tree_files,
                     artifact.max_tree_bytes, tree, artifact.path.stat().st_uid)
     observed = _observed_tree(tree, artifact.max_tree_bytes)
-    expected = {entry.path: (entry.sha256, entry.size_bytes) for entry in artifact.tree_files}
+    expected = {entry.path: _tree_signature(entry) for entry in artifact.tree_files}
     if observed != expected:
         raise AuthorityDenied("package.tree", "wheelhouse files differ from the protected content tree")
     if "requirements.txt" not in observed:
@@ -553,7 +608,7 @@ def _materialize_tree(spec: ArtifactSpec, archive_path: Path, staging_root: Path
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid or info.st_mode & 0o222:
             raise AuthorityDenied("artifact.tree-custody", "materialized artifact tree custody is invalid")
         observed = _observed_tree(destination, spec.max_tree_bytes)
-        expected = {entry.path: (entry.sha256, entry.size_bytes) for entry in spec.tree_files}
+        expected = {entry.path: _tree_signature(entry) for entry in spec.tree_files}
         if observed != expected:
             raise AuthorityDenied("artifact.tree-digest", "materialized content tree no longer matches its protected catalog")
         return destination
@@ -562,7 +617,7 @@ def _materialize_tree(spec: ArtifactSpec, archive_path: Path, staging_root: Path
         _extract_archive(archive_path, spec.archive_format, spec.archive_root, spec.tree_files,
                          spec.max_tree_bytes, temp, expected_uid)
         observed = _observed_tree(temp, spec.max_tree_bytes)
-        expected = {entry.path: (entry.sha256, entry.size_bytes) for entry in spec.tree_files}
+        expected = {entry.path: _tree_signature(entry) for entry in spec.tree_files}
         if observed != expected:
             raise AuthorityDenied("artifact.tree-digest", "archive content does not match its protected tree manifest")
         _freeze_tree(temp, expected_uid)
@@ -593,12 +648,32 @@ def _extract_archive(archive_path: Path, archive_format: str | None, archive_roo
                             _safe_relative(name.rstrip("/"))
                         continue
                     mode = info.external_attr >> 16
-                    if stat.S_ISLNK(mode) or info.file_size < 0:
-                        raise AuthorityDenied("artifact.archive", "archive contains a link or invalid member")
+                    if info.file_size < 0:
+                        raise AuthorityDenied("artifact.archive", "archive contains an invalid member")
                     pure = _safe_relative(name)
                     entry = enrolled.get(pure.as_posix())
                     if entry is None or entry.size_bytes != info.file_size:
                         raise AuthorityDenied("artifact.tree-digest", "archive member is absent from the protected content tree")
+                    if stat.S_ISLNK(mode):
+                        if entry.kind != "symlink":
+                            raise AuthorityDenied("artifact.tree-digest", "archive link type differs from its protected content tree")
+                        raw_target = archive.read(info)
+                        try:
+                            target = raw_target.decode("utf-8")
+                        except UnicodeDecodeError:
+                            raise AuthorityDenied("artifact.archive", "archive symlink target is not UTF-8") from None
+                        if target != entry.link_target:
+                            raise AuthorityDenied("artifact.tree-digest", "archive symlink target differs from its protected content tree")
+                        _write_tree_symlink(destination, pure, target, expected_uid)
+                        count += 1
+                        total += entry.size_bytes
+                        if total > max_tree_bytes:
+                            raise AuthorityDenied("artifact.archive", "archive exceeds its expanded-size bound")
+                        continue
+                    if stat.S_IFMT(mode) not in {0, stat.S_IFREG}:
+                        raise AuthorityDenied("artifact.archive", "archive contains a special member")
+                    if entry.kind != "file":
+                        raise AuthorityDenied("artifact.tree-digest", "archive regular-file type differs from its protected content tree")
                     count += 1
                     total += info.file_size
                     if total > max_tree_bytes or (info.compress_size == 0 and info.file_size > 0):
@@ -606,8 +681,9 @@ def _extract_archive(archive_path: Path, archive_format: str | None, archive_roo
                     with archive.open(info) as source:
                         _write_tree_file(source, destination, pure, info.file_size,
                                          expected_uid, entry.executable)
-        elif archive_format == "tar.gz":
-            with tarfile.open(archive_path, mode="r:gz") as archive:
+        elif archive_format in {"tar.gz", "tar.xz"}:
+            mode = "r:gz" if archive_format == "tar.gz" else "r:xz"
+            with tarfile.open(archive_path, mode=mode) as archive:
                 members = archive.getmembers()
                 if not members or len(members) > _MAX_FILES:
                     raise AuthorityDenied("artifact.archive", "archive member count is invalid")
@@ -618,12 +694,24 @@ def _extract_archive(archive_path: Path, archive_format: str | None, archive_roo
                         if name:
                             _safe_relative(name.rstrip("/"))
                         continue
-                    if not info.isfile() or info.size < 0:
+                    if info.size < 0:
                         raise AuthorityDenied("artifact.archive", "archive contains a link or special member")
                     pure = _safe_relative(name)
                     entry = enrolled.get(pure.as_posix())
-                    if entry is None or entry.size_bytes != info.size:
+                    member_size = len(info.linkname.encode("utf-8")) if info.issym() else info.size
+                    if entry is None or entry.size_bytes != member_size:
                         raise AuthorityDenied("artifact.tree-digest", "archive member is absent from the protected content tree")
+                    if info.issym():
+                        if entry.kind != "symlink" or entry.link_target != info.linkname:
+                            raise AuthorityDenied("artifact.tree-digest", "archive symlink differs from its protected content tree")
+                        _write_tree_symlink(destination, pure, info.linkname, expected_uid)
+                        count += 1
+                        total += entry.size_bytes
+                        if total > max_tree_bytes:
+                            raise AuthorityDenied("artifact.archive", "archive exceeds its expanded-size bound")
+                        continue
+                    if not info.isfile() or entry.kind != "file":
+                        raise AuthorityDenied("artifact.archive", "archive contains a link or special member")
                     count += 1
                     total += info.size
                     if total > max_tree_bytes:
@@ -671,21 +759,48 @@ def _write_tree_file(source: Any, destination: Path, relative: PurePosixPath,
     os.chmod(target, 0o555 if executable else 0o444)
 
 
-def _observed_tree(root: Path, max_bytes: int) -> dict[str, tuple[str, int]]:
-    observed: dict[str, tuple[str, int]] = {}
+def _write_tree_symlink(destination: Path, relative: PurePosixPath,
+                        target_text: str, expected_uid: int) -> None:
+    # TreeFile validates lexical containment. Resolve the target after publication
+    # too, so links to absent targets/cycles cannot enter a materialized tree.
+    target = destination.joinpath(*relative.parts)
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.symlink(target_text, target)
+    os.chown(target, expected_uid, -1, follow_symlinks=False)
+
+
+def _observed_tree(root: Path, max_bytes: int) -> dict[str, tuple[str, int, str, str | None, bool]]:
+    observed: dict[str, tuple[str, int, str, str | None, bool]] = {}
     total = 0
+    root_real = root.resolve(strict=True)
     for path in root.rglob("*"):
         info = path.lstat()
         if stat.S_ISDIR(info.st_mode):
             continue
-        if not stat.S_ISREG(info.st_mode):
+        if stat.S_ISLNK(info.st_mode):
+            target_text = os.readlink(path)
+            try:
+                resolved_target = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                raise AuthorityDenied("artifact.tree-custody", "materialized symlink target is missing or cyclic") from None
+            if not resolved_target.is_relative_to(root_real):
+                raise AuthorityDenied("artifact.tree-custody", "materialized symlink escapes its protected tree")
+            raw_target = target_text.encode("utf-8")
+            digest, size = hashlib.sha256(raw_target).hexdigest(), len(raw_target)
+            kind = "symlink"
+            executable = False
+        elif stat.S_ISREG(info.st_mode):
+            digest, size = _hash_file(path, max_bytes)
+            kind = "file"
+            target_text = None
+            executable = bool(info.st_mode & 0o111)
+        else:
             raise AuthorityDenied("artifact.tree-custody", "materialized tree contains a link or special file")
         relative = path.relative_to(root).as_posix()
-        digest, size = _hash_file(path, max_bytes)
         total += size
         if total > max_bytes:
             raise AuthorityDenied("artifact.tree-size", "materialized tree exceeds its enrolled size bound")
-        observed[relative] = (digest, size)
+        observed[relative] = (digest, size, kind, target_text, executable)
     return observed
 
 
@@ -721,13 +836,18 @@ def _validate_requirements(path: Path) -> None:
 
 def _run_fixed(argv: list[str], *, cwd: Path, timeout: float,
                cancelled: Callable[[], bool], expected_uid: int,
-               env: Mapping[str, str] | None = None) -> None:
+               env: Mapping[str, str] | None = None,
+               before_exec: Callable[[], None] | None = None) -> None:
     if not argv or any(not isinstance(arg, str) or "\x00" in arg for arg in argv):
         raise AuthorityDenied("package.argv", "fixed package command is malformed")
     # The only commands built by this module are an enrolled interpreter and its venv/pip verbs.
     if not Path(argv[0]).is_absolute():
         raise AuthorityDenied("package.argv", "package interpreter path is not canonical")
     remaining = max(0.05, min(timeout, 600.0))
+    if cancelled():
+        raise AuthorityDenied("package.cancelled", "package operation was cancelled before process start")
+    if before_exec is not None:
+        before_exec()
     try:
         process = subprocess.Popen(argv, cwd=cwd, env=dict(env) if env is not None else {
             "PATH": "/usr/bin:/bin", "HOME": str(cwd), "PYTHONNOUSERSITE": "1", "PYTHONUTF8": "1"},
@@ -805,6 +925,36 @@ def _check_grant_payload(authorization: EffectAuthorization, payload: bytes,
         raise AuthorityDenied("artifact.binding", "fixed effect payload does not match enrolled identity and grant")
 
 
+def _check_effect_live(context: HostContext, authorization: EffectAuthorization,
+                       cancelled: Callable[[], bool]) -> None:
+    if cancelled():
+        raise AuthorityDenied("effect.cancelled", "fixed effect was cancelled before its side effect")
+    now = time.monotonic()
+    if (authorization.monotonic_expires_at <= now
+            or context.monotonic_expires_at <= now
+            or authorization.policy_revision != context.policy_revision
+            or authorization.principal_id != context.principal_id
+            or authorization.profile_id != context.profile_id
+            or authorization.namespace_id != context.namespace_id
+            or authorization.uid != context.uid):
+        raise AuthorityDenied("grant.stale", "host effect authorization is stale before the side effect")
+
+
+def _revalidate_effect(context: HostContext, authorization: EffectAuthorization,
+                       operation: str, authorization_check: Callable[..., Any] | None,
+                       cancelled: Callable[[], bool]) -> None:
+    _check_effect_live(context, authorization, cancelled)
+    if authorization_check is not None:
+        result = authorization_check(
+            context, authorization, operation=operation,
+            request_digest=authorization.request_digest,
+            retry_index=authorization.retry_index,
+        )
+        if result is False:
+            raise AuthorityDenied("grant.stale", "host policy generation changed before the side effect")
+    _check_effect_live(context, authorization, cancelled)
+
+
 def _json_response(value: Mapping[str, Any]) -> Mapping[str, Any]:
     body = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     return {"status": 200, "body": body,
@@ -821,7 +971,8 @@ def _artifact_from_record(item: Any) -> ArtifactSpec:
         raise ValueError
     tree = []
     for row in item["tree_files"]:
-        if not isinstance(row, dict) or set(row) != {"path", "sha256", "size_bytes", "executable"}:
+        if not isinstance(row, dict) or set(row) not in ({"path", "sha256", "size_bytes", "executable"},
+                                                      {"path", "sha256", "size_bytes", "executable", "kind", "link_target"}):
             raise ValueError
         tree.append(TreeFile(**row))
     return ArtifactSpec(**{**item, "redirect_hosts": tuple(item["redirect_hosts"]), "tree_files": tuple(tree)})
@@ -851,6 +1002,10 @@ def _safe_relative(value: str) -> PurePosixPath:
     if path.is_absolute() or path.as_posix() != value or any(part in {"", ".", ".."} for part in path.parts):
         raise ValueError("path is not a normalized relative path")
     return path
+
+
+def _tree_signature(entry: TreeFile) -> tuple[str, int, str, str | None, bool]:
+    return entry.sha256, entry.size_bytes, entry.kind, entry.link_target, entry.executable
 
 
 def _strip_archive_root(value: str, archive_root: str | None,
