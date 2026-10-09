@@ -46,10 +46,11 @@ class BrokerTransport:
 
 def host_context(*, sensitivity="public", capabilities=frozenset({"provider-inference", "provider-tool-call"})):
     return SimpleNamespace(
-        principal_id="host-principal", profile_id="hermes-public", namespace_id="ns-7",
+        principal_id="host-principal", profile_id="hermes-public", namespace_id="ns-7", uid=1000,
         purpose="native-hermes-chat", intent_id="intent-9", trace_id="trace-1",
         lineage_hash="lineage-hash", policy_revision="policy-r4",
-        monotonic_expires_at=time.monotonic() + 60, capabilities=capabilities,
+        issued_at_monotonic=time.monotonic(), monotonic_expires_at=time.monotonic() + 30,
+        capabilities=capabilities,
         nonce="context-nonce", signature="host-signature", sensitivity=sensitivity,
     )
 
