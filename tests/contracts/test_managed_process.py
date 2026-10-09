@@ -282,6 +282,63 @@ class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
                         await handle.stop("integration cleanup", timeout=5)
             asyncio.run(exercise())
 
+    def test_managed_command_captures_separate_streams_and_proves_inode(self) -> None:
+        from hermes_installer.managed_process import run_managed_process
+
+        code = "import sys; print('out'); print('err', file=sys.stderr)"
+        spec = ManagedProcessSpec(
+            executable=self.executable, argv=(str(self.executable), "-c", code),
+            artifact_sha256=hashlib.sha256(self.executable.read_bytes()).hexdigest(),
+            artifact_root=self.artifact, owned_root=self.owned, cwd=self.work, data_root=self.data,
+            env_allowlist={"HOME": "/hermes", "PATH": "/usr/bin:/bin", "LANG": "C"},
+            journal_operation=self.operation, journal=self.journal, service_identity="ci-capture",
+            service_user=self.service_user, startup_deadline_monotonic=time.monotonic()+10,
+            max_lifetime_seconds=20,
+        )
+        async def exercise() -> None:
+            result = await run_managed_process(spec, timeout=10, stdout_limit=128, stderr_limit=128)
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.stdout, b"out\n")
+            self.assertEqual(result.stderr, b"err\n")
+            self.assertFalse(result.timed_out)
+            self.assertFalse(result.cancelled)
+            self.assertTrue(result.cleanup_verified)
+            self.assertEqual(result.executable_device, self.executable.stat().st_dev)
+            self.assertEqual(result.executable_inode, self.executable.stat().st_ino)
+            self.assertGreater(result.start_ticks, 0)
+            checkpoint = self.journal.operation(self.operation)
+            self.assertEqual(checkpoint["status"], "stopped")
+        asyncio.run(exercise())
+
+    def test_managed_command_deadline_reaps_ignored_term_descendant(self) -> None:
+        from hermes_installer.managed_process import run_managed_process
+
+        code = (
+            "import signal,subprocess,sys,time; "
+            "subprocess.Popen([sys.executable,'-c',"
+            "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'],"
+            "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True); "
+            "print('ready',flush=True); time.sleep(30)"
+        )
+        spec = ManagedProcessSpec(
+            executable=self.executable, argv=(str(self.executable), "-c", code),
+            artifact_sha256=hashlib.sha256(self.executable.read_bytes()).hexdigest(),
+            artifact_root=self.artifact, owned_root=self.owned, cwd=self.work, data_root=self.data,
+            env_allowlist={"HOME": "/hermes", "PATH": "/usr/bin:/bin", "LANG": "C"},
+            journal_operation=self.operation, journal=self.journal, service_identity="ci-deadline",
+            service_user=self.service_user, startup_deadline_monotonic=time.monotonic()+10,
+            max_lifetime_seconds=20,
+        )
+        async def exercise() -> None:
+            result = await run_managed_process(spec, timeout=3, stdout_limit=128, stderr_limit=128)
+            self.assertTrue(result.timed_out)
+            self.assertTrue(result.cleanup_verified)
+            self.assertEqual(result.stdout, b"ready\n")
+            self.assertFalse((Path("/sys/fs/cgroup") / result.cgroup.lstrip("/") / "cgroup.procs").exists())
+            checkpoint = self.journal.operation(self.operation)
+            self.assertEqual(checkpoint["status"], "stopped")
+        asyncio.run(exercise())
+
 
 if __name__ == "__main__":
     unittest.main()

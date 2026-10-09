@@ -30,6 +30,22 @@ class ManagedProcessError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class ManagedProcessResult:
+    exit_code: int | None
+    stdout: bytes
+    stderr: bytes
+    timed_out: bool
+    cancelled: bool
+    cleanup_verified: bool
+    unit: str
+    cgroup: str
+    pid: int
+    start_ticks: int
+    executable_device: int
+    executable_inode: int
+
+
+@dataclass(frozen=True, slots=True)
 class ManagedProcessSpec:
     executable: Path
     argv: tuple[str, ...]
@@ -56,6 +72,8 @@ class ProcessIdentity:
     start_ticks: int
     executable_sha256: str
     pidfd: int
+    executable_device: int = 0
+    executable_inode: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +85,8 @@ class ChildIdentity:
     executable_sha256: str
     cgroup: str
     pidfd: int
+    executable_device: int = 0
+    executable_inode: int = 0
 
 
 def provision_service_identity(owned_root: OwnedRoot, journal: Journal, profile_id: str,
@@ -177,7 +197,7 @@ def _privileged_output(arguments: Sequence[str], *, limit: int = 65536,
     return completed.stdout
 
 
-def _proc_executable_hash(pid: int) -> str:
+def _proc_executable_identity(pid: int) -> tuple[str, int, int]:
     path = f"/proc/{pid}/exe"
     stat_tool = shutil.which("stat", path="/usr/bin:/bin")
     sha_tool = shutil.which("sha256sum", path="/usr/bin:/bin")
@@ -188,7 +208,8 @@ def _proc_executable_hash(pid: int) -> str:
     after = _privileged_output([stat_tool, "-Lc", "%d:%i", path], limit=128).decode("ascii").strip()
     if not re.fullmatch(r"[0-9]+:[0-9]+", before) or before != after or not raw or not re.fullmatch(r"[0-9a-f]{64}", raw[0]):
         raise ManagedProcessError("process executable changed during inspection")
-    return raw[0]
+    device, inode = (int(value) for value in before.split(":"))
+    return raw[0], device, inode
 
 
 def _proc_inode(pid: int, namespace: str) -> int:
@@ -213,17 +234,17 @@ def _protected_home_is_empty(pid: int) -> bool:
     )
     return not result.strip()
 
-def _observe_process(pid: int, expected_cgroup: str) -> tuple[int, int, str, int]:
+def _observe_process(pid: int, expected_cgroup: str) -> tuple[int, int, str, int, int, int]:
     pidfd = os.pidfd_open(pid, 0)
     try:
         parent, ticks = _proc_stat(pid)
         if _proc_cgroup(pid) != expected_cgroup:
             raise ManagedProcessError("process is outside the manager-owned cgroup")
-        digest = _proc_executable_hash(pid)
+        digest, device, inode = _proc_executable_identity(pid)
         if (_proc_stat(pid)[1] != ticks or _proc_cgroup(pid) != expected_cgroup
                 or _pidfd_exited(pidfd)):
             raise ManagedProcessError("process identity changed during observation")
-        return parent, ticks, digest, pidfd
+        return parent, ticks, digest, device, inode, pidfd
     except BaseException:
         os.close(pidfd)
         raise
@@ -326,7 +347,7 @@ def _parse_systemd_timespan_us(value: str) -> int:
     return int(total)
 
 
-def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Path, Path]:
+def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Path, Path, int, int]:
     if not isinstance(spec.owned_root, OwnedRoot) or not isinstance(spec.journal, Journal):
         raise ManagedProcessError("managed processes require an OwnedRoot and durable Journal")
     try:
@@ -351,7 +372,10 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
         raise ManagedProcessError("executable pin is invalid")
     if _digest(exe) != spec.artifact_sha256:
         raise ManagedProcessError("executable does not match its reviewed artifact pin")
-    if not spec.argv or spec.argv[0] != str(exe) or any(not isinstance(x, str) or "\\x00" in x for x in spec.argv):
+    exe_info = exe.stat(follow_symlinks=False)
+    if not stat.S_ISREG(exe_info.st_mode) or exe_info.st_nlink != 1:
+        raise ManagedProcessError("pinned executable must be a single-link regular file")
+    if not spec.argv or spec.argv[0] != str(exe) or any(not isinstance(x, str) or "\x00" in x for x in spec.argv):
         raise ManagedProcessError("argv must start with the pinned executable and contain NUL-free strings")
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", spec.journal_operation):
         raise ManagedProcessError("journal operation id is invalid")
@@ -368,7 +392,7 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
     allowed = {"HOME", "PATH", "LANG", "LC_ALL", "DISPLAY", "WAYLAND_DISPLAY",
                "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "HERMES_HOME", "TMPDIR"}
     for key, value in spec.env_allowlist.items():
-        if key not in allowed or not isinstance(value, str) or "\\x00" in value or len(value) > 1024:
+        if key not in allowed or not isinstance(value, str) or "\x00" in value or len(value) > 1024:
             raise ManagedProcessError("environment key or value is outside the reviewed allowlist")
         if re.search(r"(TOKEN|SECRET|PASSWORD|API_KEY|CREDENTIAL)", key, re.I):
             raise ManagedProcessError("secret-bearing environment values are not accepted")
@@ -384,7 +408,7 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
             raise ManagedProcessError("display value is invalid")
     if spec.env_allowlist.get("HOME") != "/hermes":
         raise ManagedProcessError("profile HOME must be the isolated /hermes mount")
-    return spec.owned_root, exe, artifact, cwd, data
+    return spec.owned_root, exe, artifact, cwd, data, exe_info.st_dev, exe_info.st_ino
 
 class ManagedProcessHandle:
     def __init__(self, spec: ManagedProcessSpec, unit: str, cgroup: str,
@@ -429,20 +453,16 @@ class ManagedProcessHandle:
                 raise ManagedProcessError("managed process identity changed")
             if _pidfd_exited(self.identity.pidfd):
                 raise ManagedProcessError("managed process exited")
+            pinned = _proc_executable_identity(self.identity.pid)
+            if pinned != (self.identity.executable_sha256, self.identity.executable_device,
+                          self.identity.executable_inode):
+                raise ManagedProcessError("managed process executable pin changed")
             self._verify_target_environment()
         except (FileNotFoundError, ProcessLookupError):
             raise ManagedProcessError("managed process exited") from None
 
     def _verify_target_environment(self) -> None:
-        raw = Path(f"/proc/{self.identity.pid}/environ").read_bytes()
-        observed = {}
-        for item in raw.split(b"\x00"):
-            if not item:
-                continue
-            key, separator, value = item.partition(b"=")
-            if separator:
-                observed[key.decode("utf-8", "strict")] = value.decode("utf-8", "strict")
-        if observed != self._target_env:
+        if ManagedProcessSupervisor._read_process_environment(self.identity.pid) != self._target_env:
             raise ManagedProcessError("started process environment differs from the sanitized allowlist")
 
     async def snapshot_children(self) -> tuple[ChildIdentity, ...]:
@@ -453,17 +473,17 @@ class ManagedProcessHandle:
             pids = [int(x) for x in (base / "cgroup.procs").read_text().split()]
         except (OSError, ValueError):
             raise ManagedProcessError("owned cgroup membership cannot be observed") from None
-        by_pid: dict[int, tuple[int, int, str, int]] = {}
+        by_pid: dict[int, tuple[int, int, str, int, int, int]] = {}
         out: list[ChildIdentity] = []
         try:
             for pid in pids:
                 try:
-                    parent, ticks, digest, fd = _observe_process(pid, self.cgroup)
-                    by_pid[pid] = (parent, ticks, digest, fd)
+                    parent, ticks, digest, device, inode, fd = _observe_process(pid, self.cgroup)
+                    by_pid[pid] = (parent, ticks, digest, device, inode, fd)
                 except (OSError, ValueError, ManagedProcessError):
                     continue
             pins = self.spec.child_artifact_hashes or {}
-            for pid, (parent, ticks, digest, fd) in tuple(by_pid.items()):
+            for pid, (parent, ticks, digest, device, inode, fd) in tuple(by_pid.items()):
                 role = next((name for name, pin in pins.items() if pin == digest), None)
                 ancestor, seen, valid = parent, set(), False
                 while role and ancestor not in seen and ancestor > 1:
@@ -475,11 +495,12 @@ class ManagedProcessHandle:
                         break
                     ancestor = by_pid[ancestor][0]
                 if role and valid and _proc_cgroup(pid) == self.cgroup and not _pidfd_exited(fd):
-                    out.append(ChildIdentity(role, pid, ticks, parent, digest, self.cgroup, fd))
+                    out.append(ChildIdentity(role, pid, ticks, parent, digest, self.cgroup, fd,
+                                             device, inode))
                     by_pid.pop(pid, None)
             return tuple(out)
         except BaseException:
-            for _, _, _, fd in by_pid.values():
+            for _, _, _, _, _, fd in by_pid.values():
                 with contextlib.suppress(OSError):
                     os.close(fd)
             for child in out:
@@ -499,11 +520,15 @@ class ManagedProcessHandle:
         ready = loop.create_future()
         loop.add_reader(fd, lambda: None if ready.done() else ready.set_result(None))
         try:
-            await asyncio.wait_for(ready, timeout)
+            try:
+                await asyncio.wait_for(ready, timeout)
+            except asyncio.TimeoutError:
+                return b""
             await self._check_live()
-            return os.read(fd, maximum_bytes)
-        except BlockingIOError:
-            return b""
+            try:
+                return os.read(fd, maximum_bytes)
+            except BlockingIOError:
+                return b""
         finally:
             loop.remove_reader(fd)
 
@@ -570,7 +595,28 @@ class ManagedProcessHandle:
             self._watchdog.cancel()
         deadline = time.monotonic() + timeout
         try:
-            await self._check_custody()
+            try:
+                await self._check_custody()
+            except ManagedProcessError:
+                if (self._launcher.poll() is not None and _pidfd_exited(self.identity.pidfd)
+                        and not self._cgroup_pids()):
+                    await asyncio.to_thread(self.spec.journal.checkpoint, self.spec.journal_operation,
+                                            "stopped", {"unit": self.unit, "cgroup": self.cgroup,
+                                                         "pid": self.identity.pid,
+                                                         "start_ticks": self.identity.start_ticks,
+                                                         "executable_sha256": self.identity.executable_sha256,
+                                                         "executable_device": self.identity.executable_device,
+                                                         "executable_inode": self.identity.executable_inode,
+                                                         "service_identity": self.spec.service_identity,
+                                                         "reason": reason[:160], "manager_collected": True})
+                    self._closed = True
+                    with contextlib.suppress(OSError):
+                        os.close(self.identity.pidfd)
+                    for stream in (self._launcher.stdout, self._launcher.stderr, self._launcher.stdin):
+                        if stream:
+                            stream.close()
+                    return
+                raise
             await _systemctl_async("kill", "--kill-whom=all", "--signal=SIGTERM", self.unit,
                                    timeout=min(1.0, self._remaining(deadline)))
             grace = min(deadline, time.monotonic() + .5)
@@ -586,11 +632,16 @@ class ManagedProcessHandle:
                 raise ManagedProcessError("manager did not empty the owned cgroup before the cleanup deadline")
             await asyncio.to_thread(self.spec.journal.checkpoint, self.spec.journal_operation,
                                     "stopped", {"unit": self.unit, "cgroup": self.cgroup,
+                                                "pid": self.identity.pid,
+                                                "start_ticks": self.identity.start_ticks,
+                                                "executable_sha256": self.identity.executable_sha256,
+                                                "executable_device": self.identity.executable_device,
+                                                "executable_inode": self.identity.executable_inode,
                                                 "service_identity": self.spec.service_identity,
                                                 "reason": reason[:160]})
             self._closed = True
             os.close(self.identity.pidfd)
-            for stream in (self._launcher.stdout, self._launcher.stdin):
+            for stream in (self._launcher.stdout, self._launcher.stderr, self._launcher.stdin):
                 if stream:
                     stream.close()
             if self._launcher.poll() is None:
@@ -615,7 +666,7 @@ class ManagedProcessHandle:
 class ManagedProcessSupervisor:
     """Starts private transient services with manager-enforced descendant custody."""
     async def start(self, spec: ManagedProcessSpec) -> ManagedProcessHandle:
-        owned, exe, artifact, cwd, data = _validate_spec(spec)
+        owned, exe, artifact, cwd, data, executable_device, executable_inode = _validate_spec(spec)
         if not hasattr(os, "pidfd_open"):
             raise ManagedProcessError("kernel pidfd support is required")
         systemd_run = shutil.which("systemd-run", path="/usr/bin:/bin")
@@ -684,14 +735,14 @@ class ManagedProcessSupervisor:
         })
         try:
             launcher = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.DEVNULL, env=client_env,
+                                        stderr=subprocess.PIPE, env=client_env,
                                         close_fds=True, shell=False)
         except OSError:
             spec.journal.checkpoint(spec.journal_operation, "start-failed", {
                 "unit": unit, "service_identity": spec.service_identity, "reason": "client launch failed",
             })
             raise ManagedProcessError("systemd transient service launch failed") from None
-        for stream in (launcher.stdin, launcher.stdout):
+        for stream in (launcher.stdin, launcher.stdout, launcher.stderr):
             if stream is not None:
                 os.set_blocking(stream.fileno(), False)
         try:
@@ -710,12 +761,13 @@ class ManagedProcessSupervisor:
                             observed = _observe_process(pid, cgroup)
                         except (OSError, ValueError, ManagedProcessError):
                             continue
-                        parent, ticks, digest, pidfd = observed
+                        parent, ticks, digest, device, inode, pidfd = observed
                         os.close(pidfd)
-                        if digest == spec.artifact_sha256:
-                            matching.append((pid, parent, ticks))
+                        if (digest == spec.artifact_sha256 and device == executable_device
+                                and inode == executable_inode):
+                            matching.append((pid, parent, ticks, device, inode))
                     if len(matching) == 1:
-                        pid, parent, ticks = matching[0]
+                        pid, parent, ticks, _, _ = matching[0]
                         break
                 except (ManagedProcessError, FileNotFoundError, ValueError):
                     pass
@@ -724,8 +776,10 @@ class ManagedProcessSupervisor:
                 raise ManagedProcessError("managed process startup deadline expired")
 
             group = _proc_cgroup(pid)
-            parent, ticks, digest, pidfd = _observe_process(pid, cgroup)
-            if group != cgroup or digest != spec.artifact_sha256 or parent != matching[0][1] or ticks != matching[0][2]:
+            parent, ticks, digest, device, inode, pidfd = _observe_process(pid, cgroup)
+            if (group != cgroup or digest != spec.artifact_sha256
+                    or device != executable_device or inode != executable_inode
+                    or parent != matching[0][1] or ticks != matching[0][2]):
                 os.close(pidfd)
                 raise ManagedProcessError("systemd process identity changed during admission")
             for prop, expected in (("KillMode", "control-group"),
@@ -771,12 +825,14 @@ class ManagedProcessSupervisor:
             if not _protected_home_is_empty(pid):
                 os.close(pidfd)
                 raise ManagedProcessError("host home directories remain visible inside service")
-            identity = ProcessIdentity(unit, cgroup, pid, ticks, digest, pidfd)
+            identity = ProcessIdentity(unit, cgroup, pid, ticks, digest, pidfd,
+                                       device, inode)
             await _systemctl_async("show", "--property=Description", "--value", unit, timeout=1.0)
             spec.journal.record_owned("managed-systemd-service", unit, "active")
             spec.journal.checkpoint(spec.journal_operation, "running", {
                 "unit": unit, "cgroup": cgroup, "pid": pid, "start_ticks": ticks,
-                "executable_sha256": digest, "service_identity": spec.service_identity,
+                "executable_sha256": digest, "executable_device": device,
+                "executable_inode": inode, "service_identity": spec.service_identity,
             })
             return ManagedProcessHandle(spec, unit, cgroup, launcher, identity, started,
                                         spec.env_allowlist)
@@ -824,3 +880,104 @@ class ManagedProcessSupervisor:
                 os.close(child.pidfd)
             except OSError:
                 pass
+
+
+async def run_managed_process(spec: ManagedProcessSpec, *, timeout: float,
+                              stdout_limit: int = 65536, stderr_limit: int = 65536,
+                              input_bytes: bytes = b"") -> ManagedProcessResult:
+    """Run a pinned executable with bounded, separate stdout/stderr capture.
+
+    The manager starts it under ``spec.service_user`` and its verified private
+    namespaces. Deadlines and all exceptional exits stop the complete owned cgroup.
+    """
+    if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout) or not 0 < timeout <= 600
+            or not 0 <= stdout_limit <= 1_048_576 or not 0 <= stderr_limit <= 1_048_576
+            or not isinstance(input_bytes, bytes) or len(input_bytes) > 1_048_576):
+        raise ValueError("managed command bounds are invalid")
+    handle = await ManagedProcessSupervisor().start(spec)
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    caps = {"stdout": stdout_limit, "stderr": stderr_limit}
+    streams = {"stdout": handle._launcher.stdout, "stderr": handle._launcher.stderr}
+    loop = asyncio.get_running_loop()
+    deadline = time.monotonic() + timeout
+
+    async def drain(name: str) -> None:
+        stream = streams[name]
+        if stream is None:
+            raise ManagedProcessError("managed output stream is unavailable")
+        fd = stream.fileno()
+        while True:
+            try:
+                block = os.read(fd, min(16384, max(1, caps[name] - len(buffers[name]) + 1)))
+            except BlockingIOError:
+                ready = loop.create_future()
+                loop.add_reader(fd, lambda: None if ready.done() else ready.set_result(None))
+                try:
+                    await asyncio.wait_for(ready, max(0.001, deadline - time.monotonic()))
+                finally:
+                    loop.remove_reader(fd)
+                continue
+            if not block:
+                return
+            buffers[name].extend(block)
+            if len(buffers[name]) > caps[name]:
+                raise ManagedProcessError(f"managed {name} exceeded its output bound")
+
+    drainers = [asyncio.create_task(drain(name)) for name in ("stdout", "stderr")]
+    timed_out = False
+    try:
+        if input_bytes:
+            written = await handle.write(input_bytes, min(30.0, max(0.0, deadline-time.monotonic())))
+            if written != len(input_bytes):
+                raise ManagedProcessError("managed command did not accept its bounded input")
+        if handle._launcher.stdin:
+            handle._launcher.stdin.close()
+        while time.monotonic() < deadline:
+            for task in drainers:
+                if task.done() and not task.cancelled() and task.exception():
+                    raise task.exception()
+            if handle._launcher.poll() is not None:
+                break
+            state = await _show_async(handle.unit, "ActiveState", timeout=min(1.0, max(.1, deadline-time.monotonic())))
+            if state not in {"active", "activating", "reloading"}:
+                break
+            await asyncio.sleep(min(.05, max(.001, deadline-time.monotonic())))
+        else:
+            timed_out = True
+        if timed_out:
+            await handle.stop("managed command deadline", timeout=min(5.0, max(.1, 600.0)))
+            for task in drainers:
+                task.cancel()
+            await asyncio.gather(*drainers, return_exceptions=True)
+            return _managed_result(handle, None, buffers, timed_out=True)
+        await asyncio.wait_for(asyncio.gather(*drainers), max(.05, deadline-time.monotonic()))
+        await asyncio.to_thread(handle._launcher.wait, max(.05, deadline-time.monotonic()))
+        code = handle._launcher.returncode
+        if code is None:
+            raise ManagedProcessError("managed command exit status is unavailable")
+        await handle.stop("managed command completed", timeout=min(5.0, max(.1, deadline-time.monotonic())))
+        return _managed_result(handle, code, buffers, timed_out=False)
+    except asyncio.CancelledError:
+        for task in drainers:
+            task.cancel()
+        await asyncio.gather(*drainers, return_exceptions=True)
+        if not handle._closed:
+            await asyncio.shield(handle.stop("managed command cancelled", timeout=5.0))
+        raise
+    except BaseException:
+        for task in drainers:
+            task.cancel()
+        await asyncio.gather(*drainers, return_exceptions=True)
+        if not handle._closed:
+            await asyncio.shield(handle.stop("managed command failed", timeout=5.0))
+        raise
+
+
+def _managed_result(handle: ManagedProcessHandle, exit_code: int | None,
+                    buffers: Mapping[str, bytearray], *, timed_out: bool) -> ManagedProcessResult:
+    identity = handle.identity
+    return ManagedProcessResult(exit_code, bytes(buffers["stdout"]), bytes(buffers["stderr"]),
+                                timed_out, False, handle._closed, handle.unit, handle.cgroup,
+                                identity.pid, identity.start_ticks, identity.executable_device,
+                                identity.executable_inode)
