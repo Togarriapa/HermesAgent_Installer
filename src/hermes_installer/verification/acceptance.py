@@ -104,7 +104,7 @@ class TargetWorkflowRunner:
         if not isinstance(output_dir, str) or not output_dir.strip():
             raise ValueError("an evidence output directory is required")
         return WorkflowResult(acceptance_id, EvidenceState.PENDING,
-            "No structured owner-run result was supplied; no target effects were started.")
+            "No structured owner-run result was supplied; target effects were not started.")
 
     def collect_result(
         self, request_value: Mapping[str, object], result_value: Mapping[str, object],
