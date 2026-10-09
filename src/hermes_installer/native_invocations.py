@@ -110,12 +110,15 @@ def dispatch_native_mcp_tool_call(authority: Any, registration: Any,
         schema = _thaw_native_mcp_schema(frozen_schema)
         schema_bytes = json.dumps(schema, ensure_ascii=True, sort_keys=True,
                                   separators=(",", ":"), allow_nan=False).encode("ascii")
-        if hashlib.sha256(schema_bytes).hexdigest() != schema_digest:
+        if (len(schema_bytes) > _MAX_NATIVE_MCP_ARGUMENT_BYTES
+                or hashlib.sha256(schema_bytes).hexdigest() != schema_digest):
             raise ValueError("protected MCP schema pin differs")
-        if type(arguments) is not dict:
+        input_schema = schema.get("parameters") if isinstance(schema, dict) else None
+        if (not isinstance(input_schema, Mapping) or type(arguments) is not dict
+                or schema.get("name") != getattr(registration, "native_tool_name", None)):
             raise ValueError("native MCP arguments must be a JSON object")
-        _validate_schema(schema)
-        _validate_value(arguments, schema)
+        _validate_schema(input_schema)
+        _validate_value(arguments, input_schema)
         arguments_bytes = canonical_tool_arguments(arguments)
         if len(arguments_bytes) > _MAX_NATIVE_MCP_ARGUMENT_BYTES:
             raise ValueError("native MCP arguments exceed their bound")

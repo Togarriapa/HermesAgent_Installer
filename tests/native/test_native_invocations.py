@@ -100,21 +100,25 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
 
         arguments = {"resource": "selected", "limit": 1}
         argument_bytes = canonical_tool_arguments(arguments)
-        schema = {
-            "type": "object", "properties": {
-                "resource": {"type": "string"}, "limit": {"type": "integer", "maximum": 5},
-            }, "required": ["resource", "limit"], "additionalProperties": False,
-        }
+        schema = {"name": "mcp__selected__read_selected", "description": "selected fixture tool",
+                  "parameters": {
+                      "type": "object", "properties": {
+                          "resource": {"type": "string"}, "limit": {"type": "integer", "maximum": 5},
+                      }, "required": ["resource", "limit"], "additionalProperties": False,
+                  }}
         schema_digest = hashlib.sha256(json.dumps(
             schema, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode("utf-8")).hexdigest()
         registration = SimpleNamespace(
-            id="mcp.read.selected", native_tool_name="read_selected",
+            id="mcp.read.selected", native_tool_name="mcp__selected__read_selected",
             native_schema_sha256=schema_digest, native_schema=MappingProxyType({
-                "type": "object", "properties": MappingProxyType({
-                    "resource": MappingProxyType({"type": "string"}),
-                    "limit": MappingProxyType({"type": "integer", "maximum": 5}),
-                }), "required": ("resource", "limit"), "additionalProperties": False,
+                "name": "mcp__selected__read_selected", "description": "selected fixture tool",
+                "parameters": MappingProxyType({
+                    "type": "object", "properties": MappingProxyType({
+                        "resource": MappingProxyType({"type": "string"}),
+                        "limit": MappingProxyType({"type": "integer", "maximum": 5}),
+                    }), "required": ("resource", "limit"), "additionalProperties": False,
+                }),
             }),
             native_package_id="package-a", native_package_generation="generation-a",
             profile_id="profile-a",
@@ -145,11 +149,13 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
         from hermes_installer.native_invocations import _CURRENT_BINDING
 
         arguments = {"resource": "selected"}
-        encoded_schema = b'{"additionalProperties":false,"properties":{"resource":{"type":"string"}},"required":["resource"],"type":"object"}'
+        encoded_schema = (b'{"description":"selected fixture tool","name":"mcp__selected__read_selected",'
+                         b'"parameters":{"additionalProperties":false,"properties":{"resource":{"type":"string"}},'
+                         b'"required":["resource"],"type":"object"}}')
         schema = json.loads(encoded_schema)
         schema_digest = hashlib.sha256(encoded_schema).hexdigest()
         registration = SimpleNamespace(
-            id="mcp.read.selected", native_tool_name="read_selected",
+            id="mcp.read.selected", native_tool_name="mcp__selected__read_selected",
             native_schema_sha256=schema_digest, native_schema=schema,
             native_package_id="package-a", native_package_generation="generation-a",
             profile_id="profile-a",
