@@ -527,7 +527,36 @@
     "joins": "daemon_unit_id root-selected actual system daemon unit, not caller service name. Root custody resolves its current MainPID/PIDFD/starttime/cgroup/executable pin and root-owned loader/module closure. UID0 actual root dispatcher required. role_module artifact verified actual loaded immutable module, not inferred from job artifact/receipt labels. Each source_observer ID joins exact active source_issuer/current observer role and capture schema; allowed backend IDs join active resource backend rows/current resource/profile generation.",
     "resolver": "RootResourceControllerRegistry.resolve_for_event(root_event_handle,node_id)->RootTaskController; root event handle created only by concrete selected timer/HMAC+replay/channel ingress root observer, retains full immutable event closure/consent/body/current policy. Resolve role row by exact observer ID+kind and backend ID unique match; verify daemon kernel identity/actual module pins/current snapshot, duplicate its owned PIDFD for runner. No synthetic source process or caller self-enrollment.",
     "issuer": "issue_resource_job_context(root_event_handle,node_id,operation,canonical_payload_sha256) root-private registry: operation must equal exact selected node/backend operation and row allowed_operations, payload digest must equal root-rendered canonical body from protected body recipe/forced scope/full source closure. Root event registration stores actual action/body bindings. Fresh child grant selects only enrolled reduced process.start target/recipe, no caller operation/digest accepted as truth. Missing event/role/module/current peer denies.",
-    "ownership": "Source observer owner implements authority/resource_source_controllers.py actual role/event resolver and root issuer integration; authority owner consumes typed current controller and emits fresh reduced effect. Runtime task adapter consumes these APIs, never substitutes callbacks/worker claims."
+    "ownership": "Source observer owner implements authority/resource_source_controllers.py actual role/event resolver and root issuer integration; authority owner consumes typed current controller and emits fresh reduced effect. Runtime task adapter consumes these APIs, never substitutes callbacks/worker claims.",
+    "initial_ingress_custody": {
+      "owner_module": "hermes_installer.authority.resource_source_controllers",
+      "resolve_call": "resolve_selected_ingress_controller(controller_role_id,selected_source_issuer_id,selected_backend_id)->RootIngressControllerProof",
+      "proof_fields": [
+        "schema",
+        "proof_handle",
+        "controller_role_id",
+        "controller_kind",
+        "controller_generation",
+        "source_issuer_id",
+        "backend_enrollment_id",
+        "resource_generation",
+        "service_generation_digest",
+        "pid",
+        "pidfd",
+        "uid",
+        "live_peer_identity",
+        "role_artifact_id",
+        "role_artifact_sha256",
+        "namespace_id",
+        "selected_ingress_binding_id",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "selection": "Arguments are internal root static ingress/scheduler selection IDs, never public caller selectors. Resolve active resource_controller_roles/source_issuers/backend rows/current generations and actual root daemon/service PIDFD/executable/cgroup/module closure. This lookup requires no event handle or SourceReceipt. Timer exact root timer registration; webhook fixed selected route/account/HMAC credential binding+durable replay record; channel selected authenticated account/session binding. selected_ingress_binding_id is that actual protected registry record, not event ID.",
+      "mint_call": "capture_selected_ingress(proof_handle,root_observed_input_record)->RootResourceEventHandle",
+      "capture": "Private actual observer supplies bounded exact authenticated timer/webhook/channel record, not worker dict. Registry revalidates proof/controller PIDFD/module/lease/selection/HMAC/session/replay/time, atomically reserves input nonce then captures actual bytes and mints SourceReceipt plus event capsule/handle in single journal transaction. SourceReceipt.native_process_identity derives actual controller process proof, not source labels/event contents. After mint, downstream admitted source resolver may use event/receipt. No circular prerequisite or fake daemon identity.",
+      "ownership": "Registry retains controller PIDFD; proof caller receives root-local borrowed/dup clearly managed handle, capture uses retained registry lookup. On revocation/restart/gen mismatch proof expires and event mint denies. Historical source ancestry and current task execution controller remain distinct."
+    }
   },
   "profile_handler_artifact": {
     "artifact_id": "hermes-installer.resource-profile-task.v1",

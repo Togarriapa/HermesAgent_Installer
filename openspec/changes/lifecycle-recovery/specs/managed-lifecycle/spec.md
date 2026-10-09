@@ -320,3 +320,10 @@ The implementation SHALL use exact v35 initial identity and terminal companion j
 #### Scenario: Companion proof follows immutable terminal
 - **WHEN** root custody has issued the actual terminal receipt
 - **THEN** root native registry binds a separate verified companion receipt without fabricating or modifying custody evidence
+
+### Requirement: Noncircular immutable first-stage publication
+The implementation SHALL use the exact applicable v36 release roles, immutable policy publication and pre-event root ingress custody joins.
+
+#### Scenario: First ingress has no source receipt yet
+- **WHEN** root resolves selected ingress controller custody
+- **THEN** actual process/module/selected ingress proof is checked independently before atomically minting the source receipt and event handle
