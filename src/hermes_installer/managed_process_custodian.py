@@ -350,6 +350,7 @@ class _ManagedTaskState:
     selection_payload: bytes
     admission_handle_id: str
     initial_input_receipt_handle: str | None = None
+    initial_input_expires_monotonic: float | None = None
     service_generation_digest: str | None = None
     root_handle: ManagedTaskHandle | None = None
     stdin_write_receipt: Any | None = None
@@ -763,7 +764,7 @@ class ManagedProcessEffectHandler:
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
         self._task_terminal_receipts: dict[str, tuple[str, RootTaskTerminalReceipt, float]] = {}
-        self._task_stdin_write_receipts: dict[str, tuple[str, Any, float]] = {}
+        self._task_stdin_write_receipts: dict[str, tuple[ManagedTaskHandle, Any, float, str]] = {}
         self._lock = threading.RLock()
         self._member_key = os.urandom(32)
         # Root-only test harness may capture bounded manager diagnostics. This
@@ -1788,6 +1789,7 @@ class ManagedProcessEffectHandler:
                     or not self._task_admission_is_current(task_handle, selection_payload)):
                 raise AuthorityDenied("resource.task_input", "initial input receipt does not bind this live task")
             state.initial_input_receipt_handle = receipt.receipt_handle
+            state.initial_input_expires_monotonic = receipt.expires_monotonic
             state.service_generation_digest = receipt.service_generation_digest
             consumed_receipt = coordinator.consume_initial_input_receipt(
                 receipt.receipt_handle, task_handle=root_handle,
@@ -1856,6 +1858,7 @@ class ManagedProcessEffectHandler:
         with state.lock:
             if (state.input_closed or handle.launcher.stdin is None or handle.stopped
                     or state.initial_input_receipt_handle is None
+                    or state.initial_input_expires_monotonic is None
                     or state.service_generation_digest is None
                     or state.root_handle is not task_handle):
                 raise AuthorityDenied("resource.task_stdin", "task stdin is already closed or unavailable")
@@ -1863,6 +1866,7 @@ class ManagedProcessEffectHandler:
             offset = 0
             while offset < len(exact_bytes):
                 if (state.cancelled() or self.monotonic() >= state.stdin_deadline
+                        or self.monotonic() >= state.initial_input_expires_monotonic
                         or _pidfd_exited(handle.parent_pidfd)
                         or _pidfd_exited(handle.child_pidfd)
                         or not self._task_admission_is_current(state.admission, state.selection_payload)):
@@ -1909,19 +1913,21 @@ class ManagedProcessEffectHandler:
                 stdin_closed=handle.launcher.stdin.closed,
                 service_generation_digest=state.service_generation_digest,
                 issued_monotonic=issued,
-                expires_monotonic=min(state.deadline, handle.expires, issued + 30.0),
+                expires_monotonic=min(state.deadline, handle.expires,
+                                      state.initial_input_expires_monotonic, issued + 30.0),
             )
             if (not receipt.write_complete or not receipt.stdin_closed
                     or len(exact_bytes) != receipt.stdin_size_bytes):
                 raise AuthorityDenied("resource.task_stdin", "stdin write or EOF proof is incomplete")
             with self._lock:
-                for receipt_id, (_task_id, _receipt, expires) in tuple(self._task_stdin_write_receipts.items()):
+                for receipt_id, (_task_handle, _receipt, expires, _profile_id) in tuple(
+                        self._task_stdin_write_receipts.items()):
                     if expires <= issued:
                         self._task_stdin_write_receipts.pop(receipt_id, None)
                 if len(self._task_stdin_write_receipts) >= 4096:
                     raise AuthorityDenied("resource.task_receipts", "stdin write receipt registry is full")
                 self._task_stdin_write_receipts[receipt.receipt_handle] = (
-                    task_handle, receipt, receipt.expires_monotonic)
+                    task_handle, receipt, receipt.expires_monotonic, handle.profile.profile_id)
             state.stdin_write_receipt = receipt
             task_handle._stdin_write_receipt[0] = receipt.receipt_handle
             return offset
@@ -2068,8 +2074,10 @@ class ManagedProcessEffectHandler:
             entry = self._task_stdin_write_receipts.get(receipt_handle)
             if entry is None:
                 raise AuthorityDenied("resource.task_stdin_receipt", "stdin write receipt is unavailable")
-            retained_task_handle, receipt, expires = entry
+            retained_task_handle, receipt, expires, profile_id = entry
+            profile = self.profiles.get(profile_id)
             if (retained_task_handle is not task_handle or expires <= self.monotonic()
+                    or profile is None or profile.generation != task_handle.generation
                     or type(receipt) is not RootTaskStdinWriteReceipt
                     or receipt.task_handle != task_handle.handle_id
                     or receipt.process_id != task_handle.process_id
@@ -4109,6 +4117,9 @@ class ManagedBuildJobRunner:
         was_cancelled = False
         cgroup_empty = pidfd_gone = launcher_reaped = False
         unit_started = False
+        startup_gate_verified = False
+        ready_marker = b"HERMES_BUILD_PROBE_READY_V1\n"
+        combined_output_bytes = 0
         try:
             current = self.process_profile_resolver(inputs.target_id, inputs.generation)
             if (current is not profile or manager.profiles.get(profile.profile_id) is not profile
@@ -4172,7 +4183,7 @@ class ManagedBuildJobRunner:
                 "--quiet", "--service-type=exec", "--wait", "--pipe", *properties,
                 "--setenv=LANG=C", "--setenv=LC_ALL=C", "--setenv=HOME=/tmp",
                 "--setenv=TMPDIR=/tmp", "--setenv=PATH=/usr/bin:/bin", *argv]
-            launcher = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            launcher = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
                 close_fds=True, shell=False)
             unit_started = True
@@ -4211,9 +4222,20 @@ class ManagedBuildJobRunner:
                         selector.unregister(key.fileobj)
                         continue
                     destination = log if key.data == "stdout" else stderr_output
-                    if len(destination) + len(chunk) > 4096:
+                    combined_output_bytes += len(chunk)
+                    if combined_output_bytes > 4096:
                         raise AuthorityDenied("build.python_probe", "CPython probe output exceeded its bound")
                     destination.extend(chunk)
+                if not startup_gate_verified and bytes(stderr_output).startswith(ready_marker):
+                    if bytes(stderr_output) != ready_marker:
+                        raise AuthorityDenied("build.python_probe", "CPython startup marker was not exact")
+                    if main_pid is not None and main_pidfd is not None:
+                        if launcher.stdin is None:
+                            raise AuthorityDenied("build.python_probe", "CPython startup gate has no owned input")
+                        launcher.stdin.write(b"\x01")
+                        launcher.stdin.flush()
+                        launcher.stdin.close()
+                        startup_gate_verified = True
             if was_cancelled or timed_out:
                 self._terminate_unit(unit, cgroup, launcher)
             if launcher.poll() is None:
@@ -4232,7 +4254,8 @@ class ManagedBuildJobRunner:
                         if not chunk:
                             break
                         destination = log if key.data == "stdout" else stderr_output
-                        if len(destination) + len(chunk) > 4096:
+                        combined_output_bytes += len(chunk)
+                        if combined_output_bytes > 4096:
                             raise AuthorityDenied("build.python_probe", "CPython probe output exceeded its bound")
                         destination.extend(chunk)
             exit_code = launcher.returncode
@@ -4247,9 +4270,9 @@ class ManagedBuildJobRunner:
                 pidfd_gone = _pidfd_exited(main_pidfd)
             if (not cgroup_empty or not pidfd_gone or not launcher_reaped or not main_pid
                     or not observed_cgroup or not start_ticks or not mount_ns or not network_ns
-                    or not limits or not cgroup_limits):
+                    or not limits or not cgroup_limits or not startup_gate_verified):
                 raise AuthorityDenied("build.python_probe", "probe terminal cleanup or process identity is unproven")
-            if timed_out or was_cancelled or exit_code != 0 or stderr_output:
+            if timed_out or was_cancelled or exit_code != 0 or bytes(stderr_output) != ready_marker:
                 raise AuthorityDenied("build.python_probe", "isolated CPython ABI probe did not exit cleanly")
             after_sha, after_size, after_executable, after_root = _read_selected_executable(inputs, executable)
             if ((after_sha, after_size, after_executable.st_dev, after_executable.st_ino,
@@ -4278,6 +4301,7 @@ class ManagedBuildJobRunner:
                 "mount_ns": mount_ns, "network_ns": network_ns, "exit_code": 0,
                 "cleanup": True, "limits": limits, "cgroup_limits": cgroup_limits,
                 "log_digest": hashlib.sha256(stdout).hexdigest(), "log_bytes": len(stdout),
+                "startup_gate_verified": startup_gate_verified,
             }
             with self._lock:
                 self._records[probe_terminal_id] = probe_evidence
@@ -4294,6 +4318,7 @@ class ManagedBuildJobRunner:
                 output_root_device=output_info.st_dev, output_root_inode=output_info.st_ino,
                 executable_sha256=executable_sha256, executable_size_bytes=executable_size,
                 bounded_log_digest=hashlib.sha256(stdout).hexdigest(), log_bytes=len(stdout),
+                startup_gate_verified=startup_gate_verified,
                 stdout=stdout)
         except BaseException:
             if unit_started and launcher is not None:
