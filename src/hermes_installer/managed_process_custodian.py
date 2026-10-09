@@ -1036,9 +1036,14 @@ class ManagedProcessEffectHandler:
             fields, separator = candidates[0]
             options = set(fields[5].split(","))
             propagation = fields[6:separator]
-            if (not {"ro", "nosuid", "nodev", "noexec"}.issubset(options)
-                    or any(item.startswith(("shared:", "master:", "propagate_from:")) for item in propagation)):
-                failure_code = "mount_flags_or_propagation"
+            missing = sorted({"ro", "nosuid", "nodev", "noexec"} - options)
+            if missing:
+                failure_code = "mount_missing_" + "_".join(missing)
+                raise ValueError("mount flags are not constrained")
+            propagation_flags = [item.split(":", 1)[0] for item in propagation
+                                 if item.startswith(("shared:", "master:", "propagate_from:"))]
+            if propagation_flags:
+                failure_code = "mount_propagation_" + "_".join(sorted(set(propagation_flags)))
                 raise ValueError("mount flags are not constrained")
             observed = os.stat(f"/proc/{pid}/root{receipt.mount_path}", follow_symlinks=False)
             if (observed.st_dev, observed.st_ino) != (receipt.mount_source_device, receipt.mount_source_inode):
