@@ -14,6 +14,18 @@ Before source staging, the skill-tree reference audit follows local Markdown lin
 
 Applications use isolated feature environments and on-demand scheduling. The scheduler accepts only installer-registered workload IDs (`browser-fixture`, `graphify-code-fixture`, and `hyperframes-render-fixture`); callers provide narrow fixture parameters, never executable, argv, environment, resource limits, or capability declarations. Fixed builders bind verified runtime and private work roots, and each generated stage is checked against the registration's capability, memory, network, and time bounds before the managed supervisor is called. Browser Use success requires its structured navigation/click/screenshot proof, not only a zero exit code. Graphify stages a fixed entrypoint/helper fixture, sequences offline extraction before query, and checks that the resulting private `graph.json` contains both source nodes and their connecting edge. No boot workers or coordinator replacement are registered. A catalog record does not prove ARM64 support. Missing dependencies or account eligibility leave that item pending with an actionable reason.
 
+### R0091, R0094, R0095, and R0096 source boundaries
+
+The selected pins remain `AgriciDaniel/banana-claude@6a2b1b51fdcc35932184f06e513646a6f6f4f7d8`, `virgiliojr94/book-to-skill@e180fc46365e8c1aab0120778cc8a40b9515324b`, `dickwu/apple-design-skill@904b0eedc7cc778152f545506075d5bb5219ce77`, and `latent-spaces/brag@7079945d391573edebe48fdc0a23b39c4b4e8726`. Book-to-skill remains the user-star-selected repository; its `apple-ouyang/book-to-skill` pin is an explicit alternate only.
+
+Banana Claude's portable instructions and source can be reviewed, but image generation is unavailable until an installer-owned image route enforces capability, private/public routing, credential references, and budget policy. The upstream plugin calls Gemini directly, so the installer does not run its provider client. Paid generation never runs during installation.
+
+Book-to-skill's pinned local converter can extract a rights-authorized text fixture into its documented text and metadata outputs. Its selected `SKILL.md` is discoverable by Hermes. The source delegates skill generation to the agent workflow; generated-skill creation remains pending until Hermes exposes a supported invocation path. Local extraction does not upload text or imply model generation.
+
+Apple Design is third-party Apple Human Interface Guidelines reference material, not Apple software or an Xcode toolchain. The selected repository has no detected license and reproduces Apple-authored text. Keep it in private source review only; do not import, stage, redistribute, or activate it until rights review is recorded. No Xcode toolchain is required for the reference itself.
+
+Brag supplies portable skills and bundled media and delegates per-project composition and rendering to Hyperframes. It reuses the existing Hyperframes component; it does not install a second renderer. The registered Hyperframes workload is a fixed smoke fixture and does not establish Brag output. Brag rendering remains unavailable until its source-bound composition effect is registered and verified. Narration stays opt-in and unavailable without separately eligible local runtime/account and budget.
+
 Application profiles retain exact manifest and lock digests and validate lockfile structure before reporting lock integrity reviewed. Checks bind resolved package records for uv and Poetry, root plus package entries for npm, the root and CLI workspaces for Hyperframes Bun, and the root importer for pnpm. A reviewed lock still leaves installation, isolated ARM64 compatibility, invocation, accounts, and target acceptance as separate evidence. The Browser Use ARM64/Python 3.14 workflow pins source commit `c75e8476e26d18b7617643bc2ae082fae8eae431`, preserves the upstream manifest and hash-records its uv overlay, resolves/installs on hosted ARM64, explicitly requires Chromium sandboxing, and runs a local navigation/click/screenshot fixture. Run `37963622384` passed on `cd6fd12a4c4424d42efd172d8fe3640780dca7fd`; it used the matching pinned Chrome SUID sandbox helper in ephemeral CI. Artifact `11632662322` (`browser-use-aarch64-python314-lock.zip`) contains the generated lock and provenance: uv.lock SHA256 `51a998bc09c355b39ca5979a4ffd5e05fe3daf8b6d423151df4add75b83ffeb4`, upstream pyproject SHA256 `5a61c6cc0b66c5e51972c7deeabefe00cf9a8127d7408bdbf3e573bdaf582f87`, and overlay pyproject SHA256 `7364254e748c9b74824d9b8de04dfcfabe5bcc0593e64b1610df686a27909435`. Target-device compatibility and acceptance remain separate. `components.browser_use` exposes a managed-supervisor adapter that accepts only a literal loopback fixture and requires navigation, click and screenshot effects before returning proof. Cloud browser use stays disabled absent a separate budget and account decision.
 
 The Browser Use lock, both manifest variants, and provenance are packaged in the installer so runtime staging does not depend on Actions artifact retention. `components.locked_runtime` validates the fixed hashes against the selected source and stages a separate immutable runtime tree with the original manifest retained.
@@ -25,6 +37,10 @@ The selected source remains `K-Dense-AI/scientific-agent-skills` at commit `92ac
 Memory has one automatic capture owner per profile and separate user/profile namespaces. Extraction and embedding recheck privacy, capability and budget policy. Generated memory cannot recursively enter capture. Retrieval filters again by namespace. Provider-specific export and removal preserve other namespaces.
 
 OpenViking uses the native Hermes catalog plugin and a separately prestarted server with sanitized environment; lazy installs are disabled. OpenViking, claude-mem and Agent Memory remain separate engines with their own extraction policy.
+
+### Panniantong Agent-Reach (R0079)
+
+`components.panniantong_agent_reach` binds the CLI and portable skill to `Panniantong/Agent-Reach@94f06c1969dfc1834001269d79d3ad0972d9dee6`. The adapter verifies the package name, source URL, license label, CLI entry point, and upstream skill entry before import. Installation uses the exact GitHub VCS URL and commit in a dedicated component Python environment; it never uses the unrelated same-name PyPI distribution or writes upstream skill files into global agent directories. Doctor output is advisory and runs with loopback-only network scope. Channel doctor status, functional reads, credential status, and account status remain distinct. The local fixture runs a bounded loopback GET and an inert doctor stand-in; real channel reads, account checks, native Hermes discovery, and ARM64/Pi support remain unverified.
 
 ### Offline reference catalog search
 
@@ -122,3 +138,33 @@ At Superpowers `obra/superpowers@8ca22dba9a94f28898bbce59f2537ff4d87c747d`, the 
 ### Preserved native Plugin resources
 
 `components.native_plugins` records the 18 preserved resource Plugin IDs as distinct adapter identities and exposes `create_native_plugin_handler(adapter_id, runtime_context) -> register(ctx)`. `ReviewedPluginAdapterRegistry` resolves actual implementations through `resolve_native_plugin_implementation`; the metadata crosswalk is not executable. The factory checks the trusted selected Plugin identity and resolves only from the installer-owned typed registry; imported manifests cannot supply handler callables, endpoints, or credentials. `resource-overlay-store` registers fixed profile-view read/write/history/soft-delete tools with one-MiB payload limits and compare-and-swap revisions; it exposes no profile path or ID argument. Its implementation is source-backed; contract fixtures exercise the installer-owned CAS store. The `mcp-registry` and `agent37-discovery` adapters provide fixed read-only public search/metadata inspection through the root `registry.read` effect: service IDs, origins, capabilities and HTTP GET routes are compiled in the installer; requests contain only canonical bounded query/page fields; redirects, retries, private-classified contexts and oversized/non-JSON responses fail closed. Requests are capped at 256 canonical query bytes, 30 entries per page and three pages (90 entries maximum), with a two-MiB response cap and nine-second whole-operation deadline. MCP Registry paths follow its [official API reference](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/official-registry-api.md) and [OpenAPI specification](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/openapi.yaml): list search/page uses `/v0.1/servers`, while named version routes have no pagination parameters. Agent37 search/detail paths are fixed to `www.agent37.com/api/skills/search` and `/api/skills/{id}`; search results' instruction content is stripped, detail IDs must be returned 32-hex identifiers, and retained fields are scalar metadata only. All registry results are labeled untrusted public source data. These handlers do not import or install registry entries, create enrollments, or activate accounts. The root authority must separately enroll the exact effects. Encrypted overlay backup remains unavailable pending the lifecycle backup API. All Plugin native module paths remain absent until an installer-owned loader can inject the protected runtime context; handler resolvability is not native discovery or invocation. The other 15 Plugin handlers remain source-specific and pending; each adapter crosswalk entry now states its concrete missing runtime/account capability and next enrollment or implementation step. Plugin IDs: `agent-live-wallet`, `agent-sandbox-wallet`, `agent37-discovery`, `authentik-authorization`, `cloudflare-homelab`, `codex`, `composio`, `ebook-toolchain`, `epic-kanban`, `financial-data-hub`, `financial-execution-gateway`, `github`, `homelab-ops-broker`, `kobo-bridge`, `mcp-registry`, `resource-overlay-store`, `voice-pipeline`, and `web`.
+
+### gstack, Ruflo, and Open Executive (R0081–R0083)
+
+`components.gstack.bind_gstack_profile_instructions` binds the exact
+`agents-digest/gstack-AGENTS.md` bytes from gstack commit
+`20eb6202fa8ea83a882e7c0463b722cd8a31af1e` into one selected profile's
+instructions. That source's `hosts/hermes.ts` explicitly declares Hermes
+`instruction-only`; no setup command, hook, or browser executable is enabled.
+The digest SHA is recorded with the binding so a later profile writer can
+preserve its source and content provenance.
+
+`components.ruflo.review_ruflo_source` checks the pinned `claude-flow` 3.56.1
+package and MCP source at commit `58e0ae7e14e68aab45a4127d6f42f567bbcfb328`.
+Its optional dependency list includes native components such as
+`better-sqlite3`, `@ruvector/core`, `@ruvector/router`, and `agentdb`; the
+selected tree also names an x64-only router package. Linux ARM64 installation
+and behavior have not been qualified, and no per-tool MCP enrollment exists,
+so service and MCP startup remain unavailable. The adapter cannot replace the
+Hermes resource coordinator.
+
+`components.open_executive.review_open_executive_source` verifies the pinned
+Open Executive 0.5.2 FastAPI chat contract at commit
+`303d45eaa0b2323f2e9646d19bf35dbcc98c6d71`. Its `/chat` request is bounded to
+32,000 input characters, but the application selects its own Anthropic,
+OpenRouter, or OpenAI-compatible local provider and runs specialist tools.
+There is no enrolled Hermes policy-gateway route or bounded per-tool authority,
+and Linux ARM64 inference dependencies are unqualified; its workflow therefore
+remains unavailable. The adapter does not launch the service or expose provider
+URLs. These are source reviews and fixture denials, not installation, runtime,
+or target acceptance evidence.
