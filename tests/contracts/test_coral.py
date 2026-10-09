@@ -139,7 +139,8 @@ def test_delegate_use_and_actual_output_required_even_for_selected_device(tmp_pa
         "runtime_sha256": "a" * 64, "delegate_library": "/runtime/libedgetpu.so.1",
         "runtime_version": "2.14", "python_version": "3.9", "architecture": "aarch64",
         "delegate_loaded": True, "delegate_used": True, "delegated_operation_count": 1,
-        "inference_performed": True, "output_sha256": "b" * 64, "elapsed_seconds": 0.04}
+        "inference_performed": True, "output_sha256": "b" * 64, "elapsed_seconds": 0.04,
+        "hermes_python_changed": False}
     assert assess_inference_evidence(base, device(), sample_path=sample, runtime_path=runtime).status == "verified_delegate_used"
     for patch, message in (({"delegate_used": False}, "completed inference"),
                            ({"delegated_operation_count": 0}, "completed inference"),

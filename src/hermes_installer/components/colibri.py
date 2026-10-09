@@ -11,6 +11,7 @@ import stat
 import struct
 import subprocess
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -276,6 +277,17 @@ def build_colibri_arm64(source: Path, *, expected_revision: str = COLIBRI_REVISI
     machine = machine or platform.machine()
     if system != "Linux" or machine.casefold() not in {"aarch64", "arm64"}:
         raise ColibriError(f"Colibri engine must be built on Linux ARM64; found {system}/{machine}")
+    if isinstance(timeout, bool) or timeout <= 0 or timeout > 600:
+        raise ValueError("managed Colibri build command must be bounded to 600 seconds")
+    build_deadline = time.monotonic() + timeout
+
+    def bounded_run(argv: Sequence[str], *, cwd: Path | None = None,
+                    env: Mapping[str, str] | None = None, request_timeout: float = 60):
+        remaining = build_deadline - time.monotonic()
+        if remaining <= 0:
+            raise ColibriError("managed Colibri build exceeded its total time budget")
+        return _run(argv, cwd=cwd, env=env, timeout=min(request_timeout, remaining), runner=runner)
+
     source = source.resolve(strict=True)
     runner = _adapt_managed_runner(runner)
     marker_path = source / ".hermes-colibri-source.json"
@@ -304,7 +316,7 @@ def build_colibri_arm64(source: Path, *, expected_revision: str = COLIBRI_REVISI
     if setup.is_symlink() or not setup.is_file():
         raise ColibriError("pinned Colibri source is missing its reviewed c/setup.sh build entry point")
     for tool in ("gcc", "make", "python3"):
-        checked = _run((tool, "--version"), timeout=10, runner=runner)
+        checked = bounded_run((tool, "--version"), request_timeout=10)
         if checked.returncode:
             raise ColibriError(f"Colibri build dependency {tool} is unavailable; install {', '.join(BUILD_PACKAGES)} through the managed host")
     # Match the upstream setup check and ensure it links and runs against ARM64 libgomp.
@@ -312,18 +324,16 @@ def build_colibri_arm64(source: Path, *, expected_revision: str = COLIBRI_REVISI
     try:
         probe_c, probe_bin = probe_dir / "probe.c", probe_dir / "probe"
         probe_c.write_text("#include <omp.h>\nint main(void){int n=0;\n#pragma omp parallel reduction(+:n)\n n += 1; return n < 1;}\n", encoding="ascii")
-        compile_result = _run(("gcc", "-fopenmp", str(probe_c), "-o", str(probe_bin)), timeout=60, runner=runner)
+        compile_result = bounded_run(("gcc", "-fopenmp", str(probe_c), "-o", str(probe_bin)), request_timeout=60)
         if compile_result.returncode:
             raise ColibriError("OpenMP/libgomp compile probe failed; install the ARM64 libgomp runtime and compiler package")
-        execute_result = _run((str(probe_bin),), timeout=15, runner=runner)
+        execute_result = bounded_run((str(probe_bin),), request_timeout=15)
         if execute_result.returncode:
             raise ColibriError("OpenMP/libgomp runtime probe failed on the target")
     finally:
         shutil.rmtree(probe_dir, ignore_errors=True)
     env = {"PATH": "/usr/bin:/bin", "ARCH": "native", "LC_ALL": "C", "HOME": "/tmp"}
-    if timeout <= 0 or timeout > 600:
-        raise ValueError("managed Colibri build command must be bounded to 600 seconds")
-    build_result = _run(("bash", str(setup)), cwd=source / "c", env=env, timeout=timeout, runner=runner)
+    build_result = bounded_run(("bash", str(setup)), cwd=source / "c", env=env, request_timeout=600)
     if build_result.returncode:
         tail = build_result.stdout[-2400:].strip()
         raise ColibriError(f"pinned Colibri ARM64 build/self-test failed: {tail}")
@@ -333,7 +343,7 @@ def build_colibri_arm64(source: Path, *, expected_revision: str = COLIBRI_REVISI
     elf, _ = _elf_machine(binary)
     if elf != "aarch64":
         raise ColibriError(f"Colibri binary is {elf}, expected aarch64")
-    linked = _run(("ldd", str(binary)), timeout=15, runner=runner)
+    linked = bounded_run(("ldd", str(binary)), request_timeout=15)
     if linked.returncode or "libgomp.so" not in linked.stdout:
         raise ColibriError("Colibri binary is not linked to the required libgomp.so runtime")
     self_test_line = next((line.strip() for line in build_result.stdout.splitlines()

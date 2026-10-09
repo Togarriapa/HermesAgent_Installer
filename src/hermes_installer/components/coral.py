@@ -359,7 +359,7 @@ def download_official_sample(destination: Path, *, selected: bool = False, cance
 
 
 def _verify_sample(path: Path) -> None:
-    if path.stat().st_size != CORAL_SAMPLE_BYTES:
+    if path.is_symlink() or not path.is_file() or path.stat().st_size != CORAL_SAMPLE_BYTES:
         raise ArtifactError("official compiled Coral sample has the wrong byte length")
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -398,6 +398,8 @@ class CoralInferenceEvidence:
 def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
                               *, sample_path: Path, runtime_path: Path) -> CoralInferenceEvidence:
     _verify_sample(sample_path)
+    if runtime_path.is_symlink() or not runtime_path.is_file():
+        raise ArtifactError("selected Edge TPU runtime library must be a regular non-symlink file")
     runtime_sha = _sha256(runtime_path)
     if raw.get("model_sha256") != CORAL_SAMPLE_SHA256:
         raise ArtifactError("evidence does not identify the pinned official compiled Coral model")
@@ -427,7 +429,7 @@ def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
         raise ArtifactError("evidence runtime digest does not match the selected Edge TPU runtime")
     if raw.get("python_version") != "3.9" or raw.get("architecture", "").casefold() not in {"aarch64", "arm64"}:
         raise CoralError("Coral inference must run on the isolated CPython 3.9 ARM64 component runtime")
-    if raw.get("hermes_python_changed") is True:
+    if raw.get("hermes_python_changed") is not False:
         raise CoralError("Coral qualification must preserve Hermes Python and use an isolated compatible runtime")
     return CoralInferenceEvidence("verified_delegate_used", device.transport, device.address,
         device.vendor_id, device.product_id, CORAL_SAMPLE_SHA256, runtime_sha,
