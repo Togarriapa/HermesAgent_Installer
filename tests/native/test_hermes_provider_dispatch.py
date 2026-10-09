@@ -165,8 +165,8 @@ def fixture_echo(args, **kwargs):
     marker = os.environ.get("HERMES_FIXTURE_MARKER")
     if not marker:
         raise RuntimeError("fixture marker path missing")
-    with open(marker, "w", encoding="utf-8") as stream:
-        stream.write("fixture_echo_invoked")
+    with open(marker, "a", encoding="utf-8") as stream:
+        stream.write("fixture_echo_invoked\n")
     return json.dumps({"result": "SYNTHETIC_PRIVATE_CANARY_7f4c"})
 ''', encoding="utf-8")
                 (fixture_plugin / "__init__.py").write_text('''from .schemas import FIXTURE_ECHO
@@ -284,7 +284,7 @@ plugins:
                     + " recording_requests=" + json.dumps(request_summaries, sort_keys=True))
                 self.assertTrue(fixture_marker.is_file(),
                     "native AIAgent cycle did not invoke the real fixture tool handler")
-                self.assertEqual(fixture_marker.read_text(encoding="utf-8"), "fixture_echo_invoked")
+                self.assertEqual(fixture_marker.read_text(encoding="utf-8"), "fixture_echo_invoked\n")
                 self.assertIn("NATIVE_DISPATCH_OK", result.stdout)
                 self.assertEqual(len(transport.calls), 6)
                 self.assertEqual([call[0] for call in transport.calls],
@@ -301,7 +301,21 @@ plugins:
                 direct_payloads = [json.loads(call[2]) for call in transport.calls[4:]]
                 self.assertEqual([payload["messages"][0]["content"] for payload in direct_payloads],
                                  ["native primary fixture", "native auxiliary fixture"])
+                self.assertEqual(transport.response_actions[:4],
+                                 ["tool_search", "tool_describe", "tool_call", "final-text"])
                 self.assertFalse((Path(plugin["plugin"]) / "__pycache__").exists())
+                print("NATIVE_PROVIDER_PROBE_RESULT=" + json.dumps({
+                    "hermes_source_commit": HERMES_PIN,
+                    "profile_sensitivity": "PRIVATE",
+                    "upstream": "synthetic recording transport only",
+                    "agent_executor": "AIAgent.run_conversation",
+                    "deferred_tools": transport.response_actions[:3],
+                    "handler_invocations": 1,
+                    "gateway_requests": len(transport.calls),
+                    "routes": [call[0] for call in transport.calls],
+                    "primary_and_title_generation_auxiliary": "recorded",
+                    "external_account_or_provider_request": False,
+                }, sort_keys=True))
             finally:
                 if gateway is not None:
                     gateway.close()
