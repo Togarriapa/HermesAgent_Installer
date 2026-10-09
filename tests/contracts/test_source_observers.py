@@ -149,11 +149,8 @@ class _Service:
             source_kind=observation.source_kind, principal_id=observation.principal_id,
             profile_id=observation.profile_id, namespace_id=observation.namespace_id,
             uid=observation.producer_uid,
-<<<<<<< HEAD
-            # The observer proof carries the event-derived origin; the
-            # authority preserves the signed value without re-appending it.
-=======
->>>>>>> 794630ead5238f0d81dffeda6a3a642e4ed02a74
+                # Keep the event identifier in the signed receipt; authority
+                # preserves the root-derived origin without appending a suffix.
             origin_id=observation.origin_id,
             process_generation=observation.generation,
             payload_digest=observation.payload_sha256, sensitivity=Sensitivity.PRIVATE,
