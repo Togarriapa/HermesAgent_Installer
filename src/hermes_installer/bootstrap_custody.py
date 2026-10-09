@@ -98,7 +98,8 @@ class BootstrapCustody:
         return self.client
 
     def fetch_artifact(self, *, artifact_id: str, sha256: str,
-                       max_bytes: int, timeout: float = 30.0) -> tuple[str, str]:
+                       max_bytes: int, timeout: float = 30.0,
+                       cancelled=None) -> tuple[str, str]:
         client = self._required_client()
         target = f"artifact:{artifact_id}:{sha256}"
         payload = {"schema": 1, "artifact_id": artifact_id, "sha256": sha256,
@@ -110,7 +111,7 @@ class BootstrapCustody:
         grant = client.authorize_effect(context, capability="installer-bootstrap",
             target=target, recipient=None, request_digest=digest)
         response = client.fetch_artifact(grant, target=target, artifact_id=artifact_id,
-            sha256=sha256, max_bytes=max_bytes, timeout=timeout)
+            sha256=sha256, max_bytes=max_bytes, timeout=timeout, cancelled=cancelled)
         self._record_receipt("artifact.fetch", target, response)
         if response.status != 200:
             raise BootstrapCustodyError("Pinned host artifact fetch was denied")

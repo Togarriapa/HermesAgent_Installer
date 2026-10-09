@@ -390,6 +390,8 @@ class ProtectedEnrollment:
     remote_session_records: tuple[Mapping[str, Any], ...]
     resource_backend_enrollment_records: tuple[Mapping[str, Any], ...]
     resource_body_recipe_records: tuple[Mapping[str, Any], ...]
+    resource_scope_bindings: Mapping[str, Mapping[str, Any]]
+    resource_validators: Mapping[str, Mapping[str, Any]]
 
 
 _SOURCE_ACTIONS_BY_CHANNEL = {
@@ -451,7 +453,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "protected_build_records", "native_packages", "memory_enrollments",
             "operation_parameter_schemas", "source_issuers", "resource_jobs",
             "remote_session_enrollments", "resource_backend_enrollments",
-            "resource_body_recipes",
+            "resource_body_recipes", "resource_scope_bindings", "resource_validators",
             "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != 1:
@@ -673,6 +675,87 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         for scope_name, scope_id in body["scope_bindings"].items():
             _read_id(scope_name, "resource body scope name")
             _read_id(scope_id, "resource body scope binding ID")
+    scope_rows = item["resource_scope_bindings"]
+    if (not isinstance(scope_rows, list) or len(scope_rows) > 4096
+            or any(not isinstance(row, dict) for row in scope_rows)):
+        raise AuthorityDenied("enrollment.generation", "protected resource scope catalog is invalid")
+    scope_fields = {"id", "resource_id", "profile_id", "principal_id", "resource_generation",
+                    "profile_generation", "backend_enrollment_id", "fixed_fields",
+                    "credential_reference_ids", "recipient"}
+    seen_scope_ids: set[str] = set()
+    for row in scope_rows:
+        scope = _exact(row, scope_fields, "resource scope binding")
+        scope_id = _read_id(scope["id"], "resource scope binding ID")
+        if scope_id in seen_scope_ids:
+            raise AuthorityDenied("enrollment.generation", "resource scope binding is duplicated")
+        seen_scope_ids.add(scope_id)
+        for name in ("resource_id", "profile_id", "principal_id", "resource_generation",
+                     "profile_generation", "backend_enrollment_id"):
+            _read_id(scope[name], f"resource scope {name}")
+        fixed = scope["fixed_fields"]
+        refs = scope["credential_reference_ids"]
+        if (not isinstance(fixed, dict) or len(fixed) > 64
+                or not isinstance(refs, list) or len(refs) > 64
+                or any(not _is_credential_reference(value) for value in refs)
+                or len(refs) != len(set(refs))):
+            raise AuthorityDenied("enrollment.generation", "resource scope fixed values or credentials are invalid")
+        for name, value in fixed.items():
+            _read_id(name, "resource scope fixed field")
+            normalized = name.casefold().replace("-", "_")
+            if (any(term in normalized for term in ("token", "secret", "password", "credential", "api_key"))
+                    or isinstance(value, (dict, list, float)) or value is None
+                    or not isinstance(value, (str, int, bool))):
+                raise AuthorityDenied("enrollment.generation", "resource scope fixed field is not a safe typed scalar")
+            if isinstance(value, str) and (len(value) > 4096 or any(ch in value for ch in "\x00\r\n")
+                                           or "://" in value or value.startswith(("/", "~"))):
+                raise AuthorityDenied("enrollment.generation", "resource scope fixed value contains a path or URL")
+        if scope["recipient"] is not None:
+            _read_id(scope["recipient"], "resource scope recipient")
+    validator_rows = item["resource_validators"]
+    if (not isinstance(validator_rows, list) or len(validator_rows) > 4096
+            or any(not isinstance(row, dict) for row in validator_rows)):
+        raise AuthorityDenied("enrollment.generation", "protected resource validator catalog is invalid")
+    validator_fields = {"id", "kind", "maximum_bytes", "minimum", "maximum",
+                        "allowed_values", "schema_artifact_id", "schema_sha256"}
+    validator_kinds = {"utf8-string", "opaque-id", "integer", "boolean", "enum", "bounded-json"}
+    seen_validator_ids: set[str] = set()
+    for row in validator_rows:
+        validator = _exact(row, validator_fields, "resource validator")
+        validator_id = _read_id(validator["id"], "resource validator ID")
+        kind = validator["kind"]
+        if validator_id in seen_validator_ids or kind not in validator_kinds:
+            raise AuthorityDenied("enrollment.generation", "resource validator identity or kind is invalid")
+        seen_validator_ids.add(validator_id)
+        maximum_bytes = validator["maximum_bytes"]
+        minimum, maximum = validator["minimum"], validator["maximum"]
+        allowed = validator["allowed_values"]
+        artifact_id, artifact_sha = validator["schema_artifact_id"], validator["schema_sha256"]
+        if kind in {"utf8-string", "opaque-id", "bounded-json"}:
+            cap = 128 if kind == "opaque-id" else 262_144
+            if type(maximum_bytes) is not int or not 1 <= maximum_bytes <= cap:
+                raise AuthorityDenied("enrollment.generation", "resource validator byte bound is invalid")
+        elif maximum_bytes is not None:
+            raise AuthorityDenied("enrollment.generation", "resource validator has an inapplicable byte bound")
+        if kind == "integer":
+            if (type(minimum) is not int or type(maximum) is not int or minimum > maximum
+                    or allowed is not None):
+                raise AuthorityDenied("enrollment.generation", "resource integer validator bounds are invalid")
+        elif minimum is not None or maximum is not None:
+            raise AuthorityDenied("enrollment.generation", "resource validator has inapplicable numeric bounds")
+        if kind == "enum":
+            if (not isinstance(allowed, list) or not 1 <= len(allowed) <= 128
+                    or len({(type(value).__name__, repr(value)) for value in allowed}) != len(allowed)
+                    or any(value is None or isinstance(value, (dict, list, float))
+                           or not isinstance(value, (str, int, bool)) for value in allowed)):
+                raise AuthorityDenied("enrollment.generation", "resource enum validator values are invalid")
+        elif allowed is not None:
+            raise AuthorityDenied("enrollment.generation", "resource validator has inapplicable enum values")
+        if kind == "bounded-json":
+            _read_id(artifact_id, "resource validator schema artifact ID")
+            if not isinstance(artifact_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", artifact_sha):
+                raise AuthorityDenied("enrollment.generation", "resource JSON schema artifact digest is invalid")
+        elif artifact_id is not None or artifact_sha is not None:
+            raise AuthorityDenied("enrollment.generation", "resource validator has an inapplicable schema artifact")
     # Parse the exact active source-issuer schema here, after verifying the
     # digest, so callers cannot fall back to an unsigned sidecar catalog.
     _parse_source_issuers(item["source_issuers"])
@@ -1193,6 +1276,10 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         tuple(dict(row) for row in service_generations["remote_session_enrollments"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["resource_backend_enrollments"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["resource_body_recipes"]),
+        MappingProxyType({row["id"]: MappingProxyType(dict(row))
+                          for row in service_generations["resource_scope_bindings"]}),
+        MappingProxyType({row["id"]: MappingProxyType(dict(row))
+                          for row in service_generations["resource_validators"]}),
     )
 
 

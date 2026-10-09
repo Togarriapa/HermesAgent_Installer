@@ -39,8 +39,10 @@ class BootstrapCustodyContractTests(unittest.TestCase):
                 return SimpleNamespace(status=200, body=body, receipt_id="artifact-receipt")
 
         client = Client()
+        cancelled = lambda: False
         store_id, receipt = BootstrapCustody(client).fetch_artifact(
-            artifact_id="hermes-installer-fixture", sha256=digest, max_bytes=1024)
+            artifact_id="hermes-installer-fixture", sha256=digest, max_bytes=1024,
+            cancelled=cancelled)
         self.assertEqual(store_id, f"artifact:hermes-installer-fixture:{digest}")
         self.assertEqual(receipt, "artifact-receipt")
         context_call = next(call for call in client.calls if call[0] == "context")
@@ -53,7 +55,9 @@ class BootstrapCustodyContractTests(unittest.TestCase):
             "sha256": digest, "max_bytes": 1024}, sort_keys=True,
             separators=(",", ":"), ensure_ascii=True).encode("ascii")
         self.assertEqual(grant_call[1]["request_digest"], hashlib.sha256(request).hexdigest())
-        self.assertEqual(next(call for call in client.calls if call[0] == "fetch")[1], "one-use-grant")
+        fetch_call = next(call for call in client.calls if call[0] == "fetch")
+        self.assertEqual(fetch_call[1], "one-use-grant")
+        self.assertIs(fetch_call[2]["cancelled"], cancelled)
 
     def test_root_selected_recipe_uses_opaque_handle_controls_and_verified_stop(self):
         class Client:
