@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+import unittest
+
+from hermes_installer.native_plugin_loader import (
+    _NativePluginContextResultAdapter,
+    _UNSAFE_PLUGIN_RESULT,
+    _plugin_tool_result,
+)
+
+
+class NativePluginToolResultTests(unittest.TestCase):
+    def test_strings_are_returned_unchanged(self):
+        value = "already supported"
+        self.assertIs(_plugin_tool_result(value), value)
+
+    def test_json_values_become_canonical_text(self):
+        self.assertEqual(_plugin_tool_result({"z": 1, "a": [True, None]}),
+                         '{"a":[true,null],"z":1}')
+        self.assertEqual(_plugin_tool_result(["a", 2]), '["a",2]')
+
+    def test_supported_multimodal_envelope_is_preserved(self):
+        value = {"_multimodal": True, "content": [{"type": "text", "text": "ok"}]}
+        self.assertIs(_plugin_tool_result(value), value)
+
+    def test_non_json_and_oversized_values_use_static_safe_error(self):
+        self.assertEqual(_plugin_tool_result({"credential": object()}), _UNSAFE_PLUGIN_RESULT)
+        self.assertEqual(_plugin_tool_result({"large": "x" * (2 * 1024 * 1024)}), _UNSAFE_PLUGIN_RESULT)
+
+    def test_proxy_preserves_registration_options_and_wraps_handler(self):
+        class Context:
+            def register_tool(self, **kwargs):
+                return kwargs
+
+        handler = lambda _args: {"answer": 42}
+        registered = _NativePluginContextResultAdapter(Context()).register_tool(
+            "fixture", "fixture-tools", {"type": "object"}, handler,
+            check_fn="check", requires_env=["FIXTURE"], description="fixture",
+            emoji="x", override=True,
+        )
+        self.assertEqual(registered["check_fn"], "check")
+        self.assertEqual(registered["requires_env"], ["FIXTURE"])
+        self.assertTrue(registered["override"])
+        self.assertEqual(registered["handler"]({}), '{"answer":42}')
+
+
+if __name__ == "__main__":
+    unittest.main()

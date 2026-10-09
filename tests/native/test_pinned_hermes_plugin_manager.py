@@ -55,7 +55,7 @@ class Facade:
             raise PermissionError("no matching root-observed native invocation")
         if (adapter_id, action_id, arguments) != ("native-fixture", "lookup", {"key": "private"}):
             raise PermissionError("selected action mismatch")
-        return "root-brokered:private"
+        return {"status": "ok", "data": "private"}
 
 class Adapter:
     action_ids = ("lookup",)
@@ -141,7 +141,7 @@ try:
     )
 except Exception as exc:
     raise AssertionError(f"actual PluginManager dispatch failed: {type(exc).__name__}: {exc!r}") from exc
-assert result == "root-brokered:private", result
+assert result == '{"data":"private","status":"ok"}', result
 assert Path(sys.modules["agent"].__file__).resolve() == (overlay / "agent/__init__.py").resolve(), sys.modules["agent"].__file__
 '''
             env = dict(os.environ)
