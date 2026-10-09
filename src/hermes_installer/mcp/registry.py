@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from ..policy import ContextAuthorizer, DispatchContext
+from ..authority import AuthorityClient
 from .adapters import MCPService, ReadOnlyAdapter, SERVICES
 from .client import MCPClient
 from .transports import StdioTransport, StreamableHTTPTransport, is_supervised_stdio_handle
@@ -40,17 +41,25 @@ class MCPConnectionRegistry:
     def __init__(self, *, context: DispatchContext | None,
                  context_authorizer: ContextAuthorizer | None,
                  sources: Mapping[str, SourceRecord] | None = None,
-                 timeout: float = 9.0) -> None:
+                 timeout: float = 9.0,
+                 authority_client: AuthorityClient | None = None) -> None:
         if not 0 < timeout <= 9:
             raise ValueError("MCP startup timeout must be in (0, 9] seconds")
         self.context = context
         self.context_authorizer = context_authorizer
         self.sources = dict(sources or {})
+        if authority_client is not None and type(authority_client) is not AuthorityClient:
+            raise TypeError("MCP registry requires the first-party host authority client")
+        self.authority_client = authority_client
         self.timeout = timeout
 
     def connect(self, service_id: str, transport, *, selection,
                 allowed_tools: frozenset[str] | None = None,
                 result_scrubber=None) -> ReadOnlyAdapter:
+        if self.authority_client is None:
+            fixture = getattr(self.context, "capabilities", frozenset())
+            if "mcp:test:stdio" not in fixture and "mcp:test:loopback" not in fixture:
+                raise PermissionError("protected host authority is required for MCP service I/O")
         try:
             service = SERVICES[service_id]
         except KeyError:
@@ -95,5 +104,6 @@ class MCPConnectionRegistry:
             transport, tools, service_id=service_id, selection=selection,
             dispatch_context=self.context, context_authorizer=self.context_authorizer,
             timeout=self.timeout, result_scrubber=result_scrubber,
+            authority_client=self.authority_client,
         )
         return ReadOnlyAdapter(service, client, selection)
