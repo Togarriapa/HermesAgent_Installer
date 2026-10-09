@@ -7,6 +7,7 @@ uses only the returned opaque session handle with the fixed connector client.
 from __future__ import annotations
 
 import asyncio
+from abc import ABC, abstractmethod
 import hashlib
 import hmac
 import json
@@ -124,16 +125,17 @@ class OriginProbeObservation:
         object.__setattr__(self, "assertions", MappingProxyType(dict(self.assertions)))
 
 
-class PrivateOriginProbeExecutor:
+class PrivateOriginProbeExecutor(ABC):
     """Adapter to the enrolled gateway's fixed Xpra/app-only observation path.
 
     Implementations must collect HTTP/WS bytes and the root-correlated native
     window observation. The control protocol intentionally accepts no booleans,
     URLs, socket addresses, or caller-selected targets from the root request.
     """
+    @abstractmethod
     async def run_selected_probe(self, binding: SelectedOriginProbeBinding,
                                  request: Mapping[str, Any]) -> OriginProbeObservation:
-        raise NotImplementedError
+        """Run the selected fixed probe and return observed, typed evidence."""
 
 
 @dataclass(slots=True)

@@ -87,6 +87,10 @@ class PrivateOriginProbeRequestTests(unittest.TestCase):
                                    ("probe:fixture",), "a" * 64,
                                    "ws-fixture", "window-fixture")
 
+    def test_probe_executor_is_not_a_placeholder_base_class(self):
+        with self.assertRaises(TypeError):
+            PrivateOriginProbeExecutor()
+
     @unittest.skipUnless(importlib.util.find_spec("aiohttp"), "aiohttp isolated runtime is unavailable")
     def test_probe_control_is_not_registered_as_a_public_http_route(self):
         from hermes_installer.remote.gateway import RemotePolicy
