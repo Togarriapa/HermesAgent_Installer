@@ -103,9 +103,9 @@ def _git_tree(files: Mapping[str, bytes], modes: Mapping[str, int]):
                 directory = False
             order = name.encode() + (b"/" if directory else b"")
             entries.append((order, mode, name, object_id))
-        payload = b"".join(mode.encode() + b" " + name.encode() + b"\\0" + bytes.fromhex(object_id)
+        payload = b"".join(mode.encode() + b" " + name.encode() + b"\0" + bytes.fromhex(object_id)
                            for _, mode, name, object_id in sorted(entries, key=lambda item: item[0]))
-        return hashlib.sha1(b"tree " + str(len(payload)).encode() + b"\\0" + payload).hexdigest()
+        return hashlib.sha1(b"tree " + str(len(payload)).encode() + b"\0" + payload).hexdigest()
     return digest(root), subtrees
 
 
