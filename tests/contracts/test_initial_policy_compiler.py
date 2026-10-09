@@ -119,6 +119,7 @@ def test_v63_prepared_authority_binds_actual_key_and_exact_dormant_snapshot():
         "native_packages", "memory_enrollments", "operation_parameter_schemas", "source_issuers",
         "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
         "resource_body_recipes", "resource_scope_bindings", "resource_validators", "root_journal_roots",
+        "resource_controller_roles", "native_mcp_tool_bindings", "remote_observation_enrollments",
         "generation_digest",
     }
 

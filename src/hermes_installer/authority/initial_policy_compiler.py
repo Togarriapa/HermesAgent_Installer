@@ -159,6 +159,8 @@ def _empty_prepared_service_generation(root_journal_root: Mapping[str, Any], *,
         "memory_enrollments": [], "operation_parameter_schemas": [], "source_issuers": [],
         "resource_jobs": [], "remote_session_enrollments": [], "resource_backend_enrollments": [],
         "resource_body_recipes": [], "resource_scope_bindings": [], "resource_validators": [],
+        "resource_controller_roles": [], "native_mcp_tool_bindings": [],
+        "remote_observation_enrollments": [],
         "root_journal_roots": [rows],
     }
     value["generation_digest"] = hashlib.sha256(_canonical_json(value)).hexdigest()
@@ -233,9 +235,11 @@ class RootFirstStagePolicyCompiler:
 
     def __init__(self, verified_installer_release_receipt: Any,
                  root_actor_observation: Any, initial_compilation_registry: Any,
-                 principal_selection_registry: Any):
+                 principal_selection_registry: Any,
+                 authority_key_selection_registry: Any):
         from .installer_release import RootActorObservation, VerifiedInstallerReleaseReceipt
         from .bootstrap_runtime_factory import RootInitialCompilationRegistry
+        from .enrollment import RootAuthorityKeySelectionRegistry
         from .setup_principal import RootSetupPrincipalSelectionRegistry
         if not isinstance(verified_installer_release_receipt, VerifiedInstallerReleaseReceipt):
             raise InitialPolicyCompilationError("compiler requires the sealed installed-release receipt")
@@ -245,20 +249,29 @@ class RootFirstStagePolicyCompiler:
             raise InitialPolicyCompilationError("compiler requires the installed stage-zero registry")
         if not isinstance(principal_selection_registry, RootSetupPrincipalSelectionRegistry):
             raise InitialPolicyCompilationError("compiler requires the root Authentik principal registry")
+        if (not isinstance(authority_key_selection_registry, RootAuthorityKeySelectionRegistry)
+                or authority_key_selection_registry.release is not verified_installer_release_receipt
+                or authority_key_selection_registry.initial_compilation_registry is not initial_compilation_registry
+                or authority_key_selection_registry.actor_verifier is not initial_compilation_registry.actor_verifier
+                or authority_key_selection_registry.root_journal != initial_compilation_registry.root_journal):
+            raise InitialPolicyCompilationError("compiler requires the same-registry root authority-key selector")
         self._release = verified_installer_release_receipt
         self._actor = root_actor_observation
         self._registry = initial_compilation_registry
         self._principal_registry = principal_selection_registry
+        self._key_registry = authority_key_selection_registry
 
     @classmethod
     def from_installed_release(cls, verified_installer_release_receipt: Any,
                                root_actor_observation: Any, *,
                                initial_compilation_registry: Any,
-                               principal_selection_registry: Any) -> "RootFirstStagePolicyCompiler":
+                               principal_selection_registry: Any,
+                               authority_key_selection_registry: Any) -> "RootFirstStagePolicyCompiler":
         verified_installer_release_receipt.verify_current()
         root_actor_observation.verify_current(verified_installer_release_receipt)
         return cls(verified_installer_release_receipt, root_actor_observation,
-                   initial_compilation_registry, principal_selection_registry)
+                   initial_compilation_registry, principal_selection_registry,
+                   authority_key_selection_registry)
 
     def compile_initial_policy(self, choices: Any) -> "CompiledRootSetupPublication":
         """Compile one sealed initial publication from explicit root UI choices.
