@@ -113,3 +113,12 @@ Cross-process native source handoff SHALL use root-issued one-use bridge state b
 
 - **WHEN** producer captures messages without full SDK fields or reuses a prior bridge on retry
 - **THEN** root rejects final effect mismatch/replay before bytes; a new complete request capture and fresh one-use bridge preserves full bounded parent ancestry
+
+### Requirement: Operation-bound fixed effect rules (HI12)
+
+Protected effect rules SHALL key exact capability, operation and enrolled target together; grants SHALL bind the same tuple and canonical payload. Shared targets SHALL not imply cross-operation permission. Connector frame operations SHALL each use fresh one-use bounded grants without extending original stream lease; trusted expiry/revocation cleanup SHALL remain independent.
+
+#### Scenario: Same target different operation
+
+- **WHEN** same service target has open/read/write/close rules or caller changes operation under a prior target grant
+- **THEN** root evaluates only exact enrolled operation tuple and consumes bounded frame grant; wrong operation/replay denies and expiry cleanup still closes the stream

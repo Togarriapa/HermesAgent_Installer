@@ -39,3 +39,7 @@ HI10/HI-T10/EV-HI10 concretizes existing remote native process/sandbox proof; HI
 HI11/HI-T11/EV-HI11 operationalizes existing HI08/PR source lineage for actual producer and gateway peer separation, without transferring bearer authority.
 
 HI11 wire clarification in native-cross-process-bridge-v2 captures complete request directly; existing source snapshots are bounded retained ancestry, not portable effect authority.
+
+## Exact operation rule refinement
+
+HI12/HI-T12/EV-HI12 completes existing HI03/HI07 narrow effect semantics for multiple verbs on one target; no broadened target or wildcard authorization.

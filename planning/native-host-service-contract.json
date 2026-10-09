@@ -83,8 +83,16 @@
         "write",
         "close"
       ],
-      "constraints": "peer/context/session-bound opaque handle; sequence/replay checks; approved protocol frames only; root deadlines/byte limits and retained bidirectional shutdown; no caller URL/socket/descriptor authority"
-    }
+      "constraints": "peer/context/session-bound opaque handle; sequence/replay checks; approved protocol frames only; root deadlines/byte limits and retained bidirectional shutdown; no caller URL/socket/descriptor authority",
+      "grant_binding": "each explicit operation uses fresh one-use effect grant keyed exact capability+operation+canonical target_id; frame grants also bind connector_id/generation/session/sequence/route/readlimit or payloadhash/bytes/deadline; original stream admission expiry never extended",
+      "cleanup": "root watchdog/revoke/expiry always closes owned stream without awaiting fresh caller grant; authenticated owner cancellation cannot be blocked by expired authorization. Normal grant-bound close cannot target sibling handle."
+    },
+    "authority_operations": [
+      "connector.open",
+      "connector.read",
+      "connector.write",
+      "connector.close"
+    ]
   },
   "source_receipt": {
     "issuer": "trusted host broker only",
@@ -174,5 +182,11 @@
     ],
     "failure": "incomplete/changed generation/identity, inaccessible process, relaunch or renderer lineage unknown cannot authorize remote exposure; no merely mainPID-only success",
     "sensitive_output": "no environment/secrets/raw unrestricted argv; fixed sandbox evidence fields and bounded process count"
-  }
+  },
+  "operation_rule_key": [
+    "capability",
+    "operation",
+    "target"
+  ],
+  "operation_rule_migration": "protected rule explicitly states one operation; duplicate/ambiguous keys and implicit wildcard/pair fallback deny. Re-enroll exact singleton legacy operation before activation, invalidate old policy revision/grants."
 }
