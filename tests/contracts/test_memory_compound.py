@@ -55,19 +55,146 @@ class MemoryCompoundTests(unittest.TestCase):
                 recipe=self.recipe, step={"method": "POST", "path_template": "/api/memory/save",
                                           "body_recipe_id": "unreviewed"},
                 body={"text": "x"}, scope_bindings=self.scope)
+
+    def test_openviking_session_recipe_uses_root_session_and_captured_event(self):
+        from hermes_installer.memory.compound import validate_step_outcome
+        create = build_memory_request(
+            provider="openviking", route_id="openviking-session-capture",
+            recipe=self.recipe,
+            step={"method": "POST", "path_template": "/api/v1/sessions",
+                  "body_recipe_id": "openviking-create-owned-session-v1"},
+            body={}, scope_bindings=self.scope,
+            captures={"new_session_id": "session-root-1"})
+        self.assertEqual(create.path, "/api/v1/sessions")
+        self.assertEqual(json.loads(create.body), {
+            "auto_commit_policy": None, "session_id": "session-root-1", "telemetry": False,
+        })
+        created = validate_step_outcome(
+            route_id="openviking-session-capture", step_id="create", status=200,
+            value={"status": "ok", "result": {"session_id": "session-root-1"}},
+            expected_session_id="session-root-1")
+        self.assertEqual(created.captures, {"session_id": "session-root-1"})
+        with self.assertRaises(MemoryRecipeDenied):
+            validate_step_outcome(
+                route_id="openviking-session-capture", step_id="create", status=200,
+                value={"status": "ok", "result": {"session_id": "sibling-session"}},
+                expected_session_id="session-root-1")
+
+        append = build_memory_request(
+            provider="openviking", route_id="openviking-session-capture",
+            recipe=self.recipe,
+            step={"method": "POST",
+                  "path_template": "/api/v1/sessions/{root-captured-owned-session-id}/messages",
+                  "body_recipe_id": "openviking-append-captured-event-v1"},
+            body={"content": "synthetic captured fact"}, scope_bindings=self.scope,
+            captures={"session_id": "session-root-1"},
+            trusted_event={"content": "synthetic captured fact", "role": "user",
+                           "source_message_ids": ["source-message-1"]})
+        self.assertEqual(append.path, "/api/v1/sessions/session-root-1/messages")
+        self.assertEqual(json.loads(append.body), {
+            "content": "synthetic captured fact", "role": "user",
+            "source_message_ids": ["source-message-1"], "telemetry": False,
+        })
+        with self.assertRaises(MemoryRecipeDenied):
+            build_memory_request(
+                provider="openviking", route_id="openviking-session-capture",
+                recipe=self.recipe,
+                step={"method": "POST",
+                      "path_template": "/api/v1/sessions/{root-captured-owned-session-id}/messages",
+                      "body_recipe_id": "openviking-append-captured-event-v1"},
+                body={"content": "changed"}, scope_bindings=self.scope,
+                captures={"session_id": "session-root-1"},
+                trusted_event={"content": "synthetic captured fact", "role": "user"})
+
         with self.assertRaises(MemoryRecipeUnavailable):
             build_memory_request(
                 provider="openviking", route_id="openviking-session-capture",
                 recipe=self.recipe,
-                step={"method": "POST", "path_template": "/api/v1/sessions",
-                      "body_recipe_id": "openviking-create-owned-session-v1"},
-                body={"content": "x"}, scope_bindings=self.scope)
+                step={"method": "POST",
+                      "path_template": "/api/v1/sessions/{root-captured-owned-session-id}/{root-selected-commit-or-extract}",
+                      "body_recipe_id": "openviking-finalize-private-v1"},
+                body={}, scope_bindings=self.scope,
+                captures={"session_id": "session-root-1", "finalize_action": "extract"})
+        private_scope = {**self.scope, "private_provider_route_ref": "private-route-root"}
+        finalize = build_memory_request(
+            provider="openviking", route_id="openviking-session-capture",
+            recipe=self.recipe,
+            step={"method": "POST",
+                  "path_template": "/api/v1/sessions/{root-captured-owned-session-id}/{root-selected-commit-or-extract}",
+                  "body_recipe_id": "openviking-finalize-private-v1"},
+            body={}, scope_bindings=private_scope,
+            captures={"session_id": "session-root-1", "finalize_action": "extract"})
+        self.assertEqual(finalize.path, "/api/v1/sessions/session-root-1/extract")
+        self.assertEqual(finalize.body, b"{}")
 
     def test_agentmemory_arbitrary_json_is_not_accepted_as_semantic_success(self):
         from hermes_installer.memory.compound import validate_step_outcome
         with self.assertRaises(MemoryRecipeUnavailable):
             validate_step_outcome(route_id="agentmemory-capture", step_id="capture",
                                   status=201, value={"anything": "looks successful"})
+
+    def test_agentmemory_pinned_results_require_exact_semantic_shapes(self):
+        from hermes_installer.memory.compound import validate_step_outcome
+
+        found = validate_step_outcome(
+            route_id="agentmemory-search", step_id="search", status=200,
+            value={"mode": "compact", "results": [{
+                "obsId": "observation-1", "sessionId": "session-1",
+                "title": "synthetic fact", "type": "fact", "score": 0.75,
+                "timestamp": "2026-10-09T12:00:00Z",
+            }]})
+        self.assertEqual(found.result, {
+            "records": [{"id": "observation-1", "source": "agentmemory",
+                         "text": "synthetic fact"}],
+        })
+        saved = validate_step_outcome(
+            route_id="agentmemory-capture", step_id="capture", status=201,
+            value={"success": True, "memory": {"id": "memory-1", "title": "synthetic fact"}})
+        self.assertEqual(saved.captures, {"memory_id": "memory-1"})
+        self.assertEqual(saved.result, {"success": True, "id": "memory-1"})
+
+        invalid_results = [
+            {"mode": "full", "results": []},
+            {"mode": "compact", "results": [{"obsId": "x"}]},
+            {"mode": "compact", "results": [{
+                "obsId": "observation-1", "sessionId": "session-1",
+                "title": "synthetic fact", "type": "fact", "score": float("nan"),
+                "timestamp": "2026-10-09T12:00:00Z",
+            }]},
+            {"mode": "compact", "results": [{
+                "obsId": "observation-1", "sessionId": "session-1",
+                "title": "synthetic fact", "type": "fact", "score": 0.5,
+                "timestamp": "2026-10-09T12:00:00Z", "sibling_scope": "private",
+            }]},
+        ]
+        for value in invalid_results:
+            with self.subTest(value=value), self.assertRaises(MemoryRecipeUnavailable):
+                validate_step_outcome(route_id="agentmemory-search", step_id="search",
+                                      status=200, value=value)
+        for value in ({"success": True, "memory": {"id": "../other"}},
+                      {"success": False, "memory": {"id": "memory-1"}},
+                      {"success": True, "memory": {}}):
+            with self.subTest(value=value), self.assertRaises(MemoryRecipeUnavailable):
+                validate_step_outcome(route_id="agentmemory-capture", step_id="capture",
+                                      status=201, value=value)
+
+    def test_openviking_find_arbitrary_json_is_not_a_semantic_result(self):
+        from hermes_installer.memory.compound import validate_step_outcome
+        with self.assertRaises(MemoryRecipeUnavailable):
+            validate_step_outcome(
+                route_id="openviking-find", step_id="find", status=200,
+                value={"status": "ok", "result": {"anything": "accepted"}})
+
+    def test_openviking_find_needs_a_protected_uri_resolver(self):
+        with self.assertRaises(MemoryRecipeUnavailable):
+            build_memory_request(
+                provider="openviking", route_id="openviking-find",
+                recipe=self.recipe,
+                step={"method": "POST", "path_template": "/api/v1/search/find",
+                      "body_recipe_id": "openviking-find-owned-v1"},
+                body={"query": "synthetic fact", "limit": 8},
+                scope_bindings=self.scope,
+            )
 
     def test_protected_recipe_is_strictly_route_bound(self):
         route = {

@@ -4,6 +4,7 @@ import getpass, os, re, stat, sys, warnings
 from pathlib import Path
 from typing import Callable, Mapping
 from urllib.parse import unquote, urlparse
+from hermes_installer.safe_paths import canonicalize_darwin_temp_alias
 
 class CredentialError(RuntimeError):
     """Safe credential error containing no secret material."""
@@ -29,6 +30,11 @@ def resolve_secret(reference: str, *, environ: Mapping[str, str] | None = None,
         parts = [unquote(p) for p in parsed.path.split("/") if p]
         if not parts or any(p in {".", ".."} or chr(0) in p or "/" in p or chr(92) in p for p in parts):
             raise CredentialError("Invalid secret file path")
+        try:
+            canonical_path = canonicalize_darwin_temp_alias(Path("/").joinpath(*parts))
+        except ValueError:
+            raise CredentialError("Secret file could not be read safely") from None
+        parts = list(canonical_path.parts[1:])
         flags_dir = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
         current = os.open("/", flags_dir)
         try:

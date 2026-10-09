@@ -161,10 +161,8 @@ def load_acceptance_catalog(planning_dir: str | Path) -> dict[str, Any]:
                     "blocker": "No authenticated implementation evidence has been recorded",
                 })
         raw_acceptance = manifest.get("acceptance", ())
-        # Amendments use either a list of additions (AC16) or one metadata
-        # object (AC17/AC18). Treat the latter as one row, never as its string
-        # keys; object shapes without explicit requirement links apply to all
-        # requirements in that amendment.
+        # Append-only amendments encode AC16 as a list and later additions as
+        # one metadata object. Normalize the latter as one row, never its keys.
         acceptance_items = [raw_acceptance] if isinstance(raw_acceptance, Mapping) else raw_acceptance
         if not isinstance(acceptance_items, (list, tuple)):
             raise ValueError(f"invalid acceptance entries in {filename}")

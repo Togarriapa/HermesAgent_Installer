@@ -114,23 +114,22 @@ def _selection_bound(service_id: str, tool: str, arguments: Mapping[str, Any], s
     if not keys or not isinstance(arguments, Mapping):
         return False
     expected = selection if isinstance(selection, Mapping) else None
-    matched = []
-    for key in keys:
-        if key not in arguments:
-            continue
+    present = [key for key in keys if key in arguments]
+    if not present:
+        return False
+    for key in present:
         actual = arguments[key]
         wanted = expected.get(key) if expected is not None else selection
         if wanted is None:
-            continue
-        if isinstance(wanted, (tuple, list, set, frozenset)):
-            valid = (isinstance(actual, (tuple, list, set, frozenset))
-                     and all(isinstance(x, str) for x in actual)
-                     and set(actual) == set(wanted))
-        else:
-            valid = actual == wanted
-        if valid:
-            matched.append(key)
-    return len(matched) == 1
+            return False
+        if isinstance(wanted, (tuple, list)):
+            if (not isinstance(actual, list)
+                    or any(not isinstance(item, str) for item in actual)
+                    or actual != list(wanted)):
+                return False
+        elif actual != wanted or type(actual) is not type(wanted):
+            return False
+    return True
 
 def _intent(service_id: str, operation: str, selection: Any, tool: str | None = None, args: Any = None, binding: str = "") -> str:
     payload = json.dumps(
@@ -346,6 +345,7 @@ class MCPClient:
         except Exception:
             raise MCPError("MCP request could not be bound to its selected resource") from None
         purpose = "mcp-selected-resource-read" if operation == "call" else "mcp-connection-lifecycle"
+        digest = canonical_digest(payload)
         expected_intent_id = canonical_digest({"purpose": purpose, "intent": intent})
         cancellation = __import__("threading").Event()
         async with self._semaphore:
@@ -353,15 +353,19 @@ class MCPClient:
             if remaining <= 0:
                 raise MCPError("MCP request deadline expired")
             try:
+                broker_operation = "mcp.stdio" if channel == "stdio" else "mcp.request"
                 context = await asyncio.wait_for(asyncio.to_thread(
                     authority.context, purpose=purpose, intent=intent,
+                    operation=broker_operation, final_payload_digest=digest,
                     lease_seconds=min(30.0, remaining), cancelled=cancellation.is_set,
                 ), remaining)
-                if context.intent_id != expected_intent_id or context.monotonic_expires_at <= self.monotonic():
+                if (context.intent_id != expected_intent_id
+                        or context.operation != broker_operation
+                        or context.final_payload_digest != digest
+                        or context.monotonic_expires_at <= self.monotonic()):
                     raise MCPError("host issued a stale or mismatched MCP context")
                 remaining = min(remaining, context.monotonic_expires_at - self.monotonic())
                 capability = f"mcp:{self.service_id}:{'read' if operation == 'call' else 'connect'}"
-                digest = canonical_digest(payload)
                 grant = await asyncio.wait_for(asyncio.to_thread(
                     authority.authorize_effect, context, capability=capability, target=target,
                     recipient=None, request_digest=digest, retry_index=0,
@@ -369,6 +373,7 @@ class MCPClient:
                 ), remaining)
                 if (grant.target != target or grant.capability != capability
                         or grant.request_digest != digest or grant.intent_id != expected_intent_id
+                        or grant.operation != broker_operation or grant.final_payload_digest != digest
                         or grant.context_digest == ""):
                     raise MCPError("host MCP grant is stale or mismatched")
                 remaining = min(remaining, grant.monotonic_expires_at - self.monotonic())
@@ -388,8 +393,10 @@ class MCPClient:
                 raise
             except AuthorityDenied as exc:
                 cancellation.set()
-                reason = "authentication denied or revoked" if getattr(exc, "code", "").startswith(("auth.", "account.")) else "host authority denied MCP request"
-                raise MCPError(reason) from None
+                code = getattr(exc, "code", "authority.denied")
+                reason = "authentication denied or revoked" if code.startswith(("auth.", "account.")) else "host authority denied MCP request"
+                self._last_error = f"authority:{code}"
+                raise MCPError(f"{reason} ({code})") from None
             except Exception:
                 cancellation.set()
                 raise MCPError("protected MCP broker is unavailable or denied the request") from None
