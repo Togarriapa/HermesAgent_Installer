@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import base64
 import tempfile
 import time
 from pathlib import Path
@@ -180,7 +181,7 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
 
         assert launcher.seen is True
         assert response["status"] == 200 and response["receipt_id"]
-        receipt = json.loads(response["body"])
+        receipt = json.loads(base64.b64decode(response["body"], validate=True))
         assert receipt["operation_id"] == "colibri-source-build-v1"
         assert receipt["service_generation_digest"] == profile.service_generation_digest
         assert {output["relative_path"] for output in receipt["output_records"]} == set(profile.output_specs)
