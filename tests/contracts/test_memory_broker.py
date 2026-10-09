@@ -23,13 +23,14 @@ class BrokerFixture:
         return SimpleNamespace(profile_id=self.profile_id, namespace_id=self.namespace_id,
                                trace_id=trace_id or purpose, purpose=purpose, sensitivity="PRIVATE")
 
-    def authorize_effect(self, context, *, capability, target, recipient=None):
-        self.calls.append(("grant", context, capability, target))
-        return (capability, target, context)
+    def authorize_effect(self, context, *, capability, target, recipient=None, request_digest, retry_index=0, cancelled=None):
+        self.calls.append(("grant", context, capability, target, request_digest))
+        return (capability, target, context, request_digest)
 
     def memory_request(self, grant, *, target, request_digest, payload, timeout, cancelled=None):
         self.assert_request(target, request_digest, payload, timeout)
-        capability, granted_target, context = grant
+        capability, granted_target, context, granted_digest = grant
+        assert request_digest == granted_digest
         self.calls.append(("request", context, capability, granted_target, payload))
         op = target.rsplit(":", 1)[-1]
         body = {
