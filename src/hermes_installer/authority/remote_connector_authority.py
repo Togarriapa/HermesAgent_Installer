@@ -30,6 +30,7 @@ from .types import AuthorityDenied, EffectAuthorization, HostContext, canonical_
 
 _OPS = {"connector.open", "connector.read", "connector.write", "connector.close"}
 _ID_FIELDS = ("session_id", "target_id", "route_id", "native_generation")
+_HI12_DEADLINE_MARGIN_SECONDS = 0.05
 
 
 def _deny(code: str, message: str) -> AuthorityDenied:
@@ -116,11 +117,14 @@ class AuthorityServiceHI12Adapter:
             raise _deny("remote.connector-hi12-stale", "root service generation or boot epoch changed")
         rule = self._rule(operation, binding.target_id)
         payload_digest = canonical_digest(canonical_payload)
+        context_lease = min(deadline - now - _HI12_DEADLINE_MARGIN_SECONDS, 5.0)
+        if context_lease <= 0:
+            raise _deny("remote.connector-hi12-stale", "connector deadline is too close for a fresh grant")
         context_wire = service._issue_context(uid, {
             "purpose": "remote-desktop-connector",
             "intent": f"{binding.session_id}:{operation}:{sequence}",
             "trace_id": binding.session_id,
-            "lease_seconds": min(deadline - now, 5.0),
+            "lease_seconds": context_lease,
             "source_contexts": [], "final_payload_digest": payload_digest,
             "operation": operation,
         })
@@ -276,6 +280,8 @@ class RemoteConnectorEffectAuthority:
             hi12_grant = self._hi12.issue_remote_connector_effect(
                 binding=binding, operation=operation, canonical_payload=canonical_payload,
                 sequence=sequence, deadline=deadline, boot_epoch=self._boot_epoch())
+        except AuthorityDenied:
+            raise
         except Exception:
             raise _deny("remote.connector-hi12", "protected connector capability is unavailable") from None
         nonce = secrets.token_urlsafe(32)
@@ -331,6 +337,8 @@ class RemoteConnectorEffectAuthority:
                 issued.hi12_grant, binding=binding, operation=operation,
                 canonical_payload=canonical_payload, sequence=sequence,
                 boot_epoch=self._boot_epoch())
+        except AuthorityDenied:
+            raise
         except Exception:
             raise _deny("remote.connector-hi12", "protected connector effect was denied") from None
         if accepted is not True:
