@@ -174,7 +174,7 @@ class BootstrapTests(unittest.TestCase):
             state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
             boot.script_path.parent.mkdir(parents=True,exist_ok=True)
-            boot.script_path.write_text("#!/usr/bin/env bash\\nprintf '%200000s' x\\n")
+            boot.script_path.write_text("#!/usr/bin/env bash\nprintf '%200000s' x\n")
             started=time.monotonic()
             with self.assertRaisesRegex(BootstrapError,"output bound"):
                 boot._run_process(["--manifest"],timeout=5,capture=True)
