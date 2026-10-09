@@ -1,0 +1,3 @@
+# Runnable custody and functional health order v22
+
+BD-F03/LC-F03/HI-T01 retain original native-health gate. v21 activate naming could create a circular dependency because health requires a committed runnable profile. Publish receipt-verified runnable authority records with functional enablement pending, execute exact health against that committed generation, then journal passed health before functional enablement. Runnable custody publication is not accepted installation. Health receipt never substitutes runtime identity or creates the profile needed to observe itself. All target acceptance remains pending; baseline unchanged.

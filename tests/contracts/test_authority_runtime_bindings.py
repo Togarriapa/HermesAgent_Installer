@@ -115,6 +115,75 @@ def test_build_process_profile_resolves_only_service_joined_to_fixed_build_targe
         bindings.resolve_build_process_profile("coral-cpython-build:start", "build-gen")
 
 
+def test_selected_native_principal_returns_only_unique_current_protected_binding():
+    from hermes_installer.authority.service import PrincipalBinding
+
+    service = SimpleNamespace(
+        profile_id="desktop-profile", generation="desktop-generation",
+        enrollment_id="desktop-enrollment", service_uid=2201, service_gid=2202,
+        principal_id="desktop-principal", namespace_identity="mnt:11;net:12",
+    )
+    binding = PrincipalBinding(
+        uid=2201, principal_id="desktop-principal", profile_id="desktop-profile",
+        namespace_id="mnt:11;net:12", capabilities=frozenset({"remote.desktop"}),
+    )
+
+    class Catalog:
+        digest = "d" * 64
+
+        def resolve_profile_generation(self, profile_id, generation):
+            if profile_id != service.profile_id or generation != service.generation:
+                raise EnrollmentDenied("stale selection")
+            return service
+
+    custody = SimpleNamespace(
+        profile_id=service.profile_id, generation=service.generation,
+        enrollment_id=service.enrollment_id, owner_uid=service.service_uid,
+        owner_gid=service.service_gid,
+    )
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=Catalog(), build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None,
+        process_profiles={service.profile_id: custody},
+        protected_principal_bindings=(binding,),
+    )
+    assert runtime.resolve_selected_native_principal(
+        service.profile_id, service.generation, "d" * 64,
+    ) is binding
+
+    for stale_generation, digest in (("old-generation", "d" * 64),
+                                     (service.generation, "e" * 64)):
+        with pytest.raises(EnrollmentDenied):
+            runtime.resolve_selected_native_principal(service.profile_id, stale_generation, digest)
+
+    duplicate = RootRuntimeBindings(
+        enrollment_catalog=runtime.enrollment_catalog, build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None, process_profiles=runtime.process_profiles,
+        protected_principal_bindings=(binding, binding),
+    )
+    with pytest.raises(EnrollmentDenied, match="absent or ambiguous"):
+        duplicate.resolve_selected_native_principal(
+            service.profile_id, service.generation, "d" * 64,
+        )
+
+    wrong_uid = PrincipalBinding(
+        uid=2203, principal_id="desktop-principal", profile_id="desktop-profile",
+        namespace_id="mnt:11;net:12", capabilities=frozenset({"remote.desktop"}),
+    )
+    mismatched = RootRuntimeBindings(
+        enrollment_catalog=runtime.enrollment_catalog, build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None, process_profiles=runtime.process_profiles,
+        protected_principal_bindings=(wrong_uid,),
+    )
+    with pytest.raises(EnrollmentDenied, match="UID and namespace"):
+        mismatched.resolve_selected_native_principal(
+            service.profile_id, service.generation, "d" * 64,
+        )
+
+
 def test_root_native_package_resolver_rejects_ambiguous_selected_profile_generation():
     from hermes_installer.authority.runtime_bindings import _build_native_package_resolver
 
