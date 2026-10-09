@@ -24,6 +24,16 @@ from .types import (
     VerifiedEffectAuthorization, canonical_bytes, canonical_digest,
 )
 
+_OPERATIONS = frozenset({
+    "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor",
+    "memory.capture", "memory.search", "memory.export", "memory.delete", "memory.extract",
+    "memory.embed", "memory.backup", "memory.restore", "memory.enqueue", "memory.result",
+    "host.write", "alert.deliver", "process.start", "process.status", "process.read",
+    "process.write", "process.stop", "artifact.fetch", "package.install",
+    "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.orchestrator.recruit",
+})
+
 MAX_REQUEST = 6 * 1024 * 1024 + 16_384
 MAX_RESPONSE = 4 * 1024 * 1024 + 32_768
 MAX_TIMEOUT = 600.0
@@ -132,7 +142,7 @@ class AuthorityClient:
         """Connect only to the installed fixed endpoint; never consult env vars."""
         return cls(default_socket_path(), server_uid=0, server_gid=os.getgid(), timeout=timeout)
 
-    def context(self, *, purpose: str, intent: str,
+    def context(self, *, purpose: str, intent: str, operation: str,
                 source_contexts: Sequence[HostContext] = (),
                 source_receipts: Sequence[SourceReceipt] = (),
                 final_payload_digest: str | None = None,
@@ -144,6 +154,8 @@ class AuthorityClient:
             raise AuthorityDenied("context.invalid", "purpose is invalid")
         if not isinstance(intent, str) or not 1 <= len(intent) <= 512:
             raise AuthorityDenied("context.invalid", "intent is invalid")
+        if operation not in _OPERATIONS:
+            raise AuthorityDenied("context.invalid", "operation is not a fixed host effect")
         if trace_id is not None and (not isinstance(trace_id, str) or not 1 <= len(trace_id) <= 128):
             raise AuthorityDenied("context.invalid", "trace ID is invalid")
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, (int, float)) or not 0 < lease_seconds <= MAX_TIMEOUT:
@@ -166,6 +178,7 @@ class AuthorityClient:
             request["source_receipts"] = [receipt.to_wire() for receipt in source_receipts]
         if final_payload_digest is not None:
             request["final_payload_digest"] = final_payload_digest
+        request["operation"] = operation
         result = self._rpc("issue_context", {
             **request,
         }, timeout=min(self.timeout, float(lease_seconds)), cancelled=cancelled)

@@ -101,7 +101,7 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
         binding = PrincipalBinding(1001, "principal:a", "profile:a", "namespace:a",
                                    frozenset({"profile-run"}))
         effects = []
-        def handler(*, context, authorization, payload, timeout, peer_pid, cancelled):
+        def handler(*, context, authorization, payload, timeout, peer_pid, peer_pidfd=None, cancelled):
             effects.append((context.profile_id, payload))
             return {"status": 200, "body": b"started", "headers": {}, "receipt_id": "start"}
         service = AuthorityService(
@@ -109,11 +109,13 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
             bindings_by_uid={1001: binding}, rules={(rule.capability, rule.target): rule},
             handlers={(rule.operation, rule.target): handler}, policy=policy,
         )
+        payload = b"{}"
         context = HostContext.from_wire(service._issue_context(1001, {
             "purpose": "bootstrap", "intent": "start-pinned-profile", "trace_id": "trace-local",
             "lease_seconds": 10, "source_contexts": [],
-        }))
-        payload = b"{}"
+            "final_payload_digest": canonical_digest(payload),
+            "operation": "process.start",
+        }, peer_pid=os.getpid()))
         grant = service._authorize_effect(1001, {
             "context": context.to_wire(), "capability": rule.capability,
             "target": rule.target, "recipient": None,
@@ -174,7 +176,7 @@ class BackgroundMemoryConsentContracts(unittest.TestCase):
         }
         effects = []
 
-        def handler(*, context, authorization, payload, timeout, peer_pid, cancelled):
+        def handler(*, context, authorization, payload, timeout, peer_pid, peer_pidfd=None, cancelled):
             effects.append((context.sensitivity, authorization.capability, payload))
             return {"status": 200, "body": b'{"facts":[]}', "headers": {"content-type": "application/json"}, "receipt_id": "memory-receipt"}
 
@@ -190,7 +192,9 @@ class BackgroundMemoryConsentContracts(unittest.TestCase):
         source = HostContext.from_wire(service._issue_context(binding.uid, {
             "purpose": "memory-capture", "intent": "source-event", "trace_id": "trace-a",
             "lease_seconds": 10.0, "source_contexts": [],
-        }))
+            "final_payload_digest": canonical_digest(b"source event"),
+            "operation": "memory.enqueue",
+        }, peer_pid=os.getpid()))
         consent = service.create_background_consent(
             source, provider_id="openviking", owner_generation=1, ttl_seconds=300)
         now[0] += 11.0
@@ -199,6 +203,8 @@ class BackgroundMemoryConsentContracts(unittest.TestCase):
             service._issue_context(binding.uid, {
                 "purpose": "memory-extract", "intent": "unapproved-refresh", "trace_id": "trace-b",
                 "lease_seconds": 10.0, "source_contexts": [source.to_wire()],
+                "final_payload_digest": canonical_digest(b"refresh"),
+                "operation": "memory.extract",
             })
         self.assertEqual(effects, [])
 
@@ -236,12 +242,12 @@ class ChildDelegationContracts(unittest.TestCase):
         effects = []
         service_ref = {}
 
-        def child_handler(*, context, authorization, payload, timeout, peer_pid, cancelled):
+        def child_handler(*, context, authorization, payload, timeout, peer_pid, peer_pidfd=None, cancelled):
             effects.append((context.profile_id, authorization.uid, authorization.target, payload))
             return {"status": 200, "body": b'{"started":true}',
                     "headers": {"content-type": "application/json"}, "receipt_id": "child-start"}
 
-        def parent_handler(*, context, authorization, payload, timeout, peer_pid, cancelled):
+        def parent_handler(*, context, authorization, payload, timeout, peer_pid, peer_pidfd=None, cancelled):
             result = service_ref["service"].perform_delegated_effect(
                 authorization, delegation_id="cron-weekly-child", payload=b'{"argv":["pinned"]}',
                 peer_pid=peer_pid, timeout=timeout, cancelled=cancelled)
@@ -257,11 +263,13 @@ class ChildDelegationContracts(unittest.TestCase):
                       (child_rule.operation, child_rule.target): child_handler},
             policy=FixturePolicy(), delegations={delegation.delegation_id: delegation})
         service_ref["service"] = service
+        parent_payload = b'{"job":"weekly"}'
         source = HostContext.from_wire(service._issue_context(parent.uid, {
             "purpose": "resource-cron", "intent": "run-selected-job", "trace_id": "trace-child",
             "lease_seconds": 20.0, "source_contexts": [],
-        }))
-        parent_payload = b'{"job":"weekly"}'
+            "final_payload_digest": canonical_digest(parent_payload),
+            "operation": "resource.cron.run",
+        }, peer_pid=os.getpid()))
         parent_grant = EffectAuthorization.from_wire(service._authorize_effect(parent.uid, {
             "context": source.to_wire(), "capability": parent_rule.capability,
             "target": parent_rule.target, "recipient": None,
@@ -293,7 +301,7 @@ class HostAuthorityIPCContracts(unittest.TestCase):
         target = "memory:openviking:capture"
         rule = EffectRule("memory-capture", "memory.capture", target)
 
-        def handler(*, context, authorization, payload, timeout, peer_pid, cancelled):
+        def handler(*, context, authorization, payload, timeout, peer_pid, peer_pidfd=None, cancelled):
             if cancelled():
                 raise TimeoutError("cancelled")
             self.effects.append(payload)
@@ -331,8 +339,9 @@ class HostAuthorityIPCContracts(unittest.TestCase):
         self.temp.cleanup()
 
     def _context_and_grant(self, payload=b"capture"):
-        context = self.client.context(purpose="memory-capture", intent="store approved source")
         digest = canonical_digest(payload)
+        context = self.client.context(purpose="memory-capture", intent="store approved source",
+                                      operation="memory.capture", final_payload_digest=digest)
         grant = self.client.authorize_effect(
             context, capability="memory-capture", target="memory:openviking:capture",
             request_digest=digest,
@@ -387,8 +396,10 @@ class HostAuthorityIPCContracts(unittest.TestCase):
 
         policy = RevokesAtBroker()
         self.service.policy = policy
-        context = self.client.context(purpose="memory-capture", intent="revocation fixture")
         payload = b"capture"
+        context = self.client.context(purpose="memory-capture", intent="revocation fixture",
+                                      operation="memory.capture",
+                                      final_payload_digest=canonical_digest(payload))
         grant = self.client.authorize_effect(
             context, capability="memory-capture", target="memory:openviking:capture",
             request_digest=canonical_digest(payload),
@@ -397,6 +408,31 @@ class HostAuthorityIPCContracts(unittest.TestCase):
             self.client.perform_effect(grant, operation="memory.capture", payload=payload, timeout=1)
         self.assertEqual(policy.calls, 2)
         self.assertEqual(self.effects, [])
+
+    def test_source_receipt_is_private_process_bound_and_one_use(self):
+        payload = b"derived-memory-payload"
+        source_context = self.client.context(
+            purpose="memory-capture", intent="captured source bytes",
+            operation="memory.capture", final_payload_digest=canonical_digest(payload))
+        receipt = self.service.issue_source_receipt(
+            source_context, source_kind="memory-record", origin_id="record:7",
+            payload=b"private source bytes")
+        self.assertEqual(receipt.sensitivity, Sensitivity.PRIVATE)
+        self.assertEqual(receipt.native_process_identity, source_context.native_process_identity)
+        context = self.client.context(
+            purpose="memory-capture", intent="derived memory write",
+            operation="memory.capture", source_receipts=(receipt,),
+            final_payload_digest=canonical_digest(payload))
+        grant = self.client.authorize_effect(
+            context, capability="memory-capture", target="memory:openviking:capture",
+            request_digest=canonical_digest(payload))
+        self.client.perform_effect(grant, operation="memory.capture", payload=payload, timeout=1)
+        replay = self.client.authorize_effect(
+            context, capability="memory-capture", target="memory:openviking:capture",
+            request_digest=canonical_digest(payload))
+        with self.assertRaises(AuthorityDenied):
+            self.client.perform_effect(replay, operation="memory.capture", payload=payload, timeout=1)
+        self.assertEqual(self.effects, [payload])
 
 
 if __name__ == "__main__":

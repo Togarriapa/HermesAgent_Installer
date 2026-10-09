@@ -126,6 +126,7 @@ class EffectHandler(Protocol):
     def __call__(self, *, context: HostContext, authorization: EffectAuthorization,
                  payload: bytes, timeout: float,
                  peer_pid: int,
+                 peer_pidfd: int | None,
                  cancelled: Callable[[], bool]) -> Mapping[str, Any]: ...
 
 
@@ -193,6 +194,9 @@ class AuthorityService:
         self.background_consent_active = background_consent_active or (lambda _consent_id: False)
         self.memory_owner_state: Callable[[str], tuple[str | None, int]] | None = None
         self._nonces: dict[str, float] = {}
+        # Receipts are provenance evidence, not reusable bearer permissions.
+        # Consumption is atomic with the one-use effect nonce below.
+        self._source_receipts_consumed: dict[str, float] = {}
         self._lock = threading.RLock()
         self._client_nonces: dict[str, float] = {}
 
@@ -268,7 +272,17 @@ class AuthorityService:
                                            "payload_digest": payload_digest}),
             policy_revision=self._policy_revision(), capabilities=child_binding.capabilities,
             issued_at_monotonic=now, monotonic_expires_at=expiry,
-            nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24), signature="pending")
+            nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24), signature="pending",
+            source_receipts=parent_authorization.source_receipts,
+            final_payload_digest=payload_digest,
+            enrollment_id=canonical_digest({"uid": child_binding.uid,
+                                            "principal_id": child_binding.principal_id,
+                                            "profile_id": child_binding.profile_id,
+                                            "namespace_id": child_binding.namespace_id,
+                                            "generation": self.profile_generations.get(child_binding.profile_id, "unversioned")}),
+            generation=self.profile_generations.get(child_binding.profile_id, "unversioned"),
+            operation=rule.child_operation,
+            native_process_identity=parent_authorization.native_process_identity)
         child_context = HostContext.from_wire(self._signed_context(context, self._sign(context.claims())))
         grant_wire = self._authorize_effect(child_binding.uid, {
             "context": child_context.to_wire(), "capability": rule.child_capability,
@@ -300,7 +314,8 @@ class AuthorityService:
         """
         if (not isinstance(parent_context, HostContext) or not isinstance(payload, bytes)
                 or not 1 <= len(payload) <= MAX_REQUEST or type(ttl_seconds) is not int
-                or not 1 <= ttl_seconds <= 600):
+                or not 1 <= ttl_seconds <= 600
+                or not parent_context.native_process_identity):
             raise AuthorityDenied("source.request", "trusted source receipt request is malformed")
         if source_kind not in {"native-input", "tool-result", "memory-record", "static-context",
                                "schedule-event", "webhook-event", "provider-result"}:
@@ -323,6 +338,14 @@ class AuthorityService:
             parent_lineage_hash=parent_context.lineage_hash,
             policy_revision=self._policy_revision(), recipient_ceiling=frozenset(),
             issued_at_monotonic=now, monotonic_expires_at=expiry, signature="pending",
+            enrollment_id=parent_context.enrollment_id or canonical_digest({
+                "uid": binding.uid, "principal_id": binding.principal_id,
+                "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
+                "generation": self.profile_generations.get(binding.profile_id, "unversioned"),
+            }),
+            native_process_identity=parent_context.native_process_identity,
+            parent_receipt_ids=tuple(sorted(item.receipt_id for item in parent_context.source_receipts)),
+            nonce=secrets.token_urlsafe(24),
         )
         return replace(receipt, signature=self._sign(receipt.claims()))
 
@@ -337,16 +360,23 @@ class AuthorityService:
                 or not isinstance(retry_index, int) or isinstance(retry_index, bool)):
             raise AuthorityDenied("effect.revalidation", "effect revalidation binding is malformed")
         binding = self._binding(context.uid)
-        self._verify_context_signature(context)
         self._verify_grant_signature(authorization)
-        self._assert_current_context(context, binding, context.uid)
         self._assert_grant_current(authorization, binding, context.uid)
+        expected = self._context_from_grant(authorization, binding)
+        if any(getattr(context, field) != getattr(expected, field) for field in (
+                "principal_id", "profile_id", "namespace_id", "uid", "purpose", "intent_id",
+                "trace_id", "sensitivity", "lineage_hash", "policy_revision", "capabilities",
+                "monotonic_expires_at", "source_receipts", "final_payload_digest", "enrollment_id",
+                "generation", "operation", "native_process_identity")):
+            raise AuthorityDenied("effect.revalidation", "handler context differs from the signed grant")
         rule = self.rules.get((authorization.capability, authorization.target))
         if (rule is None or rule.operation != operation
-                or authorization.context_digest != _context_digest(context)
+                or authorization.operation != operation
                 or authorization.source_receipts != context.source_receipts
                 or authorization.request_digest != request_digest
                 or authorization.retry_index != retry_index
+                or any(rule.recipient is not None and rule.recipient not in receipt.recipient_ceiling
+                       for receipt in context.source_receipts)
                 or not self.policy.allow_effect(context=context, rule=rule,
                                                 request_digest=request_digest,
                                                 retry_index=retry_index)):
@@ -439,9 +469,18 @@ class AuthorityService:
 
     def handle_connection(self, connection: socket.socket) -> None:
         """Authenticate kernel peer, issue challenge, and process exactly one RPC."""
+        peer_pidfd: int | None = None
         try:
             connection.settimeout(MAX_CONTEXT_LEASE + 25.0)
             peer_pid, uid = self._peer_credentials(connection)
+            if not hasattr(os, "pidfd_open"):
+                raise AuthorityDenied("peer.pidfd", "kernel parent-death handle is unavailable")
+            try:
+                # Pin the SO_PEERCRED process identity before parsing attacker-
+                # controlled RPC bytes or scheduling any handler work.
+                peer_pidfd = os.pidfd_open(peer_pid, 0)
+            except OSError:
+                raise AuthorityDenied("peer.pidfd", "kernel peer exited before authority dispatch") from None
             hello = self._read_json_line(connection, MAX_REQUEST)
             if hello != {"version": 1, "operation": "hello"}:
                 raise AuthorityDenied("protocol.handshake", "invalid authority handshake")
@@ -463,7 +502,7 @@ class AuthorityService:
                 if len(self._client_nonces) >= 100_000:
                     raise AuthorityDenied("protocol.capacity", "authority replay protection is at capacity")
                 self._client_nonces[client_nonce] = now + 130.0
-            result = self._dispatch(uid, peer_pid, request["operation"], request["payload"],
+            result = self._dispatch(uid, peer_pid, peer_pidfd, request["operation"], request["payload"],
                                    cancelled=lambda: self._peer_disconnected(connection))
             response = {"version": 1, "server_nonce": nonce, "result": result, "error": None}
         except AuthorityDenied as exc:
@@ -476,17 +515,22 @@ class AuthorityService:
             self._write_json_line(connection, response, MAX_RESPONSE)
         except (OSError, AuthorityDenied):
             pass
+        finally:
+            if peer_pidfd is not None:
+                os.close(peer_pidfd)
 
-    def _dispatch(self, uid: int, peer_pid: int, operation: Any, payload: Any,
+    def _dispatch(self, uid: int, peer_pid: int, peer_pidfd: int | None,
+                  operation: Any, payload: Any,
                   *, cancelled: Callable[[], bool]) -> Any:
         if operation == "issue_context":
-            return self._issue_context(uid, payload)
+            return self._issue_context(uid, payload, peer_pid=peer_pid)
         if operation == "authorize_effect":
-            return self._authorize_effect(uid, payload)
+            return self._authorize_effect(uid, payload, peer_pid=peer_pid)
         if operation == "verify_effect":
-            return self._verify_effect(uid, payload)
+            return self._verify_effect(uid, payload, peer_pid=peer_pid)
         if operation == "perform_effect":
-            return self._perform_effect(uid, peer_pid, payload, cancelled=cancelled)
+            return self._perform_effect(uid, peer_pid, payload, cancelled=cancelled,
+                                        peer_pidfd=peer_pidfd)
         raise AuthorityDenied("protocol.operation", "authority operation is unavailable")
 
     def _binding(self, uid: int) -> PrincipalBinding:
@@ -495,9 +539,13 @@ class AuthorityService:
             raise AuthorityDenied("principal.unenrolled", "kernel peer UID has no enrolled profile")
         return binding
 
-    def _issue_context(self, uid: int, payload: Any, *, allow_expired_sources: bool = False) -> dict[str, Any]:
+    def _issue_context(self, uid: int, payload: Any, *, allow_expired_sources: bool = False,
+                       peer_pid: int | None = None,
+                       inherited_process_identity: str | None = None) -> dict[str, Any]:
         required = {"purpose", "intent", "trace_id", "lease_seconds", "source_contexts"}
-        if not isinstance(payload, dict) or frozenset(payload) not in {frozenset(required), frozenset(required | {"source_receipts"})}:
+        optional = {"source_receipts", "final_payload_digest", "operation"}
+        if (not isinstance(payload, dict) or not required.issubset(payload)
+                or set(payload) - required - optional):
             raise AuthorityDenied("context.request", "context request fields are invalid")
         binding = self._binding(uid)
         purpose, intent = payload["purpose"], payload["intent"]
@@ -532,11 +580,38 @@ class AuthorityService:
             for receipt in parsed_receipts:
                 if receipt != next(item for item in receipts if item.receipt_id == receipt.receipt_id):
                     raise AuthorityDenied("context.lineage", "source receipt identifier has conflicting claims")
+        receipt_ids = {receipt.receipt_id for receipt in receipts}
+        if any(not set(receipt.parent_receipt_ids).issubset(receipt_ids) for receipt in receipts):
+            raise AuthorityDenied("context.lineage", "source receipt parent closure is incomplete")
         for receipt in receipts:
             self._verify_source_receipt(receipt, binding, allow_expired=allow_expired_sources)
         trace_id = payload["trace_id"] or secrets.token_urlsafe(24)
         if not isinstance(trace_id, str) or not 1 <= len(trace_id) <= 128:
             raise AuthorityDenied("context.request", "trace ID is invalid")
+        final_payload_digest = payload.get("final_payload_digest")
+        if final_payload_digest is not None and (not isinstance(final_payload_digest, str)
+                                                 or len(final_payload_digest) != 64
+                                                 or any(char not in "0123456789abcdef" for char in final_payload_digest)):
+            raise AuthorityDenied("context.request", "final payload digest is invalid")
+        if receipts and final_payload_digest is None:
+            raise AuthorityDenied("context.lineage", "source receipts require a final payload digest")
+        operation = payload.get("operation")
+        if operation not in _OPERATIONS:
+            raise AuthorityDenied("context.operation", "context operation is not a fixed host effect")
+        generation = self.profile_generations.get(binding.profile_id, "unversioned")
+        enrollment_id = canonical_digest({"uid": uid, "principal_id": binding.principal_id,
+                                           "profile_id": binding.profile_id,
+                                           "namespace_id": binding.namespace_id,
+                                           "generation": generation})
+        native_process_identity = inherited_process_identity
+        if peer_pid is not None:
+            native_process_identity = self._native_process_identity(peer_pid, uid)
+        if receipts and (not native_process_identity or any(
+                receipt.native_process_identity != native_process_identity for receipt in receipts)):
+            raise AuthorityDenied("context.lineage", "source receipt is bound to another native process")
+        if sources and (not native_process_identity or any(
+                source.native_process_identity != native_process_identity for source in sources)):
+            raise AuthorityDenied("context.lineage", "source context is bound to another native process")
         sensitivity, lineage_hash = self.policy.classify(
             purpose=purpose, intent=intent, source_contexts=sources, binding=binding)
         if receipts:
@@ -561,7 +636,9 @@ class AuthorityService:
             policy_revision=self._policy_revision(), capabilities=binding.capabilities,
             issued_at_monotonic=now, monotonic_expires_at=now + lease,
             nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24), signature="pending",
-            source_receipts=receipts,
+            source_receipts=receipts, final_payload_digest=final_payload_digest,
+            enrollment_id=enrollment_id, generation=generation, operation=operation,
+            native_process_identity=native_process_identity,
         )
         signature = self._sign(context.claims())
         return HostContext(**{**context.__dict__, "signature": signature}).to_wire() if hasattr(context, "__dict__") else self._signed_context(context, signature)
@@ -611,7 +688,8 @@ class AuthorityService:
     def context_for_job(self, source_context_wire: bytes | Mapping[str, Any],
                         consent_wire: bytes | Mapping[str, Any], *, provider_id: str,
                         owner_generation: int, action: str, trace_id: str | None = None,
-                        lease_seconds: float = 30.0) -> HostContext:
+                        lease_seconds: float = 30.0,
+                        final_payload_digest: str | None = None) -> HostContext:
         """Reissue a fresh short context from valid persisted source consent."""
         source = self._decode_wire(source_context_wire, "source context")
         consent = self._decode_wire(consent_wire, "background consent")
@@ -658,7 +736,10 @@ class AuthorityService:
         wire = self._issue_context(source_context.uid, {
             "purpose": f"memory-{action}", "intent": intent, "trace_id": trace_id,
             "lease_seconds": lease_seconds, "source_contexts": [source_context.to_wire()],
-        }, allow_expired_sources=True)
+            "final_payload_digest": final_payload_digest,
+            "operation": f"memory.{action}",
+        }, allow_expired_sources=True,
+           inherited_process_identity=source_context.native_process_identity)
         return HostContext.from_wire(wire)
 
     def perform_memory_effect(self, source_context_wire: bytes | Mapping[str, Any],
@@ -675,7 +756,7 @@ class AuthorityService:
             raise AuthorityDenied("memory.effect", "memory stage or canonical payload is invalid")
         context = self.context_for_job(source_context_wire, consent_wire, provider_id=provider_id,
                                        owner_generation=owner_generation, action=action,
-                                       trace_id=trace_id)
+                                       trace_id=trace_id, final_payload_digest=canonical_digest(payload))
         target = f"memory:{provider_id}:{action}"
         digest = canonical_digest(payload)
         authorization = self._authorize_effect(context.uid, {
@@ -694,7 +775,7 @@ class AuthorityService:
             "authorization": authorization, "operation": f"memory.{action}",
             "payload": __import__("base64").b64encode(payload).decode("ascii"),
             "timeout": timeout,
-        }, cancelled=effect_cancelled)
+        }, cancelled=effect_cancelled, enforce_peer_identity=False)
         import base64
         return BrokeredEffectResponse(result["status"], base64.b64decode(result["body"], validate=True),
                                       result["headers"], result["receipt_id"])
@@ -715,13 +796,13 @@ class AuthorityService:
         fields["signature"] = signature
         return fields
 
-    def _authorize_effect(self, uid: int, payload: Any) -> dict[str, Any]:
+    def _authorize_effect(self, uid: int, payload: Any, *, peer_pid: int | None = None) -> dict[str, Any]:
         if not isinstance(payload, dict) or set(payload) != {"context", "capability", "target", "recipient", "request_digest", "retry_index"}:
             raise AuthorityDenied("effect.request", "effect request fields are invalid")
         binding = self._binding(uid)
         context = HostContext.from_wire(payload["context"])
         self._verify_context_signature(context)
-        self._assert_current_context(context, binding, uid)
+        self._assert_current_context(context, binding, uid, peer_pid=peer_pid)
         capability, target, recipient = payload["capability"], payload["target"], payload["recipient"]
         request_digest, retry_index = payload["request_digest"], payload["retry_index"]
         if (not isinstance(capability, str) or not isinstance(target, str)
@@ -732,6 +813,10 @@ class AuthorityService:
         rule = self.rules.get((capability, target))
         if (rule is None or (rule.operation, rule.target) not in self.handlers
                 or rule.recipient != recipient
+                or context.operation != rule.operation
+                or context.final_payload_digest != request_digest
+                or any(recipient is not None and recipient not in receipt.recipient_ceiling
+                       for receipt in context.source_receipts)
                 or not self.policy.allow_effect(context=context, rule=rule,
                                                 request_digest=request_digest, retry_index=retry_index)):
             raise AuthorityDenied("effect.denied", "host policy denied this exact effect")
@@ -751,17 +836,22 @@ class AuthorityService:
             monotonic_expires_at=expiry, grant_id=secrets.token_urlsafe(24),
             nonce=secrets.token_urlsafe(24), context_digest=_context_digest(context),
             signature="pending", source_receipts=context.source_receipts,
+            final_payload_digest=context.final_payload_digest,
+            enrollment_id=context.enrollment_id, generation=context.generation,
+            operation=rule.operation, native_process_identity=context.native_process_identity,
         )
         signed = self._sign(grant.claims())
         return {**grant.claims(), "signature": signed}
 
-    def _verify_effect(self, uid: int, payload: Any) -> dict[str, Any]:
-        grant, context, rule = self._parse_effect_request(uid, payload)
+    def _verify_effect(self, uid: int, payload: Any, *, peer_pid: int | None = None) -> dict[str, Any]:
+        grant, context, rule = self._parse_effect_request(uid, payload, peer_pid=peer_pid)
         return {"operation": rule.operation, "verified_at_monotonic": self.monotonic(),
                 "verification_receipt": secrets.token_urlsafe(24)}
 
     def _perform_effect(self, uid: int, peer_pid: int, payload: Any,
-                        *, cancelled: Callable[[], bool]) -> dict[str, Any]:
+                        *, cancelled: Callable[[], bool],
+                        peer_pidfd: int | None = None,
+                        enforce_peer_identity: bool = True) -> dict[str, Any]:
         if not isinstance(payload, dict) or set(payload) != {"authorization", "operation", "payload", "timeout"}:
             raise AuthorityDenied("effect.request", "broker request fields are invalid")
         import base64
@@ -778,9 +868,14 @@ class AuthorityService:
             raise AuthorityDenied("effect.binding", "broker payload digest mismatch")
         rule = self.rules.get((grant.capability, grant.target))
         if (rule is None or rule.operation != payload["operation"]
-                or rule.recipient != grant.recipient):
+                or rule.recipient != grant.recipient
+                or grant.operation != payload["operation"]
+                or grant.final_payload_digest != grant.request_digest):
             raise AuthorityDenied("effect.binding", "fixed effect operation does not match protected target")
         context = self._context_from_grant(grant, binding)
+        if (enforce_peer_identity
+                and context.native_process_identity != self._native_process_identity(peer_pid, uid)):
+            raise AuthorityDenied("peer.process", "effect grant belongs to a different native process")
         if not self.policy.allow_effect(context=context, rule=rule,
                                         request_digest=grant.request_digest,
                                         retry_index=grant.retry_index):
@@ -794,11 +889,22 @@ class AuthorityService:
         if remaining <= 0:
             raise AuthorityDenied("effect.expired", "fixed effect grant expired before dispatch")
         cancellation = lambda: (self.monotonic() >= grant.monotonic_expires_at or cancelled())
+        def current_or_cancelled() -> bool:
+            if cancellation():
+                return True
+            try:
+                self.revalidate_effect(context, grant, operation=rule.operation,
+                                       request_digest=grant.request_digest,
+                                       retry_index=grant.retry_index)
+                return False
+            except AuthorityDenied:
+                return True
         response = handler(context=context, authorization=grant,
                            payload=body, timeout=remaining,
                            peer_pid=peer_pid,
-                           cancelled=cancellation)
-        if cancellation():
+                           peer_pidfd=peer_pidfd,
+                           cancelled=current_or_cancelled)
+        if current_or_cancelled():
             raise AuthorityDenied("effect.expired", "fixed effect exceeded its grant lease")
         if not isinstance(response, Mapping) or set(response) != {"status", "body", "headers", "receipt_id"}:
             raise AuthorityDenied("effect.response", "fixed effect handler returned an invalid response")
@@ -819,7 +925,8 @@ class AuthorityService:
         return {"status": response["status"], "body": base64.b64encode(body_bytes).decode("ascii"),
                 "headers": dict(headers), "receipt_id": receipt_id}
 
-    def _parse_effect_request(self, uid: int, payload: Any) -> tuple[EffectAuthorization, HostContext, EffectRule]:
+    def _parse_effect_request(self, uid: int, payload: Any, *, peer_pid: int | None = None
+                              ) -> tuple[EffectAuthorization, HostContext, EffectRule]:
         if not isinstance(payload, dict) or set(payload) != {"authorization", "context", "capability", "target", "recipient", "request_digest", "retry_index"}:
             raise AuthorityDenied("effect.request", "effect verification fields are invalid")
         grant = EffectAuthorization.from_wire(payload["authorization"])
@@ -827,10 +934,13 @@ class AuthorityService:
         binding = self._binding(uid)
         self._verify_context_signature(context)
         self._verify_grant_signature(grant)
-        self._assert_current_context(context, binding, uid)
+        self._assert_current_context(context, binding, uid, peer_pid=peer_pid)
         self._assert_grant_current(grant, binding, uid)
         if (grant.context_digest != _context_digest(context)
                 or grant.source_receipts != context.source_receipts
+                or grant.final_payload_digest != context.final_payload_digest
+                or grant.operation != context.operation
+                or context.final_payload_digest != grant.request_digest
                 or grant.capability != payload["capability"] or grant.target != payload["target"]
                 or grant.recipient != payload["recipient"] or grant.request_digest != payload["request_digest"]
                 or grant.retry_index != payload["retry_index"]):
@@ -844,20 +954,40 @@ class AuthorityService:
             raise AuthorityDenied("effect.denied", "fresh host policy denied the fixed effect")
         return grant, context, rule
 
-    def _assert_current_context(self, context: HostContext, binding: PrincipalBinding, uid: int) -> None:
+    def _assert_current_context(self, context: HostContext, binding: PrincipalBinding, uid: int, *,
+                                peer_pid: int | None = None) -> None:
+        expected_generation = self.profile_generations.get(binding.profile_id, "unversioned")
+        expected_enrollment = canonical_digest({
+            "uid": binding.uid, "principal_id": binding.principal_id,
+            "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
+            "generation": expected_generation,
+        })
         if (context.uid != uid or context.principal_id != binding.principal_id
                 or context.profile_id != binding.profile_id or context.namespace_id != binding.namespace_id
                 or context.monotonic_expires_at <= self.monotonic()
-                or context.policy_revision != self._policy_revision()):
+                or context.policy_revision != self._policy_revision()
+                or context.generation != expected_generation
+                or context.enrollment_id != expected_enrollment):
             raise AuthorityDenied("context.stale", "host context is stale or bound to another principal")
+        if (peer_pid is not None
+                and context.native_process_identity != self._native_process_identity(peer_pid, uid)):
+            raise AuthorityDenied("context.process", "host context is bound to another native process")
         for receipt in context.source_receipts:
             self._verify_source_receipt(receipt, binding)
 
     def _assert_grant_current(self, grant: EffectAuthorization, binding: PrincipalBinding, uid: int) -> None:
+        expected_generation = self.profile_generations.get(binding.profile_id, "unversioned")
+        expected_enrollment = canonical_digest({
+            "uid": binding.uid, "principal_id": binding.principal_id,
+            "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
+            "generation": expected_generation,
+        })
         if (grant.uid != uid or grant.principal_id != binding.principal_id
                 or grant.profile_id != binding.profile_id or grant.namespace_id != binding.namespace_id
                 or grant.monotonic_expires_at <= self.monotonic()
-                or grant.policy_revision != self._policy_revision()):
+                or grant.policy_revision != self._policy_revision()
+                or grant.generation != expected_generation
+                or grant.enrollment_id != expected_enrollment):
             raise AuthorityDenied("grant.stale", "effect grant is stale or bound to another principal")
         for receipt in grant.source_receipts:
             self._verify_source_receipt(receipt, binding)
@@ -874,17 +1004,29 @@ class AuthorityService:
             monotonic_expires_at=grant.monotonic_expires_at, nonce=grant.nonce,
             grant_id=grant.grant_id, signature="verified-in-service",
             source_receipts=grant.source_receipts,
+            final_payload_digest=grant.final_payload_digest,
+            enrollment_id=grant.enrollment_id, generation=grant.generation,
+            operation=grant.operation, native_process_identity=grant.native_process_identity,
         )
 
     def _consume(self, grant: EffectAuthorization) -> None:
         with self._lock:
             now = self.monotonic()
             self._nonces = {nonce: expiry for nonce, expiry in self._nonces.items() if expiry > now}
+            self._source_receipts_consumed = {
+                receipt_id: expiry for receipt_id, expiry in self._source_receipts_consumed.items()
+                if expiry > now
+            }
             if grant.nonce in self._nonces:
                 raise AuthorityDenied("grant.replay", "effect grant was already consumed")
-            if len(self._nonces) >= 100_000:
+            receipt_ids = {receipt.receipt_id for receipt in grant.source_receipts}
+            if receipt_ids & self._source_receipts_consumed.keys():
+                raise AuthorityDenied("source.replay", "source receipt was already used by another effect")
+            if len(self._nonces) >= 100_000 or len(self._source_receipts_consumed) + len(receipt_ids) > 100_000:
                 raise AuthorityDenied("grant.capacity", "effect replay protection is at capacity")
             self._nonces[grant.nonce] = grant.monotonic_expires_at
+            for receipt in grant.source_receipts:
+                self._source_receipts_consumed[receipt.receipt_id] = receipt.monotonic_expires_at
 
     def _verify_context_signature(self, context: HostContext) -> None:
         self._verify_signature(context.claims(), context.signature)
@@ -892,12 +1034,20 @@ class AuthorityService:
     def _verify_source_receipt(self, receipt: SourceReceipt, binding: PrincipalBinding,
                                *, allow_expired: bool = False) -> None:
         self._verify_signature(receipt.claims(), receipt.signature)
+        expected_enrollment = canonical_digest({
+            "uid": binding.uid, "principal_id": binding.principal_id,
+            "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
+            "generation": self.profile_generations.get(binding.profile_id, "unversioned"),
+        })
         if (receipt.issuer_id != "host-authority"
                 or receipt.uid != binding.uid
                 or receipt.principal_id != binding.principal_id
                 or receipt.profile_id != binding.profile_id
                 or receipt.namespace_id != binding.namespace_id
                 or receipt.process_generation != self.profile_generations.get(binding.profile_id, "unversioned")
+                or receipt.enrollment_id != expected_enrollment
+                or not receipt.native_process_identity
+                or receipt.nonce == ""
                 or receipt.policy_revision != self._policy_revision()
                 or receipt.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL}
                 or not allow_expired and receipt.monotonic_expires_at <= self.monotonic()):
@@ -937,6 +1087,29 @@ class AuthorityService:
         if pid <= 0 or uid <= 0:
             raise AuthorityDenied("peer.invalid", "root or invalid peer identity cannot request user authority")
         return pid, uid
+
+    @staticmethod
+    def _native_process_identity(peer_pid: int, peer_uid: int) -> str:
+        """Hash kernel-observed executable inode and start time for a pinned PID."""
+        try:
+            stat_text = Path(f"/proc/{peer_pid}/stat").read_text(encoding="ascii")
+            right = stat_text.rfind(")")
+            fields = stat_text[right + 2:].split()
+            # After the parenthesized comm, field 22 (starttime) is offset 19.
+            start_ticks = fields[19]
+            status = Path(f"/proc/{peer_pid}/status").read_text(encoding="ascii")
+            uid_line = next(line for line in status.splitlines() if line.startswith("Uid:"))
+            real_uid = int(uid_line.split()[1])
+            executable = os.stat(f"/proc/{peer_pid}/exe")
+            if right < 0 or real_uid != peer_uid or not start_ticks.isdigit():
+                raise ValueError("peer process identity mismatch")
+            identity_hash = canonical_digest({
+                "pid": peer_pid, "uid": real_uid, "start_ticks": start_ticks,
+                "exe_device": executable.st_dev, "exe_inode": executable.st_ino,
+            })
+            return f"linux-proc:{identity_hash}"
+        except (OSError, ValueError, StopIteration, IndexError):
+            raise AuthorityDenied("peer.process", "kernel peer process identity is unavailable") from None
 
     @staticmethod
     def _read_json_line(connection: socket.socket, maximum: int) -> Any:
