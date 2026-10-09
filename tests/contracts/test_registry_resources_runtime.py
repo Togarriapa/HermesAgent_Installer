@@ -5,6 +5,7 @@ import json
 import tempfile
 import threading
 import time
+from contextlib import closing
 from types import ModuleType
 import unittest
 from pathlib import Path
@@ -201,7 +202,7 @@ class ResourcesRuntimeTests(unittest.TestCase):
                 store.claim("example", "delivery-2", time.time() + 60)
             # The private database persists only a digest of the resource/event pair.
             import sqlite3
-            with sqlite3.connect(store_path) as db:
+            with closing(sqlite3.connect(store_path)) as db:
                 raw = " ".join(str(value) for row in db.execute("SELECT * FROM replay_claims") for value in row)
             self.assertNotIn("delivery-1", raw)
 
