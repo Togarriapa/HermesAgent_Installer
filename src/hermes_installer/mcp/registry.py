@@ -65,12 +65,13 @@ class MCPConnectionRegistry:
             if not isinstance(transport, StreamableHTTPTransport):
                 raise PermissionError("Home Assistant must use its documented remote HTTP endpoint")
         elif service_id == "playwright":
-            if not isinstance(transport, StdioTransport):
-                raise PermissionError("Playwright requires the host-managed local process")
+            if not isinstance(transport, StdioTransport) or not getattr(transport, "binding_id", None):
+                raise PermissionError("Playwright requires a pinned host-managed local process")
         elif service_id == "google-community":
             record = self.sources.get(service_id)
-            if (not isinstance(transport, StdioTransport) or not isinstance(record, SourceRecord)
-                    or record.service_id != service_id or record.uri != service.source_uri):
+            if (not isinstance(transport, StdioTransport) or not getattr(transport, "binding_id", None)
+                    or not isinstance(record, SourceRecord) or record.service_id != service_id
+                    or record.uri != service.source_uri):
                 raise PermissionError("Community source revision, digest and supervised command must be owned and pinned")
             raise PermissionError("Community tool schema/effect review is pending")
         else:
