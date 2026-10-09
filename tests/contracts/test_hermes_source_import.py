@@ -18,6 +18,8 @@ from hermes_installer.hermes_source import (
     HERMES_SOURCE_SHA256,
     HERMES_SOURCE_TREE_MANIFEST_SHA256,
     HERMES_SOURCE_TREE_SHA1,
+    HermesSourceReceiptHandoff,
+    PinnedHermesSourceProvisioner,
     _git_tree_sha1,
     _git_blob_sha1,
     _load_normalization_manifest,
@@ -117,6 +119,67 @@ class HermesSourceImportTests(unittest.TestCase):
             "setup_authorization": setup_authorization,
         })
         self.assertEqual(handoff.source.git_tree_sha1, HERMES_SOURCE_TREE_SHA1)
+
+    def test_root_provisioner_uses_fixed_broker_identity_then_mints_handle(self):
+        source = VerifiedHermesSource(HERMES_SOURCE_ARTIFACT_ID, HERMES_SOURCE_SHA256,
+            HERMES_SOURCE_BYTES, HERMES_SOURCE_COMMIT, HERMES_SOURCE_TREE_SHA1,
+            HERMES_SOURCE_TREE_MANIFEST_SHA256, HERMES_SOURCE_NORMALIZATION_SHA256,
+            Path("/root-private/archive"), Path("/root-private/tree"))
+
+        class Fetcher:
+            calls = []
+
+            def fetch_artifact(self, **kwargs):
+                self.calls.append(kwargs)
+                return (f"artifact:{HERMES_SOURCE_ARTIFACT_ID}:{HERMES_SOURCE_SHA256}",
+                        "root-effect-receipt")
+
+        class Registry:
+            calls = []
+
+            def mint(self, **kwargs):
+                self.calls.append(kwargs)
+                return "opaque-setup-receipt-handle"
+
+        fetcher, registry = Fetcher(), Registry()
+        catalog = object()
+        artifact_root = Path("/root-private/cas")
+        provisioner = PinnedHermesSourceProvisioner(
+            fetcher=fetcher, catalog=catalog, artifact_root=artifact_root,
+            receipt_registry=registry, expected_uid=os.getuid())
+        proof = object()
+        with patch("hermes_installer.hermes_source.register_pinned_hermes_source_receipt",
+                   return_value=HermesSourceReceiptHandoff("opaque-setup-receipt-handle", source)) as register:
+            result = provisioner.provision(proof)
+        self.assertEqual(result.receipt_handle, "opaque-setup-receipt-handle")
+        self.assertEqual(len(fetcher.calls), 1)
+        self.assertEqual({key: value for key, value in fetcher.calls[0].items() if key != "timeout"}, {
+            "artifact_id": HERMES_SOURCE_ARTIFACT_ID, "sha256": HERMES_SOURCE_SHA256,
+            "max_bytes": 100_663_296,
+        })
+        self.assertGreater(fetcher.calls[0]["timeout"], 119.0)
+        self.assertLessEqual(fetcher.calls[0]["timeout"], 120.0)
+        register.assert_called_once_with(
+            catalog, f"artifact:{HERMES_SOURCE_ARTIFACT_ID}:{HERMES_SOURCE_SHA256}",
+            "root-effect-receipt", artifact_root, registry, proof,
+            expected_uid=os.getuid(), cancelled=unittest.mock.ANY,
+            deadline_monotonic=unittest.mock.ANY)
+
+    def test_root_provisioner_rejects_unpinned_receipt_before_registry(self):
+        class Fetcher:
+            def fetch_artifact(self, **kwargs):
+                return ("artifact:caller-selected:" + "0" * 64, "receipt")
+
+        class Registry:
+            def mint(self, **kwargs):
+                raise AssertionError("unverified receipt must not be minted")
+
+        provisioner = PinnedHermesSourceProvisioner(
+            fetcher=Fetcher(), catalog=object(), artifact_root=Path("/root-private/cas"),
+            receipt_registry=Registry(), expected_uid=os.getuid())
+        with self.assertRaises(AuthorityDenied) as caught:
+            provisioner.provision(object())
+        self.assertEqual(caught.exception.code, "source.receipt")
 
 
 if __name__ == "__main__":

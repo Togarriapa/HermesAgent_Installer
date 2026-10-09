@@ -127,9 +127,11 @@ class RootBootstrapProvisionOperation:
     target = "service-generation:bootstrap:install"
 
     def __init__(self, transaction: RootBootstrapEnrollment,
-                 authorizer: RootSetupAuthorizer):
+                 authorizer: RootSetupAuthorizer, *,
+                 source_receipt_provider: Callable[[VerifiedRootSetupAuthorization], str] | None = None):
         self.transaction = transaction
         self.authorizer = authorizer
+        self.source_receipt_provider = source_receipt_provider
 
     def handle(self, payload: Mapping[str, Any], *, peer_uid: int, peer_gid: int) -> dict[str, Any]:
         if type(peer_uid) is not int or peer_uid != 0 or type(peer_gid) is not int:
@@ -150,6 +152,19 @@ class RootBootstrapProvisionOperation:
                 or type(proof.operator_uid) is not int or proof.operator_uid <= 0
                 or proof.transaction_handle != request.operation_intent):
             raise BootstrapEnrollmentError("root-local setup admission is absent or invalid")
+        if self.source_receipt_provider is not None:
+            # Source acquisition is root-owned and fixed to the protected
+            # Hermes pin. Only the transaction-scoped opaque handle crosses
+            # into enrollment; archive/tree paths remain private to the
+            # provider and verifier.
+            source_handle = self.source_receipt_provider(proof)
+            if not isinstance(source_handle, str) or not re.fullmatch(
+                    r"[A-Za-z0-9_-]{32,128}", source_handle):
+                raise BootstrapEnrollmentPending("pinned source receipt provider returned no valid opaque handle")
+            if source_handle in request.artifact_receipt_handles:
+                raise BootstrapEnrollmentError("root source provider reused a caller-supplied receipt handle")
+            request = replace(request, artifact_receipt_handles=(
+                *request.artifact_receipt_handles, source_handle))
         receipt = self.transaction.enroll(request, setup_authorization=proof)
         return _receipt_wire(receipt)
 

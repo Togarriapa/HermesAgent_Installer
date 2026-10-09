@@ -65,6 +65,63 @@ class HermesSourceReceiptHandoff:
     source: VerifiedHermesSource
 
 
+class PinnedHermesSourceProvisioner:
+    """Root-only bridge from the fixed artifact.fetch effect to setup receipt.
+
+    The fetcher must be the enrolled ``BootstrapCustody`` adapter (or a
+    root-owned equivalent over ``AuthorityClient.fetch_artifact``). It never
+    accepts a URL, artifact identity, size, destination, or cache path from a
+    setup caller. The output handle is transaction-scoped by the protected
+    ``RootArtifactReceiptRegistry``; source paths remain in this process.
+    """
+
+    def __init__(self, *, fetcher: Any, catalog: ArtifactCatalog,
+                 artifact_root: Path | str, receipt_registry: Any,
+                 expected_uid: int = 0):
+        if (not callable(getattr(fetcher, "fetch_artifact", None))
+                or not callable(getattr(receipt_registry, "mint", None))):
+            raise ValueError("root artifact fetcher and receipt registry are required")
+        root = Path(artifact_root)
+        if not root.is_absolute():
+            raise ValueError("artifact CAS root must be absolute")
+        self.fetcher = fetcher
+        self.catalog = catalog
+        self.artifact_root = root
+        self.receipt_registry = receipt_registry
+        self.expected_uid = expected_uid
+
+    def provision(self, setup_authorization: Any, *,
+                  cancelled: Callable[[], bool] | None = None,
+                  deadline_monotonic: float | None = None) -> HermesSourceReceiptHandoff:
+        live_cancelled = cancelled or (lambda: False)
+        deadline = (min(deadline_monotonic, time.monotonic() + 600.0)
+                    if deadline_monotonic is not None else time.monotonic() + 600.0)
+        _check_source_live(live_cancelled, deadline)
+        try:
+            store_id, fetch_receipt_id = self.fetcher.fetch_artifact(
+                artifact_id=HERMES_SOURCE_ARTIFACT_ID,
+                sha256=HERMES_SOURCE_SHA256,
+                max_bytes=100_663_296,
+                timeout=min(120.0, max(0.1, deadline - time.monotonic())))
+        except Exception:
+            raise AuthorityDenied("source.fetch", "pinned Hermes source artifact fetch was denied or unavailable") from None
+        _check_source_live(live_cancelled, deadline)
+        if (store_id != f"artifact:{HERMES_SOURCE_ARTIFACT_ID}:{HERMES_SOURCE_SHA256}"
+                or not isinstance(fetch_receipt_id, str)
+                or not fetch_receipt_id or len(fetch_receipt_id) > 128
+                or any(ord(character) < 0x21 or ord(character) > 0x7e for character in fetch_receipt_id)):
+            raise AuthorityDenied("source.receipt", "pinned Hermes source effect receipt is malformed")
+        return register_pinned_hermes_source_receipt(
+            self.catalog, store_id, fetch_receipt_id, self.artifact_root,
+            self.receipt_registry, setup_authorization,
+            expected_uid=self.expected_uid, cancelled=live_cancelled,
+            deadline_monotonic=deadline)
+
+    def __call__(self, setup_authorization: Any) -> str:
+        """Return only the setup-scoped opaque receipt handle for enrollment."""
+        return self.provision(setup_authorization).receipt_handle
+
+
 def materialize_pinned_hermes_source(
     catalog: ArtifactCatalog,
     store_id: str,
