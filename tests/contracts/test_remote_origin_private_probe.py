@@ -6,6 +6,7 @@ import os
 import secrets
 import socket
 import struct
+import sys
 import tempfile
 import threading
 import unittest
@@ -164,7 +165,15 @@ class _PrivateControlFixture:
                 headers += b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
             conn.sendall(headers + b"\r\n")
             conn.settimeout(2)
-            return conn.recv(8192)
+            response = bytearray()
+            while True:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                response.extend(chunk)
+                if len(response) > 8192:
+                    raise AssertionError("fixture origin response exceeded its read bound")
+            return bytes(response)
 
     def _serve(self):
         while not self.stop.is_set():
@@ -219,7 +228,12 @@ class _PrivateControlFixture:
 
 class RemoteOriginPrivateProbeTests(unittest.TestCase):
     def test_root_readiness_requires_real_private_http_websocket_and_window_exchange(self):
-        with tempfile.TemporaryDirectory() as temp:
+        # /tmp is sticky and world-writable on Linux, so a 0700 child there
+        # still has an unsafe ancestor for the production fd-walk check. macOS
+        # uses its per-user private temp hierarchy instead of the /private/tmp
+        # integration checkout, whose ancestor is intentionally world-writable.
+        parent = None if sys.platform == "darwin" else Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory(dir=parent) as temp:
             base = Path(temp).resolve()
             os.chmod(base, 0o700)
             app = _AppSocketFixture()
