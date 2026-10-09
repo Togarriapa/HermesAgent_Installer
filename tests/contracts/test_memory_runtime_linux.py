@@ -159,8 +159,8 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
             raw = record(port=port)
             raw["namespace_identity"] = namespace_identity
             raw["memory_owner_generation"] = 1
-            raw["fixed_route_map"]["agentmemory-search"]["scope_bindings"][
-                "memory_owner_generation"] = 1
+            for selected_route in raw["fixed_route_map"].values():
+                selected_route["scope_bindings"]["memory_owner_generation"] = 1
             enrollment = MemoryServiceEnrollment.from_protected_record(raw)
             recipe = enrollment.fixed_route_map["agentmemory-search"]
             assert isinstance(recipe, MemoryRouteRecipe)
