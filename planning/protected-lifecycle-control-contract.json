@@ -767,7 +767,8 @@
       ],
       "verify": "Root normal session actualcurrentactor/currentplan/ownedpreparedtransaction/heldroots/NSS plus exact runtime/compiledclosure/source receipts and fresh principal identity/policy. Render same strict closed templates from actualreceipt fields, no caller rows. Store immutable actualclaim/compiledbytes in rootpublicationregistry; activepublisher resolves explicittypedactiveclaim/currentpredecessor and validates whole loader schema. Initialstage0 cannot stand in activeclaim. Healthnotprerequisiteforrunnableprofile; laterfunctionalhealthseparateactualreceipt.",
       "identity_adoption": "Verified stage0handoff preserves SAME rootvaultref/nonsecret origin/groups through retainedreceipt linkage, not secret copy/repeatedchoice. RootSetupSessionStore.resolve_adopted_identity_policy(normal_session)->fresh boundpolicyselection with newnormallease/currentactor, renews only exactauthorizedref metadata. Fixedidentityobserver re-observes actualsameAuthentiksubject/principal/currentpolicy/Systemgroups; expired30sstage0identitycannotauthorizeactivation. Changedsubject/revokedcredentialdenies/pending; no automaticprincipalchange."
-    }
+    },
+    "service_root_layout": "service_container_root is fixed /var/lib/hermes-installer/services. service_parent_root is selected profile-specific child /var/lib/hermes-installer/services/hermes-agent-native-v1 from closed template, never the container itself. Service home/work/data are direct children of that profile root. Strict loader validates containment and exact template selection, not equality to container; factory appends home/work/data exactly once. HERMES_HOME/HOME equal profile-root/home. Root held nofollow/inode/owner/generation checks and prepared/active semantics unchanged."
   },
   "official_pm_runtime": {
     "requirements": [
