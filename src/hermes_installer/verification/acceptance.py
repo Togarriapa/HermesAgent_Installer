@@ -80,6 +80,8 @@ class WorkflowResult:
     state: EvidenceState
     message: str
     record: EvidenceRecord | None = None
+    blocker_code: str | None = None
+    next_step: str | None = None
 
 
 class TargetWorkflowRunner:
@@ -104,7 +106,9 @@ class TargetWorkflowRunner:
         if not isinstance(output_dir, str) or not output_dir.strip():
             raise ValueError("an evidence output directory is required")
         return WorkflowResult(acceptance_id, EvidenceState.PENDING,
-            "No structured owner-run result was supplied; target effects were not started.")
+            "No structured owner-run result was supplied; target effects were not started.",
+            blocker_code="operator_result_missing",
+            next_step="Run the installer-owned request on the authorized target and return its bounded structured result.")
 
     def collect_result(
         self, request_value: Mapping[str, object], result_value: Mapping[str, object],
@@ -127,5 +131,6 @@ class TargetWorkflowRunner:
         return WorkflowResult(
             request.acceptance_id, record.state,
             "Structured target observation retained; an enrolled evidence verifier must authenticate the artifact before acceptance.",
-            record,
+            record, blocker_code="artifact_authentication_required",
+            next_step="Authenticate the retained artifact with the enrolled verifier; keep the acceptance pending until it verifies.",
         )

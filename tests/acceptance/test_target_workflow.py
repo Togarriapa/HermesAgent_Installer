@@ -88,6 +88,8 @@ class TargetWorkflowTests(unittest.TestCase):
         result = TargetWorkflowRunner(authorize=lambda _: True).run("AC01", target(), "a" * 40, "/tmp/evidence")
         self.assertEqual(result.state.value, "pending")
         self.assertIn("target effects were not started", result.message)
+        self.assertEqual("operator_result_missing", result.blocker_code)
+        self.assertTrue(result.next_step)
 
     def test_collector_requires_enrollment_and_binds_candidate_before_retaining(self):
         enrolled = target(platform="fixture-x86_64")
@@ -131,6 +133,8 @@ class TargetWorkflowTests(unittest.TestCase):
             collected = collector.collect_result(request, result_json(), enrolled, "a" * 40, OwnedRoot(Path(temp) / "accepted"))
             self.assertEqual("pass", collected.state.value)
             self.assertIn("must authenticate", collected.message)
+            self.assertEqual("artifact_authentication_required", collected.blocker_code)
+            self.assertIn("pending until it verifies", collected.next_step)
             self.assertEqual(1, len(list((Path(temp) / "accepted").rglob("*.json"))))
             catalog = load_acceptance_catalog(Path(__file__).parents[2] / "planning")
             report = acceptance_report(candidate_sha="a" * 40, traceability=catalog, records=[collected.record])
