@@ -1,0 +1,3 @@
+# Selected display and private loopback startup v60
+
+Original remote Desktop and HI07/HI09/HI10 requirements need actual selected display/Xauthority/Desktop/gateway startup and finite loopback transport. Existing Xauthority module is used, not ambient display or broad network permission. This additive contract fixes startup row/operations, mount/env, protected namespace members and exact port/role enforcement; all target gates remain pending. It also clarifies existing profile-specific service root vs shared container root. Official Xpra manual and systemd primary exec documentation reviewed for semantics; pinned parser/executables and actual Linux effects remain required.
