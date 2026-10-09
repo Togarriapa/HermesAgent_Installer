@@ -58,6 +58,20 @@ retained event projection is bounded, job-expiring, and scrubbed when the job
 terminates, expires, or is revoked. Caller-supplied event bytes and unsigned
 webhook receipts cannot supply recipe values.
 
+Root ingress now has a separate `ResourceJobAuthority.admit_root_resource_event()`
+entry point. Producers pass only the exact in-process `RootResourceEventHandle`
+returned by the selected root controller registry; the method rechecks the
+active resource generation and consent, signed parent context, full source
+receipt closure, event digest, root controller lease, deadline and cancellation
+before writing the replay-keyed job row. It retains the validated event fields
+and source closure under the resulting job ID. This does not expose admission
+over worker RPC and does not make target or account acceptance evidence.
+
+The v66 predecessor-result closure is still required before a root dispatcher
+can safely advance dependent DAG nodes. Until the shared resolver and fresh
+root task/controller path are attached, admission alone does not establish
+that a job ran; RB-T08/EV-RB07 remain open.
+
 For a selected profile task, the private admission row retains the actual
 verified `_JobEvent`, signed parent context, and complete source receipt
 objects beside the one-use node handle. `resolve_admitted_task_source()` is
