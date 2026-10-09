@@ -121,7 +121,10 @@ class PluginContext:
 
 class PluginRuntime:
     def __init__(self, resource_id, effects=None):
-        self.identity = type("Identity", (), {"kind": "plugins", "resource_id": resource_id, "version": "1.0.0"})()
+        versions = {"financial-data-hub": "1.0.1", "agent-live-wallet": "1.0.0",
+                    "agent-sandbox-wallet": "1.0.0", "financial-execution-gateway": "1.0.0"}
+        self.identity = type("Identity", (), {"kind": "plugins", "resource_id": resource_id,
+            "version": versions.get(resource_id, "1.0.0")})()
         self.plugin_effects = effects
 
 
@@ -491,6 +494,13 @@ class PluginFinanceTests(unittest.TestCase):
             "opaque_confirmation_attestation_id": "attestation_handle_123456"})
         self.assertEqual(result["state"], "ambiguous")
         self.assertNotIn("accepted", result)
+
+    def test_financial_data_hub_requires_exact_vendored_101_identity(self):
+        runtime = PluginRuntime("financial-data-hub", EffectSpy())
+        runtime.identity = type("Identity", (), {"kind": "plugins", "resource_id": "financial-data-hub",
+            "version": "1.0.0"})()
+        with self.assertRaises(FinanceUnavailable):
+            FinancialDataHubImplementation().register(PluginContext(), runtime)
 
 
 if __name__ == "__main__":
