@@ -50,6 +50,32 @@ class StateContractTests(unittest.TestCase):
             owned_child.ensure()
             self.assertTrue(owned_child.path(".hermes-installer-owned").exists())
 
+    def test_marker_and_lock_must_be_private_owned_regular_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            owned = OwnedRoot(base / "owned")
+            owned.ensure()
+            marker = base / "owned" / ".hermes-installer-owned"
+            marker.chmod(0o644)
+            with self.assertRaises(OwnershipError):
+                OwnedRoot(base / "owned").ensure()
+            marker.write_text("foreign marker")
+            marker.chmod(0o600)
+            with self.assertRaises(OwnershipError):
+                OwnedRoot(base / "owned").ensure()
+
+    def test_process_lock_rejects_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            owned = OwnedRoot(base / "owned")
+            owned.ensure()
+            external = base / "outside"
+            external.write_text("preserve")
+            (base / "owned" / "installer.lock").symlink_to(external)
+            with self.assertRaises(OwnershipError):
+                with process_lock(owned.path("installer.lock")):
+                    self.fail("symlink lock must never be followed")
+
     def test_process_lock_denies_duplicate_operation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             owned_root = OwnedRoot(Path(temporary) / "state")

@@ -129,7 +129,10 @@ def process_lock(path: Path) -> Iterator[None]:
     _reject_symlink_components(path.parent)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    fd = os.open(path, flags, 0o600)
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError:
+        raise OwnershipError("Process lock cannot be opened without following links") from None
     info = os.fstat(fd)
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
         os.close(fd)
