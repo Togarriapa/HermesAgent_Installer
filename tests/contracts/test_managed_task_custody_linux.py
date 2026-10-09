@@ -77,6 +77,14 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
 
         store = RootNativeLoaderObservationStore(
             fixture.handler, active_loader_selection, source_target_selector=lambda *_args: None)
+        previous_store = fixture.handler.native_loader_observation_store
+        if previous_store is not None:
+            # The cancellation/expiry case admits two sequential tasks through
+            # one fixture manager. The earlier task is terminal before this
+            # helper runs again, so retire its loader observer before replacing
+            # the selected package/generation closure for the next task.
+            previous_store.close()
+            fixture.handler.native_loader_observation_store = None
         fixture.handler.set_native_loader_observation_store(store)
 
         task_payload = json.dumps({"prompt": prompt}, sort_keys=True,
