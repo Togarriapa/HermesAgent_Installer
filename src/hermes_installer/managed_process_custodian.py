@@ -2882,7 +2882,9 @@ class ManagedBuildJobRunner:
                 "--property=BindReadOnlyPaths=" + str(inputs.toolchain_root) + ":" + mount_targets["toolchain"],
                 "--property=BindPaths=" + str(work) + ":" + mount_targets["work"],
                 "--property=BindPaths=" + str(inputs.output_root) + ":" + mount_targets["output"],
-                "--property=InaccessiblePaths=/etc/hermes-installer /var/lib/hermes-installer /etc/ssh /etc/ssl/private",
+                # Every mask is optional on a clean development host: systemd
+                # rejects the namespace if an unprefixed masked path is absent.
+                "--property=InaccessiblePaths=-/etc/hermes-installer -/var/lib/hermes-installer -/etc/ssh -/etc/ssl/private",
             ]
             if profile.memory_max_bytes is not None:
                 properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
@@ -3033,7 +3035,9 @@ class ManagedBuildJobRunner:
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
                             timeout=1.0, check=False)
-                        if journal.returncode == 0 and len(journal.stdout) <= 16384:
+                        # `systemctl status` returns nonzero for a failed unit
+                        # while still placing the diagnostic status on stdout.
+                        if len(journal.stdout) <= 16384 and journal.stdout:
                             diagnostic_bytes.append(journal.stdout)
                             diagnostic_sources.append(journal.stdout.decode("utf-8", "replace").casefold())
                     except (OSError, subprocess.TimeoutExpired):
