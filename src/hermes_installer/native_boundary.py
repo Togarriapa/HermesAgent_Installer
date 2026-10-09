@@ -283,7 +283,7 @@ def prepare_provider_request(kwargs: Mapping[str, Any], *, purpose: str) -> dict
 
 
 def record_tool_result(messages: list[Any], message: Mapping[str, Any]) -> None:
-    """Capture an exact native tool-result message as a private host-observed event."""
+    """Block the conversation until a root-observed tool-result issuer exists."""
     if not isinstance(messages, list) or not isinstance(message, Mapping):
         if isinstance(messages, list):
             _block_conversation(messages)

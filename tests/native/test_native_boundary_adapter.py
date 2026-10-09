@@ -31,9 +31,10 @@ EXPECTED = {
 
 
 class NativeBoundaryAdapterTests(unittest.TestCase):
-    def test_provider_attempt_captures_exact_canonical_messages_and_adds_opaque_header(self):
+    def test_provider_attempt_prepares_exact_full_body_and_adds_opaque_header(self):
         messages = [{"role": "user", "content": "local fixture"}]
-        kwargs = {"messages": messages, "model": "fixture"}
+        kwargs = {"messages": messages, "model": "fixture", "tools": [{"name": "lookup"}],
+                  "stream": False, "timeout": 10}
         captured = []
 
         def prepare(payload, *, parent_receipt_handles, purpose, intent_id, trace_id, retry_index):
@@ -44,7 +45,7 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
             result = boundary.prepare_provider_request(kwargs, purpose="native-primary")
 
         self.assertEqual(captured, [(
-            b'{"messages":[{"content":"local fixture","role":"user"}],"model":"fixture"}',
+            b'{"messages":[{"content":"local fixture","role":"user"}],"model":"fixture","stream":false,"tools":[{"name":"lookup"}]}',
             (), "native-primary", 0)])
         self.assertEqual(result["extra_headers"], {
             "X-Hermes-Installer-Context": "native_evt_000000000000000000000000000001",
@@ -53,37 +54,27 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
         self.assertGreater(result["timeout"], 0)
         self.assertNotIn("extra_headers", kwargs)
 
-    def test_retry_gets_fresh_event_handle_and_retains_source_ancestry(self):
-        messages = [{"role": "tool", "name": "fixture", "content": "private"}]
+    def test_retry_gets_fresh_event_handle_without_inventing_source_receipts(self):
+        messages = [{"role": "user", "content": "private fixture"}]
         captured = []
         issued = iter(("native_evt_000000000000000000000000000002",
                        "native_evt_000000000000000000000000000003"))
-
-        def capture(payload, *, parent_receipt_handles=()):
-            captured.append(("source", payload, tuple(parent_receipt_handles)))
-            return "native_evt_000000000000000000000000000001"
 
         def prepare(payload, *, parent_receipt_handles, purpose, intent_id, trace_id, retry_index):
             captured.append(("event", tuple(parent_receipt_handles), purpose, retry_index,
                              intent_id, trace_id))
             return next(issued), boundary.time.monotonic() + 30
 
-        with patch.object(boundary, "_capture_source", side_effect=capture), \
-                patch.object(boundary, "_prepare_native_event", side_effect=prepare):
-            boundary.record_tool_result(messages, {
-                "role": "tool", "name": "fixture", "content": "private"})
+        with patch.object(boundary, "_prepare_native_event", side_effect=prepare):
             first = boundary.prepare_provider_request({"messages": messages}, purpose="native-primary")
             retry = boundary.prepare_provider_request({"messages": messages}, purpose="native-primary")
 
         self.assertNotEqual(first["extra_headers"], retry["extra_headers"])
         self.assertEqual(first["extra_headers"][boundary.RETRY_INDEX_HEADER], "0")
         self.assertEqual(retry["extra_headers"][boundary.RETRY_INDEX_HEADER], "1")
-        self.assertEqual(captured[0][0], "source")
-        self.assertEqual(captured[1][:4], ("event", ("native_evt_000000000000000000000000000001",),
-                                           "native-primary", 0))
-        self.assertEqual(captured[2][:4], ("event", ("native_evt_000000000000000000000000000001",),
-                                           "native-primary", 1))
-        self.assertEqual(captured[1][4:], captured[2][4:])
+        self.assertEqual(captured[0][:4], ("event", (), "native-primary", 0))
+        self.assertEqual(captured[1][:4], ("event", (), "native-primary", 1))
+        self.assertEqual(captured[0][4:], captured[1][4:])
 
     def test_worker_cannot_supply_context_or_source_classification(self):
         messages = [{"role": "user", "content": "fixture"}]
