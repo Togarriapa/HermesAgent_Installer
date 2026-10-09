@@ -494,11 +494,24 @@ class Dispatcher:
         request_cancelled = cancelled if callable(cancelled) else (
             getattr(context, "cancelled", lambda: False) if not host_bound else (lambda: False))
         if host_bound:
-            required = ("principal_id", "profile_id", "namespace_id", "purpose", "intent_id",
-                        "trace_id", "lineage_hash", "policy_revision", "monotonic_expires_at",
-                        "capabilities", "nonce", "signature")
+            required = ("principal_id", "profile_id", "namespace_id", "uid", "purpose", "intent_id",
+                        "trace_id", "lineage_hash", "policy_revision", "issued_at_monotonic",
+                        "monotonic_expires_at", "sensitivity", "capabilities", "nonce", "signature")
             if any(not getattr(context, name, None) for name in required):
                 raise PolicyDenied("authorization.context_unavailable", "Signed host provider context is incomplete")
+            issued = getattr(context, "issued_at_monotonic")
+            expires = getattr(context, "monotonic_expires_at")
+            uid = getattr(context, "uid")
+            now = self._now()
+            sensitivity = _host_sensitivity(context)
+            if (isinstance(uid, bool) or not isinstance(uid, int) or uid < 0
+                    or isinstance(issued, bool) or not isinstance(issued, (int, float))
+                    or isinstance(expires, bool) or not isinstance(expires, (int, float))
+                    or not math.isfinite(issued) or not math.isfinite(expires)
+                    or issued > now or expires <= now or expires <= issued
+                    or expires - issued > 60 or sensitivity == Sensitivity.UNKNOWN
+                    or not isinstance(context.capabilities, frozenset)):
+                raise PolicyDenied("authorization.context_unavailable", "Signed host provider context has invalid identity, classification or monotonic lease")
         with self._lock:
             if context.trace_id in self._active:
                 raise PolicyDenied("dispatch.loop", "Repeated trace indicates a provider routing loop")
