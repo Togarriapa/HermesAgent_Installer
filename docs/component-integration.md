@@ -26,6 +26,10 @@ Memory has one automatic capture owner per profile and separate user/profile nam
 
 OpenViking uses the native Hermes catalog plugin and a separately prestarted server with sanitized environment; lazy installs are disabled. OpenViking, claude-mem and Agent Memory remain separate engines with their own extraction policy.
 
+### Panniantong Agent-Reach (R0079)
+
+`components.panniantong_agent_reach` binds the CLI and portable skill to `Panniantong/Agent-Reach@94f06c1969dfc1834001269d79d3ad0972d9dee6`. The adapter verifies the package name, source URL, license label, CLI entry point, and upstream skill entry before import. Installation uses the exact GitHub VCS URL and commit in a dedicated component Python environment; it never uses the unrelated same-name PyPI distribution or writes upstream skill files into global agent directories. Doctor output is advisory and runs with loopback-only network scope. Channel doctor status, functional reads, credential status, and account status remain distinct. The local fixture runs a bounded loopback GET and an inert doctor stand-in; real channel reads, account checks, native Hermes discovery, and ARM64/Pi support remain unverified.
+
 ### Offline reference catalog search
 
 `install_reference_catalog` is the private installer for the selected public-apis (R0066), awesome-harness-engineering (R0077), and awesome-design (R0086) catalogs. It accepts only a `VerifiedComponentSource` matching the exact selected owner/repository/revision, checks the original Git tree, and stages it with `GenerationStore` under the profile-owned data root. `InstalledReferenceCatalog.search()` re-verifies the generation's owner journal and content digest before each query, then scans only bounded UTF-8 documentation/data files and returns file/line excerpts with source URL and revision. Oversized/non-UTF-8 candidates mark the result incomplete; it never presents that result as exhaustive. It does not call listed APIs or provision them. An unresolved/NOASSERTION license permits private source import while leaving redistribution review required on the returned adapter.
