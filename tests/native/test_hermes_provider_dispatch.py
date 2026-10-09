@@ -81,16 +81,34 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
             sys.path.insert(0, str(source))
             try:
                 from pm.environments import committed_venv, venv_command
-                selected_venv = committed_venv(source)
-                self.assertIsNotNone(selected_venv, "pinned source has no committed PM environment")
-                command_prefix = venv_command(source, selected_venv)
-                self.assertTrue(command_prefix)
                 data_root = OwnedRoot(data_path)
                 plugin = materialize_hermes_provider_plugin(
                     data_root, profile_relative=profile_relative, port=None, model=MODEL)
                 profile_home = Path(plugin["home"])
                 materialize_hermes_profile_config(
                     data_root, home_relative=profile_relative, port=int(plugin["port"]), model=MODEL)
+                # Reconcile dependencies only through Hermes' pinned PM runtime
+                # path; runtime-only avoids publishing shell config or launchers.
+                prep_env = {
+                    "HOME": str(Path(scratch)),
+                    "HERMES_HOME": str(profile_home),
+                    "HERMES_AGENT_SOURCE_ROOT": str(source),
+                    "PATH": "/usr/bin:/bin",
+                    "UV_NO_CONFIG": "1",
+                    "PYTHONNOUSERSITE": "1",
+                }
+                preparation = subprocess.run(
+                    [str(source / "scripts" / "run-in-hermes-env"), "python3", "-c",
+                     "import ruamel.yaml, openai; print('PM_CORE_DEPENDENCIES_READY')"],
+                    cwd=str(source), env=prep_env, capture_output=True, text=True, timeout=600,
+                )
+                self.assertEqual(preparation.returncode, 0,
+                    "Pinned PM runtime dependency preparation failed: " + preparation.stderr[-3000:])
+                self.assertIn("PM_CORE_DEPENDENCIES_READY", preparation.stdout)
+                selected_venv = committed_venv(source)
+                self.assertIsNotNone(selected_venv, "pinned source has no committed PM environment")
+                command_prefix = venv_command(source, selected_venv)
+                self.assertTrue(command_prefix)
             finally:
                 if old_home is None:
                     os.environ.pop("HOME", None)
