@@ -752,6 +752,59 @@ class ResourceJobAdmission:
 
 
 @dataclass(frozen=True, slots=True)
+class RootResourceNodeResultClosure:
+    """One registry-issued snapshot of completed prerequisite result capsules.
+
+    This immutable DTO carries only opaque root handles and digests. Result
+    fields remain in ResourceJobAuthority's private capsule index and are
+    resolved again at the context-issuance boundary.
+    """
+
+    schema: int
+    closure_handle: str
+    event_handle: str
+    admission_handle: str
+    node_id: str
+    job_handle: str
+    resource_generation: str
+    service_generation_digest: str
+    prerequisite_node_ids: tuple[str, ...]
+    result_capsule_handles: tuple[str, ...]
+    result_capsule_sha256s: tuple[str, ...]
+    parent_closure_digest: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if type(self.schema) is not int or self.schema != 1:
+            raise ResourceJobDenied("root result closure schema is invalid")
+        for name in ("closure_handle", "event_handle", "admission_handle", "node_id", "job_handle",
+                     "resource_generation"):
+            _ident(getattr(self, name), f"root result closure {name}")
+        for name in ("service_generation_digest", "parent_closure_digest"):
+            if not isinstance(getattr(self, name), str) or not _DIGEST.fullmatch(getattr(self, name)):
+                raise ResourceJobDenied("root result closure digest is invalid")
+        if (not isinstance(self.prerequisite_node_ids, tuple)
+                or len(set(self.prerequisite_node_ids)) != len(self.prerequisite_node_ids)
+                or any(not isinstance(item, str) or not _ID.fullmatch(item)
+                       for item in self.prerequisite_node_ids)
+                or not isinstance(self.result_capsule_handles, tuple)
+                or not isinstance(self.result_capsule_sha256s, tuple)
+                or len(self.result_capsule_handles) != len(self.result_capsule_sha256s)
+                or len(self.result_capsule_handles) != len(self.prerequisite_node_ids)
+                or any(not isinstance(item, str) or not _ID.fullmatch(item)
+                       for item in self.result_capsule_handles)
+                or any(not isinstance(item, str) or not _DIGEST.fullmatch(item)
+                       for item in self.result_capsule_sha256s)):
+            raise ResourceJobDenied("root result closure capsule list is malformed")
+        if (any(isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) for value in
+                (self.issued_monotonic, self.expires_monotonic))
+                or self.issued_monotonic <= 0 or self.expires_monotonic <= self.issued_monotonic):
+            raise ResourceJobDenied("root result closure lease is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class RootResourceJobAdmissionHandle:
     """Root-only one-attempt handle used to launch a selected Hermes task.
 
@@ -1347,6 +1400,39 @@ class ResourceJobLedger:
             row = db.execute("SELECT generation,expires,status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
             return bool(row and row[0] == current_generation and row[1] > self.monotonic()
                         and row[2] == "running")
+        finally:
+            db.close()
+
+    def completed_node_result_receipts(
+        self, job_id: str, node_id: str, *, current_generation: str,
+    ) -> tuple[str, int, tuple[str, ...]]:
+        """Return only the latest terminal-complete node's durable receipt set."""
+        _ident(job_id, "job id")
+        node_id = _ident(node_id, "node id")
+        if not _DIGEST.fullmatch(current_generation):
+            raise ResourceJobDenied("resource generation is unavailable")
+        db = self._connect()
+        try:
+            row = db.execute(
+                "SELECT c.admission_id,c.attempt,c.status,c.result_receipts,j.generation,j.expires,j.status "
+                "FROM children AS c JOIN jobs AS j ON j.job_id=c.job_id "
+                "WHERE c.job_id=? AND c.node_id=? ORDER BY c.attempt DESC LIMIT 1",
+                (job_id, node_id),
+            ).fetchone()
+            now = self.monotonic()
+            if (row is None or row[2] != "complete" or row[4] != current_generation
+                    or row[5] <= now or row[6] != "running"):
+                raise ResourceJobDenied("node result is not a current completed job child")
+            receipts = json.loads(row[3])
+            if (not isinstance(receipts, list) or not receipts or len(receipts) > 64
+                    or any(not isinstance(item, str) or not item for item in receipts)
+                    or len(set(receipts)) != len(receipts)):
+                raise ResourceJobDenied("completed node result receipts are malformed")
+            return row[0], row[1], tuple(receipts)
+        except ResourceJobDenied:
+            raise
+        except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ResourceJobDenied("completed node result lookup failed closed") from exc
         finally:
             db.close()
 
