@@ -192,6 +192,18 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
         handle, task, exact, _, parent_fd = self._admit_and_start(
             suffix="positive", script=script, prompt=prompt)
         try:
+            process_lease = fixture.handler.resolve_managed_task_process_handle(handle)
+            self.assertIsNotNone(process_lease,
+                "active task handle did not resolve to its root-registered process")
+            self.assertEqual(process_lease.process_id, handle.process_id)
+            self.assertEqual(process_lease.generation, handle.generation)
+            self.assertEqual(process_lease.uid, fixture.uid)
+            self.assertEqual(process_lease.pid, fixture.handler._handles[handle.process_id].pid)
+            self.assertNotEqual(process_lease.pidfd,
+                fixture.handler._handles[handle.process_id].child_pidfd)
+            process_lease.close()
+            self.assertIsNone(fixture.handler.resolve_managed_task_process_handle(
+                type(handle)(handle.handle_id, "stale-generation", handle.process_id)))
             terminal = fixture.handler.wait_owned_task_terminal(
                 handle, deadline_monotonic=task.deadline_monotonic, cancelled=lambda: False)
         finally:
