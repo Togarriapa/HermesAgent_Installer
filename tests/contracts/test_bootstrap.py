@@ -328,15 +328,14 @@ class BootstrapTests(unittest.TestCase):
             state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=FakeRunner())
             with self.assertRaisesRegex(BootstrapError,"object identity"): boot.prepare()
-            self.assertFalse(boot.script_path.exists())
+            self.assertFalse(data.path("cache/hermes-install-"+HERMES_COMMIT[:12]+".sh").exists())
 
     def test_default_bootstrap_runner_fails_closed_without_host_custody(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data"); data.ensure()
             state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
-            boot.script_path.parent.mkdir(parents=True,exist_ok=True)
-            boot.script_path.write_bytes(SCRIPT)
+            boot.script_store_id=f"artifact:{INSTALL_SCRIPT_ARTIFACT_ID}:{INSTALL_SCRIPT_SHA256}"
             with self.assertRaisesRegex(BootstrapError,"(?i)host-authorized Hermes process start"):
                 boot._run_process(["--manifest"],timeout=5,capture=True)
 
@@ -349,6 +348,6 @@ class BootstrapTests(unittest.TestCase):
             with self.assertRaisesRegex(BootstrapError,"download broker"):
                 boot.install(include_desktop=False)
             self.assertEqual(journal.operation(boot.operation)["status"],"failed:download-broker")
-            self.assertFalse(boot.script_path.exists())
+            self.assertFalse(data.path("cache/hermes-install-"+HERMES_COMMIT[:12]+".sh").exists())
 
 if __name__ == "__main__": unittest.main()

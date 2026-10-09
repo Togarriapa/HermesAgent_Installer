@@ -244,6 +244,53 @@ def test_trusted_factory_fails_closed_when_root_selected_package_binding_is_abse
     assert authority.calls == []
 
 
+def test_trusted_factory_accepts_only_loader_package_matching_selected_manifest(monkeypatch):
+    import sys
+    from types import ModuleType
+
+    class SelectedNativePackage:
+        def __init__(self, digest):
+            self.digest = digest
+
+        def resolve(self, adapter_id, action_id):
+            return Selected() if (adapter_id, action_id) == ("web", "retrieve-public-web-content") else None
+
+        def manifest_digest_for_adapter(self, adapter_id):
+            return self.digest if adapter_id == "web" else None
+
+    module = ModuleType("hermes_installer.native_plugin_loader")
+    module.SelectedNativePackage = SelectedNativePackage
+    module.bind_current_native_plugin_package = lambda _authority: SelectedNativePackage("a" * 64)
+    monkeypatch.setitem(sys.modules, "hermes_installer.native_plugin_loader", module)
+
+    class BoundAuthority(Authority):
+        def bind_selected_native_package(self):
+            return object()
+
+    authority = BoundAuthority()
+    identity = SimpleNamespace(kind="plugins", resource_id="web", content_digest="a" * 64)
+    schema_registry = StaticPluginActionSchemas({("web", "retrieve-public-web-content"): PluginActionSchema(
+        adapter_id="web", action_id="retrieve-public-web-content",
+        argument_schema_id="web-retrieve-v1", result_schema_id="web-result-v1",
+        operation="plugin.web.read", adapter_sha256="b" * 64,
+        argument_schema={"type": "object"}, result_schema={"type": "object"},
+    )})
+    facade = build_plugin_effects_facade(
+        authority=authority, invocation_contexts=lambda **_: (object(),),
+        identity=identity, action_schemas=schema_registry,
+    )
+    assert isinstance(facade, PluginEffectDispatcher)
+    assert authority.calls == []
+
+    with pytest.raises(PluginEffectUnavailable, match="package binding"):
+        build_plugin_effects_facade(
+            authority=authority, invocation_contexts=lambda **_: (object(),),
+            identity=SimpleNamespace(kind="plugins", resource_id="web", content_digest="c" * 64),
+            action_schemas=schema_registry,
+        )
+    assert authority.calls == []
+
+
 def test_component_catalog_is_complete_pinned_and_keeps_actions_finite():
     from hermes_installer.components.plugin_effects import (
         _EXPECTED_ACTION_KEYS,

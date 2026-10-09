@@ -153,12 +153,14 @@ class HermesSourceImportTests(unittest.TestCase):
             result = provisioner.provision(proof)
         self.assertEqual(result.receipt_handle, "opaque-setup-receipt-handle")
         self.assertEqual(len(fetcher.calls), 1)
-        self.assertEqual({key: value for key, value in fetcher.calls[0].items() if key != "timeout"}, {
+        self.assertEqual({key: value for key, value in fetcher.calls[0].items()
+                          if key not in {"timeout", "cancelled"}}, {
             "artifact_id": HERMES_SOURCE_ARTIFACT_ID, "sha256": HERMES_SOURCE_SHA256,
             "max_bytes": 100_663_296,
         })
         self.assertGreater(fetcher.calls[0]["timeout"], 119.0)
         self.assertLessEqual(fetcher.calls[0]["timeout"], 120.0)
+        self.assertTrue(callable(fetcher.calls[0]["cancelled"]))
         register.assert_called_once_with(
             catalog, f"artifact:{HERMES_SOURCE_ARTIFACT_ID}:{HERMES_SOURCE_SHA256}",
             "root-effect-receipt", artifact_root, registry, proof,
@@ -180,6 +182,22 @@ class HermesSourceImportTests(unittest.TestCase):
         with self.assertRaises(AuthorityDenied) as caught:
             provisioner.provision(object())
         self.assertEqual(caught.exception.code, "source.receipt")
+
+    def test_cancelled_root_provisioner_never_starts_artifact_fetch(self):
+        class Fetcher:
+            def fetch_artifact(self, **_kwargs):
+                raise AssertionError("cancelled provision must not make a broker request")
+
+        class Registry:
+            def mint(self, **_kwargs):
+                raise AssertionError("cancelled provision must not mint a receipt")
+
+        provisioner = PinnedHermesSourceProvisioner(
+            fetcher=Fetcher(), catalog=object(), artifact_root=Path("/root-private/cas"),
+            receipt_registry=Registry(), expected_uid=os.getuid())
+        with self.assertRaises(AuthorityDenied) as caught:
+            provisioner.provision(object(), cancelled=lambda: True)
+        self.assertEqual(caught.exception.code, "source.cancelled")
 
 
 if __name__ == "__main__":

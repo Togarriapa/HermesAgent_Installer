@@ -71,7 +71,9 @@ class HermesMCPConfigTests(unittest.TestCase):
 
     def test_profile_config_write_is_private_and_preserves_foreign_entries(self):
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            # macOS exposes temporary directories through /var -> /private/var.
+            # Pass the canonical, symlink-free selected Hermes home to the writer.
+            home = Path(temporary).resolve(strict=True)
             selected = home / "profiles" / "selected"
             selected.mkdir(mode=0o700, parents=True)
             os.chmod(home, 0o700)

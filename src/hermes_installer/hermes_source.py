@@ -102,7 +102,8 @@ class PinnedHermesSourceProvisioner:
                 artifact_id=HERMES_SOURCE_ARTIFACT_ID,
                 sha256=HERMES_SOURCE_SHA256,
                 max_bytes=100_663_296,
-                timeout=min(120.0, max(0.1, deadline - time.monotonic())))
+                timeout=min(120.0, max(0.1, deadline - time.monotonic())),
+                cancelled=live_cancelled)
         except Exception:
             raise AuthorityDenied("source.fetch", "pinned Hermes source artifact fetch was denied or unavailable") from None
         _check_source_live(live_cancelled, deadline)
