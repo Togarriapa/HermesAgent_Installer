@@ -36,50 +36,98 @@ class DispatchBroker:
         self.authorize, self.now, self.timeout = authorize, now, timeout
 
     async def call(self, context: DispatchContext, call: SpecialistCall, operation: Operation):
-        classification = getattr(context, "effective_sensitivity", context.sensitivity)
+        # Missing trusted fields fail closed; caller-declared sensitivity is never
+        # a substitute for the gateway's effective (including derived) label.
+        classification = getattr(context, "effective_sensitivity", "UNKNOWN")
         sensitivity = getattr(classification, "name", str(classification)).upper()
         namespace = getattr(context, "namespace", None)
         capabilities = frozenset(getattr(context, "capabilities", ()))
         trace_id = getattr(context, "trace_id", None)
         provenance = getattr(context, "provenance", ())
-        if (not context.profile_id or not namespace or not trace_id or not provenance
-            or sensitivity == "UNKNOWN" or context.purpose != "native-hermes-chat"):
+        cancelled = getattr(context, "cancelled", lambda: False)
+        if (
+            not context.profile_id
+            or not namespace
+            or not trace_id
+            or not provenance
+            or sensitivity not in {"PUBLIC", "PRIVATE", "CONFIDENTIAL"}
+            or context.purpose != "native-hermes-chat"
+        ):
             raise BrokerDenied("trusted dispatch context is incomplete or unknown")
-        if getattr(context, "cancelled", lambda: False)(): raise BrokerDenied("request cancelled before authorization")
+        if cancelled():
+            raise BrokerDenied("request cancelled before authorization")
         if not call.specialist or not call.request_id or not call.child_id or not call.operation:
             raise BrokerDenied("specialist call identity is incomplete")
-        if not call.capabilities or "delegate" not in call.capabilities or not call.capabilities.issubset(capabilities):
+        if not call.capabilities or "delegate" not in call.capabilities:
+            raise BrokerDenied("specialist call has no delegation capability")
+        if not call.capabilities.issubset(capabilities):
             raise BrokerDenied("context does not grant all requested specialist capabilities")
         if sensitivity == "PRIVATE" and "private-context" not in call.capabilities:
             raise BrokerDenied("private context requires an explicit private-context grant")
         if sensitivity == "CONFIDENTIAL" and "confidential-context" not in call.capabilities:
             raise BrokerDenied("confidential context requires an explicit confidential-context grant")
+
         deadline = getattr(context, "deadline", None)
         if deadline is not None and deadline <= self.now():
-            raise BrokerDenied("dispatch deadline expired before execution")
-        lease = await asyncio.wait_for(self.authorize(context, call), timeout=self.timeout)
-        if (lease.profile_id != context.profile_id or lease.namespace != namespace or lease.trace_id != trace_id
-            or not lease.policy_revision or not lease.grant_id or lease.expires_at <= self.now()
-            or not call.capabilities.issubset(lease.capabilities)):
+            raise BrokerDenied("dispatch deadline expired before authorization")
+        authorization_timeout = self.timeout
+        if deadline is not None:
+            authorization_timeout = min(authorization_timeout, deadline - self.now())
+        try:
+            lease = await asyncio.wait_for(
+                self.authorize(context, call), timeout=authorization_timeout
+            )
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError("host authorization exceeded dispatch deadline") from exc
+        if (
+            lease.profile_id != context.profile_id
+            or lease.namespace != namespace
+            or lease.trace_id != trace_id
+            or not lease.policy_revision
+            or not lease.grant_id
+            or lease.expires_at <= self.now()
+            or not call.capabilities.issubset(lease.capabilities)
+        ):
             raise BrokerDenied("host authorization lease is stale, mismatched, or insufficient")
+        if cancelled():
+            raise BrokerDenied("request cancelled before specialist execution")
+
+        wall_budget = min(self.timeout, lease.expires_at - self.now())
+        if deadline is not None:
+            wall_budget = min(wall_budget, deadline - self.now())
+        if wall_budget <= 0:
+            raise BrokerDenied("authorization expired before specialist execution")
+        loop = asyncio.get_running_loop()
+        monotonic_deadline = loop.time() + wall_budget
         task = asyncio.create_task(operation())
-        deadline = min(self.timeout, lease.expires_at - self.now(),
-                       deadline - self.now() if deadline is not None else self.timeout)
         try:
             while not task.done():
-                if getattr(context, "cancelled", lambda: False)():
-                    task.cancel(); await asyncio.gather(task, return_exceptions=True)
+                if cancelled():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
                     raise asyncio.CancelledError
-                if self.now() >= lease.expires_at:
-                    task.cancel(); await asyncio.gather(task, return_exceptions=True)
-                    raise BrokerDenied("host authorization expired during dispatch")
-                done, _ = await asyncio.wait({task}, timeout=min(0.05, deadline))
-                if not done and deadline <= 0:
-                    task.cancel(); await asyncio.gather(task, return_exceptions=True)
+                remaining = monotonic_deadline - loop.time()
+                if remaining <= 0 or self.now() >= lease.expires_at:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    if self.now() >= lease.expires_at:
+                        raise BrokerDenied("host authorization expired during dispatch")
                     raise TimeoutError("specialist dispatch exceeded authorization deadline")
-                deadline -= 0.05
+                done, _ = await asyncio.wait({task}, timeout=min(0.05, remaining))
+                if not done and deadline is not None and self.now() >= deadline:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    raise TimeoutError("specialist dispatch exceeded request deadline")
+            # Recheck trust at the completion boundary before exposing the result.
+            if cancelled():
+                raise asyncio.CancelledError
+            if self.now() >= lease.expires_at:
+                raise BrokerDenied("host authorization expired before result delivery")
+            if deadline is not None and self.now() >= deadline:
+                raise TimeoutError("specialist dispatch exceeded request deadline")
             return task.result()
         except asyncio.CancelledError:
-            if not task.done(): task.cancel()
+            if not task.done():
+                task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             raise

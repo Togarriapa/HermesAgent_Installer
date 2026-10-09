@@ -2,9 +2,10 @@
 import asyncio, types, unittest
 from hermes_installer.topology import BrokerDenied, CapabilityLease, DispatchBroker, Orchestrator, RecruitmentDenied, SpecialistCall, WorkResult
 
-def ctx(*, cancelled=lambda:False, sensitivity="PUBLIC", capabilities=frozenset({"delegate"}), provenance=("trusted-server",)):
+def ctx(*, cancelled=lambda:False, sensitivity="PUBLIC", effective=None, capabilities=frozenset({"delegate"}), provenance=("trusted-server",)):
     return types.SimpleNamespace(profile_id="profile", purpose="native-hermes-chat", sensitivity=sensitivity,
-        namespace="private", trace_id="trace-1", provenance=provenance, capabilities=capabilities, cancelled=cancelled)
+        effective_sensitivity=sensitivity if effective is None else effective, namespace="private", trace_id="trace-1",
+        provenance=provenance, capabilities=capabilities, cancelled=cancelled)
 
 class TopologyTests(unittest.IsolatedAsyncioTestCase):
     def broker(self, authorize):
@@ -57,6 +58,15 @@ class TopologyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await service.cancel("80eb7097-b78a-4538-bd1c-25442826758a"))
         with self.assertRaises(asyncio.CancelledError): await task
         self.assertTrue(cancelled.is_set())
+    async def test_derived_private_classification_overrides_public_declaration(self):
+        effects=[]
+        async def authorize(context,call): return self.lease()
+        async def effect(): effects.append(1)
+        call=SpecialistCall("worker","r","c","delegate",frozenset({"delegate"}))
+        with self.assertRaises(BrokerDenied):
+            await self.broker(authorize).call(ctx(sensitivity="PUBLIC",effective="PRIVATE"),call,effect)
+        self.assertEqual(effects,[])
+
     async def test_unknown_or_untrusted_context_is_denied_before_side_effect(self):
         effects=[]
         async def authorize(context,call): return self.lease()
