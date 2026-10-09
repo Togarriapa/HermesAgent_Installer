@@ -20,9 +20,20 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .types import (
-    AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, SourceReceipt,
+    AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
     VerifiedEffectAuthorization, canonical_bytes, canonical_digest,
 )
+
+_OPERATIONS = frozenset({
+    "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor",
+    "memory.capture", "memory.search", "memory.export", "memory.delete", "memory.extract",
+    "memory.embed", "memory.backup", "memory.restore", "memory.enqueue", "memory.result",
+    "host.write", "alert.deliver", "process.start", "process.status", "process.read",
+    "process.write", "process.stop", "artifact.fetch", "package.install",
+    "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.orchestrator.recruit",
+    "source.capture",
+})
 
 MAX_REQUEST = 6 * 1024 * 1024 + 16_384
 MAX_RESPONSE = 4 * 1024 * 1024 + 32_768
@@ -132,9 +143,9 @@ class AuthorityClient:
         """Connect only to the installed fixed endpoint; never consult env vars."""
         return cls(default_socket_path(), server_uid=0, server_gid=os.getgid(), timeout=timeout)
 
-    def context(self, *, purpose: str, intent: str,
+    def context(self, *, purpose: str, intent: str, operation: str,
                 source_contexts: Sequence[HostContext] = (),
-                source_receipts: Sequence[SourceReceipt] = (),
+                source_receipt_handles: Sequence[str] = (),
                 final_payload_digest: str | None = None,
                 trace_id: str | None = None,
                 lease_seconds: float = 30.0,
@@ -144,32 +155,60 @@ class AuthorityClient:
             raise AuthorityDenied("context.invalid", "purpose is invalid")
         if not isinstance(intent, str) or not 1 <= len(intent) <= 512:
             raise AuthorityDenied("context.invalid", "intent is invalid")
+        if operation not in _OPERATIONS:
+            raise AuthorityDenied("context.invalid", "operation is not a fixed host effect")
         if trace_id is not None and (not isinstance(trace_id, str) or not 1 <= len(trace_id) <= 128):
             raise AuthorityDenied("context.invalid", "trace ID is invalid")
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, (int, float)) or not 0 < lease_seconds <= MAX_TIMEOUT:
             raise AuthorityDenied("context.invalid", "context lease exceeds its fixed upper bound")
         if (len(source_contexts) > 64 or any(not isinstance(x, HostContext) for x in source_contexts)
-                or len(source_receipts) > 64 or any(not isinstance(x, SourceReceipt) for x in source_receipts)):
+                or len(source_receipt_handles) > 64
+                or any(not isinstance(x, str) or not x for x in source_receipt_handles)):
             raise AuthorityDenied("context.invalid", "source lineage is invalid")
-        if source_contexts and source_receipts:
+        if source_contexts and source_receipt_handles:
             raise AuthorityDenied("context.invalid", "use one complete source lineage representation")
         if final_payload_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", final_payload_digest):
             raise AuthorityDenied("context.invalid", "final payload digest is invalid")
-        if source_receipts and final_payload_digest is None:
+        if source_receipt_handles and final_payload_digest is None:
             raise AuthorityDenied("context.invalid", "source receipts require a final payload digest")
         request = {
             "purpose": purpose, "intent": intent, "trace_id": trace_id,
             "lease_seconds": float(lease_seconds),
             "source_contexts": [ctx.to_wire() for ctx in source_contexts],
         }
-        if source_receipts:
-            request["source_receipts"] = [receipt.to_wire() for receipt in source_receipts]
+        if source_receipt_handles:
+            request["source_receipt_handles"] = list(source_receipt_handles)
         if final_payload_digest is not None:
             request["final_payload_digest"] = final_payload_digest
+        request["operation"] = operation
         result = self._rpc("issue_context", {
             **request,
         }, timeout=min(self.timeout, float(lease_seconds)), cancelled=cancelled)
         return HostContext.from_wire(result)
+
+    def capture_source(self, payload: bytes, *, parent_receipt_handles: Sequence[str] = (),
+                       timeout: float = 5.0,
+                       cancelled: Callable[[], bool] | None = None) -> str:
+        """Let the root broker hash exact submitted bytes and return an opaque private receipt handle."""
+        if not isinstance(payload, bytes) or not 1 <= len(payload) <= 1_048_576:
+            raise AuthorityDenied("source.invalid", "source capture exceeds its fixed byte bound")
+        if (len(parent_receipt_handles) > 64
+                or any(not isinstance(item, str) or not item for item in parent_receipt_handles)):
+            raise AuthorityDenied("source.invalid", "parent receipt handles are invalid")
+        if cancelled is not None and cancelled():
+            raise AuthorityDenied("source.cancelled", "source capture was cancelled")
+        import base64
+        result = self._rpc("capture_source", {
+            "schema": 1,
+            "payload": base64.b64encode(payload).decode("ascii"),
+            "parent_receipt_handles": list(parent_receipt_handles),
+        }, timeout=min(self.timeout, timeout), cancelled=cancelled)
+        if not isinstance(result, dict) or set(result) != {"receipt_handle"}:
+            raise AuthorityDenied("source.invalid", "source broker returned an invalid receipt handle")
+        handle = result["receipt_handle"]
+        if not isinstance(handle, str) or not 32 <= len(handle) <= 128:
+            raise AuthorityDenied("source.invalid", "source broker returned an invalid receipt handle")
+        return handle
 
     def authorize_effect(self, context: HostContext, *, capability: str,
                          target: str, recipient: str | None = None,

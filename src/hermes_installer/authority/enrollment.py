@@ -624,7 +624,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
     bindings_by_profile = {binding.profile_id: binding for binding in bindings.values()}
     for raw in catalogs["memory_providers"].values():
         target = _exact(raw, {"id", "provider", "profile_id", "namespace_id", "service_id",
-                              "source_revision", "service_generation", "data_root_id", "dedicated_store"},
+                              "source_revision", "service_generation", "data_root_id", "dedicated_store",
+                              "approved_route_ids"},
                         "memory provider")
         profile_id = _read_id(target["profile_id"], "memory profile ID")
         namespace_id = _read_id(target["namespace_id"], "memory namespace ID")
@@ -635,6 +636,21 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         if type(service_generation) is not int or service_generation < 1:
             raise AuthorityDenied("enrollment.memory", "memory service generation is invalid")
         data_root_id = _read_id(target["data_root_id"], "memory data-root identity")
+        route_ids = target["approved_route_ids"]
+        route_catalog = {
+            "openviking": {"memory.openviking.ready.v1", "memory.openviking.search.find.v1",
+                           "memory.openviking.session.capture.v1"},
+            "claude-mem": {"memory.claude-mem.healthz.v1", "memory.claude-mem.search.v1",
+                           "memory.claude-mem.create.v1", "memory.claude-mem.delete.v1"},
+            "agentmemory": {"memory.agentmemory.livez.v1", "memory.agentmemory.smart-search.v1",
+                            "memory.agentmemory.remember.v1", "memory.agentmemory.forget.v1",
+                            "memory.agentmemory.export.v1", "memory.agentmemory.import.v1"},
+        }
+        if (not isinstance(route_ids, list) or not route_ids or len(route_ids) > 16
+                or any(not isinstance(route, str) for route in route_ids)
+                or len(route_ids) != len(set(route_ids))
+                or not set(route_ids).issubset(route_catalog.get(provider, set()))):
+            raise AuthorityDenied("enrollment.memory", "approved memory route IDs are invalid")
         profile = profiles_by_id.get(profile_id)
         binding = bindings_by_profile.get(profile_id)
         if (provider not in {"openviking", "claude-mem", "agentmemory"}

@@ -8,6 +8,7 @@ protected config or key.
 from __future__ import annotations
 
 import os
+import inspect
 import signal
 import stat
 import threading
@@ -74,6 +75,14 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
     vault = RootCredentialVault()
     enrollment = load_protected_enrollment(vault=vault)
     handlers: dict[tuple[str, str], EffectHandler] = {}
+    service_ref: dict[str, AuthorityService] = {}
+    def authorization_check(context: Any, authorization: Any, *, operation: str,
+                            request_digest: str, retry_index: int = 0) -> bool:
+        active = service_ref.get("service")
+        if active is None:
+            raise AuthorityDenied("authority.starting", "authority service is not ready")
+        return active.revalidate_effect(context, authorization, operation=operation,
+                                        request_digest=request_digest, retry_index=retry_index)
     artifact_catalog = load_artifact_catalog(enrollment) if ARTIFACT_CATALOG_PATH.exists() else None
     effective_process_options = dict(process_handler_options or {})
     if artifact_catalog is not None:
@@ -90,8 +99,13 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
 
     if ARTIFACT_CATALOG_PATH.exists():
         from hermes_installer.artifacts import build_artifact_handlers
-        handlers.update(build_artifact_handlers(artifact_catalog, enrollment.artifact_staging_directory,
-                                               expected_uid=0))
+        # Older broker revisions lack an effect-time authorization callback.
+        # Do not silently register those handlers: cancellation during a body
+        # read is too late to prevent an outbound connection after revocation.
+        if "authorization_check" in inspect.signature(build_artifact_handlers).parameters:
+            handlers.update(build_artifact_handlers(
+                artifact_catalog, enrollment.artifact_staging_directory,
+                expected_uid=0, authorization_check=authorization_check))
 
     # These integrations are composed only when their actual protected
     # eligibility/transport implementations have been supplied by the root
@@ -134,11 +148,14 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
                              for profile_id, profile in enrollment.process_profiles.items()},
         background_consent_active=background_consent_active,
     )
+    service_ref["service"] = service
     if enrollment.memory_providers:
         from hermes_installer.memory.broker import MemoryTarget, build_memory_handlers, build_memory_runtime
         targets = {}
         for raw in enrollment.memory_providers.values():
-            target = MemoryTarget(**{key: value for key, value in raw.items() if key != "id"})
+            fields = {key: value for key, value in raw.items() if key != "id"}
+            fields["approved_route_ids"] = frozenset(fields["approved_route_ids"])
+            target = MemoryTarget(**fields)
             targets[(target.profile_id, target.namespace_id, target.provider)] = target
         runtime = build_memory_runtime(
             targets, service, root_data_dir=Path("/var/lib/hermes-installer/memory"), vault=vault)
