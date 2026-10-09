@@ -138,9 +138,62 @@ def _run_setup(args: argparse.Namespace) -> CommandResult:
                 journal.event("installer:setup-command", "wizard", "failed", {
                     "error_type": type(exc).__name__})
                 raise
-            state = {"ready": OutcomeState.READY, "pending": OutcomeState.PENDING,
-                     "failed": OutcomeState.FAILED}[result.state]
+            state_name = result.state
+            message = result.message
+            account_states = dict(result.account_states)
+            next_steps = list(result.next_steps)
             config_output = dict(result.config)
+            remote_config = config_output.get("remote_desktop", {})
+            if (result.selected_components.get("remote_desktop") is True
+                    and isinstance(remote_config, dict)
+                    and isinstance(remote_config.get("hostname"), str) and remote_config["hostname"]
+                    and isinstance(remote_config.get("management_token_ref"), str)
+                    and remote_config["management_token_ref"]):
+                try:
+                    from .remote.enrollment import run_remote_desktop_enrollment
+                    enrollment = run_remote_desktop_enrollment(
+                        config_output, journal, activate_route=False,
+                        resume_command=result.resume_command or resume)
+                    account_states["remote_desktop_access"] = enrollment.access_state
+                    account_states["remote_desktop_policy_read"] = enrollment.policy_read_state
+                    account_states["remote_desktop_route"] = enrollment.route_state
+                    if enrollment.state == "failed":
+                        state_name = "failed"
+                    elif enrollment.state != "ready" and state_name == "ready":
+                        state_name = "pending"
+                    next_steps.extend(enrollment.next_steps)
+                    message = enrollment.message
+                    journal.checkpoint("installer:setup-command", state_name, {
+                        "selected_components": dict(result.selected_components),
+                        "account_states": account_states, "resume": result.resume_command or resume,
+                        "remote_phase": enrollment.phase,
+                        "remote_resource_ids": dict(enrollment.resource_ids),
+                    })
+                    journal.event("installer:setup-command", "remote-enrollment", enrollment.state, {
+                        "phase": enrollment.phase, "access_state": enrollment.access_state,
+                        "policy_read_state": enrollment.policy_read_state,
+                        "route_state": enrollment.route_state,
+                        "resource_ids": dict(enrollment.resource_ids),
+                    })
+                except Exception as exc:
+                    # Preserve the setup checkpoint for retry. Never expose
+                    # token values or raw provider bodies in the CLI result.
+                    state_name = "pending" if state_name != "failed" else state_name
+                    account_states["remote_desktop_access"] = "pending"
+                    next_steps.append(
+                        "Owned Access enrollment could not be completed; preserve the saved secure references and rerun setup."
+                    )
+                    message = "Remote Desktop setup remains pending; owned resource checkpoints and secure references were preserved."
+                    journal.checkpoint("installer:setup-command", state_name, {
+                        "selected_components": dict(result.selected_components),
+                        "account_states": account_states, "resume": result.resume_command or resume,
+                        "remote_error_type": type(exc).__name__,
+                    })
+                    journal.event("installer:setup-command", "remote-enrollment", "pending", {
+                        "error_type": type(exc).__name__,
+                    })
+            state = {"ready": OutcomeState.READY, "pending": OutcomeState.PENDING,
+                     "failed": OutcomeState.FAILED}[state_name]
             saved_path = None
             if args.save_config and result.state != "failed":
                 try:
@@ -151,14 +204,14 @@ def _run_setup(args: argparse.Namespace) -> CommandResult:
                     journal.event("installer:setup-command", "config-write", "failed", {
                         "error_type": type(exc).__name__})
                     raise
-            journal.checkpoint("installer:setup-command", result.state, {
+            journal.checkpoint("installer:setup-command", state_name, {
                 "selected_components": dict(result.selected_components),
-                "account_states": dict(result.account_states), "resume": result.resume_command,
+                "account_states": account_states, "resume": result.resume_command,
                 "saved_config": str(saved_path) if saved_path else None})
             details = {"selected_components": dict(result.selected_components),
-                "account_states": dict(result.account_states), "next_steps": list(result.next_steps),
+                "account_states": account_states, "next_steps": next_steps,
                 "config": config_output, "saved_config": str(saved_path) if saved_path else None}
-            return CommandResult("setup", state, result.message,
+            return CommandResult("setup", state, message,
                 (Finding("setup.wizard", result.message, state, details),),
                 result.resume_command or resume, result.exit_code)
     except (OSError, OwnershipError, RuntimeError, ValueError, ConfigError) as exc:

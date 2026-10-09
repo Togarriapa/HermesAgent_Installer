@@ -2,6 +2,8 @@ from __future__ import annotations
 import json, tempfile, unittest
 from pathlib import Path
 import stat
+import sys
+import types
 from types import SimpleNamespace
 from unittest.mock import patch
 from hermes_installer.cli import run
@@ -143,6 +145,39 @@ class CliLifecycleTests(unittest.TestCase):
                 save_config=output,json=True))
             self.assertEqual(again.state,OutcomeState.FAILED)
             self.assertEqual(json.loads(output.read_text())["schema_version"],1)
+
+    def test_remote_setup_enrolls_owned_access_only_when_explicitly_selected(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); config=root/"input.json"
+            config.write_text(json.dumps({"schema_version":1,"paths":{"state_root":str(root/"state")}}))
+            wizard = SimpleNamespace(state="pending", selected_components={"remote_desktop":True},
+                config={"schema_version":1,"paths":{"state_root":str(root/"state")},
+                    "remote_desktop":{"hostname":"desktop.example.test",
+                        "management_token_ref":"file:///private/token-ref",
+                        "policy_read_token_ref":"file:///private/read-ref"}},
+                message="Remote setup pending", resume_command="hermes-installer setup",
+                next_steps=(), account_states={"remote_desktop":"pending"}, exit_code=4)
+            calls=[]
+            enrollment_module=types.ModuleType("hermes_installer.remote.enrollment")
+            def enroll(received_config, journal, **kwargs):
+                calls.append((received_config, journal, kwargs))
+                return SimpleNamespace(state="pending", access_state="ready",
+                    policy_read_state="ready", route_state="pending", phase="access-verified",
+                    message="Access is verified; route activation awaits an enrolled origin.",
+                    next_steps=("Enroll the protected origin, then resume install.",),
+                    resource_ids={"access_app":"owned-app-id"}, component_installable=True)
+            enrollment_module.run_remote_desktop_enrollment=enroll
+            with patch.dict(sys.modules, {"hermes_installer.remote.enrollment":enrollment_module}), \
+                 patch("hermes_installer.setup_wizard.run_setup_wizard", return_value=wizard):
+                result=run(SimpleNamespace(command="setup",config=config,non_interactive=True,
+                    save_config=None,json=True))
+            self.assertEqual(len(calls),1)
+            self.assertIsInstance(calls[0][1],Journal)
+            self.assertFalse(calls[0][2]["activate_route"])
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertEqual(result.message,"Access is verified; route activation awaits an enrolled origin.")
+            self.assertEqual(result.findings[0].details["account_states"]["remote_desktop_access"],"ready")
+            self.assertEqual(Journal(root/"state"/"journal.sqlite3").operation("installer:setup-command")["status"],"pending")
 
     def test_interactive_setup_without_tty_has_no_filesystem_effect(self):
         with tempfile.TemporaryDirectory() as td:
