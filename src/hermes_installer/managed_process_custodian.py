@@ -713,6 +713,7 @@ class ManagedProcessEffectHandler:
         self._task_handles: dict[str, _ManagedTaskState] = {}
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
+        self._task_terminal_receipts: dict[str, tuple[str, RootTaskTerminalReceipt, float]] = {}
         self._lock = threading.RLock()
         self._member_key = os.urandom(32)
         # Root-only test harness may capture bounded manager diagnostics. This
@@ -1835,9 +1836,45 @@ class ManagedProcessEffectHandler:
                 state.consumed = True
                 with self._lock:
                     self._task_handles.pop(task_handle.handle_id, None)
+                    now = self.monotonic()
+                    for receipt_id, (_task_id, _receipt, expires) in tuple(self._task_terminal_receipts.items()):
+                        if expires <= now:
+                            self._task_terminal_receipts.pop(receipt_id, None)
+                    if len(self._task_terminal_receipts) >= 4096:
+                        raise AuthorityDenied("resource.task_receipts", "terminal receipt registry is full")
+                    self._task_terminal_receipts[result.terminal_receipt_handle] = (
+                        task_handle.handle_id, result, now + 30.0)
                 return result
             except BaseException:
                 raise
+
+    def resolve_task_terminal(self, task_handle_id: str,
+                              terminal_receipt_handle: str) -> RootTaskTerminalReceipt:
+        """Resolve the exact recent terminal object produced by this manager.
+
+        This root-internal lookup lets the task-native observer join terminal
+        facts without reconstructing them or accepting a caller-produced DTO.
+        Its consumer owns one-use semantics; the bounded receipt remains
+        available only until its short resolver lease or profile generation
+        ends.
+        """
+        if (not isinstance(task_handle_id, str) or not re.fullmatch(r"[0-9a-f]{32}", task_handle_id)
+                or not isinstance(terminal_receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", terminal_receipt_handle)):
+            raise AuthorityDenied("resource.task_receipt", "task terminal receipt selector is malformed")
+        with self._lock:
+            entry = self._task_terminal_receipts.get(terminal_receipt_handle)
+            if entry is None:
+                raise AuthorityDenied("resource.task_receipt", "task terminal receipt is unavailable")
+            bound_task_id, receipt, expires = entry
+            profile = self.profiles.get(receipt.profile_id)
+            if (bound_task_id != task_handle_id or expires <= self.monotonic()
+                    or profile is None or profile.generation != receipt.process_generation
+                    or receipt.task_handle != task_handle_id
+                    or receipt.terminal_receipt_handle != terminal_receipt_handle):
+                self._task_terminal_receipts.pop(terminal_receipt_handle, None)
+                raise AuthorityDenied("resource.task_receipt", "task terminal receipt is stale or mismatched")
+            return receipt
 
     def _resolve_task_handle(self, task_handle: ManagedTaskHandle) -> _ManagedTaskState:
         if not isinstance(task_handle, ManagedTaskHandle):
