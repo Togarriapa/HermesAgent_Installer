@@ -2,14 +2,15 @@
 import json
 import unittest
 from pathlib import Path
-from hermes_installer.registry.source import BundledRegistrySource, PinnedSource, RegistrySourceError
+from hermes_installer.registry.source import BundledRegistrySource, PinnedSource, RegistrySourceError, load_bundled_source
 
 class VendoredRegistryTests(unittest.TestCase):
     def setUp(self):
         root=Path(__file__).resolve().parents[2]
-        pin=json.loads((root/"resources/upstream/hermes-agent-resources.pin.json").read_text())
+        bundle=root/"src/hermes_installer/registry/bundle_data"
+        pin=json.loads((bundle/"hermes-agent-resources.pin.json").read_text())
         self.pin=PinnedSource.from_mapping(pin)
-        self.archive=(root/"resources/upstream/hermes-agent-resources-2.3.1.tar.gz").read_bytes()
+        self.archive=(bundle/"hermes-agent-resources-2.3.1.tar.gz").read_bytes()
     def test_complete_snapshot_is_verified_without_network(self):
         source=BundledRegistrySource(self.pin).load(self.archive)
         self.assertEqual(source.revision,"113f42d33be9e0c8f0f47f5ca998e687323dec83")
@@ -29,5 +30,9 @@ class VendoredRegistryTests(unittest.TestCase):
         with self.assertRaises(RegistrySourceError): loader.load(self.archive[:-1])
         corrupt=bytearray(self.archive); corrupt[-10]^=1
         with self.assertRaises(RegistrySourceError): loader.load(bytes(corrupt))
+    def test_packaged_loader_uses_the_installed_offline_bundle(self):
+        source=load_bundled_source()
+        self.assertEqual(source.revision,self.pin.commit)
+        self.assertEqual(len(source.content_digest),64)
 
 if __name__=="__main__": unittest.main()

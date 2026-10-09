@@ -10,8 +10,8 @@ from hermes_installer.registry.source import BundledRegistrySource, PinnedSource
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ARCHIVE = ROOT / "resources/upstream/hermes-agent-resources-2.3.1.tar.gz"
-PIN = ROOT / "resources/upstream/hermes-agent-resources.pin.json"
+ARCHIVE = ROOT / "src/hermes_installer/registry/bundle_data/hermes-agent-resources-2.3.1.tar.gz"
+PIN = ROOT / "src/hermes_installer/registry/bundle_data/hermes-agent-resources.pin.json"
 SNAPSHOT = ROOT / "resources/vendor/hermes-agent-resources-2.3.1"
 
 

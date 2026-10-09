@@ -57,6 +57,12 @@ class ConfigContractTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             validate_config({"schema_version": 1, "components": {"remote_desktop": True}, "remote_desktop": {"hostname": "desktop.example.org", "allowed_emails": ["owner@example.org"], "management_token_ref": "cf-secret-value"}})
 
+    def test_policy_read_token_is_a_separate_secret_reference(self) -> None:
+        config = validate_config({"schema_version": 1, "remote_desktop": {"policy_read_token_ref": "secret://cloudflare/policy-read"}})
+        self.assertEqual(config.remote_desktop["policy_read_token_ref"], "secret://cloudflare/policy-read")
+        with self.assertRaises(ConfigError):
+            validate_config({"schema_version": 1, "remote_desktop": {"policy_read_token_ref": "inline-secret"}})
+
 
 if __name__ == "__main__":
     unittest.main()
