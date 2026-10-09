@@ -333,7 +333,8 @@ class MCPClient:
                 raise MCPError("MCP request deadline expired")
             try:
                 context = await asyncio.wait_for(asyncio.to_thread(
-                    authority.context, purpose=purpose, intent=intent_id, lease_seconds=min(30.0, remaining)
+                    authority.context, purpose=purpose, intent=intent_id,
+                    lease_seconds=min(30.0, remaining), cancelled=cancellation.is_set
                 ), remaining)
                 if context.intent_id != intent_id or context.monotonic_expires_at <= self.monotonic():
                     raise MCPError("host issued a stale or mismatched MCP context")
