@@ -268,3 +268,10 @@ The installer SHALL bind native tool and memory invocation ancestry to actual ro
 #### Scenario: Worker invents current invocation
 - **WHEN** a worker supplies a forged response/call handle or changes observed action arguments
 - **THEN** root rejects before effects and does not mint source or user provenance from caller assertions
+
+### Requirement: Observed native metadata and bounded composite effects
+The installer SHALL resolve source observers from explicit selected adapter joins and deliver provider metadata only through peer/request/response-bound root lookup; composite effects SHALL preserve exact outer matching and fresh root child authority.
+
+#### Scenario: Composite tool requests an unselected child
+- **WHEN** worker code invokes a different action/digest or claims response metadata without exact root lookup
+- **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants

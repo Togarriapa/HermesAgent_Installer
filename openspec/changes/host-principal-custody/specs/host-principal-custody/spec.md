@@ -313,3 +313,87 @@ The installer SHALL bind build service identity to a protected current service e
 #### Scenario: Source hash used as runtime identity
 - **WHEN** a prepared profile substitutes a source archive hash or unjoined output UID for executable/service proof
 - **THEN** root rejects execution publication and retains the original incomplete checkpoint
+
+### Requirement: Root-local setup and journal provenance
+The installer SHALL authenticate initial provision through its installed root-local setup session and transaction-scoped artifact receipts, and resolve authority state from protected root journal selection.
+
+#### Scenario: Worker fabricates bootstrap actor
+- **WHEN** a worker supplies root labels, another transaction receipt or a writable journal mapping
+- **THEN** root rejects before provision/state effects without requiring or inventing a first active worker context
+
+### Requirement: Observed native metadata and bounded composite effects
+The installer SHALL resolve source observers from explicit selected adapter joins and deliver provider metadata only through peer/request/response-bound root lookup; composite effects SHALL preserve exact outer matching and fresh root child authority.
+
+#### Scenario: Composite tool requests an unselected child
+- **WHEN** worker code invokes a different action/digest or claims response metadata without exact root lookup
+- **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants
+
+### Requirement: Exact selected finite voice recipes
+The installer SHALL verify the actual immutable selected voice workflow recipe and registered primitive handlers while preserving session-specific permission and fresh child authority.
+
+#### Scenario: Recipe bytes available without handler
+- **WHEN** a selected recipe is verified but actual root engine, primitive handler or trusted session permission is missing
+- **THEN** capability remains incomplete and no recipe/fixture status claims native effect success
+
+### Requirement: Separate private setup probe authority
+The installer SHALL authorize private origin probes through a separate root-owned setup binding and exact fresh connector effects, without fabricating public Access sessions or worker profile contexts.
+
+#### Scenario: Setup probe submitted to public issuer
+- **WHEN** a private probe handle or synthetic Access context reaches the public remote connector issuer
+- **THEN** it is rejected, and only the separate root-private exact probe issuer may admit selected local app readiness operations
+
+### Requirement: Native loaded closure observation
+
+The implementation SHALL enforce this protocol. HI-T08 / HI-T09: use planning/protected-runtime-assembly-contract.json native_custody_proof_protocol; immutable mount metadata alone cannot establish readiness, source provenance or action success.
+
+#### Scenario: Missing concrete runtime proof
+- **WHEN** the exact protocol or current kernel/native observations are unavailable
+- **THEN** the affected task remains incomplete and no fixture or mount-only evidence establishes acceptance.
+
+### Requirement: Finite loader progress receiver
+
+The root receiver SHALL enforce native_custody_proof_protocol.progress_wire framing, selected-role custody and ordered finite observations before issuing a loaded closure proof.
+
+#### Scenario: Forged or incomplete loader event
+- **WHEN** progress frames are malformed, stale, replayed or incomplete
+- **THEN** no readiness proof is issued and existing task acceptance remains pending.
+
+### Requirement: Private probe principal and sequence joins
+
+The private probe issuer SHALL resolve the actual protected native PrincipalBinding, separate effect and connector frame sequences, and admit only immutable per-action child probe handles.
+
+#### Scenario: Child action substitution
+- **WHEN** an asset, action, principal or sequence differs from current root selection
+- **THEN** admission is denied before connector bytes.
+
+### Requirement: Root observed initial input closure
+
+The implementation SHALL resolve actual installed release custody and full admitted source receipt closure before issuing native input provenance. Private or unknown sensitivity SHALL remain unchanged absent separate reviewed clearance.
+
+#### Scenario: Digest without source closure
+- **WHEN** only a digest or caller provenance label is available
+- **THEN** no trusted input receipt or admitted native effect is created.
+
+### Requirement: Supported loader and current task controller
+
+The implementation SHALL use the exact named systemd FD transfer and kernel-authenticated loader progress contract, and SHALL distinguish historical source lineage from current verified execution controller.
+
+#### Scenario: Historical capsule mistaken for current peer
+- **WHEN** only serialized source metadata or manager socket credentials are available
+- **THEN** no live producer or loader proof is fabricated.
+
+### Requirement: Protected setup store and bounded probe response
+
+The implementation SHALL resolve the protected setup catalog/store and validate the exact bounded private probe response against current root admission and actual observations.
+
+#### Scenario: Untrusted injected catalog or response
+- **WHEN** selected artifact custody or probe envelope/observation binding differs
+- **THEN** provisioning/readiness cannot be marked complete.
+
+### Requirement: Exact root peer delivery and controller roles
+
+The implementation SHALL use explicit protected observer delivery role joins and actual kernel controller DTOs with exact PIDFD ownership.
+
+#### Scenario: Unenrolled cross-peer selection
+- **WHEN** no exact current observer delivery mapping exists
+- **THEN** cross-peer delivery is denied without target-string inference.

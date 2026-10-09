@@ -1,0 +1,3 @@
+# Supported loader FD and task controller v17
+
+HI-T08/HI-T09/HI-T11/RB-T08 preserve original scope. systemd-run pipe cannot transfer arbitrary socketpairs. Official systemd v253 service documentation defines OpenFile named inherited AF_UNIX FD; the live assembly contract supersedes only the transfer mechanism and requires actual per-message child credentials/PIDFD proof, not manager connection identity. Neutral root task DTOs distinguish canonical task JSON from stdin byte hashes and historical source closure from current root/worker execution controller. Root event context issuance is finite actual timer/webhook/channel admission, not caller classification. All runtime/acceptance remains pending; baseline unchanged.
