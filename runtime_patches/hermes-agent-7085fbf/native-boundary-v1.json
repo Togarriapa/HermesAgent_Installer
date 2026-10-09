@@ -28,7 +28,7 @@
         "path": "agent/tool_executor.py",
         "source_sha256": "8b145fbc70936f028f18e59cb7f9c8723fc992a067fe068f06e7f9f876e9c679",
         "overlay_sha256": "fd671a435cbeda36cfbec3a2b278ff34f66f8cbe37a8a87b0a372a5170e777aa",
-        "hooks": ["exact tool-result message snapshot before transcript append"]
+        "hooks": ["attempts a tool-result capture before transcript append; current generic worker capture is retired so this seam fails closed until root-observed role issuer exists"]
       }
     ]
   },
@@ -40,6 +40,8 @@
     "provider_context_header": "X-Hermes-Installer-Context",
     "provider_retry_index_header": "X-Hermes-Installer-Retry-Index",
     "retry_index_header_semantics": "Root-derived bounded decimal transport claim; gateway passes it to the root, which must compare it with the one-use event's stored retry index.",
+    "tool_result_source": "unavailable; generic worker capture_source is retired and the root-observed role-specific result issuer is not installed",
+    "native_package_binding": "root-selected no-argument bind_selected_native_package plus read_native_resolver; resolver rows are presentation only, never effect grants",
     "attempt_semantics": "Fresh complete SDK request-envelope capture and opaque bridge handle per attempted request; exact-envelope repeat increments retry_index with unchanged intent/trace and retained parents. Changed envelopes start a distinct intent at retry_index=0 until host retry admission is wired.",
     "limits": [
       "The current worktree does not yet contain the HI11 AuthorityClient bridge API or enrolled producer-to-gateway pair.",

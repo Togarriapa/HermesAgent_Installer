@@ -38,7 +38,7 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
 
         def prepare(payload, *, parent_receipt_handles, purpose, intent_id, trace_id, retry_index):
             captured.append((payload, tuple(parent_receipt_handles), purpose, retry_index))
-            return "evt.fixture.handle.00000001", boundary.time.monotonic() + 30
+            return "native_evt_000000000000000000000000000001", boundary.time.monotonic() + 30
 
         with patch.object(boundary, "_prepare_native_event", side_effect=prepare):
             result = boundary.prepare_provider_request(kwargs, purpose="native-primary")
@@ -47,7 +47,7 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
             b'{"messages":[{"content":"local fixture","role":"user"}],"model":"fixture"}',
             (), "native-primary", 0)])
         self.assertEqual(result["extra_headers"], {
-            "X-Hermes-Installer-Context": "evt.fixture.handle.00000001",
+            "X-Hermes-Installer-Context": "native_evt_000000000000000000000000000001",
             "X-Hermes-Installer-Retry-Index": "0"})
         self.assertEqual(result["max_retries"], 0)
         self.assertGreater(result["timeout"], 0)
@@ -56,11 +56,12 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
     def test_retry_gets_fresh_event_handle_and_retains_source_ancestry(self):
         messages = [{"role": "tool", "name": "fixture", "content": "private"}]
         captured = []
-        issued = iter(("evt.fixture.handle.00000002", "evt.fixture.handle.00000003"))
+        issued = iter(("native_evt_000000000000000000000000000002",
+                       "native_evt_000000000000000000000000000003"))
 
         def capture(payload, *, parent_receipt_handles=()):
             captured.append(("source", payload, tuple(parent_receipt_handles)))
-            return "evt.fixture.handle.00000001"
+            return "native_evt_000000000000000000000000000001"
 
         def prepare(payload, *, parent_receipt_handles, purpose, intent_id, trace_id, retry_index):
             captured.append(("event", tuple(parent_receipt_handles), purpose, retry_index,
@@ -78,9 +79,9 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
         self.assertEqual(first["extra_headers"][boundary.RETRY_INDEX_HEADER], "0")
         self.assertEqual(retry["extra_headers"][boundary.RETRY_INDEX_HEADER], "1")
         self.assertEqual(captured[0][0], "source")
-        self.assertEqual(captured[1][:4], ("event", ("evt.fixture.handle.00000001",),
+        self.assertEqual(captured[1][:4], ("event", ("native_evt_000000000000000000000000000001",),
                                            "native-primary", 0))
-        self.assertEqual(captured[2][:4], ("event", ("evt.fixture.handle.00000001",),
+        self.assertEqual(captured[2][:4], ("event", ("native_evt_000000000000000000000000000001",),
                                            "native-primary", 1))
         self.assertEqual(captured[1][4:], captured[2][4:])
 
@@ -88,8 +89,8 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
         messages = [{"role": "user", "content": "fixture"}]
         with patch.object(boundary, "_prepare_native_event") as prepare:
             for headers in (
-                {"X-Hermes-Installer-Context": "evt.fixture.handle.00000004"},
-                {"x-hermes-installer-context": "evt.fixture.handle.00000004"},
+                {"X-Hermes-Installer-Context": "native_evt_000000000000000000000000000004"},
+                {"x-hermes-installer-context": "native_evt_000000000000000000000000000004"},
             ):
                 with self.assertRaises(boundary.NativeBoundaryUnavailable):
                     boundary.prepare_provider_request(
@@ -129,22 +130,22 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
         calls = []
         client.prepare_native_event = lambda payload, **kwargs: (
             calls.append((payload, kwargs)) or SimpleNamespace(
-                native_event_handle="evt.fixture.handle.00000009",
+                native_event_handle="native_evt_000000000000000000000000000009",
                 expires_monotonic=__import__("time").monotonic() + 30))
         with patch.object(boundary, "_authority_client", return_value=client):
             result = boundary._prepare_native_event(
-                b'{"messages":[]}', parent_receipt_handles=("receipt.fixture.00000009",),
+                b'{"messages":[]}', parent_receipt_handles=("native_receipt_00000000000000000000000009",),
                 purpose="native-primary", intent_id="intent-fixture",
                 trace_id="trace-fixture", retry_index=1)
-        self.assertEqual(result[0], "evt.fixture.handle.00000009")
+        self.assertEqual(result[0], "native_evt_000000000000000000000000000009")
         self.assertGreater(result[1], boundary.time.monotonic())
         self.assertEqual(calls, [(b'{"messages":[]}', {
-            "parent_receipt_handles": ("receipt.fixture.00000009",),
+            "parent_receipt_handles": ("native_receipt_00000000000000000000000009",),
             "purpose": "native-primary", "intent_id": "intent-fixture",
             "trace_id": "trace-fixture", "retry_index": 1})])
 
         client.prepare_native_event = lambda *_args, **_kwargs: SimpleNamespace(
-            native_event_handle="evt.fixture.handle.00000010",
+            native_event_handle="native_evt_000000000000000000000000000010",
             expires_monotonic=__import__("time").monotonic() - 1)
         with patch.object(boundary, "_authority_client", return_value=client):
             with self.assertRaises(boundary.NativeBoundaryUnavailable):

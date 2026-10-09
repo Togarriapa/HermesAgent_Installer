@@ -24,7 +24,7 @@ from typing import Any, Mapping, Sequence
 
 CONTEXT_HEADER = "X-Hermes-Installer-Context"
 RETRY_INDEX_HEADER = "X-Hermes-Installer-Retry-Index"
-_HANDLE = re.compile(r"[A-Za-z0-9_.:@~-]{16,512}\Z", re.ASCII)
+_HANDLE = re.compile(r"[A-Za-z0-9_-]{32,128}\Z", re.ASCII)
 _MAX_SOURCE_BYTES = 1_048_576
 _MAX_PARENT_HANDLES = 64
 _MAX_TRACKED_CONVERSATIONS = 128
@@ -71,33 +71,14 @@ def _authority_client():
 
 
 def _capture_source(payload: bytes, *, parent_receipt_handles: Sequence[str] = ()) -> str:
-    """Ask the root authority to observe these bytes and mint a one-use handle.
+    """Reject generic worker claims until a root-observed result issuer exists.
 
-    Importing AuthorityClient lazily keeps fixture inspection and source-overlay
-    validation independent from a configured host. Production calls fail closed
-    when the protected authority package/socket is missing.
+    HI11 explicitly retires ``capture_source`` as a worker RPC. A tool callback
+    cannot self-assert that arbitrary bytes are an observed tool result; the
+    root must bind result bytes to a registered invocation/effect result.
     """
-    if not isinstance(payload, bytes) or not 0 < len(payload) <= _MAX_SOURCE_BYTES:
-        raise NativeBoundaryUnavailable("native source payload is outside its bound")
-    if (not isinstance(parent_receipt_handles, (tuple, list))
-            or len(parent_receipt_handles) > _MAX_PARENT_HANDLES
-            or any(not isinstance(item, str) or not _HANDLE.fullmatch(item)
-                   for item in parent_receipt_handles)):
-        raise NativeBoundaryUnavailable("native source parent closure is malformed")
-    try:
-        client = _authority_client()
-        capture = getattr(client, "capture_source", None)
-        if not callable(capture):
-            raise NativeBoundaryUnavailable("host source capture API is not installed")
-        handle = capture(payload, parent_receipt_handles=tuple(parent_receipt_handles), timeout=5.0)
-    except NativeBoundaryUnavailable:
-        raise
-    except Exception:
-        # Do not leak peer paths, payload text, socket diagnostics or receipt data.
-        raise NativeBoundaryUnavailable("host source capture is unavailable") from None
-    if not isinstance(handle, str) or not _HANDLE.fullmatch(handle):
-        raise NativeBoundaryUnavailable("host returned a malformed source handle")
-    return handle
+    del payload, parent_receipt_handles
+    raise NativeBoundaryUnavailable("root-observed native tool-result issuer is not installed")
 
 
 def _prepare_native_event(
