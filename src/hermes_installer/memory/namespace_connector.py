@@ -46,13 +46,17 @@ class _Route:
 
 
 def _frame(*, enrollment: Any, route_id: str, request: MemoryServiceRequest,
-           secret: str, maximum_bytes: int) -> bytes:
+           secret: str | None, maximum_bytes: int) -> bytes:
+    public_probe = ((enrollment.provider == "openviking" and route_id == "openviking-ready")
+                    or (enrollment.provider == "agentmemory" and route_id == "agentmemory-ready"))
     if (not isinstance(request, MemoryServiceRequest)
             or route_id not in enrollment.fixed_route_map
-            or not isinstance(secret, str) or not secret
-            or any(char in secret for char in "\r\n\x00")):
+            or (not public_probe and (not isinstance(secret, str) or not secret))
+            or (isinstance(secret, str) and any(char in secret for char in "\r\n\x00"))):
         raise MemoryNamespaceDenied("memory request does not match protected enrollment")
-    if enrollment.provider == "agentmemory":
+    if public_probe:
+        auth = None
+    elif enrollment.provider == "agentmemory":
         auth = ("Authorization", f"Bearer {secret}")
     elif enrollment.provider == "openviking":
         auth = ("X-API-Key", secret)
@@ -66,10 +70,11 @@ def _frame(*, enrollment: Any, route_id: str, request: MemoryServiceRequest,
         f"Host: 127.0.0.1:{enrollment.literal_loopback_port}",
         "Connection: close",
         "Accept: application/json",
-        "Content-Type: application/json",
-        f"Content-Length: {len(body)}",
-        f"{auth[0]}: {auth[1]}",
     ]
+    if body:
+        headers.extend(("Content-Type: application/json", f"Content-Length: {len(body)}"))
+    if auth is not None:
+        headers.append(f"{auth[0]}: {auth[1]}")
     encoded = ("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + body
     if len(encoded) > maximum_bytes:
         raise MemoryNamespaceDenied("memory HTTP frame exceeds its enrolled bound")
@@ -249,7 +254,9 @@ class MemoryNamespaceConnector:
                     or lease.namespace_identity != enrollment.namespace_identity
                     or not callable(getattr(lease, "close", None))):
                 raise MemoryNamespaceDenied("supervised memory service generation or namespace changed")
-            secret = self.vault.resolve_reference(
+            public_probe = ((enrollment.provider == "openviking" and route_id == "openviking-ready")
+                            or (enrollment.provider == "agentmemory" and route_id == "agentmemory-ready"))
+            secret = None if public_probe else self.vault.resolve_reference(
                 request.credential_reference_id, peer_uid=lease.uid,
                 required_scope=f"memory.{enrollment.provider}",
                 principal_id=enrollment.principal_id)
