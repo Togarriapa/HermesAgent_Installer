@@ -99,6 +99,8 @@ def load_acceptance_catalog(planning_dir: str | Path) -> dict[str, Any]:
     root = Path(planning_dir)
     baseline = json.loads((root / "traceability.json").read_text(encoding="utf-8"))
     additions = []
+    amendment_requirements = []
+    amendment_evidence = []
     amendment_files = (
         "resources-bundle-amendment.json",
         "remote-policy-read-amendment.json",
@@ -111,6 +113,51 @@ def load_acceptance_catalog(planning_dir: str | Path) -> dict[str, Any]:
         manifest = json.loads(path.read_text(encoding="utf-8"))
         requirements = {str(row["id"]): row for row in manifest.get("requirements", ()) if isinstance(row, Mapping) and row.get("id")}
         tasks = [row for row in manifest.get("tasks", ()) if isinstance(row, Mapping)]
+        for requirement_id, requirement in requirements.items():
+            linked_tasks = [row for row in tasks if row.get("requirement") == requirement_id or requirement_id in row.get("requirement_ids", ())]
+            linked_evidence = set()
+            direct_id = requirement.get("evidence_id")
+            if isinstance(direct_id, str) and direct_id.startswith("EV-"):
+                linked_evidence.add(direct_id)
+            for task in linked_tasks:
+                for key in ("evidence", "evidence_id"):
+                    evidence_id = task.get(key)
+                    if isinstance(evidence_id, str) and evidence_id.startswith("EV-"):
+                        linked_evidence.add(evidence_id)
+            task_ids_for_requirement = [str(row["id"]) for row in linked_tasks if row.get("id")]
+            amendment_requirements.append({
+                "id": requirement_id,
+                "source_line": None,
+                "source_section": -1,
+                "source_subsection": "",
+                "text": str(requirement.get("text", requirement.get("name", ""))),
+                "change": str(manifest.get("change", filename)),
+                "capability": "acceptance-evidence",
+                "task_id": task_ids_for_requirement[0] if task_ids_for_requirement else None,
+                "task_ids": task_ids_for_requirement,
+                "test_id": sorted(linked_evidence)[0] if linked_evidence else None,
+                "test_path": None,
+                "component_id": None,
+                "kind": "requirement",
+                "state": "specified; implementation-pending",
+                "implementation_module": "src/hermes_installer/evidence.py",
+                "verification_method": str(requirement.get("verification", requirement.get("then", ""))),
+            })
+            for evidence_id in linked_evidence:
+                amendment_evidence.append({
+                    "id": evidence_id,
+                    "requirement_ids": [requirement_id],
+                    "task_ids": task_ids_for_requirement,
+                    "method": str(requirement.get("verification", requirement.get("then", requirement.get("text", "")))),
+                    "assertion": str(requirement.get("then", requirement.get("text", ""))),
+                    "fixture_test": None,
+                    "platform": "fixture, native ARM64, target, or account as explicitly recorded",
+                    "result": "not-run",
+                    "candidate_sha": None,
+                    "target_id": None,
+                    "artifacts": [],
+                    "blocker": "No authenticated implementation evidence has been recorded",
+                })
         for item in manifest.get("acceptance", ()):
             if not isinstance(item, Mapping) or not item.get("id"):
                 raise ValueError(f"invalid acceptance entry in {filename}")
@@ -146,6 +193,19 @@ def load_acceptance_catalog(planning_dir: str | Path) -> dict[str, Any]:
             })
     combined = dict(baseline)
     combined["acceptance"] = list(baseline.get("acceptance", ()))
+    existing_requirements = {str(row.get("id")): dict(row) for row in baseline.get("requirements", ())}
+    for row in amendment_requirements:
+        existing_requirements.setdefault(str(row["id"]), row)
+    combined["requirements"] = list(existing_requirements.values())
+    existing_evidence = {str(row.get("id")): dict(row) for row in baseline.get("evidence", ())}
+    for row in amendment_evidence:
+        if row["id"] in existing_evidence:
+            current = existing_evidence[row["id"]]
+            current["requirement_ids"] = sorted(set(current.get("requirement_ids", ())) | set(row["requirement_ids"]))
+            current["task_ids"] = sorted(set(current.get("task_ids", ())) | set(row["task_ids"]))
+        else:
+            existing_evidence[row["id"]] = row
+    combined["evidence"] = list(existing_evidence.values())
     existing_additional = {str(row.get("id")): dict(row) for row in baseline.get("additional_acceptance", ())}
     for addition in additions:
         acceptance_id = addition["id"]
@@ -194,6 +254,54 @@ def acceptance_report(
                 # An unavailable or malfunctioning trust adapter never promotes evidence.
                 pass
 
+    evidence_links: dict[str, set[str]] = {}
+    for entry in traceability.get("evidence", ()):
+        if not isinstance(entry, Mapping) or not entry.get("id"):
+            continue
+        for requirement_id in entry.get("requirement_ids", ()):
+            evidence_links.setdefault(str(requirement_id), set()).add(str(entry["id"]))
+    requirement_rows = []
+    for requirement in traceability.get("requirements", ()):
+        if not isinstance(requirement, Mapping) or not requirement.get("id"):
+            continue
+        requirement_id = str(requirement["id"])
+        wanted_evidence = evidence_links.get(requirement_id, set())
+        related = [row for evidence_id, row in accepted_records.items() if evidence_id in wanted_evidence]
+        trusted_related = [row for row in related if row.evidence_id in trusted_ids]
+        trusted_pass_ids = {row.evidence_id for row in trusted_related if row.state == EvidenceState.PASS}
+        trusted_fail = any(row.state == EvidenceState.FAIL for row in trusted_related)
+        if trusted_fail:
+            evidence_state = EvidenceState.FAIL.value
+        elif wanted_evidence and wanted_evidence.issubset(trusted_pass_ids):
+            evidence_state = EvidenceState.PASS.value
+        else:
+            evidence_state = EvidenceState.PENDING.value
+        implementation_state = str(requirement.get("state", "specified; implementation-pending"))
+        implemented = any(marker in implementation_state.lower() for marker in ("implemented", "complete", "completed", "verified"))
+        status = EvidenceState.PASS.value if implemented and evidence_state == EvidenceState.PASS.value else EvidenceState.FAIL.value if evidence_state == EvidenceState.FAIL.value else EvidenceState.PENDING.value
+        blocker = None
+        if status != EvidenceState.PASS.value:
+            messages = [row.blocker for row in trusted_related if row.blocker]
+            if messages:
+                blocker = "; ".join(sorted(set(_safe_text(message) for message in messages)))
+            elif not related:
+                blocker = "No linked evidence artifact has been recorded"
+            elif not trusted_related:
+                blocker = "Evidence artifacts have not been authenticated by an enrolled verifier"
+            else:
+                blocker = "Implementation or one or more linked evidence IDs are incomplete"
+        requirement_rows.append({
+            "requirement_id": requirement_id,
+            "change": str(requirement.get("change", "")),
+            "task_ids": [str(value) for value in requirement.get("task_ids", ())] or ([str(requirement["task_id"])] if requirement.get("task_id") else []),
+            "evidence_ids": sorted(wanted_evidence),
+            "implementation_state": implementation_state,
+            "evidence_state": evidence_state,
+            "state": status,
+            "blocker": blocker,
+            "resume_command": next((row.resume_command for row in trusted_related if row.resume_command), None),
+        })
+
     workflows = []
     for acceptance_id in sorted(required):
         criterion = by_id[acceptance_id]
@@ -221,6 +329,8 @@ def acceptance_report(
             "fixture_state": _lane_state(trusted_related, EvidenceClass.FIXTURE),
             "native_arm64_state": _lane_state(trusted_related, EvidenceClass.NATIVE_ARM64),
             "target_state": _lane_state(trusted_related, EvidenceClass.PHYSICAL_PI, EvidenceClass.ACCOUNT),
+            "physical_pi_state": _lane_state(trusted_related, EvidenceClass.PHYSICAL_PI),
+            "account_state": _lane_state(trusted_related, EvidenceClass.ACCOUNT),
             "blocker": blocker if not related or trusted_related else "Evidence artifacts have not been authenticated by an enrolled verifier",
             "resume_command": next((row.resume_command for row in related if row.resume_command), None),
         })
@@ -232,19 +342,23 @@ def acceptance_report(
         "state": "pass" if full else "pending",
         "full_acceptance": full,
         "acceptance": workflows,
+        "requirements": requirement_rows,
         "evidence": [_record_public_dict(row, trusted=row.evidence_id in trusted_ids) for row in sorted(accepted_records.values(), key=lambda row: row.evidence_id)],
     }
 
 
 def write_report(path: str, report: Mapping[str, Any]) -> str:
     """Write only the allow-listed report model and return its content digest."""
-    top_keys = {"schema_version", "candidate_sha", "generated_at", "state", "full_acceptance", "acceptance", "evidence"}
+    top_keys = {"schema_version", "candidate_sha", "generated_at", "state", "full_acceptance", "acceptance", "requirements", "evidence"}
     if set(report) != top_keys:
         raise ValueError("report does not match the public evidence schema")
-    acceptance_keys = {"acceptance_id", "description", "state", "requirement_ids", "task_ids", "evidence_ids", "observed_evidence_ids", "fixture_state", "native_arm64_state", "target_state", "blocker", "resume_command"}
+    acceptance_keys = {"acceptance_id", "description", "state", "requirement_ids", "task_ids", "evidence_ids", "observed_evidence_ids", "fixture_state", "native_arm64_state", "target_state", "physical_pi_state", "account_state", "blocker", "resume_command"}
+    requirement_keys = {"requirement_id", "change", "task_ids", "evidence_ids", "implementation_state", "evidence_state", "state", "blocker", "resume_command"}
     record_keys = {"evidence_id", "candidate_sha", "evidence_class", "state", "platform", "target_id", "started_at", "finished_at", "command", "exit_code", "assertions", "artifact_sha256", "blocker", "resume_command", "trusted"}
     if any(set(row) != acceptance_keys for row in report.get("acceptance", ())):
         raise ValueError("acceptance row does not match the public evidence schema")
+    if any(set(row) != requirement_keys for row in report.get("requirements", ())):
+        raise ValueError("requirement row does not match the public evidence schema")
     if any(set(row) != record_keys for row in report.get("evidence", ())):
         raise ValueError("evidence row does not match the public evidence schema")
     payload = json.dumps(_redact_secrets(dict(report)), sort_keys=True, indent=2).encode()

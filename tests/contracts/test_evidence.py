@@ -32,6 +32,8 @@ def record(evidence_id="EV-R0169", evidence_class="fixture", state="pass", **ove
 
 def criterion_catalog():
     return {
+        "requirements": [{"id": "R0169", "change": "verification-documentation", "task_id": "VD-R0169", "state": "specified; implementation-pending"}],
+        "evidence": [{"id": "EV-R0169", "requirement_ids": ["R0169"], "task_ids": ["VD-R0169"]}],
         "acceptance": [
             {"id": f"AC{i:02d}", "text": f"criterion {i}", "evidence_ids": [f"EV-R{168+i:04d}"]}
             for i in range(1, 13)
@@ -52,6 +54,11 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertEqual(report["state"], "pending")
         self.assertEqual(report["acceptance"][0]["fixture_state"], "pass")
         self.assertEqual(report["acceptance"][0]["target_state"], "pending")
+        self.assertEqual(report["acceptance"][0]["physical_pi_state"], "pending")
+        self.assertEqual(report["acceptance"][0]["account_state"], "pending")
+        requirement = next(row for row in report["requirements"] if row["requirement_id"] == "R0169")
+        self.assertEqual(requirement["evidence_state"], "pass")
+        self.assertEqual(requirement["state"], "pending")
 
     def test_skip_and_config_only_cannot_be_pass_evidence(self):
         configured = record(evidence_class="configuration")
@@ -65,6 +72,8 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertFalse(report["evidence"][0]["trusted"])
         self.assertEqual(report["acceptance"][0]["state"], "pending")
         self.assertIn("not been authenticated", report["acceptance"][0]["blocker"])
+        requirement = next(row for row in report["requirements"] if row["requirement_id"] == "R0169")
+        self.assertEqual(requirement["evidence_state"], "pending")
 
     def test_candidate_mismatch_and_empty_catalog_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "different candidate"):
@@ -110,6 +119,8 @@ class EvidenceContractTests(unittest.TestCase):
             self.assertEqual(additions["AC16"]["text"], "existing Sol row")
             self.assertEqual(additions["AC17"]["task_ids"], ["RP-T01"])
             self.assertEqual(additions["AC18"]["evidence_ids"], ["EV-HI01"])
+            self.assertIn("RB01", {row["id"] for row in catalog["requirements"]})
+            self.assertIn("EV-HI01", {row["id"] for row in catalog["evidence"]})
 
 
 if __name__ == "__main__":
