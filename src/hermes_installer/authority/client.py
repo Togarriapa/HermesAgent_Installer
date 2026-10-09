@@ -380,6 +380,59 @@ class AuthorityClient:
         return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"],
                                       source_handle, producer_handle, tool_calls)
 
+    def dispatch_native_mcp(self, invocation_handle: str,
+                            canonical_arguments: bytes) -> BrokeredEffectResponse:
+        """Dispatch one root-observed native MCP tool call through the host.
+
+        The invocation handle is a lookup key for the lexical tool binding.
+        This request carries no caller-selected MCP service, tool, target,
+        capability, recipient, context, or effect grant.
+        """
+        import base64
+
+        if (not isinstance(invocation_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", invocation_handle)
+                or not isinstance(canonical_arguments, bytes)
+                or not 1 <= len(canonical_arguments) <= 2 * 1024 * 1024):
+            raise AuthorityDenied("native.mcp", "native MCP invocation is malformed or over its bound")
+        try:
+            parsed = strict_json_loads(canonical_arguments.decode("utf-8"))
+            if (not isinstance(parsed, dict)
+                    or canonical_bytes(parsed) != canonical_arguments):
+                raise ValueError
+        except (ValueError, TypeError, UnicodeError):
+            raise AuthorityDenied("native.mcp", "native MCP arguments are not a canonical JSON object") from None
+        result = self._rpc("native.mcp.dispatch", {
+            "schema": 1,
+            "invocation_handle": invocation_handle,
+            "canonical_arguments_b64": base64.b64encode(canonical_arguments).decode("ascii"),
+        })
+        base_fields = {"status", "body", "headers", "receipt_id"}
+        allowed = {frozenset(base_fields), frozenset(base_fields | {"source_receipt_handle"})}
+        if not isinstance(result, dict) or frozenset(result) not in allowed:
+            raise AuthorityDenied("native.mcp", "authority returned a malformed native MCP response")
+        try:
+            body = base64.b64decode(result["body"], validate=True)
+        except Exception:
+            raise AuthorityDenied("native.mcp", "authority returned a malformed native MCP body") from None
+        headers = result["headers"]
+        if (type(result["status"]) is not int or not 0 <= result["status"] <= 599
+                or len(body) > 4 * 1024 * 1024
+                or not isinstance(headers, dict) or len(headers) > 32
+                or any(not isinstance(key, str) or not isinstance(value, str)
+                       or any(char in key + value for char in "\\r\\n\\x00")
+                       for key, value in headers.items())
+                or not isinstance(result["receipt_id"], str)
+                or not 1 <= len(result["receipt_id"]) <= 256):
+            raise AuthorityDenied("native.mcp", "authority native MCP response exceeds its bound")
+        source_handle = result.get("source_receipt_handle")
+        if source_handle is not None and (not isinstance(source_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle)):
+            raise AuthorityDenied("native.mcp", "authority returned a malformed result lineage handle")
+        return BrokeredEffectResponse(
+            result["status"], body, dict(headers), result["receipt_id"], source_handle,
+        )
+
     def authorize_effect(self, context: HostContext, *, capability: str,
                          target: str, recipient: str | None = None,
                          request_digest: str, retry_index: int = 0,

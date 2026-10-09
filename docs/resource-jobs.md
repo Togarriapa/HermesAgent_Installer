@@ -58,6 +58,20 @@ retained event projection is bounded, job-expiring, and scrubbed when the job
 terminates, expires, or is revoked. Caller-supplied event bytes and unsigned
 webhook receipts cannot supply recipe values.
 
+Root ingress now has a separate `ResourceJobAuthority.admit_root_resource_event()`
+entry point. Producers pass only the exact in-process `RootResourceEventHandle`
+returned by the selected root controller registry; the method rechecks the
+active resource generation and consent, signed parent context, full source
+receipt closure, event digest, root controller lease, deadline and cancellation
+before writing the replay-keyed job row. It retains the validated event fields
+and source closure under the resulting job ID. This does not expose admission
+over worker RPC and does not make target or account acceptance evidence.
+
+The v66 predecessor-result closure is still required before a root dispatcher
+can safely advance dependent DAG nodes. Until the shared resolver and fresh
+root task/controller path are attached, admission alone does not establish
+that a job ran; RB-T08/EV-RB07 remain open.
+
 For a selected profile task, the private admission row retains the actual
 verified `_JobEvent`, signed parent context, and complete source receipt
 objects beside the one-use node handle. `resolve_admitted_task_source()` is
@@ -86,3 +100,36 @@ functional. Dynamic result/scope recipes fail closed. Fixture tests exercise
 ledger/parser behavior and typed root source/controller resolution; they do
 not establish cron, webhook, channel, bundle, Hermes process custody, or target
 effects.
+# Root source-event authority
+
+Root timer, webhook, and channel adapters must be attached to the active
+`ResourceEventContextIssuer` inside the authority process. An attached producer
+receives an opaque per-instance capability and can create a one-use
+`RootResourceSourceEventProof` only at its native accepted-event seam. The
+proof is not serializable and carries the exact canonical event bytes plus an
+opaque producer observation that is revalidated when consumed. Before an
+event or receipt exists, `RootResourceControllerRegistry` resolves the
+selected role/issuer/backend through `resolve_selected_ingress_controller` and
+retains a one-use `RootIngressControllerProof` backed by live systemd MainPID,
+PIDFD, executable, namespace, and loaded-role evidence. The registry's
+`capture_selected_ingress` consumes that retained proof and the exact producer
+observation together. The issuer rechecks current resource generation and
+consent, the selected observer and source policy, and the live controller
+proof, then signs the original private `HostContext` and source receipt. The
+HTTP/audio adapter's exact proof-bound receipt handles are resolved once by
+its root observer to actual service-signed `SourceReceipt` objects; the issuer
+rechecks signature, current profile/principal/generation, source-kind policy,
+expiry, and complete parent closure before signing the event receipt with those
+parents. The event context carries the sorted parent receipts and event receipt
+together, so the registry can verify the full signed closure without trusting
+receipt objects supplied in an RPC or event DTO. Missing resolver wiring fails
+closed. The registry atomically retains that signed closure as the root event; child-node
+issuance separately revalidates the selected backend/body recipe and current
+controller custody.
+
+The proof/capsule interfaces are root-internal only. Worker RPCs, reconstructed
+dataclasses, caller-supplied root contexts, event labels, and serialized HMAC
+or timer claims cannot enter this path. A producer without a concrete native
+provenance verifier and the root registry's pre-event custody proof remains
+unavailable. HTTP and audio channel inputs use distinct v40 typed selection
+and observation proofs; they cannot reuse Telegram/Discord or webhook proof.
