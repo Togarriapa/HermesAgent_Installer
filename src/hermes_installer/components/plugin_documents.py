@@ -8,6 +8,7 @@ separately gated by the caller.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import resource
@@ -18,6 +19,7 @@ import threading
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 from xml.sax.saxutils import escape
 
@@ -91,23 +93,28 @@ class DocumentRuntime(Protocol):
     tool_root: Path
     import_root: Path
     output_root: Path
-    output_target_id: str
-    generation: str
 
     def resolve_source(self, source_id: str) -> ApprovedSource | None: ...
     def resolve_book(self, book_id: str) -> ApprovedBook | None: ...
     def resolve_tool(self, tool_id: str) -> Path | None: ...
     def resolve_kobo(self, enrollment_id: str) -> "EnrolledKobo | None": ...
-    def authorize_local_effect(self, *, operation: str, target: str,
-                               request_digest: str, rights_receipt: str | None) -> bool: ...
+
+
+class PluginEffects(Protocol):
+    """Root-selected protected action dispatcher used by native handlers."""
+
+    def invoke(self, adapter_id: str, action_id: str, arguments: dict[str, object],
+               idempotency_key: str | None = None,
+               opaque_confirmation_attestation_id: str | None = None) -> object: ...
 
 
 _SOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_ROOT_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _FIXED_TOOL_IDS = frozenset({"pandoc", "epubcheck", "calibre-ebook-convert"})
 
 
 class ManagedEbookToolchain:
-    """Fixed pandoc/EPUBCheck/Calibre recipes under one managed tool root."""
+    """Host-only fixed recipes, called after root effect authorization."""
 
     def __init__(self, runtime: DocumentRuntime, *, timeout_seconds: float = 30.0,
                  max_source_bytes: int = 256 * 1024, max_output_bytes: int = 2 * 1024 * 1024) -> None:
@@ -186,18 +193,6 @@ class ManagedEbookToolchain:
             raise DocumentAdapterError("source exceeds the configured size limit")
         return source
 
-    def _authorize(self, source: Path, rights_receipt: str, *, recipe: str,
-                   target_name: str) -> None:
-        target = f"plugin:ebook-toolchain:{self.runtime.output_target_id}:{self.runtime.generation}"
-        request_digest = hashlib.sha256(
-            (recipe + "\0" + target_name).encode() + b"\0" + hashlib.sha256(source.read_bytes()).digest()
-        ).hexdigest()
-        if not self.runtime.authorize_local_effect(
-            operation="plugin.ebook-toolchain.run", target=target, request_digest=request_digest,
-            rights_receipt=rights_receipt,
-        ):
-            raise DocumentAdapterError("local document effect was not authorized")
-
     def build_epub3(self, approved: ApprovedSource, *, title: str) -> EbookResult:
         if not title.strip() or len(title) > 200:
             raise DocumentAdapterError("title must contain 1 to 200 characters")
@@ -206,7 +201,6 @@ class ManagedEbookToolchain:
         target = root / f"{approved.source_id}.epub"
         if target.exists() or target.is_symlink():
             raise DocumentAdapterError("refusing to overwrite an existing managed ebook")
-        self._authorize(source, approved.rights_receipt, recipe="epub3", target_name=target.name)
         with tempfile.TemporaryDirectory(prefix=".ebook-build-", dir=root) as work:
             workdir = Path(work)
             stage = workdir / f"{approved.source_id}.epub"
@@ -235,7 +229,6 @@ class ManagedEbookToolchain:
         target = root / f"{approved.source_id}.pdf"
         if target.exists() or target.is_symlink():
             raise DocumentAdapterError("refusing to overwrite an existing managed ebook")
-        self._authorize(source, approved.rights_receipt, recipe="pdf", target_name=target.name)
         with tempfile.TemporaryDirectory(prefix=".ebook-build-", dir=root) as work:
             workdir = Path(work)
             stage = workdir / f"{approved.source_id}.pdf"
@@ -253,109 +246,166 @@ class ManagedEbookToolchain:
 
 
 class EbookToolchainImplementation:
-    """Native fixed tool surface, with all roots and recipes supplied by trust."""
+    """Native tool surface delegates every operation to the root effect broker."""
 
     def register(self, ctx: object, runtime_context: object) -> None:
-        _require_identity(runtime_context, "ebook-toolchain")
-        runtime = _document_runtime(runtime_context)
-        plugin = ManagedEbookToolchain(runtime)
+        effects = _selected_effects(runtime_context, "ebook-toolchain")
         register_tool = getattr(ctx, "register_tool", None)
         if not callable(register_tool):
             raise DocumentAdapterError("Hermes PluginContext.register_tool is unavailable")
         schema = {"type": "object", "properties": {
-            "source_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
-            "format": {"type": "string", "enum": ["epub", "pdf"]},
-            "title": {"type": "string", "minLength": 1, "maxLength": 200},
-        }, "required": ["source_id", "format"], "additionalProperties": False}
+            "source_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+            "format": {"type": "string", "enum": ["epub3", "pdf"]},
+            "title": {"type": "string", "minLength": 1, "maxLength": 256},
+            "recipe_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        }, "required": ["source_id", "format", "title", "recipe_id"], "additionalProperties": False}
 
         def build(args: object) -> dict[str, object]:
-            fields = _fields(args, frozenset({"source_id", "format", "title"}))
-            source_id = _bounded_id(fields.get("source_id"))
-            source = runtime.resolve_source(source_id)
-            if source is None or source.source_id != source_id:
-                raise DocumentAdapterError("source is not enrolled in the selected profile")
+            fields = _fields(args, frozenset({"source_id", "format", "title", "recipe_id"}))
+            source_id = _bounded_ref(fields.get("source_id"), "source_id")
             kind = fields.get("format")
-            if kind == "epub":
-                result = plugin.build_epub3(source, title=_bounded_title(fields.get("title", source_id)))
-            elif kind == "pdf":
-                result = plugin.build_pdf(source)
-            else:
+            if kind not in {"epub3", "pdf"}:
                 raise DocumentAdapterError("requested ebook format is not supported")
-            return {"artifact_id": result.path.name, "format": result.format,
-                    "sha256": result.sha256, "source_sha256": result.source_sha256,
-                    "validation": result.validation}
+            arguments: dict[str, object] = {"source_id": source_id, "format": kind,
+                                            "title": _bounded_title(fields.get("title"), max_length=256),
+                                            "recipe_id": _bounded_ref(fields.get("recipe_id"), "recipe_id")}
+            return _invoke_effect(effects, "ebook-toolchain", "run", arguments,
+                                  write=True)
+
+        inspect_schema = {"type": "object", "properties": {
+            "source_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+            "recipe_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        }, "required": ["source_id", "recipe_id"], "additionalProperties": False}
+
+        def inspect(args: object) -> dict[str, object]:
+            fields = _fields(args, frozenset({"source_id", "recipe_id"}))
+            return _invoke_effect(effects, "ebook-toolchain", "inspect", {
+                "source_id": _bounded_ref(fields.get("source_id"), "source_id"),
+                "recipe_id": _bounded_ref(fields.get("recipe_id"), "recipe_id"),
+            }, write=False)
+
+        def validate(args: object) -> dict[str, object]:
+            fields = _fields(args, frozenset({"source_id", "recipe_id"}))
+            return _invoke_effect(effects, "ebook-toolchain", "validate", {
+                "source_id": _bounded_ref(fields.get("source_id"), "source_id"),
+                "recipe_id": _bounded_ref(fields.get("recipe_id"), "recipe_id"),
+            }, write=False)
 
         register_tool(name="ebook_toolchain_build", toolset="ebook_toolchain", schema=schema,
                       handler=build, requires_env=None, is_async=False,
                       description="Build a rights-cleared ebook through the fixed managed tool recipes.")
+        register_tool(name="ebook_toolchain_inspect", toolset="ebook_toolchain", schema=inspect_schema,
+                      handler=inspect, requires_env=None, is_async=False,
+                      description="Inspect an enrolled source document using its selected managed recipe.")
+        register_tool(name="ebook_toolchain_validate", toolset="ebook_toolchain", schema=inspect_schema,
+                      handler=validate, requires_env=None, is_async=False,
+                      description="Validate an enrolled ebook artifact with its selected managed recipe.")
 
 
 class KoboBridgeImplementation:
-    """Explicit EPUB/PDF delivery of one book to one enrolled USB Kobo."""
+    """Explicit EPUB/PDF delivery and exported-note reads through root targets."""
 
     def register(self, ctx: object, runtime_context: object) -> None:
-        _require_identity(runtime_context, "kobo-bridge")
-        runtime = _document_runtime(runtime_context)
+        effects = _selected_effects(runtime_context, "kobo-bridge")
         register_tool = getattr(ctx, "register_tool", None)
         if not callable(register_tool):
             raise DocumentAdapterError("Hermes PluginContext.register_tool is unavailable")
         schema = {"type": "object", "properties": {
-            "book_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
+            "export_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
             "enrollment_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
-        }, "required": ["book_id", "enrollment_id"], "additionalProperties": False}
+        }, "required": ["export_id", "enrollment_id"], "additionalProperties": False}
 
         def deliver(args: object) -> dict[str, object]:
-            fields = _fields(args, frozenset({"book_id", "enrollment_id"}))
-            book_id = _bounded_id(fields.get("book_id"))
+            fields = _fields(args, frozenset({"export_id", "enrollment_id"}))
+            export_id = _bounded_ref(fields.get("export_id"), "export_id")
             enrollment_id = _bounded_id(fields.get("enrollment_id"))
-            book = runtime.resolve_book(book_id)
-            enrollment = runtime.resolve_kobo(enrollment_id)
-            if book is None or book.book_id != book_id or not book.rights_receipt:
-                raise DocumentAdapterError("book is not rights-cleared and enrolled in this profile")
-            if book.drm_free is not True:
-                raise DocumentAdapterError("Kobo delivery is restricted to sources attested as DRM-free")
-            if enrollment is None or enrollment.enrollment_id != enrollment_id:
-                raise DocumentAdapterError("Kobo is not enrolled for this profile")
-            if enrollment.connection != "usb":
-                raise DocumentAdapterError("this adapter supports the enrolled USB export path only")
-            if "usb_epub_pdf_export" not in enrollment.capabilities:
-                raise DocumentAdapterError("the enrolled Kobo has not passed USB export capability detection")
-            if book.path.is_symlink():
-                raise DocumentAdapterError("book must not be a symbolic link")
-            source = _inside(book.path, runtime.import_root)
-            if not source.is_file() or source.is_symlink():
-                raise DocumentAdapterError("book must be an enrolled regular file")
-            target_id = f"plugin:kobo-bridge:{enrollment.enrollment_id}:{enrollment.generation}"
-            request_digest = hashlib.sha256(
-                (book_id + "\0" + enrollment.model + "\0" + hashlib.sha256(source.read_bytes()).hexdigest()).encode()
-            ).hexdigest()
-            if not runtime.authorize_local_effect(operation="plugin.kobo-bridge.deliver", target=target_id,
-                                                  request_digest=request_digest,
-                                                  rights_receipt=book.rights_receipt):
-                raise DocumentAdapterError("Kobo delivery was not authorized")
-            result = export_to_kobo(source, enrollment=enrollment,
-                                    expected_enrollment_id=enrollment.enrollment_id,
-                                    expected_model=enrollment.model, rights_attested=True,
-                                    drm_free_attested=book.drm_free)
-            return {"book_id": book_id, "sha256": result.sha256, "model": result.model,
-                    "enrollment_id": result.enrollment_id, "connection": result.connection}
+            return _invoke_effect(effects, "kobo-bridge", "deliver",
+                                  {"export_id": export_id, "enrollment_id": enrollment_id}, write=True)
 
         register_tool(name="kobo_bridge_deliver", toolset="kobo_bridge", schema=schema,
                       handler=deliver, requires_env=None, is_async=False,
-                      description="Deliver one rights-cleared non-DRM EPUB or PDF to an enrolled USB Kobo.")
+                      description="Deliver one rights-cleared non-DRM EPUB or PDF to an explicitly approved Kobo destination.")
+
+        read_schema = {"type": "object", "properties": {
+            "book_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+            "enrollment_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
+        }, "required": ["book_id", "enrollment_id"], "additionalProperties": False}
+
+        def read_export(args: object) -> dict[str, object]:
+            fields = _fields(args, frozenset({"book_id", "enrollment_id"}))
+            book_id = _bounded_ref(fields.get("book_id"), "book_id")
+            enrollment_id = _bounded_id(fields.get("enrollment_id"))
+            return _invoke_effect(effects, "kobo-bridge", "read",
+                                  {"book_id": book_id, "enrollment_id": enrollment_id}, write=False)
+
+        register_tool(name="kobo_bridge_read_export", toolset="kobo_bridge", schema=read_schema,
+                      handler=read_export, requires_env=None, is_async=False,
+                      description="Read one root-authorized Kobo-exported annotation by enrolled opaque ID.")
 
 
-def _document_runtime(context: object) -> DocumentRuntime:
-    runtime = getattr(context, "document_runtime", None)
-    if not isinstance(runtime, DocumentRuntime):
-        raise DocumentAdapterError("protected document runtime is not enrolled")
-    return runtime
-
-
-def _require_identity(context: object, resource_id: str) -> None:
+def _selected_effects(context: object, resource_id: str) -> PluginEffects:
     identity = getattr(context, "identity", None)
-    if getattr(identity, "kind", None) != "plugins" or getattr(identity, "resource_id", None) != resource_id:
+    if (getattr(identity, "kind", None) != "plugins"
+            or getattr(identity, "resource_id", None) != resource_id
+            or getattr(identity, "version", None) != "1.0.0"):
         raise DocumentAdapterError("trusted context does not match the selected document plugin")
+    effects = getattr(context, "plugin_effects", None)
+    if not callable(getattr(effects, "invoke", None)):
+        raise DocumentAdapterError("root-selected plugin effect dispatcher is unavailable")
+    return effects
+
+
+def _invoke_effect(effects: PluginEffects, adapter_id: str, action_id: str,
+                   arguments: dict[str, object], *, write: bool) -> dict[str, object]:
+    operation = f"plugin.{adapter_id}.{action_id}"
+    canonical = json.dumps({"adapter_id": adapter_id, "action_id": action_id,
+                            "arguments": arguments}, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False).encode("utf-8")
+    key = hashlib.sha256(canonical).hexdigest() if write else None
+    response = effects.invoke(adapter_id=adapter_id, action_id=action_id,
+                              arguments=arguments, idempotency_key=key,
+                              opaque_confirmation_attestation_id=None)
+    if isinstance(response, Mapping):
+        value = dict(response)
+    else:
+        raise DocumentAdapterError(f"{operation} returned a malformed effect response")
+    required = {"schema", "operation_id", "state", "result", "verification_status", "resume_action_id"}
+    if (set(value) != required or type(value.get("schema")) is not int or value.get("schema") != 1
+            or value.get("state") not in {"committed", "read-complete", "pending", "ambiguous", "unavailable"}
+            or not isinstance(value.get("operation_id"), str) or not 1 <= len(value["operation_id"]) <= 128
+            or not isinstance(value.get("verification_status"), str) or len(value["verification_status"]) > 64
+            or (value.get("resume_action_id") is not None
+                and (not isinstance(value.get("resume_action_id"), str)
+                     or len(value["resume_action_id"]) > 128))):
+        raise DocumentAdapterError(f"{operation} returned an unexpected effect envelope")
+    if value["state"] in {"pending", "ambiguous", "unavailable"}:
+        return {key: value[key] for key in ("operation_id", "state", "verification_status", "resume_action_id")}
+    if value["state"] != ("committed" if write else "read-complete"):
+        raise DocumentAdapterError(f"{operation} returned an unexpected effect state")
+    result = value["result"]
+    if not isinstance(result, Mapping):
+        raise DocumentAdapterError(f"{operation} returned a malformed result")
+    try:
+        encoded = json.dumps(dict(result), sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, RecursionError):
+        raise DocumentAdapterError(f"{operation} returned a malformed result") from None
+    if len(encoded) > 2 * 1024 * 1024 or _contains_path_fields(dict(result)):
+        raise DocumentAdapterError(f"{operation} returned an unbounded result or host path")
+    return dict(result)
+
+
+def _contains_path_fields(value: object) -> bool:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if isinstance(key, str) and (key.casefold().endswith("_path")
+                                          or key.casefold() in {"path", "argv", "command", "executable"}):
+                return True
+            if _contains_path_fields(child):
+                return True
+    elif isinstance(value, (list, tuple)):
+        return any(_contains_path_fields(child) for child in value)
+    return False
 
 
 def _fields(args: object, allowed: frozenset[str]) -> dict[str, object]:
@@ -370,10 +420,16 @@ def _bounded_id(value: object) -> str:
     return value
 
 
-def _bounded_title(value: object) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value) > 200:
-        raise DocumentAdapterError("title must contain 1 to 200 characters")
+def _bounded_title(value: object, *, max_length: int = 200) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > max_length:
+        raise DocumentAdapterError(f"title must contain 1 to {max_length} characters")
     return value.strip()
+
+
+def _bounded_ref(value: object, name: str) -> str:
+    if not isinstance(value, str) or not _ROOT_REF.fullmatch(value):
+        raise DocumentAdapterError(f"{name} must be a bounded opaque root reference")
+    return value
 
 
 DOCUMENT_PLUGIN_IMPLEMENTATIONS = {

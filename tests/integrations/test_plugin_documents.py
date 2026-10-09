@@ -124,11 +124,7 @@ class _DocumentRuntime:
     tool_root: Path
     import_root: Path
     output_root: Path
-    output_target_id: str = "profile-1"
-    generation: str = "generation-7"
-    grants: list[tuple[str, str, str, str | None]] | None = None
     kobo: EnrolledKobo | None = None
-    allow_effect: bool = True
 
     def resolve_tool(self, tool_id: str) -> Path | None:
         candidate = self.tool_root / tool_id
@@ -145,18 +141,31 @@ class _DocumentRuntime:
     def resolve_kobo(self, enrollment_id: str) -> EnrolledKobo | None:
         return self.kobo if self.kobo and self.kobo.enrollment_id == enrollment_id else None
 
-    def authorize_local_effect(self, *, operation: str, target: str,
-                               request_digest: str, rights_receipt: str | None) -> bool:
-        self.grants = self.grants or []
-        self.grants.append((operation, target, request_digest, rights_receipt))
-        return self.allow_effect and rights_receipt == "rights-receipt-1"
-
 
 def _write_tool(root: Path, name: str, body: str) -> Path:
     path = root / name
     path.write_text(f"#!{sys.executable}\n" + body, encoding="utf-8")
     path.chmod(0o700)
     return path
+
+
+class _PluginEffects:
+    def __init__(self, *, state: str = "committed", result=None):
+        self.calls = []
+        self.state = state
+        self.result = result or {"artifact_id": "root-owned-result", "model": "fixture-kobo"}
+
+    def invoke(self, *, adapter_id, action_id, arguments, idempotency_key=None,
+               opaque_confirmation_attestation_id=None):
+        self.calls.append({"adapter_id": adapter_id, "action_id": action_id,
+                           "arguments": arguments, "idempotency_key": idempotency_key,
+                           "confirmation": opaque_confirmation_attestation_id})
+        state = ("read-complete" if action_id in {"read", "inspect", "validate"}
+                 and self.state == "committed" else self.state)
+        return {"schema": 1, "operation_id": "fixture-operation", "state": state,
+                "result": self.result,
+                "verification_status": "verified" if state in {"committed", "read-complete"} else "pending",
+                "resume_action_id": None if state in {"committed", "read-complete"} else "resume-fixture"}
 
 
 def _fixture_epub(path: Path) -> None:
@@ -203,8 +212,6 @@ pathlib.Path(sys.argv[2]).write_bytes(b"%PDF-1.7\\nfixture\\n%%EOF")
     assert epub.validation == "epubcheck-and-structural-epub3"
     with zipfile.ZipFile(epub.path) as archive:
         assert archive.namelist()[0] == "mimetype"
-    assert runtime.grants[0][0] == "plugin.ebook-toolchain.run"
-    assert runtime.grants[0][1] == "plugin:ebook-toolchain:profile-1:generation-7"
 
     # The PDF recipe consumes an enrolled EPUB source and uses Calibre only.
     copy = imports / "book-2.epub"
@@ -215,7 +222,7 @@ pathlib.Path(sys.argv[2]).write_bytes(b"%PDF-1.7\\nfixture\\n%%EOF")
     assert "calibre" in log.read_text(encoding="utf-8")
 
 
-def test_managed_builder_denials_preserve_sources_and_outputs(tmp_path: Path) -> None:
+def test_missing_or_unmanaged_builder_fails_without_publishing(tmp_path: Path) -> None:
     tools, imports, output = (tmp_path / name for name in ("tools", "imports", "output"))
     for root in (tools, imports, output):
         root.mkdir()
@@ -230,20 +237,6 @@ def test_managed_builder_denials_preserve_sources_and_outputs(tmp_path: Path) ->
 
     (tools / "pandoc").write_text("outside", encoding="utf-8")
     with pytest.raises(PluginDocumentAdapterError, match="not executable"):
-        toolchain.build_epub3(ApprovedSource("denied", source, "rights-receipt-1"), title="Denied")
-    assert not list(output.iterdir())
-
-    tools.joinpath("pandoc").unlink()
-    _write_tool(tools, "pandoc", '''import pathlib, sys, zipfile
-args=sys.argv[1:]
-out=pathlib.Path(args[args.index("--output")+1])
-with zipfile.ZipFile(out,"w") as z:
- z.writestr("mimetype","application/epub+zip",compress_type=zipfile.ZIP_STORED)
- z.writestr("META-INF/container.xml","x")
- z.writestr("EPUB/package.opf","x")
-''')
-    runtime.allow_effect = False
-    with pytest.raises(PluginDocumentAdapterError, match="not authorized"):
         toolchain.build_epub3(ApprovedSource("denied", source, "rights-receipt-1"), title="Denied")
     assert not list(output.iterdir())
 
@@ -272,18 +265,10 @@ with zipfile.ZipFile(out,"w") as z:
     assert not list(output.iterdir())
 
 
-def test_native_kobo_handler_resolves_enrollment_and_authorizes_before_export(tmp_path: Path) -> None:
-    tools, imports, output, device = (tmp_path / name for name in ("tools", "imports", "output", "device"))
-    for root in (tools, imports, output, device):
-        root.mkdir()
-    book = imports / "selected.epub"
-    _fixture_epub(book)
-    enrollment = EnrolledKobo("kobo-1", "Libra Colour", device, generation="usb-generation-2",
-                             capabilities=("usb_epub_pdf_export",))
-    runtime = _DocumentRuntime(tools, imports, output, kobo=enrollment)
-    identity = type("Identity", (), {"kind": "plugins", "resource_id": "kobo-bridge"})()
-    runtime_context = type("RuntimeContext", (), {"identity": identity, "document_runtime": runtime})()
-
+def test_native_kobo_tools_delegate_delivery_and_read_to_root_effect_api() -> None:
+    effects = _PluginEffects()
+    identity = type("Identity", (), {"kind": "plugins", "resource_id": "kobo-bridge", "version": "1.0.0"})()
+    runtime_context = type("RuntimeContext", (), {"identity": identity, "plugin_effects": effects})()
     class PluginContext:
         def __init__(self):
             self.tools = {}
@@ -293,52 +278,25 @@ def test_native_kobo_handler_resolves_enrollment_and_authorizes_before_export(tm
 
     ctx = PluginContext()
     KoboBridgeImplementation().register(ctx, runtime_context)
-    delivered = ctx.tools["kobo_bridge_deliver"]({"book_id": "selected", "enrollment_id": "kobo-1"})
-    assert delivered["model"] == "Libra Colour"
-    assert (device / book.name).read_bytes() == book.read_bytes()
-    assert runtime.grants[0][0] == "plugin.kobo-bridge.deliver"
-    assert runtime.grants[0][1] == "plugin:kobo-bridge:kobo-1:usb-generation-2"
+    delivered = ctx.tools["kobo_bridge_deliver"]({"export_id": "export-1", "enrollment_id": "kobo-1"})
+    assert delivered["artifact_id"] == "root-owned-result"
+    assert effects.calls[0]["adapter_id"] == "kobo-bridge"
+    assert effects.calls[0]["action_id"] == "deliver"
+    assert effects.calls[0]["arguments"] == {"export_id": "export-1", "enrollment_id": "kobo-1"}
+    assert isinstance(effects.calls[0]["idempotency_key"], str)
+    assert effects.calls[0]["confirmation"] is None
 
-    pdf = imports / "selected.pdf"
-    pdf.write_bytes(b"%PDF-1.7\nminimal fixture\n%%EOF")
-    pdf_enrollment = EnrolledKobo("kobo-2", "Libra Colour", device, generation="usb-generation-3")
-    pdf_result = export_to_kobo(pdf, enrollment=pdf_enrollment,
-                                expected_enrollment_id="kobo-2", expected_model="Libra Colour",
-                                rights_attested=True, drm_free_attested=True)
-    assert pdf_result.path.read_bytes() == pdf.read_bytes()
-
-    other_device = tmp_path / "other-device"
-    other_device.mkdir()
-    denied_runtime = _DocumentRuntime(tools, imports, output,
-                                     kobo=EnrolledKobo("other", "Libra Colour", other_device,
-                                                       capabilities=("usb_epub_pdf_export",)),
-                                     allow_effect=False)
-    denied_context = type("RuntimeContext", (), {"identity": identity, "document_runtime": denied_runtime})()
-    denied_ctx = PluginContext()
-    KoboBridgeImplementation().register(denied_ctx, denied_context)
-    with pytest.raises(PluginDocumentAdapterError, match="not authorized"):
-        denied_ctx.tools["kobo_bridge_deliver"]({"book_id": "selected", "enrollment_id": "other"})
-    assert not list(other_device.iterdir())
+    read = ctx.tools["kobo_bridge_read_export"]({"book_id": "book-1", "enrollment_id": "kobo-1"})
+    assert read["artifact_id"] == "root-owned-result"
+    assert effects.calls[1]["action_id"] == "read"
+    assert effects.calls[1]["idempotency_key"] is None
+    assert all("path" not in call["arguments"] for call in effects.calls)
 
 
-def test_native_ebook_handler_accepts_only_enrolled_ids_and_fixed_formats(tmp_path: Path) -> None:
-    tools, imports, output = (tmp_path / name for name in ("tools", "imports", "output"))
-    for root in (tools, imports, output):
-        root.mkdir()
-    source = imports / "selected.md"
-    source.write_text("# Selected", encoding="utf-8")
-    _write_tool(tools, "pandoc", f'''import pathlib, sys, zipfile
-args=sys.argv[1:]
-assert args[:3] == ["--from=markdown", "--to=epub3", "--standalone"]
-out=pathlib.Path(args[args.index("--output")+1])
-with zipfile.ZipFile(out,"w") as z:
- z.writestr("mimetype","application/epub+zip",compress_type=zipfile.ZIP_STORED)
- z.writestr("META-INF/container.xml","x")
- z.writestr("EPUB/package.opf","x")
-''')
-    runtime = _DocumentRuntime(tools, imports, output)
-    identity = type("Identity", (), {"kind": "plugins", "resource_id": "ebook-toolchain"})()
-    runtime_context = type("RuntimeContext", (), {"identity": identity, "document_runtime": runtime})()
+def test_native_ebook_handler_sends_only_typed_options_to_root_action() -> None:
+    effects = _PluginEffects()
+    identity = type("Identity", (), {"kind": "plugins", "resource_id": "ebook-toolchain", "version": "1.0.0"})()
+    runtime_context = type("RuntimeContext", (), {"identity": identity, "plugin_effects": effects})()
 
     class PluginContext:
         def __init__(self):
@@ -349,24 +307,61 @@ with zipfile.ZipFile(out,"w") as z:
 
     ctx = PluginContext()
     EbookToolchainImplementation().register(ctx, runtime_context)
-    result = ctx.tools["ebook_toolchain_build"]({"source_id": "selected", "format": "epub", "title": "Selected"})
-    assert result["format"] == "epub"
-    assert (output / "selected.epub").is_file()
-    assert runtime.grants[0][0] == "plugin.ebook-toolchain.run"
+    result = ctx.tools["ebook_toolchain_build"]({"source_id": "selected", "format": "epub3",
+                                                 "title": "Selected", "recipe_id": "recipe-1"})
+    assert result["artifact_id"] == "root-owned-result"
+    assert effects.calls[0]["action_id"] == "run"
+    assert effects.calls[0]["arguments"] == {"source_id": "selected", "format": "epub3",
+                                               "title": "Selected", "recipe_id": "recipe-1"}
+    assert effects.calls[0]["adapter_id"] == "ebook-toolchain"
+    assert isinstance(effects.calls[0]["idempotency_key"], str)
+    assert all("path" not in call["arguments"] for call in effects.calls)
     with pytest.raises(PluginDocumentAdapterError, match="unrecognized"):
-        ctx.tools["ebook_toolchain_build"]({"source_id": "selected", "format": "epub", "path": "/tmp/x"})
-    with pytest.raises(PluginDocumentAdapterError, match="not enrolled"):
-        ctx.tools["ebook_toolchain_build"]({"source_id": "unknown", "format": "epub"})
+        ctx.tools["ebook_toolchain_build"]({"source_id": "selected", "format": "epub3", "title": "Selected",
+                                             "recipe_id": "recipe-1", "path": "/tmp/x"})
+    ctx.tools["ebook_toolchain_inspect"]({"source_id": "selected", "recipe_id": "inspect-1"})
+    ctx.tools["ebook_toolchain_validate"]({"source_id": "export-1", "recipe_id": "epubcheck-1"})
+    assert [call["action_id"] for call in effects.calls[1:]] == ["inspect", "validate"]
 
 
-def test_native_registration_blocks_until_root_document_runtime_is_injected() -> None:
+def test_native_registration_blocks_until_root_plugin_effect_dispatcher_is_injected() -> None:
     class PluginContext:
         def register_tool(self, **kwargs):
             raise AssertionError("must not register an unbacked tool")
 
     for implementation, plugin_id in ((EbookToolchainImplementation(), "ebook-toolchain"),
                                        (KoboBridgeImplementation(), "kobo-bridge")):
-        identity = type("Identity", (), {"kind": "plugins", "resource_id": plugin_id})()
+        identity = type("Identity", (), {"kind": "plugins", "resource_id": plugin_id,
+                                           "version": "1.0.0"})()
         context = type("RuntimeContext", (), {"identity": identity})()
-        with pytest.raises(PluginDocumentAdapterError, match="protected document runtime"):
+        with pytest.raises(PluginDocumentAdapterError, match="dispatcher"):
             implementation.register(PluginContext(), context)
+
+
+def test_native_effect_errors_and_pending_results_stay_root_brokered() -> None:
+    identity = type("Identity", (), {"kind": "plugins", "resource_id": "ebook-toolchain",
+                                     "version": "1.0.0"})()
+
+    class PluginContext:
+        def __init__(self):
+            self.tools = {}
+
+        def register_tool(self, *, name, handler, **kwargs):
+            self.tools[name] = handler
+
+    pending_effects = _PluginEffects(state="unavailable")
+    context = type("RuntimeContext", (), {"identity": identity, "plugin_effects": pending_effects})()
+    ctx = PluginContext()
+    EbookToolchainImplementation().register(ctx, context)
+    result = ctx.tools["ebook_toolchain_build"]({"source_id": "source-1", "format": "epub3",
+                                                  "title": "Book", "recipe_id": "recipe-1"})
+    assert result["state"] == "unavailable"
+    assert len(pending_effects.calls) == 1
+
+    leaking_effects = _PluginEffects(result={"artifact_id": "result-1", "output_path": "/private/file.epub"})
+    leaking_context = type("RuntimeContext", (), {"identity": identity, "plugin_effects": leaking_effects})()
+    leaking_ctx = PluginContext()
+    EbookToolchainImplementation().register(leaking_ctx, leaking_context)
+    with pytest.raises(PluginDocumentAdapterError, match="host path"):
+        leaking_ctx.tools["ebook_toolchain_build"]({"source_id": "source-1", "format": "epub3",
+                                                     "title": "Book", "recipe_id": "recipe-1"})

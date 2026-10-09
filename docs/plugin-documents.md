@@ -10,23 +10,33 @@ or text source from the approved import root, runs the fixed Pandoc arguments,
 validates EPUB structure, and uses optional managed EPUBCheck when present. PDF
 conversion accepts a rights-receipted valid EPUB and uses the fixed Calibre
 `ebook-convert` recipe. Executables must resolve beneath the managed tool root;
-time, input, and output sizes are bounded. Outputs are created once beneath the
-approved output root and include source/output digests and validation
-provenance. Kobo delivery accepts only enrolled book and device IDs, validates
-the current model/generation and root-issued `plugin.kobo-bridge.deliver`
-authorization, requires root-confirmed `usb_epub_pdf_export` capability, then
-copies a structurally recognized non-DRM EPUB or PDF to
-the existing enrolled USB root and verifies its digest without overwriting
-files. EPUBs are validated as packages; PDFs receive a bounded header/trailer
-check. Full PDF conformance remains unverified.
+time, input, and output sizes are bounded. The native adapters never resolve
+those paths themselves: they submit only bounded opaque IDs and format/title
+options through `plugin_effects.invoke` (`ebook-toolchain/run`,
+`kobo-bridge/read`, and `kobo-bridge/deliver`). The root action resolves the
+fixed recipe, protected profile roots, rights receipts, enrolled device/model,
+and output generation. The package maps ebook `run`, `inspect`, and `validate`
+action IDs to the root operation `plugin.ebook-toolchain.run`; Kobo uses its
+separate root `read` and `deliver` operations. Run arguments are `source_id`, `format` (`epub3` or
+`pdf`), `title`, and the root-selected `recipe_id`; inspect/validate accept
+only `source_id` and `recipe_id`. Kobo read accepts `book_id` plus
+`enrollment_id`; delivery accepts `export_id` plus `enrollment_id`. The root
+selects the enrolled USB or user-authorized cloud connection. These are
+opaque references, never paths or executable arguments. Kobo notebook reads are limited to exported-file IDs;
+delivery validates the selected model/generation and transport capability in
+the root action. The local host fixture helper covers USB and refuses existing
+destinations. EPUBs are validated as packages; PDFs receive a bounded
+header/trailer check. Full PDF conformance remains unverified.
 
 Fixture executables exercise real subprocess recipes and create EPUB/PDF
-artifacts. Additional fixtures verify Kobo export bytes, authorization,
-enrollment mismatch, rights denial, malformed output, symlink input, and
-overwrite refusal. These results do not establish native ARM64 toolchain,
+artifacts through host helpers. Native-handler fixtures assert that every
+generation, notebook-read, or delivery request reaches the selected root
+effect API with only typed IDs/options, stable idempotency for writes, and no
+caller paths or executable arguments. Additional helper fixtures verify Kobo
+export bytes, authorization, enrollment mismatch, rights denial, malformed
+output, symlink input, and overwrite refusal. These results do not establish native ARM64 toolchain,
 Kobo hardware/model capability, Dropbox, Google Drive, Composio OAuth, or
-account readiness. Native registration stays unavailable until the root
-runtime supplies a protected document runtime with managed tool IDs, approved
-profile roots, rights receipts, current device enrollment, and per-effect
-authorization. Manifest tool preferences do not permit arbitrary argv or
-shell.
+account readiness. Native registration stays unavailable until the runtime
+injects the selected `plugin_effects` facade and root package bindings for
+these exact actions. Manifest tool preferences do not permit arbitrary argv
+or shell.
