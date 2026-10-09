@@ -64,8 +64,13 @@ def _selected(runtime: object, plugin_id: str) -> NativePluginRuntimeContext:
 
 
 def _object(value: object, allowed: frozenset[str], required: frozenset[str] = frozenset()) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping) or set(value) - allowed or required - set(value):
+    if not isinstance(value, Mapping):
         raise ValueError("arguments must contain only the reviewed fields")
+    if set(value) - allowed:
+        raise ValueError("arguments contain fields outside the reviewed schema")
+    missing = required - set(value)
+    if missing:
+        raise ValueError("required fields are missing: " + ", ".join(sorted(missing)))
     return value
 
 
@@ -111,6 +116,8 @@ class AuthentikAuthorizationImplementation:
         empty = {"type": "object", "properties": {}, "additionalProperties": False}
         actions = (
             ("authentik_current_principal", "read-current-principal", "Read the signed session's current Authentik identity."),
+            ("authentik_active_user_identity", "read-active-user-identity", "Read the signed principal's current active Authentik user record."),
+            ("authentik_effective_groups", "read-user-effective-groups", "Read the signed principal's current direct and indirect Authentik groups."),
             ("authentik_verify_system_membership", "verify-effective-system-membership", "Freshly check this signed principal's effective System membership."),
             ("authentik_system_alarm_recipients", "list-current-system-alarm-recipients", "Resolve the current System alarm recipient set."),
         )
@@ -139,11 +146,13 @@ class CloudflareHomelabImplementation:
             "content": {"type": "string", "minLength": 1, "maxLength": 253},
             "ttl": {"type": "integer", "minimum": 60, "maximum": 86400},
             "proxied": {"type": "boolean"},
-        }, "required": ["hostname", "content", "ttl", "proxied"], "additionalProperties": False}
+            "confirmation_id": {"type": "string", "minLength": 24, "maxLength": 128},
+        }, "required": ["hostname", "content", "ttl", "proxied", "confirmation_id"], "additionalProperties": False}
         tunnel_write_schema = {"type": "object", "properties": {
             "tunnel": {"type": "string", "enum": sorted(_TUNNELS)},
             "hostname": {"type": "string", "enum": sorted(_CLOUDFLARE_HOSTNAMES)},
-        }, "required": ["tunnel", "hostname"], "additionalProperties": False}
+            "confirmation_id": {"type": "string", "minLength": 24, "maxLength": 128},
+        }, "required": ["tunnel", "hostname", "confirmation_id"], "additionalProperties": False}
 
         def read_dns(args: object) -> dict[str, Any]:
             fields = _object(args, frozenset({"hostname"}), frozenset({"hostname"}))
@@ -154,18 +163,18 @@ class CloudflareHomelabImplementation:
                          operation="provider.dispatch", action="read-approved-dns-record",
                          arguments={"hostname": hostname}, intent="Read one approved homelab DNS record")
 
-        def read_tunnel(args: object) -> dict[str, Any]:
+        def read_tunnel(args: object, *, view: str) -> dict[str, Any]:
             fields = _object(args, frozenset({"tunnel"}), frozenset({"tunnel"}))
             tunnel = fields["tunnel"]
             if tunnel not in _TUNNELS:
                 raise ValueError("tunnel is outside the approved homelab set")
             return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin.cloudflare.read",
-                         operation="provider.dispatch", action="read-approved-tunnel-state",
+                         operation="provider.dispatch", action=view,
                          arguments={"tunnel": tunnel}, intent="Read one approved homelab tunnel")
 
         def update_dns(args: object) -> dict[str, Any]:
-            fields = _object(args, frozenset({"hostname", "content", "ttl", "proxied"}),
-                             frozenset({"hostname", "content", "ttl", "proxied"}))
+            fields = _object(args, frozenset({"hostname", "content", "ttl", "proxied", "confirmation_id"}),
+                             frozenset({"hostname", "content", "ttl", "proxied", "confirmation_id"}))
             hostname, content = fields["hostname"], fields["content"]
             if hostname not in _CLOUDFLARE_HOSTNAMES:
                 raise ValueError("hostname is outside the approved homelab set")
@@ -178,24 +187,38 @@ class CloudflareHomelabImplementation:
                     raise ValueError("DNS target must be an IP address or a hostname in the approved domain")
             if type(fields["ttl"]) is not int or not 60 <= fields["ttl"] <= 86400 or type(fields["proxied"]) is not bool:
                 raise ValueError("DNS TTL or proxy flag is invalid")
+            confirmation = fields["confirmation_id"]
+            if not isinstance(confirmation, str) or not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", confirmation):
+                raise ValueError("DNS update requires a host-issued one-shot confirmation reference")
             return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin.cloudflare.write",
                          operation="host.write", action="update-approved-dns-record",
                          arguments={"hostname": hostname, "content": content,
-                                    "ttl": fields["ttl"], "proxied": fields["proxied"]},
+                                    "ttl": fields["ttl"], "proxied": fields["proxied"],
+                                    "confirmation_id": confirmation},
                          intent="Update one approved homelab DNS record")
 
         def update_tunnel(args: object) -> dict[str, Any]:
-            fields = _object(args, frozenset({"tunnel", "hostname"}), frozenset({"tunnel", "hostname"}))
+            fields = _object(args, frozenset({"tunnel", "hostname", "confirmation_id"}),
+                             frozenset({"tunnel", "hostname", "confirmation_id"}))
             if fields["tunnel"] not in _TUNNELS or fields["hostname"] not in _CLOUDFLARE_HOSTNAMES:
                 raise ValueError("tunnel or hostname is outside the approved homelab set")
+            confirmation = fields["confirmation_id"]
+            if not isinstance(confirmation, str) or not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", confirmation):
+                raise ValueError("tunnel update requires a host-issued one-shot confirmation reference")
             return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin.cloudflare.write",
                          operation="host.write", action="update-approved-tunnel-configuration",
-                         arguments={"tunnel": fields["tunnel"], "hostname": fields["hostname"]},
+                         arguments={"tunnel": fields["tunnel"], "hostname": fields["hostname"],
+                                    "confirmation_id": confirmation},
                          intent="Reconcile one approved tunnel to its enrolled hostname")
 
         for name, schema, handler, description in (
             ("cloudflare_homelab_read_dns", read_schema, read_dns, "Read an approved homelab DNS record."),
-            ("cloudflare_homelab_read_tunnel", read_schema, read_tunnel, "Read approved tunnel state."),
+            ("cloudflare_homelab_read_tunnel", read_schema,
+             lambda args: read_tunnel(args, view="read-approved-tunnel-state"), "Read approved tunnel state."),
+            ("cloudflare_homelab_read_tunnel_connectors", read_schema,
+             lambda args: read_tunnel(args, view="read-approved-tunnel-connectors"), "Read connectors for an approved tunnel."),
+            ("cloudflare_homelab_read_tunnel_configuration", read_schema,
+             lambda args: read_tunnel(args, view="read-approved-tunnel-configuration"), "Read configuration for an approved tunnel."),
             ("cloudflare_homelab_update_dns", dns_write_schema, update_dns, "Update one journal-owned approved DNS record; fresh System membership is checked by root."),
             ("cloudflare_homelab_update_tunnel", tunnel_write_schema, update_tunnel, "Reconcile an approved tunnel using protected root configuration; fresh System membership is checked by root."),
         ):

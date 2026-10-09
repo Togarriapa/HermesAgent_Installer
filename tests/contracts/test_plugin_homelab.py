@@ -63,7 +63,8 @@ class HomelabPluginTests(unittest.TestCase):
         AUTHENTIK_AUTHORIZATION_IMPLEMENTATION.register(plugin, runtime)
         self.assertEqual(set(plugin.tools), {
             "authentik_current_principal", "authentik_verify_system_membership",
-            "authentik_system_alarm_recipients",
+            "authentik_system_alarm_recipients", "authentik_active_user_identity",
+            "authentik_effective_groups",
         })
         for _, schema, _, _ in plugin.tools.values():
             self.assertEqual(schema["properties"], {})
@@ -86,7 +87,8 @@ class HomelabPluginTests(unittest.TestCase):
         self.assertEqual(json.loads(read_call["payload"])["arguments"], {"hostname": "ha.togarriapahome.uk"})
 
         update = plugin.tools["cloudflare_homelab_update_dns"][2]
-        update({"hostname": "ha.togarriapahome.uk", "content": "192.0.2.8", "ttl": 300, "proxied": False})
+        update({"hostname": "ha.togarriapahome.uk", "content": "192.0.2.8", "ttl": 300,
+                "proxied": False, "confirmation_id": "root-issued-confirmation-reference-1234"})
         write_call = [row for row in runtime.authority.calls if row[0] == "perform"][-1][1]
         self.assertEqual(write_call["operation"], "host.write")
         payload = json.loads(write_call["payload"])
@@ -108,6 +110,7 @@ class HomelabPluginTests(unittest.TestCase):
             plugin.tools["cloudflare_homelab_update_dns"][2]({
                 "hostname": "ha.togarriapahome.uk", "content": "attacker.example",
                 "ttl": 300, "proxied": False,
+                "confirmation_id": "root-issued-confirmation-reference-1234",
             })
         with self.assertRaises(ValueError):
             plugin.tools["cloudflare_homelab_read_dns"][2]({
@@ -146,6 +149,16 @@ class HomelabPluginTests(unittest.TestCase):
                 "host": "hermes", "action": "restart-approved-service",
             })
         self.assertFalse(any(name == "perform" for name, _ in authority.calls))
+
+    def test_cloudflare_write_requires_host_issued_confirmation_reference(self):
+        runtime, plugin = _runtime("cloudflare-homelab"), _PluginContext()
+        CLOUDFLARE_HOMELAB_IMPLEMENTATION.register(plugin, runtime)
+        with self.assertRaisesRegex(ValueError, "confirmation"):
+            plugin.tools["cloudflare_homelab_update_dns"][2]({
+                "hostname": "ha.togarriapahome.uk", "content": "192.0.2.8",
+                "ttl": 300, "proxied": False,
+            })
+        self.assertEqual(runtime.authority.calls, [])
 
     def test_plugin_identity_and_version_are_checked_before_tool_registration(self):
         for implementation, plugin_id in (
