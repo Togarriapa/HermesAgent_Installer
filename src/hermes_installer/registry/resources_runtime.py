@@ -160,8 +160,10 @@ class BrokeredEffectResponse(Protocol):
 
 
 class AuthorityClient(Protocol):
-    def context(self, *, purpose: str, intent: str,
+    def context(self, *, purpose: str, intent: str, operation: str,
                 source_contexts: Sequence[HostContext] = (),
+                source_receipt_handles: Sequence[str] = (),
+                final_payload_digest: str,
                 trace_id: str | None = None, lease_seconds: float = 30.0,
                 cancelled: Callable[[], bool] | None = None) -> HostContext: ...
 
@@ -1023,7 +1025,8 @@ def invoke_fixed_resource_effect(
     if not source_contexts:
         raise ResourceRuntimeError("trusted Hermes invocation lineage is unavailable")
     issued = context.authority.context(
-        purpose=purpose, intent=intent, source_contexts=source_contexts,
+        purpose=purpose, intent=intent, operation=effect.operation,
+        source_contexts=source_contexts, final_payload_digest=digest,
         trace_id=None, lease_seconds=30.0, cancelled=cancelled,
     )
     grant = context.authority.authorize_effect(
