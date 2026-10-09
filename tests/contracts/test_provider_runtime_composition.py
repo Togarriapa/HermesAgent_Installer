@@ -66,7 +66,7 @@ def _policy_record() -> dict[str, object]:
     return record
 
 
-def _protected_enrollment(provider_record, bridge):
+def _protected_enrollment(provider_record, bridge, service):
     values = {}
     for item in fields(ProtectedEnrollment):
         if item.default is not MISSING:
@@ -77,7 +77,8 @@ def _protected_enrollment(provider_record, bridge):
             values[item.name] = {}
     values.update(
         key_id="fixture-key",
-        bindings_by_uid={}, rules={}, policy=_Policy(), process_profiles={},
+        bindings_by_uid=service.bindings_by_uid, rules=service.rules,
+        policy=_Policy(), process_profiles={},
         provider_enrollments={"provider-account-1": provider_record},
         mcp_services={}, mcp_http_bindings={}, delegations={}, memory_providers={},
         native_bridges={bridge.bridge_id: bridge}, artifact_catalog={}, package_catalog={},
@@ -86,6 +87,15 @@ def _protected_enrollment(provider_record, bridge):
         protected_enrollment_digest="e" * 64,
     )
     return ProtectedEnrollment(**values)
+
+
+def _runtime_bindings(bridges, observers):
+    return RootRuntimeBindings(
+        enrollment_catalog=SimpleNamespace(digest="e" * 64), build_catalog=None,
+        device_catalog=None, process_manager=None, effect_handlers={},
+        native_bridges=bridges, artifact_catalog=None, build_store=None,
+        service_connector=None, source_observer_enrollments=observers,
+    )
 
 
 def _fixture(*, observer=True, handler=True, inference_rule=True, admission=None):
@@ -163,8 +173,9 @@ def _fixture(*, observer=True, handler=True, inference_rule=True, admission=None
         )},
         normalization_policies={(target, recipient): policy}, admission=admission, vault=vault,
     ) if handler else {}
-    enrollment = _protected_enrollment(route, bridge)
-    bindings = SimpleNamespace(native_bridges=bridge_map)
+    service.handlers.update(provider_handlers)
+    enrollment = _protected_enrollment(route, bridge, service)
+    bindings = _runtime_bindings(bridge_map, observer_map)
     return service, enrollment, bindings, bridge_map, observer_map, provider_handlers, vault
 
 
@@ -173,7 +184,7 @@ class ProviderRuntimeCompositionTests(unittest.TestCase):
         service, enrollment, bindings, bridges, observers, handlers, vault = _fixture()
         selected = build_provider_runtime_selection(
             service=service, enrollment=enrollment, bindings=bindings,
-            bridges=bridges, provider_handlers=handlers, vault=vault,
+            bridges=bridges, provider_handlers=service.handlers, vault=vault,
             source_observer_enrollments=observers,
         )
         bridge = next(iter(bridges.values()))
@@ -192,13 +203,13 @@ class ProviderRuntimeCompositionTests(unittest.TestCase):
         ), ())
 
     def test_constructs_and_attaches_native_response_registry_to_selected_broker(self):
-        service, enrollment, _bindings, bridges, observers, handlers, vault = _fixture()
+        service, enrollment, bindings, bridges, observers, handlers, vault = _fixture()
         bridge = next(iter(bridges.values()))
         from hermes_installer.authority.provider_runtime_composition import build_provider_runtime_selection
         selected = build_provider_runtime_selection(
             service=service, enrollment=enrollment,
-            bindings=SimpleNamespace(native_bridges=bridges), bridges=bridges,
-            provider_handlers=handlers, vault=vault, source_observer_enrollments=observers,
+            bindings=bindings, bridges=bridges,
+            provider_handlers=service.handlers, vault=vault, source_observer_enrollments=observers,
         )
 
         class _ProcessManager:
@@ -226,6 +237,7 @@ class ProviderRuntimeCompositionTests(unittest.TestCase):
             enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
             process_manager=manager, effect_handlers={}, native_bridges=bridges,
             artifact_catalog=None, build_store=None, service_connector=None,
+            source_observer_enrollments=observers,
         )
         from hermes_installer.authority.runtime_composition import _ProtectedNativeActionResolver
         from hermes_installer.mcp.native_schema_catalog import (
@@ -269,7 +281,7 @@ class ProviderRuntimeCompositionTests(unittest.TestCase):
                 with self.assertRaises(ProviderRuntimeUnavailable):
                     build_provider_runtime_selection(
                         service=service, enrollment=enrollment, bindings=bindings,
-                        bridges=bridges, provider_handlers=handlers, vault=vault,
+                        bridges=bridges, provider_handlers=service.handlers, vault=vault,
                         source_observer_enrollments=observers,
                     )
 
@@ -278,7 +290,7 @@ class ProviderRuntimeCompositionTests(unittest.TestCase):
         with self.assertRaises(ProviderRuntimeUnavailable):
             build_provider_runtime_selection(
                 service=service, enrollment=enrollment, bindings=bindings,
-                bridges=bridges, provider_handlers=handlers, vault=vault,
+                bridges=bridges, provider_handlers=service.handlers, vault=vault,
                 source_observer_enrollments=observers,
             )
 
@@ -289,7 +301,7 @@ class ProviderRuntimeCompositionTests(unittest.TestCase):
         with self.assertRaises(ProviderRuntimeUnavailable):
             build_provider_runtime_selection(
                 service=service, enrollment=enrollment, bindings=bindings,
-                bridges=bridges, provider_handlers=handlers, vault=vault,
+                bridges=bridges, provider_handlers=service.handlers, vault=vault,
                 source_observer_enrollments=observers,
             )
 

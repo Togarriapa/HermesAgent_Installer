@@ -14,6 +14,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from .service import AuthorityService
+from .runtime_bindings import RootRuntimeBindings
 
 
 class ProviderRuntimeUnavailable(PermissionError):
@@ -57,13 +58,18 @@ def build_provider_runtime_selection(*, service: AuthorityService,
     from hermes_installer.provider_response_observer import parse_successful_provider_tool_calls
 
     if (not isinstance(service, AuthorityService) or not isinstance(enrollment, ProtectedEnrollment)
+            or not isinstance(bindings, RootRuntimeBindings)
             or not isinstance(bridges, Mapping) or not bridges
-            or not isinstance(provider_handlers, Mapping)
+            or provider_handlers is not service.handlers
             or vault is None or not isinstance(source_observer_enrollments, Mapping)):
         raise ProviderRuntimeUnavailable("protected provider runtime dependencies are unavailable")
     if (service.service_generation_digest != enrollment.protected_enrollment_digest
+            or service.bindings_by_uid != dict(enrollment.bindings_by_uid)
+            or service.rules != dict(enrollment.rules)
             or not isinstance(bindings.native_bridges, Mapping)
-            or dict(bridges) != dict(bindings.native_bridges)):
+            or dict(bridges) != dict(bindings.native_bridges)
+            or dict(bridges) != dict(enrollment.native_bridges)
+            or dict(source_observer_enrollments) != dict(bindings.source_observer_enrollments)):
         raise ProviderRuntimeUnavailable("provider bridge snapshot differs from active protected generation")
     module_path = inspect.getsourcefile(canonical_provider_request)
     if not module_path:
