@@ -19,6 +19,7 @@ from hermes_installer.hermes_source import (
     HERMES_SOURCE_TREE_MANIFEST_SHA256,
     HERMES_SOURCE_TREE_SHA1,
     _git_tree_sha1,
+    _git_blob_sha1,
     _load_normalization_manifest,
     materialize_pinned_hermes_source,
     register_pinned_hermes_source_receipt,
@@ -68,6 +69,27 @@ class HermesSourceImportTests(unittest.TestCase):
             script.chmod(0o755)
             self.assertEqual(_git_tree_sha1(root, {}), "73c9649eac820b650904a7b7f8d6a3a706e9475c")
             self.assertNotEqual(_git_tree_sha1(root, {}), HERMES_SOURCE_TREE_SHA1)
+
+    def test_only_a_pinned_crlf_file_is_normalized_for_git_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = b"line\r\n"
+            normalized = b"line\n"
+            path = root / "a.ps1"
+            path.write_bytes(raw)
+            row = {
+                "archive_git_blob_sha1": _git_blob_sha1(raw),
+                "archive_sha256": hashlib.sha256(raw).hexdigest(),
+                "archive_size_bytes": len(raw),
+                "normalized_git_blob_sha1": _git_blob_sha1(normalized),
+                "normalized_size_bytes": len(normalized),
+                "path": "a.ps1", "source_git_blob_sha1": _git_blob_sha1(normalized),
+                "source_size_bytes": len(normalized),
+            }
+            tree = _git_tree_sha1(root, {"a.ps1": row})
+            self.assertEqual(tree, "feb019423a130722da842e8e01b46056cd41623a")
+            with self.assertRaises(AuthorityDenied):
+                _git_tree_sha1(root, {"other.ps1": row})
 
     def test_registry_receives_only_verified_pinned_store_identity(self):
         source = VerifiedHermesSource(HERMES_SOURCE_ARTIFACT_ID, HERMES_SOURCE_SHA256,
