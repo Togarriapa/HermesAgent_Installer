@@ -42,3 +42,7 @@ Read plans/amendments/2026-10-09-coral-sample-v1.md and planning/coral-sample-ar
 ## Isolated Coral compatibility runtime
 
 Follow plans/amendments/2026-10-09-coral-component-runtime-v1.md and planning/coral-component-runtime-metadata.json for component-owned CPython3.9.25 and direct TFLite2.14.0 aarch64 delegate worker. Record Python3.9 EOL explicitly; require complete transitive hash lock, nativeglibc>=2.34, no-network kernel confinement and actual delegated inference before activation. This selects no PyCoral dependency and never changes host/Hermes Python.
+
+## Protected artifact catalog refinement
+
+Use planning/colibri-source-artifact-metadata.json for verified official pinned archive and documented line-ending normalization. Source lacks optional c/glm_tiny assets; no fabricated self-test success. Actual ARM64 build/full GLM acceptance remains pending.
