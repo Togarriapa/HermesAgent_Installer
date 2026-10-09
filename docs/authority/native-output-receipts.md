@@ -52,6 +52,18 @@ candidate index must match its closure member, entrypoint manifest, resolver,
 and overlay manifest must match their closure members, and every overlay row
 must match a selected closure file.
 
+The active-policy compiler can reserve the complete five-role output set with
+`reserve_for_active_compilation(...)`. Reservation holds the receipts without
+consuming them; `verify_active_compilation(...)` revalidates the current setup,
+CAS bytes, selected generation, and cross-role closure without consumption.
+The publisher must call `release_active_compilation(...)` on rollback. Only
+after it has a typed active `RootSetupPublicationReceipt` bound to the same
+publication handle, claim digest, prepared generation, and exact reserved
+output handles may it call `complete_active_compilation(...)`, which consumes
+the reservation atomically. The sealed root binding also revalidates that
+receipt against the durable active descriptor/current selection. Arbitrary
+caller-created receipt-shaped objects cannot complete a reservation.
+
 ## Evidence and limits
 
 The contract tests validate the fixed source archive, full inventory, member

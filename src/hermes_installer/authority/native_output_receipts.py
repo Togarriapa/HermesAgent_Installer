@@ -49,6 +49,7 @@ _MAX_OUTPUT_BYTES = {
 _RESOURCES_ARTIFACT_ID = "resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83"
 _RESOURCES_ARCHIVE_SHA256 = "b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1"
 _RESOURCES_ARCHIVE_SIZE = 295_368
+_GENERATED_ROLES = frozenset(_ROLE_KINDS) - {"resources-source-bundle"}
 _ROOT_FACTORY_SEAL = object()
 
 
@@ -130,6 +131,17 @@ class RuntimeArtifactReceipt:
     output_kind: str
     issued_monotonic: float
     expires_monotonic: float
+
+
+@dataclass(frozen=True, slots=True)
+class NativeOutputReservation:
+    """Non-publication state held while the active policy CAS is prepared."""
+
+    reservation_handle: str
+    publication_handle: str
+    claim_digest: str
+    prepared_generation_id: str
+    receipt_ids: tuple[str, ...]
 
 
 class RootMaterializationReceiptRegistry:
@@ -288,6 +300,224 @@ class RootMaterializationReceiptRegistry:
             raise NativeOutputReceiptDenied("native output receipt was consumed concurrently")
         return _receipt_from_record(record)
 
+    def reserve_for_active_compilation(
+        self, receipt_ids: Sequence[str], *, prepared_generation_id: str,
+        publication_handle: str, claim_digest: str,
+    ) -> NativeOutputReservation:
+        """Reserve every generated receipt for one active-policy publication.
+
+        This is deliberately non-consuming: the compiler may revalidate while
+        atomically publishing policy, and must call ``release`` on rollback or
+        ``complete`` after it has a typed root publication receipt.
+        """
+        self._require_root()
+        role_ids = _normalize_reservation_ids(receipt_ids)
+        if (not _valid_identifier(prepared_generation_id)
+                or not _valid_handle(publication_handle)
+                or not isinstance(claim_digest, str) or not _HEX.fullmatch(claim_digest)):
+            raise NativeOutputReceiptDenied("active compilation reservation identity is malformed")
+        records = [self._get_record(receipt_id) for receipt_id in role_ids]
+        if {record["artifact_role"] for record in records} != _GENERATED_ROLES:
+            raise NativeOutputReceiptDenied("active compilation requires the complete fixed native output role set")
+        first = records[0]
+        for record in records:
+            if (record["state"] != "issued"
+                    or record["prepared_generation_id"] != prepared_generation_id
+                    or record["transaction_handle"] != first["transaction_handle"]
+                    or record["setup_session_id"] != first["setup_session_id"]
+                    or record["plan_digest"] != first["plan_digest"]
+                    or record["compiled_closure_sha256"] != first["compiled_closure_sha256"]
+                    or record["expires_monotonic"] <= self._monotonic()):
+                raise NativeOutputReceiptDenied("active compilation receipts are stale or span selections")
+            self._verify_record_current(record)
+        selection = self._selection_for_record(first)
+        for record in records:
+            if record["artifact_role"] != "resources-source-bundle":
+                payload = self._read_record_payload(record)
+                self._assert_output_relations(selection, record["artifact_role"], payload)
+        reservation = NativeOutputReservation(
+            secrets.token_urlsafe(36), publication_handle, claim_digest,
+            prepared_generation_id, role_ids)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                for receipt_id in role_ids:
+                    changed = db.execute(
+                        "UPDATE outputs SET state='reserved' WHERE receipt_id=? AND state='issued' AND expires_monotonic>?",
+                        (receipt_id, self._monotonic()),
+                    ).rowcount
+                    if changed != 1:
+                        raise NativeOutputReceiptDenied("native output changed during active compilation reservation")
+                db.execute(
+                    "INSERT INTO reservations VALUES(?,?,?,?,?,?,?)",
+                    (reservation.reservation_handle, publication_handle, claim_digest,
+                     prepared_generation_id, json.dumps(role_ids), first["transaction_handle"],
+                     min(record["expires_monotonic"] for record in records)),
+                )
+            except Exception:
+                db.rollback()
+                raise
+            else:
+                db.commit()
+        return reservation
+
+    def verify_active_compilation(
+        self, reservation_handle: str, *, prepared_generation_id: str,
+        publication_handle: str, claim_digest: str,
+    ) -> tuple[RuntimeArtifactReceipt, ...]:
+        """Revalidate a reservation without consuming its output receipts."""
+        reservation = self._get_reservation(
+            reservation_handle, prepared_generation_id=prepared_generation_id,
+            publication_handle=publication_handle, claim_digest=claim_digest,
+        )
+        records = [self._get_record(receipt_id) for receipt_id in reservation.receipt_ids]
+        for record in records:
+            if record["state"] != "reserved":
+                raise NativeOutputReceiptDenied("active compilation output reservation is no longer held")
+            self._verify_record_current(record)
+        if {record["artifact_role"] for record in records} != _GENERATED_ROLES:
+            raise NativeOutputReceiptDenied("active compilation reservation lost a fixed output role")
+        selection = self._selection_for_record(records[0])
+        for record in records:
+            payload = self._read_record_payload(record)
+            self._assert_output_relations(selection, record["artifact_role"], payload,
+                                          resolving=True)
+        return tuple(_receipt_from_record(record) for record in records)
+
+    def complete_active_compilation(
+        self, reservation_handle: str, publication_receipt: Any, *,
+        prepared_generation_id: str, publication_handle: str,
+        claim_digest: str,
+    ) -> tuple[RuntimeArtifactReceipt, ...]:
+        """Consume the reserved output closure after root policy publication.
+
+        The publication object remains opaque here. The sealed setup binding
+        must verify its concrete type and bind it to this reservation before
+        any receipt is spent.
+        """
+        reservation = self._get_reservation(
+            reservation_handle, prepared_generation_id=prepared_generation_id,
+            publication_handle=publication_handle, claim_digest=claim_digest,
+        )
+        verifier = getattr(self._binding, "verify_native_publication_receipt", None)
+        if not callable(verifier):
+            raise NativeOutputReceiptDenied("root binding cannot verify active publication receipts")
+        receipt_handles = getattr(publication_receipt, "materialization_receipt_handles", None)
+        if (getattr(publication_receipt, "publication_handle", None) != publication_handle
+                or getattr(publication_receipt, "claim_digest", None) != claim_digest
+                or getattr(publication_receipt, "prepared_generation_id", None) != prepared_generation_id
+                or getattr(publication_receipt, "state", None) not in {"active-committed", "active", "committed"}
+                or not isinstance(receipt_handles, tuple)
+                or not set(reservation.receipt_ids).issubset(receipt_handles)):
+            raise NativeOutputReceiptDenied("typed active publication receipt does not bind reserved native outputs")
+        try:
+            verified = verifier(reservation, publication_receipt)
+        except Exception:
+            verified = False
+        if verified is not True:
+            raise NativeOutputReceiptDenied("active policy publication receipt does not bind this reservation")
+        receipts = self.verify_active_compilation(
+            reservation_handle, prepared_generation_id=prepared_generation_id,
+            publication_handle=publication_handle, claim_digest=claim_digest)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                for receipt in receipts:
+                    changed = db.execute(
+                        "UPDATE outputs SET state='consumed' WHERE receipt_id=? AND state='reserved' AND expires_monotonic>?",
+                        (receipt.receipt_id, self._monotonic()),
+                    ).rowcount
+                    if changed != 1:
+                        raise NativeOutputReceiptDenied("active compilation receipt changed before commit")
+                changed = db.execute(
+                    "UPDATE reservations SET state='completed' WHERE reservation_handle=? AND state='reserved'",
+                    (reservation_handle,),
+                ).rowcount
+                if changed != 1:
+                    raise NativeOutputReceiptDenied("active compilation reservation was already completed")
+            except Exception:
+                db.rollback()
+                raise
+            else:
+                db.commit()
+        return receipts
+
+    def release_active_compilation(
+        self, reservation_handle: str, *, prepared_generation_id: str,
+        publication_handle: str, claim_digest: str,
+    ) -> None:
+        """Release an uncommitted reservation for compiler rollback/retry."""
+        reservation = self._get_reservation(
+            reservation_handle, prepared_generation_id=prepared_generation_id,
+            publication_handle=publication_handle, claim_digest=claim_digest,
+        )
+        with self._connect() as db:
+            state = db.execute("SELECT state FROM reservations WHERE reservation_handle=?",
+                               (reservation_handle,)).fetchone()["state"]
+        if state == "released":
+            return
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                for receipt_id in reservation.receipt_ids:
+                    db.execute("UPDATE outputs SET state='issued' WHERE receipt_id=? AND state='reserved'",
+                               (receipt_id,))
+                changed = db.execute(
+                    "UPDATE reservations SET state='released' WHERE reservation_handle=? AND state='reserved'",
+                    (reservation_handle,),
+                ).rowcount
+                if changed != 1:
+                    raise NativeOutputReceiptDenied("active compilation reservation is no longer held")
+            except Exception:
+                db.rollback()
+                raise
+            else:
+                db.commit()
+
+    def _verify_record_current(self, record: Mapping[str, Any]) -> None:
+        selection = self._selection_for_record(record)
+        self._require_current(selection)
+        self._verify_cas(record["sha256"], record["size_bytes"])
+        payload = self._read_record_payload(record)
+        members = _stored_member_manifest(record["artifact_role"], payload)
+        _verify_payload(record["artifact_role"], record["output_kind"], payload, members)
+        if _member_manifest_digest(members) != record["member_tree_sha256"]:
+            raise NativeOutputReceiptDenied("native CAS member tree digest changed")
+        _validate_role_selection_payload(selection, record["artifact_role"], payload)
+
+    def _selection_for_record(self, record: Mapping[str, Any]) -> NativeOutputSelection:
+        selection = self._binding.authorize_native_output(
+            artifact_role=record["artifact_role"], output_kind=record["output_kind"],
+            member_tree_sha256=record["member_tree_sha256"],
+            output_sha256=record["sha256"], output_size_bytes=record["size_bytes"],
+        )
+        self._validate_selection(selection, record["artifact_role"], record["output_kind"],
+                                 record["member_tree_sha256"], record["sha256"],
+                                 record["size_bytes"])
+        return selection
+
+    def _read_record_payload(self, record: Mapping[str, Any]) -> bytes:
+        path = self._cas_root / record["sha256"][:2] / record["sha256"]
+        return _read_private_file(path, _MAX_OUTPUT_BYTES[record["artifact_role"]])
+
+    def _get_reservation(self, handle: str, *, prepared_generation_id: str,
+                         publication_handle: str, claim_digest: str) -> NativeOutputReservation:
+        self._require_root()
+        if not _valid_handle(handle):
+            raise NativeOutputReceiptDenied("active compilation reservation handle is malformed")
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM reservations WHERE reservation_handle=?", (handle,)).fetchone()
+        if row is None or row["state"] not in {"reserved", "released"}:
+            raise NativeOutputReceiptDenied("active compilation reservation is stale or spent")
+        if row["expires_monotonic"] <= self._monotonic():
+            raise NativeOutputReceiptDenied("active compilation reservation is expired")
+        if (row["prepared_generation_id"] != prepared_generation_id
+                or row["publication_handle"] != publication_handle
+                or row["claim_digest"] != claim_digest):
+            raise NativeOutputReceiptDenied("active compilation reservation belongs to another claim")
+        return NativeOutputReservation(handle, publication_handle, claim_digest,
+                                       prepared_generation_id, tuple(json.loads(row["receipt_ids"])))
+
     def _validate_selection(self, selection: NativeOutputSelection,
                             role: str, kind: str, member_digest: str,
                             output_digest: str, output_size: int) -> None:
@@ -366,8 +596,18 @@ class RootMaterializationReceiptRegistry:
                     issued_monotonic REAL NOT NULL, expires_monotonic REAL NOT NULL,
                     state TEXT NOT NULL,
                     UNIQUE(transaction_handle, artifact_role));
+                CREATE TABLE IF NOT EXISTS reservations(
+                    reservation_handle TEXT PRIMARY KEY,
+                    publication_handle TEXT NOT NULL,
+                    claim_digest TEXT NOT NULL,
+                    prepared_generation_id TEXT NOT NULL,
+                    receipt_ids TEXT NOT NULL,
+                    transaction_handle TEXT NOT NULL,
+                    expires_monotonic REAL NOT NULL,
+                    state TEXT NOT NULL);
             """)
             columns = tuple(row["name"] for row in db.execute("PRAGMA table_info(outputs)"))
+            reservation_columns = tuple(row["name"] for row in db.execute("PRAGMA table_info(reservations)"))
         expected_columns = (
             "receipt_id", "artifact_id", "artifact_role", "sha256", "size_bytes",
             "store_id", "setup_session_id", "transaction_handle", "plan_digest",
@@ -378,6 +618,10 @@ class RootMaterializationReceiptRegistry:
         )
         if columns != expected_columns:
             raise NativeOutputReceiptDenied("native output journal schema is not the reviewed version")
+        if reservation_columns != ("reservation_handle", "publication_handle", "claim_digest",
+                                   "prepared_generation_id", "receipt_ids", "transaction_handle",
+                                   "expires_monotonic", "state"):
+            raise NativeOutputReceiptDenied("native output reservation journal schema is not the reviewed version")
         self._database.chmod(0o600)
 
     def _connect(self):
@@ -506,7 +750,7 @@ class RootMaterializationReceiptRegistry:
         for other_role, record in records.items():
             if other_role == role:
                 continue
-            states = {"issued", "consumed"} if resolving else {"issued"}
+            states = {"issued", "reserved", "consumed"} if resolving else {"issued", "reserved"}
             same_selection = (
                 record["setup_session_id"] == selection.setup_session_id
                 and record["transaction_handle"] == selection.transaction_handle
@@ -903,6 +1147,17 @@ def _valid_identifier(value: str) -> bool:
 
 def _valid_handle(value: str) -> bool:
     return isinstance(value, str) and bool(_HANDLE.fullmatch(value))
+
+
+def _normalize_reservation_ids(receipt_ids: Sequence[str]) -> tuple[str, ...]:
+    if not isinstance(receipt_ids, Sequence) or isinstance(receipt_ids, (str, bytes)):
+        raise NativeOutputReceiptDenied("active compilation receipt handles must be a sequence")
+    normalized = tuple(receipt_ids)
+    if (len(normalized) != len(_GENERATED_ROLES)
+            or len(set(normalized)) != len(normalized)
+            or any(not _valid_handle(value) for value in normalized)):
+        raise NativeOutputReceiptDenied("active compilation receipt handle set is malformed")
+    return normalized
 
 
 def _expected_artifact_id(role: str, package_id: str, generation: str) -> str:

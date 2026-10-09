@@ -19,6 +19,7 @@ from hermes_installer.authority.native_output_receipts import (
     _read_archive_member,
     _archive_manifest,
     _member_manifest_digest,
+    _normalize_reservation_ids,
     _normalize_members,
     _verify_payload,
     _verify_resources_source,
@@ -159,6 +160,15 @@ def test_native_json_must_be_canonical_and_reject_duplicate_keys() -> None:
         _parse_canonical_json(b'{ "schema":1}')
     with pytest.raises(NativeOutputReceiptDenied, match="malformed"):
         _parse_canonical_json(b'{"schema":1,"schema":2}')
+
+
+def test_active_compilation_reservation_requires_exact_five_opaque_handles() -> None:
+    handles = tuple(chr(65 + index) * 48 for index in range(5))
+    assert _normalize_reservation_ids(handles) == handles
+    with pytest.raises(NativeOutputReceiptDenied, match="handle set"):
+        _normalize_reservation_ids(handles[:-1])
+    with pytest.raises(NativeOutputReceiptDenied, match="handle set"):
+        _normalize_reservation_ids((*handles[:-1], handles[0]))
 
 
 def test_non_root_cannot_construct_or_publish_native_output_receipts(tmp_path: Path) -> None:
