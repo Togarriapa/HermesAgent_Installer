@@ -223,3 +223,10 @@ The installer SHALL resolve each effect from its exact selected active node, sco
 #### Scenario: Mismatched backend or setup identity
 - **WHEN** a node selects a different backend, an event/result lacks root-observed closure, or runtime tunnel identity requests setup writer/probe authority
 - **THEN** root rejects before effects and preserves pending original acceptance; no caller booleans or consumed grants substitute for proof
+
+### Requirement: Separate private setup probe authority
+The installer SHALL authorize private origin probes through a separate root-owned setup binding and exact fresh connector effects, without fabricating public Access sessions or worker profile contexts.
+
+#### Scenario: Setup probe submitted to public issuer
+- **WHEN** a private probe handle or synthetic Access context reaches the public remote connector issuer
+- **THEN** it is rejected, and only the separate root-private exact probe issuer may admit selected local app readiness operations
