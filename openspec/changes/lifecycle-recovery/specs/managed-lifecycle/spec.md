@@ -299,3 +299,17 @@ The compiler SHALL resolve selected authenticated principal receipt through the 
 #### Scenario: No active worker exists during first setup
 - **WHEN** actual selected authenticated identity and dedicated NSS allocation are verified in the root setup transaction
 - **THEN** the compiler binds the exact principal fields without requiring a previous active worker profile or fabricating a principal from operator UID
+
+### Requirement: Installed closure and native construction joins
+The implementation SHALL use the applicable exact root release and native assembly joins in the v33 amendment before activating selected runtime behavior.
+
+#### Scenario: First input precedes provider pending pair
+- **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
+- **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors
+
+### Requirement: Complete frozen baseline receipt digest
+The deployment verifier SHALL distinguish the complete frozen-tree SHA256 map from the original160 snapshot file manifest.
+
+#### Scenario: Frozen metadata is present
+- **WHEN** computing baseline_tree_sha256
+- **THEN** every regular frozen file including hashes.json is included, while original160 snapshot entries are checked separately against their bytes
