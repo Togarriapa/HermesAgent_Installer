@@ -309,7 +309,11 @@ def validate_step_outcome(*, route_id: str, step_id: str, status: int,
         memory = value.get("memory")
         if value.get("success") is not True or not isinstance(memory, dict):
             raise MemoryRecipeUnavailable("AgentMemory remember response failed source schema")
-        memory_id = _opaque(memory.get("id"), "AgentMemory created memory ID")
+        try:
+            memory_id = _opaque(memory.get("id"), "AgentMemory created memory ID")
+        except MemoryRecipeDenied:
+            raise MemoryRecipeUnavailable(
+                "AgentMemory remember response contains an invalid owned ID") from None
         title = memory.get("title")
         if title is not None and (not isinstance(title, str) or len(title.encode("utf-8")) > 8192):
             raise MemoryRecipeUnavailable("AgentMemory created memory title is invalid")
