@@ -104,6 +104,21 @@ class PrincipalIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class AuthentikPrincipalSnapshot:
+    """Fresh root-observed Authentik subject and complete group hierarchy."""
+
+    principal_id: str
+    username: str
+    email: str
+    subject_id: str
+    direct_group_ids: frozenset[str]
+    effective_group_ids: frozenset[str]
+    system_member: bool
+    policy_revision: str
+    checked_at_monotonic: float
+
+
+@dataclass(frozen=True, slots=True)
 class AuthentikEnrollment:
     """Protected configuration; values are immutable target/group identifiers."""
 
@@ -204,6 +219,19 @@ class AuthentikSystemPolicy(AuthorityPolicy):
             self._deadline.value = None
 
     def _authorize_actor(self, context: HostContext) -> frozenset[str]:
+        snapshot = self.principal_snapshot(context, require_system_membership=True)
+        return snapshot.effective_group_ids
+
+    def principal_snapshot(self, context: HostContext, *,
+                           require_system_membership: bool = False) -> AuthentikPrincipalSnapshot:
+        """Return a fresh, root-only identity/hierarchy observation.
+
+        This public adapter surface lets fixed read-only host handlers reuse
+        the same bounded user and complete direct/indirect group verification
+        as write policy. It never accepts caller identity or group labels.
+        """
+        if not isinstance(context, HostContext):
+            raise AuthorityDenied("authentik.principal", "host-issued principal context is required")
         expected = self.enrollment.principal_identities.get(context.principal_id)
         token = self.actor_token(context.principal_id)
         if expected is None or not token:
@@ -213,10 +241,23 @@ class AuthentikSystemPolicy(AuthorityPolicy):
                 or actor["email"].casefold() != expected.email.casefold()
                 or expected.subject_id is not None and actor["subject"] != expected.subject_id):
             raise AuthorityDenied("authentik.mismatch", "fresh Authentik subject does not match the enrolled principal")
-        groups = self._complete_groups(token, actor["groups"])
-        if self.enrollment.system_group_id not in groups:
+        direct = frozenset(actor["groups"])
+        groups = self._complete_groups(token, direct)
+        system_member = self.enrollment.system_group_id in groups
+        if require_system_membership and not system_member:
             raise AuthorityDenied("authentik.system-membership", "principal is not currently in the required System hierarchy")
-        return groups
+        return AuthentikPrincipalSnapshot(
+            principal_id=context.principal_id, username=actor["username"],
+            email=actor["email"], subject_id=str(actor["subject"]),
+            direct_group_ids=direct, effective_group_ids=groups,
+            system_member=system_member, policy_revision=self.revision,
+            checked_at_monotonic=self._clock(),
+        )
+
+    def authorize_delivery_recipient(self, recipient_id: str) -> str:
+        """Freshly validate one root-enrolled active System recipient and return its email."""
+        self._authorize_recipient(recipient_id)
+        return self.enrollment.recipient_email_by_id[recipient_id]
 
     def _authorize_recipient(self, recipient_id: str | None) -> None:
         if not recipient_id or recipient_id not in self.enrollment.recipient_email_by_id:

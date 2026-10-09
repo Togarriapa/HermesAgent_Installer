@@ -153,7 +153,7 @@ def write_authority_config(document: Mapping[str, Any], *, expected_uid: int = 0
     _reject_secret_material(root)
     required = {"schema", "key_id", "principals", "rules", "authentik", "process_profiles",
                 "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers",
-                "native_bridges", "delegations"}
+                "native_bridges", "normalization_policies", "delegations"}
     root = _exact(root, required, "authority")
     if root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "authority configuration schema version is unsupported")
@@ -332,6 +332,12 @@ class NativeBridgeEnrollment:
     gateway_principal_id: str
     canonicalizer_artifact_id: str
     canonicalizer_sha256: str
+    normalization_policy_id: str
+    normalization_policy_sha256: str
+    normalization_policy_revision: int
+    route_schema_id: str
+    output_limit_mode: str
+    output_limit_ceiling: int | None
     approved_operation: str
     provider_enrollment_id: str
     target: str
@@ -368,7 +374,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                            object_pairs_hook=_unique_pairs)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         raise AuthorityDenied("enrollment.schema", "protected authority configuration is malformed") from None
-    root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges", "delegations"}, "authority")
+    root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges", "normalization_policies", "delegations"}, "authority")
     _reject_secret_material(root)
     if type(root["schema"]) is not int or root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "protected authority schema version is unsupported")
@@ -603,12 +609,21 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
     for raw in raw_bridges:
         item = _exact(raw, {"id", "producer_profile_id", "gateway_profile_id",
                             "canonicalizer_artifact_id", "canonicalizer_sha256",
+                            "normalization_policy_id", "normalization_policy_sha256",
+                            "normalization_policy_revision", "route_schema_id",
+                            "output_limit_mode", "output_limit_ceiling",
                             "approved_operation"}, "native bridge")
         bridge_id = _read_id(item["id"], "native bridge ID")
         producer_id = _read_id(item["producer_profile_id"], "native producer profile")
         gateway_id = _read_id(item["gateway_profile_id"], "native gateway profile")
         canonicalizer_id = _read_id(item["canonicalizer_artifact_id"], "native canonicalizer artifact")
         canonicalizer_sha = item["canonicalizer_sha256"]
+        policy_id = _read_id(item["normalization_policy_id"], "normalization policy ID")
+        policy_sha = item["normalization_policy_sha256"]
+        policy_revision = item["normalization_policy_revision"]
+        route_schema_id = _read_id(item["route_schema_id"], "provider route schema")
+        limit_mode = item["output_limit_mode"]
+        output_ceiling = item["output_limit_ceiling"]
         pair = (producer_id, gateway_id)
         producer = process_profiles.get(producer_id)
         gateway = process_profiles.get(gateway_id)
@@ -616,6 +631,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         gateway_binding = binding_by_profile.get(gateway_id)
         if (bridge_id in native_bridges or pair in bridge_pairs or producer_id == gateway_id
                 or item["approved_operation"] != "provider.dispatch"
+                or canonicalizer_id != "provider-canonicalizer-v1"
+                or canonicalizer_sha != "8539e50998ca68e1075030c021a5cb9d698fb2b01b50806f7218d8d1d1a50a52"
                 or not isinstance(canonicalizer_sha, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", canonicalizer_sha)
                 or producer is None or gateway is None
@@ -629,6 +646,50 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         if len(provider_routes) != 1 or "provider-dispatch" not in producer_binding.capabilities:
             raise AuthorityDenied("enrollment.native_bridge", "producer must have one exact enrolled provider route")
         route = provider_routes[0]
+        raw_policies = root["normalization_policies"]
+        if not isinstance(raw_policies, list) or len(raw_policies) > 64:
+            raise AuthorityDenied("enrollment.native_bridge", "normalization policy catalog is invalid")
+        policy_catalog: dict[str, dict[str, Any]] = {}
+        for raw_policy in raw_policies:
+            policy = _exact(raw_policy, {"id", "revision", "route_schema_id", "output_limit_mode",
+                                         "output_limit_ceiling", "canonicalizer_artifact_id",
+                                         "canonicalizer_sha256", "normalization_policy_sha256"},
+                            "normalization policy")
+            item_id = _read_id(policy["id"], "normalization policy ID")
+            if item_id in policy_catalog:
+                raise AuthorityDenied("enrollment.native_bridge", "normalization policy is duplicated")
+            revision = policy["revision"]
+            module_hash = policy["canonicalizer_sha256"]
+            policy_hash = policy["normalization_policy_sha256"]
+            body = {key: value for key, value in policy.items() if key != "normalization_policy_sha256"}
+            expected_policy_hash = hashlib.sha256(json.dumps(
+                body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+            if (type(revision) is not int or revision < 1
+                    or not isinstance(module_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", module_hash)
+                    or not isinstance(policy_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", policy_hash)
+                    or policy_hash != expected_policy_hash):
+                raise AuthorityDenied("enrollment.native_bridge", "normalization policy hash or revision is invalid")
+            policy_catalog[item_id] = policy
+        if route["provider"] == "openrouter":
+            expected_policy = ("provider-output-reject-4096-v1", 1, "provider-chat-compatible-v1",
+                              "reject-over-ceiling", 4096)
+        elif route["provider"] == "codex":
+            expected_policy = ("siwc-output-unsupported-v1", 1, "siwc-responses-preview-v1",
+                              "unsupported-field-reject", None)
+        else:
+            raise AuthorityDenied("enrollment.native_bridge", "provider route has no reviewed native normalization policy")
+        policy_record = policy_catalog.get(policy_id)
+        if (policy_record is None or type(policy_revision) is not int or policy_revision < 1
+                or policy_record["id"] != expected_policy[0]
+                or policy_revision != expected_policy[1]
+                or policy_record["revision"] != policy_revision
+                or policy_record["normalization_policy_sha256"] != policy_sha
+                or (policy_record["route_schema_id"], policy_record["output_limit_mode"],
+                    policy_record["output_limit_ceiling"]) != expected_policy[2:]
+                or (policy_id, policy_revision, route_schema_id, limit_mode, output_ceiling) != expected_policy
+                or policy_record["canonicalizer_artifact_id"] != canonicalizer_id
+                or policy_record["canonicalizer_sha256"] != canonicalizer_sha):
+            raise AuthorityDenied("enrollment.native_bridge", "native request normalization policy is not the selected route policy")
         provider_target = _read_id(route["target"], "native provider target")
         provider_recipient = _read_id(route["recipient"], "native provider recipient")
         native_bridges[bridge_id] = NativeBridgeEnrollment(
@@ -641,6 +702,9 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             gateway_executable_sha256=gateway.artifact_sha256,
             gateway_principal_id=gateway_binding.principal_id,
             canonicalizer_artifact_id=canonicalizer_id, canonicalizer_sha256=canonicalizer_sha,
+            normalization_policy_id=policy_id, normalization_policy_sha256=policy_sha,
+            normalization_policy_revision=policy_revision, route_schema_id=route_schema_id,
+            output_limit_mode=limit_mode, output_limit_ceiling=output_ceiling,
             approved_operation="provider.dispatch", provider_enrollment_id=route["id"],
             target=provider_target, recipient=provider_recipient,
         )

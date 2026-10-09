@@ -179,7 +179,9 @@ class AuthorityService:
                  wall_clock: Callable[[], float] = time.time,
                  profile_generations: Mapping[str, str] | None = None,
                  background_consent_active: Callable[[str], bool] | None = None,
-                 delegations: Mapping[str, ChildDelegationRule] | None = None):
+                 delegations: Mapping[str, ChildDelegationRule] | None = None,
+                 process_effect_handler: Any | None = None,
+                 native_bridge_broker: Any | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
@@ -202,6 +204,8 @@ class AuthorityService:
         self.wall_clock = wall_clock
         self.profile_generations = dict(profile_generations or {})
         self.delegations = dict(delegations or {})
+        self.process_effect_handler = process_effect_handler
+        self.native_bridge_broker = native_bridge_broker
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -554,6 +558,18 @@ class AuthorityService:
         if operation == "perform_effect":
             return self._perform_effect(uid, peer_pid, payload, cancelled=cancelled,
                                         peer_pidfd=peer_pidfd)
+        if operation == "prepare_native_event":
+            broker = self.native_bridge_broker
+            if broker is None or peer_pidfd is None:
+                raise AuthorityDenied("native.unavailable", "native source producer is not enrolled")
+            return broker.prepare(uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                                  payload=payload, cancelled=cancelled)
+        if operation == "dispatch_native_request":
+            broker = self.native_bridge_broker
+            if broker is None or peer_pidfd is None:
+                raise AuthorityDenied("native.unavailable", "native provider gateway is not enrolled")
+            return broker.dispatch(uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                                   payload=payload, cancelled=cancelled)
         raise AuthorityDenied("protocol.operation", "authority operation is unavailable")
 
     def _binding(self, uid: int) -> PrincipalBinding:
@@ -898,7 +914,8 @@ class AuthorityService:
     def _perform_effect(self, uid: int, peer_pid: int, payload: Any,
                         *, cancelled: Callable[[], bool],
                         peer_pidfd: int | None = None,
-                        enforce_peer_identity: bool = True) -> dict[str, Any]:
+                        enforce_peer_identity: bool = True,
+                        reuse_source_receipts: bool = False) -> dict[str, Any]:
         if not isinstance(payload, dict) or set(payload) != {"authorization", "operation", "payload", "timeout"}:
             raise AuthorityDenied("effect.request", "broker request fields are invalid")
         import base64
@@ -930,7 +947,7 @@ class AuthorityService:
         handler = self.handlers.get((rule.operation, rule.target))
         if handler is None:
             raise AuthorityDenied("effect.unavailable", "fixed effect handler is not installed")
-        self._consume(grant)
+        self._consume(grant, consume_source_receipts=not reuse_source_receipts)
         started = self.monotonic()
         remaining = min(timeout, grant.monotonic_expires_at - started)
         if remaining <= 0:
@@ -1056,7 +1073,7 @@ class AuthorityService:
             operation=grant.operation, native_process_identity=grant.native_process_identity,
         )
 
-    def _consume(self, grant: EffectAuthorization) -> None:
+    def _consume(self, grant: EffectAuthorization, *, consume_source_receipts: bool = True) -> None:
         with self._lock:
             now = self.monotonic()
             self._nonces = {nonce: expiry for nonce, expiry in self._nonces.items() if expiry > now}
@@ -1067,13 +1084,15 @@ class AuthorityService:
             if grant.nonce in self._nonces:
                 raise AuthorityDenied("grant.replay", "effect grant was already consumed")
             receipt_ids = {receipt.receipt_id for receipt in grant.source_receipts}
-            if receipt_ids & self._source_receipts_consumed.keys():
+            if consume_source_receipts and receipt_ids & self._source_receipts_consumed.keys():
                 raise AuthorityDenied("source.replay", "source receipt was already used by another effect")
-            if len(self._nonces) >= 100_000 or len(self._source_receipts_consumed) + len(receipt_ids) > 100_000:
+            if len(self._nonces) >= 100_000 or (consume_source_receipts
+                    and len(self._source_receipts_consumed) + len(receipt_ids) > 100_000):
                 raise AuthorityDenied("grant.capacity", "effect replay protection is at capacity")
             self._nonces[grant.nonce] = grant.monotonic_expires_at
-            for receipt in grant.source_receipts:
-                self._source_receipts_consumed[receipt.receipt_id] = receipt.monotonic_expires_at
+            if consume_source_receipts:
+                for receipt in grant.source_receipts:
+                    self._source_receipts_consumed[receipt.receipt_id] = receipt.monotonic_expires_at
 
     def _verify_context_signature(self, context: HostContext) -> None:
         self._verify_signature(context.claims(), context.signature)

@@ -31,7 +31,8 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
                             process_handler_options: Mapping[str, Any] | None = None,
                             profile_generations: Mapping[str, str] | None = None,
                             background_consent_active: Any | None = None,
-                            delegations: Mapping[str, ChildDelegationRule] | None = None) -> AuthorityService:
+                            delegations: Mapping[str, ChildDelegationRule] | None = None,
+                            process_effect_handler: Any | None = None) -> AuthorityService:
     """Build the root service from already validated protected enrollments.
 
     `process_profiles`, policy, rules and handler adapters must be created by
@@ -39,10 +40,12 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
     factories from a worker or from environment variables.
     """
     registered = dict(handlers)
-    if process_profiles:
-        from hermes_installer.managed_process_custodian import build_managed_process_handlers
-        for key, handler in build_managed_process_handlers(
-                process_profiles, **dict(process_handler_options or {})).items():
+    manager = process_effect_handler
+    if process_profiles and manager is None:
+        from hermes_installer.managed_process_custodian import create_managed_process_handler
+        manager = create_managed_process_handler(process_profiles, **dict(process_handler_options or {}))
+    if manager is not None:
+        for key, handler in manager.handlers().items():
             if key in registered:
                 raise AuthorityDenied("authority.configuration", "duplicate fixed effect handler registration")
             registered[key] = handler
@@ -52,6 +55,7 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
         profile_generations=profile_generations,
         background_consent_active=background_consent_active,
         delegations=delegations,
+        process_effect_handler=manager,
     )
 
 
@@ -92,10 +96,11 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
             raise AuthorityDenied("authority.configuration", "process artifact resolver is fixed by protected catalog")
         effective_process_options["artifact_resolver"] = resolver
 
+    process_manager = None
     if enrollment.process_profiles:
-        from hermes_installer.managed_process_custodian import build_managed_process_handlers
-        handlers.update(build_managed_process_handlers(
-            enrollment.process_profiles, **effective_process_options))
+        from hermes_installer.managed_process_custodian import create_managed_process_handler
+        process_manager = create_managed_process_handler(
+            enrollment.process_profiles, **effective_process_options)
 
     if ARTIFACT_CATALOG_PATH.exists():
         from hermes_installer.artifacts import build_artifact_handlers
@@ -110,18 +115,19 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
     # These integrations are composed only when their actual protected
     # eligibility/transport implementations have been supplied by the root
     # service package. Catalog presence alone is never treated as consent.
-    if enrollment.provider_enrollments and provider_admission is not None:
+    typed_providers: dict[tuple[str, str], Any] = {}
+    if enrollment.provider_enrollments:
         from hermes_installer.provider_effect_handlers import ProviderEnrollment, build_provider_handlers
-        typed: dict[tuple[str, str], Any] = {}
         for record in enrollment.provider_enrollments.values():
             fields = dict(record)
             fields.pop("id", None)
             fields["models"] = frozenset(fields["models"])
             fields["allowed_sensitivities"] = frozenset(fields["allowed_sensitivities"])
             route = ProviderEnrollment(**fields)
-            typed[(route.target, route.recipient)] = route
-        handlers.update(build_provider_handlers(enrollments=typed, admission=provider_admission,
-                                                vault=vault))
+            typed_providers[(route.target, route.recipient)] = route
+        if provider_admission is not None:
+            handlers.update(build_provider_handlers(enrollments=typed_providers, admission=provider_admission,
+                                                    vault=vault))
 
     if enrollment.mcp_services and enrollment.mcp_http_bindings:
         # The enrolled transport owns endpoint resolution and TLS. This fixed
@@ -147,8 +153,37 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
         profile_generations={profile_id: profile.generation
                              for profile_id, profile in enrollment.process_profiles.items()},
         background_consent_active=background_consent_active,
+        process_effect_handler=process_manager,
     )
     service_ref["service"] = service
+    if enrollment.native_bridges:
+        if process_manager is None or provider_admission is None:
+            # The root source/gateway role pairing exists in config, but no
+            # route may be activated without its live provider account gate.
+            raise AuthorityDenied("native.unavailable", "native bridge requires live provider admission and process custody")
+        try:
+            from hermes_installer.provider_effect_handlers import canonical_provider_request
+        except ImportError:
+            raise AuthorityDenied("native.unavailable", "pinned provider canonicalizer is not installed") from None
+        bridge_routes: dict[str, dict[tuple[str, str], Any]] = {}
+        for bridge_id, bridge in enrollment.native_bridges.items():
+            route = typed_providers.get((bridge.target, bridge.recipient))
+            if route is None:
+                raise AuthorityDenied("native.enrollment", "native bridge provider route is not enrolled")
+            if route.principal_id != bridge.producer_principal_id:
+                raise AuthorityDenied("native.enrollment", "native bridge provider route belongs to another principal")
+            bridge_routes[bridge_id] = {(bridge.target, bridge.recipient): route}
+        for bridge in enrollment.native_bridges.values():
+            if ("provider.dispatch", bridge.target) not in handlers:
+                raise AuthorityDenied("native.unavailable", "native provider effect handler is not active")
+        from .native_bridge import NativeBridgeBroker
+        service.native_bridge_broker = NativeBridgeBroker(
+            service=service, bridges=enrollment.native_bridges,
+            process_resolver=process_manager.resolve_live_peer,
+            canonicalizer=canonical_provider_request,
+            root_selected_enrollments=bridge_routes,
+            canonicalizer_sha256=next(iter(enrollment.native_bridges.values())).canonicalizer_sha256,
+        )
     if enrollment.memory_providers:
         from hermes_installer.memory.broker import MemoryTarget, build_memory_handlers, build_memory_runtime
         targets = {}
