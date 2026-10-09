@@ -214,11 +214,13 @@ class SetupProbeConnectorAuthority:
 
     def __init__(self, *, resolve_binding: Callable[[str, int, int, int], RootSetupProbeBinding],
                  hi12: AuthorityServiceHI12Adapter, boot_epoch: Callable[[], str],
+                 advance_sequence: Callable[[str, int, str, str, int, int, int], bool],
                  monotonic: Callable[[], float] = time.monotonic):
         if (not callable(resolve_binding)
                 or not callable(getattr(hi12, "issue_remote_connector_effect", None))
                 or not callable(getattr(hi12, "consume_remote_connector_effect", None))
                 or not callable(boot_epoch)
+                or not callable(advance_sequence)
                 or not callable(monotonic)):
             raise ValueError("root setup resolver and HI12 issuer/consumer are required")
         if getattr(hi12, "_capability", None) != "hermes-service-connect":
@@ -226,6 +228,7 @@ class SetupProbeConnectorAuthority:
         self._resolve = resolve_binding
         self._hi12 = hi12
         self._boot_epoch = boot_epoch
+        self._advance_sequence = advance_sequence
         self._monotonic = monotonic
         self._lock = threading.RLock()
         self._issued: dict[str, _Issued] = {}
@@ -324,6 +327,34 @@ class SetupProbeConnectorAuthority:
             raise _deny("remote.probe-hi12", "protected HI12 denied the setup connector effect")
         return True
 
+    def advance_probe_connector_sequence(self, root_probe_handle: str,
+                                         expected_sequence: int, operation: str,
+                                         connector_handle: str, *, peer_uid: int,
+                                         peer_pid: int, peer_pidfd: int) -> bool:
+        """CAS the root probe state after a complete successful socket effect.
+
+        The connector backend calls this only after the full syscall effect
+        completes. The callback must atomically bind the handle on open, require
+        the same handle thereafter, and advance expected_sequence exactly once.
+        On effect failure or CAS failure, the caller must cancel/close the probe.
+        """
+        binding = self._current(root_probe_handle, peer_uid, peer_pid, peer_pidfd)
+        if (operation not in _OPS or type(expected_sequence) is not int
+                or expected_sequence != binding.next_sequence
+                or (operation == "connector.open" and expected_sequence != 0)
+                or not isinstance(connector_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", connector_handle)):
+            raise _deny("remote.probe-sequence", "probe connector sequence or handle is stale")
+        try:
+            accepted = self._advance_sequence(root_probe_handle, expected_sequence,
+                                              operation, connector_handle,
+                                              peer_uid, peer_pid, peer_pidfd)
+        except Exception:
+            raise _deny("remote.probe-sequence", "root probe sequence transition failed") from None
+        if accepted is not True:
+            raise _deny("remote.probe-sequence", "root probe sequence transition was stale")
+        return True
+
     def _current(self, handle: str, uid: int, pid: int, pidfd: int) -> RootSetupProbeBinding:
         if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
                 or any(type(value) is not int or value <= 0 for value in (uid, pid, pidfd))):
@@ -371,7 +402,8 @@ class SetupProbeConnectorAuthority:
             route = expected["approved_route_id"]
             expected_route = ("xpra-websocket" if binding.selected_action == "websocket-attach"
                               else "xpra-http")
-            if (set(body) != set(expected) or body != expected or route not in binding.approved_route_ids
+            if (sequence != binding.next_sequence
+                    or set(body) != set(expected) or body != expected or route not in binding.approved_route_ids
                     or route != expected_route
                 or sequence != 0):
                 raise _deny("remote.probe-payload", "probe open is outside the enrolled route")

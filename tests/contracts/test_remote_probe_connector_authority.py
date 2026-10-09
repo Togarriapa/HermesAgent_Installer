@@ -53,7 +53,7 @@ class SetupProbeConnectorAuthorityContracts(unittest.TestCase):
             approved_route_ids=("xpra-http", "xpra-websocket"), session_id="setup-probe:nonce",
             asset_ids=("f" * 64,),
             selected_action="asset-get", selected_asset_id="f" * 64,
-            next_sequence=1,
+            next_sequence=0,
             policy_revision="policy-r1", policy_config_digest="d" * 64,
             service_generation_digest="e" * 64, principal_id="setup-actor",
             issued_monotonic=5.0, expires_monotonic=40.0, frame_deadline_monotonic=20.0,
@@ -63,12 +63,20 @@ class SetupProbeConnectorAuthorityContracts(unittest.TestCase):
         self.authority = SetupProbeConnectorAuthority(
             resolve_binding=self._resolve, hi12=self.hi12,
             boot_epoch=lambda: "boot-1",
+            advance_sequence=self._advance_sequence,
             monotonic=lambda: self.now)
 
     def _resolve(self, handle, uid, pid, pidfd):
         if (handle != self.handle or (uid, pid, pidfd) != (1001, 200, 8)):
             raise RuntimeError("peer mismatch")
         return self.current[0]
+
+    def _advance_sequence(self, handle, expected, operation, connector_id, uid, pid, pidfd):
+        if (handle != self.handle or (uid, pid, pidfd) != (1001, 200, 8)
+                or expected != self.current[0].next_sequence):
+            return False
+        self.current[0] = replace(self.current[0], next_sequence=expected + 1)
+        return True
 
     def _open_payload(self, route="xpra-http"):
         return canonical({"schema": 1, "enrollment_id": self.binding.native_enrollment_id,
@@ -91,11 +99,25 @@ class SetupProbeConnectorAuthorityContracts(unittest.TestCase):
         self.assertTrue(self.authority.consume_probe_connector_effect(
             auth, self.handle, "connector.open", payload, 0,
             peer_uid=1001, peer_pid=200, peer_pidfd=8))
+        self.assertTrue(self.authority.advance_probe_connector_sequence(
+            self.handle, 0, "connector.open", "c" * 32,
+            peer_uid=1001, peer_pid=200, peer_pidfd=8))
+        self.assertEqual(self.current[0].next_sequence, 1)
         with self.assertRaises(AuthorityDenied):
             self.authority.consume_probe_connector_effect(
                 auth, self.handle, "connector.open", payload, 0,
                 peer_uid=1001, peer_pid=200, peer_pidfd=8)
         self.assertEqual(len(self.hi12.spent), 1)
+
+    def test_sequence_cas_denies_replay_or_foreign_connector(self):
+        with self.assertRaises(AuthorityDenied):
+            self.authority.advance_probe_connector_sequence(
+                self.handle, 1, "connector.open", "c" * 32,
+                peer_uid=1001, peer_pid=200, peer_pidfd=8)
+        with self.assertRaises(AuthorityDenied):
+            self.authority.advance_probe_connector_sequence(
+                self.handle, 0, "connector.open", "bad",
+                peer_uid=1001, peer_pid=200, peer_pidfd=8)
 
     def test_cross_route_or_noncanonical_payload_denies_before_hi12(self):
         with self.assertRaises(AuthorityDenied):
