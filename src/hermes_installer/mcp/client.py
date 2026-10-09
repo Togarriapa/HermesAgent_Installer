@@ -102,9 +102,9 @@ def _contains_selection(value: Any, selection: Any) -> bool:
     return value == selection
 
 
-def _intent(service_id: str, operation: str, selection: Any, tool: str | None = None, args: Any = None) -> str:
+def _intent(service_id: str, operation: str, selection: Any, tool: str | None = None, args: Any = None, binding: str = "") -> str:
     payload = json.dumps(
-        {"selection": selection, "tool": tool, "args": args},
+        {"selection": selection, "tool": tool, "args": args, "binding": binding},
         sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     ).encode("utf-8")
     return f"mcp:{service_id}:{operation}:{hashlib.sha256(payload).hexdigest()}"
@@ -185,7 +185,8 @@ class MCPClient:
         remaining = actual_deadline - now
         if remaining <= 0:
             raise MCPError("MCP request deadline expired")
-        intent_id = _intent(self.service_id, operation, self.selection, tool, args)
+        binding = getattr(self.transport, "binding_id", None) or getattr(self.transport, "endpoint", None) or f"fixture:{self.service_id}"
+        intent_id = _intent(self.service_id, operation, self.selection, tool, args, binding)
         def cancelled() -> bool:
             return context.cancelled() or self.monotonic() >= actual_deadline
         try:
@@ -339,7 +340,8 @@ class MCPClient:
             raise PermissionError("MCP request does not bind arguments to the selected resource")
         metadata = self._tools[name]
         _validate_value(arguments, metadata["inputSchema"])
-        if metadata["annotations"].get("readOnlyHint") is False:
+        if (metadata["annotations"].get("readOnlyHint") is not True
+                or metadata["annotations"].get("destructiveHint") is True):
             raise PermissionError("MCP tool is explicitly marked as not read-only")
         result = await self._rpc("tools/call", {"name": name, "arguments": dict(arguments)},
                                  deadline=deadline, operation="call", tool=name, args=arguments)
