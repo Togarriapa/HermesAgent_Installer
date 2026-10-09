@@ -173,15 +173,10 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
 
             class SelectedProfileCatalog(ProtectedEnrollmentCatalog):
                 def __init__(self):
-                    super().__init__({}, digest="a" * 64, memory_enrollments={
-                        (enrollment.service_enrollment_id, enrollment.service_generation): enrollment,
-                    })
-
-                def resolve(self, enrollment_id, generation):
-                    if (enrollment_id, generation) != (enrollment.service_enrollment_id,
-                                                       enrollment.service_generation):
-                        raise AssertionError("unexpected service enrollment selector")
-                    return SimpleNamespace(
+                    # ProtectedEnrollmentCatalog intentionally rejects empty
+                    # service enrollment. Supply the exact selected profile
+                    # identity used by its production memory route join.
+                    selected_profile = SimpleNamespace(
                         enrollment_id=enrollment.service_enrollment_id,
                         generation=enrollment.service_generation,
                         profile_id=enrollment.profile_id,
@@ -189,6 +184,11 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
                         namespace_identity=enrollment.namespace_identity,
                         roots=SimpleNamespace(data_id=enrollment.data_root_id),
                     )
+                    super().__init__({
+                        (enrollment.service_enrollment_id, enrollment.service_generation): selected_profile,
+                    }, digest="a" * 64, memory_enrollments={
+                        (enrollment.service_enrollment_id, enrollment.service_generation): enrollment,
+                    })
 
             service_catalog = SelectedProfileCatalog()
 
