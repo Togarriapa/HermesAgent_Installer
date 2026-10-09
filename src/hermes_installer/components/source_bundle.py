@@ -6,11 +6,12 @@ import io
 import json
 import re
 import tarfile
+import time
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Mapping, Protocol
-from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.parse import urljoin, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from hermes_installer.components.adapters import ComponentAdapterContract
 from hermes_installer.components.skill_refs import audit_skill_file_map
@@ -31,25 +32,92 @@ class SourceTransport(Protocol):
     def get(self, url: str, *, max_bytes: int, timeout_seconds: int) -> HttpResponse: ...
 
 
+class _NoAutomaticRedirects(HTTPRedirectHandler):
+    """Leave redirect decisions to the origin-checked transport loop."""
+
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
+
+
 class UrllibSourceTransport:
     """TLS-verified unauthenticated transport for public immutable source archives."""
 
+    MAX_REDIRECTS = 3
+    MAX_LOCATION_BYTES = 4096
+
+    @staticmethod
+    def _validate_url(url: str, *, expected_host: str) -> None:
+        try:
+            parsed = urlsplit(url)
+            host = parsed.hostname
+            port = parsed.port
+        except ValueError:
+            raise ComponentSourceError("component source URL is malformed") from None
+        if (parsed.scheme != "https" or host != expected_host or port not in (None, 443)
+                or parsed.username is not None or parsed.password is not None
+                or not parsed.path.startswith("/") or parsed.fragment
+                or any(ord(char) < 32 or ord(char) == 127 for char in url)):
+            raise ComponentSourceError("component source redirect is outside its exact HTTPS origin")
+
     def get(self, url: str, *, max_bytes: int, timeout_seconds: int) -> HttpResponse:
-        request = Request(
-            url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "HermesAgentInstaller/1",
-            },
-            method="GET",
-        )
-        with urlopen(request, timeout=timeout_seconds) as response:
-            final_url = response.geturl()
-            status = response.status
-            body = response.read(max_bytes + 1)
-        if len(body) > max_bytes:
-            raise ComponentSourceError("upstream source archive exceeds the compressed size limit")
-        return HttpResponse(status=status, url=final_url, body=body)
+        try:
+            initial = urlsplit(url)
+            expected_host = initial.hostname
+        except ValueError:
+            raise ComponentSourceError("component source URL is malformed") from None
+        if expected_host not in {"api.github.com", "codeload.github.com"}:
+            raise ComponentSourceError("component source URL is not a protected GitHub origin")
+        self._validate_url(url, expected_host=expected_host)
+        if max_bytes <= 0 or timeout_seconds <= 0:
+            raise ValueError("source transport limits must be positive")
+        deadline = time.monotonic() + timeout_seconds
+        opener = build_opener(_NoAutomaticRedirects())
+        current_url = url
+        for redirect_count in range(self.MAX_REDIRECTS + 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ComponentSourceError("component source request exceeded its whole-operation deadline")
+            request = Request(
+                current_url,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "HermesAgentInstaller/1",
+                },
+                method="GET",
+            )
+            try:
+                response = opener.open(request, timeout=remaining)
+            except Exception as exc:
+                # urllib raises HTTPError for redirects when automatic following
+                # is disabled. Inspect its Location before issuing another GET.
+                status = getattr(exc, "code", None)
+                headers = getattr(exc, "headers", None)
+                if status not in {301, 302, 303, 307, 308} or headers is None:
+                    raise ComponentSourceError("component source request failed") from exc
+                location = headers.get("Location")
+                if (redirect_count >= self.MAX_REDIRECTS or not isinstance(location, str)
+                        or not location or len(location.encode("utf-8", "ignore")) > self.MAX_LOCATION_BYTES
+                        or any(ord(char) < 32 or ord(char) == 127 for char in location)):
+                    close = getattr(exc, "close", None)
+                    if callable(close):
+                        close()
+                    raise ComponentSourceError("component source redirect is missing, excessive or malformed") from None
+                next_url = urljoin(current_url, location)
+                close = getattr(exc, "close", None)
+                if callable(close):
+                    close()
+                self._validate_url(next_url, expected_host=expected_host)
+                current_url = next_url
+                continue
+            with response:
+                final_url = response.geturl()
+                self._validate_url(final_url, expected_host=expected_host)
+                body = response.read(max_bytes + 1)
+                status = response.status
+            if len(body) > max_bytes:
+                raise ComponentSourceError("upstream source archive exceeds the compressed size limit")
+            return HttpResponse(status=status, url=final_url, body=body)
+        raise ComponentSourceError("component source exceeded its redirect limit")
 
 
 @dataclass(frozen=True, slots=True)

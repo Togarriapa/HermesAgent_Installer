@@ -23,6 +23,15 @@ _COMPONENTS = {"hermes_agent", "hermes_desktop", "registry", "providers", "memor
 _HOSTNAME = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*\Z")
 _EMAIL = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+\Z")
 _SECRET_REF_PREFIXES = ("keyring://", "secret://", "file://", "env://")
+_POLICY_READ_TOKEN_REF_PREFIXES = ("keyring://", "secret://", "file://")
+
+
+def _valid_policy_read_token_ref(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and any(value.startswith(prefix) and len(value) > len(prefix) for prefix in _POLICY_READ_TOKEN_REF_PREFIXES)
+        and not any(character.isspace() for character in value)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +82,7 @@ def validate_config(data: Any) -> InstallerConfig:
 
     remote = data.get("remote_desktop", {})
     if not isinstance(remote, dict) or set(remote) - _REMOTE_FIELDS:
-        raise ConfigError("remote_desktop may contain only hostname, allowed_emails, management_token_ref and zone_id; inline credentials are forbidden")
+        raise ConfigError("remote_desktop may contain only hostname, allowed_emails, management_token_ref, policy_read_token_ref, and zone_id; inline credentials are forbidden")
     if "hostname" in remote:
         hostname = remote["hostname"]
         if not isinstance(hostname, str) or (hostname and not _HOSTNAME.fullmatch(hostname.lower())):
@@ -85,8 +94,8 @@ def validate_config(data: Any) -> InstallerConfig:
             raise ConfigError("remote_desktop.allowed_emails must contain valid addresses when a hostname is configured")
     if "management_token_ref" in remote and (not isinstance(remote["management_token_ref"], str) or not remote["management_token_ref"].startswith(_SECRET_REF_PREFIXES)):
         raise ConfigError("remote_desktop.management_token_ref must use keyring://, secret://, file://, or env://, never a token value")
-    if "policy_read_token_ref" in remote and (not isinstance(remote["policy_read_token_ref"], str) or not remote["policy_read_token_ref"].startswith(_SECRET_REF_PREFIXES)):
-        raise ConfigError("remote_desktop.policy_read_token_ref must use keyring://, secret://, file://, or env://, never a token value")
+    if "policy_read_token_ref" in remote and not _valid_policy_read_token_ref(remote["policy_read_token_ref"]):
+        raise ConfigError("remote_desktop.policy_read_token_ref must use a separate secure keyring://, secret://, or private file:// reference; environment references and inline tokens are forbidden")
     if "zone_id" in remote and (not isinstance(remote["zone_id"], str) or not remote["zone_id"].strip()):
         raise ConfigError("remote_desktop.zone_id must be a non-empty discovered Cloudflare zone id")
     if components.get("remote_desktop"):
@@ -96,6 +105,10 @@ def validate_config(data: Any) -> InstallerConfig:
             raise ConfigError("remote_desktop.allowed_emails is required when remote_desktop is selected")
         if not remote.get("management_token_ref"):
             raise ConfigError("remote_desktop.management_token_ref is required for noninteractive remote setup")
+        if not remote.get("policy_read_token_ref"):
+            raise ConfigError("remote_desktop.policy_read_token_ref is a separate protected reference required for Access policy reads")
+        if remote.get("policy_read_token_ref") == remote.get("management_token_ref"):
+            raise ConfigError("remote_desktop.policy_read_token_ref must not reuse management_token_ref")
 
     return InstallerConfig(1, timezone, dict(paths), dict(components), dict(privacy), dict(remote))
 
