@@ -1,12 +1,11 @@
 """Launch Xpra through the host-issued, kernel-custodied profile process service."""
 from __future__ import annotations
 
-import inspect
 import os
 import shlex
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping
 
 from ..authority.client import (
     AuthorityClient,
@@ -15,6 +14,7 @@ from ..authority.client import (
 )
 from ..authority.types import HostContext, canonical_digest
 from ..managed_process import ManagedProcessHandle, ManagedProcessSpec, ManagedProcessSupervisor
+from .host_process import InspectedProcess, inspect_managed_process
 from .session import SessionSpec, SessionUnavailable, require_sandbox_evidence
 
 
@@ -37,28 +37,20 @@ def build_xpra_command(session: SessionSpec, xpra: str | Path, runtime_dir: Path
     ]
 
 
-class XpraSessionInspector(Protocol):
-    """Root-backed process inspector; a caller-supplied PID probe is not evidence."""
-
-    async def inspect(self, handle: ManagedProcessHandle) -> Mapping[str, Any]: ...
-
-
 class XpraLauncher:
     def __init__(
         self,
         session: SessionSpec,
         *,
         authority: AuthorityClient,
-        host_context: HostContext,
         process_template: ManagedProcessSpec,
         supervisor: ManagedProcessSupervisor,
         runtime_dir: Path,
-        inspector: XpraSessionInspector | None = None,
     ) -> None:
-        if not isinstance(authority, AuthorityClient):
+        if type(authority) is not AuthorityClient:
             raise SessionUnavailable("host AuthorityClient is required for Xpra launch")
-        if not isinstance(host_context, HostContext):
-            raise SessionUnavailable("installer-issued profile context is required for Xpra launch")
+        if not callable(getattr(authority, "inspect_process", None)):
+            raise SessionUnavailable("root process inspection is not installed; Desktop session launch remains pending")
         if not isinstance(process_template, ManagedProcessSpec):
             raise SessionUnavailable("typed managed process specification is required")
         if not isinstance(supervisor, ManagedProcessSupervisor) or supervisor.authority_verifier is not authority:
@@ -68,12 +60,8 @@ class XpraLauncher:
             runtime_dir.resolve(strict=False).relative_to(profile_mount)
         except (ValueError, OSError):
             raise SessionUnavailable("Xpra runtime path must stay inside its enrolled private profile")
-        if process_template.profile_id != "hermes-desktop" or host_context.profile_id != process_template.profile_id:
-            raise SessionUnavailable("host-issued context is not bound to the exact Hermes Desktop profile")
-        if host_context.uid != os.geteuid() or host_context.uid <= 0:
-            raise SessionUnavailable("host-issued context does not belong to this installer process")
-        if "hermes-profile-invoke" not in host_context.capabilities:
-            raise SessionUnavailable("Desktop profile is not authorized for managed process launch")
+        if process_template.profile_id != "hermes-desktop":
+            raise SessionUnavailable("only the enrolled Hermes Desktop profile may start Xpra")
         if str(process_template.executable.resolve(strict=False)) != str(process_template.argv[0]):
             raise SessionUnavailable("managed Xpra executable differs from its protected process registration")
         if process_template.artifact_sha256 != _sha256_file(process_template.executable):
@@ -83,20 +71,19 @@ class XpraLauncher:
             hermes_path.resolve(strict=False).relative_to(profile_mount)
         except (ValueError, OSError):
             raise SessionUnavailable("Hermes Desktop executable must be inside its enrolled profile mount")
-        child_hashes = {str(Path(path).resolve(strict=False)): digest
-                        for path, digest in (process_template.child_artifact_hashes or {}).items()}
-        if child_hashes.get(str(hermes_path.resolve(strict=False))) is None:
+        hermes_digest = _sha256_file(hermes_path)
+        child_refs = process_template.child_artifact_refs or {}
+        if not any(ref.rsplit(":", 1)[-1] == digest == hermes_digest
+                   for ref, digest in child_refs.items()):
             raise SessionUnavailable("Hermes Desktop executable is absent from the protected child artifact pins")
         if type(process_template.max_lifetime_seconds) is not int or not 1 <= process_template.max_lifetime_seconds <= 600:
             raise SessionUnavailable("managed Xpra lifetime must be an integer bounded to ten minutes")
         self.session = session
         self.authority = authority
-        self.host_context = host_context
         self.process_template = process_template
         self.supervisor = supervisor
         self.xpra = str(process_template.executable)
         self.runtime_dir = runtime_dir
-        self.inspector = inspector
         self.handle: ManagedProcessHandle | None = None
 
     def command(self) -> list[str]:
@@ -129,13 +116,27 @@ class XpraLauncher:
             data_root=template.data_root,
             argv=argv,
             env_allowlist=env,
-            child_artifact_hashes=template.child_artifact_hashes,
+            child_artifact_refs=template.child_artifact_refs,
             max_lifetime_seconds=template.max_lifetime_seconds,
             max_output_bytes=4096,
             stdin_mode="closed",
         )
+        payload_digest = canonical_digest(envelope)
+        context = self.authority.context(
+            purpose="hermes-profile-invoke",
+            intent="start-pinned-hermes-desktop-xpra",
+            operation="process.start",
+            final_payload_digest=payload_digest,
+            lease_seconds=30.0,
+        )
+        if (not isinstance(context, HostContext)
+                or context.profile_id != template.profile_id or context.uid != os.geteuid()
+                or context.operation != "process.start"
+                or "hermes-profile-invoke" not in context.capabilities
+                or context.final_payload_digest != payload_digest):
+            raise SessionUnavailable("host context is not bound to this caller, profile and exact Xpra launch")
         grant = self.authority.authorize_effect(
-            self.host_context,
+            context,
             capability="hermes-profile-invoke",
             target=target,
             request_digest=canonical_digest(envelope),
@@ -145,57 +146,65 @@ class XpraLauncher:
             template,
             argv=argv,
             env_allowlist=env,
-            authority_context=self.host_context,
+            authority_context=context,
             effect_authorization=grant,
             max_output_bytes=4096,
             stdin_mode="closed",
         )
 
     async def start(self) -> Mapping[str, Any]:
-        if self.inspector is None:
-            raise SessionUnavailable("root-backed Xpra/Electron process inspection is unavailable")
         if self.handle is not None:
             raise SessionUnavailable("this Desktop profile already has an active Xpra generation")
-        process_spec = self._bound_process_spec()
+        import asyncio
+
+        process_spec = await asyncio.to_thread(self._bound_process_spec)
         handle = await self.supervisor.start(process_spec)
         self.handle = handle
         try:
-            evidence = self.inspector.inspect(handle)
-            if inspect.isawaitable(evidence):
-                evidence = await evidence
             identity = handle.identity
-            required = {
-                "process_id": identity.process_id,
-                "generation": identity.generation,
-                "pid": identity.pid,
-                "start_ticks": identity.start_ticks,
-                "cgroup": identity.cgroup,
-                "executable_sha256": identity.executable_sha256,
-                "executable_device": identity.executable_device,
-                "executable_inode": identity.executable_inode,
-            }
-            if not isinstance(evidence, Mapping) or any(evidence.get(k) != v for k, v in required.items()):
-                raise SessionUnavailable("root-backed Xpra identity does not match managed process custody")
-            if (evidence.get("display") != self.session.display
-                    or evidence.get("foreign_children") != 0
-                    or evidence.get("foreign_windows") != 0
-                    or evidence.get("hermes_build_sha") != self.session.hermes_build_sha):
-                raise SessionUnavailable("dedicated session/window/build check failed")
-            renderer_pid = evidence.get("renderer_pid")
-            if (type(renderer_pid) is not int or renderer_pid <= 0
-                    or evidence.get("renderer_cgroup") != identity.cgroup
-                    or evidence.get("renderer_parent_chain_verified") is not True):
-                raise SessionUnavailable("pinned Hermes Electron renderer is not proven inside the managed cgroup")
-            sandboxed = evidence.get("renderer_sandboxed") is True
-            no_sandbox_marker = evidence.get("no_sandbox_marker") is True
+            receipt = await asyncio.to_thread(
+                inspect_managed_process, self.authority,
+                process_id=identity.process_id,
+                generation=identity.generation,
+                profile_id=self.process_template.profile_id,
+            )
+            if receipt.cgroup_identity != identity.cgroup:
+                raise SessionUnavailable("root inspection cgroup does not match the managed Xpra generation")
+            main = [item for item in receipt.processes if item.role == "xpra-server"]
+            if len(main) != 1 or not self._matches_identity(main[0], identity):
+                raise SessionUnavailable("root inspection does not identify the pinned Xpra server process")
+            child_pins = self.process_template.child_artifact_refs or {}
+            renderers = [item for item in receipt.processes
+                         if item.role == "electron-renderer"
+                         and item.exe_sha256 in child_pins.values()
+                         and any(ref.rsplit(":", 1)[-1] == item.exe_sha256
+                                 for ref, digest in child_pins.items() if digest == item.exe_sha256)
+                         and item.cgroup_identity == identity.cgroup
+                         and item.kernel_uid == identity.uid]
+            renderer = next((item for item in renderers if self._descends_from(item, main[0], receipt.processes)), None)
+            if renderer is None:
+                raise SessionUnavailable("pinned Hermes Electron renderer lineage is absent from the root cgroup receipt")
+            attestation = renderer.sandbox_attestation
+            sandboxed = (attestation.get("verified") is True
+                         and attestation.get("role") == "electron-renderer"
+                         and attestation.get("artifact_verified") is True
+                         and attestation.get("parent_chain_verified") is True
+                         and attestation.get("kernel_uid") == renderer.kernel_uid
+                         and attestation.get("cgroup_identity") == identity.cgroup
+                         and attestation.get("seccomp_mode") == 2
+                         and attestation.get("no_new_privs") is True
+                         and attestation.get("forbidden_flags_present") is False)
+            no_sandbox_marker = attestation.get("forbidden_flags_present") is True
             require_sandbox_evidence(renderer_sandboxed=sandboxed, no_sandbox_marker=no_sandbox_marker)
-            if evidence.get("renderer_relaunch_monitor") is not True:
-                raise SessionUnavailable("renderer relaunch monitor is not active")
+            if (attestation.get("relaunch_monitor_verified") is not True
+                    or attestation.get("window_denial_verified") is not True
+                    or attestation.get("native_generation") != receipt.generation):
+                raise SessionUnavailable("root-protected renderer, relaunch, or window-denial enrollment is incomplete")
             return {
                 "process_id": identity.process_id,
                 "generation": identity.generation,
                 "pid": identity.pid,
-                "renderer_pid": renderer_pid,
+                "renderer_member_id": renderer.member_id,
                 "display": self.session.display,
                 "cgroup": identity.cgroup,
                 "sandboxed": sandboxed,
@@ -204,6 +213,32 @@ class XpraLauncher:
         except BaseException:
             await self.stop()
             raise
+
+    @staticmethod
+    def _matches_identity(process: InspectedProcess, identity: Any) -> bool:
+        return (process.cgroup_identity == identity.cgroup
+                and process.exe_sha256 == identity.executable_sha256
+                and process.exe_device == identity.executable_device
+                and process.exe_inode == identity.executable_inode
+                and process.starttime == identity.start_ticks
+                and process.kernel_uid == identity.uid)
+
+    @staticmethod
+    def _descends_from(process: InspectedProcess, ancestor: InspectedProcess,
+                       processes: tuple[InspectedProcess, ...]) -> bool:
+        by_id = {item.member_id: item for item in processes}
+        seen: set[str] = set()
+        current = process
+        while current.parent_member_id is not None:
+            if current.parent_member_id == ancestor.member_id:
+                return True
+            if current.parent_member_id in seen:
+                return False
+            seen.add(current.parent_member_id)
+            current = by_id.get(current.parent_member_id)  # type: ignore[assignment]
+            if current is None:
+                return False
+        return False
 
     async def stop(self) -> None:
         handle, self.handle = self.handle, None
