@@ -225,7 +225,16 @@
       "root",
       "luna_host_custody"
     ],
-    "state": "superseded failed unique history; no active worker; retained pending full-history preservation audit"
+    "state": "superseded failed unique history; no active worker; retained pending full-history preservation audit",
+    "closure_observation": {
+      "observed_at_utc": "2026-10-09T16:51:28.403071+00:00",
+      "remote_branch_present": false,
+      "archive_tag": "archive/luna-host-isolation-30d63fdf",
+      "annotated_tag_object": "0b590ed1730e7fed37b03f846cbc6a027f60dcce",
+      "target": "30d63fdf33eca7f778519ff64c33225a60c1a933",
+      "verified": "fresh remote refs and fetched annotated tag at exact observed object preserve failed unique history; no claim of external tag protection or integrated runtime acceptance",
+      "state": "ref retired after archival preservation"
+    }
   },
   "rules": [
     "Reuse listed branch for its owner area; never create a per-fix branch.",

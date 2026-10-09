@@ -16,6 +16,14 @@ def write_config(path, data_root, state_root, components=None):
 class CliLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.host=SimpleNamespace(supported_arm64_linux=True,package_locks=(),package_lock_probe_errors=())
+    def test_resources_status_reports_native_roots_without_claiming_target_discovery(self):
+        result=run(SimpleNamespace(command="resources",action="status",config=None))
+        self.assertEqual(result.state,OutcomeState.PENDING)
+        finding=next(item for item in result.findings if item.code=="resources.native-crosswalk")
+        self.assertEqual(finding.details["native_profile_root"],"HERMES_HOME/profiles/<profile_id>/")
+        self.assertEqual(finding.details["native_skill_root"],"HERMES_HOME/skills/<skill_id>/SKILL.md")
+        self.assertEqual(finding.details["target_discovery"],"not-probed-by-this-read-only-command")
+        self.assertFalse(finding.details["target_verified"])
     def test_dry_run_does_not_create_roots_or_start_bootstrap(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")

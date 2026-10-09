@@ -1,0 +1,14 @@
+{
+  "functional_browser_fixture": true,
+  "generated_in_ci": true,
+  "installed_dependencies": true,
+  "overlay_pyproject_sha256": "7364254e748c9b74824d9b8de04dfcfabe5bcc0593e64b1610df686a27909435",
+  "platform": "aarch64-unknown-linux-gnu",
+  "pyproject_sha256": "5a61c6cc0b66c5e51972c7deeabefe00cf9a8127d7408bdbf3e573bdaf582f87",
+  "python": "3.14",
+  "runner_architecture": "aarch64",
+  "source_revision": "c75e8476e26d18b7617643bc2ae082fae8eae431",
+  "source_url": "https://github.com/browser-use/browser-use",
+  "uv_lock_sha256": "51a998bc09c355b39ca5979a4ffd5e05fe3daf8b6d423151df4add75b83ffeb4",
+  "uv_version": "uv 0.12.23 (aarch64-unknown-linux-gnu)"
+}

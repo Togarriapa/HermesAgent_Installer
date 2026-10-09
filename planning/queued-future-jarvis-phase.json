@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "phase": "future-jarvis-after-initial-installer-acceptance",
+  "requested_on": "2026-10-09",
+  "status": "queued; not researched, specified or implemented",
+  "scope": "Record sequencing request only; preserve complete initially designed installer scope and active gates",
+  "governance_bindings": [
+    "R0194",
+    "VD-R0194"
+  ],
+  "entry_gate": {
+    "criteria": [
+      "AC01",
+      "AC02",
+      "AC03",
+      "AC04",
+      "AC05",
+      "AC06",
+      "AC07",
+      "AC08",
+      "AC09",
+      "AC10",
+      "AC11",
+      "AC12",
+      "AC13",
+      "AC14",
+      "AC15",
+      "AC16",
+      "AC17",
+      "AC18"
+    ],
+    "required": "All initially designed installer obligations and additive RB/RP/HI obligations implemented and genuinely verified, with actual native Pi and applicable account/hardware acceptance evidence; no fixture-only, catalog-only, historical unrelated or partial acceptance waiver",
+    "result": "not-established; queued phase may not begin"
+  },
+  "sources": [
+    {
+      "url": "https://www.youtube.com/watch?v=h9SsHkRSHxo",
+      "video_id": "h9SsHkRSHxo",
+      "watched": false,
+      "transcript_reviewed": false,
+      "analyzed": false,
+      "feature_claims": []
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=RqwXffETwsc",
+      "video_id": "RqwXffETwsc",
+      "watched": false,
+      "transcript_reviewed": false,
+      "analyzed": false,
+      "feature_claims": []
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=AqhYvItgMOE",
+      "video_id": "AqhYvItgMOE",
+      "watched": false,
+      "transcript_reviewed": false,
+      "analyzed": false,
+      "feature_claims": []
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=zCTKDgETwUQ",
+      "video_id": "zCTKDgETwUQ",
+      "watched": false,
+      "transcript_reviewed": false,
+      "analyzed": false,
+      "feature_claims": []
+    },
+    {
+      "url": "https://www.youtube.com/shorts/6smKhzEXM_s",
+      "video_id": "6smKhzEXM_s",
+      "watched": false,
+      "transcript_reviewed": false,
+      "analyzed": false,
+      "feature_claims": []
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=ufPb_ESGy-w",
+      "video_id": "ufPb_ESGy-w",
+      "watched": false,
+      "transcript_reviewed": false,
+      "analyzed": false,
+      "feature_claims": []
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=Ytpp65paFpY",
+      "video_id": "Ytpp65paFpY",
+      "watched": false,
+      "transcript_reviewed": false,
+      "analyzed": false,
+      "feature_claims": []
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=O2iSLGL3wo8",
+      "video_id": "O2iSLGL3wo8",
+      "watched": false,
+      "transcript_reviewed": false,
+      "analyzed": false,
+      "feature_claims": []
+    },
+    {
+      "url": "https://www.murphmaxxing.com/vault/saved-reels-to-claude-skill",
+      "kind": "webpage",
+      "provenance": "User supplied this page with tracking query; canonical destination recorded without tracking parameters.",
+      "read": false,
+      "reviewed": false,
+      "analyzed": false,
+      "license_verified": false,
+      "access_verified": false,
+      "feature_claims": []
+    }
+  ],
+  "next_steps_after_gate": [
+    "Sol reviews actual videos/transcripts and the user-supplied webpage with source/timestamp evidence and truthful access/license limitations.",
+    "Sol creates new append-only immutable amendment and evidence-based OpenSpec proposal/delta specifications/design/task graph preserving original scope.",
+    "Luna implements only from that validated specification handoff, with meaningful failure tests and separate target acceptance."
+  ],
+  "restrictions": [
+    "Do not start Jarvis runtime or expand initial installer scope before full entry gate.",
+    "Do not infer video contents/features from URL, title, thumbnail or hearsay.",
+    "Keep existing Jarvis/component baseline obligations active; this queue neither removes them nor adds early runtime scope.",
+    "No new spending, accounts, services or target enrollment is authorized by this metadata.",
+    "Future adaptation targets Hermes; page naming does not automatically authorize or require a Claude dependency.",
+    "Do not infer webpage contents, licensing or functions before actual later access verification; no purchase or spend for paywall access."
+  ]
+}
