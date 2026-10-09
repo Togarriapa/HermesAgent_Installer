@@ -141,8 +141,24 @@ class _ProtectedNativeActionResolver:
                 if workflow.get("external_tool_name") != tool_name:
                     continue
                 try:
+                    schema_id = workflow["external_argument_schema_id"]
+                    protected_schema = self.bindings.resolve_native_schema_record(
+                        schema_id, package.package_id, package.generation,
+                        adapter.adapter_id, adapter.action_id, "arguments",
+                    )
+                    if (not isinstance(protected_schema, Mapping)
+                            or protected_schema.get("id") != schema_id
+                            or protected_schema.get("native_package_id") != package.package_id
+                            or protected_schema.get("native_package_generation") != package.generation
+                            or protected_schema.get("adapter_id") != adapter.adapter_id
+                            or protected_schema.get("action_id") != adapter.action_id
+                            or protected_schema.get("schema_kind") != "arguments"
+                            or not isinstance(protected_schema.get("source_receipt_handle"), str)):
+                        raise AuthorityDenied(
+                            "native.action", "selected workflow schema metadata does not match its protected row",
+                        )
                     schema = self.schema_catalog.resolve(
-                        workflow["external_argument_schema_id"],
+                        schema_id,
                         native_package_id=package.package_id,
                         native_package_generation=package.generation,
                         adapter_id=adapter.adapter_id,
