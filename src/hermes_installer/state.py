@@ -174,8 +174,17 @@ class Journal:
         db.execute("PRAGMA synchronous=FULL")
         return db
 
+    @contextlib.contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        db = self._connect()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
     def _initialize(self) -> None:
-        with self._connect() as db:
+        with self._transaction() as db:
             db.execute("CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at REAL NOT NULL, payload TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS owned_resources (kind TEXT NOT NULL, resource_id TEXT NOT NULL, created_at REAL NOT NULL, state TEXT NOT NULL, PRIMARY KEY(kind, resource_id))")
 
@@ -183,21 +192,21 @@ class Journal:
         if not operation or not status:
             raise ValueError("operation and status are required")
         encoded = json.dumps(payload, sort_keys=True)
-        with self._connect() as db:
+        with self._transaction() as db:
             db.execute("INSERT INTO operations(id,status,updated_at,payload) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at, payload=excluded.payload", (operation, status, time.time(), encoded))
 
     def operation(self, operation: str) -> dict[str, object] | None:
-        with self._connect() as db:
+        with self._transaction() as db:
             row = db.execute("SELECT status,updated_at,payload FROM operations WHERE id=?", (operation,)).fetchone()
         if row is None:
             return None
         return {"status": row["status"], "updated_at": row["updated_at"], "payload": json.loads(row["payload"])}
 
     def record_owned(self, kind: str, resource_id: str, state: str = "active") -> None:
-        with self._connect() as db:
+        with self._transaction() as db:
             db.execute("INSERT INTO owned_resources(kind,resource_id,created_at,state) VALUES(?,?,?,?) ON CONFLICT(kind,resource_id) DO UPDATE SET state=excluded.state", (kind, resource_id, time.time(), state))
 
     def owned(self, kind: str | None = None) -> list[dict[str, object]]:
-        with self._connect() as db:
+        with self._transaction() as db:
             rows = db.execute("SELECT kind,resource_id,created_at,state FROM owned_resources WHERE (? IS NULL OR kind=?) ORDER BY kind,resource_id", (kind, kind)).fetchall()
         return [dict(row) for row in rows]
