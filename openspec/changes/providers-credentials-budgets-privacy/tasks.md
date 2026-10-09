@@ -33,3 +33,7 @@ Dependencies: installer-bootstrap-desktop. Full IDs and task edges: planning/dep
 - Review code against every requirement/scenario and actual evidence; do not archive incomplete hardware/account tasks.
 - Run strict pinned OpenSpec validation and coverage; archive only verified completed changes using the installed documented workflow, preserving dated history and canonical specs.
 - Sol must approve refinement via append-only amendment; keep plans/2026-10-09-v1 immutable.
+
+## 3. Supported ChatGPT-plan protocol refinement
+
+- [ ] 3.1 `PR-T01` Implement PR01 supported SIWC auth permission and HTTP/SSE normalization/completion; prerequisites PR-F01, HI-T08, HI-T09. Evidence EV-PR01: recording bounded response.completed/failed/incomplete/partial EOF/usage errors, unsupported fields/tools and source/grant/retry/cancel negatives. Keep actual enrolled-account/native inference acceptance separate and original PR-F02/03 plus PR-R0124/25/26 open.
