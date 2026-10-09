@@ -186,6 +186,106 @@
       "selection": "commit/extract fixed enrolled recipe selected before admission with fresh background consent/private eligible provider; never caller dynamic path. Returned session scoped sameprofile/store/current owner gen; response validated source schema."
     },
     "admission": "Outer memory effect admits immutable bounded compound job; each step has fresh child-specific exact connector grant/digest/sequence/route under original lease. Never reuse one outer grant per request; abort on failure/revoke/expiry, journal owned created session for bounded reviewed cleanup, no sibling session purge.",
-    "scope": "Endpoint-specific root body recipe forces AgentMemory project/agentId/user/account/session scope, rejects caller override fields; source schema strict and actual configured vault header/auth field root-held. OpenViking root trusted/API key; Claude selected backend root key. No secret bytes worker args/env/receipts. Actual body serializer/schema must match selected pinned API before enrollment, absent unavailable."
+    "scope": "Endpoint-specific root body recipe forces AgentMemory project/agentId/user/account/session scope, rejects caller override fields; source schema strict and actual configured vault header/auth field root-held. OpenViking root trusted/API key; Claude selected backend root key. No secret bytes worker args/env/receipts. Actual body serializer/schema must match selected pinned API before enrollment, absent unavailable.",
+    "connector_protocol": {
+      "mode": "fixed-memory-compound-json-v1 (separate from Xpra/Colibri raw stream modes)",
+      "open": "Existing connector.open exact target/route grant additionally binds opaque admitted compound_job_handle and expected_step_id; root resolves immutable selected recipe/job/current step/profile/gen/lease. Caller cannot construct or replace job state.",
+      "write_envelope_fields": [
+        "schema=1",
+        "handle_id",
+        "generation",
+        "sequence",
+        "compound_job_handle",
+        "step_id",
+        "body"
+      ],
+      "body": "Canonical typed JSON object validated against selected protected body_recipe_id/request_schema; root forces account/profile/store fields and builds fixed HTTP method/path/headers/auth. No caller complete HTTP frame/URL/method/header/credential/path accepted in compound mode. Payload digest hashes complete canonical envelope including step ID/body.",
+      "state": "Root tracks current step/sequence/inflight/consumption per admitted job; atomic fresh grant reserve before bytes. Root parses bounded source-schema response and captures owned session ID internally, transitions only successful create->append->fixed-finalize; forged/skipped/repeated/concurrent step denied. Separate root open/write/read/close authorization remains HI12; opening nextstep requires fresh grants under original job lease, no outer grant reuse.",
+      "recipe_resolution": "Root protected fixed_route_map and reviewed serializer body recipes; root catalog schema IDs resolve immutable installed validators. Caller body only exact allowed contentfields; object scope IDs/path/auth/commit selection derived from job enrollment. Actual recipe/schema pin missing stays unavailable.",
+      "result": "Bounded typed response/artifact and root-observed result receipt; no arbitrary response-controlled next URL/session scope. Error marks failed/ambiguous, no automatic replay; owned cleanup journal only."
+    }
+  },
+  "closed_recipe_examples": {
+    "source_files": [
+      {
+        "path": "rohitg00/agentmemory@df3d4a83b966d8d415cb9180d5a4724b07f729dc/src/triggers/api.ts",
+        "sha256": "a41d023f9171cf27aac73fd22910de33b1c76917453416954e4d7d8c767f7ee2"
+      },
+      {
+        "path": "volcengine/OpenViking@e7b2e974b1fb97cd8c6087ff013181ddfec94f77/openviking/server/routers/search.py",
+        "sha256": "5ce47214d019c751f3362881a30d4e47b16f1c14f5b81b6f7fa4dcc6ffa93971"
+      },
+      {
+        "path": "volcengine/OpenViking@e7b2e974b1fb97cd8c6087ff013181ddfec94f77/openviking/server/routers/sessions.py",
+        "sha256": "f057987a42944e9b789a38bb7599d857afe1dede12434ca26f4210a6c6af4b20"
+      }
+    ],
+    "scope_bindings_schema": {
+      "profile_id": "root enrolled current profile",
+      "service_generation": "opaque string",
+      "memory_owner_generation": "positive integer",
+      "backend_project_ref": "opaque root-owned provider project scope",
+      "backend_agent_ref": "opaque root-owned provider actor scope",
+      "backend_session_ref": "root captured owned session or null",
+      "private_provider_route_ref": "root-owned eligible selected embedding/extraction route",
+      "credential_reference_id": "vault opaque reference, no secret in catalog"
+    },
+    "fixed_routes": {
+      "agentmemory-search": {
+        "request_schema_id": "agentmemory-search-request-v1",
+        "body_recipe_id": "agentmemory-search-owned-v1",
+        "response_schema_id": "agentmemory-search-result-v1",
+        "caller_fields": {
+          "query": "nonempty text<=16384chars",
+          "limit": "int1..100"
+        },
+        "forced_fields": "project and agentId resolved protected scope, source=root observed receipt channel; omit expandIds/includeLessons/sessionId unless separately reviewed root fixedownscope action. Rejectcaller project/agentId/source override."
+      },
+      "agentmemory-capture": {
+        "request_schema_id": "agentmemory-capture-request-v1",
+        "body_recipe_id": "agentmemory-remember-owned-v1",
+        "response_schema_id": "agentmemory-remember-result-v1",
+        "caller_fields": {
+          "content": "nonempty text<=65536chars"
+        },
+        "forced_fields": "rootproject/agentId, no caller files/type/ttl/sourceObservationIds until separatelyreviewed owningaction; freshprivate extraction consent"
+      },
+      "openviking-find": {
+        "request_schema_id": "openviking-find-request-v1",
+        "body_recipe_id": "openviking-find-owned-v1",
+        "response_schema_id": "openviking-find-result-v1",
+        "caller_fields": {
+          "query": "nonemptytext<=16384chars",
+          "limit": "int1..100"
+        },
+        "forced_fields": "target_uri rootowned selected scope, image_url absent, contexttype/rootfilter finiteenrollment, telemetry false; forbidcaller URI/filter/scope overrides"
+      },
+      "openviking-session-capture": {
+        "request_schema_id": "openviking-capture-event-v1",
+        "result_schema_id": "openviking-capture-result-v1",
+        "caller_fields": {
+          "content": "nonemptytext<=65536chars"
+        },
+        "step_schema_ids": {
+          "create": "openviking-create-owned-session-v1",
+          "append": "openviking-append-captured-event-v1",
+          "finalize": "openviking-finalize-private-v1"
+        },
+        "response_schema_ids": {
+          "create": "openviking-create-result-v1",
+          "append": "openviking-append-result-v1",
+          "finalize": "openviking-finalize-result-v1"
+        },
+        "forced_fields": "create rootowned session scope, auto_commit_policy explicitnull disables, telemetryfalse; append role/source_message_ids/peer fromactualcapturedtrusted event, contentexactbytes, no arbitraryparts/tool/URI; finalizemode rootselectedfreshconsentprivate recipe"
+      }
+    },
+    "bounds": {
+      "request_bytes": 262144,
+      "response_bytes": 2097152,
+      "maximum_results": 100,
+      "simple_seconds": 15,
+      "compound_seconds": 60
+    },
+    "validator_policy": "IDs are required closed serializer/validator contract names, not claims installed artifacts. Root enrolls actual immutable validator artifact/digest before use. Validate bounded JSON object, operation success status and root ownership; OpenViking status=ok/result session_id rootcaptured; AgentMemory actual selected success result shape verified against pinned mem implementation before activation, no invented semantic success/IDs from arbitrary JSON. Returnunavailable if selected result validator absent. Extra callerfields reject."
   }
 }

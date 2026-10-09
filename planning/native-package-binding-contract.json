@@ -98,7 +98,51 @@
     ],
     "capture_api": "capture_source(payload:bytes,parent_receipt_handles=()) -> opaque peer-bound provenance handle; channel/role selected by root listener and live registry, never caller source_kind/sensitivity",
     "trust": "Native-input requires root-observed selected authenticated user ingress/channel and exact event bytes; arbitrary worker submitted bytes remain UNKNOWN/private rather than proof of user/public origin. Tool/memory/effect results require root-observed registered invocation/result binding, not a worker claim; child joins exact parent/delegation/child peer admission, schedule root timer issuer. Missing actual observer preserves unavailable qualified capability, not permanently omitted original scope.",
-    "context": "All actual parent receipt closure inherited; receipt ancestry is provenance not repeat-effect authorization. Public clearance separate trusted exact-payload user review, no labels."
+    "context": "All actual parent receipt closure inherited; receipt ancestry is provenance not repeat-effect authorization. Public clearance separate trusted exact-payload user review, no labels.",
+    "root_private_api": {
+      "signature": "capture_observed_source(observer_enrollment_id, event_record_id, payload:bytes, parent_receipt_handles=()) -> SourceReceiptHandle",
+      "availability": "Root-private in-daemon callback only, NOT AuthorityClient worker RPC or generic IPC verb. Observer channel/action selected from immutable observer enrollment and actual registered pending event/invocation, never functioncaller labels. Worker capture_source remains UNKNOWN/private exactbytes provenance only.",
+      "observer_record_fields": [
+        "id",
+        "issuer_channel_id",
+        "source_action_id",
+        "observer_role_artifact_id",
+        "observer_role_sha256",
+        "producer_profile_id",
+        "generation",
+        "capture_schema_id",
+        "result_schema_id",
+        "maximum_bytes",
+        "maximum_lease_seconds",
+        "target_role_enrollment_id"
+      ],
+      "event_record_fields": [
+        "event_record_id",
+        "observer_id",
+        "registered_invocation_id",
+        "target_peer_identity",
+        "producer_profile_id",
+        "profile_generation",
+        "parent_closure_digest",
+        "observed_payload_sha256",
+        "source_channel",
+        "source_action_id",
+        "issued_monotonic",
+        "expires_monotonic",
+        "consumed_source_admission"
+      ],
+      "observations": {
+        "native-input": "Actual authenticated root ingress request/session verifier record and exact observed user input bytes; verified requester/profile join, no worker boolean",
+        "tool-result": "Actual registered selected root tool invocation operation/target/grant/digest and bounded verified backend result bytes",
+        "memory-result": "Actual selected memory broker step/backend result/current owner epoch/scope/private route/source closure",
+        "effect-result": "Actual root selected backend handler successful or failed result bound invocation/current effect; result content untrusted data, never authority",
+        "delegated-child": "Actual admitted parent/delegation/child peer PIDFD/generation/operation plus bounded root-observed result and full closure; worker parentID insufficient",
+        "schedule-event": "Root selected enabled timer occurrence/schedule gen/freshbackgroundconsent/private closure, not caller timestamp"
+      },
+      "response": "Opaque SourceReceiptHandle only delivered through root-created peer-bound receipt channel to actual enrolled target role process. Worker facade receives no signed receipt wire/sensitivity/credentials. Root bridges references to another enrolled role only via HI11 selected peer mapping, never bearer transfer.",
+      "receipt_binding": "Root retained record binds actual observer artifact/enrollment/channel/action/event/invocation, exact bytes SHA, full parent closure, target peer UID/PIDFD/starttime/exe/profile/generation, current policy/recipient ceiling, finite monotonic lease and random handle nonce. Root private signature/HMAC ifserialized, key root-only; handle possession alone notproof. Source facts authenticated from observer record; UNKNOWN remains private.",
+      "replay": "Atomically claim observed event record once for source admission; immutable ancestry retained within lease for allowed descendant provenance. Effect/retry always freshHI11/rootgrant, never repeat source permission. Wrongpeer/event/digest/observer/gen/parents/replayed admission expired lease denies. Actualroottrustedobserver absence makes qualifiedchannel unavailable."
+    }
   },
   "artifacts": {
     "receipt_fields": [
@@ -130,7 +174,8 @@
       "adapters"
     ],
     "adapters": "Finite list of records with adapter_id,manifest_sha256,adapter_sha256,action_id,argument_schema_id,result_schema_id,effect_enrollment_id,operation,capability,target_id,recipient,generation matching package catalog; extra fields forbidden",
-    "semantics": "Root returns canonical bounded immutable resolver document from selected closure after same actual peer/package/generation validation; maximum2MiB and <=692 selected declarations. No request path, FD, module import or caller mount choice. Root selected loader reads only enrolled read-only namespace closure internally. Facade resolver is presentation/routing only: root re-resolves current effect enrollment and all identity/authority/schema/source conditions EVERY effect, never trusts returned record as permission."
+    "semantics": "Root returns canonical bounded immutable resolver document from selected closure after same actual peer/package/generation validation; maximum2MiB and <=692 selected declarations. No request path, FD, module import or caller mount choice. Root selected loader reads only enrolled read-only namespace closure internally. Facade resolver is presentation/routing only: root re-resolves current effect enrollment and all identity/authority/schema/source conditions EVERY effect, never trusts returned record as permission.",
+    "digest": "SHA256 of UTF-8 canonical JSON object {schema,package_id,profile_id,generation,adapters}, excluding resolver_sha256, sorted keys, compact separators comma/colon, ensure_ascii=false, no trailing newline. Reject duplicate JSON keys and unknown fields. Protected resolver artifact stores exact canonical document bytes for same artifact/document SHA; wrapper archive must retain separately named artifact SHA and document SHA, never conflate. Worker verifies presentation digest/bounds, root re-resolves effect authority."
   },
   "operation_recipes": {
     "enrollment_field": "operation_recipes",
@@ -170,8 +215,33 @@
       "constraints": "Finite fields, exact required/optional keys; extra parameters forbidden. Every string requires max_length<=4096 and either finite enum or reviewed plain-text validator, reject NUL/newline and all control chars; no path/URL/shell/secret fields. Every integer explicit inclusive min/max (not bool). Boolean exact JSON true/false. Structured arrays/maps disallowed in argv parameters. Opaque resource selections resolved by root enrollment before recipe, never substituted caller path. Missing required bounds/validator unavailable.",
       "argv_recipe": "list token objects, each EXACTLY {literal:string} or {parameter:string}; parameter names refer to schema fields. No concatenation/interpolation/conditional/default/shell expansion. Each token yields exactly one argv element; literals protected exact strings; strings preserved, integers canonical base10, booleans literal true or false. Optional absent parameter cannot occur in argv recipe; choose separately enrolled recipe instead. First executable not an argv token, fixed enrolled executable.",
       "operation_id": "Opaque finite recipe ID, distinct from effect operation process.start. operation_targets maps process.start exact admission target; selected recipe ID+parameters+enrollment/generation all part of canonical effect request digest. Reject unsupported recipe before custody launch.",
-      "device_join": "Root-selected HW02 device enrollment joins selected process profile/generation via opaque device_enrollment_id in protected profile, never RPC parameter. Build HW03 recipes normally have no TPU device access. Inference worker exact selected device identity only; no all-device defaults."
-    }
+      "device_join": "Protected inference process profile includes device_enrollment_id and expected_device_generation (opaque nonempty string); root DeviceIdentity.generation must equal expected_device_generation, NOT process profile generation. Process profile generation separately binds process/enrollment/grants. Any device epoch/hotplug identity change invalidates joined launch and active inference, requires root reenrollment/attestation. HW03 builder no TPU access by default."
+    },
+    "model_recipe_bindings": [
+      {
+        "operation_id": "colibri-source-build-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "colibri-source-build:start"
+      },
+      {
+        "operation_id": "coral-cpython39-source-build-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "coral-cpython-build:start"
+      },
+      {
+        "operation_id": "coral-selected-inference-worker-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "coral-inference:start"
+      }
+    ],
+    "empty_parameter_schema": {
+      "id": "no-caller-parameters-v1",
+      "fields": []
+    },
+    "model_recipe_note": "All parameters {}, no caller model/input/device/path/buildflag. Root pins actual source/toolchain/builder/fixedargv/worker and selecteddevice. Inference input/model supplied only through separately authorized exact root-enrolled fixed worker protocol, not arbitrary process.start argv. coral-inference:start is fixed root-selected inference profile target, not existing successful enrollment claim."
   },
   "protected_file_schema": {
     "file": "/etc/hermes-installer/native-packages.json",

@@ -1,0 +1,3 @@
+# Memory compound connector wire v5
+
+Sol additive SK01/HI07/HI12 exact protocol clarification. planning/memory-service-connector-contract.json defines fixed-memory-compound-json-v1 canonical write envelope, root serializer method/path/auth, current immutable job/step state and fresh HI12 frame grants. Complete worker HTTP frame forbidden in this mode. Root validates selected body schema, forces scope and captures bounded owned session response; no caller next URL/step reorder or outer grant reuse. Xpra/Colibri stream modes unchanged. Existing SK-T01/HI-T07/HI-T12 and all native acceptance remain open; frozen baseline/tag unchanged.

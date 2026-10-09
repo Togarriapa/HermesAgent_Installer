@@ -139,7 +139,7 @@
         "canonicalizer_sha256",
         "normalization_policy_sha256"
       ],
-      "digest": "normalization_policy_sha256 is SHA256 of canonical sorted compact JSON of preceding record fields EXCLUDING normalization_policy_sha256; canonicalizer_sha256 separately hashes exact installed reviewed canonicalizer bytes. Do not silently conflate module hash and policy hash.",
+      "digest": "normalization_policy_sha256 is SHA256 of canonical sorted compact JSON of preceding record fields EXCLUDING normalization_policy_sha256; canonicalizer_sha256 separately hashes exact installed reviewed canonicalizer bytes. Do not silently conflate module hash and policy hash. Canonical encoding UTF-8 sorted keys, compact comma/colon separators, ensure_ascii=false, no trailing newline; reject duplicate keys. Policy record preimage exactly id,revision,route_schema_id,output_limit_mode,output_limit_ceiling,canonicalizer_artifact_id,canonicalizer_sha256.",
       "selected_records": [
         {
           "id": "provider-output-reject-4096-v1",
