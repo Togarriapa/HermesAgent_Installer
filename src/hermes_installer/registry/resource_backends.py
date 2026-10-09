@@ -12,6 +12,8 @@ import hashlib
 import os
 import re
 import stat
+import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Protocol
@@ -45,14 +47,8 @@ class ProtectedResourceRuntimeBindings(Protocol):
     def resolve_native_package(self, package_id: str, generation: str) -> Any: ...
 
 
-class RootResourceJobAdmissionHandle(Protocol):
-    """Opaque, in-process handle minted by ResourceJobAuthority after ledger claim."""
-
-
 class RootResourceTaskLauncher(Protocol):
-    def launch_resource_profile_task(
-        self, root_job_admission_handle: RootResourceJobAdmissionHandle, node_id: str,
-    ) -> Any: ...
+    def launch_resource_profile_task(self, root_job_admission_handle: Any, node_id: str) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,14 +261,52 @@ class ResourceProfileTaskAdapter:
     def launch_resource_profile_task(
         self, root_job_admission_handle: RootResourceJobAdmissionHandle, node_id: str,
     ) -> Any:
-        if node_id != self.node_id or root_job_admission_handle is None:
-            raise ResourceProfileTaskUnavailable("job admission handle does not select this profile-task node")
+        from hermes_installer.registry.resource_jobs import RootResourceJobAdmissionHandle
         from hermes_installer.authority.service import AuthorityService
 
-        if (not isinstance(self.launcher, AuthorityService)
-                or not callable(getattr(self.launcher, "launch_resource_profile_task", None))):
+        handle = root_job_admission_handle
+        if not isinstance(handle, RootResourceJobAdmissionHandle) or node_id != self.node_id:
+            raise ResourceProfileTaskUnavailable("root admission handle does not select this typed profile-task node")
+        selected = self.selection
+        expected = {
+            "node_id": self.node_id,
+            "backend_enrollment_id": selected.resource_backend_id,
+            "resource_generation": selected.resource_generation,
+            "profile_id": selected.profile_id,
+            "profile_generation": selected.profile_generation,
+            "native_package_id": selected.native_package_id,
+            "native_package_generation": selected.native_package_generation,
+            "process_enrollment_id": selected.process_enrollment_id,
+            "process_generation": selected.process_generation,
+            "operation_id": selected.operation_id,
+            "child_target_id": selected.process_start_target,
+            "child_capability": "hermes-profile-invoke",
+            "task_body_recipe_id": selected.task_body_recipe_id,
+            "task_request_schema_id": selected.task_request_schema_id,
+        }
+        if any(getattr(handle, name, None) != value for name, value in expected.items()):
+            raise ResourceProfileTaskUnavailable("root admission handle selection differs from protected backend")
+        task_bytes = handle.task_payload
+        if (not isinstance(task_bytes, bytes) or not task_bytes
+                or hashlib.sha256(task_bytes).hexdigest() != handle.task_payload_sha256):
+            raise ResourceProfileTaskUnavailable("root admission task payload digest is invalid")
+        try:
+            task_body = json.loads(task_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ResourceProfileTaskUnavailable("root admission task payload is not canonical JSON") from None
+        if (not isinstance(task_body, dict) or set(task_body) != {"prompt"}
+                or not isinstance(task_body["prompt"], str)
+                or len(task_body["prompt"].encode("utf-8")) > 262_144
+                or json.dumps(task_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8") != task_bytes):
+            raise ResourceProfileTaskUnavailable("root admission task payload violates the selected prompt schema")
+        if (type(handle.expires_monotonic) not in (int, float)
+                or handle.expires_monotonic <= time.monotonic()):
+            raise ResourceProfileTaskUnavailable("root admission handle is expired")
+        if not isinstance(self.launcher, AuthorityService) or not callable(
+            getattr(self.launcher, "launch_resource_profile_task", None)
+        ):
             raise ResourceProfileTaskUnavailable("root selected profile-task launcher is not installed")
-        # The root launcher re-resolves the handle, backend/node join, child
+        # The root launcher re-resolves the handle, admission, child
         # process.start rule, lineage, and current generation before effects.
         # This adapter deliberately never calls a worker AuthorityClient.
-        return self.launcher.launch_resource_profile_task(root_job_admission_handle, node_id)
+        return self.launcher.launch_resource_profile_task(handle, node_id)
