@@ -23,7 +23,7 @@ class RemoteProvisionerTests(unittest.TestCase):
  def test_policy_origin_tunnel_precede_dns_and_token_is_separate(self):
   api=Recorder();p,_=self.make(api);result=p.provision();writes=[(i,m,path) for i,(m,path,_) in enumerate(api.calls)]
   policy=next(i for i,m,path in writes if m=="POST" and path.endswith("/policies"));dns=next(i for i,m,path in writes if m=="POST" and path.endswith("/dns_records"))
-  self.assertLess(policy,dns);self.assertEqual(result.runtime_token,"protected-runtime-token");self.assertEqual(api.calls[dns][2]["content"],result.tunnel_id+".cfargotunnel.com");self.assertTrue(api.calls[dns][2]["proxied"])
+  self.assertLess(policy,dns);self.assertEqual(result.runtime_token,"protected-runtime-token");self.assertEqual(api.calls[dns][2]["content"],result.tunnel_id+".cfargotunnel.com");self.assertTrue(api.calls[dns][2]["proxied"]);self.assertEqual(p.journal.phase,RemotePhase.ACTIVE)
  def test_unready_origin_rolls_back_owned_resources_and_never_publishes_dns(self):
   api=Recorder();p,_=self.make(api,"op2",False)
   with self.assertRaises(Exception):p.provision()
@@ -41,6 +41,11 @@ class RemoteProvisionerTests(unittest.TestCase):
   self.assertFalse(any(m=="POST" and path.endswith("/dns_records") for m,path,_ in api.calls))
   self.assertFalse(any(path.endswith("/cfd_tunnel") and m in {"POST","PUT"} for m,path,_ in api.calls))
   self.assertTrue(any("resume:policy_read_token_ref" in completed for _,_,completed in snapshots))
+  resumed_setup=RemoteSetup(setup.hostname,setup.allowed_emails,setup.zone,setup.auth_domain,setup.management_token,"keyring://hermes/access-read")
+  resumed=RemoteCloudflareProvisioner(api,resumed_setup,p.journal,checkpoint=lambda _j:None,origin_ready=lambda:True)
+  activated=resumed.provision()
+  self.assertEqual(resumed.journal.phase,RemotePhase.ACTIVE)
+  self.assertTrue(activated.tunnel_id)
  def test_preflight_rejects_foreign_dns_before_any_mutation(self):
   api=Recorder();api.rows["/zones/z1/dns_records"]=[{"id":"foreign","name":self.setup.hostname,"type":"A","content":"192.0.2.1"}]
   p,_=self.make(api,"op3")

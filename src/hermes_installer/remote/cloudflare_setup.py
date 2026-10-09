@@ -180,12 +180,16 @@ class RemoteCloudflareProvisioner:
         self._save("dns","dns",rid,created); return rid
     def provision(self):
         self._preflight() # no resource mutation before exact hostname conflicts are checked
+        from .lifecycle import RemotePhase
         try:
             idp=self.ensure_identity_provider()
             app=self.ensure_access_app(idp)
             self.ensure_email_policy(app)
+            if self.journal.phase.value not in {RemotePhase.ACCESS_READY.value,RemotePhase.ORIGIN_READY.value,RemotePhase.TUNNEL_READY.value,RemotePhase.ACTIVE.value}:
+                self.journal.phase=RemotePhase.ACCESS_READY
+                self.journal.completed.add("access_ready")
+                self.checkpoint(self.journal)
             if not self.setup.policy_read_token_ref:
-                from .lifecycle import RemotePhase
                 self.journal.phase=RemotePhase.ACCESS_READY
                 self.journal.error_code="POLICY_READ_REFERENCE_REQUIRED"
                 self.journal.completed.add("resume:policy_read_token_ref")
@@ -194,8 +198,20 @@ class RemoteCloudflareProvisioner:
                     "Owned Access setup is checkpointed; configure remote_desktop.policy_read_token_ref and resume before tunnel activation"
                 )
             if not self.origin_ready():raise CloudflareError("Loopback gateway is not ready; hostname remains unpublished")
+            if self.journal.phase.value not in {RemotePhase.ORIGIN_READY.value,RemotePhase.TUNNEL_READY.value,RemotePhase.ACTIVE.value}:
+                self.journal.phase=RemotePhase.ORIGIN_READY
+                self.journal.completed.add("origin_ready")
+                self.checkpoint(self.journal)
             tunnel,token=self.ensure_tunnel()
+            if self.journal.phase.value not in {RemotePhase.TUNNEL_READY.value,RemotePhase.ACTIVE.value}:
+                self.journal.phase=RemotePhase.TUNNEL_READY
+                self.journal.completed.add("tunnel_ready")
+                self.checkpoint(self.journal)
             dns=self.activate_dns(tunnel)
+            self.journal.phase=RemotePhase.ACTIVE
+            self.journal.error_code=None
+            self.journal.completed.add("active")
+            self.checkpoint(self.journal)
             return ProvisionedRemote(tunnel,app,idp,dns,token)
         except PolicyReadReferenceRequired:
             # Preserve the exact journal-owned Access checkpoint so the setup
