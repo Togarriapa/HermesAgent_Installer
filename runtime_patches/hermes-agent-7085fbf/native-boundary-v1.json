@@ -21,8 +21,8 @@
       {
         "path": "agent/auxiliary_client.py",
         "source_sha256": "cdaf4384374eaa906a51e3060b41aa656f88fff336f44160bd053726ed1dec73",
-        "overlay_sha256": "5915b0d05f45316cb691871c6b88edc7e17590571e4529d90836239369b51261",
-        "hooks": ["each observed auxiliary chat-completions attempt", "retry/fallback/stream negotiation attempts that use those call sites"]
+        "overlay_sha256": "876a97cc1c81fb1e4bc97d92872e03ceb0b1d8f43680d551d974b4376e8950c6",
+        "hooks": ["each observed auxiliary chat-completions attempt", "retry/fallback/stream negotiation attempts that use those call sites", "SDK automatic retries disabled for auxiliary OpenAI clients"]
       },
       {
         "path": "agent/tool_executor.py",
@@ -38,15 +38,21 @@
     "host_assigned_fields": ["event_id", "native process identity", "profile", "generation", "sensitivity", "receipt handle"],
     "classification": "private/unknown only; no human-origin or public clearance",
     "provider_context_header": "X-Hermes-Installer-Context",
-    "attempt_semantics": "Fresh complete SDK request-envelope capture and opaque bridge handle per attempted request; source ancestry is retained, but bridge/context/effect grants are never replayed.",
+    "attempt_semantics": "Fresh complete SDK request-envelope capture and opaque bridge handle per attempted request; exact-envelope repeat increments retry_index with unchanged intent/trace and retained parents. Changed envelopes start a distinct intent at retry_index=0 until host retry admission is wired.",
     "limits": [
       "The current worktree does not yet contain the HI11 AuthorityClient bridge API or enrolled producer-to-gateway pair.",
+      "Changed-envelope upstream fallback chains do not yet carry explicit root retry admission.",
       "The current AuthorityClient API does not supply authenticated UI-origin, effect-result, memory-result, or public-clearance issuers.",
       "Root broker must resolve full lineage and bind normalized final request digest, operation, purpose, generation, retry, cancellation and one-effect grant before egress.",
       "Do not enable native provider egress from this overlay until the gateway-to-authority handle bridge is implemented and enrolled."
     ]
   },
   "coverage_state": "partial; HI-T08 remains open",
+  "transport_controls": {
+    "SDK_automatic_retries": "forced to zero for primary request-scoped OpenAI clients and patched auxiliary OpenAI clients; Hermes-observed attempts require a fresh native event",
+    "request_timeout": "clamped to the live host-issued event lease before SDK call",
+    "retry_admission": "only exact-envelope repeats retain intent and increment retry_index; changed-envelope retries require an explicit host retry-admission integration"
+  },
   "explicitly_uncovered": [
     "Hermes PluginContext.register(ctx) runtime-context injection and protected component/plugin loader",
     "Anthropic, Bedrock, MoA internals and direct non-chat-completions paths",

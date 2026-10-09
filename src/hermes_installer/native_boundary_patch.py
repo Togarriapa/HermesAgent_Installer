@@ -73,6 +73,21 @@ _FILES = {
                 "bypass_chat_sdk_request_transform(request, client)))",
                 1,
             ),
+            (
+                "    kwargs.setdefault(\"max_retries\", 0)\n",
+                "    kwargs[\"max_retries\"] = 0\n",
+                1,
+            ),
+            (
+                "    async_kwargs.setdefault(\"max_retries\", 0)\n",
+                "    async_kwargs[\"max_retries\"] = 0\n",
+                1,
+            ),
+            (
+                "client = _VertexOpenAI(api_key=token, base_url=base_url)",
+                "client = _VertexOpenAI(api_key=token, base_url=base_url, max_retries=0)",
+                1,
+            ),
         ),
     },
     "agent/tool_executor.py": {
@@ -118,6 +133,26 @@ def _transform(relative_path: str, original: bytes) -> bytes:
     return text.encode("utf-8")
 
 
+def _ensure_overlay_parent(overlay: Path, relative_path: str, *, create: bool) -> Path:
+    """Walk beneath the output root without following attacker-controlled links."""
+    parent = overlay
+    for segment in Path(relative_path).parts[:-1]:
+        parent = parent / segment
+        if parent.is_symlink():
+            raise NativePatchError(f"native overlay contains a symbolic link: {relative_path}")
+        if parent.exists():
+            if not parent.is_dir():
+                raise NativePatchError(f"native overlay parent is not a directory: {relative_path}")
+        elif create:
+            parent.mkdir(mode=0o755)
+        else:
+            raise NativePatchError(f"native overlay parent is unavailable: {relative_path}")
+    resolved = parent.resolve(strict=True) if parent.exists() else parent
+    if resolved != overlay and overlay not in resolved.parents:
+        raise NativePatchError("native overlay path escaped its root")
+    return parent
+
+
 def apply_native_boundary_overlay(source_root: Path, overlay_root: Path) -> dict[str, str]:
     """Create/verify the three-file HI08 overlay without modifying upstream files."""
     source = Path(source_root).resolve(strict=True)
@@ -143,18 +178,10 @@ def apply_native_boundary_overlay(source_root: Path, overlay_root: Path) -> dict
     results: dict[str, str] = {}
     for relative_path, (_original, patched, source_mode) in prepared.items():
         target = overlay / relative_path
-        target.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
-        parent = target.parent.resolve(strict=True)
-        if parent != overlay and overlay not in parent.parents:
-            raise NativePatchError("native overlay path escaped its root")
-        cursor = target.parent
-        while cursor != overlay:
-            if cursor.is_symlink():
-                raise NativePatchError(f"native overlay contains a symbolic link: {relative_path}")
-            cursor = cursor.parent
+        _ensure_overlay_parent(overlay, relative_path, create=True)
+        if target.is_symlink():
+            raise NativePatchError(f"native overlay target is a symbolic link: {relative_path}")
         if target.exists():
-            if target.is_symlink():
-                raise NativePatchError(f"native overlay target is a symbolic link: {relative_path}")
             try:
                 existing = target.read_bytes()
             except OSError:
@@ -188,6 +215,7 @@ def verify_native_boundary_overlay(source_root: Path, overlay_root: Path) -> dic
     for relative_path in _FILES:
         expected = _transform(relative_path, (source / relative_path).read_bytes())
         target = overlay / relative_path
+        _ensure_overlay_parent(overlay, relative_path, create=False)
         if target.is_symlink():
             raise NativePatchError(f"native overlay target is a symbolic link: {relative_path}")
         try:

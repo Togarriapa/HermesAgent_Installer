@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,7 +25,7 @@ from hermes_installer.native_boundary_patch import (
 UPSTREAM = Path("/tmp/hermes-agent-hi08")
 EXPECTED = {
     "agent/chat_completion_helpers.py": "81f26a93ff1591dba15246f6552d32df7e331533cf758b653a79a1aa225790f9",
-    "agent/auxiliary_client.py": "5915b0d05f45316cb691871c6b88edc7e17590571e4529d90836239369b51261",
+    "agent/auxiliary_client.py": "876a97cc1c81fb1e4bc97d92872e03ceb0b1d8f43680d551d974b4376e8950c6",
     "agent/tool_executor.py": "fd671a435cbeda36cfbec3a2b278ff34f66f8cbe37a8a87b0a372a5170e777aa",
 }
 
@@ -37,7 +38,7 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
 
         def prepare(payload, *, parent_receipt_handles, purpose, intent_id, trace_id, retry_index):
             captured.append((payload, tuple(parent_receipt_handles), purpose, retry_index))
-            return "evt.fixture.handle.00000001"
+            return "evt.fixture.handle.00000001", boundary.time.monotonic() + 30
 
         with patch.object(boundary, "_prepare_native_event", side_effect=prepare):
             result = boundary.prepare_provider_request(kwargs, purpose="native-primary")
@@ -47,9 +48,11 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
             (), "native-primary", 0)])
         self.assertEqual(result["extra_headers"], {
             "X-Hermes-Installer-Context": "evt.fixture.handle.00000001"})
+        self.assertEqual(result["max_retries"], 0)
+        self.assertGreater(result["timeout"], 0)
         self.assertNotIn("extra_headers", kwargs)
 
-    def test_retry_gets_fresh_event_handle_and_never_replays_receipts(self):
+    def test_retry_gets_fresh_event_handle_and_retains_source_ancestry(self):
         messages = [{"role": "tool", "name": "fixture", "content": "private"}]
         captured = []
         issued = iter(("evt.fixture.handle.00000002", "evt.fixture.handle.00000003"))
@@ -61,7 +64,7 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
         def prepare(payload, *, parent_receipt_handles, purpose, intent_id, trace_id, retry_index):
             captured.append(("event", tuple(parent_receipt_handles), purpose, retry_index,
                              intent_id, trace_id))
-            return next(issued)
+            return next(issued), boundary.time.monotonic() + 30
 
         with patch.object(boundary, "_capture_source", side_effect=capture), \
                 patch.object(boundary, "_prepare_native_event", side_effect=prepare):
@@ -102,7 +105,51 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
             with self.assertRaises(boundary.NativeBoundaryUnavailable):
                 boundary.prepare_provider_request({"messages": messages}, purpose="native-primary")
 
-    def test_patch_is_hash_pinned_atomic_read_only_and_compilable(self):
+    def test_failed_tool_result_capture_blocks_later_provider_dispatch(self):
+        messages = [{"role": "tool", "name": "fixture", "content": "private"}]
+        with patch.object(boundary, "_capture_source", side_effect=boundary.NativeBoundaryUnavailable("offline")), \
+                patch.object(boundary, "_prepare_native_event") as prepare:
+            boundary.record_tool_result(messages, {
+                "role": "tool", "name": "fixture", "content": "private"})
+            with self.assertRaises(boundary.NativeBoundaryUnavailable):
+                boundary.prepare_provider_request({"messages": messages}, purpose="native-primary")
+            prepare.assert_not_called()
+
+    def test_native_event_bridge_requires_exact_root_method_and_live_lease(self):
+        client = SimpleNamespace(prepare_native_event=None)
+        with patch.object(boundary, "_authority_client", return_value=client):
+            with self.assertRaises(boundary.NativeBoundaryUnavailable):
+                boundary._prepare_native_event(
+                    b"{}", parent_receipt_handles=(), purpose="native-primary",
+                    intent_id="intent-fixture", trace_id="trace-fixture", retry_index=0)
+
+        calls = []
+        client.prepare_native_event = lambda payload, **kwargs: (
+            calls.append((payload, kwargs)) or SimpleNamespace(
+                native_event_handle="evt.fixture.handle.00000009",
+                expires_monotonic=__import__("time").monotonic() + 30))
+        with patch.object(boundary, "_authority_client", return_value=client):
+            result = boundary._prepare_native_event(
+                b'{"messages":[]}', parent_receipt_handles=("receipt.fixture.00000009",),
+                purpose="native-primary", intent_id="intent-fixture",
+                trace_id="trace-fixture", retry_index=1)
+        self.assertEqual(result[0], "evt.fixture.handle.00000009")
+        self.assertGreater(result[1], boundary.time.monotonic())
+        self.assertEqual(calls, [(b'{"messages":[]}', {
+            "parent_receipt_handles": ("receipt.fixture.00000009",),
+            "purpose": "native-primary", "intent_id": "intent-fixture",
+            "trace_id": "trace-fixture", "retry_index": 1})])
+
+        client.prepare_native_event = lambda *_args, **_kwargs: SimpleNamespace(
+            native_event_handle="evt.fixture.handle.00000010",
+            expires_monotonic=__import__("time").monotonic() - 1)
+        with patch.object(boundary, "_authority_client", return_value=client):
+            with self.assertRaises(boundary.NativeBoundaryUnavailable):
+                boundary._prepare_native_event(
+                    b"{}", parent_receipt_handles=(), purpose="native-primary",
+                    intent_id="intent-fixture", trace_id="trace-fixture", retry_index=0)
+
+    def test_patch_is_hash_pinned_validated_before_write_and_read_only(self):
         if not UPSTREAM.is_dir():
             self.skipTest("exact official Hermes source checkout is not available")
         self.assertEqual(
@@ -158,6 +205,15 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
             target.symlink_to(source / next(iter(EXPECTED)))
             with self.assertRaises(NativePatchError):
                 verify_native_boundary_overlay(source, overlay)
+
+            outside = scratch_path / "outside"
+            outside.mkdir()
+            linked_overlay = scratch_path / "linked-overlay"
+            linked_overlay.mkdir()
+            (linked_overlay / "agent").symlink_to(outside, target_is_directory=True)
+            with self.assertRaises(NativePatchError):
+                apply_native_boundary_overlay(source, linked_overlay)
+            self.assertFalse(list(outside.iterdir()))
 
 
 if __name__ == "__main__":
