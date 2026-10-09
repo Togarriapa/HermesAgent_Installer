@@ -4,7 +4,9 @@ import json
 import sqlite3
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
+from unittest import mock
 
 from hermes_installer.lifecycle import GenerationStore, LifecycleError, LifecycleRecovery
 from hermes_installer.state import Journal, OwnedRoot, OwnershipError
@@ -123,6 +125,115 @@ class LifecycleRecoveryTests(unittest.TestCase):
             recovery.restore(backup)
         self.assertFalse(first.exists())
         self.assertFalse(second.exists())
+
+    def test_backup_recovers_committed_rename_after_power_loss(self) -> None:
+        profile = self.data.path("profiles/default/SOUL.md")
+        profile.parent.mkdir(parents=True)
+        profile.write_bytes(b"user profile")
+        recovery = LifecycleRecovery(self.data, self.state, self.journal)
+        backup = recovery.backup()
+        operation = "lifecycle:backup:" + backup.name
+        stage_name = ".stage-" + "a" * 32
+        self.journal.checkpoint(operation, "running", {
+            "backup": backup.name, "staging_path": stage_name, "schema_version": 1})
+
+        recovery.backup()
+
+        recovered = self.journal.operation(operation)
+        self.assertEqual(recovered["status"], "complete_recovered")
+        self.assertTrue(recovered["payload"]["recovered_after_interruption"])
+        self.assertTrue((backup / "user-data.tar").is_file())
+
+    def test_backup_recovery_removes_only_recorded_private_stage(self) -> None:
+        recovery = LifecycleRecovery(self.data, self.state, self.journal)
+        stage_name = ".stage-" + "b" * 32
+        stage = recovery.backups / stage_name
+        stage.mkdir(mode=0o700)
+        (stage / "partial.tar").write_bytes(b"incomplete")
+        operation = "lifecycle:backup:20261009T120000Z-1234abcd"
+        self.journal.checkpoint(operation, "running", {
+            "backup": "20261009T120000Z-1234abcd", "staging_path": stage_name})
+
+        recovery.backup()
+
+        self.assertFalse(stage.exists())
+        self.assertEqual(self.journal.operation(operation)["status"], "interrupted_cleaned")
+        self.assertEqual(self.journal.operation(operation)["payload"]["resume"], "hermes-installer data backup")
+
+    def test_backup_recovery_never_follows_a_recorded_stage_symlink(self) -> None:
+        recovery = LifecycleRecovery(self.data, self.state, self.journal)
+        with tempfile.TemporaryDirectory() as temporary:
+            foreign = Path(temporary)
+            keep = foreign / "keep.txt"
+            keep.write_text("foreign data")
+            stage_name = ".stage-" + "d" * 32
+            (recovery.backups / stage_name).symlink_to(foreign, target_is_directory=True)
+            operation = "lifecycle:backup:20261009T120001Z-5678abcd"
+            self.journal.checkpoint(operation, "running", {
+                "backup": "20261009T120001Z-5678abcd", "staging_path": stage_name})
+
+            recovery.backup()
+
+            self.assertTrue((recovery.backups / stage_name).is_symlink())
+            self.assertEqual(keep.read_text(), "foreign data")
+            self.assertEqual(self.journal.operation(operation)["status"], "running")
+
+    def test_backup_failed_stage_creation_preserves_preexisting_path(self) -> None:
+        recovery = LifecycleRecovery(self.data, self.state, self.journal)
+        stage = recovery.backups / (".stage-" + "2" * 32)
+        stage.mkdir(mode=0o700)
+        sentinel = stage / "foreign.txt"
+        sentinel.write_text("preserve")
+
+        with mock.patch("hermes_installer.lifecycle.uuid.uuid4", side_effect=[
+                uuid.UUID(hex="1" * 32), uuid.UUID(hex="2" * 32)]):
+            with self.assertRaises(FileExistsError):
+                recovery.backup()
+
+        self.assertEqual(sentinel.read_text(), "preserve")
+        failed = self.journal.operations(prefix="lifecycle:backup:", statuses=("failed",))
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0]["id"].rsplit("-", 1)[-1], "11111111")
+
+    def test_restore_failed_stage_creation_preserves_preexisting_path(self) -> None:
+        profile = self.data.path("profiles/default/SOUL.md")
+        profile.parent.mkdir(parents=True)
+        profile.write_bytes(b"snapshot")
+        recovery = LifecycleRecovery(self.data, self.state, self.journal)
+        backup = recovery.backup()
+        stage = self.data.root / (".hermes-restore-" + "3" * 32)
+        stage.mkdir(mode=0o700)
+        sentinel = stage / "foreign.txt"
+        sentinel.write_text("preserve")
+
+        with mock.patch("hermes_installer.lifecycle.uuid.uuid4", return_value=uuid.UUID(hex="3" * 32)):
+            with self.assertRaises(FileExistsError):
+                recovery.restore(backup)
+
+        self.assertEqual(sentinel.read_text(), "preserve")
+        self.assertEqual(self.journal.operation("lifecycle:restore:" + backup.name)["status"], "failed")
+
+    def test_restore_crash_recovery_removes_recorded_stage_then_resumes(self) -> None:
+        profile = self.data.path("profiles/default/SOUL.md")
+        profile.parent.mkdir(parents=True)
+        profile.write_bytes(b"restorable profile")
+        recovery = LifecycleRecovery(self.data, self.state, self.journal)
+        backup = recovery.backup()
+        profile.unlink()
+        stage_name = ".hermes-restore-" + "c" * 32
+        stage = self.data.root / stage_name
+        stage.mkdir(mode=0o700)
+        (stage / "partial").write_bytes(b"partial restore")
+        operation = "lifecycle:restore:" + backup.name
+        self.journal.checkpoint(operation, "restoring_entry", {
+            "backup": backup.name, "staging_path": stage_name, "entry": "data/profiles/default/SOUL.md"})
+
+        result = recovery.restore(backup)
+
+        self.assertFalse(stage.exists())
+        self.assertEqual(self.journal.events(operation)[0]["event"], "interrupted_cleaned")
+        self.assertEqual(result["restored"], ["data/profiles/default/SOUL.md"])
+        self.assertEqual(profile.read_bytes(), b"restorable profile")
 
 
 def tarfile_open(path: Path):

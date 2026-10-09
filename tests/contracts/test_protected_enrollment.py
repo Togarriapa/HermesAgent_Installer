@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -21,6 +20,27 @@ from hermes_installer.protected_enrollment import (
 
 
 def build_record(target="coral-cpython-build:start"):
+    if target == "colibri-source-build:start":
+        outputs = [{"relative_path": "c/colibri", "kind": "file", "maximum_bytes": 67108864,
+                    "executable_role": "colibri-engine", "target_facts": {
+                        "elf_class": 64, "elf_machine": "EM_AARCH64", "os": "linux",
+                        "required_runtime_dependencies": ["libgomp.so.1", "libm", "libc"],
+                        "instruction_policy": "actual target compatible ARM64 flags; no x86 default or unmeasured CPUflags",
+                    }}]
+    else:
+        outputs = [
+            {"relative_path": "runtime/bin/python3.9", "kind": "file", "maximum_bytes": 67108864,
+             "executable_role": "coral-cpython39", "target_facts": {
+                 "elf_class": 64, "elf_machine": "EM_AARCH64", "python_version": "3.9.25",
+                 "soabi": "cpython-39-aarch64-linux-gnu", "debug": False,
+                 "glibc_minimum": "2.34 for selected TFLite wheel",
+             }},
+            {"relative_path": "runtime/lib/python3.9", "kind": "tree", "maximum_bytes": 268435456,
+             "executable_role": "cpython-stdlib-and-extension-closure", "target_facts": {
+                 "python_version": "3.9.25", "target": "linux-aarch64",
+                 "all_native_extensions": "ELF64EM_AARCH64, actual dependency closure verified",
+             }},
+        ]
     return {
         "target_id": target,
         "generation": "g1",
@@ -36,7 +56,7 @@ def build_record(target="coral-cpython-build:start"):
         "output_root_id": "coral-build-staging",
         "output_root": "/var/lib/hermes-installer/builds/coral",
         "output_owner_uid": 1001,
-        "required_outputs": {"python/bin/python3.9": "4" * 64},
+        "output_specs": outputs,
     }
 
 
@@ -100,33 +120,16 @@ def test_fixed_build_record_rejects_unlisted_target_and_caller_recipe_fields():
         FixedBuildProfile.from_protected_record(item)
 
 
-def test_output_attestation_rejects_caller_path_and_wrong_bytes(tmp_path: Path, monkeypatch):
-    record = build_record()
-    output = tmp_path / "output"
-    output.mkdir()
-    (output / "python").mkdir()
-    (output / "python" / "bin").mkdir()
-    output.chmod(0o700)
-    (output / "python").chmod(0o700)
-    (output / "python" / "bin").chmod(0o700)
-    (output / "python" / "bin" / "python3.9").write_bytes(b"unattested")
-    profile = FixedBuildProfile.from_protected_record({**record, "output_root": str(output), "output_owner_uid": os.geteuid()})
-    with pytest.raises(EnrollmentDenied, match="caller-selected"):
-        profile.attest_outputs(tmp_path)
-    original_lstat = Path.lstat
-    def root_attested_lstat(path):
-        result = original_lstat(path)
-        # Model a root-owned non-writable ancestor chain while keeping the
-        # temporary output leaf service-owned, matching the on-host custody
-        # contract without weakening the production validator.
-        if path == output or output in path.parents:
-            owner = os.geteuid()
-        else:
-            owner = 0
-        return SimpleNamespace(st_mode=result.st_mode & ~0o022, st_uid=owner)
-    monkeypatch.setattr(Path, "lstat", root_attested_lstat)
-    with pytest.raises(EnrollmentDenied, match="does not match"):
-        profile.attest_outputs()
+def test_build_output_constraints_are_root_reviewed_and_contain_no_preknown_digest():
+    profile = FixedBuildProfile.from_protected_record(build_record())
+    output = profile.output_specs["runtime/bin/python3.9"]
+    assert (output.kind, output.maximum_bytes, output.executable_role) == (
+        "file", 67108864, "coral-cpython39")
+    assert output.target_facts["soabi"] == "cpython-39-aarch64-linux-gnu"
+    unreviewed = build_record()
+    unreviewed["output_specs"][0]["sha256"] = "f" * 64
+    with pytest.raises(EnrollmentDenied, match="output constraint fields"):
+        FixedBuildProfile.from_protected_record(unreviewed)
 
 
 def test_usb_and_pci_selection_stay_opaque_and_generation_bound(monkeypatch):

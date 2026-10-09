@@ -50,6 +50,14 @@ class HermesMCPConfigTests(unittest.TestCase):
         with self.assertRaises(HermesMCPConfigError):
             merge_hermes_mcp_config(modified, {"installer-figma": self.ENTRY}, owned_fingerprints=owners)
 
+    def test_installer_entries_cannot_be_enabled_before_native_mediation(self):
+        with self.assertRaisesRegex(
+            HermesMCPConfigError, "cannot be enabled until native calls are authority-mediated",
+        ):
+            merge_hermes_mcp_config(
+                None, {"installer-figma": {**self.ENTRY, "enabled": True}},
+            )
+
     def test_rejects_non_tls_and_unbounded_or_unallowlisted_entries(self):
         for bad in (
             {**self.ENTRY, "url": "http://mcp.example.test/mcp"},

@@ -183,7 +183,8 @@ class AuthorityService:
                  delegations: Mapping[str, ChildDelegationRule] | None = None,
                  process_effect_handler: Any | None = None,
                  native_bridge_broker: Any | None = None,
-                 selected_operation_resolver: Callable[[str, str, str, str], Any] | None = None):
+                 selected_operation_resolver: Callable[[str, str, str, str], Any] | None = None,
+                 remote_session_authority: Any | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
@@ -214,6 +215,7 @@ class AuthorityService:
         self.process_effect_handler = process_effect_handler
         self.native_bridge_broker = native_bridge_broker
         self.selected_operation_resolver = selected_operation_resolver
+        self.remote_session_authority = remote_session_authority
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -592,7 +594,96 @@ class AuthorityService:
                 raise AuthorityDenied("native.unavailable", "native provider gateway is not enrolled")
             return broker.dispatch(uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                                    payload=payload, cancelled=cancelled)
+        if operation in {
+            "admit_remote_session", "challenge_remote_session", "renew_remote_session",
+            "close_remote_session", "open_remote_connector", "read_remote_connector",
+            "write_remote_connector", "close_remote_connector",
+        }:
+            return self._dispatch_remote_session(
+                operation, uid, peer_pid, peer_pidfd, payload,
+            )
         raise AuthorityDenied("protocol.operation", "authority operation is unavailable")
+
+    def _dispatch_remote_session(self, operation: str, peer_uid: int, peer_pid: int,
+                                 peer_pidfd: int | None, payload: Any) -> Mapping[str, Any]:
+        """Dispatch typed HI13 operations using only socket-derived peer identity."""
+        authority = self.remote_session_authority
+        if authority is None or peer_pidfd is None:
+            raise AuthorityDenied("remote.unavailable", "root remote session authority is not enrolled")
+        if not isinstance(payload, dict):
+            raise AuthorityDenied("remote.request", "remote authority request is malformed")
+        import base64
+
+        def text_field(name: str) -> str:
+            value = payload.get(name)
+            if not isinstance(value, str) or not value:
+                raise AuthorityDenied("remote.request", "remote authority request is malformed")
+            return value
+
+        def token_field(name: str, maximum: int) -> bytes:
+            value = text_field(name)
+            try:
+                decoded = base64.b64decode(value, validate=True)
+            except Exception:
+                raise AuthorityDenied("remote.request", "remote authority byte field is malformed") from None
+            if not 1 <= len(decoded) <= maximum:
+                raise AuthorityDenied("remote.request", "remote authority byte field exceeds its bound")
+            return decoded
+
+        peer = {"peer_uid": peer_uid, "peer_pid": peer_pid, "peer_pidfd": peer_pidfd}
+        if operation == "admit_remote_session":
+            if set(payload) != {"access_jwt_b64", "request"}:
+                raise AuthorityDenied("remote.request", "remote admission fields are invalid")
+            from .remote_sessions import MAX_JWT_BYTES, RemoteAdmissionRequest
+            request = RemoteAdmissionRequest.from_wire(payload["request"])
+            return authority.admit_remote_session(
+                token_field("access_jwt_b64", MAX_JWT_BYTES), request, **peer,
+            ).to_wire()
+        if operation == "renew_remote_session":
+            if set(payload) != {"remote_session_handle", "access_jwt_b64", "renewal_nonce"}:
+                raise AuthorityDenied("remote.request", "remote renewal fields are invalid")
+            from .remote_sessions import MAX_JWT_BYTES
+            return authority.renew_remote_session(
+                text_field("remote_session_handle"), token_field("access_jwt_b64", MAX_JWT_BYTES),
+                text_field("renewal_nonce"), **peer,
+            ).to_wire()
+        handle = text_field("remote_session_handle")
+        if operation in {"challenge_remote_session", "close_remote_session", "open_remote_connector"}:
+            if set(payload) != {"remote_session_handle"}:
+                raise AuthorityDenied("remote.request", "remote session fields are invalid")
+            method = {
+                "challenge_remote_session": authority.challenge_remote_session,
+                "close_remote_session": authority.close_remote_session,
+                "open_remote_connector": authority.open_remote_connector,
+            }[operation]
+            return method(handle, **peer).to_wire()
+        if operation == "read_remote_connector":
+            if set(payload) != {"remote_session_handle", "connector_handle", "sequence", "maximum_bytes"}:
+                raise AuthorityDenied("remote.request", "remote read fields are invalid")
+            sequence, maximum = payload["sequence"], payload["maximum_bytes"]
+            if type(sequence) is not int or type(maximum) is not int:
+                raise AuthorityDenied("remote.request", "remote read bounds are invalid")
+            return authority.read_remote_connector(
+                handle, text_field("connector_handle"), sequence, maximum, **peer,
+            ).to_wire()
+        if operation == "write_remote_connector":
+            if set(payload) != {"remote_session_handle", "connector_handle", "sequence", "data_bytes_b64"}:
+                raise AuthorityDenied("remote.request", "remote write fields are invalid")
+            sequence = payload["sequence"]
+            if type(sequence) is not int:
+                raise AuthorityDenied("remote.request", "remote write sequence is invalid")
+            from .remote_sessions import MAX_FRAME_BYTES
+            data = token_field("data_bytes_b64", MAX_FRAME_BYTES)
+            return authority.write_remote_connector(
+                handle, text_field("connector_handle"), sequence, data, **peer,
+            ).to_wire()
+        if operation == "close_remote_connector":
+            if set(payload) != {"remote_session_handle", "connector_handle"}:
+                raise AuthorityDenied("remote.request", "remote connector close fields are invalid")
+            return authority.close_remote_connector(
+                handle, text_field("connector_handle"), **peer,
+            ).to_wire()
+        raise AuthorityDenied("protocol.operation", "remote authority operation is unavailable")
 
     def _authorize_process_start(self, uid: int, peer_pid: int | None, payload: Any) -> dict[str, Any]:
         """Resolve process.start target from root enrollment, never caller input."""

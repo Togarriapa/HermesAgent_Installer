@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from hermes_installer.authority.types import EffectAuthorization, HostContext
 from hermes_installer.state import OwnedRoot, process_lock
 from hermes_installer.memory.owner_ledger import SQLiteOwnerLedger
+from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+from hermes_installer.memory.transport import MemoryServiceIPC, RootConnectorFactory
 
 MAX_REQUEST = 256 * 1024
 MAX_RESPONSE = 1024 * 1024
@@ -127,6 +129,48 @@ class MemoryTarget:
     data_root_id: str
     dedicated_store: bool = True
     approved_route_ids: frozenset[str] = frozenset()
+    enrollment: MemoryServiceEnrollment | None = None
+
+    @classmethod
+    def from_enrollment(cls, enrollment: MemoryServiceEnrollment) -> "MemoryTarget":
+        if not isinstance(enrollment, MemoryServiceEnrollment):
+            raise TypeError("MemoryServiceEnrollment is required")
+        return cls(
+            provider=enrollment.provider, profile_id=enrollment.profile_id,
+            namespace_id=enrollment.namespace_identity,
+            service_id=enrollment.service_enrollment_id,
+            source_revision=enrollment.source_revision,
+            service_generation=enrollment.service_generation,
+            data_root_id=enrollment.data_root_id, dedicated_store=True,
+            approved_route_ids=frozenset(enrollment.fixed_route_map),
+            enrollment=enrollment,
+        )
+
+    def route_for(self, action: str) -> str | None:
+        if self.enrollment is None:
+            return ROUTE_IDS[self.provider].get(action)
+        e = self.enrollment
+        if self.provider == "openviking":
+            choices = {"doctor": "openviking-ready", "search": "openviking-find",
+                       "capture": "openviking-session-capture"}
+        elif self.provider == "agentmemory":
+            choices = {"doctor": "agentmemory-ready", "search": "agentmemory-search",
+                       "capture": "agentmemory-capture", "delete": "agentmemory-delete",
+                       "export": "agentmemory-export", "backup": "agentmemory-backup",
+                       "restore": "agentmemory-restore"}
+        elif e.backend_variant == "server-v1-sqlite":
+            choices = {"doctor": "claude-sqlite-ready", "search": "claude-sqlite-search",
+                       "capture": "claude-sqlite-capture"}
+        elif e.backend_variant == "server-v1-postgres":
+            choices = {"doctor": "claude-postgres-ready", "search": "claude-postgres-search",
+                       "capture": "claude-postgres-capture", "delete": "claude-postgres-delete"}
+        elif e.backend_variant == "worker-observation":
+            choices = {"capture": "claude-worker-capture", "search": "claude-worker-search-get",
+                       "delete": "claude-worker-delete"}
+        else:
+            return None
+        route_id = choices.get(action)
+        return route_id if route_id in e.fixed_route_map else None
 
     def __post_init__(self) -> None:
         if self.provider not in PROVIDERS or not all(
@@ -135,9 +179,23 @@ class MemoryTarget:
             raise ValueError("invalid protected provider enrollment")
         if self.source_revision != SOURCE_REVISIONS[self.provider]:
             raise ValueError("provider source revision differs from the reviewed pin")
-        if type(self.service_generation) is not int or self.service_generation < 1:
-            raise ValueError("supervised service generation is required")
-        allowed_routes = frozenset(ROUTE_IDS[self.provider].values())
+        if self.enrollment is None:
+            if type(self.service_generation) is not int or self.service_generation < 1:
+                raise ValueError("legacy fixture generation must be a positive integer")
+            allowed_routes = frozenset(ROUTE_IDS[self.provider].values())
+        else:
+            e = self.enrollment
+            if not isinstance(self.service_generation, str) or not self.service_generation:
+                raise ValueError("opaque host service generation is required")
+            if (self.service_generation != e.service_generation
+                    or self.service_id != e.service_enrollment_id
+                    or self.profile_id != e.profile_id
+                    or self.namespace_id != e.namespace_identity
+                    or self.data_root_id != e.data_root_id
+                    or self.provider != e.provider
+                    or self.source_revision != e.source_revision):
+                raise ValueError("memory target differs from strict protected enrollment")
+            allowed_routes = frozenset(e.fixed_route_map)
         if isinstance(self.approved_route_ids, (str, bytes)):
             raise ValueError("protected approved route IDs must be a sequence of opaque IDs")
         try:
@@ -502,8 +560,17 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 raise ValueError("memory timeout is out of bounds")
             body = parse_request(payload)
             _scope(context, target, body)
+            if action not in {"enqueue", "result", "extract", "embed"} and ipc is not None:
+                raise BrokerUnavailable(
+                    "raw HTTP memory transport is incompatible with fixed compound protocol")
             if cancelled():
                 return _reply({"error":"cancelled"}, 499)
+            enrolled_scope = (target.enrollment.fixed_project_account_user_scope
+                              if target.enrollment is not None else {
+                                  "project_id": target.namespace_id,
+                                  "account_id": target.profile_id,
+                                  "user_id": target.profile_id,
+                              })
             if action == "enqueue":
                 if queue is None:
                     raise BrokerUnavailable("durable queue is unavailable")
@@ -553,8 +620,14 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 source=_text(body.get("source"),"source",512)
                 if source.startswith("memory:"):
                     raise BrokerDenied("recursive memory ingestion denied")
-                if target.provider=="claude-mem":
-                    request={"projectId":target.namespace_id,"kind":"manual","type":"fact",
+                if target.provider=="claude-mem" and target.enrollment is not None and target.enrollment.backend_variant == "worker-observation":
+                    request={"text":"\n".join(facts),"title":record_id,
+                        "project":enrolled_scope["project_id"],
+                        "metadata":{"hermes_record_id":record_id,
+                        "hermes_lineage":context.lineage_hash,"hermes_source":source,
+                        "owner_generation":generation}}
+                elif target.provider=="claude-mem":
+                    request={"projectId":enrolled_scope["project_id"],"kind":"manual","type":"fact",
                         "facts":facts,"metadata":{"hermes_record_id":record_id,
                         "hermes_lineage":context.lineage_hash,"hermes_source":source,
                         "owner_generation":generation}}
@@ -564,7 +637,8 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     # The root-only adapter maps this bounded body to the pinned
                     # REST operation. Per-profile service/data roots provide scope.
                     request={"content":"\n".join(facts),"type":"fact",
-                        "project":target.namespace_id,
+                        "project":enrolled_scope["project_id"],
+                        "agentId":enrolled_scope["user_id"],
                         "concepts":["hermes-record:"+record_id,
                                     "hermes-lineage:"+context.lineage_hash,
                                     "hermes-source:"+source]}
@@ -578,22 +652,26 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 if target.provider=="openviking":
                     request={"query":q,"target_uri":"viking://~/memories","context_type":["memory"],"limit":limit,"read_content":True}
                 elif target.provider=="claude-mem":
-                    request={"projectId":target.namespace_id,"query":q,"limit":min(limit,50)}
+                    if target.enrollment is not None and target.enrollment.backend_variant == "worker-observation":
+                        request={"query":q,"limit":min(limit,100)}
+                    else:
+                        request={"projectId":enrolled_scope["project_id"],"query":q,"limit":min(limit,50)}
                 else:
-                    request={"query":q,"project":target.namespace_id,"limit":min(limit,20)}
+                    request={"query":q,"project":enrolled_scope["project_id"],
+                             "agentId":enrolled_scope["user_id"],"limit":min(limit,20)}
             elif action=="doctor":
                 request={"profile_id":context.profile_id,"namespace_id":context.namespace_id,
                          "service_generation":target.service_generation}
             elif action=="delete":
                 rid=_text(body.get("record_id"),"record id",256)
                 if target.provider=="agentmemory":
-                    request={"memoryId":rid,"project":target.namespace_id}
+                    request={"memoryId":rid}
                 elif target.provider=="claude-mem":
-                    request={"id":rid,"projectId":target.namespace_id}
+                    request={"record_id":rid,"projectId":enrolled_scope["project_id"]}
                 else:
                     raise BrokerUnavailable("OpenViking pinned API has no per-memory delete operation")
             elif action in {"export","backup","restore"}:
-                if action not in ROUTE_IDS[target.provider]:
+                if target.route_for(action) is None:
                     raise BrokerUnavailable(target.provider+" has no pinned safe "+action+" API")
                 if action=="restore":
                     if not target.dedicated_store:
@@ -604,7 +682,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     request={"profile_id":context.profile_id,"namespace_id":context.namespace_id}
             else:
                 raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
-            route_id=ROUTE_IDS[target.provider].get(action)
+            route_id=target.route_for(action)
             if route_id is None:
                 raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
             if route_id not in target.approved_route_ids:
@@ -641,7 +719,13 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 deadline_monotonic=time.monotonic()+timeout, payload=canonical(request),
                 timeout=timeout, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                 cancelled=cancelled)
-            result=_result(raw_result)
+            response_status = getattr(raw_result, "status", 200)
+            response_body = getattr(raw_result, "body", raw_result)
+            if not 200 <= int(response_status) < 300:
+                if int(response_status) in {401, 403, 404}:
+                    raise BrokerDenied("memory service denied the enrolled operation")
+                raise BrokerUnavailable("memory service returned a non-success status")
+            result=_result(response_body)
             if action=="search":
                 if target.provider=="openviking":
                     hits=result.get("memories",[])
@@ -732,24 +816,27 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
             result[binding]=dispatch
     return result
 
-def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTarget],
+def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTarget | MemoryServiceEnrollment],
         authority_service: Any, *, root_data_dir: Path = Path("/var/lib/hermes-installer/memory"),
-        vault: Any = None) -> dict[str, Any]:
+        vault: Any = None, connector_factory: RootConnectorFactory | None = None) -> dict[str, Any]:
     """Assemble the static root runtime from protected enrollment only.
 
-    The authority daemon passes its root-signed consent issuer. Service IPC and
-    private model engines are deliberately absent until the process custodian
-    enrolls authenticated per-service IPC and eligible local/private runtimes.
+    The authority daemon passes its root-signed consent issuer. Service IPC
+    and private model engines are deliberately absent until the process custodian
+    enrolls the typed fixed-memory compound executor and eligible local/private
+    runtimes. Raw HTTP connector factories are rejected.
     In that state handlers are still real, bounded handlers and data-plane
     operations truthfully return unavailable; no service is started or lazily
     installed here. The vault argument is reserved for the future root-only
     connector and is intentionally never read by worker-facing code.
     """
-    targets = dict(protected_targets)
-    for key, target in targets.items():
+    targets: dict[tuple[str, str, str], MemoryTarget] = {}
+    for key, item in protected_targets.items():
+        target = MemoryTarget.from_enrollment(item) if isinstance(item, MemoryServiceEnrollment) else item
         if not isinstance(target, MemoryTarget) or key != (
                 target.profile_id, target.namespace_id, target.provider):
-            raise ValueError("memory runtime accepts only exact protected MemoryTarget entries")
+            raise ValueError("memory runtime accepts only exact protected enrollment entries")
+        targets[key] = target
     ledger = SQLiteOwnerLedger(root_data_dir / "owner-ledger")
     owner_state = ledger.get_owner_state
     consent_issuer = getattr(authority_service, "create_background_consent", None)
@@ -768,15 +855,22 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
     data_roots = [target.data_root_id for target in targets.values()]
     if len(service_ids) != len(set(service_ids)) or len(data_roots) != len(set(data_roots)):
         raise ValueError("memory services and data roots must be separately isolated per profile")
+    # Raw HTTP streams are not a valid SK01 memory transport. The only
+    # accepted data plane is fixed-memory-compound-json-v1 with root-owned
+    # job/step state and a fresh HI12 grant for each step. Until that typed
+    # executor is composed, all service actions remain explicitly unavailable.
+    if connector_factory is not None:
+        raise ValueError("raw memory HTTP connector factories are not supported")
+    ipc = None
     return {
         "targets": targets,
         "owner_ledger": ledger,
         "owner_state": owner_state,
         "queue": queue,
-        "ipc": None,
+        "ipc": ipc,
         "engines": {},
         "eligibility": eligibility,
-        "maximum_timeout": 20.0,
+        "maximum_timeout": 15.0,
         "consent_active": consent_active,
         "consent_ready": consent_ready,
         "background_effect": effect_runner if callable(effect_runner) else None,

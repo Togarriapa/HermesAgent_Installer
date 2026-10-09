@@ -87,12 +87,24 @@ async def main() -> None:
 
     identity = {"schema": 1, "process_id": process_id, "generation": generation}
     inspection = await control("process.inspect", identity)
+    members = inspection.get("processes", [])
+    main_members = [member for member in members if member.get("role") == "main"]
+    main_attestation = main_members[0].get("sandbox_attestation", {}) if main_members else {}
     if (inspection.get("process_id") != process_id
             or inspection.get("generation") != generation
             or not inspection.get("complete")
-            or not any(member.get("role") == "main" for member in inspection.get("processes", []))
+            or not main_members
+            or main_attestation.get("kernel_uid") != os.getuid()
+            or main_attestation.get("cgroup_identity") != started.get("cgroup")
+            or main_attestation.get("namespace_identity") != (
+                f"mnt:{started.get('mount_namespace_inode')};net:{started.get('network_namespace_inode')}"
+            )
+            or main_attestation.get("seccomp_mode") != 2
+            or main_attestation.get("no_new_privs") is not True
+            or main_attestation.get("forbidden_flags_present") is not False
+            or any(member.get("role") == "main" for member in members if member not in main_members)
             or any("pid" in member or "argv" in member or "path" in member
-                   for member in inspection.get("processes", []))):
+                   for member in members)):
         raise RuntimeError("root process inspection returned incomplete or over-disclosed evidence")
     print(json.dumps({"event": "started", **started, "inspection": inspection}, sort_keys=True), flush=True)
 

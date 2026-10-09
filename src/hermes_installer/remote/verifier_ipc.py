@@ -411,14 +411,14 @@ class PolicyVerifierService:
                 request["access_jwt"], policy=self.runtime.policy,
                 now=lambda: start_wall, cancel_event=cancel, deadline_monotonic=deadline,
             )
-            allowed = self.runtime.authority.allows(
+            observation = self.runtime.authority.inspect(
                 principal.email, cancel_event=cancel, deadline_monotonic=deadline,
             )
             end_mono = time.monotonic()
-            if not allowed or cancel.is_set() or end_mono > deadline:
+            if not observation.allowed or cancel.is_set() or end_mono > deadline:
                 return None
             jwt_deadline = start_mono + max(0.0, principal.expires_at - start_wall)
-            valid_until = min(start_mono + 60.0, jwt_deadline)
+            valid_until = min(observation.started_monotonic + 60.0, jwt_deadline)
             if valid_until <= end_mono:
                 return None
             return {
@@ -427,7 +427,8 @@ class PolicyVerifierService:
                 "config_digest": self.runtime.config_digest, "decision": True, "code": "ALLOW",
                 "email": principal.email, "subject": principal.subject,
                 "token_fingerprint": principal.token_fingerprint,
-                "observed_start_monotonic": start_mono, "observed_end_monotonic": end_mono,
+                "observed_start_monotonic": observation.started_monotonic,
+                "observed_end_monotonic": observation.ended_monotonic,
                 "jwt_deadline_monotonic": jwt_deadline, "valid_until_monotonic": valid_until,
             }
         except Exception:
