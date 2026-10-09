@@ -48,6 +48,9 @@ import hermes_cli.config
 assert Path(hermes_cli.config.__file__).resolve().is_relative_to(upstream.resolve()), hermes_cli.config.__file__
 
 class Facade:
+    def __init__(self):
+        self.calls = []
+
     def invoke(self, adapter_id, action_id, arguments, **_kwargs):
         from hermes_installer.native_invocations import current_native_invocation_binding
         binding = current_native_invocation_binding()
@@ -55,6 +58,7 @@ class Facade:
             raise PermissionError("no matching root-observed native invocation")
         if (adapter_id, action_id, arguments) != ("native-fixture", "lookup", {"key": "private"}):
             raise PermissionError("selected action mismatch")
+        self.calls.append((adapter_id, action_id, dict(arguments)))
         return {"status": "ok", "data": "private"}
 
 class Adapter:
@@ -142,6 +146,11 @@ try:
 except Exception as exc:
     raise AssertionError(f"actual PluginManager dispatch failed: {type(exc).__name__}: {exc!r}") from exc
 assert result == '{"data":"private","status":"ok"}', result
+denied = registry.dispatch(
+    "installer_native_fixture", {"key": "private"}, scope=manager.scope_key,
+)
+assert isinstance(denied, str) and "no matching root-observed native invocation" in denied, denied
+assert context.plugin_effects.calls == [("native-fixture", "lookup", {"key": "private"})]
 assert Path(sys.modules["agent"].__file__).resolve() == (overlay / "agent/__init__.py").resolve(), sys.modules["agent"].__file__
 '''
             env = dict(os.environ)
