@@ -540,5 +540,84 @@
       "transaction": "Resolve root-owned one-use compiler publication handle; validate current session/plan/source receipts/actual template/compiled strict schemas and predecessor catalog digest. Create private staged directory, write fsync exact policy/catalog/descriptor/selection, validate actual bytes and held inode again, seal/rename generation; atomically CAS root-setup-selection.json last with parent fsync. RootSetupPublicationReceipt binds generation ID/digest/current file hashes/rootinode/input receipt handles and predecessor. Concurrent mismatch preserves prior selection and leaves staged owned generation journaled for safe resume.",
       "phases": "Prepared and active each new publication digest/ID; stable setup transaction persists. Prepared service records may empty, active values require actual runtime/closure pins, health final enablement separate. Compiler/factory consume typed publication receipt and selected generation only; no raw worker authority row publication."
     }
+  },
+  "official_pm_runtime": {
+    "requirements": [
+      "BD-F01",
+      "BD-F02",
+      "LC-F03",
+      "HI09"
+    ],
+    "tasks": [
+      "BD-F01",
+      "LC-F03",
+      "HI-T09"
+    ],
+    "owner_module": "hermes_installer.authority.pm_runtime",
+    "source_commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "source_evidence": "Pinned scripts/install.sh715..756 stages exact pm/lock.json uv and Python3.14; source pm/environments.py committed_venv/venv_python select successful committed PM dependency environment. pm/receipt.py sync receipt alone does not attest interpreter identity. Source owner luna_pm_runtime_receipt read exact783 implementation/source lock; pins independently match existing protected-artifact-source-catalog.json.",
+    "artifact_roles": [
+      {
+        "artifact_id": "hermes-pm-lock",
+        "sha256": "49b79259220160f147255078a19af541a5f328d3871c8041cc1eb909d19eb549",
+        "size_bytes": 33804,
+        "role": "official-pm-lock"
+      },
+      {
+        "artifact_id": "hermes-pm-uv-linux-arm64",
+        "sha256": "bb66cb52e7b1823aed1183630d8d8e5c958840d584a4c55ec10a4cfc168dcca2",
+        "size_bytes": 20423730,
+        "role": "official-pm-uv",
+        "version": "0.12.3"
+      },
+      {
+        "artifact_id": "hermes-pm-python314-linux-arm64",
+        "sha256": "30f1cc489be654477d895b441e196bb080738bf0456da82080ad4ab66a22d80f",
+        "size_bytes": 95628137,
+        "role": "official-pm-base-python",
+        "version": "3.14.7+20260901"
+      }
+    ],
+    "provision_call": "RootPMRuntimeProvisioner.provision_selected(prepared_setup_receipt_handle,source_receipt_handle,pm_lock_receipt_handle)->opaque runtime_receipt_handle",
+    "provision": "Root local verified setup session/held private roots/CAS exact selected source+lock+tool artifacts only. Use official pinned Python -m pm.cli install, optional --without agent-browser/--without cua-driver only explicit selected feature policy, no caller argv/package/pip/URL or global runtime downgrade. PM owns dependency environment; timeout/cancel/private resource bounds existing selected stage recipe. Selected Node only for later frontend/build role, not prerequisite Python runtime receipt.",
+    "receipt_fields": [
+      "schema",
+      "receipt_id",
+      "setup_session_id",
+      "transaction_handle",
+      "prepared_generation_id",
+      "source_commit",
+      "source_receipt_handle",
+      "pm_lock_artifact_id",
+      "pm_lock_sha256",
+      "uv_artifact_id",
+      "uv_artifact_sha256",
+      "base_python_artifact_id",
+      "base_python_artifact_sha256",
+      "platform",
+      "pm_sync_receipt_sha256",
+      "pm_sync_outcome",
+      "feature_list",
+      "committed_venv_receipt_handle",
+      "runtime_executable_artifact_id",
+      "runtime_executable_sha256",
+      "runtime_device",
+      "runtime_inode",
+      "runtime_uid",
+      "runtime_gid",
+      "runtime_mode",
+      "version_info",
+      "implementation",
+      "cache_tag",
+      "soabi",
+      "machine",
+      "cleanup_receipt_id",
+      "terminal_receipt_id",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "resolve_call": "RootPMRuntimeReceiptRegistry.resolve_runtime(runtime_receipt_handle,transaction_handle,prepared_generation_id)->VerifiedPMRuntimeSelection",
+    "runtime_identity": "Only actual PM committed_venv(project_root) and venv_python(committed_venv) after successful sync; root reopens nofollow and verifies held directory/current inode/owner/mode/executable SHA, selected source/lock/tool artifacts and observed managed process Python version3.14.7 implementation/cache_tag/SOABI/machine. Actual installed executable SHA is observed postprovision, never equal archiveSHA by assumption. Root private VerifiedPMRuntimeSelection contains Path for materializer/activation only; exported receipt has no filesystem path or secret.",
+    "bootstrap_join": "Actual RootSetupSessionStore+RootSetupArtifactFetcher root-first acquisition, RootArtifactReceiptRegistry, prepared enrollment and RootMaterializationReceiptRegistry are constructor dependencies. Root factory compiler/activation consumes verified runtime receipt plus native output closure, never raw process status. Resolve validates current session/transaction/source/root/lease/receipt instance/revocation. Actual native target qualification remains pending; payload acquisition and PM sync not health acceptance."
   }
 }

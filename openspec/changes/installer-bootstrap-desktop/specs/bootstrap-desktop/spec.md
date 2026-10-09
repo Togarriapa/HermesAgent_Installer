@@ -366,3 +366,10 @@ The implementation SHALL use the exact applicable v36 release roles, immutable p
 #### Scenario: First ingress has no source receipt yet
 - **WHEN** root resolves selected ingress controller custody
 - **THEN** actual process/module/selected ingress proof is checked independently before atomically minting the source receipt and event handle
+
+### Requirement: Official committed PM runtime identity
+The implementation SHALL resolve the exact selected official committed PM dependency environment through the v37 root runtime receipt.
+
+#### Scenario: PM source or sync receipt alone exists
+- **WHEN** actual selected runtime executable identity and source/lock/tool joins have not been verified
+- **THEN** runtime activation and functional health remain pending, without substituting a source archive digest or system Python
