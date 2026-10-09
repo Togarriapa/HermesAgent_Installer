@@ -86,6 +86,17 @@ class OperatorEvidenceTests(unittest.TestCase):
 
     def test_supplemental_profiles_are_exact_and_unobserved_claims_stay_pending(self):
         expected = {
+            ("AC18", "EV-HI11"): {
+                "producer_gateway_identity_and_generation_bound", "complete_source_closure_and_final_payload_bound",
+                "operation_retry_and_bounded_lease_bound", "gateway_peer_authenticated_and_admission_atomically_consumed",
+                "opaque_reference_and_caller_header_authority_denied",
+            },
+            ("AC18", "EV-HI12"): {
+                "capability_operation_target_and_canonical_payload_bound",
+                "shared_target_does_not_imply_cross_operation_permission",
+                "fresh_one_use_frame_grants_preserve_original_stream_deadline",
+                "trusted_expiry_and_revocation_cleanup_independent_and_observed",
+            },
             ("AC18", "EV-HI10"): {
                 "registered_process_handle_required", "current_cgroup_descendants_attested",
                 "stable_kernel_identity_and_executable_pin_verified", "renderer_lineage_and_sandbox_attested",
