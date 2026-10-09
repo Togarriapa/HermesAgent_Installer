@@ -18,6 +18,10 @@ from hermes_installer.state import OwnedRoot, process_lock
 from hermes_installer.memory.owner_ledger import SQLiteOwnerLedger
 from hermes_installer.memory.enrollment import MemoryServiceEnrollment
 from hermes_installer.memory.transport import MemoryServiceIPC, RootConnectorFactory
+from hermes_installer.authority.memory_execution import (
+    MemoryCompoundExecutor, MemoryExecutionDenied, MemoryExecutionUnavailable,
+)
+from hermes_installer.memory.compound import MemoryRecipeDenied, MemoryRecipeUnavailable
 
 MAX_REQUEST = 256 * 1024
 MAX_RESPONSE = 1024 * 1024
@@ -489,6 +493,11 @@ class DurableMemoryQueue:
                     (code, now, profile_id, provider_id, owner_generation)).rowcount
                 db.execute("UPDATE consents SET active=0,updated=? WHERE profile=? AND provider=? AND owner_generation=? AND active=1",
                     (now, profile_id, provider_id, owner_generation))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='compound_jobs'").fetchone():
+                    db.execute("UPDATE compound_jobs SET state='revoked',source_context=X'',consent=NULL,"
+                        "request_body=X'7b7d',captures=X'7b7d',inflight_step=NULL,inflight_sequence=NULL "
+                        "WHERE profile=? AND provider=? AND owner_generation=? AND state='active'",
+                        (profile_id, provider_id, owner_generation))
                 db.commit()
                 return int(changed)
             except BaseException:
@@ -510,6 +519,10 @@ class DurableMemoryQueue:
                 changed = db.execute("UPDATE jobs SET status='failed',error_code=?,source_context=X'',consent=X'',event=X'',lease_until=NULL,updated=? WHERE profile=? AND status IN ('queued','processing')",
                     (code,now,profile_id)).rowcount
                 db.execute("UPDATE consents SET active=0,updated=? WHERE profile=? AND active=1", (now,profile_id))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='compound_jobs'").fetchone():
+                    db.execute("UPDATE compound_jobs SET state='revoked',source_context=X'',consent=NULL,"
+                        "request_body=X'7b7d',captures=X'7b7d',inflight_step=NULL,inflight_sequence=NULL "
+                        "WHERE profile=? AND state='active'", (profile_id,))
                 db.commit()
                 return int(changed)
             except BaseException:
@@ -535,7 +548,8 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
              queue: DurableMemoryQueue | None, owner_state: OwnerState,
              engines: Mapping[str, PrivateEngine],
              eligibility: Callable[[MemoryTarget, str, HostContext], bool] | None,
-             maximum_timeout: float):
+             maximum_timeout: float,
+             compound_executor: MemoryCompoundExecutor | None = None):
     def handle(*, context: HostContext, authorization: EffectAuthorization,
                payload: bytes, timeout: float, peer_pid: int,
                cancelled: Callable[[], bool], peer_pidfd: int | None = None) -> Mapping[str, Any]:
@@ -687,6 +701,28 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
             if route_id not in target.approved_route_ids:
                 raise BrokerDenied("memory route is not in the protected enrollment")
+            if compound_executor is not None and action in {"search", "capture"}:
+                enrollment = target.enrollment
+                recipe = enrollment.fixed_route_map.get(route_id) if enrollment is not None else None
+                if recipe is None:
+                    raise BrokerUnavailable("selected memory action has no complete protected compound recipe")
+                if action == "search":
+                    compound_body = {"query": _text(body.get("query"), "query", 16384),
+                                     "limit": limit}
+                elif target.provider == "agentmemory":
+                    compound_body = {"content": _text(request.get("content"), "content", 65536)}
+                else:
+                    raise BrokerUnavailable("selected memory capture lacks a root-captured event recipe")
+                source_context_wire = context.to_wire()
+                executed = compound_executor.execute(
+                    enrollment=enrollment, recipe=recipe, body=compound_body,
+                    source_context_wire=source_context_wire,
+                    parent_authorization=authorization,
+                    cancelled=cancelled)
+                result = dict(executed)
+                result["profile_id"] = context.profile_id
+                result["namespace_id"] = context.namespace_id
+                return _reply(result)
             if ipc is None:
                 raise BrokerUnavailable("root-owned authenticated memory service connector is unavailable")
             if action=="restore":
@@ -768,6 +804,14 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
             return _reply(result)
         except BrokerDenied as exc:
             return _reply({"error":str(exc)},403)
+        except MemoryExecutionDenied as exc:
+            return _reply({"error":str(exc)},403)
+        except MemoryExecutionUnavailable as exc:
+            return _reply({"error":str(exc)},503)
+        except MemoryRecipeDenied as exc:
+            return _reply({"error":str(exc)},403)
+        except MemoryRecipeUnavailable as exc:
+            return _reply({"error":str(exc)},503)
         except (ValueError,TypeError) as exc:
             return _reply({"error":str(exc)},400)
         except BrokerUnavailable as exc:
@@ -781,6 +825,7 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
         owner_state: OwnerState, queue: DurableMemoryQueue|None, ipc: ServiceIPC|None,
         engines: Mapping[str,PrivateEngine]|None=None,
         eligibility: Callable[[MemoryTarget,str,HostContext],bool]|None=None,
+        compound_executor: MemoryCompoundExecutor | None = None,
         maximum_timeout: float=20.0):
     """Return one fixed handler per provider/action; signed context resolves profile.
 
@@ -809,7 +854,8 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
                 if target is None:
                     return _reply({"error":"no enrolled memory target for signed profile"},403)
                 return _handler(target,_action,ipc=ipc,queue=queue,owner_state=owner_state,
-                    engines=engines,eligibility=eligibility,maximum_timeout=maximum_timeout)(
+                    engines=engines,eligibility=eligibility,maximum_timeout=maximum_timeout,
+                    compound_executor=compound_executor)(
                         context=context,authorization=authorization,payload=payload,
                         timeout=timeout,peer_pid=peer_pid,cancelled=cancelled,
                         peer_pidfd=peer_pidfd)
@@ -819,16 +865,13 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
 def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTarget | MemoryServiceEnrollment],
         authority_service: Any, *, root_data_dir: Path = Path("/var/lib/hermes-installer/memory"),
         vault: Any = None, connector_factory: RootConnectorFactory | None = None) -> dict[str, Any]:
-    """Assemble the static root runtime from protected enrollment only.
+    """Assemble the root memory runtime from protected enrollment only.
 
-    The authority daemon passes its root-signed consent issuer. Service IPC
-    and private model engines are deliberately absent until the process custodian
-    enrolls the typed fixed-memory compound executor and eligible local/private
-    runtimes. Raw HTTP connector factories are rejected.
-    In that state handlers are still real, bounded handlers and data-plane
-    operations truthfully return unavailable; no service is started or lazily
-    installed here. The vault argument is reserved for the future root-only
-    connector and is intentionally never read by worker-facing code.
+    Fixed compound execution is available only when AuthorityService provides
+    the root-owned per-step effect callback. The callback must resolve the
+    protected service/route and issue a new HI12 grant for each network step.
+    Without that callback, no service bytes are sent. This builder never starts
+    or lazily installs provider processes or models.
     """
     targets: dict[tuple[str, str, str], MemoryTarget] = {}
     for key, item in protected_targets.items():
@@ -862,12 +905,20 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
     if connector_factory is not None:
         raise ValueError("raw memory HTTP connector factories are not supported")
     ipc = None
+    from hermes_installer.authority.memory_execution import MemoryCompoundLedger, MemoryCompoundExecutor
+    step_effect = getattr(authority_service, "perform_memory_connector_step", None)
+    compound_ledger = MemoryCompoundLedger(
+        root_data_dir / ("queue" if queue is not None else "compound"))
+    compound_executor = MemoryCompoundExecutor(
+        compound_ledger, step_effect if callable(step_effect) else None)
     return {
         "targets": targets,
         "owner_ledger": ledger,
         "owner_state": owner_state,
         "queue": queue,
         "ipc": ipc,
+        "compound_ledger": compound_ledger,
+        "compound_executor": compound_executor,
         "engines": {},
         "eligibility": eligibility,
         "maximum_timeout": 15.0,
