@@ -11,11 +11,21 @@ from hermes_installer.registry.resource_jobs import (
     ResourceBackendEnrollment,
     ResourceBodyRecipe,
     ResourceBodyRecipeField,
+    ResourceCredentialBinding,
     ResourceJobEnrollment,
     ResourceJobNode,
     ResourceScopeBinding,
     ResourceValidator,
 )
+
+
+def test_resource_credential_binding_preserves_full_manifest_placeholder():
+    binding = ResourceCredentialBinding(
+        "${GITHUB_WEBHOOK_SECRET}", "credential-github-hook", "webhook-hmac-verify",
+    )
+    assert binding.source_placeholder == "${GITHUB_WEBHOOK_SECRET}"
+    with pytest.raises(Exception):
+        ResourceCredentialBinding("${github-secret}", "credential-github-hook", "webhook-hmac-verify")
 
 _EXECUTION_BINDING = {
     "process_enrollment_id": "process-profile",
