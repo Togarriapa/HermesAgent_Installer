@@ -678,7 +678,7 @@ class _PluginImplementation:
 _CONFIRMATION_FIELD = "opaque_confirmation_attestation_id"
 _ATTESTATION = re.compile(r"^[A-Za-z0-9_-]{16,256}$")
 _DATA_ACTIONS: Mapping[tuple[DataProvider, DataOperation], str] = {
-    (provider, operation): f"{provider.value}.{operation.value}.read"
+    (provider, operation): "plugin.financial-data-hub.read"
     for provider, operations in _DATA_SCOPES.items() for operation in operations
 }
 _EXECUTION_OPERATIONS: Mapping[str, frozenset[str]] = {

@@ -351,7 +351,8 @@ class PluginFinanceTests(unittest.TestCase):
         tool = context.tools["financial_data_read"]
         result = tool["handler"]({"provider": "bank-aisp", "operation": "balances"})
         self.assertEqual(effects.calls[0]["adapter_id"], "financial-data-hub")
-        self.assertEqual(effects.calls[0]["action_id"], "bank-aisp.balances.read")
+        self.assertEqual(effects.calls[0]["action_id"], "plugin.financial-data-hub.read")
+        self.assertEqual(effects.calls[0]["arguments"]["operation"], "balances")
         self.assertNotIn("financial_data", vars(runtime))
         self.assertNotIn("access_token", str(result))
 
