@@ -159,11 +159,13 @@ class VerifierManagedServiceDescriptor:
         env = dict(runtime_env)
         if set(env) != {"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"}:
             raise ValueError("verifier may receive only its dedicated private runtime paths")
-        if any(not Path(value).is_absolute() or not Path(value).is_relative_to(self.owned_root)
+        if any(not Path(value).is_absolute()
+               or not Path(value).resolve(strict=True).is_relative_to(self.owned_root.resolve(strict=True))
                for value in env.values()):
             raise ValueError("verifier runtime paths must be confined to its owned root")
-        if (not self.cwd.is_relative_to(self.owned_root)
-                or not self.executable.is_relative_to(self.owned_root)):
+        root = self.owned_root.resolve(strict=True)
+        if (not self.cwd.resolve(strict=True).is_relative_to(root)
+                or not self.executable.resolve(strict=True).is_relative_to(root)):
             raise ValueError("verifier executable and working directory must be inside its owned root")
         argv = (
             str(self.executable.resolve(strict=True)), "-I", "-m",
