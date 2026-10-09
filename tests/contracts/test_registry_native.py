@@ -40,7 +40,7 @@ class NativeRegistryTests(unittest.TestCase):
    self.assertNotIn("ref",action)
  def test_materialization_applies_policy_without_claiming_authority(self):
   files=self.registry.materialize()
-  self.assertEqual(len(files),692)
+  self.assertEqual(len(files),694)  # 692 resources plus Catalog and QUALITY_POLICY
   self.assertEqual({path.split("/",1)[0] for path in files if "/" in path},set(self.registry.root_counts))
   self.assertIn("catalog.yaml",files)
   sample=next(data for path,data in files.items() if path.startswith("skills/"))
