@@ -218,7 +218,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
                 profile_id=self.profile_id, namespace_id="fixture-namespace-" + self.token[:12],
                 capabilities=frozenset({"hermes-profile-invoke", "hermes-process-control"}),
             )},
-            rules={(rule.capability, rule.target): rule for rule in effect_rules},
+            rules={(rule.capability, rule.operation, rule.target): rule for rule in effect_rules},
             handlers=handler_map, policy=_ControlledCustodyPolicy(),
             profile_generations={self.profile_id: self.profile.generation},
         )

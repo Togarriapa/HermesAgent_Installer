@@ -687,7 +687,10 @@ class ManagedProcessEffectHandler:
                 raise AuthorityDenied("process.cgroup", "service did not receive its exact cgroup")
             expected_props = {
                 "KillMode": "control-group", "ProtectSystem": "strict", "PrivateTmp": "yes",
-                "PrivateDevices": "yes", "NoNewPrivileges": "yes", "IPAddressDeny": "any",
+                "PrivateDevices": "yes", "NoNewPrivileges": "yes",
+                # systemd expands `any` to both address-family CIDR ranges in
+                # the observed unit property; compare the kernel rule form.
+                "IPAddressDeny": "0.0.0.0/0 ::/0",
                 "PrivateNetwork": "yes", "RestrictAddressFamilies": "AF_UNIX", "ProtectHome": "tmpfs",
                 "ProtectProc": "invisible", "ProcSubset": "pid", "User": profile.service_user,
             }
