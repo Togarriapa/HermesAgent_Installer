@@ -1607,6 +1607,7 @@ class ManagedProcessEffectHandler:
                 # the other mount restrictions through its dedicated namespace
                 # properties so mountinfo reflects kernel-enforced flags.
                 properties.append("--property=PrivateMounts=yes")
+                properties.append("--property=MountFlags=private")
                 properties.append("--property=NoExecPaths=" + native_mount_receipt.mount_path)
         except BaseException:
             os.close(parent_fd)
