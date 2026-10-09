@@ -20,7 +20,7 @@ class RecordingNetwork:
         self.socket_timeout=socket_timeout
         self.max_response_bytes=max_response_bytes
         self.calls=[]
-    def request(self,url,*,method,headers,body):
+    def request(self,url,*,method,headers,body,cancelled=lambda:False):
         self.calls.append((url,method,headers,body))
         return HTTPResult(200,{"x-secret-echo":"must not propagate","Retry-After":"1"},b'{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":4}}')
 

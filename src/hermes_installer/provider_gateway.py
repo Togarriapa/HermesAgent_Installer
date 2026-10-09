@@ -336,8 +336,11 @@ class LocalProviderGateway:
                         self._reply(503, _error_body("gateway.cancelled", "Gateway request was cancelled"))
                         return
                 except PolicyDenied as exc:
-                    self._reply(403 if exc.code.startswith(("route.", "context.")) else 400,
-                                _error_body(exc.code, str(exc)))
+                    if gateway._closing.is_set():
+                        self._reply(503, _error_body("gateway.cancelled", "Gateway request was cancelled"))
+                    else:
+                        self._reply(403 if exc.code.startswith(("route.", "context.")) else 400,
+                                    _error_body(exc.code, str(exc)))
                     return
                 except Exception:
                     self._reply(502, _error_body("provider.failed", "Policy gateway request failed"))
