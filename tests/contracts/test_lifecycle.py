@@ -84,9 +84,8 @@ class LifecycleRecoveryTests(unittest.TestCase):
             names = archive.getnames()
         self.assertNotIn("data/profiles/default/.env", names)
 
-    def test_uninstall_removes_only_marked_generation_and_retains_user_data(self) -> None:
+    def test_uninstall_removes_only_marked_inactive_generation_and_retains_user_data(self) -> None:
         generation = self.store.stage("agent-v1", {"bin/hermes": b"installer product"})
-        self.store.activate(generation, health_check=lambda _: True)
         overlay = self.data.path("profiles/default/SOUL.md")
         overlay.parent.mkdir(parents=True)
         overlay.write_text("keep")

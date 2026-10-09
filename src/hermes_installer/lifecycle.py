@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import tarfile
 import tempfile
 import time
@@ -20,11 +21,15 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping
 
-from .state import Journal, OwnedRoot, OwnershipError, _atomic_write, process_lock
+from .state import Journal, OwnedRoot, OwnershipError, _atomic_write
 
 
 class LifecycleError(RuntimeError):
     """A safe operation failure with a journaled recovery path."""
+
+
+class LifecycleBlocked(LifecycleError):
+    """An operation was intentionally withheld because a custody precondition is absent."""
 
 
 _IDENTITY = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}\Z")
@@ -276,6 +281,39 @@ class GenerationStore:
             raise LifecycleError("Active generation no longer matches its recorded digest")
         return generation
 
+    @classmethod
+    def inspect_active_readonly(cls, data_root: OwnedRoot) -> Generation | None:
+        """Verify the active pointer without creating or repairing installer state."""
+        root = data_root.root
+        if root.is_symlink():
+            raise OwnershipError("Managed data root cannot be a symlink")
+        if not root.exists():
+            return None
+        info = root.lstat()
+        if (not root.is_dir() or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise OwnershipError("Managed data root ownership is not verified")
+        marker = root / ".hermes-installer-owned"
+        try:
+            fd = os.open(marker, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0))
+            try:
+                marker_info = os.fstat(fd)
+                marker_bytes = os.read(fd, 64)
+            finally:
+                os.close(fd)
+        except OSError:
+            raise OwnershipError("Managed data ownership marker is unavailable") from None
+        if (not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != os.getuid()
+                or stat.S_IMODE(marker_info.st_mode) & 0o077 or marker_bytes != b"schema=1\n"):
+            raise OwnershipError("Managed data ownership marker is invalid")
+        store = object.__new__(cls)
+        store.data_root = data_root
+        store.generations = data_root.path("generations")
+        if store.generations.is_symlink():
+            raise OwnershipError("Generation root cannot be a symlink")
+        return store.current()
+
     def rollback(self, *, health_check: Callable[[Generation], bool]) -> Generation:
         current = self.current()
         if current is None:
@@ -395,6 +433,8 @@ class LifecycleRecovery:
         if self._hash(archive_path) != manifest.get("archive_sha256"):
             raise LifecycleError("Backup archive failed integrity verification")
         entries = self._validated_backup_entries(manifest)
+        if database_destination is not None and "state/journal.sqlite3" not in entries:
+            raise LifecycleError("Backup has no installer database snapshot to restore")
         identity = candidate.name
         operation = "lifecycle:restore:" + identity
         self.journal.checkpoint(operation, "running", {"backup": identity, "schema_version": expected_schema_version})
@@ -511,37 +551,51 @@ class LifecycleRecovery:
                 raise LifecycleError("Backed-up SQLite database failed integrity verification")
         finally:
             check.close()
-        lock = self.state_root.path("installer.lock")
-        with process_lock(lock):
-            previous: Path | None = None
-            if target.exists():
-                previous = self.backups / ("pre-restore-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8] + ".sqlite3")
-                self._sqlite_backup(target, previous)
-                previous.chmod(0o600)
-            temp = target.with_name("." + target.name + ".restore-" + uuid.uuid4().hex)
-            self._sqlite_backup(source, temp)
-            temp.chmod(0o600)
-            for suffix in ("-wal", "-shm"):
-                sidecar = Path(str(target) + suffix)
-                if sidecar.exists() and (sidecar.is_symlink() or not sidecar.is_file()):
-                    temp.unlink(missing_ok=True)
-                    raise OwnershipError("Live SQLite sidecar is unsafe")
-            os.replace(temp, target)
-            for suffix in ("-wal", "-shm"):
-                Path(str(target) + suffix).unlink(missing_ok=True)
-            GenerationStore._fsync_directory(target.parent)
+        # LifecycleRecovery is called under the installer-wide exclusive lease.
+        # Acquiring the same flock here is not safely re-entrant: restore invoked
+        # by the CLI already holds it, so a nested lock would report a false
+        # concurrent operation and leave a valid restore incomplete.
+        previous: Path | None = None
+        if target.exists():
+            previous = self.backups / ("pre-restore-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8] + ".sqlite3")
+            self._sqlite_backup(target, previous)
+            previous.chmod(0o600)
+        temp = target.with_name("." + target.name + ".restore-" + uuid.uuid4().hex)
+        self._sqlite_backup(source, temp)
+        temp.chmod(0o600)
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(str(target) + suffix)
+            if sidecar.exists() and (sidecar.is_symlink() or not sidecar.is_file()):
+                temp.unlink(missing_ok=True)
+                raise OwnershipError("Live SQLite sidecar is unsafe")
+        os.replace(temp, target)
+        for suffix in ("-wal", "-shm"):
+            Path(str(target) + suffix).unlink(missing_ok=True)
+        GenerationStore._fsync_directory(target.parent)
         Journal(target)
         self.journal.event("lifecycle:database-restore", target.name, "committed", {
             "database": target.name, "previous_snapshot": previous.name if previous else None})
         return target
 
-    def uninstall(self, *, stop_owned: Callable[[], None] | None = None) -> dict[str, object]:
+    def uninstall(self) -> dict[str, object]:
         """Remove only ledger-owned software artifacts and retain all user data."""
         operation = "lifecycle:uninstall"
         self.journal.checkpoint(operation, "running", {"data_retained": True})
         try:
-            if stop_owned is not None:
-                stop_owned()
+            pointer_generation = GenerationStore.inspect_active_readonly(self.data_root)
+            active = [row for row in self.journal.owned()
+                if row["kind"] in {"generation", "hermes-generation", "service", "process", "daemon"}
+                and row["state"] in {"active", "running", "enabled"}]
+            if active or pointer_generation is not None:
+                self.journal.checkpoint(operation, "blocked-active-generation", {
+                    "data_retained": True,
+                    "active_generation": pointer_generation.identity if pointer_generation else None,
+                    "resources": [str(row["resource_id"]) for row in active],
+                    "resume": "hermes-installer data uninstall"})
+                self.journal.event(operation, "uninstall", "blocked", {
+                    "reason": "active generation requires verified host-custody shutdown",
+                    "resource_count": len(active)})
+                raise LifecycleBlocked("Uninstall is blocked until host custody verifies shutdown of active generations")
             removed: list[str] = []
             for row in self.journal.owned():
                 if row["kind"] == "generation" and row["state"] in {"active", "staged", "rollback-retained"}:
@@ -588,6 +642,8 @@ class LifecycleRecovery:
             self.journal.checkpoint(operation, "complete", result)
             self.journal.event(operation, "uninstall", "complete", {"removed_count": len(removed), "data_retained": True})
             return result
+        except LifecycleBlocked:
+            raise
         except BaseException as exc:
             self.journal.checkpoint(operation, "failed", {"error_type": type(exc).__name__, "data_retained": True})
             self.journal.event(operation, "uninstall", "failed", {"error_type": type(exc).__name__})
