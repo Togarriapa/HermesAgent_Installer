@@ -9,10 +9,12 @@ from __future__ import annotations
 import hashlib
 import json
 import tomllib
+import os
+import stat
 
 from hermes_installer.components.isolated_locks import lockfile_errors
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Mapping, Protocol
 
 
@@ -257,6 +259,45 @@ def build_graphify_code_fixture(
             "PRIVATE", "deny", 30, 512,
         ),
     )
+
+
+def stage_graphify_fixture(fixture_root: str) -> tuple[str, ...]:
+    """Create the fixed, harmless import fixture in a private owned work root."""
+    root = _absolute_path(fixture_root, "fixture root")
+    path = Path(root)
+    try:
+        info = path.lstat()
+    except OSError:
+        raise RuntimeProfileError("Graphify fixture root must be pre-created by the trusted installer") from None
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_mode & 0o077 or path.resolve(strict=True) != path):
+        raise RuntimeProfileError("Graphify fixture root must be a canonical private installer-owned directory")
+    fixtures = {
+        "entrypoint.py": b"from helper import build_graph\n\ndef main():\n    return build_graph()\n",
+        "helper.py": b"def build_graph():\n    return 'graphify-fixture-connected'\n",
+    }
+    for name, content in fixtures.items():
+        file_path = path / name
+        try:
+            fd = os.open(file_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_NOFOLLOW", 0), 0o444)
+        except FileExistsError:
+            try:
+                file_info = file_path.lstat()
+                existing = file_path.read_bytes()
+            except OSError:
+                raise RuntimeProfileError("Graphify fixture contains an unreadable file") from None
+            if (not stat.S_ISREG(file_info.st_mode) or file_info.st_uid != os.geteuid()
+                    or file_info.st_mode & 0o222 or existing != content):
+                raise RuntimeProfileError("Graphify fixture contains conflicting or mutable data")
+        except OSError:
+            raise RuntimeProfileError("Graphify fixture cannot be safely staged") from None
+        else:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+    return tuple(fixtures)
 
 
 def build_hyperframes_render_fixture(

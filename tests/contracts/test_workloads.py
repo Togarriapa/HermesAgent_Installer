@@ -1,6 +1,10 @@
 """Effects and fail-closed behavior for registered component workload recipes."""
 import unittest
+import json
+import os
+import tempfile
 from decimal import Decimal
+from pathlib import Path
 
 from hermes_installer.components.workloads import Workload, WorkloadScheduler
 
@@ -105,24 +109,54 @@ class WorkloadSchedulerTests(unittest.TestCase):
         self.assertEqual(1, len(calls))
 
     def test_graphify_invocations_are_sequenced_and_dependent_query_stops_on_failure(self):
-        self.scheduler.execute(Workload("graphify-code-fixture"))
-        self.assertEqual(2, len(self.calls))
-        self.assertEqual(("extract", "/owned/fixtures/graphify", "--code-only", "--no-cluster", "--out", "/owned/work/graphify"), self.calls[0].argv)
-        self.assertEqual("query", self.calls[1].argv[0])
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            fixtures, work = (base / "fixtures").resolve(), (base / "work").resolve()
+            fixtures.mkdir(mode=0o700); work.mkdir(mode=0o700)
+            os.chmod(fixtures, 0o700); os.chmod(work, 0o700)
+            calls = []
+            def run(invocation):
+                calls.append(invocation)
+                if invocation.argv[0] == "query":
+                    output = work / "graphify-out"
+                    output.mkdir(mode=0o700)
+                    document = {
+                        "nodes": [
+                            {"id": "entry", "source_file": "entrypoint.py"},
+                            {"id": "helper", "source_file": "helper.py"},
+                        ],
+                        "edges": [{"source": "entry", "target": "helper"}],
+                    }
+                    (output / "graph.json").write_text(json.dumps(document), encoding="utf-8")
+                    os.chmod(output / "graph.json", 0o600)
+                return {"exit_code": 0}
+            scheduler = WorkloadScheduler(
+                run, self.scheduler.granted,
+                runtime_roots={"graphify": "/owned/graphify"},
+                work_roots={"graphify": str(work), "graphify-fixture": str(fixtures)},
+                memory_budget_mb=2048,
+            )
+            proof = scheduler.execute(Workload("graphify-code-fixture"))
+            self.assertEqual(True, proof["fixture_connection"])
+            self.assertEqual(2, proof["fixture_sources"])
+            self.assertEqual(2, len(calls))
+            self.assertEqual(("extract", str(fixtures), "--code-only", "--no-cluster", "--out", str(work)), calls[0].argv)
+            self.assertEqual("query", calls[1].argv[0])
+            self.assertEqual(("entrypoint.py", "helper.py"), tuple(sorted(p.name for p in fixtures.iterdir())))
 
-        failed_calls = []
-        def fail_first(invocation):
-            failed_calls.append(invocation)
-            return {"exit_code": 1}
-        scheduler = WorkloadScheduler(
-            fail_first, self.scheduler.granted,
-            runtime_roots={"graphify": "/owned/graphify"},
-            work_roots={"graphify": "/owned/work/graphify", "graphify-fixture": "/owned/fixtures/graphify"},
-            memory_budget_mb=2048,
-        )
-        with self.assertRaisesRegex(RuntimeError, "dependent stages were not launched"):
-            scheduler.execute(Workload("graphify-code-fixture"))
-        self.assertEqual(1, len(failed_calls))
+            failed_calls = []
+            def fail_first(invocation):
+                failed_calls.append(invocation)
+                return {"exit_code": 1}
+            failed = WorkloadScheduler(
+                fail_first, self.scheduler.granted,
+                runtime_roots={"graphify": "/owned/graphify"},
+                work_roots={"graphify": str(work), "graphify-fixture": str(fixtures)},
+                memory_budget_mb=2048,
+            )
+            with self.assertRaisesRegex(RuntimeError, "dependent stages were not launched"):
+                failed.execute(Workload("graphify-code-fixture"))
+            self.assertEqual(1, len(failed_calls))
 
     def test_hyperframes_fixture_is_fixed_private_on_demand_and_unmetered(self):
         result = self.scheduler.execute(Workload("hyperframes-render-fixture"))

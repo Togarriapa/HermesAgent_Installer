@@ -11,6 +11,9 @@ from decimal import Decimal
 import json
 import math
 import re
+import os
+import stat
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from threading import Lock
 from typing import Callable, Mapping
@@ -20,6 +23,7 @@ from hermes_installer.components.application_handlers import (
     build_graphify_code_fixture,
     build_hyperframes_probe_invocation,
     build_hyperframes_render_fixture,
+    stage_graphify_fixture,
 )
 from hermes_installer.components.browser_use import build_browser_use_fixture_invocation
 
@@ -42,7 +46,7 @@ class _Definition:
     account_requirement: str | None
     metered_cost_usd: Decimal
     build: Callable[[Mapping[str, object], Mapping[str, str], Mapping[str, str]], tuple[ComponentInvocation, ...]]
-    verify: Callable[[object], object] | None = None
+    verify: Callable[[object, Mapping[str, str]], object] | None = None
 
 
 def _browser_fixture(args, runtime_roots, work_roots):
@@ -55,7 +59,7 @@ def _browser_fixture(args, runtime_roots, work_roots):
     return (invocation,)
 
 
-def _verify_browser_fixture(result: object) -> object:
+def _verify_browser_fixture(result: object, work_roots: Mapping[str, str]) -> object:
     from hermes_installer.components.browser_use import verify_browser_use_fixture_result
     try:
         return verify_browser_use_fixture_result(result)
@@ -66,9 +70,61 @@ def _verify_browser_fixture(result: object) -> object:
 def _graphify_fixture(args, runtime_roots, work_roots):
     if args:
         raise ValueError("graphify-code-fixture takes no caller-controlled paths")
+    stage_graphify_fixture(work_roots["graphify-fixture"])
     return build_graphify_code_fixture(
         runtime_roots["graphify"], work_roots["graphify-fixture"], work_roots["graphify"]
     )
+
+
+def _verify_graphify_fixture(result: object, work_roots: Mapping[str, str]) -> object:
+    if not isinstance(result, Mapping) or result.get("exit_code") != 0:
+        raise RuntimeError("Graphify query did not exit successfully")
+    work_root = Path(work_roots["graphify"])
+    graph_path = work_root / "graphify-out" / "graph.json"
+    try:
+        root_info = work_root.lstat()
+        graph_info = graph_path.lstat()
+        if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.geteuid()
+                or root_info.st_mode & 0o077 or work_root.resolve(strict=True) != work_root
+                or not stat.S_ISREG(graph_info.st_mode) or graph_info.st_uid != os.geteuid()
+                or graph_info.st_mode & 0o022 or graph_info.st_size > 16 * 1024 * 1024):
+            raise RuntimeError("Graphify output is not a bounded private regular file")
+        fd = os.open(graph_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            opened = os.fstat(fd)
+            if (opened.st_ino != graph_info.st_ino or opened.st_dev != graph_info.st_dev
+                    or not stat.S_ISREG(opened.st_mode) or opened.st_size > 16 * 1024 * 1024):
+                raise RuntimeError("Graphify output changed during verification")
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                document = json.load(stream)
+        finally:
+            os.close(fd)
+    except FileNotFoundError as exc:
+        raise RuntimeError("Graphify did not produce graph.json") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Graphify output cannot be safely parsed") from exc
+    if not isinstance(document, dict) or not isinstance(document.get("nodes"), list):
+        raise RuntimeError("Graphify output has no node catalog")
+    node_ids: dict[str, str] = {}
+    for node in document["nodes"]:
+        if not isinstance(node, dict) or not isinstance(node.get("id"), str):
+            continue
+        source = node.get("source_file")
+        if isinstance(source, str) and PurePosixPath(source.replace("\\", "/")).name in {"entrypoint.py", "helper.py"}:
+            node_ids[PurePosixPath(source.replace("\\", "/")).name] = node["id"]
+    if set(node_ids) != {"entrypoint.py", "helper.py"}:
+        raise RuntimeError("Graphify graph does not contain both fixture source files")
+    edges = document.get("edges", document.get("links", []))
+    if not isinstance(edges, list):
+        raise RuntimeError("Graphify output has no edge catalog")
+    connected = any(isinstance(edge, dict)
+                    and {edge.get("source"), edge.get("target")} ==
+                    {node_ids["entrypoint.py"], node_ids["helper.py"]}
+                    for edge in edges)
+    if not connected:
+        raise RuntimeError("Graphify graph does not connect the fixture entrypoint and helper")
+    return {"fixture_sources": 2, "fixture_connection": True,
+            "node_count": len(document["nodes"]), "edge_count": len(edges)}
 
 
 def _hyperframes_fixture(args, runtime_roots, work_roots):
@@ -85,7 +141,7 @@ def _hyperframes_fixture(args, runtime_roots, work_roots):
     )
 
 
-def _verify_hyperframes_fixture(result: object) -> object:
+def _verify_hyperframes_fixture(result: object, work_roots: Mapping[str, str]) -> object:
     if not isinstance(result, Mapping) or result.get("exit_code") != 0:
         raise RuntimeError("Hyperframes output probe did not exit successfully")
     output = result.get("stdout")
@@ -134,6 +190,7 @@ _REGISTERED: Mapping[str, _Definition] = MappingProxyType({
         frozenset(),
         frozenset({"component.graphify.read-fixture", "component.graphify.write-private-work", "component.graphify.read-private-work"}),
         1024, 120, "deny", None, Decimal("0"), _graphify_fixture,
+        _verify_graphify_fixture,
     ),
     "hyperframes-render-fixture": _Definition(
         frozenset(),
@@ -226,7 +283,7 @@ class WorkloadScheduler:
                 result = self.run(invocation)
                 if not isinstance(result, Mapping) or result.get("exit_code") != 0:
                     raise RuntimeError("registered workload stage failed; dependent stages were not launched")
-            return definition.verify(result) if definition.verify is not None else result
+            return definition.verify(result, self.work_roots) if definition.verify is not None else result
         finally:
             with self._lock:
                 self._active -= 1
