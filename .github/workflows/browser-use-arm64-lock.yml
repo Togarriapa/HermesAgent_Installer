@@ -70,12 +70,9 @@ jobs:
               server = ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
               thread = Thread(target=server.serve_forever, daemon=True)
               thread.start()
-              # Hosted CI cannot provide Chromium's setuid/user-namespace sandbox.
-              # Keep this exception confined to a loopback-only fixture process.
               browser = Browser(browser_profile=BrowserProfile(
                   headless=True,
                   enable_default_extensions=False,
-                  args=["--no-sandbox"],
               ))
               try:
                   await browser.start()
