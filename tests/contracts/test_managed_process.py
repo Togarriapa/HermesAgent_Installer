@@ -38,7 +38,7 @@ class ManagedProcessAdmissionTests(unittest.TestCase):
         self.executable = self.artifact / "probe"
         self.executable.write_bytes(b"reviewed executable fixture")
         self.executable.chmod(0o700)
-        self.journal = Journal(self.root / "state" / "journal.sqlite")
+        self.journal = Journal(self.root / "journal.sqlite")
 
     def tearDown(self) -> None:
         self.temp.cleanup()
