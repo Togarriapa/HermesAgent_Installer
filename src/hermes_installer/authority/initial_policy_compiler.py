@@ -536,6 +536,8 @@ class RootFirstStagePolicyCompiler:
                 "resource_scope_bindings": [], "resource_validators": [],
                 "root_journal_roots": [journal_row], "resource_controller_roles": [],
                 "native_mcp_tool_bindings": [], "remote_observation_enrollments": [],
+                "native_schema_artifacts": [], "composio_channel_enrollments": [],
+                "channel_delivery_bindings": [],
             },
             "receipt_binding_rules": receipt_rules,
         }
@@ -603,7 +605,8 @@ class RootFirstStagePolicyCompiler:
         # Run the installed resolver's exact strict policy validation before
         # returning bytes to the same-session store/publisher.
         resolver = InstalledBootstrapPolicyResolver.__new__(InstalledBootstrapPolicyResolver)
-        resolver._parse_policy(policy, policy_row["sha256"], plan_row, None)
+        resolver._parse_policy(policy, policy_row["sha256"], plan_row, None,
+                               compilation_phase="prepared")
         package = getattr(self._registry, "package_compilation", None)
         if not callable(package):
             raise InitialPolicyCompilationError(
