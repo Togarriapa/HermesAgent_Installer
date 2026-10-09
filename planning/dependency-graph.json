@@ -104,7 +104,8 @@
     "HW-F03": [
       "HW-F01",
       "BD-F01",
-      "PR-F01"
+      "PR-F01",
+      "HW-T01"
     ],
     "SK-F01": [
       "BD-F01",
@@ -865,7 +866,8 @@
       "HW-F01"
     ],
     "HW-R0042": [
-      "HW-F01"
+      "HW-F01",
+      "HW-T01"
     ],
     "HW-R0043": [
       "HW-F01"
@@ -2276,6 +2278,11 @@
       "HI-T03",
       "HI-T08",
       "HI-T09"
+    ],
+    "HW-T01": [
+      "HI-T01",
+      "HI-T09",
+      "BD-F01"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."

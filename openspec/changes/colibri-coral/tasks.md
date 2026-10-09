@@ -32,3 +32,7 @@ Dependencies: installer-bootstrap-desktop, providers-credentials-budgets-privacy
 - Review code against every requirement/scenario and actual evidence; do not archive incomplete hardware/account tasks.
 - Run strict pinned OpenSpec validation and coverage; archive only verified completed changes using the installed documented workflow, preserving dated history and canonical specs.
 - Sol must approve refinement via append-only amendment; keep plans/2026-10-09-v1 immutable.
+
+## 3. Protected offline package set refinement
+
+- [ ] 3.1 `HW-T01` Implement HW01 fixed root package-set installer; prerequisites HI-T01, HI-T09, BD-F01. Evidence EV-HW01: exact offline NumPy/TFLite install bound to dedicated built CPython runtime, wrong hash/runtime/ABI/root/pipargs/generation/network/ENOSPC/cancel negatives and prior-generation preservation. Imports/fixture installation cannot complete HW-F03/HW-R0042 delegate inference/native hardware acceptance.
