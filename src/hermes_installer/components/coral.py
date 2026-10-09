@@ -6,21 +6,23 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
-import uuid
+import tarfile
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from hermes_installer.models.artifacts import ArtifactError
 from hermes_installer.models.artifacts import ArtifactFile
+from hermes_installer.models.downloads import download_file
 
 CORAL_SAMPLE_REPOSITORY = "google-coral/test_data"
 CORAL_SAMPLE_REVISION = "104342d2d3480b3e66203073dac24f4e2dbb4c41"
 CORAL_SAMPLE_FILE = "mobilenet_v2_1.0_224_quant_edgetpu.tflite"
 CORAL_SAMPLE_SHA256 = "4315ee115507aab28c78809c0f384e5296527dd6a5dd53a1751b3eb9c91db6aa"
 CORAL_SAMPLE_BYTES = 4_283_046
-CORAL_SAMPLE_STORE_ID = f"artifact:coral-compiled-sample:{CORAL_SAMPLE_SHA256}"
 CORAL_SAMPLE_URL = f"https://raw.githubusercontent.com/{CORAL_SAMPLE_REPOSITORY}/{CORAL_SAMPLE_REVISION}/{CORAL_SAMPLE_FILE}"
 CORAL_SAMPLE_METADATA = Path(__file__).resolve().parents[3] / "planning" / "coral-sample-artifact-metadata.json"
 PCI_VENDOR = "1ac1"
@@ -31,12 +33,9 @@ PCI_RUNTIME_PACKAGES = ("gasket-dkms", "libedgetpu1-std")
 USB_RUNTIME_PACKAGES = ("libedgetpu1-std",)
 PYTHON_BUILD_PACKAGES = ("build-essential", "libssl-dev", "zlib1g-dev", "libbz2-dev",
                          "libreadline-dev", "libsqlite3-dev", "libffi-dev", "liblzma-dev")
+PYTHON_MIN = (3, 6)
+PYTHON_MAX = (3, 9)
 CORAL_RUNTIME_METADATA = Path(__file__).resolve().parents[3] / "planning" / "coral-component-runtime-metadata.json"
-CORAL_RUNTIME_STORE_IDS = {
-    "python/cpython": "coral-python39-source",
-    "tensorflow/tflite-runtime": "coral-tflite-runtime-cp39-arm64",
-    "numpy/numpy": "coral-numpy-cp39-arm64",
-}
 
 
 class CoralError(RuntimeError):
@@ -125,37 +124,26 @@ def choose_coral_device(devices: Sequence[CoralDevice], *, preferred: str | None
 
 
 def runtime_plan(device: CoralDevice, *, component_root: Path, architecture: str,
-                 hermes_python: Path, compatible_python: Path | None = None,
-                 run_command: Callable[..., object] | None = None) -> CoralRuntimePlan:
+                 hermes_python: Path, compatible_python: Path | None = None) -> CoralRuntimePlan:
     if architecture.casefold() not in {"aarch64", "arm64"}:
         raise CoralError("this Coral runtime plan is for native Linux ARM64 only")
     driver_packages = USB_RUNTIME_PACKAGES if device.transport == "usb" else PCI_RUNTIME_PACKAGES
     packages = tuple(dict.fromkeys((*PYTHON_BUILD_PACKAGES, *driver_packages)))
     notes: list[str] = []
-    python_req = "isolated CPython 3.9 with ARM64 TensorFlow Lite runtime; host/Hermes Python is not changed"
+    python_req = "isolated CPython 3.6 through 3.9 with ARM64 TensorFlow Lite runtime; host/Hermes Python is not changed"
     env = component_root.resolve() / "venvs" / "coral-edge-tpu"
-    if compatible_python is not None:
-        if compatible_python.is_symlink():
-            raise CoralError("candidate Coral interpreter cannot be reached through a symlink")
+    if compatible_python:
         selected = compatible_python.resolve(strict=True)
         if selected == hermes_python.resolve(strict=True) or selected == Path(sys.executable).resolve(strict=True):
             raise CoralError("Coral's legacy Python cannot replace or reuse Hermes or installer Python")
-        if selected.is_symlink() or not selected.is_file() or not os.access(selected, os.X_OK):
-            raise CoralError("candidate Coral interpreter must be a regular isolated executable")
-        if run_command is None:
-            raise CoralError("Coral Python compatibility requires a bounded host-managed process probe")
-        output = _run_managed_command(run_command,
-            (str(selected), "-c", "import sys; print('%d.%d' % sys.version_info[:2])"),
-            cwd=component_root.resolve(strict=True), timeout=5,
-            env={"PATH": "/usr/bin:/bin", "PYTHONNOUSERSITE": "1"})
-        try:
-            parts = tuple(int(v) for v in output.strip().split(".")[:2])
-        except ValueError:
-            parts = ()
-        if parts != (3, 9):
-            raise CoralError("pinned official Coral Python packages require exact CPython 3.9")
+        check = subprocess.run([str(selected), "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=5)
+        if check.returncode:
+            raise CoralError("candidate isolated Coral Python could not report its version")
+        parts = tuple(int(v) for v in check.stdout.strip().split(".")[:2])
+        if not (PYTHON_MIN <= parts <= PYTHON_MAX):
+            raise CoralError("official Coral Python packages support only CPython 3.6 through 3.9")
         notes.append(f"selected compatible component interpreter at {selected}")
-        notes.append("CPython 3.9 reached EOL on 2025-10-31; this is a legacy compatibility path")
     else:
         notes.append("blocked until a separately provisioned, pinned ARM64 CPython 3.9 component interpreter is available")
     if device.transport == "pcie":
@@ -238,24 +226,6 @@ def load_coral_runtime_artifacts(metadata_path: Path = CORAL_RUNTIME_METADATA) -
     return found
 
 
-def resolve_coral_runtime_artifacts(catalog, staging_root: Path, *, expected_uid: int = 0):
-    """Resolve and rehash the three immutable Coral inputs through the host catalog."""
-    pins = load_coral_runtime_artifacts()
-    resolved = {}
-    for identity, metadata in pins.items():
-        artifact_id = CORAL_RUNTIME_STORE_IDS[identity]
-        store_id = f"artifact:{artifact_id}:{metadata.digest}"
-        artifact = catalog.resolve_store_id(store_id, staging_root, expected_uid=expected_uid)
-        if (artifact.artifact_id != artifact_id or artifact.sha256 != metadata.digest
-                or artifact.size_bytes != metadata.size or artifact.path.is_symlink()
-                or not artifact.path.is_file() or artifact.path.stat().st_size != metadata.size):
-            raise CoralError(f"protected Coral runtime receipt differs from the exact {identity} pin")
-        if _sha256(artifact.path) != metadata.digest:
-            raise CoralError(f"protected Coral runtime bytes failed the {identity} SHA-256 pin")
-        resolved[identity] = artifact
-    return resolved
-
-
 def _private_component_root(path: Path) -> Path:
     if path.is_symlink():
         raise CoralError("Coral component root cannot be a symlink")
@@ -292,74 +262,157 @@ def _run_managed_command(run_command: Callable[..., object], argv: Sequence[str]
     return str(output)
 
 
-def provision_coral_python(component_root: Path, *, selected: bool, catalog=None,
-                           staging_root: Path | None = None, expected_uid: int = 0) -> Path:
-    """Fail closed until a reviewed package-set install target exists for both exact wheels."""
+def provision_coral_python(component_root: Path, *, selected: bool,
+                           run_command: Callable[..., object],
+                           metadata_path: Path = CORAL_RUNTIME_METADATA,
+                           opener: Callable[..., object] = urllib.request.urlopen) -> Path:
+    """Build the pinned legacy runtime and install only two hash-pinned wheels offline.
+
+    This intentionally requires the managed-process adapter; no direct subprocess, system
+    Python mutation, pip resolver, network package index, or lazy installer is used here.
+    """
     if not selected:
         raise PermissionError("the isolated Coral runtime must be selected before provisioning")
-    if catalog is None or staging_root is None:
-        raise CoralError("Coral runtime provisioning requires its protected artifact-catalog receipts")
-    resolve_coral_runtime_artifacts(catalog, staging_root, expected_uid=expected_uid)
-    raise CoralError(
-        "Coral activation remains unavailable: host package.install accepts one enrolled ZIP wheelhouse, "
-        "but the reviewed NumPy and TFLite artifacts are separate official wheels; obtain a Sol-approved "
-        "package-set target bound to the isolated CPython 3.9 runtime before building or installing"
-    )
-
-def download_official_sample(destination: Path, *, selected: bool = False, cancel=None, catalog=None,
-                             staging_root: Path | None = None, expected_uid: int = 0) -> Path:
-    """Copy the official compiled sample from its root-catalog receipt after selection."""
-    if not selected:
-        raise PermissionError("the official Coral sample must be selected before download")
-    if cancel is not None and (cancel.is_set() if hasattr(cancel, "is_set") else bool(cancel())):
-        raise CoralError("official Coral sample copy was cancelled")
-    if catalog is None or staging_root is None:
-        raise CoralError("official Coral sample remains unavailable until its protected artifact catalog receipt is supplied")
-    artifact = catalog.resolve_store_id(CORAL_SAMPLE_STORE_ID, staging_root, expected_uid=expected_uid)
-    if (artifact.artifact_id != "coral-compiled-sample" or artifact.sha256 != CORAL_SAMPLE_SHA256
-            or artifact.size_bytes != CORAL_SAMPLE_BYTES or artifact.path.is_symlink()
-            or not artifact.path.is_file()):
-        raise CoralError("protected Coral sample artifact receipt differs from the exact official pin")
-    _verify_sample(artifact.path)
-    if destination.is_symlink():
-        raise CoralError("Coral sample destination cannot be a symlink")
-    if destination.parent.is_symlink():
-        raise CoralError("Coral sample directory cannot be a symlink")
-    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    parent_info = destination.parent.stat()
-    if parent_info.st_uid != os.geteuid() or parent_info.st_mode & 0o077:
-        raise CoralError("Coral sample directory must be private and owned by the component identity")
-    if destination.exists():
-        if not destination.is_file():
-            raise CoralError("Coral sample destination is not a regular file")
-        _verify_sample(destination)
-        return destination
-    temporary = destination.with_name("." + destination.name + "." + uuid.uuid4().hex + ".part")
-    digest = hashlib.sha256()
-    size = 0
+    if platform.system() != "Linux" or platform.machine().casefold() not in {"aarch64", "arm64"}:
+        raise CoralError("the isolated Coral CPython runtime can be built only on native Linux ARM64")
+    libc_name, libc_version = platform.libc_ver()
     try:
-        with artifact.path.open("rb") as incoming, temporary.open("xb") as outgoing:
-            for block in iter(lambda: incoming.read(128 * 1024), b""):
-                if cancel is not None and (cancel.is_set() if hasattr(cancel, "is_set") else bool(cancel())):
-                    raise CoralError("official Coral sample copy was cancelled")
-                outgoing.write(block)
-                digest.update(block)
-                size += len(block)
-            outgoing.flush()
-            os.fsync(outgoing.fileno())
-        if size != CORAL_SAMPLE_BYTES or digest.hexdigest() != CORAL_SAMPLE_SHA256:
-            raise CoralError("copied official Coral sample failed its exact size/digest pin")
-        temporary.chmod(0o444)
-        os.link(temporary, destination, follow_symlinks=False)
-        temporary.unlink()
-        return destination
+        glibc = tuple(int(v) for v in libc_version.split(".")[:2]) if libc_name == "glibc" else ()
+    except ValueError:
+        glibc = ()
+    if glibc < (2, 34):
+        raise CoralError("pinned TFLite wheel requires Linux ARM64 glibc 2.34 or newer")
+    component_root = _private_component_root(component_root)
+    artifacts = load_coral_runtime_artifacts(metadata_path)
+    cache = _private_child(component_root, "cache", "coral-runtime")
+    downloaded = {key: download_file(value, cache / value.name, opener=opener) for key, value in artifacts.items()}
+    _private_child(component_root, "build")
+    source_root = _private_child(component_root, "build", "cpython-3.9.25")
+    extracted = source_root / "Python-3.9.25"
+    source_marker = source_root / ".source-artifact.json"
+    source_progress = source_root / ".source-extracting.json"
+    source_digest = artifacts["python/cpython"].digest
+    if extracted.exists() or extracted.is_symlink():
+        valid_source = False
+        if source_marker.is_file() and not source_marker.is_symlink():
+            try:
+                valid_source = json.loads(source_marker.read_text(encoding="utf-8")).get("sha256") == source_digest
+            except (OSError, json.JSONDecodeError):
+                valid_source = False
+        if not valid_source:
+            in_progress = False
+            if source_progress.is_file() and not source_progress.is_symlink():
+                try:
+                    in_progress = json.loads(source_progress.read_text(encoding="utf-8")).get("sha256") == source_digest
+                except (OSError, json.JSONDecodeError):
+                    in_progress = False
+            if not in_progress or extracted.is_symlink():
+                raise CoralError("unowned or changed CPython source extraction exists")
+            shutil.rmtree(extracted)
+            source_marker.unlink(missing_ok=True)
+        else:
+            source_progress.unlink(missing_ok=True)
+    if not extracted.exists():
+        source_progress.write_text(json.dumps({"sha256": source_digest, "state": "extracting"}) + "\n", encoding="utf-8")
+        source_progress.chmod(0o600)
+        with tarfile.open(downloaded["python/cpython"], "r:xz") as archive:
+            root = source_root.resolve()
+            for member in archive.getmembers():
+                target = (source_root / member.name).resolve()
+                if root not in target.parents and target != root:
+                    raise CoralError("CPython source archive contains a path traversal")
+                if member.isdir():
+                    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+                elif member.isfile():
+                    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise CoralError("CPython source archive contains an unreadable regular file")
+                    with source, target.open("xb") as sink:
+                        shutil.copyfileobj(source, sink)
+                    target.chmod(member.mode & 0o755)
+                else:
+                    raise CoralError("CPython source archive contains a link or special file")
+        source_marker.write_text(json.dumps({"sha256": source_digest, "state": "complete"}) + "\n", encoding="utf-8")
+        source_marker.chmod(0o400)
+        source_progress.unlink(missing_ok=True)
+    prefix = component_root / "runtimes" / "cpython-3.9.25"
+    venv = component_root / "venvs" / "coral-edge-tpu-3.9.25"
+    marker = prefix / ".hermes-coral-runtime.json"
+    expected_marker = {name: artifact.digest for name, artifact in artifacts.items()}
+    if marker.is_file() and not marker.is_symlink():
+        try:
+            existing = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing = {}
+        if existing.get("pins") == expected_marker and existing.get("state") == "ready" and (venv / "bin" / "python").is_file():
+            _run_managed_command(run_command, (str(venv / "bin" / "python"), "-c",
+                "import importlib.metadata as m,sys; assert sys.version_info[:2]==(3,9); assert m.version('numpy')=='1.26.4'; assert m.version('tflite-runtime')=='2.14.0'"),
+                cwd=component_root, timeout=20, env={"PATH": "/usr/bin:/bin", "PYTHONNOUSERSITE": "1", "PIP_NO_INDEX": "1"})
+            return venv / "bin" / "python"
+        if (existing.get("pins") == expected_marker and existing.get("state") in {"provisioning", "failed"}
+                and not prefix.is_symlink() and prefix.is_dir()):
+            shutil.rmtree(prefix)
+            if venv.is_symlink():
+                raise CoralError("incomplete Coral venv path is an unexpected symlink")
+            if venv.exists():
+                shutil.rmtree(venv)
+        else:
+            raise CoralError("existing Coral runtime path is not the reviewed managed generation")
+    elif prefix.exists() or prefix.is_symlink() or venv.exists() or venv.is_symlink():
+        raise CoralError("unowned or incomplete Coral runtime path exists; inspect and remove only through recovery")
+    _private_child(component_root, "runtimes")
+    _private_child(component_root, "venvs")
+    prefix.mkdir(mode=0o700)
+    marker.write_text(json.dumps({"schema": 1, "pins": expected_marker,
+                                  "python_version": "3.9.25", "state": "provisioning"}, sort_keys=True) + "\n",
+                      encoding="utf-8")
+    marker.chmod(0o600)
+    build_env = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "HOME": str(component_root / "tmp"),
+                 "PYTHONNOUSERSITE": "1", "PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+    _private_child(component_root, "tmp")
+    try:
+        _run_managed_command(run_command, ("./configure", "--prefix=" + str(prefix), "--with-ensurepip=install"),
+                             cwd=extracted, timeout=300, env=build_env)
+        _run_managed_command(run_command, ("make", "-j2"), cwd=extracted, timeout=600, env=build_env)
+        _run_managed_command(run_command, ("make", "altinstall"), cwd=extracted, timeout=600, env=build_env)
+        interpreter = prefix / "bin" / "python3.9"
+        if not interpreter.is_file() or interpreter.is_symlink():
+            raise CoralError("managed CPython build did not produce the pinned isolated interpreter")
+        _run_managed_command(run_command, (str(interpreter), "-m", "venv", str(venv)),
+                             cwd=component_root, timeout=60, env=build_env)
+        python = venv / "bin" / "python"
+        wheels = (str(downloaded["numpy/numpy"]), str(downloaded["tensorflow/tflite-runtime"]))
+        _run_managed_command(run_command, (str(python), "-m", "pip", "install", "--no-index", "--no-deps",
+                                           "--no-input", "--no-cache-dir", *wheels),
+                             cwd=component_root, timeout=120, env=build_env)
+        _run_managed_command(run_command, (str(python), "-c", "import numpy,tflite_runtime.interpreter,sys; assert sys.version_info[:2]==(3,9)"),
+                             cwd=component_root, timeout=20, env=build_env)
+        marker.write_text(json.dumps({"schema": 1, "pins": expected_marker,
+            "python_version": "3.9.25", "maintenance": "EOL2025-10-31", "state": "ready"}, sort_keys=True) + "\n", encoding="utf-8")
+        marker.chmod(0o400)
+        return python
     except BaseException:
-        temporary.unlink(missing_ok=True)
+        # The private, pin-matching provisioning marker authorizes safe retry cleanup.
+        marker.chmod(0o600)
+        marker.write_text(json.dumps({"schema": 1, "pins": expected_marker,
+            "python_version": "3.9.25", "state": "failed"}, sort_keys=True) + "\n", encoding="utf-8")
         raise
 
 
+def download_official_sample(destination: Path, *, opener: Callable[..., object] = urllib.request.urlopen,
+                             selected: bool = False, cancel=None) -> Path:
+    """Fetch the 4.3 MB official compiled sample only after Coral qualification is selected."""
+    if not selected:
+        raise PermissionError("the official Coral sample must be selected before download")
+    sample = load_coral_sample_artifact()
+    result = download_file(sample, destination, cancel=cancel, timeout=30, opener=opener)
+    result.chmod(0o444)
+    return result
+
+
 def _verify_sample(path: Path) -> None:
-    if path.is_symlink() or not path.is_file() or path.stat().st_size != CORAL_SAMPLE_BYTES:
+    if path.stat().st_size != CORAL_SAMPLE_BYTES:
         raise ArtifactError("official compiled Coral sample has the wrong byte length")
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -398,8 +451,6 @@ class CoralInferenceEvidence:
 def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
                               *, sample_path: Path, runtime_path: Path) -> CoralInferenceEvidence:
     _verify_sample(sample_path)
-    if runtime_path.is_symlink() or not runtime_path.is_file():
-        raise ArtifactError("selected Edge TPU runtime library must be a regular non-symlink file")
     runtime_sha = _sha256(runtime_path)
     if raw.get("model_sha256") != CORAL_SAMPLE_SHA256:
         raise ArtifactError("evidence does not identify the pinned official compiled Coral model")
@@ -429,7 +480,7 @@ def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
         raise ArtifactError("evidence runtime digest does not match the selected Edge TPU runtime")
     if raw.get("python_version") != "3.9" or raw.get("architecture", "").casefold() not in {"aarch64", "arm64"}:
         raise CoralError("Coral inference must run on the isolated CPython 3.9 ARM64 component runtime")
-    if raw.get("hermes_python_changed") is not False:
+    if raw.get("hermes_python_changed") is True:
         raise CoralError("Coral qualification must preserve Hermes Python and use an isolated compatible runtime")
     return CoralInferenceEvidence("verified_delegate_used", device.transport, device.address,
         device.vendor_id, device.product_id, CORAL_SAMPLE_SHA256, runtime_sha,

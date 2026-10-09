@@ -43,7 +43,7 @@ class EvidenceRecord:
     finished_at: str
     command: str
     exit_code: int | None
-    assertions: Mapping[str, bool | None] = field(default_factory=dict)
+    assertions: Mapping[str, bool] = field(default_factory=dict)
     artifact_sha256: str | None = None
     blocker: str | None = None
     resume_command: str | None = None
@@ -83,10 +83,8 @@ class EvidenceRecord:
         end = _parse_time(self.finished_at)
         if end < start:
             raise ValueError("finished_at precedes started_at")
-        if any(value is not None and not isinstance(value, bool) for value in self.assertions.values()):
-            raise ValueError("assertions must contain only true, false, or null for not observed")
         if self.state == EvidenceState.PASS:
-            if self.exit_code != 0 or not self.assertions or any(value is not True for value in self.assertions.values()):
+            if self.exit_code != 0 or not self.assertions or not all(self.assertions.values()):
                 raise ValueError("pass requires exit_code 0 and non-empty all-true observed assertions")
             if not self.artifact_sha256 or not re.fullmatch(r"[0-9a-f]{64}", self.artifact_sha256):
                 raise ValueError("pass requires a SHA-256 digest of retained evidence")
@@ -160,20 +158,12 @@ def load_acceptance_catalog(planning_dir: str | Path) -> dict[str, Any]:
                     "artifacts": [],
                     "blocker": "No authenticated implementation evidence has been recorded",
                 })
-        raw_acceptance = manifest.get("acceptance", ())
-        # Amendments use either a list of additions (AC16) or one metadata
-        # object (AC17/AC18). Treat the latter as one row, never as its string
-        # keys; object shapes without explicit requirement links apply to all
-        # requirements in that amendment.
-        acceptance_items = [raw_acceptance] if isinstance(raw_acceptance, Mapping) else raw_acceptance
-        if not isinstance(acceptance_items, (list, tuple)):
-            raise ValueError(f"invalid acceptance entries in {filename}")
-        for item in acceptance_items:
+        for item in manifest.get("acceptance", ()):
             if not isinstance(item, Mapping) or not item.get("id"):
                 raise ValueError(f"invalid acceptance entry in {filename}")
             requirement_ids = list(item.get("requirement_ids", item.get("requirements", ())))
             if not requirement_ids:
-                requirement_ids = list(requirements)
+                raise ValueError(f"acceptance {item['id']} has no linked requirements")
             task_ids = list(item.get("tasks", item.get("task_ids", ())))
             if not task_ids:
                 wanted_requirements = set(requirement_ids)

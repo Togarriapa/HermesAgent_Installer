@@ -2,7 +2,7 @@
 import unittest
 from hermes_installer.mcp.google import adapter as google
 from hermes_installer.mcp.adapters import SERVICES
-from hermes_installer.mcp.home_assistant import adapter as ha
+from hermes_installer.mcp.home_assistant import adapter as ha, _selected_entities
 from hermes_installer.mcp.playwright_mcp import validate_fixture_origin
 
 class MCPAccountTests(unittest.TestCase):
@@ -24,11 +24,16 @@ class MCPAccountTests(unittest.TestCase):
         self.assertEqual(SERVICES["google-contacts"].endpoint, "https://people.googleapis.com/mcp/v1")
         self.assertEqual(SERVICES["google-contacts"].allowed_tools, frozenset({"search_contacts"}))
 
-    def test_home_assistant_targets_existing_instance_and_selected_entities(self):
-        with self.assertRaises(ValueError):
-            ha(None, endpoint="http://ha.local/", entity_ids=("sensor.temp",))
-        with self.assertRaises(ValueError):
-            ha(None, endpoint="http://ha.local/api/mcp", entity_ids=())
+    def test_home_assistant_selection_is_exact_and_bounded(self):
+        self.assertEqual(_selected_entities(("sensor.temp", "light.kitchen")),
+                         ("sensor.temp", "light.kitchen"))
+        for selected in ((), ("sensor.temp", "sensor.temp"), ("sensor.*",),
+                         ("sensor.temp;light.kitchen",), ("sensor.temp",) * 65):
+            with self.subTest(selected=selected), self.assertRaises(ValueError):
+                _selected_entities(selected)
+        with self.assertRaises(TypeError):
+            ha(None, endpoint="http://ha.local/api/mcp",
+               entity_ids=("sensor.temp",), allowed_tools=("get_state",))
 
     def test_playwright_rejects_external_origin(self):
         validate_fixture_origin("http://127.0.0.1:5000")

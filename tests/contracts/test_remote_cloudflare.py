@@ -18,51 +18,12 @@ class Recorder:
   return {"id":path.rsplit("/",1)[-1]}
 class RemoteProvisionerTests(unittest.TestCase):
  def setUp(self):self.setup=RemoteSetup("desk.example.net",("owner@example.net",),CloudflareZone("z1","example.net","a1","active"),"team.cloudflareaccess.com","setup-secret")
- def make(self,api,operation="op1",ready=True,policy_read_check="pass"):
-  snapshots=[]
-  if policy_read_check=="pass":policy_read_check=lambda j:None
-  p=RemoteCloudflareProvisioner(api,self.setup,RemoteJournal(operation,self.setup.hostname),checkpoint=lambda j:snapshots.append((j.operation_id,set(j.completed))),origin_ready=lambda:ready,policy_read_check=policy_read_check);return p,snapshots
+ def make(self,api,operation="op1",ready=True):
+  snapshots=[];p=RemoteCloudflareProvisioner(api,self.setup,RemoteJournal(operation,self.setup.hostname),checkpoint=lambda j:snapshots.append((j.operation_id,set(j.completed))),origin_ready=lambda:ready);return p,snapshots
  def test_policy_origin_tunnel_precede_dns_and_token_is_separate(self):
   api=Recorder();p,_=self.make(api);result=p.provision();writes=[(i,m,path) for i,(m,path,_) in enumerate(api.calls)]
   policy=next(i for i,m,path in writes if m=="POST" and path.endswith("/policies"));dns=next(i for i,m,path in writes if m=="POST" and path.endswith("/dns_records"))
   self.assertLess(policy,dns);self.assertEqual(result.runtime_token,"protected-runtime-token");self.assertEqual(api.calls[dns][2]["content"],result.tunnel_id+".cfargotunnel.com");self.assertTrue(api.calls[dns][2]["proxied"])
- def test_access_resources_can_be_checkpointed_without_tunnel_or_dns_for_policy_probe_resume(self):
-  api=Recorder();p,snapshots=self.make(api,"op-access")
-  prepared=p.prepare_access_resources();writes=[(m,path) for m,path,_ in api.calls if m in {"POST","PUT","DELETE"}]
-  self.assertEqual(prepared.access_app_id,p.journal.resources["access_app"].resource_id)
-  self.assertEqual(prepared.access_policy_id,p.journal.resources["access_policy"].resource_id)
-  self.assertEqual(prepared.identity_provider_id,p.journal.resources["identity_provider"].resource_id)
-  self.assertEqual(p.journal.phase,RemotePhase.ACCESS_READY)
-  self.assertTrue({"access_app","access_policy","identity_provider"}.issubset(p.journal.resources))
-  self.assertFalse(any(path.endswith("/dns_records") or path.endswith("/cfd_tunnel") for _,path in writes))
-  post_count=sum(method=="POST" for method,_,_ in api.calls)
-  resumed=p.prepare_access_resources()
-  self.assertEqual(resumed,prepared)
-  self.assertEqual(sum(method=="POST" for method,_,_ in api.calls),post_count)
-  self.assertTrue(snapshots)
- def test_publication_is_blocked_until_distinct_policy_reader_accepts_checkpointed_ids(self):
-  api=Recorder();p,_=self.make(api,"op-read-pending",policy_read_check=None)
-  with self.assertRaisesRegex(CloudflareError,"policy-read eligibility is not configured"):
-   p.provision()
-  self.assertEqual(p.journal.error_code,"POLICY_READ_PENDING")
-  self.assertEqual(p.journal.phase,RemotePhase.ACCESS_READY)
-  self.assertTrue({"access_app","access_policy","identity_provider"}.issubset(p.journal.resources))
-  self.assertFalse(any(method=="POST" and (path.endswith("/cfd_tunnel") or path.endswith("/dns_records")) for method,path,_ in api.calls))
-  def deny_with_secret(_journal):raise RuntimeError("credential-secret-canary")
-  p.policy_read_check=deny_with_secret
-  with self.assertRaisesRegex(CloudflareError,"policy-read eligibility is incomplete") as error:
-   p.provision()
-  self.assertNotIn("credential-secret-canary",str(error.exception))
-  self.assertEqual(p.journal.error_code,"POLICY_READ_PENDING")
-  self.assertFalse(any(method=="POST" and (path.endswith("/cfd_tunnel") or path.endswith("/dns_records")) for method,path,_ in api.calls))
-  def check_owned(journal):
-   self.assertEqual(journal.resources["access_app"].owner_marker,journal.operation_id)
-   self.assertEqual(journal.resources["access_policy"].owner_marker,journal.operation_id)
-   self.assertEqual(journal.resources["identity_provider"].owner_marker,journal.operation_id)
-  p.policy_read_check=check_owned
-  p.provision()
-  self.assertIn("policy_read_verified",p.journal.completed)
-  self.assertTrue(any(method=="POST" and path.endswith("/dns_records") for method,path,_ in api.calls))
  def test_unready_origin_rolls_back_owned_resources_and_never_publishes_dns(self):
   api=Recorder();p,_=self.make(api,"op2",False)
   with self.assertRaises(Exception):p.provision()

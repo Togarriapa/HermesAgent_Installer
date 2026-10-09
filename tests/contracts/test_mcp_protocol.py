@@ -6,7 +6,7 @@ import time
 import unittest
 from types import SimpleNamespace
 
-from hermes_installer.mcp.client import MCPClient, MCPError
+from hermes_installer.mcp.client import MCPClient, MCPError, _selection_bound
 from hermes_installer.mcp.privacy import MCPPrivacyError, scrub_mcp_result
 from hermes_installer.mcp.transports import StreamableHTTPTransport
 from hermes_installer.authority import BrokeredEffectResponse, canonical_bytes, canonical_digest
@@ -58,9 +58,11 @@ class BrokerAuthorityFixture:
         self.block_method = None
         self.cancel_observed = False
 
-    def context(self, *, purpose, intent, source_contexts=(), trace_id=None, lease_seconds=30, cancelled=None):
+    def context(self, *, purpose, intent, source_contexts=(), trace_id=None, lease_seconds=30,
+                final_payload_digest=None, operation="mcp.request", cancelled=None):
         context = SimpleNamespace(purpose=purpose, intent_id=canonical_digest({"purpose": purpose, "intent": intent}),
-                                  uid=1000, profile_id="fixture-profile",
+                                  uid=1000, profile_id="fixture-profile", operation=operation,
+                                  final_payload_digest=final_payload_digest,
                                   monotonic_expires_at=time.monotonic() + lease_seconds)
         self.contexts.append((purpose, intent, context))
         return context
@@ -71,13 +73,17 @@ class BrokerAuthorityFixture:
             target=target, capability=capability, request_digest=request_digest,
             intent_id=context.intent_id, context_digest="fixture-context-digest",
             monotonic_expires_at=min(context.monotonic_expires_at, time.monotonic() + 5),
+            final_payload_digest=context.final_payload_digest,
+            operation=context.operation,
         )
         self.grants.append(grant)
         return grant
 
     def mcp_request(self, grant, *, target, payload, timeout, cancelled=None):
         self.effects.append((grant, target, payload, timeout, cancelled))
-        if target != grant.target or canonical_digest(payload) != grant.request_digest:
+        if (target != grant.target or canonical_digest(payload) != grant.request_digest
+                or grant.final_payload_digest != canonical_digest(payload)
+                or grant.operation != "mcp.request"):
             raise AssertionError("broker binding mismatch")
         request = __import__("json").loads(payload)
         method, rid = request["method"], request["request_id"]
@@ -159,6 +165,22 @@ class FixtureTransport:
 
 
 class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
+    def test_home_assistant_selector_requires_exact_consistent_arguments(self):
+        selected = {"entity_id": "sensor.office",
+                    "entity_ids": ["sensor.office", "light.kitchen"]}
+        self.assertTrue(_selection_bound("home-assistant", "get_state",
+                                         {"entity_id": "sensor.office"}, selected))
+        self.assertTrue(_selection_bound("home-assistant", "get_state",
+                                         {"entity_ids": ["sensor.office", "light.kitchen"]}, selected))
+        self.assertFalse(_selection_bound("home-assistant", "get_state",
+                                          {"entity_id": "sensor.office",
+                                           "entity_ids": ["sensor.office", "sensor.office"]}, selected))
+        self.assertFalse(_selection_bound("home-assistant", "get_state",
+                                          {"entity_ids": ["light.kitchen", "sensor.office"]}, selected))
+        self.assertFalse(_selection_bound("home-assistant", "search_entities",
+                                          {"query": "office sensor.office"}, selected))
+
+
     def make_client(self, transport, authority=None, *, timeout=1.0, scrubber=None):
         return MCPClient(
             transport, {"get_state"}, service_id="fixture",

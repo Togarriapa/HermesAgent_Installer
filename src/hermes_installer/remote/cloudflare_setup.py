@@ -5,7 +5,7 @@ from dataclasses import dataclass,field
 from typing import Any,Callable,Mapping
 from .cloudflare import CloudflareClient,CloudflareError
 from .config import RemoteSetup
-from .lifecycle import OwnedResource,RemoteJournal,RemotePhase
+from .lifecycle import OwnedResource,RemoteJournal
 
 class RemoteConflict(RuntimeError): pass
 @dataclass(frozen=True)
@@ -16,19 +16,11 @@ class ProvisionedRemote:
     dns_record_id:str
     runtime_token:str=field(repr=False,compare=False)
 
-@dataclass(frozen=True)
-class PreparedAccessResources:
-    """Journal-owned Access identity checkpointed before route activation."""
-    access_app_id:str
-    access_policy_id:str
-    identity_provider_id:str
-
 class RemoteCloudflareProvisioner:
     """Only the caller-owned checkpoint callback persists state under process_lock."""
-    def __init__(self,client:CloudflareClient,setup:RemoteSetup,journal:RemoteJournal,*,checkpoint:Callable[[RemoteJournal],None],origin_ready:Callable[[],bool],policy_read_check:Callable[[RemoteJournal],None]|None=None,gateway_port:int=8765):
+    def __init__(self,client:CloudflareClient,setup:RemoteSetup,journal:RemoteJournal,*,checkpoint:Callable[[RemoteJournal],None],origin_ready:Callable[[],bool],gateway_port:int=8765):
         self.client,self.setup,self.journal=client,setup,journal
         self.checkpoint,self.origin_ready,self.gateway_port=checkpoint,origin_ready,gateway_port
-        self.policy_read_check=policy_read_check
         self.account,self.zone=setup.zone.account_id,setup.zone.zone_id
         self.marker="HermesInstaller:"+journal.operation_id
         self.tunnel_name="hermes-installer-"+hashlib.sha256((journal.operation_id+setup.hostname).encode()).hexdigest()[:20]
@@ -184,55 +176,12 @@ class RemoteCloudflareProvisioner:
             row=self._create(path,payload,lambda x:x.get("name")==host and x.get("comment")==payload["comment"],"DNS record","dns")
             rid=self._id(row); created=True
         self._save("dns","dns",rid,created); return rid
-    def _prepare_access_resources(self):
-        idp=self.ensure_identity_provider()
-        app=self.ensure_access_app(idp)
-        self.ensure_email_policy(app)
-        policy=self.journal.resources.get("access_policy")
-        if policy is None:
-            raise CloudflareError("Installer-owned Access policy was not checkpointed")
-        return PreparedAccessResources(app,policy.resource_id,idp)
-    def prepare_access_resources(self):
-        """Checkpoint only owned Access resources, without tunnel or DNS writes.
-
-        The lifecycle caller uses these durable IDs for the distinct policy-read
-        probe. If that credential is absent or under-scoped, a later resume can
-        retry against the same resources without rolling them back or exposing
-        a public route.
-        """
-        self._preflight()
-        try:
-            result=self._prepare_access_resources()
-            self.journal.phase=RemotePhase.ACCESS_READY
-            self.journal.completed.add("access_ready")
-            self.journal.completed.discard("policy_read_verified")
-            self.journal.error_code=None
-            self.checkpoint(self.journal)
-            return result
-        except Exception:
-            self.journal.error_code="ACCESS_SETUP_INCOMPLETE"
-            self.checkpoint(self.journal)
-            raise
     def provision(self):
-        # The Access-only checkpoint is resumable and never exposes a route.
-        # Policy-read eligibility must be proven with its distinct credential
-        # against these exact IDs before any tunnel or DNS stage can run.
-        access=self.prepare_access_resources()
-        if self.policy_read_check is None:
-            self.journal.error_code="POLICY_READ_PENDING"
-            self.checkpoint(self.journal)
-            raise CloudflareError("Separate Access policy-read eligibility is not configured; owned Access resources remain checkpointed and no route was activated")
+        self._preflight() # no resource mutation before exact hostname conflicts are checked
         try:
-            self.policy_read_check(self.journal)
-        except Exception:
-            self.journal.error_code="POLICY_READ_PENDING"
-            self.checkpoint(self.journal)
-            raise CloudflareError("Separate Access policy-read eligibility is incomplete; owned Access resources remain checkpointed and no route was activated") from None
-        self.journal.completed.add("policy_read_verified")
-        self.journal.error_code=None
-        self.checkpoint(self.journal)
-        try:
-            idp,app=access.identity_provider_id,access.access_app_id
+            idp=self.ensure_identity_provider()
+            app=self.ensure_access_app(idp)
+            self.ensure_email_policy(app)
             if not self.origin_ready():raise CloudflareError("Loopback gateway is not ready; hostname remains unpublished")
             tunnel,token=self.ensure_tunnel()
             dns=self.activate_dns(tunnel)

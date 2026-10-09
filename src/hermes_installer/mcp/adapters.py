@@ -41,11 +41,11 @@ SERVICES: Mapping[str, MCPService] = {
         frozenset({"get_file_metadata", "read_file_content"}),
         "Google Workspace Developer Preview OAuth", "one selected Drive file", True,
         "https://developers.google.com/workspace/drive/api/reference/mcp"),
-    "google-docs": MCPService("google-docs", "https://docsmcp.googleapis.com/mcp",
+    "google-docs": MCPService("google-docs", "https://docsmcp.googleapis.com/mcp/v1",
         frozenset({"read_doc"}), "Google Workspace Developer Preview OAuth",
         "one selected Docs document", True,
         "https://developers.google.com/workspace/docs/api/reference/mcp"),
-    "google-sheets": MCPService("google-sheets", "https://sheetsmcp.googleapis.com/mcp",
+    "google-sheets": MCPService("google-sheets", "https://sheetsmcp.googleapis.com/mcp/v1",
         frozenset({"get_spreadsheet", "get_values"}), "Google Workspace Developer Preview OAuth",
         "one selected spreadsheet", True,
         "https://developers.google.com/workspace/sheets/api/reference/mcp"),
@@ -82,6 +82,10 @@ class ReadOnlyAdapter:
         if getattr(client, "service_id", None) not in (None, service.id):
             raise ValueError("MCP client is bound to a different service")
         self.service, self.client, self.selection = service, client, selection
+        authority = getattr(client, "authority_client", None)
+        self._allowed_tools = (frozenset(getattr(client, "allowed_tools", ()))
+                               if service.id == "home-assistant" and type(authority) is AuthorityClient
+                               else frozenset(service.allowed_tools))
         self._functional = False
         self._enabled = False
         self._last_failure: str | None = None
@@ -107,7 +111,7 @@ class ReadOnlyAdapter:
             "authorized": self._authorization_ready(),
             "discovered": ready,
             "tools": tuple(sorted(getattr(client, "discovered_tools", frozenset()) &
-                                  self.service.allowed_tools)),
+                                  self._allowed_tools)),
             "functionally_tested": self._functional,
             "enabled": self._enabled,
             "last_failure": self._last_failure,
@@ -130,7 +134,7 @@ class ReadOnlyAdapter:
             result = self.status()
             result["status"] = self._last_failure
             return result
-        self.client.allowed_tools = frozenset(self.client.allowed_tools & self.service.allowed_tools)
+        self.client.allowed_tools = frozenset(self.client.allowed_tools & self._allowed_tools)
         # Even allowlisted names are rejected unless the server advertises the
         # MCP read-only hint. The static list remains the authoritative ceiling.
         accepted = {}
@@ -150,7 +154,7 @@ class ReadOnlyAdapter:
     async def read(self, name: str, arguments: Mapping, *, timeout: float = 9.0):
         if not 0 < timeout <= 9:
             raise ValueError("MCP read deadline must be in (0, 9] seconds")
-        if not self.selection or name not in self.service.allowed_tools:
+        if not self.selection or name not in self._allowed_tools:
             raise PermissionError("read outside the reviewed tool and selected-resource policy")
         if not self._authorization_ready():
             raise PermissionError("trusted host authorization is unavailable")

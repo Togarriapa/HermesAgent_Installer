@@ -72,8 +72,9 @@ class MCPConnectionRegistry:
             if getattr(transport, "endpoint", None) != service.endpoint:
                 raise PermissionError("MCP endpoint differs from the reviewed service endpoint")
         elif service_id == "home-assistant":
-            if not isinstance(transport, StreamableHTTPTransport):
-                raise PermissionError("Home Assistant must use its documented remote HTTP endpoint")
+            if (not isinstance(transport, StreamableHTTPTransport)
+                    or self.authority_client is None):
+                raise PermissionError("Home Assistant requires host-brokered Streamable HTTP")
         elif service_id == "playwright":
             if not isinstance(transport, StdioTransport) or not is_supervised_stdio_handle(transport._handle, service_id):
                 raise PermissionError("Playwright requires a live supervisor-issued pinned process")
@@ -88,7 +89,16 @@ class MCPConnectionRegistry:
         else:
             raise PermissionError("This MCP transport requires a reviewed endpoint binding")
         tools = service.allowed_tools
-        if allowed_tools is not None:
+        if service_id == "home-assistant":
+            # Home Assistant exposes the selected LLM API's live tools. The local
+            # list is only a client ceiling; the protected broker independently
+            # intersects it with root enrollment and explicit read-only schemas.
+            if (self.authority_client is None or not allowed_tools
+                    or any(not isinstance(name, str) or not name or len(name) > 128
+                           for name in allowed_tools)):
+                raise PermissionError("Home Assistant requires an explicit host-brokered tool ceiling")
+            tools = frozenset(allowed_tools)
+        elif allowed_tools is not None:
             if not allowed_tools <= tools:
                 raise PermissionError("MCP requested tools exceed the reviewed read-only allowlist")
             tools = allowed_tools
