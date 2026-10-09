@@ -515,7 +515,13 @@ class RootTaskNativeObservationRegistry:
         except (KeyError, AuthorityDenied):
             return False
         input_receipt = self._receipt_for(run.input_event.source_receipt_handle)
-        return bool(input_receipt and input_receipt.receipt_id in {item.receipt_id for item in closure})
+        root = closure[0] if closure else None
+        return bool(input_receipt and root
+                    and input_receipt.receipt_id in {item.receipt_id for item in closure}
+                    and root.profile_id == run.profile_id
+                    and root.process_generation == run.admitted_task.process_generation
+                    and root.native_process_identity == run.native_process_identity
+                    and all(item.monotonic_expires_at > self.monotonic() for item in closure))
 
     def _receipt_closure(self, roots: list[Any], by_handle: Mapping[str, Any]) -> tuple[Any, ...]:
         by_id = {item.receipt_id: item for item in by_handle.values()}

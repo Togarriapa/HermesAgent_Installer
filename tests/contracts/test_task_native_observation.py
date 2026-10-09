@@ -211,13 +211,22 @@ def test_tool_result_must_descend_from_matching_native_call_and_task():
                           "provider-handle": provider, "tool-handle": tool}, payloads)
     registry.source_observers.service.authority_epoch = "epoch-a"
     run = SimpleNamespace(
-        authority_epoch="epoch-a", required_action_ids=frozenset(),
+        authority_epoch="epoch-a", profile_id="profile-a",
+        native_process_identity="native-a",
+        admitted_task=SimpleNamespace(process_generation="profile-generation-a"),
+        required_action_ids=frozenset(),
         tool_calls={"call": ("response", "selected.read", "provider-result")},
         input_event=SimpleNamespace(source_receipt_handle="input-handle"),
         tool_results={}, observed_at={},
     )
     registry._capture_tool_results(run, 10.0)
     assert run.tool_results == {"event-tool-result-123456789012345678901234": "selected.read"}
+
+    tool.native_process_identity = "native-b"
+    run.tool_results.clear()
+    registry._capture_tool_results(run, 10.0)
+    assert run.tool_results == {}
+    tool.native_process_identity = "native-a"
 
     run.tool_calls = {"call": ("response", "selected.write", "provider-result")}
     run.tool_results.clear()
