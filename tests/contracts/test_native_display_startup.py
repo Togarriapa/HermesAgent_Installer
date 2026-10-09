@@ -6,12 +6,14 @@ import stat
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 from hermes_installer.authority.native_display_startup import (
     NativeDisplayStartupDenied,
     SelectedDisplayStartup,
+    XAUTHORITY_MOUNT_TARGET,
     XauthorityStartupRegistry,
     encode_xauthority,
 )
@@ -75,15 +77,26 @@ class XauthorityPreparationTests(unittest.TestCase):
         prepared = self.registry.prepare(self.selection)
         self.assertEqual(prepared.owner_uid, self.uid)
         self.assertEqual(prepared.owner_gid, self.gid)
-        self.assertEqual(prepared.mode, 0o440)
+        self.assertEqual(prepared.mode, 0o640)
         info = prepared.path.stat()
         self.assertEqual((info.st_dev, info.st_ino), (prepared.device, prepared.inode))
-        self.assertEqual(stat.S_IMODE(info.st_mode), 0o440)
+        self.assertEqual(stat.S_IMODE(info.st_mode), 0o640)
         data = prepared.path.read_bytes()
         self.assertEqual(hashlib.sha256(data).hexdigest(), prepared.content_sha256)
         self.assertEqual(data[-32:].__len__(), 32)
         self.assertNotIn(data[-32:].hex(), repr(prepared))
         self.assertNotIn(data[-32:].hex(), repr(self.registry))
+        mount = self.registry.mount_binding(prepared)
+        self.assertEqual(mount.target_path, XAUTHORITY_MOUNT_TARGET)
+        self.assertEqual(mount.environment, {
+            "DISPLAY": self.selection.display_name,
+            "XAUTHORITY": "/run/hermes-installer/display/Xauthority",
+        })
+        self.assertTrue(mount.read_only and mount.nofollow and mount.nosuid and mount.nodev)
+        self.assertEqual(mount.source_inode, prepared.inode)
+        self.assertTrue(self.registry.verify_mount_binding(mount))
+        self.assertFalse(self.registry.verify_mount_binding(
+            replace(mount, target_path=Path("/run/hermes-installer/other"))))
         self.registry.discard_prepared(prepared)
         self.assertFalse(prepared.path.exists())
 

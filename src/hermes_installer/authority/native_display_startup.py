@@ -24,6 +24,7 @@ _ID = re.compile(r"[A-Za-z0-9_.:@/-]{1,128}\Z", re.ASCII)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 _AUTH_NAME = b"MIT-MAGIC-COOKIE-1"
 _COOKIE_BYTES = 32
+XAUTHORITY_MOUNT_TARGET = Path("/run/hermes-installer/display/Xauthority")
 
 
 class NativeDisplayStartupDenied(PermissionError):
@@ -86,6 +87,48 @@ class PreparedXauthority:
 
     def __repr__(self) -> str:
         return "PreparedXauthority(<root-private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class XauthorityMountBinding:
+    """Root-only exact file identity and fixed read-only service mount."""
+    receipt_handle: str
+    display_profile_id: str
+    display_generation: str
+    source_path: Path = field(repr=False)
+    source_device: int
+    source_inode: int
+    source_uid: int
+    source_gid: int
+    source_mode: int
+    source_sha256: str = field(repr=False)
+    target_path: Path = XAUTHORITY_MOUNT_TARGET
+    display_name: str = ":0"
+    read_only: bool = True
+    nofollow: bool = True
+    nosuid: bool = True
+    nodev: bool = True
+    signature: bytes = field(default=b"", repr=False, compare=False)
+
+    @property
+    def environment(self) -> Mapping[str, str]:
+        return {"DISPLAY": self.display_name, "XAUTHORITY": str(self.target_path)}
+
+    def __repr__(self) -> str:
+        return "XauthorityMountBinding(<root-private>)"
+
+    def payload(self) -> bytes:
+        return _canonical({
+            "receipt_handle": self.receipt_handle,
+            "display_profile_id": self.display_profile_id,
+            "display_generation": self.display_generation,
+            "source_path": str(self.source_path), "source_device": self.source_device,
+            "source_inode": self.source_inode, "source_uid": self.source_uid,
+            "source_gid": self.source_gid, "source_mode": self.source_mode,
+            "source_sha256": self.source_sha256, "target_path": str(self.target_path),
+            "display_name": self.display_name, "read_only": self.read_only,
+            "nofollow": self.nofollow, "nosuid": self.nosuid, "nodev": self.nodev,
+        })
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -342,6 +385,7 @@ class XauthorityStartupRegistry:
         self._lock = threading.RLock()
         self._receipts: dict[str, XauthorityStartupReceipt] = {}
         self._pidfds: dict[str, int] = {}
+        self._prepared: dict[str, PreparedXauthority] = {}
 
     def prepare(self, selected: SelectedDisplayStartup) -> PreparedXauthority:
         """Create a root-owned, group-readable Xauthority file before launch.
@@ -366,7 +410,7 @@ class XauthorityStartupRegistry:
             fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
             created = True
             os.fchown(fd, self.writer_uid, selected.xauthority_reader_gid)
-            os.fchmod(fd, 0o440)
+            os.fchmod(fd, 0o640)
             view = memoryview(content)
             while view:
                 count = os.write(fd, view)
@@ -377,11 +421,11 @@ class XauthorityStartupRegistry:
             info = os.fstat(fd)
             digest = hashlib.sha256(content).hexdigest()
             if (info.st_uid != self.writer_uid or info.st_gid != selected.xauthority_reader_gid
-                    or stat.S_IMODE(info.st_mode) != 0o440
+                    or stat.S_IMODE(info.st_mode) != 0o640
                     or info.st_size != len(content)):
                 raise NativeDisplayStartupDenied("Xauthority file metadata is not protected")
             os.fsync(directory_fd)
-            return PreparedXauthority(
+            prepared = PreparedXauthority(
                 selected.remote_enrollment_id, selected.native_profile_id,
                 selected.native_generation, selected.display_profile_id,
                 selected.display_generation, selected.display_name,
@@ -390,6 +434,11 @@ class XauthorityStartupRegistry:
                 directory_path / name,
                 info.st_dev, info.st_ino, info.st_uid, info.st_gid,
                 stat.S_IMODE(info.st_mode), digest)
+            with self._lock:
+                if selected.receipt_handle in self._prepared:
+                    raise NativeDisplayStartupDenied("Xauthority preparation handle is already active")
+                self._prepared[selected.receipt_handle] = prepared
+            return prepared
         except BaseException:
             if created:
                 try:
@@ -416,6 +465,9 @@ class XauthorityStartupRegistry:
         from hermes_installer.managed_process_custodian import ManagedProcessIdentityLease
         if not isinstance(prepared, PreparedXauthority):
             raise NativeDisplayStartupDenied("prepared protected Xauthority file is required")
+        with self._lock:
+            if self._prepared.get(prepared.receipt_handle) is not prepared:
+                raise NativeDisplayStartupDenied("Xauthority preparation is not owned by this root registry")
         lease = self.custody.resolve_active_process_handle(
             prepared.display_profile_id, prepared.display_generation)
         if not isinstance(lease, ManagedProcessIdentityLease):
@@ -491,6 +543,57 @@ class XauthorityStartupRegistry:
             self._receipts[receipt.receipt_handle] = receipt
             self._pidfds[receipt.receipt_handle] = retained_pidfd
         return receipt
+
+    def mount_binding(self, prepared: PreparedXauthority) -> XauthorityMountBinding:
+        """Return signed fixed-target mount data for the root custody adapter."""
+        with self._lock:
+            if self._prepared.get(prepared.receipt_handle) is not prepared:
+                raise NativeDisplayStartupDenied("Xauthority preparation is not owned by this root registry")
+        fd = self._open_and_check(prepared)
+        os.close(fd)
+        unsigned = XauthorityMountBinding(
+            receipt_handle=prepared.receipt_handle,
+            display_profile_id=prepared.display_profile_id,
+            display_generation=prepared.display_generation,
+            source_path=prepared.path, source_device=prepared.device, source_inode=prepared.inode,
+            source_uid=prepared.owner_uid, source_gid=prepared.owner_gid, source_mode=prepared.mode,
+            source_sha256=prepared.content_sha256, display_name=prepared.display_name,
+        )
+        return XauthorityMountBinding(
+            receipt_handle=unsigned.receipt_handle,
+            display_profile_id=unsigned.display_profile_id,
+            display_generation=unsigned.display_generation,
+            source_path=unsigned.source_path, source_device=unsigned.source_device,
+            source_inode=unsigned.source_inode, source_uid=unsigned.source_uid,
+            source_gid=unsigned.source_gid, source_mode=unsigned.source_mode,
+            source_sha256=unsigned.source_sha256, target_path=unsigned.target_path,
+            display_name=unsigned.display_name, read_only=True, nofollow=True,
+            nosuid=True, nodev=True, signature=self.signer.sign(unsigned.payload()),
+        )
+
+    def verify_mount_binding(self, binding: XauthorityMountBinding) -> bool:
+        """Revalidate signed mount instructions and active file identity."""
+        if (not isinstance(binding, XauthorityMountBinding)
+                or binding.target_path != XAUTHORITY_MOUNT_TARGET
+                or not (binding.read_only and binding.nofollow and binding.nosuid and binding.nodev)
+                or not self.signer.verify(binding.payload(), binding.signature)):
+            return False
+        with self._lock:
+            prepared = self._prepared.get(binding.receipt_handle)
+        if (prepared is None or binding.display_profile_id != prepared.display_profile_id
+                or binding.display_generation != prepared.display_generation
+                or binding.source_path != prepared.path
+                or binding.source_device != prepared.device or binding.source_inode != prepared.inode
+                or binding.source_uid != prepared.owner_uid or binding.source_gid != prepared.owner_gid
+                or binding.source_mode != prepared.mode or binding.source_sha256 != prepared.content_sha256
+                or binding.display_name != prepared.display_name):
+            return False
+        try:
+            fd = self._open_and_check(prepared)
+            os.close(fd)
+            return True
+        except NativeDisplayStartupDenied:
+            return False
 
     def resolve_selected(self, receipt_handle: str, *, remote_enrollment_id: str,
                          native_profile_id: str, native_generation: str,
@@ -595,6 +698,9 @@ class XauthorityStartupRegistry:
     def discard_prepared(self, prepared: PreparedXauthority) -> None:
         if not isinstance(prepared, PreparedXauthority):
             return
+        with self._lock:
+            if self._prepared.get(prepared.receipt_handle) is prepared:
+                self._prepared.pop(prepared.receipt_handle, None)
         try:
             directory = os.open(prepared.path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                                 | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
@@ -622,6 +728,7 @@ class XauthorityStartupRegistry:
         with self._lock:
             receipt = self._receipts.pop(receipt_handle, None)
             pidfd = self._pidfds.pop(receipt_handle, None)
+            self._prepared.pop(receipt_handle, None)
         if pidfd is not None:
             try:
                 os.close(pidfd)
