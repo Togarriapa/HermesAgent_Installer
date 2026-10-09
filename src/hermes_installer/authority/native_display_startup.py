@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -17,6 +18,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
+
+from .types import EffectAuthorization, HostContext, canonical_digest
 
 
 _OPAQUE = re.compile(r"[A-Za-z0-9_-]{43}\Z", re.ASCII)
@@ -29,6 +32,101 @@ XAUTHORITY_MOUNT_TARGET = Path("/run/hermes-installer/display/Xauthority")
 
 class NativeDisplayStartupDenied(PermissionError):
     """Selected native display startup or current receipt proof is unavailable."""
+
+
+_STARTUP_OPERATIONS = {
+    "display": "native-display-start-v1",
+    "gateway": "native-remote-gateway-start-v1",
+    "desktop": "native-desktop-app-start-v1",
+}
+
+
+def selected_start_payload(enrollment_id: str, generation: str,
+                           operation_id: str) -> bytes:
+    """Canonical parameters-empty selection for one protected startup role."""
+    if (not isinstance(enrollment_id, str) or not _ID.fullmatch(enrollment_id)
+            or not isinstance(generation, str) or not _ID.fullmatch(generation)
+            or operation_id not in _STARTUP_OPERATIONS.values()):
+        raise NativeDisplayStartupDenied("selected startup operation is invalid")
+    return _canonical({
+        "schema": 1, "enrollment_id": enrollment_id,
+        "generation": generation, "operation_id": operation_id,
+        "parameters": {},
+    })
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedStartupGrant:
+    """Authority-issued one-use launch grant for one v65 selected role.
+
+    Construction does not confer authority: custody must verify/consume the
+    signed context and effect grant with the live root AuthorityService before
+    any process or mount effect.
+    """
+    schema: int
+    startup_authorization_handle: str
+    role: str
+    service_enrollment_id: str
+    generation: str
+    operation_id: str
+    selection_payload_sha256: str
+    controller_proof_handle: str
+    context: HostContext = field(repr=False)
+    effect_authorization: EffectAuthorization = field(repr=False)
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (self.schema != 1 or self.role not in _STARTUP_OPERATIONS
+                or self.operation_id != _STARTUP_OPERATIONS.get(self.role)
+                or not isinstance(self.service_enrollment_id, str)
+                or not _ID.fullmatch(self.service_enrollment_id)
+                or not isinstance(self.generation, str) or not _ID.fullmatch(self.generation)
+                or not _OPAQUE.fullmatch(self.startup_authorization_handle)
+                or not _OPAQUE.fullmatch(self.controller_proof_handle)
+                or not _SHA256.fullmatch(self.selection_payload_sha256)
+                or not isinstance(self.context, HostContext)
+                or not isinstance(self.effect_authorization, EffectAuthorization)
+                or isinstance(self.issued_monotonic, bool)
+                or not isinstance(self.issued_monotonic, (int, float))
+                or isinstance(self.expires_monotonic, bool)
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
+                or not (0 < self.issued_monotonic < self.expires_monotonic)):
+            raise NativeDisplayStartupDenied("root-selected startup grant is malformed")
+        payload = selected_start_payload(
+            self.service_enrollment_id, self.generation, self.operation_id,
+        )
+        if canonical_digest(payload) != self.selection_payload_sha256:
+            raise NativeDisplayStartupDenied("startup grant selection digest is inconsistent")
+        if (self.context.operation != "process.start"
+                or self.context.enrollment_id != self.service_enrollment_id
+                or self.context.generation != self.generation
+                or self.context.final_payload_digest != self.selection_payload_sha256
+                or self.effect_authorization.operation != "process.start"
+                or self.effect_authorization.enrollment_id != self.service_enrollment_id
+                or self.effect_authorization.generation != self.generation
+                or self.effect_authorization.final_payload_digest != self.selection_payload_sha256
+                or self.effect_authorization.request_digest != self.selection_payload_sha256
+                or self.effect_authorization.context_digest != canonical_digest({
+                    **self.context.claims(), "signature": self.context.signature,
+                })
+                or self.effect_authorization.profile_id != self.context.profile_id
+                or self.effect_authorization.principal_id != self.context.principal_id
+                or self.effect_authorization.namespace_id != self.context.namespace_id
+                or self.effect_authorization.uid != self.context.uid
+                or self.effect_authorization.capability != "hermes-profile-invoke"
+                or "hermes-profile-invoke" not in self.context.capabilities):
+            raise NativeDisplayStartupDenied("startup grant is not bound to its exact operation and selection")
+
+    def __repr__(self) -> str:
+        return "RootSelectedStartupGrant(<root-private>)"
+
+    def selection_payload(self) -> bytes:
+        return selected_start_payload(
+            self.service_enrollment_id, self.generation, self.operation_id,
+        )
 
 
 class DisplayReceiptSigner(Protocol):
