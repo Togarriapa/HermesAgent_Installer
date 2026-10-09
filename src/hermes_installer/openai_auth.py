@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Callable, Mapping, Protocol
+from typing import Callable, ContextManager, Mapping, Protocol
 from urllib.parse import urlencode, urlsplit, parse_qs
 
 from .credentials import CredentialError
@@ -47,6 +47,7 @@ class HostCredentialVault(Protocol):
     def save(self, reference: str, account: "ChatGPTAccount") -> None: ...
     def load(self, reference: str) -> "ChatGPTAccount": ...
     def clear_tokens(self, reference: str) -> None: ...
+    def session_lock(self, reference: str) -> ContextManager[None]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,55 +359,54 @@ class ChatGPTPlanAuth:
         return account
 
     def revoke(self, *, credential_ref: str) -> bool:
-        """Revoke through the issuer's advertised endpoint, then clear local tokens.
+        """Revoke through issuer discovery, then clear tokens while holding the host session lock.
 
         False means remote revocation could not be confirmed; registration
         identity/client mapping remains available for a later sign-in.
         """
+        confirmed = False
         try:
-            account = self.vault.load(credential_ref)
-            if account.host_id != self.host_id or not account.refresh_token:
-                raise OAuthAttemptError("Stored ChatGPT session is unavailable")
-            configuration = self.transport.get_json(DISCOVERY_ENDPOINT, timeout=10)
-            endpoint = configuration.get("revocation_endpoint") if isinstance(configuration, Mapping) else None
-            parsed = urlsplit(endpoint) if isinstance(endpoint, str) else None
-            if (parsed is None or parsed.scheme != "https" or parsed.hostname != "auth.openai.com"
-                    or parsed.path != "/api/accounts/oauth/revoke" or parsed.query or parsed.fragment):
-                raise OAuthAttemptError("OpenAI revocation endpoint is not the issuer endpoint")
-            form = {
-                "token": account.refresh_token, "token_type_hint": "refresh_token",
-                "client_id": account.client_id,
-            }
-            confirmed = False
-            for attempt in range(3):
+            with self.vault.session_lock(credential_ref):
                 try:
-                    response = self.transport.post_form(endpoint, form, timeout=15)
-                    status = response.get("status_code", 200) if isinstance(response, Mapping) else 0
-                    if status == 200:
-                        confirmed = True
-                        break
-                    if not isinstance(status, int) or not 500 <= status <= 599:
-                        break
+                    account = self.vault.load(credential_ref)
+                    if account.host_id != self.host_id or not account.refresh_token:
+                        raise OAuthAttemptError("Stored ChatGPT session is unavailable")
+                    configuration = self.transport.get_json(DISCOVERY_ENDPOINT, timeout=10)
+                    endpoint = configuration.get("revocation_endpoint") if isinstance(configuration, Mapping) else None
+                    parsed = urlsplit(endpoint) if isinstance(endpoint, str) else None
+                    if (parsed is None or parsed.scheme != "https" or parsed.hostname != "auth.openai.com"
+                            or parsed.path != "/api/accounts/oauth/revoke" or parsed.query or parsed.fragment):
+                        raise OAuthAttemptError("OpenAI revocation endpoint is not the issuer endpoint")
+                    form = {
+                        "token": account.refresh_token, "token_type_hint": "refresh_token",
+                        "client_id": account.client_id,
+                    }
+                    for attempt in range(3):
+                        try:
+                            response = self.transport.post_form(endpoint, form, timeout=15)
+                            status = response.get("status_code", 200) if isinstance(response, Mapping) else 0
+                            if status == 200:
+                                confirmed = True
+                                break
+                            if not isinstance(status, int) or not 500 <= status <= 599:
+                                break
+                        except Exception:
+                            if attempt == 2:
+                                break
+                        if attempt < 2:
+                            self.sleep((0.1, 0.3)[attempt])
                 except Exception:
-                    if attempt == 2:
-                        break
-                if attempt < 2:
-                    self.sleep((0.1, 0.3)[attempt])
+                    confirmed = False
+                finally:
+                    self.vault.clear_tokens(credential_ref)
         except Exception:
-            confirmed = False
-        finally:
-            try:
-                self.vault.clear_tokens(credential_ref)
-            except Exception:
-                # Keep the result truthful: callers must not report local sign-out
-                # until their vault confirms token removal.
-                raise OAuthAttemptError("Host credential vault could not clear the local session") from None
+            raise OAuthAttemptError("Host credential vault could not clear the local session") from None
         return confirmed
 
     def refresh(self, *, credential_ref: str) -> ChatGPTAccount:
         with self._locks_guard:
             lock = self._account_locks.setdefault(credential_ref, threading.Lock())
-        with lock:
+        with lock, self.vault.session_lock(credential_ref):
             try:
                 account = self.vault.load(credential_ref)
                 if account.host_id != self.host_id or PLAN_SCOPE not in account.scopes:
