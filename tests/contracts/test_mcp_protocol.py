@@ -58,9 +58,11 @@ class BrokerAuthorityFixture:
         self.block_method = None
         self.cancel_observed = False
 
-    def context(self, *, purpose, intent, source_contexts=(), trace_id=None, lease_seconds=30, cancelled=None):
+    def context(self, *, purpose, intent, source_contexts=(), trace_id=None, lease_seconds=30,
+                final_payload_digest=None, operation="mcp.request", cancelled=None):
         context = SimpleNamespace(purpose=purpose, intent_id=canonical_digest({"purpose": purpose, "intent": intent}),
-                                  uid=1000, profile_id="fixture-profile",
+                                  uid=1000, profile_id="fixture-profile", operation=operation,
+                                  final_payload_digest=final_payload_digest,
                                   monotonic_expires_at=time.monotonic() + lease_seconds)
         self.contexts.append((purpose, intent, context))
         return context
@@ -71,13 +73,15 @@ class BrokerAuthorityFixture:
             target=target, capability=capability, request_digest=request_digest,
             intent_id=context.intent_id, context_digest="fixture-context-digest",
             monotonic_expires_at=min(context.monotonic_expires_at, time.monotonic() + 5),
+            final_payload_digest=context.final_payload_digest,
         )
         self.grants.append(grant)
         return grant
 
     def mcp_request(self, grant, *, target, payload, timeout, cancelled=None):
         self.effects.append((grant, target, payload, timeout, cancelled))
-        if target != grant.target or canonical_digest(payload) != grant.request_digest:
+        if (target != grant.target or canonical_digest(payload) != grant.request_digest
+                or grant.final_payload_digest != canonical_digest(payload)):
             raise AssertionError("broker binding mismatch")
         request = __import__("json").loads(payload)
         method, rid = request["method"], request["request_id"]
