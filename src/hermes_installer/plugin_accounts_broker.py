@@ -100,6 +100,27 @@ class PluginActionEnrollment:
                 raise ValueError(f"plugin action {name} is invalid")
         if self.operation not in _OPERATIONS[self.adapter_id]:
             raise ValueError("plugin action operation is outside the adapter's fixed verbs")
+        if self.adapter_id == "github":
+            read_actions = {"repo.get", "issues.list", "content.get"}
+            write_actions = {"content.put", "issue.create"}
+            if self.action_id not in read_actions | write_actions:
+                raise ValueError("GitHub action is outside the reviewed fixed REST catalog")
+            expected_write = self.action_id in write_actions
+            expected_operation = "plugin.github.write" if expected_write else "plugin.github.read"
+            if self.operation != expected_operation or self.mutating is not expected_write:
+                raise ValueError("GitHub action operation/mutation class does not match its fixed verb")
+        elif self.adapter_id == "composio":
+            if self.action_id not in {"invoke.read", "invoke.write"}:
+                raise ValueError("Composio action is outside the reviewed selected-tool catalog")
+            expected_write = self.action_id == "invoke.write"
+            if self.mutating is not expected_write or self.operation != "plugin.composio.invoke":
+                raise ValueError("Composio action operation/mutation class does not match its fixed verb")
+            if self.confirmation_policy_id is not None and not expected_write:
+                raise ValueError("read-only Composio action cannot carry write confirmation")
+            if expected_write and not self.confirmation_policy_id:
+                raise ValueError("Composio writes require exact-action confirmation")
+        elif self.adapter_id == "codex" and (self.action_id != "run" or self.operation != "plugin.codex.run"):
+            raise ValueError("Codex action is outside the fixed managed task runner")
         if self.adapter_id == "codex" and not self.mutating:
             raise ValueError("Codex execution can change its assigned workspace and must use write authority")
         if self.capability != f"plugin:{self.adapter_id}":
@@ -111,8 +132,8 @@ class PluginActionEnrollment:
             raise ValueError("plugin action bounds exceed the global limits")
         if self.mutating and not self.idempotency_policy_id:
             raise ValueError("mutating plugin actions require a protected idempotency policy")
-        if self.mutating and not self.verify_after_write and self.adapter_id == "github":
-            raise ValueError("GitHub write actions must verify the remote result")
+        if self.mutating and not self.verify_after_write:
+            raise ValueError("mutating account actions require a fixed post-effect verification action")
         if self.verify_after_write and not self.verification_action_id:
             raise ValueError("verify-after-write requires a fixed read action ID")
         if not isinstance(self.argument_schema, Mapping):
@@ -147,6 +168,9 @@ class PluginAccountEnrollment:
     repositories: frozenset[str] = frozenset()
     composio_connections: Mapping[str, str] = field(default_factory=dict)
     toolkit_versions: Mapping[str, str] = field(default_factory=dict)
+    composio_argument_schemas: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    composio_result_schemas: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    composio_mutating_actions: frozenset[str] | None = None
     codex_workspaces: Mapping[str, "CodexWorkspaceBinding"] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -171,14 +195,37 @@ class PluginAccountEnrollment:
         if self.adapter_id == "github" and (not self.repositories or any(not _REPO.fullmatch(item) for item in self.repositories)):
             raise ValueError("GitHub enrollment requires exact owner/repository allowlist")
         if self.adapter_id == "composio":
-            if not self.composio_connections or not self.toolkit_versions:
-                raise ValueError("Composio enrollment requires explicit user connections and pinned toolkit versions")
+            if (not self.composio_connections or not self.toolkit_versions
+                    or not self.composio_argument_schemas or not self.composio_result_schemas):
+                raise ValueError("Composio enrollment requires connections, pinned versions, and per-action argument/result schemas")
             if any(not _TOOL_SLUG.fullmatch(slug) or not _OPAQUE_ID.fullmatch(value)
                    for slug, value in self.composio_connections.items()):
                 raise ValueError("Composio connection map is invalid")
             if any(not _TOOL_SLUG.fullmatch(slug) or not _TOOL_VERSION.fullmatch(value)
                    for slug, value in self.toolkit_versions.items()):
                 raise ValueError("Composio toolkit version map is invalid")
+            if (set(self.composio_connections) != set(self.toolkit_versions)
+                    or set(self.composio_connections) != set(self.composio_argument_schemas)
+                    or set(self.composio_connections) != set(self.composio_result_schemas)):
+                raise ValueError("Composio connection, version, and schema allowlists must match exactly")
+            if (not isinstance(self.composio_mutating_actions, (set, frozenset))
+                    or not self.composio_mutating_actions <= set(self.composio_connections)):
+                raise ValueError("Composio read/write effect classification must be explicitly enrolled")
+            object.__setattr__(self, "composio_mutating_actions", frozenset(self.composio_mutating_actions))
+            schemas = {}
+            result_schemas = {}
+            for slug, schema in self.composio_argument_schemas.items():
+                if not _TOOL_SLUG.fullmatch(slug) or not isinstance(schema, Mapping):
+                    raise ValueError("Composio per-action argument schema is invalid")
+                _validate_schema_definition(schema)
+                schemas[slug] = _freeze_schema(schema)
+                result_schema = self.composio_result_schemas[slug]
+                if not isinstance(result_schema, Mapping):
+                    raise ValueError("Composio per-action result schema is invalid")
+                _validate_schema_definition(result_schema)
+                result_schemas[slug] = _freeze_schema(result_schema)
+            object.__setattr__(self, "composio_argument_schemas", MappingProxyType(schemas))
+            object.__setattr__(self, "composio_result_schemas", MappingProxyType(result_schemas))
         if self.adapter_id == "codex" and not self.codex_workspaces:
             raise ValueError("Codex enrollment requires exact host-assigned workspaces")
         object.__setattr__(self, "composio_connections", MappingProxyType(dict(self.composio_connections)))
@@ -302,6 +349,32 @@ class GitHubRESTBackend:
             result = json.loads(response.body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise PluginEffectDenied("github.response", "GitHub response was invalid JSON") from None
+        if op == "repo.get":
+            if not isinstance(result, dict) or not isinstance(result.get("full_name"), str):
+                raise PluginEffectDenied("github.response", "GitHub repository response was invalid")
+            result = {key: result.get(key) for key in
+                      ("full_name", "private", "default_branch", "html_url", "description")}
+        elif op == "issues.list":
+            if not isinstance(result, list) or len(result) > 30:
+                raise PluginEffectDenied("github.response", "GitHub issue list response was invalid")
+            result = {"items": [_normalize_github_issue(item) for item in result]}
+        elif op == "content.get":
+            if (not isinstance(result, dict) or result.get("type") != "file"
+                    or not isinstance(result.get("content"), str)):
+                raise PluginEffectDenied("github.response", "GitHub file content response was invalid")
+            result = {"path": result.get("path"), "sha": result.get("sha"),
+                      "size": result.get("size"), "content_base64": result["content"].replace("\n", ""),
+                      "encoding": result.get("encoding")}
+        elif op == "content.put":
+            if (not isinstance(result, dict) or not isinstance(result.get("content"), dict)
+                    or not isinstance(result.get("commit"), dict)):
+                raise PluginEffectDenied("github.response", "GitHub content write receipt was invalid")
+            file_result, commit_result = result["content"], result["commit"]
+            result = {"path": file_result.get("path"), "sha": file_result.get("sha"),
+                      "size": file_result.get("size"), "commit_sha": commit_result.get("sha"),
+                      "html_url": file_result.get("html_url")}
+        elif op == "issue.create":
+            result = _normalize_github_issue(result, include_body=False)
         if not isinstance(result, dict):
             raise PluginEffectDenied("github.response", "GitHub response shape was invalid")
         return result
@@ -352,16 +425,29 @@ class ComposioToolBackend:
     def invoke(self, *, enrollment, action, arguments, credential, idempotency_key,
                timeout, cancelled):
         _check_transport_deadline(self.network, timeout)
-        slug = action.action_id
+        if action.action_id not in {"invoke.read", "invoke.write"}:
+            raise PluginEffectDenied("composio.action", "Composio wrapper action is outside the fixed native catalog")
+        slug = arguments.get("tool_slug")
+        tool_arguments = arguments.get("arguments")
         connection = enrollment.composio_connections.get(slug)
         version = enrollment.toolkit_versions.get(slug)
-        if (not credential or connection is None or version is None or not _TOOL_SLUG.fullmatch(slug)
+        argument_schema = enrollment.composio_argument_schemas.get(slug)
+        result_schema = enrollment.composio_result_schemas.get(slug)
+        expected_write = action.action_id == "invoke.write"
+        if (type(action.mutating) is not bool or action.mutating is not expected_write
+                or (slug in enrollment.composio_mutating_actions) is not expected_write
+                or not credential or connection is None or version is None or argument_schema is None or result_schema is None
+                or not _TOOL_SLUG.fullmatch(slug)
                 or not _TOOL_VERSION.fullmatch(version)):
             raise PluginEffectDenied("composio.binding", "Composio tool or user connection is not enrolled")
-        headers = {"Authorization": f"Bearer {credential}", "Content-Type": "application/json",
+        try:
+            _validate_instance(argument_schema, tool_arguments, path="arguments")
+        except PluginEffectDenied:
+            raise
+        headers = {"x-api-key": credential, "Content-Type": "application/json",
                    "Accept": "application/json"}
         body = _canonical_json({"connected_account_id": connection, "version": version,
-                                "arguments": arguments})
+                                "arguments": tool_arguments})
         try:
             response = self.network.request(self.API + quote(slug, safe=""), method="POST",
                 headers=headers, body=body, cancelled=cancelled)
@@ -375,7 +461,11 @@ class ComposioToolBackend:
             raise PluginEffectDenied("composio.response", "Composio response was invalid JSON") from None
         if not isinstance(result, dict):
             raise PluginEffectDenied("composio.response", "Composio response shape was invalid")
-        return result
+        if result.get("successful") is not True or not isinstance(result.get("data"), Mapping):
+            raise PluginEffectDenied("composio.response", "Composio tool execution did not return successful structured data")
+        output = dict(result["data"])
+        _validate_instance(result_schema, output, path="result")
+        return output
 
     def verify(self, *, enrollment, action, arguments, credential, idempotency_key,
                response, timeout, cancelled):
@@ -866,6 +956,21 @@ def _github_path(value: Any) -> str:
             or any(ord(ch) < 32 for ch in value)):
         raise PluginEffectDenied("github.path", "GitHub content path is outside the fixed repository scope")
     return value
+
+
+def _normalize_github_issue(value: Any, *, include_body: bool = True) -> dict[str, Any]:
+    if (not isinstance(value, Mapping) or type(value.get("number")) is not int
+            or not isinstance(value.get("title"), str)
+            or value.get("state") not in {"open", "closed"}
+            or not isinstance(value.get("html_url"), str)):
+        raise PluginEffectDenied("github.response", "GitHub issue response is malformed")
+    body = value.get("body")
+    if body is not None and (not isinstance(body, str) or len(body) > 60_000):
+        raise PluginEffectDenied("github.response", "GitHub issue body exceeds its enrolled limit")
+    result = {key: value[key] for key in ("number", "title", "state", "html_url")}
+    if include_body and "body" in value:
+        result["body"] = body
+    return result
 
 
 def _freeze_schema(value: Any, depth: int = 0) -> Any:
