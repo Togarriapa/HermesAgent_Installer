@@ -324,3 +324,10 @@ The implementation SHALL follow v46 concrete internal coordinator sequence durin
 #### Scenario: Initial source delivery fails
 - **WHEN** actual loader/input custody cannot produce a verified receipt before original deadline
 - **THEN** custody closes the owned unit before stdin and never infers source after EOF
+
+### Requirement: Peer authenticated root observed channel delivery
+The implementation SHALL use v48 actual selected root transport capture and fixed producer-bound delivery before native channel processing.
+
+#### Scenario: Worker presents an SDK message object
+- **WHEN** no actual retained root transport/account/event proof exists
+- **THEN** no source context is minted and channel effects remain unavailable with exact trusted setup prerequisite

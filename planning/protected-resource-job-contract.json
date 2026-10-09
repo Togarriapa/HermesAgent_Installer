@@ -235,12 +235,74 @@
         "webhook_secret_reference_id",
         "allowed_user_numbers",
         "payload_field_bindings",
-        "max_event_age_seconds"
+        "max_event_age_seconds",
+        "account_receipt_handle",
+        "setup_receipt_handle"
       ],
       "payload_field_bindings": "Strict {sender_number,message_id,message_text,event_timestamp} each finite list of schema-approved property names into selected payload_schema, never arbitrary JSONPath/expression. If provider source cannot expose corresponding authenticated message/sender facts, enrollment cannot enable until source-supported route selected. allowed_user_numbers exact normalized E164 selected list<=256, no wildcard/profile-supplied expansion.",
       "setup": "Root business account connection scope verified; fixed selected trigger/version config validated actual source schema, create/upsert with explicit connected_account_id (never first-active default), project webhook subscription/secret actual authorized setup response journal. Existing plugin.composio.invoke broker handles only exact selected actions under independent setup grant/consent. Runtime cannot create subscriptions or export project/connection secrets. No live setup or outbound messages performed here.",
       "ingress": "Production signed webhook only, existing native-input source kind with root-channel Composio observer action. Root actual raw body and webhook-id/timestamp/signature verified using vaultsecret, exact selected trigger/user/connectedaccount/authconfig/instance/version matching, supported payload schema then E164 allowlist. Durable dedupe eventID/logID/provider messageID, timestamp<=300s and selected stricterpolicy, actual request/session/controller PIDFD/module lineage. At-least-once retry does not rerun consumed job. Unsigned subscribe/Pusher cannot mint production provenance.",
-      "scope": "Inbound business message read/delivery into selected Hermes task is original channel obligation. Outgoing reply separate explicit account/recipient/action authority with fresh grants, zero-budget policy and no outbound installation-test messaging. Preserve missingcredential/account/trigger-schema state with exact supportedsetup/resume, not permanent omission or fabricated readiness."
+      "scope": "Inbound business message read/delivery into selected Hermes task is original channel obligation. Outgoing reply separate explicit account/recipient/action authority with fresh grants, zero-budget policy and no outbound installation-test messaging. Preserve missingcredential/account/trigger-schema state with exact supportedsetup/resume, not permanent omission or fabricated readiness.",
+      "strict_types": "All IDs/version/slug/generation nonempty bounded1..256UTF8 without controls; sha64lowerhex; allowed_user_numbers unique list1..256 strict normalized E164 ^+[1-9][0-9]{1,14}$ (literal plus), no wildcards; payload_field_bindings exact four-key object each path list1..8 finite supported payload_schema property names, no expressions/indexes; max_event_age_seconds int1..300. source_issuer_id exactly SourceIssuerRecord.observer_enrollment_id; controller_role_id resource_controller_roles.id kindroot-channel. Profiles/resourcegeneration match selected backend/channel; process/controllergeneration distinct current servicegen joins.",
+      "account_receipt": "Root actual connected-account/authconfig/user/project and Business identity read-only source receipts (supported actual selected WHATSAPP_WHO_AM_I/WHATSAPP_GET_BUSINESS_ACCOUNT_DETAILS or exact authenticated connection response) bind account_receipt_handle to current root Composio enrollment/profile/resource generation and source schema. Root authorized setup receipt binds triggerinstance/subscription/secret vaultref/version/type artifact/current ownedroute and account receipt. No bare business=true/SDKlabels/trigger discovery alone. Root registry verifies exact actual response fields and selectedscope; absent source-supported Business mapping remains precise pending, not fabricated."
+    },
+    "root_peer_event_delivery": {
+      "requirements": [
+        "RG-F03",
+        "R0060",
+        "RB07",
+        "HI08"
+      ],
+      "tasks": [
+        "RG-F03",
+        "RB-T08",
+        "HI-T08"
+      ],
+      "owner_module": "hermes_installer.authority.channel_ingress",
+      "active_key": "service_generations.channel_delivery_bindings",
+      "row_fields": [
+        "id",
+        "profile_id",
+        "process_generation",
+        "native_package_id",
+        "native_package_generation",
+        "authority_endpoint_id",
+        "allowed_channel_ingress_ids",
+        "source_observer_enrollment_ids",
+        "generation"
+      ],
+      "row_types": "Opaque bounded IDs/generations, allowedchannel/sourceobserver finiteunique lists<=16. Exact current profile/package/sourceissuer+selectedoriginalchannel ingress records, root credential/account/transport references and controlled native boundary artifact joins included whole active digest. No public worker choosechannel/account/PID/URL.",
+      "setup_call": "RootChannelRuntimeRegistry.prepare_selected_channel_runtime(root_setup_or_active_selection)->RootChannelRuntimeSetupReceipt; root resolves actual selected account/credential/supportedroot transport collector before native Telegram/PTB polling or Discord gateway start hook. Missing actualconnection/setupproof configuredpending, no direct uncontrolled workerpoll fallback.",
+      "collector": "Actual root selected bot SDK/network adapter holds scoped credential, observes authenticated selected transport bytes/account/session/provider identifiers before native callback, performs signature/session/sender/replay/route schema verification and captures selected source/event via v36. Ordinary worker SDKMessageEvent cannot mint provenance. Root collector actual PIDFD/module/enrollment proof required; fixed provider endpoints only, no genericHTTP/WS proxy. HTTP/audio/Composio distinct adapters use their exact retained proofs, never Telegram/Discord substitutes.",
+      "bind_rpc": "channel.runtime.bind request {schema:1} -> ChannelRuntimeBinding; authority authenticates actual SO_PEERCRED/PIDFD/starttime/exe/cgroup/currentpackage/profile role and selects current allowed deliverybinding. No worker selectionfields.",
+      "binding_fields": [
+        "schema",
+        "binding_handle",
+        "delivery_binding_id",
+        "profile_id",
+        "generation",
+        "native_package_id",
+        "native_package_generation",
+        "service_generation_digest",
+        "expires_monotonic"
+      ],
+      "take_rpc": "channel.event.take request {schema:1,binding_handle,max_events:1}->ChannelEventDelivery or pending; fixed peer-bound AF_UNIX AuthorityClient.take_selected_channel_event(binding_handle) on selected authority endpoint, no caller input/event/source fields.",
+      "delivery_fields": [
+        "schema",
+        "delivery_handle",
+        "binding_handle",
+        "channel_ingress_id",
+        "event_handle",
+        "normalized_payload_b64",
+        "payload_sha256",
+        "source_receipt_handle",
+        "producer_context_delivery_handle",
+        "sequence",
+        "expires_monotonic"
+      ],
+      "delivery": "Root verifies actual retained captured event/transport account+session/allowedsender/HMAC/JWT/consent/current generations/lease and actual targetproducer PIDFD/loaderproof, atomically consumes oneuse eventdelivery nonce/sequence, copies bounded normalizednative input bytes plus opaque source/context handles. RootSourceRegistry keeps actual receipt/controller lineage and peer delivery separately. Payload<=256KiB; no credential/rawauthorizationheader returned. Native PTB/Discord/HTTP/audio integration injects actual root-delivered event through source-pinned native dispatch before processing, not worker-produced SDKlabel; exact payloadSHA verified and context handles carried to actual request/tool boundary.",
+      "cleanup": "Delivery lookup handles oneuse peerbound originaldeadline<=30s, boundedqueue<=64events perprofile; backpressure pending/owned dropreceipt, no blindreplay. Root registry closes context handles on logout/session revoke/account/role/gen expiry. User identity only actual authenticated selected sender/session proof; audio UNKNOWN/private, no publicupgrade.",
+      "authority": "Binding/take are source delivery lookups, not generic source.capture/effect grant. Effects still fresh operation/target/digest/recipient/context authorization; setup does not authorize outgoingmessages. Fixture cannot prove actualtransport/nativechannelacceptance."
     }
   },
   "bundle": {

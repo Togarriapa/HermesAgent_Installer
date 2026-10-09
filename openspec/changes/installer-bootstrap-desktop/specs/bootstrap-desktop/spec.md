@@ -408,3 +408,10 @@ The implementation SHALL bind the exact v47 masked intake and policy selection t
 #### Scenario: User journal contains a credential reference
 - **WHEN** it has no verified root vault custody/scope receipt
 - **THEN** it cannot authorize identity observation or policy publication and exact secure intake remains pending
+
+### Requirement: Verified initial identity template revision
+The implementation SHALL resolve the exact v49 immutable identity template through the actual root installed deployment closure.
+
+#### Scenario: Only a session digest exists
+- **WHEN** identity policy revision is needed
+- **THEN** root resolves actual verified template bytes rather than inventing a module constant or trusting a caller revision
