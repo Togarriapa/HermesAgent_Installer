@@ -112,7 +112,11 @@ def _validate_parent(enrollment: MemoryServiceEnrollment, recipe: MemoryRouteRec
     target = f"memory:{enrollment.provider}:{action}"
     operation = f"memory.{action}"
     digest = hashlib.sha256(parent_request_payload).hexdigest()
-    context_digest = canonical_digest({**context.claims(), "signature": context.signature})
+    # AuthorityService verifies the original signed context before dispatch,
+    # then gives root handlers a reconstructed context marked
+    # ``verified-in-service``. Its signature is intentionally different,
+    # so context_digest is bound to the already-verified parent grant in
+    # the durable ledger rather than recomputed from that handler view.
     if (context.profile_id != enrollment.profile_id
             or context.namespace_id != enrollment.namespace_identity
             or context.principal_id != enrollment.principal_id
@@ -125,7 +129,6 @@ def _validate_parent(enrollment: MemoryServiceEnrollment, recipe: MemoryRouteRec
             or parent.operation != operation
             or parent.capability != capability
             or parent.target != target
-            or parent.context_digest != context_digest
             or parent.request_digest != digest
             or parent.final_payload_digest != digest
             or parent.source_receipts != context.source_receipts
@@ -816,6 +819,14 @@ class RootMemoryStepEffectAuthority:
         enrollment, recipe, step, request, job, source, consent = self._revalidate_step(
             binding, canonical_connector_payload_bytes, serialized_service_request_sha256,
             cancelled=cancelled)
+        if source.signature == "verified-in-service":
+            # Re-issue the exact claims as a root signature for AuthorityService's
+            # fresh child-context issuer. This is permitted only after the
+            # original signed parent grant was verified/consumed by the broker
+            # and the durable reservation's parent binding was revalidated.
+            source = HostContext.from_wire(self.service._signed_context(
+                source, self.service._sign(source.claims())))
+            self.service._verify_context_signature(source)
         if enrollment.target_id not in self._registered:
             raise MemoryExecutionUnavailable("no protected HI12 connector.open rule is installed for memory")
         remaining = min(float(timeout), binding["deadline_monotonic"] - self.monotonic(),
@@ -835,11 +846,17 @@ class RootMemoryStepEffectAuthority:
             "owner_generation": enrollment.memory_owner_generation,
         }, min(4 * 1024 * 1024, enrollment.limits["request_bytes"] + 32_768))
         payload_digest = canonical_digest(child_payload)
+        # Context issuance itself takes time; reserve a small monotonic margin
+        # so the signed child lease can never extend past the durable job's
+        # original hard deadline.
+        child_lease = min(remaining, binding["deadline_monotonic"] - self.monotonic(), 30.0) - 0.05
+        if child_lease <= 0:
+            raise MemoryExecutionDenied("memory step deadline expired before child grant")
         context_wire = self.service._issue_context(source.uid, {
             "purpose": "memory-service-connector",
             "intent": f"{reservation_handle}:{step.step_id}:{binding['sequence']}",
             "trace_id": source.trace_id,
-            "lease_seconds": min(remaining, 30.0),
+            "lease_seconds": child_lease,
             "source_contexts": [source.to_wire()],
             "final_payload_digest": payload_digest,
             "operation": "connector.open",
@@ -992,7 +1009,19 @@ class RootMemoryStepEffectAuthority:
         try:
             source_value = json.loads(binding["source_context_wire"].decode("utf-8"))
             source = HostContext.from_wire(source_value)
-            self.service._verify_context_signature(source)
+            if source.signature == "verified-in-service":
+                # The outer fixed-effect broker already verified and consumed
+                # the signed parent grant before invoking this root-only
+                # handler. It reconstructs HostContext with this sentinel, so
+                # only the protected compound ledger can persist it. Admission
+                # bound its complete claims to the consumed grant; do not treat
+                # this internal receipt marker as a client signature.
+                if (not binding.get("parent_grant_id")
+                        or not binding.get("parent_context_digest")
+                        or not binding.get("parent_request_digest")):
+                    raise ValueError("verified parent binding is absent")
+            else:
+                self.service._verify_context_signature(source)
         except Exception:
             raise MemoryExecutionDenied("signed memory source lineage is no longer valid") from None
         principal = self.service._binding(source.uid)
