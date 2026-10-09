@@ -90,6 +90,20 @@ def test_crosswalk_path_tampering_is_rejected_before_writes() -> None:
         _selected_files(compiled, profile_id)
 
 
+def test_duplicate_hermes_destination_is_rejected() -> None:
+    registry = _registry()
+    profile_id = sorted(key.split("/", 1)[1].split("@", 1)[0]
+                        for key in registry.resolver.raw if key.startswith("profiles/"))[0]
+    compiled = dict(registry.materialize(registry.discover([f"profiles/{profile_id}@*"])))
+    ledger = json.loads(compiled["installer-registry/crosswalk.json"])
+    first = next(row for row in ledger["native_materialization"]["files"]
+                 if row["staged"].startswith("homes/profiles/"))
+    ledger["native_materialization"]["files"].append(dict(first))
+    compiled["installer-registry/crosswalk.json"] = json.dumps(ledger).encode()
+    with pytest.raises(NativeMaterializationDenied, match="multiple files"):
+        _selected_files(compiled, profile_id)
+
+
 def test_public_materialization_receipt_cannot_contain_filesystem_paths() -> None:
     names = set(NativeMaterializationReceipt.__dataclass_fields__)
     assert not any("path" in name.casefold() or name.endswith("_root") for name in names)

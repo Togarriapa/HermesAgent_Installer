@@ -491,6 +491,8 @@ def _selected_files(compiled: Mapping[str, bytes], profile_id: str) -> dict[str,
             continue
         if target != expected_source_target or staged not in compiled:
             raise NativeMaterializationDenied("compiled native path differs from its selected Hermes destination")
+        if destination in mapping:
+            raise NativeMaterializationDenied("compiled native closure maps multiple files to one Hermes destination")
         mapping[destination] = compiled[staged]
     required = {f"profiles/{profile_id}/SOUL.md", f"profiles/{profile_id}/profile.yaml",
                 f"profiles/{profile_id}/config.yaml"}
