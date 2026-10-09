@@ -199,12 +199,16 @@ class ResourceProfileBackendTests(unittest.TestCase):
                 source_url="https://schemas.example.invalid/hermes-task-text-result-v1.json",
                 max_bytes=65_536, size_bytes=len(schema_bytes), filename="schema.json",
             ),))
+            service_generation = hashlib.sha256(b"protected service generation").hexdigest()
             selected = RootArtifactValidator(
                 backend_enrollments={backend.backend_id: backend},
                 validators={validator.validator_id: validator}, artifact_catalog=catalog,
-                staging_root=root, expected_uid=os.getuid(),
+                staging_root=root, active_service_generation_digest=service_generation,
+                expected_uid=os.getuid(),
             ).resolve_selected_result(
-                backend.backend_id, HERMES_TASK_TEXT_RESULT_SCHEMA_ID, backend.generation,
+                backend.backend_id, HERMES_TASK_TEXT_RESULT_SCHEMA_ID,
+                expected_service_generation_digest=service_generation,
+                expected_resource_generation=backend.generation,
             )
             result = selected.validate_stdout(b"Hermes finished\n")
             self.assertEqual(result["text"], "Hermes finished\n")
@@ -215,8 +219,31 @@ class ResourceProfileBackendTests(unittest.TestCase):
             with self.assertRaises(ResourceProfileTaskUnavailable):
                 RootArtifactValidator(
                     backend_enrollments={backend.backend_id: backend}, validators={},
-                    artifact_catalog=catalog, staging_root=root, expected_uid=os.getuid(),
-                ).resolve_selected_result(backend.backend_id, "unreviewed-json", backend.generation)
+                    artifact_catalog=catalog, staging_root=root,
+                    active_service_generation_digest=service_generation, expected_uid=os.getuid(),
+                ).resolve_selected_result(
+                    backend.backend_id, "unreviewed-json",
+                    expected_service_generation_digest=service_generation,
+                    expected_resource_generation=backend.generation,
+                )
+            with self.assertRaises(ResourceProfileTaskUnavailable):
+                selected_result = RootArtifactValidator(
+                    backend_enrollments={backend.backend_id: backend},
+                    validators={validator.validator_id: validator}, artifact_catalog=catalog,
+                    staging_root=root, active_service_generation_digest=service_generation,
+                    expected_uid=os.getuid(),
+                )
+                selected_result.resolve_selected_result(
+                    backend.backend_id, HERMES_TASK_TEXT_RESULT_SCHEMA_ID,
+                    expected_service_generation_digest=hashlib.sha256(b"stale service").hexdigest(),
+                    expected_resource_generation=backend.generation,
+                )
+            with self.assertRaises(ResourceProfileTaskUnavailable):
+                selected_result.resolve_selected_result(
+                    backend.backend_id, HERMES_TASK_TEXT_RESULT_SCHEMA_ID,
+                    expected_service_generation_digest=service_generation,
+                    expected_resource_generation=hashlib.sha256(b"stale resource").hexdigest(),
+                )
 
     def test_composition_builds_immutable_adapter_map_from_exact_selected_joins(self):
         from hermes_installer.authority.service import AuthorityService

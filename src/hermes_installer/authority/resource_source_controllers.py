@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from .types import AuthorityDenied
+from .types import AuthorityDenied, Sensitivity, canonical_digest
 from .root_controller_custody import RootControllerRoleEnrollment as _CustodyRoleEnrollment
 from .root_controller_custody import RootControllerRoleCatalog
 
@@ -316,7 +316,257 @@ class RootResourceControllerRegistry:
         self._context_issuer_token = object()
         self._event_issuer: Any = None
         self._event_issuer_capability: RootResourceEventIssuerCapability | None = None
+        # Initial ingress must establish the actual root controller before an
+        # event (and therefore before any source receipt) exists.  Keep the
+        # custody proof in this instance until the issuer consumes the exact
+        # producer observation.  The handle is opaque and never worker-visible.
+        self._ingress_proofs: dict[str, tuple[Any, Any, Any, Any, Any]] = {}
         self._event_bytes = 0
+
+    def resolve_selected_ingress_controller(
+        self, controller_role_id: str, selected_source_issuer_id: str,
+        selected_backend_id: str,
+    ) -> Any:
+        """Reserve current root custody for an enrolled ingress before event mint.
+
+        The IDs are root assembly selections, not HTTP/worker fields.  Custody
+        independently resolves the systemd unit, PIDFD, executable and loaded
+        role module; this registry checks that its returned proof joins the
+        selected resource, observer, backend and active generation exactly.
+        """
+        from .root_controller_custody import RootIngressControllerProof
+
+        if not all(_identifier(value) for value in (
+                controller_role_id, selected_source_issuer_id, selected_backend_id)):
+            raise AuthorityDenied("resource.ingress", "selected ingress binding is malformed")
+        with self._lock:
+            if (self.service.authority_epoch != self.authority_epoch
+                    or self.service.service_generation_digest != self.service_generation_digest):
+                raise AuthorityDenied("resource.ingress", "selected ingress generation or epoch is stale")
+            role = self.roles.get(controller_role_id)
+            if role is None:
+                raise AuthorityDenied("resource.ingress", "selected ingress role is unavailable")
+            enrollments = [enrollment for enrollment in self.job_enrollments.values()
+                           if getattr(enrollment, "source_issuer_channel_id", None) == selected_source_issuer_id
+                           and getattr(enrollment, "selected_enabled", False) is True
+                           and selected_backend_id in getattr(enrollment, "backends", {})]
+            if len(enrollments) != 1:
+                raise AuthorityDenied("resource.ingress", "selected ingress resource/backend join is missing or ambiguous")
+            enrollment = enrollments[0]
+            observer_id = getattr(enrollment, "observer_enrollment_id", None)
+            observer = getattr(self.source_observers, "observers", {}).get(observer_id)
+            if observer is None:
+                raise AuthorityDenied("resource.ingress", "selected ingress observer enrollment is unavailable")
+            source_kind = {"crons": "schedule-event", "webhooks": "webhook-event",
+                           "channels": "native-input"}.get(enrollment.kind)
+            expected_controller = self._source_controller_kind(source_kind) if source_kind else None
+            backend = enrollment.backends[selected_backend_id]
+            expected_operation = {"crons": "resource.cron.run", "webhooks": "resource.webhook.run",
+                                  "channels": "resource.channel.run"}.get(enrollment.kind)
+            if (role.controller_kind != expected_controller
+                    or observer_id not in role.source_observer_enrollment_ids
+                    or selected_backend_id not in role.allowed_backend_enrollment_ids
+                    or expected_operation not in role.allowed_operations
+                    or getattr(observer, "source_kind", None) != source_kind
+                    or getattr(observer, "profile_id", None) != enrollment.profile_id
+                    or getattr(observer, "principal_id", None) != enrollment.principal_id
+                    or getattr(observer, "generation", None) != enrollment.profile_generation
+                    or getattr(observer, "channel_id", None) != enrollment.source_issuer_channel_id
+                    or getattr(backend, "observer_enrollment_id", observer_id) != observer_id
+                    or getattr(backend, "source_issuer_channel_id", selected_source_issuer_id)
+                    != selected_source_issuer_id
+                    or getattr(backend, "backend_id", None) != selected_backend_id):
+                raise AuthorityDenied("resource.ingress", "selected ingress role/observer/backend join is invalid")
+            resolver = getattr(self.custody_resolver, "resolve_selected_ingress_controller", None)
+            if not callable(resolver):
+                raise AuthorityDenied("resource.ingress", "pre-event root ingress custody is unavailable")
+            try:
+                proof = resolver(controller_role_id, selected_source_issuer_id, selected_backend_id)
+            except Exception:
+                raise AuthorityDenied("resource.ingress", "selected ingress controller custody is unavailable") from None
+            try:
+                if (type(proof) is not RootIngressControllerProof
+                        or proof.controller_role_id != role.id
+                        or proof.controller_kind != role.controller_kind
+                        or proof.controller_generation != role.controller_generation
+                        or proof.source_issuer_id != selected_source_issuer_id
+                        or proof.backend_enrollment_id != selected_backend_id
+                        or proof.resource_generation != enrollment.generation
+                        or proof.service_generation_digest != self.service_generation_digest
+                        or proof.authority_epoch != self.authority_epoch
+                        or proof.uid != 0
+                        or type(proof.pid) is not int or proof.pid <= 0
+                        or type(proof.pidfd) is not int or proof.pidfd < 0
+                        or getattr(proof, "live_peer_identity", None) is None
+                        or proof.role_artifact_id != role.role_module_artifact_id
+                        or proof.role_artifact_sha256 != role.role_module_sha256
+                        or not _identifier(proof.proof_handle)
+                        or not _OPAQUE_HANDLE.fullmatch(proof.proof_handle)
+                        or not _identifier(proof.selected_ingress_binding_id)
+                        or not callable(getattr(proof, "revalidate", None))
+                        or proof.revalidate() is not True
+                        or proof.expires_monotonic <= self.service.monotonic()
+                        or proof.expires_monotonic > self.service.monotonic() + role.max_lease_seconds):
+                    raise AuthorityDenied("resource.ingress", "selected ingress proof does not match active custody")
+                handle = proof.proof_handle
+                if handle in self._ingress_proofs:
+                    raise AuthorityDenied("resource.ingress", "selected ingress proof handle was replayed")
+                self._ingress_proofs[handle] = (proof, role, enrollment, observer, backend)
+                return proof
+            except BaseException:
+                release = getattr(self.custody_resolver, "release_ingress_proof", None)
+                if callable(release):
+                    try:
+                        release(getattr(proof, "proof_handle", ""))
+                    except Exception:
+                        pass
+                close = getattr(proof, "close", None)
+                if callable(close):
+                    close()
+                raise
+
+    def capture_selected_ingress(
+        self, proof_handle: str, root_observed_input_record: RootResourceSourceEventProof,
+    ) -> RootResourceEventHandle:
+        """Consume one retained custody proof and one sealed producer event.
+
+        Producer-specific validation stays in the attached event issuer.  It
+        receives the actual retained PIDFD/module proof, never a caller-supplied
+        identity or ordinary ``HostContext``.
+        """
+        with self._lock:
+            retained = self._ingress_proofs.pop(proof_handle, None)
+            issuer = self._event_issuer
+            capability = self._event_issuer_capability
+            if (retained is None or issuer is None or capability is None
+                    or not isinstance(root_observed_input_record, RootResourceSourceEventProof)):
+                raise AuthorityDenied("resource.ingress", "root ingress proof or producer observation is unavailable")
+        proof, role, enrollment, observer, backend = retained
+        release = getattr(self.custody_resolver, "release_ingress_proof", None)
+        try:
+            if (proof_handle != proof.proof_handle
+                    or root_observed_input_record.resource_id != enrollment.resource_id
+                    or root_observed_input_record.resource_generation != enrollment.generation
+                    or root_observed_input_record.source_observer_enrollment_id != observer.observer_enrollment_id
+                    or root_observed_input_record.source_kind != observer.source_kind
+                    or root_observed_input_record.source_kind not in enrollment.source_policy
+                    or len(root_observed_input_record.payload) > enrollment.max_payload_bytes
+                    or self.selected_specs.get((enrollment.resource_id, enrollment.generation)) is None
+                    or root_observed_input_record.issuer_token is not capability._token
+                    or self.service.authority_epoch != self.authority_epoch
+                    or self.service.service_generation_digest != self.service_generation_digest
+                    or not callable(getattr(proof, "revalidate", None))
+                    or proof.revalidate() is not True):
+                raise AuthorityDenied("resource.ingress", "root ingress proof or selected source changed")
+            capture = getattr(issuer, "capture_selected_ingress", None)
+            if not callable(capture):
+                raise AuthorityDenied("resource.ingress", "root source event issuer has no ingress capture callpoint")
+            try:
+                issued = capture(proof, root_observed_input_record, capability)
+            except Exception:
+                raise AuthorityDenied("resource.ingress", "root source event capture failed") from None
+            return self._finalize_issued_event(
+                root_observed_input_record, issued, role,
+                expected=(enrollment, observer, backend, proof),
+            )
+        finally:
+            if callable(release):
+                try:
+                    release(proof_handle)
+                except Exception:
+                    pass
+            close = getattr(proof, "close", None)
+            if callable(close):
+                close()
+
+    def _finalize_issued_event(
+        self, producer_record: RootResourceSourceEventProof,
+        issued: RootResourceIssuedSourceEvent,
+        expected_role: RootControllerRoleEnrollment, *, expected: tuple[Any, Any, Any, Any],
+    ) -> RootResourceEventHandle:
+        """Validate and retain one source event signed by the attached issuer."""
+        if not isinstance(issued, RootResourceIssuedSourceEvent):
+            raise AuthorityDenied("resource.event_issuer", "root source issuer returned an invalid event")
+        if (issued.producer_handle != producer_record.producer_handle
+                or issued.event_id != producer_record.event_id
+                or issued.resource_id != producer_record.resource_id
+                or issued.resource_generation != producer_record.resource_generation
+                or issued.source_observer_enrollment_id != producer_record.source_observer_enrollment_id
+                or issued.source_kind != producer_record.source_kind
+                or issued.payload != producer_record.payload):
+            raise AuthorityDenied("resource.event_issuer", "signed source event differs from producer provenance")
+        enrollment, observer, backend, controller_proof = expected
+        from .types import HostContext, SourceReceipt
+        if (not isinstance(issued.source_context, HostContext)
+                or not isinstance(issued.receipt, SourceReceipt)
+                or not isinstance(issued.parent_receipts, tuple)
+                or issued.receipt not in issued.source_context.source_receipts
+                or tuple(issued.source_context.source_receipts) != issued.parent_receipts):
+            raise AuthorityDenied("resource.event_issuer", "issuer omitted the signed complete source closure")
+        current_enrollment = self.job_enrollments.get((issued.resource_id, issued.resource_generation))
+        current_observer = getattr(self.source_observers, "observers", {}).get(
+            issued.source_observer_enrollment_id)
+        if (current_enrollment is not enrollment or current_observer is not observer
+                or current_enrollment.selected_enabled is not True
+                or current_enrollment.generation != issued.resource_generation
+                or issued.observer_enrollment_id != observer.observer_enrollment_id
+                or observer.source_kind != issued.source_kind
+                or observer.profile_id != enrollment.profile_id
+                or observer.principal_id != enrollment.principal_id
+                or observer.generation != enrollment.profile_generation
+                or observer.channel_id != enrollment.source_issuer_channel_id
+                or getattr(backend, "backend_id", None) not in expected_role.allowed_backend_enrollment_ids):
+            raise AuthorityDenied("resource.event_issuer", "source event differs from current protected selection")
+        expected_origin = f"{observer.origin_id}:{issued.event_id}"
+        if (issued.receipt.source_kind != observer.source_kind
+                or issued.receipt.origin_id != expected_origin
+                or issued.receipt.payload_digest != hashlib.sha256(issued.payload).hexdigest()
+                or issued.receipt.sensitivity is not Sensitivity.PRIVATE
+                or issued.source_context.profile_id != enrollment.profile_id
+                or issued.source_context.principal_id != enrollment.principal_id
+                or issued.source_context.final_payload_digest != canonical_digest(issued.payload)
+                or issued.source_context.generation != observer.generation
+                or issued.source_context.enrollment_id != observer.enrollment_id
+                or issued.receipt not in issued.parent_receipts
+                or len({item.receipt_id for item in issued.parent_receipts}) != len(issued.parent_receipts)
+                or issued.receipt.monotonic_expires_at <= self.service.monotonic()
+                or issued.source_context.monotonic_expires_at <= self.service.monotonic()):
+            raise AuthorityDenied("resource.event_issuer", "source receipt or signed context does not bind exact event")
+        custody = issued.controller_proof
+        try:
+            # Initial ingress custody is the pre-event proof itself.  Do not
+            # silently substitute an event-resolved PID or a second producer
+            # callback after the source receipt has been minted.
+            if (issued.controller_role_id != expected_role.id
+                    or custody is not controller_proof
+                    or getattr(custody, "controller_role_id", None) != expected_role.id
+                    or getattr(custody, "service_generation_digest", None)
+                    != self.service_generation_digest
+                    or getattr(custody, "uid", None) != 0
+                    or getattr(custody, "expires_monotonic", 0) > min(
+                        issued.receipt.monotonic_expires_at,
+                        issued.source_context.monotonic_expires_at)
+                    or not callable(getattr(custody, "revalidate", None))
+                    or custody.revalidate() is not True):
+                raise AuthorityDenied("resource.event_issuer", "source ingress custody is stale or mismatched")
+            handle = self._register_verified_event(
+                resource_id=issued.resource_id,
+                generation=issued.resource_generation,
+                source_kind=issued.source_kind,
+                source_observer_enrollment_id=issued.source_observer_enrollment_id,
+                payload=issued.payload,
+                parent_context=issued.source_context,
+                parent_receipts=issued.parent_receipts,
+                _issuer=self._ingress_token,
+            )
+        finally:
+            # The ingress caller owns cleanup here; capture_selected_ingress
+            # releases the retained resolver handle after this finalizer.
+            pass
+        if handle.event_id != producer_record.event_id:
+            self.cancel_event(handle)
+            raise AuthorityDenied("resource.event_issuer", "root receipt event ID differs from producer proof")
+        return handle
 
     def _select_role(self, *, observer_id: str, controller_kind: str,
                      backend_id: str, operation: str) -> RootControllerRoleEnrollment:

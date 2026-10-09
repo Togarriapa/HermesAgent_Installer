@@ -34,6 +34,7 @@ class RootAuthorityRuntime:
     body_recipes: Mapping[str, Any]
     scope_bindings: Mapping[str, Any]
     validators: Mapping[str, Any]
+    source_observer_unavailable_reason: str | None
     job_enrollments: Mapping[tuple[str, str], Any]
     memory_runtime: Any | None
     job_authority: Any | None
@@ -79,6 +80,18 @@ class RootAuthorityRuntime:
         return getattr(self.service, "native_runtime_observer", None)
 
     @property
+    def native_loader_observation_store(self) -> Any | None:
+        return getattr(self.service, "native_loader_observation_store", None)
+
+    @property
+    def gateway_boundary_observer(self) -> Any | None:
+        return getattr(self.service, "gateway_boundary_observer", None)
+
+    @property
+    def native_window_observer(self) -> Any | None:
+        return getattr(self.service, "native_window_observer", None)
+
+    @property
     def remote_session_authority(self) -> Any | None:
         return self.service.remote_session_authority
 
@@ -89,21 +102,42 @@ class RootAuthorityRuntime:
         if callable(prune):
             prune()
 
+    def revoke_native_process(self, process_id: str, generation: str | None = None) -> None:
+        """Revoke loader proofs when the root process manager retires a process."""
+        store = self.native_loader_observation_store
+        revoke = getattr(store, "revoke_process", None)
+        if callable(revoke):
+            revoke(process_id, generation)
+
     def close(self) -> None:
         """Close attached root observers and stop the active remote lease worker."""
-        for component in (self.native_runtime_observer, self.source_observer_registry):
+        errors: list[BaseException] = []
+        for component in (self.native_runtime_observer, self.source_observer_registry,
+                          self.native_loader_observation_store,
+                          self.gateway_boundary_observer, self.native_window_observer):
             close = getattr(component, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except BaseException as exc:
+                    errors.append(exc)
         directories = (self.memory_runtime.get("state_directories", {})
                        if isinstance(self.memory_runtime, Mapping) else {})
         for directory in directories.values() if isinstance(directories, Mapping) else ():
             close = getattr(directory, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except BaseException as exc:
+                    errors.append(exc)
         stop = getattr(self.remote_session_authority, "stop_watchdog", None)
         if callable(stop):
-            stop()
+            try:
+                stop()
+            except BaseException as exc:
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     def resolve_native_package(self, package_id: str, generation: str) -> Any:
         return self.bindings.resolve_native_package(package_id, generation)
@@ -193,6 +227,155 @@ def compose_root_authority_runtime(
             or not isinstance(service.authority_epoch, str) or not service.authority_epoch
             or service.service_generation_digest != enrollment.protected_enrollment_digest):
         raise AuthorityDenied("authority.composition", "runtime bindings do not match this service epoch and catalog")
+
+    source_observer_unavailable_reason: str | None = None
+    if service.source_observer_registry is None:
+        observer_enrollments = getattr(bindings, "source_observer_enrollments", None)
+        if not isinstance(observer_enrollments, Mapping) or not observer_enrollments:
+            source_observer_unavailable_reason = "no active protected source-observer enrollment is selected"
+        elif getattr(service, "native_loader_observation_store", None) is not None:
+            source_observer_unavailable_reason = (
+                "a loader observation store is already installed without its matching source registry"
+            )
+        else:
+            from .source_observers import SourceObserverEnrollment
+
+            if any(not isinstance(value, SourceObserverEnrollment)
+                   or key != value.observer_enrollment_id
+                   for key, value in observer_enrollments.items()):
+                source_observer_unavailable_reason = (
+                    "source-observer candidates are not complete typed protected joins"
+                )
+            else:
+                manager = bindings.process_manager
+                broker = getattr(service, "native_bridge_broker", None)
+                from .native_bridge import NativeBridgeBroker
+
+                if (not callable(getattr(manager, "set_native_loader_observation_store", None))
+                        or not callable(getattr(manager, "is_owned_active_process_handle", None))
+                        or not callable(getattr(manager, "resolve_live_peer", None))
+                        or not callable(getattr(manager, "resolve_native_package_for_peer", None))):
+                    source_observer_unavailable_reason = (
+                        "root process manager lacks the registered native loader OpenFile custody hooks"
+                    )
+                elif getattr(manager, "native_loader_observation_store", None) is not None:
+                    source_observer_unavailable_reason = (
+                        "root process manager already owns a loader store outside this service composition"
+                    )
+                elif (not isinstance(broker, NativeBridgeBroker)
+                      or getattr(broker, "service", None) is not service
+                      or not callable(getattr(broker, "resolve_pending_pair_for_context", None))
+                      or not callable(getattr(broker, "peer_role_artifact_resolver", None))
+                      or not callable(getattr(bindings, "resolve_native_bridge_role_artifact", None))
+                      or not isinstance(getattr(broker, "bridges", None), Mapping)
+                      or not isinstance(getattr(broker, "observer_delivery_bindings", None), Mapping)):
+                    source_observer_unavailable_reason = (
+                        "active native bridge lacks its protected pending-pair and delivery-role resolver"
+                    )
+                elif (not broker.bridges
+                      or dict(broker.bridges) != dict(bindings.native_bridges)
+                      or set(broker.observer_delivery_bindings) != set(broker.bridges)):
+                    source_observer_unavailable_reason = (
+                        "active native bridges lack complete protected observer delivery bindings"
+                    )
+                elif (not callable(getattr(bindings, "resolve_native_package", None))
+                      or not isinstance(getattr(bindings, "source_observer_enrollments", None), Mapping)
+                      or not callable(getattr(service, "attach_source_observer_registry", None))):
+                    source_observer_unavailable_reason = (
+                        "active native package catalog or root source registry attachment is unavailable"
+                    )
+                else:
+                    from .native_bridge import RootObserverDeliveryBinding
+
+                    delivery_bindings_ready = True
+                    for bridge_id, bridge in broker.bridges.items():
+                        rows = broker.observer_delivery_bindings.get(bridge_id)
+                        protected_rows = getattr(bridge, "observer_delivery_bindings", None)
+                        protected_projection = tuple(
+                            (getattr(item, "observer_enrollment_id", None),
+                             getattr(item, "delivery_role", None))
+                            for item in protected_rows
+                        ) if isinstance(protected_rows, tuple) else None
+                        if (not isinstance(rows, tuple) or not rows
+                                or protected_projection != tuple(
+                                    (item.observer_enrollment_id, item.delivery_role) for item in rows
+                                )
+                                or any(not isinstance(row, RootObserverDeliveryBinding)
+                                       or row.delivery_role not in {"producer", "gateway"}
+                                       or row.observer_enrollment_id not in observer_enrollments
+                                       for row in rows)
+                                or len({row.observer_enrollment_id for row in rows}) != len(rows)):
+                            delivery_bindings_ready = False
+                            break
+                        for row in rows:
+                            observer = observer_enrollments[row.observer_enrollment_id]
+                            peer_role = row.delivery_role
+                            if (observer.profile_id != getattr(bridge, f"{peer_role}_profile_id", None)
+                                    or observer.generation != getattr(bridge, f"{peer_role}_generation", None)
+                                    or observer.principal_id != getattr(bridge, f"{peer_role}_principal_id", None)
+                                    or observer.producer_uid != getattr(bridge, f"{peer_role}_uid", None)):
+                                delivery_bindings_ready = False
+                                break
+                        if not delivery_bindings_ready:
+                            break
+                    if not delivery_bindings_ready:
+                        source_observer_unavailable_reason = (
+                            "native bridge delivery rows do not join exact active source observer peers"
+                        )
+                if source_observer_unavailable_reason is None:
+                    # These are actual root constructors, not callback
+                    # declarations. Store and registry remain uninstalled if
+                    # any protected join or custody constructor rejects.
+                    from .native_custody_proof import (
+                        RootNativeLoaderObservationStore,
+                        active_native_catalog_resolver,
+                        attach_root_source_observers,
+                        native_bridge_source_target_selector,
+                    )
+
+                    try:
+                        store = RootNativeLoaderObservationStore(
+                            manager,
+                            active_native_catalog_resolver(
+                                bindings,
+                                service_generation_digest=service.service_generation_digest,
+                            ),
+                            clock=service.monotonic,
+                            source_target_selector=native_bridge_source_target_selector(
+                                broker, clock=service.monotonic,
+                            ),
+                        )
+                    except (TypeError, ValueError, AuthorityDenied):
+                        source_observer_unavailable_reason = (
+                            "active native loader catalog or pending-pair proof resolver rejected composition"
+                        )
+                    else:
+                        registry = attach_root_source_observers(
+                            service=service,
+                            observer_enrollments=observer_enrollments,
+                            process_resolver=manager.resolve_live_peer,
+                            package_resolver=bindings.resolve_native_package,
+                            loader_observations=store,
+                        )
+                        try:
+                            manager.set_native_loader_observation_store(store)
+                        except BaseException:
+                            try:
+                                registry.close()
+                            except BaseException:
+                                pass
+                            try:
+                                store.close()
+                            except BaseException:
+                                pass
+                            service.source_observer_registry = None
+                            if getattr(service, "source_receipt_delivery", None) is registry:
+                                service.source_receipt_delivery = None
+                            try:
+                                del service.native_loader_observation_store
+                            except AttributeError:
+                                pass
+                            raise
 
     from .resource_jobs import (
         ResourceJobAuthority, index_resource_job_records,
@@ -448,6 +631,7 @@ def compose_root_authority_runtime(
         body_recipes=MappingProxyType(dict(recipes)),
         scope_bindings=MappingProxyType(dict(scope_bindings)),
         validators=MappingProxyType(dict(validators)),
+        source_observer_unavailable_reason=source_observer_unavailable_reason,
         job_enrollments=MappingProxyType(dict(jobs)), memory_runtime=memory_runtime,
         job_authority=job_authority, build_execution_service=build_execution_service,
     )

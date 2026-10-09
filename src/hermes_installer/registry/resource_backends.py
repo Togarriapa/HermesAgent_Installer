@@ -80,22 +80,31 @@ class RootArtifactValidator:
 
     def __init__(self, *, backend_enrollments: Mapping[str, Any],
                  validators: Mapping[str, Any], artifact_catalog: Any,
-                 staging_root: str | Path, expected_uid: int = 0):
+                 staging_root: str | Path, active_service_generation_digest: str,
+                 expected_uid: int = 0):
+        if not re.fullmatch(r"[0-9a-f]{64}", active_service_generation_digest):
+            raise ValueError("active service generation must be pinned by SHA-256")
         self._backends = MappingProxyType(dict(backend_enrollments))
         self._validators = MappingProxyType(dict(validators))
         self._artifact_catalog = artifact_catalog
         self._staging_root = Path(staging_root)
+        self._active_service_generation_digest = active_service_generation_digest
         self._expected_uid = expected_uid
 
     def resolve_selected_result(self, backend_enrollment_id: str, result_schema_id: str,
-                                expected_active_generation_digest: str) -> RootSelectedResultValidator:
+                                *, expected_service_generation_digest: str,
+                                expected_resource_generation: str) -> RootSelectedResultValidator:
         from hermes_installer.registry.resource_jobs import ResourceBackendEnrollment, ResourceValidator
 
         backend = self._backends.get(backend_enrollment_id)
         if (not isinstance(backend, ResourceBackendEnrollment)
-                or backend.generation != expected_active_generation_digest
+                or expected_service_generation_digest != self._active_service_generation_digest
+                or not re.fullmatch(r"[0-9a-f]{64}", expected_resource_generation)
+                or backend.generation != expected_resource_generation
                 or backend.result_schema_id != result_schema_id):
-            raise ResourceProfileTaskUnavailable("result schema does not join the active selected backend generation")
+            raise ResourceProfileTaskUnavailable(
+                "result schema does not join the active service and selected resource generations"
+            )
         validator = self._validators.get(HERMES_TASK_TEXT_RESULT_VALIDATOR_ID)
         if (result_schema_id != HERMES_TASK_TEXT_RESULT_SCHEMA_ID
                 or not isinstance(validator, ResourceValidator)
