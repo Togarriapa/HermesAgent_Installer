@@ -7,11 +7,17 @@ from pathlib import Path
 
 from hermes_installer.state import OwnedRoot
 from hermes_installer.policy import (
-    BudgetLedger, DispatchContext, DispatchPolicy, Dispatcher, PolicyDenied,
+    BudgetLedger, DispatchAuthorization, DispatchContext, DispatchPolicy, Dispatcher, PolicyDenied,
     ProviderResponse, Route, Sensitivity, default_public_route, normalize_chat_request,
 )
 
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+
+
+def synthetic_authorizer(context, capability, now):
+    return DispatchAuthorization("fixture-principal", context.profile_id, context.profile_id,
+        context.trace_id, frozenset({"inference", "tool-call"}),
+        context.effective_sensitivity, "fixture-revision", "fixture-grant", now + 60)
 
 
 class RecordingProvider:
@@ -37,7 +43,7 @@ class ProviderPolicyTests(unittest.TestCase):
             routes["private"] = Route("private", "http://127.0.0.1:8811/v1", frozenset({MODEL, "local/test"}), Sensitivity.CONFIDENTIAL, False, True, 1.0, 2.0)
             private_name = "private"
         policy = DispatchPolicy(routes, "public", private_name, metered_budget_usd=budget)
-        return Dispatcher(policy, BudgetLedger(self.ledger_root(root)), provider, sleep=sleep or (lambda _delay: None))
+        return Dispatcher(policy, BudgetLedger(self.ledger_root(root)), provider, context_authorizer=synthetic_authorizer, sleep=sleep or (lambda _delay: None))
 
     def test_public_nemotron_tool_call_hits_only_exact_free_route(self):
         with tempfile.TemporaryDirectory() as td:
@@ -85,7 +91,7 @@ class ProviderPolicyTests(unittest.TestCase):
             provider = RecordingProvider()
             paid = Route("private", "http://127.0.0.1:8811/v1", frozenset({"local/test"}), Sensitivity.CONFIDENTIAL, False, True, 4.0, 6.0)
             policy = DispatchPolicy({"public": default_public_route(), "private": paid}, "public", "private")
-            dispatcher = Dispatcher(policy, BudgetLedger(self.ledger_root(Path(td))), provider)
+            dispatcher = Dispatcher(policy, BudgetLedger(self.ledger_root(Path(td))), provider, context_authorizer=synthetic_authorizer)
             with self.assertRaisesRegex(PolicyDenied, "No eligible provider route"):
                 dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PRIVATE), "local/test", b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
             self.assertEqual(provider.calls, [])
@@ -99,10 +105,10 @@ class ProviderPolicyTests(unittest.TestCase):
             paid = Route("private", "http://127.0.0.1:8811/v1", frozenset({"local/test"}), Sensitivity.CONFIDENTIAL, False, True, 1.0, 1.0)
             policy = DispatchPolicy({"public": default_public_route(), "private": paid}, "public", "private", metered_budget_usd=estimate * 1.5)
             ledger_root = self.ledger_root(root)
-            first = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider([ProviderResponse(200, b"ok", input_tokens=100, output_tokens=100)]))
+            first = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider([ProviderResponse(200, b"ok", input_tokens=100, output_tokens=100)]), context_authorizer=synthetic_authorizer)
             first.dispatch(DispatchContext("one", "chat", Sensitivity.PRIVATE), "local/test", payload, input_tokens=100, output_token_limit=100)
             self.assertAlmostEqual(BudgetLedger(ledger_root).spent(), estimate)
-            second = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider())
+            second = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider(), context_authorizer=synthetic_authorizer)
             with self.assertRaisesRegex(PolicyDenied, "Aggregate metered budget"):
                 second.dispatch(DispatchContext("two", "summary", Sensitivity.PRIVATE), "local/test", payload, input_tokens=100, output_token_limit=100)
 
@@ -112,7 +118,7 @@ class ProviderPolicyTests(unittest.TestCase):
             provider=RecordingProvider()
             unknown=Route("unknown","https://provider.invalid/v1",frozenset({MODEL}),Sensitivity.PUBLIC,False,True)
             policy=DispatchPolicy({"unknown":unknown},"unknown")
-            dispatcher=Dispatcher(policy,BudgetLedger(self.ledger_root(Path(td))),provider)
+            dispatcher=Dispatcher(policy,BudgetLedger(self.ledger_root(Path(td))),provider,context_authorizer=synthetic_authorizer)
             with self.assertRaisesRegex(PolicyDenied,"No eligible provider route"):
                 dispatcher.dispatch(DispatchContext("hermes","chat",Sensitivity.PUBLIC),MODEL,b'{"messages":[{"role":"user","content":"test"}]}',input_tokens=1,output_token_limit=1)
             self.assertEqual(provider.calls,[])
@@ -129,7 +135,7 @@ class ProviderPolicyTests(unittest.TestCase):
                 calls.append(route.name)
                 raise TimeoutError("fixture timeout")
             ledger=BudgetLedger(root)
-            dispatcher=Dispatcher(policy,ledger,transport)
+            dispatcher=Dispatcher(policy,ledger,transport,context_authorizer=synthetic_authorizer)
             with self.assertRaisesRegex(PolicyDenied,"Aggregate metered budget"):
                 dispatcher.dispatch(DispatchContext("private","chat",Sensitivity.PRIVATE),"local/test",payload,input_tokens=1,output_token_limit=1)
             self.assertEqual(calls,["private"])
