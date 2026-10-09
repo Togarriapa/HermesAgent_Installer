@@ -14,7 +14,13 @@ class XpraLauncher:
   self.process=None
  def command(self):
   child=shlex.join([self.spec.hermes_executable,*self.spec.hermes_arguments])
-  return [self.xpra,"seamless",self.spec.display,"--socket-dirs="+str(self.runtime_dir),"--bind-tcp=127.0.0.1:14500","--html=on","--start-child="+child,"--start-new-commands=no","--start-new-session=no","--start-desktop=no","--start-shadow=no","--start-proxy=no","--control=no","--clipboard=no","--file-transfer=no","--open-files=no","--printing=no","--webcam=no","--speaker=off","--microphone=off","--remote-logging=no","--dbus-proxy=no","--socket-permissions=600"]
+  return [self.xpra,"seamless",self.spec.display,
+   "--daemon=no","--systemd-run=no","--attach=no","--exit-with-children=yes",
+   "--socket-dirs="+str(self.runtime_dir),"--bind-tcp=127.0.0.1:14500","--html=on","--start-child="+child,
+   "--commands=no","--shell=no","--start-new-commands=no","--start-via-proxy=no","--proxy-start-sessions=no",
+   "--control=no","--dbus=no","--dbus-control=no","--clipboard=no","--file-transfer=no","--open-files=no","--open-url=no","--printing=no",
+   "--webcam=no","--audio=no","--speaker=off","--microphone=off","--remote-logging=off","--http-scripts=no",
+   "--ssh-upgrade=no","--rfb-upgrade=0","--rdp-upgrade=no","--socket-permissions=600"]
  def start(self):
   if os.geteuid()!=self.spec.uid:raise SessionUnavailable("Xpra launcher is not running as the dedicated session UID")
   if not self.window_patch_ready(self.spec.allowed_window_classes):raise SessionUnavailable("pinned Xpra deny-by-default patch is not active")
