@@ -29,6 +29,7 @@ from hermes_installer.authority.bootstrap_enrollment import (
     _generation,
     _validate_authority_base,
     _validate_policy,
+    _validate_prepared_policy,
     _validate_request,
     _verify_service_root,
     _write_journal,
@@ -37,6 +38,23 @@ from hermes_installer.authority.enrollment import _validate_service_generations
 
 
 class BootstrapEnrollmentContracts(unittest.TestCase):
+    def test_prepared_policy_keeps_root_journal_selection_without_enabling_catalogs(self):
+        policy = EnrollmentPolicy(
+            service_profile_id="hermes-profile", principal_id="hermes-service",
+            generation_id="prepared-fixture", source_artifact_id="hermes-source",
+            records=(), activation_state="prepared",
+            root_journal_roots=({"root_id": "installer-authority-journal-v1"},),
+        )
+        _validate_prepared_policy(policy)
+        with self.assertRaises(BootstrapEnrollmentError):
+            _validate_prepared_policy(EnrollmentPolicy(
+                service_profile_id="hermes-profile", principal_id="hermes-service",
+                generation_id="prepared-fixture", source_artifact_id="hermes-source",
+                records=(), activation_state="prepared",
+                root_journal_roots=policy.root_journal_roots,
+                native_packages=({"id": "must-not-enable"},),
+            ))
+
     def test_generation_uses_complete_utf8_canonical_snapshot_digest(self):
         snapshot = _generation(EnrollmentPolicy(
             service_profile_id="hermes-profile", principal_id="hermes-service",
@@ -378,6 +396,7 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
                 authority_base=base_authority,
                 activation_state=phase["value"],
                 home_root=roots[0], work_root=roots[1], data_root=roots[2],
+                root_journal_roots=(dict(proof.root_journal_root),),
             )
 
         def record_builder(policy, identity):
@@ -437,6 +456,19 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
         setup_proof = VerifiedRootSetupAuthorization(
             "service-generation:bootstrap:install", "fixture-setup-" + fixture_id,
             "a" * 64, os.getuid(), "transaction:fixture-" + fixture_id)
+            artifact_root=store, root_journal_path=fixture,
+        )
+        journal_info = fixture.lstat()
+        setup_proof = VerifiedRootSetupAuthorization(
+            "service-generation:bootstrap:install", "fixture-setup-" + fixture_id,
+            "a" * 64, os.getuid(), "transaction:fixture-" + fixture_id,
+            root_journal_root={
+                "root_id": "installer-authority-journal-v1", "absolute_path": str(fixture),
+                "owner_uid": 0, "owner_gid": 0, "mode": 0o700,
+                "device": journal_info.st_dev, "inode": journal_info.st_ino,
+                "generation": "journal-fixture-" + fixture_id,
+                "purpose": "authority-journal",
+            })
         request = BootstrapEnrollmentRequest(("source-fixture",), setup_proof.transaction_handle)
         try:
             prepared = transaction.enroll(request, setup_authorization=setup_proof)
@@ -444,6 +476,8 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
             self.assertEqual(prepared.enrollment_ids, ())
             prepared_snapshot = json.loads((fixture / "authority.json").read_text())
             self.assertEqual(prepared_snapshot["service_generations"]["service_records"], [])
+            self.assertEqual(prepared_snapshot["service_generations"]["root_journal_roots"],
+                             [dict(setup_proof.root_journal_root)])
             phase["value"] = "active"
             result = transaction.enroll(request, setup_authorization=setup_proof)
             self.assertEqual(result.state, "committed")
