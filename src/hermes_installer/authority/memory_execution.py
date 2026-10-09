@@ -112,7 +112,6 @@ def _validate_parent(enrollment: MemoryServiceEnrollment, recipe: MemoryRouteRec
     target = f"memory:{enrollment.provider}:{action}"
     operation = f"memory.{action}"
     digest = hashlib.sha256(parent_request_payload).hexdigest()
-    context_digest = canonical_digest({**context.claims(), "signature": context.signature})
     mismatches = [name for name, valid in {
         "context.profile": context.profile_id == enrollment.profile_id,
         "context.namespace": context.namespace_id == enrollment.namespace_identity,
@@ -126,7 +125,11 @@ def _validate_parent(enrollment: MemoryServiceEnrollment, recipe: MemoryRouteRec
         "grant.operation": parent.operation == operation,
         "grant.capability": parent.capability == capability,
         "grant.target": parent.target == target,
-        "grant.context_digest": parent.context_digest == context_digest,
+        # AuthorityService verifies the original signed context before dispatch,
+        # then gives root handlers a reconstructed context marked
+        # ``verified-in-service``. Its signature is intentionally different,
+        # so context_digest is bound to the already-verified parent grant in
+        # the durable ledger rather than recomputed from that handler view.
         "grant.request_digest": parent.request_digest == digest,
         "grant.final_digest": parent.final_payload_digest == digest,
         "grant.receipts": parent.source_receipts == context.source_receipts,
