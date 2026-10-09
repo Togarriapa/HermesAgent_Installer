@@ -7,6 +7,7 @@ Dependencies: installer-bootstrap-desktop, resource-registry-import, providers-c
 - [ ] 1.1 `VD-F01` Implement per-state manifest/evidence schema and complete integration report with exact blockers/resume commands; verify no green status from skip/config/download and secret-safe bundles; document readiness. Evidence: `tests/contracts/test_evidence.py`.
 - [ ] 1.2 `VD-F02` Implement executable authorized-target verifier and twelve acceptance workflows, native ARM64 lane and fixture CI; verify target guard and all contract fixtures; document provenance differences. Evidence: `tests/acceptance/test_target_workflow.py`.
 - [ ] 1.3 `VD-F03` Complete installation/account/source/compatibility/recovery docs and scenario-to-code audit; verify examples against CLI and strict OpenSpec/coverage before truthful archive. Evidence: `tests/contracts/test_documented_commands.py`.
+- [ ] 1.4 `VD-F04` Keep installer-owned probe profiles aligned with append-only Sol evidence contracts for EV-RB06, EV-HI10, EV-HW01, EV-RB07, and EV-PR01; bind each to its exact acceptance criterion and preserve null/pending state for unobserved work. Evidence: `tests/acceptance/test_operator_evidence.py`. Verify profile coverage and tri-state behavior without promoting fixture or unauthenticated results. Update `docs/acceptance-evidence.md`; keep hardware/account tasks open.
 
 ## 2. Traceable individual obligations with verification
 

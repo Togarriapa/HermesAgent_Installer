@@ -12,7 +12,8 @@ from hermes_installer.policy import (
 )
 from hermes_installer.provider_effect_handlers import (
     CODEX_ENDPOINT, OPENROUTER_ENDPOINT, OPENROUTER_MODEL,
-    OpenRouterLiveAdmission, ProviderEnrollment, ProviderHandlerDenied, build_provider_handlers,
+    OpenRouterLiveAdmission, ProviderEnrollment, ProviderHandlerDenied,
+    build_provider_handlers, canonical_provider_request,
 )
 
 
@@ -43,7 +44,7 @@ class Network:
         self.calls.append((url, kwargs))
         if url == CODEX_ENDPOINT:
             return SimpleNamespace(status=200,
-                body=b'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":4,"output_tokens":2}}}\n\n',
+                body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed","usage":{"input_tokens":4,"output_tokens":2}}}\n\n',
                 headers={"Content-Type": "text/event-stream", "Set-Cookie": "not-forwarded"})
         return SimpleNamespace(status=200, body=b'{"ok":true}',
                                headers={"Content-Type": "application/json",
@@ -166,6 +167,48 @@ class ProviderEffectHandlerTests(unittest.TestCase):
         self.handler(context=context, authorization=grant, payload=payload,
                      timeout=2.0, peer_pid=88, cancelled=lambda: False)
         self.assertEqual(self.admission.calls[-1]["capability"], "provider-tool-call")
+
+    def test_host_canonicalizer_uses_only_one_protected_model_enrollment(self):
+        raw = json.dumps({"model": OPENROUTER_MODEL, "max_tokens": 128,
+                          "messages": [{"role": "user", "content": "hello"}]},
+                         separators=(",", ":")).encode()
+        result = canonical_provider_request(
+            {(self.enrollment.target, self.enrollment.recipient): self.enrollment}, raw)
+        expected = normalize_chat_request(raw, OPENROUTER_MODEL, 128)
+        self.assertEqual(result, (expected, self.enrollment.target,
+                                  self.enrollment.recipient, "provider-inference",
+                                  OPENROUTER_MODEL))
+
+    def test_host_canonicalizer_denies_missing_malformed_and_ambiguous_enrollment(self):
+        raw = json.dumps({"model": OPENROUTER_MODEL,
+                          "messages": [{"role": "user", "content": "hello"}]}).encode()
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request({}, raw)
+        malformed_map = {("https://attacker.invalid", self.enrollment.recipient): self.enrollment}
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request(malformed_map, raw)
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request({
+                (self.enrollment.target, self.enrollment.recipient): self.enrollment,
+                (self.enrollment.target + "#duplicate", self.enrollment.recipient): self.enrollment,
+            }, raw)
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request(
+                {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
+                b'{"model":"nvidia/nemotron-3-ultra-550b-a55b","messages":[]}')
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request(
+                {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
+                b'{"model":"nvidia/nemotron-3-ultra-550b-a55b:free",'
+                b'"model":"nvidia/nemotron-3-ultra-550b-a55b:free","messages":[]}')
+        for invalid in (
+            {"model": OPENROUTER_MODEL, "max_tokens": 4097, "messages": []},
+            {"model": OPENROUTER_MODEL, "max_tokens": 100, "max_output_tokens": 50, "messages": []},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ProviderHandlerDenied):
+                canonical_provider_request(
+                    {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
+                    json.dumps(invalid).encode())
 
     def test_no_handlers_without_root_admission_or_vault(self):
         self.assertEqual(build_provider_handlers(
@@ -310,6 +353,7 @@ class OpenRouterLiveAdmissionTests(unittest.TestCase):
         )
         cases = [
             ({"is_free_tier": False}, self._model_data()),
+            ({"is_free_tier": True, "limit_remaining": 0}, self._model_data()),
             ({"is_free_tier": True}, self._model_data(prompt="0.01")),
             ({"is_free_tier": True}, {
                 **self._model_data(), "architecture": {"input_modalities": ["text", "image"]}}),

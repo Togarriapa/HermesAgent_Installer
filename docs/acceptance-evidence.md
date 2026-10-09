@@ -29,3 +29,6 @@ No claim of full installer, account, physical Pi, native ARM64, GLM-5.2, Coral T
 3. Confirm every acceptance ID and original requirement has a linked task and evidence ID.
 4. Preserve failures, skips, and pending account/hardware items with an exact blocker and resume command.
 5. Check redaction and artifact digests before sharing a report.
+
+
+Supplemental verifier profiles are explicit for the Sol-validated EV-RB06 (fixed bounded registry discovery), EV-HI10 (process attestation), EV-HW01 (protected Coral package set), EV-RB07 (authenticated selected resource jobs), and EV-PR01 (documented OpenAI subscription inference protocol). They map respectively to AC16, AC18, AC10, AC16, and AC08. These are assertion contracts, not implementation or target results: any unobserved assertion remains null/pending, and target/account acceptance still requires an authenticated retained artifact plus all other linked evidence.
