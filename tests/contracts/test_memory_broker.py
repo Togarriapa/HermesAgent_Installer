@@ -72,6 +72,7 @@ def call(handler, context, action, value, *, digest_override=None, provider="age
     grant = Grant(context.profile_id, context.namespace_id,
                   "memory:" + provider + ":" + action,
                   digest_override or hashlib.sha256(raw).hexdigest())
+    grant.trace_id = context.trace_id
     return handler(context=context, authorization=grant, payload=raw, timeout=1.0,
                    peer_pid=123, cancelled=lambda: False)
 
