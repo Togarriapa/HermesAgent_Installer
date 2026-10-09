@@ -32,3 +32,5 @@ Cloudflare API adapter uses secure management token reference only during setup/
 ## Migration Plan
 
 Implement API recorder/JWT/clock/bridge fixtures and docs in foundation tasks. Add config fields with blank hostname and allowed-email secure setup; propagate refs only. Stage native session/gateway/service; preview exact owned cloud operations then execute already-authorized scope automatically. Verify unauthorized HTTP/assets/WS and allowed principal/native app/expiry/revocation; only then claim remote protected. Preserve all original twelve acceptance workflows and add AC13..15. Missing Pi/token blocks live mutation/tests only; all code/fixtures/docs/target workflow remain required.
+
+Root-observed remote session bridge HI13: plans/amendments/2026-10-09-remote-root-session-bridge-v1.md and planning/remote-root-session-bridge-contract.json specify actual JWT/current policy/root principal binding, no gateway selfsigned claim substitute, fixed allbytes connector lease and active revocation. Management/read/tunnel credential separation preserved; native/account evidence open.

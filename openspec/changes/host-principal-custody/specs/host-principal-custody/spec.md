@@ -138,3 +138,73 @@ The installer SHALL bind actual native producer package/adapter closure through 
 #### Scenario: Mutable package or divergent normalization
 - **WHEN** native closure, peer generation, issuer provenance or route-normalized final payload differs from protected enrollment
 - **THEN** deny before effect bytes and retain exact incomplete implementation/native evidence state.
+
+### Requirement: Protected resolver reader
+The installer SHALL expose only peer-bound selected immutable resolver records via path-free native.resolver.read and SHALL re-resolve current protected effect enrollment on every dispatch.
+
+#### Scenario: Caller reuses stale resolver as permission
+- **WHEN** profile generation, handler, scope or policy changed after reading resolver
+- **THEN** deny affected effect before bytes; presentation records confer no authority.
+
+### Requirement: Fixed operation and voice session selection
+The installer SHALL resolve only protected fixed operation recipes and current root-authorized device/session handles; caller inputs SHALL not select physical executable, path, environment or device. Raw captured voice SHALL be bounded ephemeral memory only.
+
+#### Scenario: Forged recipe or expired voice session
+- **WHEN** selected operation parameters escape its schema or voice session is stale, sibling-owned or lacks trusted permission
+- **THEN** reject before execution/capture and cancel owned expired resources.
+
+### Requirement: Native protected configuration identities
+The installer SHALL validate strict root-owned package/issuer catalogs and distinct canonical normalization-policy and installed module hashes with actual current enrollment joins.
+
+#### Scenario: Partial hash or unobserved configured issuer
+- **WHEN** policy/module digest is missing or source observer only exists as configuration text
+- **THEN** keep affected native effect unavailable and require actual identity/observer evidence.
+
+### Requirement: Fixed recipe parameter grammar
+The installer SHALL validate only bounded root-selected scalar parameter schemas and exact literal/parameter argv tokens, one element each, with no interpolation or caller physical resource selection.
+
+#### Scenario: Caller injects path or extra parameter
+- **WHEN** parameter is untyped, unbounded, extra or outside exact scalar grammar
+- **THEN** reject before launch without shell expansion or alternate recipe fallback.
+
+### Requirement: Selected package and compound memory admission
+The installer SHALL resolve native package from actual enrolled peer and SHALL authorize each fixed compound memory step separately under same bounded root-owned admission and source lineage.
+
+#### Scenario: Caller chooses package or reuses compound grant
+- **WHEN** caller claims alternate package/scope or repeats one consumed authorization across steps
+- **THEN** reject before bytes and retain owned cleanup journal with no sibling deletion.
+
+### Requirement: Canonical native record digests
+The installer SHALL validate exact canonical resolver/policy document digest preimages, reject duplicate keys and keep module/archive hashes distinct.
+
+#### Scenario: Self hash or wrapper bytes substituted
+- **WHEN** digest uses wrong preimage or archive/module identity in place of canonical document
+- **THEN** reject enrollment before effects; verified presentation does not confer authority.
+
+### Requirement: Fixed memory compound wire
+The installer SHALL enforce canonical typed memory compound write envelopes with root-derived HTTP frames and atomic root current-step state, separate from stream protocols.
+
+#### Scenario: Forged HTTP frame or skipped compound step
+- **WHEN** caller submits arbitrary HTTP bytes, wrong job/step or reused frame grant
+- **THEN** reject before backend bytes with owned failure/cleanup journal and no sibling scope mutation.
+
+### Requirement: Root-observed remote session bridge
+The installer SHALL verify actual Access JWT and fresh root selected policy at root authority, join verified identity to current native profile and bind every asset/input/stream operation to fixed connector session lease/generation. Gateway local or selfsigned claims SHALL not authorize root effects.
+
+#### Scenario: Forged gateway claims or expired active stream
+- **WHEN** root JWT/policy/principal verification fails or active lease revokes/expires
+- **THEN** deny before bytes or close both stream directions within tested bounded lease and preserve setup/read/tunnel credential separation.
+
+### Requirement: Closed selected recipe identities
+The installer SHALL use finite source-bound request/recipe/validator IDs with root-enforced scope and fixed parameter-free model launches; absent actual validator identity SHALL remain unavailable.
+
+#### Scenario: Caller supplies scope or model launch parameters
+- **WHEN** caller attempts to replace root scope, URI, device or fixed build/inference parameters
+- **THEN** reject before backend/launch bytes and preserve exact incomplete native evidence.
+
+### Requirement: Independent device profile epoch join
+The installer SHALL compare selected device identity generation to protected expected_device_generation independently from process profile generation.
+
+#### Scenario: Device epoch changes under live profile
+- **WHEN** hotplug or replacement changes selected device identity epoch
+- **THEN** invalidate inference enrollment/active grant and require root reattestation without sibling/all-device fallback.
