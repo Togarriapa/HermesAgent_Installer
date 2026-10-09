@@ -129,7 +129,7 @@ class ProviderResponse:
 
 class Transport(Protocol):
     def __call__(self, route: Route, model: str, payload: bytes, *, output_token_limit: int,
-                 timeout: float, trace_id: str) -> ProviderResponse: ...
+                 timeout: float, trace_id: str, cancelled: Callable[[], bool]) -> ProviderResponse: ...
 
 
 def normalize_chat_request(payload: bytes, model: str, output_token_limit: int) -> bytes:
@@ -378,7 +378,10 @@ class Dispatcher:
                         raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
                     try:
                         try:
-                            response = self.transport(route, model, normalized_payload, output_token_limit=output_token_limit, timeout=timeout, trace_id=context.trace_id)
+                            response = self.transport(route, model, normalized_payload, output_token_limit=output_token_limit, timeout=timeout, trace_id=context.trace_id, cancelled=context.cancelled)
+                        except PolicyDenied:
+                            self.ledger.settle(reservation)
+                            raise
                         except TimeoutError:
                             response = ProviderResponse(0, b"")
                         except Exception:
@@ -388,6 +391,10 @@ class Dispatcher:
                         if 200 <= response.status < 300 and response.input_tokens >= 0 and response.output_tokens >= 0:
                             actual = (response.input_tokens * route.input_usd_per_million + response.output_tokens * route.output_usd_per_million) / 1_000_000
                         self.ledger.settle(reservation, actual)
+                        if context.cancelled():
+                            raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider dispatch")
+                        if self.clock() >= deadline:
+                            raise PolicyDenied("dispatch.deadline", "Request deadline elapsed during provider dispatch")
                     except BaseException:
                         self.ledger.settle(reservation)
                         raise

@@ -29,8 +29,15 @@ class GatewayError(RuntimeError):
 def _write_owned(root: OwnedRoot, relative: str, data: bytes, mode: int = 0o600) -> Path:
     path = root.path(relative)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if path.exists() and path.is_symlink():
-        raise OwnershipError("Provider plugin file cannot be a symlink")
+    if path.exists() or path.is_symlink():
+        info = path.lstat()
+        if path.is_symlink() or not stat.S_ISREG(info.st_mode):
+            raise OwnershipError("Provider plugin file conflicts with a non-regular path")
+        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise OwnershipError("Existing provider plugin file is not privately owned")
+        if path.read_bytes() != data:
+            raise OwnershipError("Existing provider plugin file differs; refusing to overwrite it")
+        return path
     tmp = path.with_name("." + path.name + "." + uuid.uuid4().hex + ".tmp")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     fd = os.open(tmp, flags, mode)
@@ -88,9 +95,55 @@ register_provider(ProviderProfile(
         "version: 1.0.0\n"
         "description: Installer-managed local privacy and budget gateway\n"
     ).encode("utf-8")
+    plugin_path = root.path(plugin)
+    marker_relative = plugin + "/.hermes-installer-owned"
+    marker = ("hermes-installer-provider-plugin-v1\n" + plugin + "\n").encode("utf-8")
+    if plugin_path.exists() or plugin_path.is_symlink():
+        info = plugin_path.lstat()
+        if plugin_path.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise OwnershipError("Existing provider plugin directory is not privately owned")
+        marker_path = root.path(marker_relative)
+        try:
+            marker_info = marker_path.lstat()
+            if marker_path.is_symlink() or not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != os.getuid() or stat.S_IMODE(marker_info.st_mode) & 0o077 or marker_path.read_bytes() != marker:
+                raise OwnershipError("Existing provider plugin directory lacks matching installer ownership")
+        except FileNotFoundError:
+            raise OwnershipError("Existing provider plugin directory lacks installer ownership") from None
+    else:
+        plugin_path.mkdir(mode=0o700)
+        _write_owned(root, marker_relative, marker, 0o600)
     init_path = _write_owned(root, plugin + "/__init__.py", init, 0o600)
     manifest_path = _write_owned(root, plugin + "/plugin.yaml", manifest, 0o600)
-    return {"plugin": str(root.path(plugin)), "entrypoint": str(init_path), "manifest": str(manifest_path)}
+    return {"plugin": str(plugin_path), "entrypoint": str(init_path), "manifest": str(manifest_path)}
+
+
+class _BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    block_on_close = False
+
+    def __init__(self, address, handler, *, max_connections: int):
+        self._slots = threading.BoundedSemaphore(max_connections)
+        super().__init__(address, handler)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+    def handle_error(self, _request, _client_address):
+        # Bounded read timeouts and disconnects carry no safe useful log data.
+        return
 
 
 def _error_body(code: str, message: str) -> bytes:
@@ -103,7 +156,8 @@ class LocalProviderGateway:
 
     def __init__(self, dispatcher: Dispatcher, *, token: str, profile_id: str,
                  sensitivity: Sensitivity, model: str, max_output_tokens: int = 4096,
-                 host: str = "127.0.0.1"):
+                 host: str = "127.0.0.1", read_timeout_seconds: float = 10.0,
+                 max_connections: int = 16):
         if host != "127.0.0.1":
             raise GatewayError("Provider gateway must bind IPv4 loopback only")
         if not isinstance(token, str) or not 32 <= len(token) <= 256 or any(ord(c) < 33 for c in token):
@@ -114,6 +168,8 @@ class LocalProviderGateway:
             raise GatewayError("Provider classification must come from trusted profile configuration")
         if not 1 <= max_output_tokens <= 65_536:
             raise GatewayError("Configured output token limit is outside the supported range")
+        if not 0.1 <= read_timeout_seconds <= 60 or not 1 <= max_connections <= 64:
+            raise GatewayError("Gateway connection bounds are outside the supported range")
         self.dispatcher = dispatcher
         self._token = token
         self.profile_id = profile_id
@@ -121,7 +177,12 @@ class LocalProviderGateway:
         self.model = model
         self.max_output_tokens = max_output_tokens
         self.host = host
-        self._server: http.server.ThreadingHTTPServer | None = None
+        self.read_timeout_seconds = read_timeout_seconds
+        self.max_connections = max_connections
+        self._closing = threading.Event()
+        self._active_lock = threading.Lock()
+        self._active_requests: set[threading.Event] = set()
+        self._server: _BoundedThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     def __repr__(self) -> str:
@@ -139,6 +200,10 @@ class LocalProviderGateway:
         class Handler(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
 
+            def setup(self) -> None:
+                self.request.settimeout(gateway.read_timeout_seconds)
+                super().setup()
+
             def log_message(self, _format: str, *_args: Any) -> None:
                 # Requests/bodies/headers can contain private prompts or credentials.
                 return
@@ -153,6 +218,26 @@ class LocalProviderGateway:
                 self.wfile.write(body)
                 self.close_connection = True
 
+            def _valid_host_origin(self) -> bool:
+                if gateway._server is None:
+                    return False
+                expected = f"{gateway.host}:{gateway._server.server_address[1]}"
+                hosts = self.headers.get_all("Host", [])
+                origins = self.headers.get_all("Origin", [])
+                return hosts == [expected] and len(origins) <= 1 and (not origins or origins[0] == "http://" + expected)
+
+            def _begin_request(self) -> threading.Event | None:
+                cancellation = threading.Event()
+                with gateway._active_lock:
+                    if gateway._closing.is_set():
+                        return None
+                    gateway._active_requests.add(cancellation)
+                return cancellation
+
+            def _end_request(self, cancellation: threading.Event) -> None:
+                with gateway._active_lock:
+                    gateway._active_requests.discard(cancellation)
+
             def _authorized(self) -> bool:
                 values = self.headers.get_all("Authorization", [])
                 if len(values) != 1:
@@ -162,6 +247,9 @@ class LocalProviderGateway:
                 return hmac.compare_digest(candidate.encode("utf-8"), gateway._token.encode("utf-8"))
 
             def do_GET(self) -> None:
+                if not self._valid_host_origin():
+                    self._reply(403, _error_body("gateway.origin", "Gateway Host or Origin is not allowed"))
+                    return
                 if self.path != "/v1/models":
                     self._reply(404, _error_body("route.not_found", "Gateway path is not available"))
                     return
@@ -174,17 +262,28 @@ class LocalProviderGateway:
                 self._reply(200, body)
 
             def do_POST(self) -> None:
+                if not self._valid_host_origin():
+                    self._reply(403, _error_body("gateway.origin", "Gateway Host or Origin is not allowed"))
+                    return
                 if self.path != "/v1/chat/completions":
                     self._reply(404, _error_body("route.not_found", "Gateway path is not available"))
                     return
                 if not self._authorized():
                     self._reply(401, _error_body("gateway.unauthorized", "Local provider authorization failed"))
                     return
-                if self.headers.get("Transfer-Encoding") is not None:
+                if self.headers.get_all("Transfer-Encoding", []):
                     self._reply(400, _error_body("request.framing", "Transfer-encoded requests are not accepted"))
                     return
+                content_lengths = self.headers.get_all("Content-Length", [])
+                if len(content_lengths) != 1:
+                    self._reply(400, _error_body("request.framing", "Exactly one Content-Length is required"))
+                    return
+                content_types = self.headers.get_all("Content-Type", [])
+                if len(content_types) != 1 or content_types[0].split(";", 1)[0].strip().lower() != "application/json":
+                    self._reply(415, _error_body("request.content_type", "Only application/json is accepted"))
+                    return
                 try:
-                    raw_length = self.headers.get("Content-Length", "")
+                    raw_length = content_lengths[0]
                     if not raw_length.isascii() or not raw_length.isdecimal():
                         raise ValueError
                     size = int(raw_length)
@@ -194,7 +293,11 @@ class LocalProviderGateway:
                 if size <= 0 or size > MAX_REQUEST_BYTES:
                     self._reply(413, _error_body("request.bounds", "Request body must be between 1 byte and 1 MiB"))
                     return
-                raw = self.rfile.read(size)
+                try:
+                    raw = self.rfile.read(size)
+                except (TimeoutError, OSError):
+                    self._reply(408, _error_body("request.timeout", "Request body read deadline elapsed"))
+                    return
                 if len(raw) != size:
                     self._reply(400, _error_body("request.framing", "Request body was incomplete"))
                     return
@@ -212,15 +315,26 @@ class LocalProviderGateway:
                     output_cap = min([gateway.max_output_tokens, *requested_caps])
                     input_tokens = len(raw)  # byte upper bound; tokenizers cannot exceed encoded bytes here.
                     tool_request = bool(value.get("tools")) or value.get("tool_choice") not in (None, "none")
-                    context = DispatchContext(
-                        profile_id=gateway.profile_id,
-                        purpose="native-hermes-chat",
-                        sensitivity=gateway.sensitivity,
-                    )
-                    result = gateway.dispatcher.dispatch(
-                        context, gateway.model, raw, input_tokens=input_tokens,
-                        output_token_limit=output_cap, tool_request=tool_request,
-                    )
+                    cancellation = self._begin_request()
+                    if cancellation is None:
+                        self._reply(503, _error_body("gateway.closing", "Gateway is shutting down"))
+                        return
+                    try:
+                        context = DispatchContext(
+                            profile_id=gateway.profile_id,
+                            purpose="native-hermes-chat",
+                            sensitivity=gateway.sensitivity,
+                            cancelled=lambda: cancellation.is_set() or gateway._closing.is_set(),
+                        )
+                        result = gateway.dispatcher.dispatch(
+                            context, gateway.model, raw, input_tokens=input_tokens,
+                            output_token_limit=output_cap, tool_request=tool_request,
+                        )
+                    finally:
+                        self._end_request(cancellation)
+                    if cancellation.is_set() or gateway._closing.is_set():
+                        self._reply(503, _error_body("gateway.cancelled", "Gateway request was cancelled"))
+                        return
                 except PolicyDenied as exc:
                     self._reply(403 if exc.code.startswith(("route.", "context.")) else 400,
                                 _error_body(exc.code, str(exc)))
@@ -244,9 +358,8 @@ class LocalProviderGateway:
     def start(self) -> int:
         if self._server is not None:
             return self.port
-        server = http.server.ThreadingHTTPServer((self.host, 0), self._build_handler())
-        server.daemon_threads = True
-        server.block_on_close = False
+        self._closing.clear()
+        server = _BoundedThreadingHTTPServer((self.host, 0), self._build_handler(), max_connections=self.max_connections)
         self._server = server
         thread = threading.Thread(target=server.serve_forever, name="hermes-provider-gateway", daemon=True)
         thread.start()
@@ -259,6 +372,10 @@ class LocalProviderGateway:
         self._thread = None
         if server is None:
             return
+        self._closing.set()
+        with self._active_lock:
+            for cancellation in self._active_requests:
+                cancellation.set()
         server.shutdown()
         server.server_close()
         if thread is not None:

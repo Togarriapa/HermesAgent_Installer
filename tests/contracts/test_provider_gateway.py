@@ -22,7 +22,7 @@ TOKEN="local-fixture-token-value-0123456789abcdef"
 class RecordingTransport:
     def __init__(self):
         self.calls=[]
-    def __call__(self,route,model,payload,*,output_token_limit,timeout,trace_id):
+    def __call__(self,route,model,payload,*,output_token_limit,timeout,trace_id,cancelled=lambda:False):
         self.calls.append((route.name,model,payload,output_token_limit,timeout,trace_id))
         return ProviderResponse(200,b'{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":2,"completion_tokens":3}}',{"Content-Type":"application/json"},2,3)
 
@@ -123,5 +123,121 @@ class ProviderGatewayTests(unittest.TestCase):
         self.assertNotIn(TOKEN,source)
         compile(source,paths["entrypoint"],"exec")
         self.assertEqual(Path(paths["entrypoint"]).stat().st_mode & 0o777,0o600)
+        repeated=materialize_hermes_provider_plugin(root,profile_relative="profiles/test",port=18081,model=MODEL)
+        self.assertEqual(Path(repeated["entrypoint"]).read_bytes(),Path(paths["entrypoint"]).read_bytes())
+
+    def test_materializer_refuses_existing_unowned_plugin_tree(self):
+        from hermes_installer.state import OwnershipError
+
+        root=OwnedRoot(Path(self.temp.name)/"unowned"); root.ensure()
+        plugin=root.path("profiles/test/plugins/model-providers/"+LOCAL_PROVIDER_NAME)
+        plugin.mkdir(parents=True,mode=0o700)
+        entry=plugin/"__init__.py"
+        entry.write_text("# user plugin")
+        with self.assertRaisesRegex(OwnershipError,"ownership"):
+            materialize_hermes_provider_plugin(root,profile_relative="profiles/test",port=18081,model=MODEL)
+        self.assertEqual(entry.read_text(),"# user plugin")
+
+    def test_gateway_strict_host_origin_and_duplicate_framing(self):
+        payload=json.dumps({"model":MODEL,"messages":[{"role":"user","content":"hello"}]}).encode()
+        status,_,_=self.request(body=payload,headers={"Origin":"https://evil.example"})
+        self.assertEqual(status,403)
+        status,_,_=self.request(body=payload,headers={"Host":"attacker.invalid"})
+        self.assertEqual(status,403)
+        with socket.create_connection(("127.0.0.1",self.port),timeout=2) as sock:
+            sock.sendall((
+                f"POST /v1/chat/completions HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{self.port}\r\n"
+                f"Authorization: Bearer {TOKEN}\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: 2\r\n"
+                "Content-Length: 2\r\n"
+                "Connection: close\r\n\r\n"
+            ).encode("ascii"))
+            reply=sock.recv(4096)
+        self.assertIn(b"HTTP/1.1 400",reply)
+        self.assertEqual(self.transport.calls,[])
+
+    def test_gateway_body_read_has_deadline(self):
+        root=OwnedRoot(Path(self.temp.name)/"slow"); root.ensure()
+        transport=RecordingTransport()
+        dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),transport)
+        gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="slow",sensitivity=Sensitivity.PUBLIC,
+                                     model=MODEL,read_timeout_seconds=0.15,max_connections=1)
+        port=gateway.start()
+        self.addCleanup(gateway.close)
+        with socket.create_connection(("127.0.0.1",port),timeout=2) as sock:
+            sock.sendall((
+                f"POST /v1/chat/completions HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{port}\r\n"
+                f"Authorization: Bearer {TOKEN}\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: 10\r\n"
+                "Connection: close\r\n\r\n"
+                "x"
+            ).encode("ascii"))
+            response=sock.recv(4096)
+        self.assertIn(b"HTTP/1.1 408",response)
+        self.assertEqual(transport.calls,[])
+
+    def test_connection_limit_closes_excess_slow_clients(self):
+        root=OwnedRoot(Path(self.temp.name)/"limited"); root.ensure()
+        dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),RecordingTransport())
+        gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="limited",sensitivity=Sensitivity.PUBLIC,
+                                     model=MODEL,read_timeout_seconds=1,max_connections=1)
+        port=gateway.start()
+        self.addCleanup(gateway.close)
+        first=socket.create_connection(("127.0.0.1",port),timeout=2)
+        self.addCleanup(first.close)
+        first.sendall(b"POST /v1/chat/completions HTTP/1.1\r\n")
+        second=socket.create_connection(("127.0.0.1",port),timeout=2)
+        second.settimeout(1)
+        self.addCleanup(second.close)
+        self.assertEqual(second.recv(1),b"")
+
+    def test_gateway_close_cancels_inflight_dispatch(self):
+        import threading
+        import time
+
+        class CancellableTransport:
+            def __init__(self):
+                self.started=threading.Event()
+                self.cancel_seen=threading.Event()
+            def __call__(self,route,model,payload,*,output_token_limit,timeout,trace_id,cancelled=lambda:False):
+                self.started.set()
+                limit=time.monotonic()+2
+                while time.monotonic()<limit:
+                    if cancelled():
+                        self.cancel_seen.set()
+                        return ProviderResponse(200,b'{"choices":[]}')
+                    time.sleep(0.01)
+                return ProviderResponse(200,b'{"choices":[]}')
+
+        root=OwnedRoot(Path(self.temp.name)/"cancel"); root.ensure()
+        downstream=CancellableTransport()
+        dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),downstream)
+        gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="cancel",sensitivity=Sensitivity.PUBLIC,model=MODEL)
+        port=gateway.start()
+        self.addCleanup(gateway.close)
+        outcome=[]
+        def request():
+            req=urllib.request.Request(f"http://127.0.0.1:{port}/v1/chat/completions",
+                data=json.dumps({"model":MODEL,"messages":[{"role":"user","content":"hello"}]}).encode(),
+                headers={"Authorization":"Bearer "+TOKEN,"Content-Type":"application/json"})
+            try:
+                urllib.request.urlopen(req,timeout=3)
+            except urllib.error.HTTPError as exc:
+                outcome.append(exc.code)
+            except OSError:
+                outcome.append("closed")
+        client=threading.Thread(target=request)
+        client.start()
+        self.assertTrue(downstream.started.wait(1))
+        gateway.close()
+        client.join(2)
+        self.assertFalse(client.is_alive())
+        self.assertTrue(downstream.cancel_seen.is_set())
+        self.assertIn(outcome,[[],[503],["closed"]])
+
 
 if __name__=="__main__": unittest.main()

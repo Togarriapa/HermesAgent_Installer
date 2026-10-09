@@ -52,7 +52,7 @@ class BoundedNetwork:
             raise ValueError("Invalid network bounds")
         self.deadline_seconds, self.socket_timeout = deadline_seconds, socket_timeout
         self.max_response_bytes, self.requester = max_response_bytes, requester
-    def request(self, url, *, method="GET", headers=None, body=None):
+    def request(self, url, *, method="GET", headers=None, body=None, cancelled=None):
         if not isinstance(url, str) or not url.startswith("https://") or len(url) > 2048 or any(ord(c) < 32 for c in url):
             raise NetworkError("Only bounded HTTPS URLs are accepted")
         if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
@@ -64,6 +64,8 @@ class BoundedNetwork:
             clean[name] = value
         if body is not None and (not isinstance(body, bytes) or len(body) > 1_048_576):
             raise NetworkError("Request body exceeds configured limit")
+        if cancelled is not None and cancelled():
+            raise NetworkError("HTTPS request was cancelled")
         ctx = multiprocessing.get_context("fork")
         recv, send = ctx.Pipe(duplex=False)
         args = (url, method, clean, body, self.socket_timeout, self.max_response_bytes)
@@ -71,9 +73,14 @@ class BoundedNetwork:
         started = time.monotonic()
         proc.start(); send.close()
         try:
-            remaining = self.deadline_seconds - (time.monotonic() - started)
-            if remaining <= 0 or not recv.poll(remaining):
-                raise NetworkError("HTTPS request exceeded hard deadline")
+            while True:
+                if cancelled is not None and cancelled():
+                    raise NetworkError("HTTPS request was cancelled")
+                remaining = self.deadline_seconds - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise NetworkError("HTTPS request exceeded hard deadline")
+                if recv.poll(min(0.05, remaining)):
+                    break
             ok, result = recv.recv()
             proc.join(timeout=0.1)
             if not ok:
@@ -81,6 +88,8 @@ class BoundedNetwork:
                 raise NetworkError(f"HTTPS request failed ({kind})")
             if not isinstance(result, HTTPResult) or len(result.body) > self.max_response_bytes:
                 raise NetworkError("Invalid or oversized HTTP response")
+            if cancelled is not None and cancelled():
+                raise NetworkError("HTTPS request was cancelled")
             return result
         finally:
             if proc.is_alive():
