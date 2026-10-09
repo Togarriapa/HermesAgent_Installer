@@ -51,8 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("component", nargs="?", help="Limit status to a component")
     command("doctor", "Run read-only host diagnostics")
     verify = command("verify", "Run executable acceptance probes on an identified target")
-    verify.add_argument("--target", type=Path, help="Authorized target manifest")
+    verify.add_argument("--target", type=Path, help="Owner-only scoped target lease JSON")
     verify.add_argument("--output", type=Path, help="Evidence output directory")
+    verify.add_argument("--acceptance", action="append", choices=tuple(f"AC{i:02d}" for i in range(1, 19)),
+                        help="Run one explicitly scoped acceptance workflow (repeatable)")
+    verify.add_argument("--request", type=Path, help="Bounded operator probe request JSON")
+    verify.add_argument("--result", type=Path, help="Bounded operator probe result JSON")
     resources = command("resources", "Inspect the packaged offline resource registry")
     resources.add_argument("action", choices=("plan", "status"), help="Show the verified source crosswalk and pending native adapters")
     configure = command("configure", "Configure an external provider or MCP")
@@ -680,9 +684,29 @@ def run(args: argparse.Namespace) -> CommandResult:
             f"Read-only {action}: verified {len(bindings)} declarations from the packaged bundle; materialization is planned, selected-target discovery and native operation remain pending.",
             (finding,), resume_command="hermes-installer resources status")
     if args.command == "verify":
+        if os.geteuid() == 0:
+            if args.target is not None:
+                return CommandResult("verify", OutcomeState.FAILED,
+                    "Root verification derives target identity from protected enrollment; --target is not accepted.",
+                    exit_code=2)
+            if args.output is None:
+                return CommandResult("verify", OutcomeState.FAILED,
+                    "A private output directory name is required for root verification.", exit_code=2)
+            from .verification.runtime_workflows import run_root_verify_cli
+            return run_root_verify_cli(
+                output_path=args.output,
+                requested_acceptance=tuple(args.acceptance or ()),
+                request_path=args.request, result_path=args.result,
+            )
         if args.target is None or args.output is None:
-            return CommandResult("verify", OutcomeState.FAILED, "An authorized target manifest and evidence directory are required.", resume_command="hermes-installer verify --target <authorized-target.json> --output <evidence-dir>", exit_code=2)
-        return CommandResult("verify", OutcomeState.PENDING, "Target verification adapter is not implemented yet; no target was contacted.", resume_command=f"hermes-installer verify --target {args.target} --output {args.output}")
+            return CommandResult("verify", OutcomeState.FAILED, "A scoped target lease and private evidence directory are required.", resume_command="hermes-installer verify --target <scope.json> --output <evidence-dir>", exit_code=2)
+        from .verification.runtime_workflows import run_verify_cli
+        return run_verify_cli(
+            target_path=args.target, output_path=args.output,
+            checkout=Path(__file__).resolve().parents[2],
+            requested_acceptance=tuple(args.acceptance or ()),
+            request_path=args.request, result_path=args.result,
+        )
     if args.command in {"install", "resume"}:
         facts = discover_host()
         if not facts.supported_arm64_linux:
