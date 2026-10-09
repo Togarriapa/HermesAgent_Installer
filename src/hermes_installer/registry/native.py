@@ -80,7 +80,23 @@ class NativeRegistry:
         for item in selected.resources:
             key=f"{item.resource.kind.value}/{item.resource.id}@{item.resource.version}"
             doc=copy.deepcopy(dict(self.resolver.raw[key].document))
-            doc["spec"]=copy.deepcopy(dict(item.effective_spec or item.resource.body))
+            effective=copy.deepcopy(dict(item.effective_spec or item.resource.body))
+            # These bundled scheduled jobs used to fetch Togarriapa/HermesAgent_Resources.
+            # The runtime form now addresses the Installer-owned immutable snapshot and
+            # cannot fall back to the original repository or a moving branch.
+            if item.resource.kind.value=="crons" and item.resource.id in {"resource-sync","daily-resource-reconcile"}:
+                action=effective.get("action")
+                if not isinstance(action,Mapping):
+                    raise RegistryError(f"bundled update cron has no action mapping: {item.resource.id}")
+                action=dict(action)
+                action.pop("repository",None); action.pop("ref",None)
+                action["type"]="installer-resource-candidate-assessment"
+                action["source"]={"kind":"installer-bundle",
+                    "path":f"resources/vendor/hermes-agent-resources-{self.source.catalog_version}",
+                    "catalogVersion":self.source.catalog_version,"revision":self.source.revision}
+                action["mode"]="candidate-assessment"
+                effective["action"]=action
+            doc["spec"]=effective
             meta=dict(doc.get("metadata") or {}); ann=dict(meta.get("annotations") or {})
             ann.update({"hermes.togarriapa/installer-source-revision":self.source.revision,
                 "hermes.togarriapa/quality-policy-applied":"true",

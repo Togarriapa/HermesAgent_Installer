@@ -27,6 +27,17 @@ class NativeRegistryTests(unittest.TestCase):
   structured=[item for item in result.resources if isinstance((item.effective_spec or {}).get("capabilities"),dict)]
   self.assertTrue(structured)
   self.assertTrue(all(not item.resource.capabilities for item in structured))
+ def test_update_crons_use_installer_bundle_only(self):
+  rendered=self.registry.materialize()
+  for name in ("resource-sync","daily-resource-reconcile"):
+   import yaml
+   doc=yaml.safe_load(rendered[f"crons/{name}.yaml"])
+   action=doc["spec"]["action"]
+   self.assertEqual(action["type"],"installer-resource-candidate-assessment")
+   self.assertEqual(action["source"]["kind"],"installer-bundle")
+   self.assertEqual(action["source"]["revision"],self.registry.source.revision)
+   self.assertNotIn("repository",action)
+   self.assertNotIn("ref",action)
  def test_materialization_applies_policy_without_claiming_authority(self):
   files=self.registry.materialize()
   self.assertEqual(len(files),692)
