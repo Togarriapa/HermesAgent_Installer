@@ -63,10 +63,13 @@ class HermesMCPConfigTests(unittest.TestCase):
 
     def test_profile_config_write_is_private_and_preserves_foreign_entries(self):
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary) / "profiles" / "selected"
-            home.mkdir(mode=0o700, parents=True)
+            home = Path(temporary)
+            selected = home / "profiles" / "selected"
+            selected.mkdir(mode=0o700, parents=True)
             os.chmod(home, 0o700)
-            config = home / "config.yaml"
+            os.chmod(home / "profiles", 0o700)
+            os.chmod(selected, 0o700)
+            config = selected / "config.yaml"
             config.write_text("model: GLM-5.2\nmcp_servers:\n  user_server:\n    url: https://example.test/mcp\n", encoding="utf-8")
             os.chmod(config, 0o600)
             owners, digest = write_selected_profile_mcp_config(
@@ -82,9 +85,12 @@ class HermesMCPConfigTests(unittest.TestCase):
     def test_profile_config_write_rejects_symlink_and_outside_target(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
-            home = base / "profile"
-            home.mkdir(mode=0o700)
+            home = base / "instance"
+            selected = home / "profiles" / "selected"
+            selected.mkdir(mode=0o700, parents=True)
             os.chmod(home, 0o700)
+            os.chmod(home / "profiles", 0o700)
+            os.chmod(selected, 0o700)
             link = base / "linked"
             link.symlink_to(home, target_is_directory=True)
             with self.assertRaises(HermesMCPConfigError):
