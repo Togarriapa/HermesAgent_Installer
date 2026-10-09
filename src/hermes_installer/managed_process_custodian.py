@@ -3024,16 +3024,31 @@ class ManagedBuildJobRunner:
                 if exit_code is not None:
                     missing_proof.append("exit_code_" + str(exit_code))
                 output = bytes(log).decode("utf-8", "replace").casefold()
+                diagnostic_sources = [output]
+                if exit_code == 226:
+                    try:
+                        journal = subprocess.run(["/usr/bin/journalctl", "--no-pager", "-n", "12",
+                            "-o", "cat", "--unit=" + unit], stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                            timeout=.75, check=False)
+                        if journal.returncode == 0 and len(journal.stdout) <= 16384:
+                            diagnostic_sources.append(journal.stdout.decode("utf-8", "replace").casefold())
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
                 for needle, category in (
                     ("mount namespacing", "mount_namespace_setup"),
                     ("network namespacing", "network_namespace_setup"),
                     ("failed to set up namespace", "namespace_setup"),
                     ("failed to set up mount", "mount_setup"),
                     ("failed to set up network", "network_setup"),
+                    ("failed at step namespace", "namespace_setup"),
+                    ("failed at step mount", "mount_setup"),
+                    ("failed at step setgroups", "group_setup"),
                     ("permission denied", "permission_denied"),
                     ("no such file", "missing_runtime_input"),
                 ):
-                    if needle in output:
+                    if any(needle in source for source in diagnostic_sources):
                         missing_proof.append("systemd_" + category)
                         break
                 if self._diagnostic_observer is not None:
