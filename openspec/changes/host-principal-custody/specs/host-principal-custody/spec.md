@@ -236,3 +236,10 @@ The installer SHALL bind source issuer records into active generation digest, us
 #### Scenario: Mutable sidecar or predicted runtime hash
 - **WHEN** source issuer differs from active snapshot or package manifest claims a prebuilt unknown executable digest
 - **THEN** reject activation and retain prior owned generation with exact pending build/source reason.
+
+### Requirement: Selected Hermes and resource runtime recipes
+The installer SHALL resolve fixed parameter-free Hermes stage/health recipes and active protected resource job DAG/source/backend joins, retaining official PM runtime and actual functional health evidence.
+
+#### Scenario: Caller supplies bootstrap paths or source-only health
+- **WHEN** caller overrides recipe/roots/argv or only inventory/status exists without actual selected native workflow
+- **THEN** reject overrides or keep functional readiness incomplete, preserve prior generation and exact resume reason.

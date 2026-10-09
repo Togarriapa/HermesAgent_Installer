@@ -253,7 +253,27 @@
       "id": "no-caller-parameters-v1",
       "fields": []
     },
-    "model_recipe_note": "All parameters {}, no caller model/input/device/path/buildflag. Root pins actual source/toolchain/builder/fixedargv/worker and selecteddevice. Inference input/model supplied only through separately authorized exact root-enrolled fixed worker protocol, not arbitrary process.start argv. coral-inference:start is fixed root-selected inference profile target, not existing successful enrollment claim."
+    "model_recipe_note": "All parameters {}, no caller model/input/device/path/buildflag. Root pins actual source/toolchain/builder/fixedargv/worker and selecteddevice. Inference input/model supplied only through separately authorized exact root-enrolled fixed worker protocol, not arbitrary process.start argv. coral-inference:start is fixed root-selected inference profile target, not existing successful enrollment claim.",
+    "hermes_recipe_bindings": [
+      {
+        "operation_id": "hermes-agent-stage-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "hermes-agent-stage:start"
+      },
+      {
+        "operation_id": "hermes-agent-health-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "hermes-agent-health:start"
+      }
+    ],
+    "hermes_recipe_constraints": {
+      "stage": "Root reviewed immutable installer bootstrap adapter artifact/SHA resolves selected owned staging checkout/HERMES_HOME/PM runtime IDs and exact pinned script034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86 at7085fbf7753266fc4943c55ac04926186bc90005. Script supportedflags --commit exactpin --dir rootstagedcheckout --hermes-home rootselectedownedservicehome --non-interactive; browser/computer-use stage flags only reviewedplan and no permanent originalscope omission. Callerparameters{}; script/args/paths/env notworkerselected. Rootfixedverifiedscript invocation by reviewed adapter is allowed official thin shell bootstrap, genericcaller shell/physicalrun envelope remainsforbidden. Dependencies/downloads only protectedroot artifact catalog/broker fixedsource selection, networkdeniedworker or reviewedfiniteeffectthroughroot; no arbitraryscriptnetwork/apt takeover or globaldowngrade. Missingwhole pinnedsource/PM payloadhashes/deps prevents stagecompletion.",
+      "runtime": "OfficialPM Python3.14 observed; exactselected PMlock/source/python/toolchain catalog pin actualstagedbytes/attestation required, no componentPython39 substitution. Rootseparatecallerjournal andservicehome/work/data/credentials, preserve prioruser/private state.",
+      "health": "Reviewed immutable rootselected health adapter with exactinstalledPMinterpreter/Agentclosure/profile generation/control handle. Observe actualprocess start+ownedpidfd/cgroup/namespace +nativeAgent registration/request/result through HI08/HI11 source issuer and selected safe local tool fixture plus compatible private/zero-budget provider workflow when selected. Sourcehash/version/import/status alone readiness only, not functionalhealth. Missingprovider/account/model/native observer yields exactincomplete resume notfakepassed/no hugeweights. No outboundmessage/writes/spend.",
+      "control": "Root derives active lifecycle operation enrollment/target/generation from selectedbootstrap transaction; client receives opaque controlhandle only. Every stage/health attempt fresh exactoperation grant+fullrecipe/paramsdigest, bounded<=600s plusownedchildcleanup/canceljournal; profileartifact/catalogtransition currentrootepoch invalidatespriorhandles. Failedhealthrollback preserves priorowned generation/userdata."
+    }
   },
   "protected_file_schema": {
     "file": "/etc/hermes-installer/native-packages.json",
