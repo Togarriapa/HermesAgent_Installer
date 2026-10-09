@@ -51,7 +51,7 @@ class FreshAccessPolicyAuthority:
         if not i.hostname or not i.application_name or not i.policy_name or not i.allowed_emails:
             raise ValueError("exact journal-owned Access identity is required")
         normalized = frozenset(e.casefold() for e in i.allowed_emails)
-        if len(normalized) != len(i.allowed_emails) or any(not re.fullmatch(r"[^@\\s]{1,64}@[^@\\s.]+(?:\\.[^@\\s.]+)+", e) for e in normalized):
+        if len(normalized) != len(i.allowed_emails) or any(not re.fullmatch(r"[^@\s]{1,64}@[^@\s.]+(?:\\.[^@\s.]+)+", e) for e in normalized):
             raise ValueError("invalid exact Access email allowlist")
         object.__setattr__(self, "identity", AccessPolicyIdentity(
             i.account_id, i.application_id, i.policy_id, i.identity_provider_id,

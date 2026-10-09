@@ -78,7 +78,8 @@ class RemoteGatewayAuthorizedFlowTests(unittest.IsolatedAsyncioTestCase):
    return socket
   upstream_app.router.add_get("/index.html",index);upstream_app.router.add_get("/css/client.css",css);upstream_app.router.add_get("/",echo)
   self.upstream=TestServer(upstream_app);await self.upstream.start_server()
-  self.membership=[True]\n  runtime=GatewayRuntime(self.policy,upstream=str(self.upstream.make_url("/")),monotonic=lambda:self.monotonic[0],policy_current=lambda email:self.membership[0] and email=="owner@example.net",max_lease_seconds=1,watchdog_seconds=1)
+  self.membership=[True]
+  runtime=GatewayRuntime(self.policy,upstream=str(self.upstream.make_url("/")),monotonic=lambda:self.monotonic[0],policy_current=lambda email:self.membership[0] and email=="owner@example.net",max_lease_seconds=1,watchdog_seconds=1)
   self.gateway=TestClient(TestServer(create_app(runtime)));await self.gateway.start_server()
   self.headers={"Host":self.policy.hostname,"Origin":"https://"+self.policy.hostname,"Cf-Access-Jwt-Assertion":self.token}
  async def asyncTearDown(self):
