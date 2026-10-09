@@ -134,6 +134,11 @@ class NativePluginRuntimeContext:
     provider_dispatcher: object | None = None
     local_overlay_store: "ProfileOverlayView | None" = None
     profile_targets: SelectedHermesProfileResolver | None = None
+    # Supplied only by the trusted native bootstrap after it binds this live
+    # process to the root-selected package resolver.  A missing facade leaves
+    # Plugin registrations unavailable; resource declarations cannot construct
+    # one or supply any of its authority inputs.
+    plugin_effects: "PluginEffectsFacade | None" = None
 
 
 class HostContext(Protocol):
@@ -195,6 +200,21 @@ class NativePluginImplementation(Protocol):
 
 class PluginAdapterRegistry(Protocol):
     def resolve_plugin_adapter(self, adapter_id: str) -> NativePluginImplementation | None: ...
+
+
+class PluginEffectsFacade(Protocol):
+    """Local facade over exact root-selected plugin actions.
+
+    This is the canonical native package binding surface. Implementations
+    resolve the adapter/action, schema, operation, target and recipient from
+    the live protected package binding, then preserve trusted invocation
+    lineage while dispatching. Callers provide only action arguments and
+    optional idempotency/confirmation references, never authority metadata.
+    """
+
+    def invoke(self, adapter_id: str, action_id: str, arguments: Mapping[str, Any],
+               idempotency_key: str | None = None,
+               opaque_confirmation_attestation_id: str | None = None) -> object: ...
 
 
 class ReviewedPluginAdapterRegistry:
