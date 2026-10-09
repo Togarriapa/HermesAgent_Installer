@@ -22,6 +22,7 @@ from .codex_responses import (
     CODEX_RECIPIENT,
     CODEX_TARGET,
     normalize_responses_request,
+    validate_responses_sse,
 )
 from .network import BoundedNetwork, NetworkError
 from .policy import (
@@ -444,7 +445,7 @@ class _FixedProviderHandler:
                 } if enrollment.provider == "openrouter" else {
                     "Authorization": "Bearer " + token,
                     "Content-Type": "application/json",
-                    "Accept": "application/json",
+                    "Accept": "text/event-stream" if enrollment.provider == "codex" else "application/json",
                 },
                 body=body, cancelled=cancelled,
             )
@@ -459,6 +460,11 @@ class _FixedProviderHandler:
             raise ProviderHandlerDenied("provider.response_bounds", "Provider response is invalid or oversized")
         if cancelled() or time.monotonic() >= authorization.monotonic_expires_at:
             raise ProviderHandlerDenied("provider.expired", "Provider attempt expired before its response was accepted")
+        if enrollment.provider == "codex" and 200 <= result.status < 300:
+            try:
+                validate_responses_sse(result.body, _safe_headers(result.headers).get("Content-Type", ""))
+            except PolicyDenied as exc:
+                raise ProviderHandlerDenied(exc.code, str(exc)) from None
         return {
             "status": result.status,
             "body": result.body,

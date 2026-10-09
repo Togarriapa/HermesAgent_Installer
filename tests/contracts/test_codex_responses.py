@@ -47,8 +47,8 @@ class FakeAuthority:
             raise RuntimeError("fake broker failure")
         self.calls.append((grant, target, recipient, request_digest, payload, timeout, cancelled))
         return SimpleNamespace(status=200,
-            body=b'{"id":"resp_1","usage":{"input_tokens":9,"output_tokens":4}}',
-            headers={"Content-Type": "application/json", "Retry-After": "2", "Set-Cookie": "secret"})
+            body=b'event: response.completed\\ndata: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":9,"output_tokens":4}}}\\n\\n',
+            headers={"Content-Type": "text/event-stream", "Retry-After": "2", "Set-Cookie": "secret"})
 
 
 def context(sensitivity="private", lease=20, final_payload_digest=None):
@@ -90,9 +90,9 @@ class CodexResponsesTests(unittest.TestCase):
         self.assertLessEqual(timeout, 5)
         normalized = json.loads(sent)
         self.assertFalse(normalized["store"])
-        self.assertFalse(normalized["stream"])
+        self.assertTrue(normalized["stream"])
         self.assertFalse(normalized["parallel_tool_calls"])
-        self.assertEqual(response.headers, {"Content-Type": "application/json", "Retry-After": "2"})
+        self.assertEqual(response.headers, {"Content-Type": "text/event-stream", "Retry-After": "2"})
         self.assertNotIn("secret", repr(transport))
 
     def test_each_retry_gets_new_grant_and_text_call_uses_inference_capability(self):
@@ -147,7 +147,10 @@ class CodexResponsesTests(unittest.TestCase):
     def test_request_rejects_private_modes_modalities_fallback_and_malformed_json(self):
         bad = [
             b'{"model":"x","input":"hi","store":true}',
-            b'{"model":"x","input":"hi","stream":true}',
+            b'{"model":"x","input":"hi","stream":false}',
+            b'{"model":"x","input":"hi","max_output_tokens":64}',
+            b'{"model":"x","input":"hi","truncation":"auto"}',
+            b'{"model":"x","input":[{"role":"system","content":"private system prompt"}]}',
             b'{"model":"x","input":"hi","background":true}',
             b'{"model":"x","input":[{"role":"user","content":[{"type":"input_image","image_url":"x"}]}]}',
             request(tools=[{"type": "web_search"}]),
@@ -159,6 +162,24 @@ class CodexResponsesTests(unittest.TestCase):
         for payload in bad:
             with self.subTest(payload=payload), self.assertRaises(PolicyDenied):
                 normalize_responses_request(payload)
+
+    def test_sse_requires_successful_bounded_terminal_completion(self):
+        from hermes_installer.codex_responses import validate_responses_sse
+
+        good=b'event: response.output_text.delta\\ndata: {"type":"response.output_text.delta","delta":"partial"}\\n\\n'
+        with self.assertRaisesRegex(PolicyDenied, "before response.completed"):
+            validate_responses_sse(good, "text/event-stream")
+        bad=b'event: response.incomplete\\ndata: {"type":"response.incomplete","response":{}}\\n\\n'
+        with self.assertRaisesRegex(PolicyDenied, "incomplete"):
+            validate_responses_sse(bad, "text/event-stream")
+        failure=b'event: response.failed\\ndata: {"type":"response.failed","error":{"code":"subscription_sharing_usage_limit_exceeded"}}\\n\\n'
+        with self.assertRaisesRegex(PolicyDenied, "did not complete"):
+            validate_responses_sse(failure, "text/event-stream")
+        unterminated=b'event: response.completed\\ndata: {"type":"response.completed","response":{}}'
+        with self.assertRaisesRegex(PolicyDenied, "before response.completed"):
+            validate_responses_sse(unterminated, "text/event-stream")
+        complete=b'event: response.completed\\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":7,"output_tokens":3}}}\\n\\n'
+        self.assertEqual(validate_responses_sse(complete, "text/event-stream"), (7, 3))
 
     def test_function_tool_output_requires_tool_capability(self):
         _, _, uses_tools = normalize_responses_request(request(input=[
