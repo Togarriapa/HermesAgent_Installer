@@ -12,9 +12,12 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from .bootstrap_enrollment import BootstrapEnrollmentPending
+
+if TYPE_CHECKING:
+    from .bootstrap_runtime_factory import CompiledRootSetupPublication
 
 
 TEMPLATE_ARTIFACT_ID = "installer-bootstrap-compiler-template-v1"
@@ -180,14 +183,14 @@ class RootFirstStagePolicyCompiler:
         return cls(verified_installer_release_receipt, root_actor_observation,
                    initial_compilation_registry, principal_selection_registry)
 
-    def compile_initial_policy(self, choices: Any) -> Any:
-        """Render the reviewed template or return the root registry's pending state.
+    def compile_initial_policy(self, choices: Any) -> "CompiledRootSetupPublication":
+        """Compile one sealed initial publication from explicit root UI choices.
 
-        No partial template is returned as a policy. The compiled-publication
-        DTO is issued only after all selected source artifacts and live root
-        observations needed by the strict serializer are available.
+        Missing verified inputs raise the existing typed pending condition. A
+        partial template is never returned as policy and no caller receives raw
+        authority or root-selection rows.
         """
-        from .bootstrap_runtime_factory import PendingInitialCompilation, RootSetupChoices
+        from .bootstrap_runtime_factory import RootSetupChoices
         if not isinstance(choices, RootSetupChoices):
             raise InitialPolicyCompilationError("initial setup requires validated RootSetupChoices")
         session = self._registry.begin_initial_compilation(choices)
@@ -199,9 +202,8 @@ class RootFirstStagePolicyCompiler:
         self._registry.resolve_identity_policy_template(session.compilation_session_handle)
         principal_handle = choices.selected_principal_binding_receipt_handle
         if principal_handle is None:
-            return PendingInitialCompilation(
-                "pending-principal-selection", session,
-                "Complete the root-authenticated identity selection, then resume stage-zero compilation.")
+            raise InitialPolicyCompilationError(
+                "pending-principal-selection: complete root-authenticated identity selection")
         selected = self._principal_registry.resolve_selected_principal(
             principal_handle, session.compilation_session_handle,
             session.compilation_transaction_handle, session.plan_sha256)
@@ -233,9 +235,8 @@ class RootFirstStagePolicyCompiler:
         except InitialPolicyCompilationError as exc:
             # Stage zero has not issued these ownership and process facts yet.
             # The profile namespace selected in policy is not kernel evidence.
-            return PendingInitialCompilation(
-                "pending-root-observation", session,
-                f"Resolve the held root and process observations before policy serialization: {exc}")
+            raise InitialPolicyCompilationError(
+                f"pending-root-observation: resolve held root and process observations: {exc}") from exc
         raise InitialPolicyCompilationError(
             "strict policy envelope assembly requires a source-verified authority-base template and signer key ID")
 
