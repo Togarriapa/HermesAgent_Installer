@@ -45,6 +45,36 @@ class EnrolledMCPTransportTests(unittest.TestCase):
                 self.assertEqual(_ENDPOINT_SOURCES[service_id][0], endpoint)
                 self.assertTrue(_ENDPOINT_SOURCES[service_id][1].startswith("https://developers.google.com/"))
 
+    def test_home_assistant_requires_root_enrolled_official_api_route(self):
+        service = ProtectedMCPService(
+            "home-assistant", "http", frozenset({"get_state"}),
+            "ha-binding", self.revision,
+            selection_arguments={"get_state": ("entity_id",)},
+        )
+        binding = ProtectedMCPHTTPBinding(
+            "ha-binding", "home-assistant", "https://ha.example/api/mcp/assist",
+            "https://www.home-assistant.io/integrations/mcp_server/",
+            self.revision, _CredentialHandle(),
+        )
+        handlers = build_enrolled_mcp_handlers(
+            {"home-assistant": service}, {"ha-binding": binding},
+        )
+        self.assertEqual(set(handlers), {("mcp.request", "mcp:home-assistant:http")})
+
+    def test_home_assistant_rejects_nonofficial_path_or_source(self):
+        for endpoint, source in (
+            ("http://ha.example/api/mcp", "https://www.home-assistant.io/integrations/mcp_server/"),
+            ("https://ha.example/api/mcp/../../api", "https://www.home-assistant.io/integrations/mcp_server/"),
+            ("https://ha.example/other", "https://www.home-assistant.io/integrations/mcp_server/"),
+            ("https://ha.example/api/mcp", "https://attacker.example/mcp"),
+        ):
+            with self.subTest(endpoint=endpoint, source=source):
+                with self.assertRaises(MCPHTTPBindingError):
+                    ProtectedMCPHTTPBinding(
+                        "ha-binding", "home-assistant", endpoint, source,
+                        self.revision, _CredentialHandle(),
+                    )
+
     def test_builds_only_exact_root_enrolled_http_target(self):
         handlers = build_enrolled_mcp_handlers(
             {"figma": self.service}, {"figma-binding": self.binding},
