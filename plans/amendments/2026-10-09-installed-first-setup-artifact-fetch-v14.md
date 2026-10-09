@@ -1,0 +1,3 @@
+# Installed first setup artifact fetch v14
+
+BD-F01/BD-F03/LC-F03/HI-T01 retain original initial provisioning scope. First setup cannot depend on an already active worker or use source archive hashes as executable proof. The lifecycle contract now fixes the installed root selection catalog, exact role keys/record fields and actual deployed byte verification, concrete plan/actor resolver joins, and root-local selected artifact fetch to transaction-bound verified CAS receipts. No arbitrary downloader or worker context substitution. No new task IDs; actual Linux setup/failure evidence remains required. Baseline unchanged and all acceptance pending.
