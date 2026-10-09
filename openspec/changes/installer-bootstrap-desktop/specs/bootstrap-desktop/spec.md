@@ -373,3 +373,10 @@ The implementation SHALL resolve the exact selected official committed PM depend
 #### Scenario: PM source or sync receipt alone exists
 - **WHEN** actual selected runtime executable identity and source/lock/tool joins have not been verified
 - **THEN** runtime activation and functional health remain pending, without substituting a source archive digest or system Python
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata

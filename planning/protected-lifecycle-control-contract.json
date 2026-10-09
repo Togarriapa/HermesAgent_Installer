@@ -443,7 +443,8 @@
         "expires_monotonic"
       ],
       "roles": "resources-source-bundle|native-compiled-closure|native-entrypoint-manifest|native-action-resolver|native-boundary-overlay; each exact fixed role admits one output per transaction, duplicate/crossrole conflict denied. source_receipt_handles includes distinct actual Hermes and Resources proofs as applicable. output_kind source-archive|compiled-closure|entrypoint-json|resolver-json|boundary-overlay, compatible exact role only.",
-      "catalog": "Root registry resolve actual held immutable CAS object via current session verified artifact catalog/materialized-output catalog with actual compiled bytes/SHA/size/tree/owner/mode. Newly compiled artifact records published only by pinned reviewed root compiler and exact finite output manifest, no worker arbitrary artifact enrollment or sourceSHA as compiledSHA. Caller native receipt handle is lookup-only one-use session binding."
+      "catalog": "Root registry resolve actual held immutable CAS object via current session verified artifact catalog/materialized-output catalog with actual compiled bytes/SHA/size/tree/owner/mode. Newly compiled artifact records published only by pinned reviewed root compiler and exact finite output manifest, no worker arbitrary artifact enrollment or sourceSHA as compiledSHA. Caller native receipt handle is lookup-only one-use session binding.",
+      "native_candidate_index_role": "Additive native-candidate-index exact separate compiled closure member/manifest pin per native-package-binding-contract protected_pre_discovery.index_delivery; no digest-domain conflation. Root materialization registry returns actual one-use CAS receipt same prepared transaction before activation."
     },
     "resources_source": {
       "artifact_id": "resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83",
