@@ -1,0 +1,13 @@
+# Protected selected resource jobs v1
+
+Sol additive implementation/schema refinement of original R0054/R0056/R0058/R0060, RB02/RB03 and original all-resource acceptance. No new product scope, frozen baseline/tag unchanged. Add RB07/RB-T08/EV-RB07; prerequisites RB-T02/RB-T03/HI-T03/HI-T08/HI-T09.
+
+## Protected selected resource event jobs (RB07)
+
+Follow planning/protected-resource-job-contract.json. This operationalizes original R0054/R0056/R0058/R0060 and all-kind RB02/RB03. Root enrollment fixes selected resource/kind/profile/account/credential refs/action graph/recipient and consent revision; caller selection labels or arbitrary cron/URL/graph are not authority. Protected scheduler captures actual enrolled timer event and current selection/consent before issuing source provenance; root webhook ingress resolves selected route, root-only HMAC secret reference, bounded exact bytes, protocol freshness and durable replay claim before job admission. Replay store is atomic, bounded, preserved over restart/rotation and fails closed on ambiguous/full state. Root selected official channel/account connector authenticates inbound event; outbound effects require fresh recipient/scope policy and runtime consent. No external installation-test messaging.
+
+resource.job.admit consumes one exact fresh parent admission for the root reviewed immutable DAG and creates a bounded protected job ledger. It does not return reusable child authority. resource.job.child.admit atomically admits each eligible node with complete inherited source/result receipts, reduced capability/recipient scope and fresh one-use child effect grant for exact selected action/target/final payload/retry. Existing one-child perform_delegated_effect remains one-use; do not loop/reuse its parent grant. Root maintains node state, dependency satisfaction, finite graph/concurrency/aggregate budget/deadline, and invalidates pending/running child grants on generation change/revocation/cancel. Retries need distinct fresh grants and unchanged complete lineage. Unknown/private content never routes public because of schedule/background/bundle labels.
+
+Fixed wire operations/targets and positive/negative evidence are in the JSON contract. Native adapters must actually invoke selected backend handlers, not only write schedule definitions or construct Python fixture objects. Register resources disabled unless user selected/configured; original topology and all692 functional obligations preserved. Account/hardware/native acceptance remains separate and open.
+
+Root issuers and backend/native invocation remain unfinished until genuine implementation and target evidence. All original AC01..18 gates remain unchanged.

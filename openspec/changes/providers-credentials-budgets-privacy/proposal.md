@@ -23,3 +23,7 @@ None; no runtime capability is currently implemented in this greenfield reposito
 ## Impact
 
 Planned modules: src/hermes_installer/providers/, src/hermes_installer/credentials.py, src/hermes_installer/policy.py. Depends on installer-bootstrap-desktop. All implementation belongs to GPT-6 Luna; specification/refinement belongs to GPT-6.1 Sol. See design.md and explicit task/evidence DAG.
+
+## Documented ChatGPT-plan protocol refinement
+
+PR01/PR-T01/EV-PR01 refines existing R0124/R0125/R0126 supported Codex auth/inference against dated official SIWC contract. No new provider scope, paid fallback or account-success claim.

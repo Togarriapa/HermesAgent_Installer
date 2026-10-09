@@ -44,3 +44,21 @@ SHALL distinguish bundled, validated, materialized, discovered, authenticated, f
 
 - **WHEN** required MCP account is absent but its declaration and configuration exist
 - **THEN** resource and full-compliance remain incomplete with scoped next step; no fabricated native operation, account success or missing-required-as-optional status
+
+### Requirement: Fixed read-only registry discovery (RB06)
+
+Implement the bundled mcp-registry and agent37-discovery plugins through host-authorized fixed registry.read metadata operations. SHALL bind public query provenance, exact service/action and bounded parameters before network bytes; deny caller URL/method, redirects, publication, installation and execution. Discovery results remain untrusted and never activate resources.
+
+#### Scenario: Authorized bounded metadata discovery
+
+- **WHEN** selected native discovery plugin submits an authorized public metadata query
+- **THEN** root performs only enrolled bounded read, returns untrusted metadata, and rejects private/unknown query, arbitrary destination and activation
+
+### Requirement: Protected selected event and bounded bundle jobs (RB07)
+
+Selected cron, webhook, channel and bundle resources SHALL use protected enrollment and authenticated event provenance before effects. Root SHALL admit bounded immutable jobs and issue fresh reduced-scope grants separately for every child/attempt, preserving complete source lineage, recipient scope, private routing, concurrency limits and generation revocation. Registration SHALL not auto-enable resources.
+
+#### Scenario: Authenticated selected event job
+
+- **WHEN** a selected recurring/webhook/channel event starts a multi-child workflow
+- **THEN** root authenticates event and current selection, consumes one job admission, issues fresh scoped per-child grants and denies replay/unselected/private-route/overlimit/stale generation before effects
