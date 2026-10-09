@@ -411,7 +411,9 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
     try:
         root = spec.owned_root.root.resolve(strict=True)
         cwd = spec.owned_root.path(Path(spec.cwd).relative_to(root).as_posix()).resolve(strict=True)
-        data = spec.owned_root.path(Path(spec.data_root).relative_to(root).as_posix()).resolve(strict=True)
+        requested_data = Path(spec.data_root).resolve(strict=True)
+        data = (root if requested_data == root else
+                spec.owned_root.path(requested_data.relative_to(root).as_posix()).resolve(strict=True))
         journal_path = spec.journal.path.resolve(strict=True)
     except (OwnershipError, OSError, ValueError):
         raise ManagedProcessError("executable, cwd, data root, or journal is outside safe owned paths") from None
