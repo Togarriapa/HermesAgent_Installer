@@ -348,6 +348,8 @@ class Dispatcher:
                     continue
                 if route.input_usd_per_million is None or route.output_usd_per_million is None:
                     continue
+                if (route.input_usd_per_million > 0 or route.output_usd_per_million > 0) and self.policy.metered_budget_usd <= 0:
+                    continue
                 # Validate and normalize only after trusted route, sensitivity,
                 # cancellation and deadline eligibility have passed. Costing uses
                 # the exact canonical bytes that the transport will send.

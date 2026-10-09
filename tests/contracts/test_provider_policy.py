@@ -139,7 +139,7 @@ class ProviderPolicyTests(unittest.TestCase):
             dispatcher=self.make(Path(td),provider,sleep=sleep)
             context=DispatchContext("hermes","chat",Sensitivity.PUBLIC,cancelled=lambda:cancelled[0])
             with self.assertRaisesRegex(PolicyDenied,"cancelled during retry delay"):
-                dispatcher.dispatch(context,MODEL,b'{"messages":[]}',input_tokens=1,output_token_limit=2)
+                dispatcher.dispatch(context,MODEL,b'{"messages":[{"role":"user","content":"test"}]}',input_tokens=1,output_token_limit=2)
             self.assertEqual(len(provider.calls),1)
 
     def test_policy_bounds_retry_after_and_fallback_graph(self):

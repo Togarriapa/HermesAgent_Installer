@@ -38,7 +38,7 @@ class ProviderTransportTests(unittest.TestCase):
         response=transport(route,MODEL,payload,output_token_limit=77,timeout=3,trace_id="trace-1")
         self.assertEqual(response.status,200)
         self.assertEqual((response.input_tokens,response.output_tokens),(3,4))
-        self.assertEqual(response.headers,{"Retry-After":"1"})
+        self.assertEqual(response.headers,{"Content-Type":"application/json","Retry-After":"1"})
         url,method,headers,body=networks[0].calls[0]
         self.assertEqual(url,OPENROUTER_ENDPOINT+"/chat/completions")
         self.assertEqual(method,"POST")
@@ -54,7 +54,7 @@ class ProviderTransportTests(unittest.TestCase):
 
     def test_route_host_and_nonpublic_sensitivity_are_denied(self):
         transport,_=self.make()
-        payload=b'{"messages":[]}'
+        payload=b'{"messages":[{"role":"user","content":"hi"}]}'
         evil=Route("openrouter-nemotron-free","https://attacker.invalid/api/v1",frozenset({MODEL}),Sensitivity.PUBLIC,True,True,0,0)
         with self.assertRaisesRegex(PolicyDenied,"pinned public"):
             transport(evil,MODEL,payload,output_token_limit=8,timeout=2,trace_id="trace")
@@ -65,7 +65,7 @@ class ProviderTransportTests(unittest.TestCase):
     def test_conflicting_model_and_invalid_request_are_rejected_or_normalized(self):
         transport,networks=self.make()
         route=default_public_route()
-        payload=b'{"model":"private/hidden","max_completion_tokens":1,"messages":[]}'
+        payload=b'{"model":"private/hidden","max_completion_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
         response=transport(route,MODEL,payload,output_token_limit=8,timeout=2,trace_id="trace")
         self.assertEqual(response.status,200)
         self.assertEqual(json.loads(networks[0].calls[0][3])["model"],MODEL)
