@@ -203,6 +203,11 @@ class AuthorityService:
         self.monotonic = monotonic
         self.wall_clock = wall_clock
         self.profile_generations = dict(profile_generations or {})
+        # Bind every context/receipt/grant to this daemon epoch. The signing
+        # key intentionally survives service restarts, but replay tables do
+        # not; changing this host-derived enrollment digest makes old signed
+        # effects stale before they can reach a handler after restart.
+        self.authority_epoch = secrets.token_urlsafe(24)
         self.delegations = dict(delegations or {})
         self.process_effect_handler = process_effect_handler
         self.native_bridge_broker = native_bridge_broker
@@ -306,7 +311,8 @@ class AuthorityService:
                                             "principal_id": child_binding.principal_id,
                                             "profile_id": child_binding.profile_id,
                                             "namespace_id": child_binding.namespace_id,
-                                            "generation": self.profile_generations.get(child_binding.profile_id, "unversioned")}),
+                                            "generation": self.profile_generations.get(child_binding.profile_id, "unversioned"),
+                                            "authority_epoch": self.authority_epoch}),
             generation=self.profile_generations.get(child_binding.profile_id, "unversioned"),
             operation=rule.child_operation,
             native_process_identity=parent_authorization.native_process_identity)
@@ -377,6 +383,7 @@ class AuthorityService:
                 "uid": binding.uid, "principal_id": binding.principal_id,
                 "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
                 "generation": self.profile_generations.get(binding.profile_id, "unversioned"),
+                "authority_epoch": self.authority_epoch,
             }),
             native_process_identity=parent_context.native_process_identity,
             parent_receipt_ids=tuple(sorted(item.receipt_id for item in parent_context.source_receipts)),
@@ -673,7 +680,8 @@ class AuthorityService:
         enrollment_id = canonical_digest({"uid": uid, "principal_id": binding.principal_id,
                                            "profile_id": binding.profile_id,
                                            "namespace_id": binding.namespace_id,
-                                           "generation": generation})
+                                           "generation": generation,
+                                           "authority_epoch": self.authority_epoch})
         native_process_identity = inherited_process_identity
         if peer_pid is not None:
             native_process_identity = self._native_process_identity(peer_pid, uid)
@@ -1034,7 +1042,7 @@ class AuthorityService:
         expected_enrollment = canonical_digest({
             "uid": binding.uid, "principal_id": binding.principal_id,
             "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
-            "generation": expected_generation,
+            "generation": expected_generation, "authority_epoch": self.authority_epoch,
         })
         if (context.uid != uid or context.principal_id != binding.principal_id
                 or context.profile_id != binding.profile_id or context.namespace_id != binding.namespace_id
@@ -1054,7 +1062,7 @@ class AuthorityService:
         expected_enrollment = canonical_digest({
             "uid": binding.uid, "principal_id": binding.principal_id,
             "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
-            "generation": expected_generation,
+            "generation": expected_generation, "authority_epoch": self.authority_epoch,
         })
         if (grant.uid != uid or grant.principal_id != binding.principal_id
                 or grant.profile_id != binding.profile_id or grant.namespace_id != binding.namespace_id
@@ -1118,6 +1126,7 @@ class AuthorityService:
             "uid": binding.uid, "principal_id": binding.principal_id,
             "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
             "generation": self.profile_generations.get(binding.profile_id, "unversioned"),
+            "authority_epoch": self.authority_epoch,
         })
         if (receipt.issuer_id != "host-authority"
                 or receipt.uid != binding.uid

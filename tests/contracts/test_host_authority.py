@@ -98,7 +98,7 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
             transport=lambda *_args, **_kwargs: self.fail("local effect must not query Authentik"),
         )
         rule = EffectRule("profile-run", "process.start", "process.start")
-        binding = PrincipalBinding(1001, "principal:a", "profile:a", "namespace:a",
+        binding = PrincipalBinding(os.getuid(), "principal:a", "profile:a", "namespace:a",
                                    frozenset({"profile-run"}))
         effects = []
         def handler(*, context, authorization, payload, timeout, peer_pid, peer_pidfd=None, cancelled):
@@ -106,26 +106,26 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
             return {"status": 200, "body": b"started", "headers": {}, "receipt_id": "start"}
         service = AuthorityService(
             signing_key=b"l" * 32, key_id="local-fixture",
-            bindings_by_uid={1001: binding}, rules={(rule.capability, rule.operation, rule.target): rule},
+            bindings_by_uid={binding.uid: binding}, rules={(rule.capability, rule.operation, rule.target): rule},
             handlers={(rule.operation, rule.target): handler}, policy=policy,
         )
         payload = b"{}"
-        context = HostContext.from_wire(service._issue_context(1001, {
+        context = HostContext.from_wire(service._issue_context(binding.uid, {
             "purpose": "bootstrap", "intent": "start-pinned-profile", "trace_id": "trace-local",
             "lease_seconds": 10, "source_contexts": [],
             "final_payload_digest": canonical_digest(payload),
             "operation": "process.start",
-        }, peer_pid=os.getpid()))
-        grant = service._authorize_effect(1001, {
+        }))
+        grant = service._authorize_effect(binding.uid, {
             "context": context.to_wire(), "capability": rule.capability,
             "target": rule.target, "recipient": None,
             "request_digest": canonical_digest(payload), "retry_index": 0,
         })
         import base64
-        result = service._perform_effect(1001, os.getpid(), {
+        result = service._perform_effect(binding.uid, os.getpid(), {
             "authorization": grant, "operation": rule.operation,
             "payload": base64.b64encode(payload).decode(), "timeout": 1,
-        }, cancelled=lambda: False)
+        }, cancelled=lambda: False, enforce_peer_identity=False)
         self.assertEqual(context.sensitivity, Sensitivity.UNKNOWN)
         self.assertEqual(effects, [("profile:a", payload)])
         self.assertEqual(result["status"], 200)
@@ -166,7 +166,7 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
 class BackgroundMemoryConsentContracts(unittest.TestCase):
     def test_expired_source_cannot_be_reissued_without_active_bound_consent(self):
         now = [100.0]
-        binding = PrincipalBinding(1001, "principal:a", "profile:a", "namespace:a",
+        binding = PrincipalBinding(os.getuid(), "principal:a", "profile:a", "namespace:a",
                                    frozenset({"memory-capture", "memory-extraction"}))
         targets = {
             ("memory-capture", "memory.enqueue", "memory:openviking:enqueue"): EffectRule(
@@ -189,6 +189,9 @@ class BackgroundMemoryConsentContracts(unittest.TestCase):
             background_consent_active=lambda _consent_id: True,
         )
         service.memory_owner_state = lambda _profile: ("openviking", 1)
+        # This contract fixture exercises consent expiry, not platform procfs
+        # identity; kernel peer identity is covered by the Linux socket suite.
+        service._native_process_identity = lambda _pid, _uid: "fixture-memory-process"
         source = HostContext.from_wire(service._issue_context(binding.uid, {
             "purpose": "memory-capture", "intent": "source-event", "trace_id": "trace-a",
             "lease_seconds": 10.0, "source_contexts": [],
@@ -303,6 +306,17 @@ class ChildDelegationContracts(unittest.TestCase):
                                              payload=b'{"argv":["again"]}', peer_pid=os.getpid(),
                                              timeout=10.0, cancelled=lambda: False)
         self.assertEqual(len(effects), 1)
+
+        restarted = AuthorityService(
+            signing_key=b"d" * 32, key_id="fixture",
+            bindings_by_uid={parent.uid: parent, child.uid: child},
+            rules={(parent_rule.capability, parent_rule.operation, parent_rule.target): parent_rule,
+                   (child_rule.capability, child_rule.operation, child_rule.target): child_rule},
+            handlers={(parent_rule.operation, parent_rule.target): parent_handler,
+                      (child_rule.operation, child_rule.target): child_handler},
+            policy=FixturePolicy(), delegations={delegation.delegation_id: delegation})
+        with self.assertRaisesRegex(AuthorityDenied, "effect grant is stale"):
+            restarted._assert_grant_current(parent_grant, parent, parent.uid)
 
 
 @unittest.skipUnless(hasattr(socket, "SO_PEERCRED"), "requires Linux kernel Unix peer credentials")
