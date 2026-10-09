@@ -17,7 +17,7 @@ from pathlib import Path
 INSTALLER_SRC = Path(__file__).resolve().parents[2] / "src"
 sys.path.insert(0, str(INSTALLER_SRC))
 
-from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
+from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Route, Sensitivity, default_public_route
 from hermes_installer.provider_gateway import LocalProviderGateway, materialize_hermes_profile_config, materialize_hermes_provider_plugin
 from hermes_installer.state import OwnedRoot
 
