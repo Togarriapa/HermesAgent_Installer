@@ -165,14 +165,15 @@ class ManagedProcessHandle:
         if not self._closed:
             await self.stop("maximum lifetime expired", timeout=5.0)
 
+    def _check_custody(self) -> None:
+        if self._closed or time.monotonic() - self._started >= self.spec.max_lifetime_seconds:
+            raise ManagedProcessError("managed process is closed or expired")
+        if _show(self.unit, "ControlGroup") != self.cgroup:
+            raise ManagedProcessError("systemd unit custody changed")
+
     def _check_live(self) -> None:
-        if self._closed:
-            raise ManagedProcessError("process handle is closed")
-        if time.monotonic() - self._started >= self.spec.max_lifetime_seconds:
-            raise ManagedProcessError("managed process maximum lifetime expired")
+        self._check_custody()
         try:
-            if _show(self.unit, "ControlGroup") != self.cgroup:
-                raise ManagedProcessError("systemd unit custody changed")
             if _proc_cgroup(self.identity.pid) != self.cgroup:
                 raise ManagedProcessError("managed process left its owned cgroup")
             if _proc_stat(self.identity.pid)[1] != self.identity.start_ticks:
@@ -182,7 +183,7 @@ class ManagedProcessHandle:
 
     def snapshot_children(self) -> tuple[ChildIdentity, ...]:
         """Return current cgroup members with pidfd, start-time, executable and ancestry proof."""
-        self._check_live()
+        self._check_custody()
         base = Path("/sys/fs/cgroup") / self.cgroup.lstrip("/")
         try:
             pids = [int(x) for x in (base / "cgroup.procs").read_text().split()]
@@ -327,10 +328,13 @@ class ManagedProcessSupervisor:
             while time.monotonic() < spec.startup_deadline_monotonic:
                 try:
                     cgroup = _show(unit, "ControlGroup")
-                    pid_text = _show(unit, "MainPID")
-                    pid = int(pid_text)
-                    if cgroup and cgroup.startswith("/") and pid > 1:
-                        break
+                    if cgroup and cgroup.startswith("/"):
+                        members = (Path("/sys/fs/cgroup") / cgroup.lstrip("/") / "cgroup.procs").read_text().split()
+                        matching = [int(candidate) for candidate in members
+                                    if _digest(Path(f"/proc/{candidate}/exe").resolve(strict=True)) == spec.artifact_sha256]
+                        if len(matching) == 1:
+                            pid = matching[0]
+                            break
                 except (ManagedProcessError, ValueError):
                     pass
                 if launcher.poll() is not None:
