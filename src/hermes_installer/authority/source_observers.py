@@ -12,6 +12,7 @@ import hmac
 import json
 import math
 import os
+import re
 import secrets
 import threading
 from dataclasses import dataclass, field
@@ -68,6 +69,7 @@ class SourceObserverEnrollment:
     allowed_parent_source_kinds: frozenset[str]
     max_event_bytes: int = MAX_OBSERVED_SOURCE_BYTES
     lease_seconds: int = 30
+    native_package_generation: str | None = None
 
     @classmethod
     def from_protected_record(cls, record: Mapping[str, Any]) -> "SourceObserverEnrollment":
@@ -79,7 +81,7 @@ class SourceObserverEnrollment:
             "source_action_id", "target_id", "recipient",
             "allowed_parent_source_kinds",
         }
-        optional = {"max_event_bytes", "lease_seconds"}
+        optional = {"max_event_bytes", "lease_seconds", "native_package_generation"}
         if (not isinstance(record, Mapping) or set(record) - (required | optional)
                 or required - set(record) or not isinstance(record["allowed_parent_source_kinds"], list)
                 or len(record["allowed_parent_source_kinds"]) > len(_ALLOWED_SOURCE_KINDS)
@@ -128,6 +130,12 @@ class SourceObserverEnrollment:
                 or type(self.lease_seconds) is not int
                 or not 1 <= self.lease_seconds <= MAX_EVENT_LEASE_SECONDS):
             raise ValueError("source observer bounds or parent channels are invalid")
+        if (self.native_package_generation is not None
+                and (not isinstance(self.native_package_generation, str)
+                     or not 1 <= len(self.native_package_generation) <= 256
+                     or any(ord(char) < 0x21 or char in "\\\x7f"
+                             for char in self.native_package_generation))):
+            raise ValueError("native package generation is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,6 +403,10 @@ class SourceObserverRegistry:
             raise AuthorityDenied("source.package", "root loaded-package custody proof is unavailable")
         loaded_package_proof = self._resolve_loaded_package_proof(
             identity, observer, package, now, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+        if (_selected_native_target is not None
+                and getattr(_selected_native_target, "loaded_package_proof", None)
+                != loaded_package_proof):
+            raise AuthorityDenied("source.package", "selected target loaded-package proof changed")
         if _selected_native_target is None and not callable(self.target_peer_resolver):
             raise AuthorityDenied("source.target", "root-selected target peer channel is unavailable")
         selected_target = (_selected_native_target if _selected_native_target is not None
@@ -823,7 +835,7 @@ class SourceObserverRegistry:
         observer = self.observers.get(observer_enrollment_id)
         if (observer is None or observer.source_kind != "native-input"
                 or observer.profile_id != selected.profile_id
-                or observer.generation != selected.native_package_generation
+                or observer.generation != selected.generation
                 or observer.package_id != selected.native_package_id):
             fd = getattr(target, "peer_pidfd", -1)
             if type(fd) is int and fd >= 0:
@@ -1022,7 +1034,11 @@ class SourceObserverRegistry:
 
     def cancel_source_payload_capsule(self, handle: SourceReceiptHandle) -> bool:
         """Revoke a not-yet-consumed receipt handle and scrub its payload."""
-        if not isinstance(handle, SourceReceiptHandle):
+        return self.revoke_source_handle(handle)
+
+    def revoke_source_handle(self, handle: SourceReceiptHandle) -> bool:
+        """Root-only exact-token revocation for receipt and delivery cleanup."""
+        if type(handle) is not SourceReceiptHandle:
             raise AuthorityDenied("source.capsule", "root capsule cancellation key is invalid")
         with self._lock:
             return self._revoke_source_handle_locked(str(handle))
@@ -1156,8 +1172,9 @@ class SourceObserverRegistry:
 
     def _resolve_package_role(self, observer: SourceObserverEnrollment) -> tuple[Any, Any]:
         """Join the fixed observer row to the currently selected protected package."""
+        package_generation = observer.native_package_generation or observer.generation
         try:
-            package = self.package_resolver(observer.package_id, observer.generation)
+            package = self.package_resolver(observer.package_id, package_generation)
         except Exception:
             raise AuthorityDenied("source.package", "selected native package is unavailable") from None
         adapter_records = getattr(package, "adapter_records", {}) if package is not None else {}
@@ -1175,14 +1192,14 @@ class SourceObserverRegistry:
         if (package is None
                 or getattr(package, "package_id", None) != observer.package_id
                 or getattr(package, "profile_id", None) != observer.profile_id
-                or getattr(package, "generation", None) != observer.generation
+                or getattr(package, "generation", None) != package_generation
                 or getattr(package, "compiled_closure_sha256", None) != observer.package_sha256
                 or len(role_candidates) != 1 or role_candidates[0] != observer.role_sha256
                 or adapter is None
                 or getattr(adapter, "adapter_id", None) != observer.role_id
                 or getattr(adapter, "target_id", None) != observer.target_id
                 or getattr(adapter, "recipient", None) != observer.recipient
-                or getattr(adapter, "generation", None) != observer.generation):
+                or getattr(adapter, "generation", None) != package_generation):
             raise AuthorityDenied("source.package", "selected package role or protected route binding is incomplete")
         package_fields = (
             "source_revision", "source_tree_sha256", "compiled_closure_artifact_id",
@@ -1415,6 +1432,7 @@ class RootNativeExecutionSelectionRegistry:
         self._lock = threading.RLock()
         self._selections: dict[str, _SelectedNativeExecutionRecord] = {}
         self._targets: dict[str, Any] = {}
+        self._loader_ready_event_ids: dict[str, str] = {}
         self._target_resolver: Any = None
         self._closed = False
 
@@ -1492,7 +1510,9 @@ class RootNativeExecutionSelectionRegistry:
             if (observer.source_kind != "native-input"
                     or observer.profile_id != admission_handle.profile_id
                     or observer.package_id != admission_handle.native_package_id
-                    or observer.generation != admission_handle.native_package_generation):
+                    or observer.generation != admission_handle.process_generation
+                    or (observer.native_package_generation is not None
+                        and observer.native_package_generation != admission_handle.native_package_generation)):
                 continue
             try:
                 package, adapter = self.source_observers._resolve_package_role(observer)
@@ -1500,7 +1520,8 @@ class RootNativeExecutionSelectionRegistry:
                 continue
             if (getattr(package, "package_id", None) == admission_handle.native_package_id
                     and getattr(package, "profile_id", None) == admission_handle.profile_id
-                    and getattr(package, "generation", None) == admission_handle.native_package_generation
+                    and getattr(package, "generation", None) ==
+                    (observer.native_package_generation or observer.generation)
                     and getattr(adapter, "action_id", None) == observer.source_action_id
                     and getattr(adapter, "adapter_id", None) == observer.role_id):
                 candidates.append((observer, package, adapter))
@@ -1579,9 +1600,25 @@ class RootNativeExecutionSelectionRegistry:
         if (package is not record.package or adapter is not record.adapter
                 or adapter.action_id != selected_execution.source_action_id
                 or package.package_id != selected_execution.native_package_id
-                or package.generation != selected_execution.native_package_generation):
+                or package.generation != (observer.native_package_generation or observer.generation)):
             raise AuthorityDenied("resource.native_selection", "selected package action closure changed")
         return selected_execution
+
+    def resolve_selection_handle(self, selection_handle: str) -> RootSelectedNativeExecution:
+        """Resolve an opaque root-issued handle to its exact live selection.
+
+        This is an in-process root lookup for turn-delivery composition. A
+        worker presenting the same string over RPC cannot select a task.
+        """
+        if (not isinstance(selection_handle, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", selection_handle) is None):
+            raise AuthorityDenied("resource.native_selection", "selected execution handle is malformed")
+        with self._lock:
+            record = self._selections.get(selection_handle)
+            if record is None:
+                raise AuthorityDenied("resource.native_selection", "selected execution handle is unknown or consumed")
+            selected = record.selection
+        return self.resolve_current_execution(selected)
 
     def attach_native_input_target_resolver(self, resolver: Any) -> None:
         """Attach the concrete PIDFD/loaded-package target resolver exactly once."""
@@ -1640,6 +1677,15 @@ class RootNativeExecutionSelectionRegistry:
                     pass
                 raise AuthorityDenied("resource.native_target", "native input target is stale or already selected")
             self._targets[selected.selection_handle] = target
+            ready_event_id = getattr(loaded, "loader_ready_event_id", None)
+            if not isinstance(ready_event_id, str) or not ready_event_id:
+                self._targets.pop(selected.selection_handle, None)
+                try:
+                    os.close(target.peer_pidfd)
+                except OSError:
+                    pass
+                raise AuthorityDenied("resource.native_target", "loaded package proof lacks a ready event")
+            self._loader_ready_event_ids[selected.selection_handle] = ready_event_id
         return target
 
     def consume_selected_native_input_target(
@@ -1653,6 +1699,50 @@ class RootNativeExecutionSelectionRegistry:
             raise AuthorityDenied("resource.native_target", "native target was not issued for this selection")
         return retained
 
+    def loader_ready_event_id(self, selected_execution: RootSelectedNativeExecution) -> str:
+        selected = self.resolve_current_execution(selected_execution)
+        with self._lock:
+            event_id = self._loader_ready_event_ids.get(selected.selection_handle)
+        if not isinstance(event_id, str) or not event_id:
+            raise AuthorityDenied("resource.native_loader", "selected execution has no retained loader-ready event")
+        return event_id
+
+    def revalidate_selected_native_peer(
+        self, selected_execution: RootSelectedNativeExecution, *, peer_uid: int,
+        peer_pid: int, peer_pidfd: int, loader_ready_event_id: str,
+    ) -> Any:
+        """Recheck the selected task and loaded closure against an RPC peer."""
+        selected = self.resolve_current_execution(selected_execution)
+        resolver = self._target_resolver
+        if resolver is None:
+            raise AuthorityDenied("resource.native_target", "native target resolver is unavailable")
+        target = resolver.resolve_selected_native_input_target(selected)
+        try:
+            identity = self.source_observers.process_resolver(
+                peer_pid, peer_pidfd, profile_id=selected.profile_id,
+                generation=selected.generation)
+            if (type(peer_uid) is not int or peer_uid <= 0
+                    or type(peer_pid) is not int or peer_pid <= 0
+                    or type(peer_pidfd) is not int or peer_pidfd < 0
+                    or target.peer_pid != peer_pid
+                    or target.live_peer_identity != identity
+                    or identity is None or identity.kernel_uid != peer_uid
+                    or target.profile_id != selected.profile_id
+                    or target.generation != selected.generation
+                    or target.process_id != selected.process_handle.process_id
+                    or target.service_generation_digest != selected.service_generation_digest
+                    or target.expires_monotonic <= self.monotonic()
+                    or getattr(target.loaded_package_proof, "loader_ready_event_id", None)
+                    != loader_ready_event_id
+                    or self.loader_ready_event_id(selected) != loader_ready_event_id):
+                raise AuthorityDenied("resource.native_peer", "RPC peer is not the selected loaded native task")
+            return identity
+        finally:
+            try:
+                os.close(target.peer_pidfd)
+            except OSError:
+                pass
+
     def release_selection(self, selected_execution: RootSelectedNativeExecution) -> None:
         if type(selected_execution) is not RootSelectedNativeExecution:
             raise AuthorityDenied("resource.native_selection", "selected execution proof type is invalid")
@@ -1662,6 +1752,7 @@ class RootNativeExecutionSelectionRegistry:
                 raise AuthorityDenied("resource.native_selection", "selected execution is forged or consumed")
             self._selections.pop(selected_execution.selection_handle, None)
             target = self._targets.pop(selected_execution.selection_handle, None)
+            self._loader_ready_event_ids.pop(selected_execution.selection_handle, None)
         if target is not None:
             try:
                 os.close(target.peer_pidfd)
@@ -1674,6 +1765,13 @@ class RootNativeExecutionSelectionRegistry:
                     or record.authority_epoch != self.service.authority_epoch
                     or record.selection.service_generation_digest != self.service.service_generation_digest):
                 self._selections.pop(handle, None)
+                self._loader_ready_event_ids.pop(handle, None)
+                target = self._targets.pop(handle, None)
+                if target is not None:
+                    try:
+                        os.close(target.peer_pidfd)
+                    except OSError:
+                        pass
 
     def close(self) -> None:
         with self._lock:
@@ -1681,10 +1779,314 @@ class RootNativeExecutionSelectionRegistry:
             self._selections.clear()
             targets = tuple(self._targets.values())
             self._targets.clear()
+            self._loader_ready_event_ids.clear()
         for target in targets:
             try:
                 os.close(target.peer_pidfd)
             except OSError:
+                pass
+
+
+@dataclass(frozen=True, slots=True)
+class NativeInitialInputDelivery:
+    """Opaque root response after the selected native peer takes its input."""
+
+    schema: int
+    source_receipt_handle: str
+    selected_execution_handle: str
+    input_sha256: str
+    input_size_bytes: int
+    expires_monotonic: float
+    turn_handle: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.schema != 1
+                or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.source_receipt_handle) is None
+                or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.selected_execution_handle) is None
+                or not re.fullmatch(r"[0-9a-f]{64}", self.input_sha256)
+                or type(self.input_size_bytes) is not int
+                or not 1 <= self.input_size_bytes <= MAX_OBSERVED_SOURCE_BYTES
+                or not math.isfinite(self.expires_monotonic)
+                or (self.turn_handle is not None
+                    and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle) is None)):
+            raise ValueError("native initial-input delivery response is malformed")
+
+    def to_wire(self) -> dict[str, Any]:
+        wire = {
+            "schema": self.schema,
+            "source_receipt_handle": self.source_receipt_handle,
+            "selected_execution_handle": self.selected_execution_handle,
+            "input_sha256": self.input_sha256,
+            "input_size_bytes": self.input_size_bytes,
+            "expires_monotonic": self.expires_monotonic,
+        }
+        if self.turn_handle is not None:
+            wire["turn_handle"] = self.turn_handle
+        return wire
+
+
+@dataclass(slots=True)
+class _PendingNativeInputDelivery:
+    selected_execution: RootSelectedNativeExecution = field(repr=False)
+    event: Any = field(repr=False)
+    handle: str
+    pid: int
+    uid: int
+    profile_id: str
+    generation: str
+    identity: Any = field(repr=False)
+    authority_epoch: str
+    service_generation_digest: str
+    expires_monotonic: float
+    turn_handle: str | None = None
+    state: str = "pending"
+    response: NativeInitialInputDelivery | None = None
+
+
+class RootNativeInputDeliveryRegistry:
+    """One-use, selector-free native.input.take queue for captured task input.
+
+    The root queues an already captured receipt against its exact selected
+    execution. The producer supplies no handle or identity selector: SO_PEERCRED
+    and PIDFD identify the only queued input it may consume.
+    """
+
+    MAX_PENDING = 128
+
+    def __init__(self, source_observer_registry: SourceObserverRegistry,
+                 selected_native_execution_registry: RootNativeExecutionSelectionRegistry,
+                 process_custody_registry: Any, *,
+                 monotonic: Callable[[], float] | None = None):
+        from ..managed_process_custodian import ManagedProcessEffectHandler
+
+        if (type(source_observer_registry) is not SourceObserverRegistry
+                or type(selected_native_execution_registry) is not RootNativeExecutionSelectionRegistry
+                or selected_native_execution_registry.source_observers is not source_observer_registry
+                or not isinstance(process_custody_registry, ManagedProcessEffectHandler)):
+            raise AuthorityDenied("native.input.delivery", "root native input delivery dependencies are unavailable")
+        self.source_observers = source_observer_registry
+        self.selected_executions = selected_native_execution_registry
+        self.process_custody = process_custody_registry
+        self.service = source_observer_registry.service
+        self.monotonic = monotonic or self.service.monotonic
+        if not callable(self.monotonic):
+            raise ValueError("native input delivery monotonic clock is required")
+        self._lock = threading.RLock()
+        self._changed = threading.Condition(self._lock)
+        self._pending: dict[str, _PendingNativeInputDelivery] = {}
+        self._closed = False
+
+    @classmethod
+    def from_root_runtime(cls, source_observer_registry: SourceObserverRegistry,
+                          selected_native_execution_registry: RootNativeExecutionSelectionRegistry,
+                          process_custody_registry: Any) -> "RootNativeInputDeliveryRegistry":
+        return cls(source_observer_registry, selected_native_execution_registry,
+                   process_custody_registry)
+
+    def queue_selected_input(self, selected_execution: RootSelectedNativeExecution,
+                             event: Any, *, turn_handle: str | None = None) -> None:
+        """Retain an actual root-captured input event until its producer takes it."""
+        from .native_input_observer import RootNativeInputEvent
+
+        selected = self.selected_executions.resolve_current_execution(selected_execution)
+        if (type(event) is not RootNativeInputEvent
+                or event.schema != 1 or event.input_origin_kind != "root-admitted-task"
+                or event.producer_profile_id != selected.profile_id
+                or event.producer_generation != selected.generation
+                or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", event.source_receipt_handle) is None
+                or not isinstance(event.payload_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", event.payload_sha256)
+                or type(event.payload_size_bytes) is not int
+                or not 1 <= event.payload_size_bytes <= MAX_OBSERVED_SOURCE_BYTES
+                or event.parent_closure_digest != selected.execution_handle.parent_closure_digest
+                or event.expires_monotonic <= self.monotonic()
+                or event.native_loader_ready_event_id
+                != self.selected_executions.loader_ready_event_id(selected)
+                or (turn_handle is not None
+                    and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", turn_handle) is None)):
+            raise AuthorityDenied("native.input.delivery", "captured event differs from selected native task")
+        source = self.source_observers
+        with source._lock:
+            capsule_entry = source._payload_capsules.get(event.source_receipt_handle)
+            delivery = source._receipt_delivery_bindings.get(event.source_receipt_handle)
+            if capsule_entry is None or delivery is None:
+                raise AuthorityDenied("native.input.delivery", "captured source receipt is not retained")
+            receipt, capsule, payload, epoch = capsule_entry
+            observer = source.observers.get(capsule.observer_enrollment_id)
+            if (epoch != self.service.authority_epoch
+                    or receipt.source_kind != "native-input"
+                    or observer is None or observer.observer_enrollment_id != selected.observer_enrollment_id
+                    or observer.profile_id != selected.profile_id
+                    or observer.generation != selected.generation
+                    or observer.package_id != selected.native_package_id
+                    or observer.source_action_id != selected.source_action_id
+                    or hashlib.sha256(payload).hexdigest() != event.payload_sha256
+                    or len(payload) != event.payload_size_bytes
+                    or capsule.payload_sha256 != event.payload_sha256
+                    or capsule.parent_closure_digest != event.parent_closure_digest
+                    or delivery.delivered
+                    or delivery.authority_epoch != self.service.authority_epoch
+                    or delivery.profile_id != selected.profile_id
+                    or delivery.generation != selected.generation
+                    or receipt.profile_id != selected.profile_id
+                    or receipt.process_generation != selected.generation
+                    or receipt.uid != delivery.uid
+                    or event.expires_monotonic > min(delivery.expires, selected.expires_monotonic)):
+                raise AuthorityDenied("native.input.delivery", "retained source receipt does not match captured input")
+            try:
+                duplicated = os.dup(delivery.pidfd)
+            except OSError:
+                raise AuthorityDenied("native.input.delivery", "selected native peer lease is unavailable") from None
+            pid, uid, identity = delivery.pid, delivery.uid, delivery.identity
+        try:
+            current_identity = source.process_resolver(
+                pid, duplicated, profile_id=selected.profile_id, generation=selected.generation)
+            if current_identity is None or current_identity != identity or current_identity.kernel_uid != uid:
+                raise AuthorityDenied("native.input.delivery", "captured input peer identity is no longer current")
+            self.selected_executions.revalidate_selected_native_peer(
+                selected, peer_uid=uid, peer_pid=pid, peer_pidfd=duplicated,
+                loader_ready_event_id=event.native_loader_ready_event_id,
+            )
+        finally:
+            os.close(duplicated)
+        row = _PendingNativeInputDelivery(
+            selected_execution=selected, event=event, handle=event.source_receipt_handle,
+            pid=pid, uid=uid, profile_id=selected.profile_id, generation=selected.generation,
+            identity=identity, authority_epoch=self.service.authority_epoch,
+            service_generation_digest=selected.service_generation_digest,
+            expires_monotonic=min(
+                float(event.expires_monotonic), float(delivery.expires),
+                float(selected.expires_monotonic)), turn_handle=turn_handle,
+        )
+        with self._changed:
+            self._prune_locked(self.monotonic())
+            if (self._closed or len(self._pending) >= self.MAX_PENDING
+                    or selected.selection_handle in self._pending):
+                raise AuthorityDenied("native.input.capacity", "selected native input queue is full or replayed")
+            self._pending[selected.selection_handle] = row
+            self._changed.notify_all()
+
+    def take_selected_native_input(self, *, peer_uid: int, peer_pid: int,
+                                   peer_pidfd: int) -> NativeInitialInputDelivery | None:
+        """Take the single queue entry for this authenticated kernel peer."""
+        if (type(peer_uid) is not int or peer_uid <= 0 or type(peer_pid) is not int
+                or peer_pid <= 0 or type(peer_pidfd) is not int or peer_pidfd < 0):
+            raise AuthorityDenied("native.input.take", "authenticated producer peer is malformed")
+        with self._changed:
+            self._prune_locked(self.monotonic())
+            candidates = [row for row in self._pending.values()
+                          if row.state == "pending" and row.pid == peer_pid and row.uid == peer_uid]
+            if not candidates:
+                return None
+            if len(candidates) != 1:
+                raise AuthorityDenied("native.input.take", "authenticated peer has ambiguous queued inputs")
+            row = candidates[0]
+            row.state = "taking"
+        try:
+            self.selected_executions.revalidate_selected_native_peer(
+                row.selected_execution, peer_uid=peer_uid, peer_pid=peer_pid,
+                peer_pidfd=peer_pidfd,
+                loader_ready_event_id=row.event.native_loader_ready_event_id,
+            )
+            handle = self.source_observers.take_source_receipt(
+                row.handle, peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+            if str(handle) != row.handle:
+                raise AuthorityDenied("native.input.take", "source registry delivered a different receipt")
+            self.source_observers.resolve_delivered_source_receipt(
+                row.handle, peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+            response = NativeInitialInputDelivery(
+                schema=1, source_receipt_handle=row.handle,
+                selected_execution_handle=row.selected_execution.selection_handle,
+                input_sha256=row.event.payload_sha256,
+                input_size_bytes=row.event.payload_size_bytes,
+                expires_monotonic=row.expires_monotonic,
+                turn_handle=row.turn_handle,
+            )
+        except BaseException:
+            with self._changed:
+                self._pending.pop(row.selected_execution.selection_handle, None)
+                self._changed.notify_all()
+            self.source_observers.revoke_source_handle(SourceReceiptHandle(row.handle))
+            raise
+        with self._changed:
+            current = self._pending.get(row.selected_execution.selection_handle)
+            if current is not row or self._closed:
+                self._pending.pop(row.selected_execution.selection_handle, None)
+                self._changed.notify_all()
+                self.source_observers.revoke_source_handle(SourceReceiptHandle(row.handle))
+                raise AuthorityDenied("native.input.take", "queued input was cancelled during delivery")
+            row.response = response
+            row.state = "delivered"
+            self._changed.notify_all()
+        return response
+
+    def wait_delivered(self, selected_execution: RootSelectedNativeExecution, *,
+                       timeout: float, cancelled: Callable[[], bool]) -> NativeInitialInputDelivery:
+        """Wait only for the actual producer RPC take, with a finite deadline."""
+        selected = self.selected_executions.resolve_current_execution(selected_execution)
+        if (type(timeout) not in (int, float) or not math.isfinite(timeout)
+                or not 0 < timeout <= 30.0 or not callable(cancelled)):
+            raise AuthorityDenied("native.input.wait", "delivery wait bounds are invalid")
+        deadline = min(self.monotonic() + timeout, selected.expires_monotonic)
+        with self._changed:
+            while True:
+                row = self._pending.get(selected.selection_handle)
+                if row is None or row.selected_execution is not selected:
+                    raise AuthorityDenied("native.input.wait", "selected input is not queued")
+                if row.state == "delivered" and row.response is not None:
+                    self._pending.pop(selected.selection_handle, None)
+                    return row.response
+                if row.state == "failed" or self._closed:
+                    raise AuthorityDenied("native.input.wait", "selected input delivery was revoked")
+                if cancelled():
+                    self._pending.pop(selected.selection_handle, None)
+                    self.source_observers.revoke_source_handle(SourceReceiptHandle(row.handle))
+                    raise AuthorityDenied("native.input.cancelled", "selected input delivery was cancelled")
+                remaining = deadline - self.monotonic()
+                if remaining <= 0:
+                    self._pending.pop(selected.selection_handle, None)
+                    self.source_observers.revoke_source_handle(SourceReceiptHandle(row.handle))
+                    raise AuthorityDenied("native.input.wait", "selected producer did not take input before its deadline")
+                self._changed.wait(min(remaining, 0.05))
+
+    def cancel_selected_input(self, selected_execution: RootSelectedNativeExecution) -> bool:
+        """Revoke the queued handle when its root task is cancelled or fails."""
+        if type(selected_execution) is not RootSelectedNativeExecution:
+            raise AuthorityDenied("native.input.cancelled", "selected execution token is invalid")
+        with self._changed:
+            row = self._pending.get(selected_execution.selection_handle)
+            if row is None or row.selected_execution is not selected_execution:
+                return False
+            self._pending.pop(selected_execution.selection_handle, None)
+            self._changed.notify_all()
+        return self.source_observers.revoke_source_handle(SourceReceiptHandle(row.handle))
+
+    def _prune_locked(self, now: float) -> None:
+        for key, row in tuple(self._pending.items()):
+            if (row.expires_monotonic <= now
+                    or row.authority_epoch != self.service.authority_epoch
+                    or row.service_generation_digest != self.service.service_generation_digest):
+                self._pending.pop(key, None)
+                try:
+                    self.source_observers.revoke_source_handle(SourceReceiptHandle(row.handle))
+                except AuthorityDenied:
+                    pass
+
+    def prune(self) -> None:
+        with self._changed:
+            self._prune_locked(self.monotonic())
+            self._changed.notify_all()
+
+    def close(self) -> None:
+        with self._changed:
+            self._closed = True
+            rows = tuple(self._pending.values())
+            self._pending.clear()
+            self._changed.notify_all()
+        for row in rows:
+            try:
+                self.source_observers.revoke_source_handle(SourceReceiptHandle(row.handle))
+            except AuthorityDenied:
                 pass
 
 
