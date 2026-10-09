@@ -515,8 +515,8 @@ class Dispatcher:
             if started >= deadline:
                 raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
             requires_tools = request_requires_tools(payload)
-            if not isinstance(tool_request, bool) or tool_request != requires_tools:
-                raise PolicyDenied("authorization.request_mismatch", "Tool capability flag does not match the request body")
+            if not host_bound and (not isinstance(tool_request, bool) or tool_request != requires_tools):
+                raise PolicyDenied("authorization.request_mismatch", "Synthetic tool capability flag does not match the request body")
             capability = ("provider-tool-call" if requires_tools else "provider-inference") if host_bound else (
                 "tool-call" if requires_tools else "inference")
             payload_sha256 = __import__("hashlib").sha256(payload).hexdigest()
@@ -527,8 +527,6 @@ class Dispatcher:
                 initial_authorization = None
                 sensitivity = _host_sensitivity(context)
             else:
-                if not isinstance(tool_request, bool) or tool_request != requires_tools:
-                    raise PolicyDenied("authorization.request_mismatch", "Tool capability flag does not match the request body")
                 lineage_claim = ",".join(value.name for value in context.derived_from)
                 intent_material = chr(31).join((context.profile_id, context.trace_id, context.purpose,
                     context.sensitivity.name, lineage_claim, capability, model, payload_sha256))
