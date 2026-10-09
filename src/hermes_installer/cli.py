@@ -6,6 +6,8 @@ import argparse
 import json
 import os
 import sys
+import sqlite3
+import stat
 import shlex
 from dataclasses import asdict
 from pathlib import Path
@@ -116,6 +118,32 @@ def _host_findings(config: InstallerConfig | None = None) -> tuple[Finding, ...]
     return tuple(items)
 
 
+
+def _resume_checkpoint_exists(state_path: Path) -> bool:
+    """Read-only gate so a fresh resume cannot create a root, marker, database, or WAL."""
+    path = state_path.expanduser().absolute()
+    if path.is_symlink() or not path.is_dir():
+        return False
+    marker = path / ".hermes-installer-owned"
+    database = path / "journal.sqlite3"
+    try:
+        info = path.stat()
+        marker_info = marker.lstat()
+        db_info = database.lstat()
+        if (info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077
+            or marker.is_symlink() or not stat.S_ISREG(marker_info.st_mode)
+            or marker_info.st_uid != os.getuid() or stat.S_IMODE(marker_info.st_mode) & 0o077
+            or marker.read_bytes() != b"schema=1\n"
+            or database.is_symlink() or not stat.S_ISREG(db_info.st_mode)
+            or db_info.st_uid != os.getuid() or stat.S_IMODE(db_info.st_mode) & 0o077):
+            return False
+        uri = database.as_uri() + "?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=2) as db:
+            row = db.execute("SELECT 1 FROM operations WHERE id='installer:selection'").fetchone()
+        return row is not None
+    except (OSError, sqlite3.Error, ValueError):
+        return False
+
 def run(args: argparse.Namespace) -> CommandResult:
     if args.command == "init-config":
         path = args.config or Path("installer.example.json")
@@ -156,26 +184,28 @@ def run(args: argparse.Namespace) -> CommandResult:
         state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
         resume_command = "./install.sh resume" + (f" --config {shlex.quote(str(args.config))}" if args.config else "")
         try:
+            if args.command == "resume" and not _resume_checkpoint_exists(state_path):
+                return CommandResult("resume", OutcomeState.FAILED, "There is no readable installer checkpoint to resume; the state directory was not created.", exit_code=2)
             data_root = OwnedRoot(data_path); data_root.ensure()
             state_root = OwnedRoot(state_path); state_root.ensure()
             journal = Journal(state_root.path("journal.sqlite3"))
             selection = {"schema_version": config.schema_version, "timezone": config.timezone,
                 "paths": config.paths, "components": config.components, "privacy": config.privacy,
                 "remote_desktop": config.remote_desktop}
-            prior = journal.operation("installer:selection")
-            if args.command == "resume" and prior is None:
-                return CommandResult("resume", OutcomeState.FAILED, "There is no installer operation to resume; use install first.", exit_code=2)
-            if prior is not None and prior["payload"].get("config") != selection:
-                return CommandResult(args.command, OutcomeState.FAILED, "Configuration differs from the durable installer selection; restore the original validated config before resuming.", resume_command=resume_command, exit_code=2)
-            if prior is None:
-                journal.checkpoint("installer:selection", "active", {"config": selection,
-                    "config_path": str(args.config) if args.config else None})
             with process_lock(state_root.path("installer.lock")):
+                prior = journal.operation("installer:selection")
+                if args.command == "resume" and prior is None:
+                    return CommandResult("resume", OutcomeState.FAILED, "There is no installer operation to resume; no stages were started.", exit_code=2)
+                if prior is not None and prior["payload"].get("config") != selection:
+                    return CommandResult(args.command, OutcomeState.FAILED, "Configuration differs from the durable installer selection; restore the original validated config before resuming.", resume_command=resume_command, exit_code=2)
+                if prior is None:
+                    journal.checkpoint("installer:selection", "active", {"config": selection,
+                        "config_path": str(args.config) if args.config else None})
                 report = HermesBootstrap(data_root, journal).install(include_desktop=config.components.get("hermes_desktop", True))
-            journal.checkpoint("installer:selection", "bootstrap-complete", {"config": selection,
-                "config_path": str(args.config) if args.config else None, "commit": report.commit,
-                "generation": report.generation, "agent_ready": report.agent_ready,
-                "desktop_built": report.desktop_built})
+                journal.checkpoint("installer:selection", "bootstrap-complete", {"config": selection,
+                    "config_path": str(args.config) if args.config else None, "commit": report.commit,
+                    "generation": report.generation, "agent_ready": report.agent_ready,
+                    "desktop_built": report.desktop_built})
         except (BootstrapError, OwnershipError, OSError, RuntimeError, ValueError) as exc:
             return CommandResult(args.command, OutcomeState.FAILED, str(exc),
                 resume_command=resume_command, exit_code=1)

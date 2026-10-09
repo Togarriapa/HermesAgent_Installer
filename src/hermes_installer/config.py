@@ -16,6 +16,8 @@ class ConfigError(ValueError):
 
 _TOP_LEVEL = {"schema_version", "timezone", "paths", "components", "privacy", "remote_desktop"}
 _PATHS = {"data_root", "state_root", "cache_root", "model_root"}
+_PRIVACY = {"additional_metered_budget"}
+_REMOTE_FIELDS = {"hostname", "allowed_emails", "management_token_ref", "zone_id"}
 _COMPONENTS = {"hermes_agent", "hermes_desktop", "registry", "providers", "memory", "mcp", "colibri", "coral", "remote_desktop"}
 _HOSTNAME = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*\Z")
 _EMAIL = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+\Z")
@@ -62,14 +64,15 @@ def validate_config(data: Any) -> InstallerConfig:
         raise ConfigError("component selections must be booleans")
 
     privacy = data.get("privacy", {})
-    if not isinstance(privacy, dict):
-        raise ConfigError("privacy must be an object")
-    if privacy.get("additional_metered_budget", 0) != 0:
+    if not isinstance(privacy, dict) or set(privacy) - _PRIVACY:
+        raise ConfigError("privacy may contain only additional_metered_budget")
+    budget = privacy.get("additional_metered_budget", 0)
+    if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not __import__("math").isfinite(budget) or budget != 0:
         raise ConfigError("additional_metered_budget must remain zero until a reviewed budget is configured")
 
     remote = data.get("remote_desktop", {})
-    if not isinstance(remote, dict):
-        raise ConfigError("remote_desktop must be an object")
+    if not isinstance(remote, dict) or set(remote) - _REMOTE_FIELDS:
+        raise ConfigError("remote_desktop may contain only hostname, allowed_emails, management_token_ref and zone_id; inline credentials are forbidden")
     if "hostname" in remote:
         hostname = remote["hostname"]
         if not isinstance(hostname, str) or (hostname and not _HOSTNAME.fullmatch(hostname.lower())):
@@ -81,6 +84,8 @@ def validate_config(data: Any) -> InstallerConfig:
             raise ConfigError("remote_desktop.allowed_emails must contain valid addresses when a hostname is configured")
     if "management_token_ref" in remote and (not isinstance(remote["management_token_ref"], str) or not remote["management_token_ref"].startswith(_SECRET_REF_PREFIXES)):
         raise ConfigError("remote_desktop.management_token_ref must use keyring://, secret://, file://, or env://, never a token value")
+    if "zone_id" in remote and (not isinstance(remote["zone_id"], str) or not remote["zone_id"].strip()):
+        raise ConfigError("remote_desktop.zone_id must be a non-empty discovered Cloudflare zone id")
     if components.get("remote_desktop"):
         if not remote.get("hostname"):
             raise ConfigError("remote_desktop.hostname is required when remote_desktop is selected; no default hostname is provided")

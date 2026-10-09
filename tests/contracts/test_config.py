@@ -38,6 +38,17 @@ class ConfigContractTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             validate_config({"schema_version": 1, "surprise": True})
 
+    def test_inline_secrets_unknown_remote_fields_and_unknown_privacy_fields_are_rejected(self) -> None:
+        base={"schema_version":1,"components":{"remote_desktop":True},"remote_desktop":{"hostname":"desk.example.org","allowed_emails":["a@example.org"],"management_token_ref":"keyring://cf/token"}}
+        for extra in ({"management_token":"plaintext-secret"},{"api_token":"plaintext-secret"},{"password":"plaintext-secret"}):
+            data={**base,"remote_desktop":{**base["remote_desktop"],**extra}}
+            with self.subTest(extra=tuple(extra)), self.assertRaises(ConfigError):
+                validate_config(data)
+        with self.assertRaises(ConfigError):
+            validate_config({"schema_version":1,"privacy":{"unknown":True}})
+        with self.assertRaises(ConfigError):
+            validate_config({"schema_version":1,"privacy":{"additional_metered_budget":False}})
+
     def test_remote_selection_requires_explicit_hostname_emails_and_secret_reference(self) -> None:
         with self.assertRaises(ConfigError):
             validate_config({"schema_version": 1, "components": {"remote_desktop": True}})
