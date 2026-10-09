@@ -373,3 +373,11 @@ The implementation SHALL resolve actual installed release custody and full admit
 #### Scenario: Digest without source closure
 - **WHEN** only a digest or caller provenance label is available
 - **THEN** no trusted input receipt or admitted native effect is created.
+
+### Requirement: Supported loader and current task controller
+
+The implementation SHALL use the exact named systemd FD transfer and kernel-authenticated loader progress contract, and SHALL distinguish historical source lineage from current verified execution controller.
+
+#### Scenario: Historical capsule mistaken for current peer
+- **WHEN** only serialized source metadata or manager socket credentials are available
+- **THEN** no live producer or loader proof is fabricated.
