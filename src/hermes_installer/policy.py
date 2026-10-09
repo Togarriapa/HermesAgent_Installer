@@ -466,17 +466,19 @@ class Dispatcher:
             raise PolicyDenied("authorization.stale", "Host provider authorization is stale, mismatched, or insufficient")
         return grant
 
-    def _wait(self, context: DispatchContext, delay: float, deadline: float) -> None:
+    def _wait(self, context: object, delay: float, deadline: float,
+              cancelled: Callable[[], bool] | None = None) -> None:
+        cancellation = cancelled if callable(cancelled) else getattr(context, "cancelled", lambda: False)
         remaining = min(max(0.0, delay), max(0.0, deadline - self.clock()))
         while remaining > 0:
-            if context.cancelled():
+            if cancellation():
                 raise PolicyDenied("dispatch.cancelled", "Request was cancelled during retry delay")
             step = min(0.25, remaining)
             self.sleep(step)
             remaining -= step
             if self.clock() >= deadline:
                 raise PolicyDenied("dispatch.deadline", "Request deadline elapsed during retry delay")
-        if context.cancelled():
+        if cancellation():
             raise PolicyDenied("dispatch.cancelled", "Request was cancelled during retry delay")
 
     def dispatch(self, context: object, model: str, payload: bytes, *, input_tokens: int,
@@ -628,13 +630,13 @@ class Dispatcher:
                             def dispatch_cancelled() -> bool:
                                 return request_cancelled() or self.clock() >= authorization_expires
                             if host_bound:
+                                effect_retry_index += 1
                                 response = self.transport(route, model, normalized_payload,
                                     output_token_limit=output_token_limit, timeout=timeout,
                                     trace_id=context.trace_id, cancelled=dispatch_cancelled,
                                     effect_grant=effect_grant, target=effect_target,
                                     recipient=effect_recipient, request_digest=effect_digest,
-                                    retry_index=effect_retry_index)
-                                effect_retry_index += 1
+                                    retry_index=effect_retry_index - 1)
                             else:
                                 response = self.transport(route, model, normalized_payload,
                                     output_token_limit=output_token_limit, timeout=timeout,
@@ -651,9 +653,9 @@ class Dispatcher:
                         if 200 <= response.status < 300 and response.input_tokens >= 0 and response.output_tokens >= 0:
                             actual = (response.input_tokens * route.input_usd_per_million + response.output_tokens * route.output_usd_per_million) / 1_000_000
                         self.ledger.settle(reservation, actual)
-                        if context.cancelled():
+                        if request_cancelled():
                             raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider dispatch")
-                        if self.clock() >= authorization_expires
+                        if self.clock() >= authorization_expires:
                             raise PolicyDenied("authorization.expired", "Host authorization expired during provider dispatch")
                         if self.clock() >= deadline:
                             raise PolicyDenied("dispatch.deadline", "Request deadline elapsed during provider dispatch")
@@ -676,7 +678,7 @@ class Dispatcher:
                             delay = min(1.0, self.policy.max_retry_after_seconds)
                     else:
                         delay = min(float(attempt + 1), self.policy.max_retry_after_seconds)
-                    self._wait(context, delay, deadline)
+                    self._wait(context, delay, deadline, request_cancelled)
             if last_status == 429:
                 raise PolicyDenied("provider.rate_limited", "Provider rate limit persisted after bounded retries")
             raise PolicyDenied("route.unavailable", "No eligible provider route completed this request")
