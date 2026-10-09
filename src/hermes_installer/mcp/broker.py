@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Protocol
 
 from ..authority import (
@@ -48,8 +49,8 @@ class ProtectedMCPService:
     channel: str
     allowed_tools: frozenset[str]
     transport_binding_id: str
+    reviewed_revision: str
     selection_arguments: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
-    reviewed_revision: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.service_id, str) or not _ID.fullmatch(self.service_id):
@@ -63,18 +64,20 @@ class ProtectedMCPService:
         if not isinstance(self.transport_binding_id, str) or not _ID.fullmatch(self.transport_binding_id):
             raise ValueError("protected MCP transport binding is invalid")
         if (not isinstance(self.reviewed_revision, str)
-                or self.reviewed_revision and not re.fullmatch(r"[0-9a-f]{64}", self.reviewed_revision)):
-            raise ValueError("protected MCP reviewed revision is invalid")
+                or not re.fullmatch(r"[0-9a-f]{64}", self.reviewed_revision)):
+            raise ValueError("a pinned reviewed MCP service revision is required")
         if not isinstance(self.selection_arguments, Mapping):
             raise ValueError("protected MCP selection policy is invalid")
-        for tool, keys in self.selection_arguments.items():
+        policies = dict(self.selection_arguments)
+        for tool, keys in policies.items():
             if (not isinstance(tool, str) or tool not in self.allowed_tools
                     or not isinstance(keys, tuple) or not keys
                     or len(set(keys)) != len(keys)
                     or any(not isinstance(key, str) or not _ID.fullmatch(key) for key in keys)):
                 raise ValueError("protected MCP selection policy is invalid")
-        if self.allowed_tools - set(self.selection_arguments):
+        if self.allowed_tools - set(policies):
             raise ValueError("every protected read tool requires an exact selection schema")
+        object.__setattr__(self, "selection_arguments", MappingProxyType(policies))
 
 
 class BrokerMCPTransport(Protocol):
