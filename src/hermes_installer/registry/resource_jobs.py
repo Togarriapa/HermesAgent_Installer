@@ -882,7 +882,7 @@ class RootTaskInitialInputReceipt:
                 or any(not isinstance(getattr(self, name), str)
                        or not _ID.fullmatch(getattr(self, name)) for name in identities)
                 or any(not _DIGEST.fullmatch(getattr(self, name)) for name in digests)
-                or type(self.stdin_size_bytes) is not int or not 0 <= self.stdin_size_bytes <= 262_144
+                or type(self.stdin_size_bytes) is not int or not 1 <= self.stdin_size_bytes <= 262_144
                 or any(isinstance(value, bool) or not isinstance(value, (int, float))
                        or not math.isfinite(value)
                        for value in (self.issued_monotonic, self.expires_monotonic))
