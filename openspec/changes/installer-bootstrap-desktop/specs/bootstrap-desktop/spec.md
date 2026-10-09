@@ -276,3 +276,11 @@ The implementation SHALL resolve actual installed release custody and full admit
 #### Scenario: Digest without source closure
 - **WHEN** only a digest or caller provenance label is available
 - **THEN** no trusted input receipt or admitted native effect is created.
+
+### Requirement: Protected setup store and bounded probe response
+
+The implementation SHALL resolve the protected setup catalog/store and validate the exact bounded private probe response against current root admission and actual observations.
+
+#### Scenario: Untrusted injected catalog or response
+- **WHEN** selected artifact custody or probe envelope/observation binding differs
+- **THEN** provisioning/readiness cannot be marked complete.

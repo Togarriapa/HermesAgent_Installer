@@ -200,3 +200,19 @@ The root SHALL validate actual complete task stdout using its exact selected pro
 #### Scenario: Unregistered output schema
 - **WHEN** output lacks a current registered finite schema validator or violates its exact bounds
 - **THEN** completion fails and no success capsule advances dependent nodes.
+
+### Requirement: Protected setup store and bounded probe response
+
+The implementation SHALL resolve the protected setup catalog/store and validate the exact bounded private probe response against current root admission and actual observations.
+
+#### Scenario: Untrusted injected catalog or response
+- **WHEN** selected artifact custody or probe envelope/observation binding differs
+- **THEN** provisioning/readiness cannot be marked complete.
+
+### Requirement: Exact root peer delivery and controller roles
+
+The implementation SHALL use explicit protected observer delivery role joins and actual kernel controller DTOs with exact PIDFD ownership.
+
+#### Scenario: Unenrolled cross-peer selection
+- **WHEN** no exact current observer delivery mapping exists
+- **THEN** cross-peer delivery is denied without target-string inference.

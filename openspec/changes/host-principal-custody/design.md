@@ -149,3 +149,11 @@ Use the exact installed_selection_catalog.release_root, task_runner_protocol.sou
 ### v17 supported loader and task controller
 
 Use assembly native_custody_proof_protocol.systemd_transport/pending_pair_selector and resource task_runner_protocol.neutral_types/controller_source_split/root_event_context. Existing HI/RB tasks remain open; actual kernel effects required.
+
+### v19 setup store and probe DTO
+
+Use installed_selection_catalog artifact_catalog/artifact_store joins, root task canonical payload bytes and gateway_probe_response exact envelope. Existing BD/HI/RB tasks remain pending.
+
+### v20 exact root peer/controller DTOs
+
+Use pending_pair_DTO and task_runner_protocol.RootTaskController exact records/role mapping/PIDFD ownership. Existing HI/RB tasks remain pending.

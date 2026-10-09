@@ -424,6 +424,44 @@
       "api": "register_launch retains root-owned listener/accepted channel and actual manager process handle. receive_loader_progress authenticates actual child per-message credentials after process launched; missing credentials/version/FD transfer/readiness denies. Root unlinks socket/dir after single accepted channel and closes retained FD after ready/failure. Failed connect or manager/client sender never readiness.",
       "evidence": "Actual Linux transient unit receives named socket FD, actual child credentials verified per frame, sibling substitution/proxy/manager frame/missing creds/replay denied; fixture proof alone not target acceptance."
     },
-    "pending_pair_selector": "NativeBridgeBroker.resolve_pending_pair_for_context(parent_context)->RootPendingNativePair is root-private lookup by exact signed parent context identity (grant_id/intent_id/trace_id/context digest/full lineage) stored at prepare/dispatch admission. Require exactly one current unconsumed pending pair, exact active bridge enrollment and process generations/lease; duplicate/absent denies. Return producer/gateway actual identities and duplicated PIDFDs. Source target resolver may select only declared counterpart in that pair matching observer protected target role; no caller opaque handle or PID selects target. Root registry must retain exact context index alongside existing _pending handle map; no guessed profile-only match."
+    "pending_pair_selector": "NativeBridgeBroker.resolve_pending_pair_for_context(parent_context)->RootPendingNativePair is root-private lookup by exact signed parent context identity (grant_id/intent_id/trace_id/context digest/full lineage) stored at prepare/dispatch admission. Require exactly one current unconsumed pending pair, exact active bridge enrollment and process generations/lease; duplicate/absent denies. Return producer/gateway actual identities and duplicated PIDFDs. Source target resolver may select only declared counterpart in that pair matching observer protected target role; no caller opaque handle or PID selects target. Root registry must retain exact context index alongside existing _pending handle map; no guessed profile-only match.",
+    "pending_pair_DTO": {
+      "type": "RootPendingNativePair, immutable root-private non-wire DTO owned by NativeBridgeBroker; no worker constructor accepted.",
+      "fields": {
+        "schema": "int=1",
+        "pair_id": "str opaque rootregistry ID",
+        "bridge_enrollment_id": "str",
+        "native_request_handle": "str",
+        "parent_context_sha256": "str SHA256",
+        "parent_grant_id": "str",
+        "intent_id": "str",
+        "trace_id": "str",
+        "parent_closure_digest": "str SHA256",
+        "service_generation_digest": "str SHA256",
+        "producer": "RootPendingNativePeer",
+        "gateway": "RootPendingNativePeer",
+        "observer_delivery_bindings": "tuple[RootObserverDeliveryBinding,...]",
+        "expires_monotonic": "float finite"
+      },
+      "peer_fields": {
+        "role": "producer|gateway",
+        "principal_id": "str",
+        "profile_id": "str",
+        "generation": "str",
+        "pid": "int positive",
+        "pidfd": "int owned duplicate",
+        "uid": "int nonnegative",
+        "identity": "existing actual kernel LivePeerIdentity",
+        "role_artifact_id": "str",
+        "role_artifact_sha256": "str SHA256"
+      },
+      "binding_fields": {
+        "observer_enrollment_id": "str",
+        "delivery_role": "producer|gateway"
+      },
+      "active_mapping": "Existing protected native_bridges row gains observer_delivery_bindings list of exact two-field records. Observer ID joins active derived SourceObserverEnrollment, unique per bridge; delivery_role selects exact enrolled producer or gateway counterpart. No role inferred from effect target/recipient strings. Bridge producer/gateway profile/artifact/current generation joins already required. Missing explicit cross-peer mapping denies cross-peer delivery; same-peer default still verifies exact current producer identity.",
+      "predicate": "resolve_source_target_peer(observer,parent_context) resolves unique actual pending pair by full context index; finds exactly one observer_delivery_bindings row matching observer.observer_enrollment_id, selects that exact role peer, verifies observer current protected enrollment/event relation and selected peer current PIDFD/cgroup/exe/profile/gen. observer.role_id identifies source observer role, not destination. Neither target_id nor recipient is treated as destination role authority.",
+      "ownership": "Broker retains originals; each resolve duplicates both PIDFDs. Selector transfers selected peer duplicate to SourceObserverRegistry and closes unselected duplicate immediately. Registry closes selected duplicate on pending event/delivery completion/cancel/expiry. Exception closes all duplicates. Repeated proof lookup never consumes original pair/PIDFD."
+    }
   }
 }
