@@ -6,7 +6,7 @@ import time
 import unittest
 from types import SimpleNamespace
 
-from hermes_installer.mcp.client import MCPClient, MCPError
+from hermes_installer.mcp.client import MCPClient, MCPError, _selection_bound
 from hermes_installer.mcp.privacy import MCPPrivacyError, scrub_mcp_result
 from hermes_installer.mcp.transports import StreamableHTTPTransport
 from hermes_installer.authority import BrokeredEffectResponse, canonical_bytes, canonical_digest
@@ -165,6 +165,22 @@ class FixtureTransport:
 
 
 class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
+    def test_home_assistant_selector_requires_exact_consistent_arguments(self):
+        selected = {"entity_id": "sensor.office",
+                    "entity_ids": ["sensor.office", "light.kitchen"]}
+        self.assertTrue(_selection_bound("home-assistant", "get_state",
+                                         {"entity_id": "sensor.office"}, selected))
+        self.assertTrue(_selection_bound("home-assistant", "get_state",
+                                         {"entity_ids": ["sensor.office", "light.kitchen"]}, selected))
+        self.assertFalse(_selection_bound("home-assistant", "get_state",
+                                          {"entity_id": "sensor.office",
+                                           "entity_ids": ["sensor.office", "sensor.office"]}, selected))
+        self.assertFalse(_selection_bound("home-assistant", "get_state",
+                                          {"entity_ids": ["light.kitchen", "sensor.office"]}, selected))
+        self.assertFalse(_selection_bound("home-assistant", "search_entities",
+                                          {"query": "office sensor.office"}, selected))
+
+
     def make_client(self, transport, authority=None, *, timeout=1.0, scrubber=None):
         return MCPClient(
             transport, {"get_state"}, service_id="fixture",
