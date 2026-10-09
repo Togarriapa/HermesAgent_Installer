@@ -334,3 +334,10 @@ The installer SHALL verify the actual immutable selected voice workflow recipe a
 #### Scenario: Recipe bytes available without handler
 - **WHEN** a selected recipe is verified but actual root engine, primitive handler or trusted session permission is missing
 - **THEN** capability remains incomplete and no recipe/fixture status claims native effect success
+
+### Requirement: Separate private setup probe authority
+The installer SHALL authorize private origin probes through a separate root-owned setup binding and exact fresh connector effects, without fabricating public Access sessions or worker profile contexts.
+
+#### Scenario: Setup probe submitted to public issuer
+- **WHEN** a private probe handle or synthetic Access context reaches the public remote connector issuer
+- **THEN** it is rejected, and only the separate root-private exact probe issuer may admit selected local app readiness operations
