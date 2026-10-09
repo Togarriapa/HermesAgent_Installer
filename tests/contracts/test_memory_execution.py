@@ -5,7 +5,11 @@ import hashlib
 import time
 import json
 import sqlite3
+import socket
+import threading
 from pathlib import Path
+from dataclasses import replace
+from types import SimpleNamespace
 
 from hermes_installer.authority.memory_execution import (
     MemoryCompoundExecutor,
@@ -108,16 +112,50 @@ def admit(ledger, enrollment, recipe, body, *, consent=None):
 
 class MemoryCompoundLedgerTests(unittest.TestCase):
     def test_fresh_hi12_connector_effect_consumes_exact_step_grant(self):
-        """Exercise the real AuthorityService dispatch around a local service fixture."""
+        """Exercise AuthorityService and the production HTTP connector on loopback."""
         uid = __import__("os").getuid()
         enrollment, recipe = enrolled()
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(5)
+        enrollment = replace(enrollment, literal_loopback_port=listener.getsockname()[1])
+        observed_requests = []
+
+        def serve_one():
+            try:
+                peer, _ = listener.accept()
+                with peer:
+                    peer.settimeout(2)
+                    wire = bytearray()
+                    while b"\r\n\r\n" not in wire:
+                        wire.extend(peer.recv(4096))
+                    header_end = wire.index(b"\r\n\r\n")
+                    headers = bytes(wire[:header_end])
+                    length = next(int(line.split(b":", 1)[1]) for line in headers.split(b"\r\n")
+                                  if line.lower().startswith(b"content-length:"))
+                    body = bytearray(wire[header_end + 4:])
+                    while len(body) < length:
+                        body.extend(peer.recv(length - len(body)))
+                    observed_requests.append((headers, bytes(body)))
+                    response = b'{"mode":"compact","results":[]}'
+                    peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                                 + f"Content-Length: {len(response)}\r\nConnection: close\r\n\r\n".encode()
+                                 + response)
+            except (OSError, TimeoutError):
+                pass
+
+        server_thread = threading.Thread(target=serve_one, daemon=True)
+        server_thread.start()
         binding = PrincipalBinding(
             uid, enrollment.principal_id, enrollment.profile_id,
             enrollment.namespace_identity,
             frozenset({"memory-retrieval", "hermes-service-connect"}),
         )
         outer = EffectRule("memory-retrieval", "memory.search", "memory:agentmemory:search")
-        connector = EffectRule("hermes-service-connect", "connector.open", enrollment.target_id)
+        connector_rule = EffectRule(
+            "hermes-service-connect", "connector.open", enrollment.target_id)
 
         class PrivatePolicy:
             revision = "memory-fixture-policy"
@@ -135,14 +173,14 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
             signing_key=b"m" * 32, key_id="memory-step-fixture",
             bindings_by_uid={uid: binding},
             rules={(rule.capability, rule.operation, rule.target): rule
-                   for rule in (outer, connector)},
+                   for rule in (outer, connector_rule)},
             handlers={(outer.operation, outer.target): lambda **_kwargs: {
                 "status": 200, "body": b"unused", "headers": {}, "receipt_id": "outer"}},
             policy=PrivatePolicy(),
         )
-        # This is a non-privileged macOS fixture: production Linux peer PID
-        # identity is deliberately unavailable here, so pin the test process
-        # identity at the boundary while leaving signature/grant dispatch real.
+        # Production Linux peer identity uses /proc. This non-privileged Mac
+        # fixture pins only that unavailable OS fact; signing and effect checks
+        # still run through the production AuthorityService.
         service._native_process_identity = lambda *_args: "linux-proc:memory-test"
         request_body = {"query": "synthetic after restart", "limit": 3}
         parent_payload = canonical_json({"schema": 1, **request_body})
@@ -159,22 +197,36 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
             "request_digest": digest, "retry_index": 0,
         }, peer_pid=__import__("os").getpid()))
 
+        class ProcessManager:
+            def resolve_namespace_lease(self, _binding):
+                return SimpleNamespace(
+                    generation=enrollment.service_generation,
+                    namespace_identity=enrollment.namespace_identity,
+                    namespace_fd=-1, uid=uid, close=lambda: None,
+                )
+
+        class Vault:
+            def resolve_reference(self, *_args, **_kwargs):
+                return "fixture-secret"
+
+        class Catalog:
+            def resolve_connector_route(self, _service_id, _generation, target_id, route_id):
+                return SimpleNamespace(
+                    target_id=target_id, route_id=route_id,
+                    profile_id=enrollment.profile_id, generation=enrollment.service_generation,
+                    namespace_identity=enrollment.namespace_identity,
+                    literal_loopback_port=enrollment.literal_loopback_port,
+                    memory_enrollment=enrollment,
+                    memory_route=enrollment.fixed_route_map[route_id],
+                )
+
         with tempfile.TemporaryDirectory() as directory:
             ledger = MemoryCompoundLedger(Path(directory) / "authority-memory")
-
-            class ProcessManager:
-                def resolve_namespace_lease(self, _binding):
-                    raise AssertionError("fixture transport must not attempt namespace entry")
-
-            class Vault:
-                def resolve_reference(self, *_args, **_kwargs):
-                    return "fixture-secret"
-
             step_authority = RootMemoryStepEffectAuthority(
                 service=service,
                 enrollment_resolver=lambda _profile, _generation: enrollment,
                 ledger_resolver=lambda _profile: ledger,
-                service_catalog=object(), process_manager=ProcessManager(), vault=Vault(),
+                service_catalog=Catalog(), process_manager=ProcessManager(), vault=Vault(),
                 owner_state=lambda _profile: ("agentmemory", 3),
                 consent_active=lambda _consent: False,
                 ledger_profiles=(enrollment.profile_id,),
@@ -182,19 +234,66 @@ class MemoryCompoundLedgerTests(unittest.TestCase):
             self.assertEqual(step_authority.register(), (enrollment.target_id,))
             service.attach_memory_step_effect_authority(step_authority)
 
-            # The transport fixture replaces only the final local namespace
-            # exchange. Context, grant issuance, exact body digest, nonce
-            # consumption, handler lookup, result bounds and recipe validator
-            # all run through production AuthorityService code.
-            from hermes_installer.memory.namespace_connector import MemoryHTTPResult
-            step_authority.namespace_transport.request = lambda **_kwargs: MemoryHTTPResult(
-                200, b'{"mode":"compact","results":[]}')
+            # Only namespace entry is replaced: the HTTP request uses a real
+            # local TCP listener and the production serializer/parser.
+            import socket as socket_module
+            def local_connect(_lease, port, timeout, before_connect):
+                before_connect()
+                return socket_module.create_connection(("127.0.0.1", port), timeout=timeout)
+            step_authority.namespace_transport._connect = local_connect
             result = MemoryCompoundExecutor(
                 ledger, service.perform_memory_connector_step).execute(
                     enrollment=enrollment, recipe=recipe, body=request_body,
                     source_context_wire=source.to_wire(), parent_authorization=parent,
                     parent_request_payload=parent_payload)
             self.assertEqual(result["status"], "ok")
+
+            def attempt(consent_wire=None):
+                return MemoryCompoundExecutor(
+                    ledger, service.perform_memory_connector_step).execute(
+                        enrollment=enrollment, recipe=recipe, body=request_body,
+                        source_context_wire=source.to_wire(), parent_authorization=parent,
+                        parent_request_payload=parent_payload, consent_wire=consent_wire)
+
+            current_resolver = step_authority.enrollment_resolver
+            step_authority.enrollment_resolver = lambda _profile, _generation: None
+            with self.assertRaises(MemoryExecutionDenied):
+                attempt()
+            step_authority.enrollment_resolver = current_resolver
+
+            current_owner_state = step_authority.owner_state
+            step_authority.owner_state = lambda _profile: ("agentmemory", 4)
+            with self.assertRaises(MemoryExecutionDenied):
+                attempt()
+            step_authority.owner_state = current_owner_state
+
+            consent_claims = {
+                "kind": "memory-background-consent-v1", "consent_id": "consent-fixture",
+                "source_context_digest": canonical_digest(
+                    {**source.claims(), "signature": source.signature}),
+                "principal_id": enrollment.principal_id, "profile_id": enrollment.profile_id,
+                "namespace_id": enrollment.namespace_identity, "uid": uid,
+                "provider_id": "agentmemory", "owner_generation": 3,
+                "policy_revision": service._policy_revision(), "allowed_actions": ["capture"],
+                "issued_at_unix": service.wall_clock(),
+                "expires_at_unix": service.wall_clock() + 300,
+            }
+            consent_claims["signature"] = service._sign(consent_claims)
+            with self.assertRaises(MemoryExecutionDenied):
+                attempt(canonical_json(consent_claims))
+            self.assertEqual(len(observed_requests), 1,
+                             "missing enrollment, stale epoch and revoked consent must precede I/O")
+
+        listener.close()
+        server_thread.join(timeout=2)
+        self.assertFalse(server_thread.is_alive())
+        self.assertEqual(len(observed_requests), 1)
+        self.assertIn(b"POST /agentmemory/smart-search HTTP/1.1", observed_requests[0][0])
+        self.assertIn(b"Authorization: Bearer fixture-secret", observed_requests[0][0])
+        self.assertEqual(json.loads(observed_requests[0][1]), {
+            "agentId": enrollment.profile_id, "limit": 3,
+            "project": "project-one", "query": "synthetic after restart",
+        })
 
     def test_step_is_reserved_once_and_completion_erases_source_payload(self):
         with tempfile.TemporaryDirectory() as directory:
