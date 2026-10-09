@@ -9,8 +9,10 @@ class MCPAccountTests(unittest.TestCase):
     def test_google_eligibility_and_service_are_explicit(self):
         with self.assertRaises(PermissionError):
             google(None, service="drive", resource_id="file-1", preview_eligible=False)
+        with self.assertRaises(TypeError):
+            google(None, service="drive", resource_id="file-1", preview_eligible=True)
         with self.assertRaises(ValueError):
-            google(None, service="unknown", resource_id="x", preview_eligible=True)
+            google(None, service="unknown", resource_id="x")
 
     def test_google_catalog_uses_current_official_endpoints_and_read_tools(self):
         self.assertEqual(SERVICES["google-gmail"].endpoint, "https://gmailmcp.googleapis.com/mcp/v1")
