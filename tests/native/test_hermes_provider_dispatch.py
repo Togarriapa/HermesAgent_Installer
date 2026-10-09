@@ -17,13 +17,29 @@ from pathlib import Path
 INSTALLER_SRC = Path(__file__).resolve().parents[2] / "src"
 sys.path.insert(0, str(INSTALLER_SRC))
 
-from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Route, Sensitivity, default_public_route
+from hermes_installer.policy import BudgetLedger, DispatchAuthorization, DispatchPolicy, Dispatcher, ProviderResponse, Route, Sensitivity, default_public_route
 from hermes_installer.provider_gateway import LocalProviderGateway, materialize_hermes_profile_config, materialize_hermes_provider_plugin
 from hermes_installer.state import OwnedRoot
 
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 HERMES_PIN = "7085fbf7753266fc4943c55ac04926186bc90005"
 FIXTURE_KEY = "native-local-fixture-key-0123456789abcdef"
+
+
+def synthetic_host_authorizer(context, capability, intent_id, now, timeout, cancelled):
+    import uuid
+    # Test-owned profile mapping supplies the fixture's private classification;
+    # context sensitivity strings cannot change this host decision.
+    if context.profile_id != "native-fixture-private" or capability not in {"inference", "tool-call"}:
+        return None
+    return DispatchAuthorization(
+        "fixture-process", context.profile_id, "fixture-private-namespace",
+        context.trace_id, frozenset({"inference", "tool-call"}), Sensitivity.PRIVATE,
+        "synthetic-host-policy", context.purpose, capability, intent_id,
+        "a" * 64, str(uuid.uuid4()), now + min(60, timeout),
+    )
+
+
 OPTIONS = {}
 for item in list(sys.argv[1:]):
     if item.startswith("--hermes-source="):
@@ -222,7 +238,7 @@ plugins:
                 dispatcher = Dispatcher(
                     DispatchPolicy({"public": default_public_route(), "fixture-private": private_fixture},
                                    "public", private_route="fixture-private"),
-                    BudgetLedger(root), transport,
+                    BudgetLedger(root), transport, context_authorizer=synthetic_host_authorizer,
                 )
                 gateway = LocalProviderGateway(
                     dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-private",
