@@ -152,8 +152,7 @@ class SelectedWebhookIngress:
         if not isinstance(selected_resources, SelectedResourceRegistry):
             raise TypeError("protected selected-resource registry is required")
         if (not isinstance(service_generation_digest, str)
-                or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)
-                or selected_resources.generation_digest != service_generation_digest):
+                or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
             raise ResourceObservationError("webhook selection is not from the active service generation")
         if type(expected_uid) is not int or expected_uid != 0:
             raise ResourceObservationError("webhook credential resolution is root-only")
@@ -161,6 +160,9 @@ class SelectedWebhookIngress:
             raise ResourceObservationError("protected resource job enrollments are required")
         if not callable(getattr(bindings, "resolve_resource_credential_binding", None)):
             raise ResourceObservationError("protected resource credential binding resolver is unavailable")
+        catalog = getattr(bindings, "enrollment_catalog", None)
+        if getattr(catalog, "digest", None) != service_generation_digest:
+            raise ResourceObservationError("webhook credential bindings are not from the active service generation")
         if not callable(getattr(credential_vault, "resolve_reference", None)):
             raise ResourceObservationError("protected root credential vault is unavailable")
         if not callable(getattr(replay_store, "claim", None)):
@@ -225,7 +227,8 @@ class SelectedWebhookIngress:
             selected_and_enrollment[0].identity.resource_id, headers, body,
         )
         selected, enrollment = selected_and_enrollment
-        if (selected.generation_digest != self._service_generation_digest
+        if (getattr(getattr(self._bindings, "enrollment_catalog", None), "digest", None)
+                != self._service_generation_digest
                 or self._selected_resources.resolve(selected.identity) is not selected
                 or self._job_enrollments.get((enrollment.resource_id, enrollment.generation)) is not enrollment
                 or enrollment.selected_enabled is not True):
