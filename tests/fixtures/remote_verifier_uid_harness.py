@@ -109,10 +109,13 @@ async def probe_as_foreign_peer(payload):
     await writer.drain()
     try:
         response = await asyncio.wait_for(reader.readline(), timeout=1)
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, ConnectionResetError, BrokenPipeError):
         response = b""
     writer.close()
-    await writer.wait_closed()
+    try:
+        await asyncio.wait_for(writer.wait_closed(), timeout=1)
+    except (asyncio.TimeoutError, ConnectionResetError, BrokenPipeError):
+        pass
     print(json.dumps({"response_bytes": len(response)}), flush=True)
 
 
