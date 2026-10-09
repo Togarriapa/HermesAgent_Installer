@@ -58,13 +58,20 @@ class ProtectedMCPHTTPBinding:
                                   ("endpoint_source_id", self.endpoint_source_id)):
             if not isinstance(value, str) or not value or len(value) > 256:
                 raise MCPHTTPBindingError(f"protected HTTP {field_name} is invalid")
-        expected = _ENDPOINT_SOURCES.get(self.service_id)
-        if expected is None or (self.endpoint, self.endpoint_source_id) != expected:
-            raise MCPHTTPBindingError("MCP endpoint/provenance is not in the reviewed official source catalog")
         parsed = urlsplit(self.endpoint)
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username
                 or parsed.password or parsed.query or parsed.fragment):
-            raise MCPHTTPBindingError("protected MCP endpoint must be a fixed HTTPS URL")
+            raise MCPHTTPBindingError("protected MCP endpoint must be an enrolled HTTPS URL")
+        expected = _ENDPOINT_SOURCES.get(self.service_id)
+        if self.service_id == "home-assistant":
+            # Home Assistant is a per-instance HTTPS service. Its endpoint stays
+            # only in root enrollment; bind it to the documented route and source.
+            valid_path = bool(__import__("re").fullmatch(r"/api/mcp(?:/[A-Za-z0-9][A-Za-z0-9_-]{0,63})?", parsed.path))
+            if (self.endpoint_source_id != "https://www.home-assistant.io/integrations/mcp_server/"
+                    or not valid_path):
+                raise MCPHTTPBindingError("Home Assistant endpoint does not match its official MCP route")
+        elif expected is None or (self.endpoint, self.endpoint_source_id) != expected:
+            raise MCPHTTPBindingError("MCP endpoint/provenance is not in the reviewed official source catalog")
         if (not isinstance(self.reviewed_revision, str)
                 or len(self.reviewed_revision) != 64
                 or any(ch not in "0123456789abcdef" for ch in self.reviewed_revision)):
