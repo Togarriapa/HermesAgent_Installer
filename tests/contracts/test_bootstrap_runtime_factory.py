@@ -67,6 +67,14 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaises(TypeError):
             RootBootstrapRuntimeFactory(selection_path="/tmp/caller-selection.json")
 
+    def test_session_id_lookup_only_resolves_an_existing_root_issued_session(self):
+        factory = object.__new__(RootBootstrapRuntimeFactory)
+        factory._sessions = {}
+        with self.assertRaises(BootstrapEnrollmentPending):
+            factory.resolve_live_session_id("not-a-session")
+        with self.assertRaises(BootstrapEnrollmentPending):
+            factory.resolve_live_session_id("a" * 64)
+
     def test_factory_refuses_non_linux_or_uninstalled_root_trust(self):
         if os.geteuid() == 0 and Path("/proc/sys/kernel/ostype").exists() \
                 and Path("/etc/hermes-installer/root-setup-selection.json").exists():

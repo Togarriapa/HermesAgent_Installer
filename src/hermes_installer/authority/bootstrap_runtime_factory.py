@@ -2441,6 +2441,20 @@ class RootBootstrapRuntimeFactory:
             raise BootstrapEnrollmentPending("root session authorization changed after factory issuance")
         return session
 
+    def resolve_live_session_id(self, session_id: str) -> "RootBootstrapSession":
+        """Resolve an opaque root-issued session ID and recheck its current proof.
+
+        This narrow accessor is for root-owned receipt resolvers whose typed
+        receipt retains the session ID rather than the in-process handle object.
+        It does not let a caller create or restore a session from an ID.
+        """
+        if not isinstance(session_id, str) or not re.fullmatch(r"[0-9a-f]{64}", session_id):
+            raise BootstrapEnrollmentPending("root setup session ID is malformed")
+        session = self._sessions.get(session_id)
+        if session is None or session._factory is not self:
+            raise BootstrapEnrollmentPending("root setup session ID is absent from this live factory")
+        return self.resolve_live_session(session._handle)
+
     def _receipt_resolver(self, handle: str, *, setup_authorization: VerifiedRootSetupAuthorization) -> VerifiedArtifactReceipt:
         artifact_id, digest = self._receipt_registry.lookup(handle, setup_authorization)
         selected_plan = self.resolver.resolve(setup_authorization.plan_artifact_id)
