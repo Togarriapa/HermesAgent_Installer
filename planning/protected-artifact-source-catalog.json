@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "change": "installer-bootstrap-desktop",
+  "requirement_ids": [
+    "R0033",
+    "R0035",
+    "R0040",
+    "R0054",
+    "R0155"
+  ],
+  "task_ids": [
+    "BD-F02",
+    "BD-R0033",
+    "BD-R0035",
+    "HI-T01",
+    "HI-T04"
+  ],
+  "source_commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+  "bootstrap": {
+    "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/7085fbf7753266fc4943c55ac04926186bc90005/scripts/install.sh",
+    "sha256": "034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86",
+    "bytes": 52776,
+    "evidence": "independent source hash matches frozen bootstrap interface; not executed"
+  },
+  "pm_lock": {
+    "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/7085fbf7753266fc4943c55ac04926186bc90005/pm/lock.json",
+    "sha256": "49b79259220160f147255078a19af541a5f328d3871c8041cc1eb909d19eb549",
+    "bytes": 33804,
+    "local_source": "planning/upstream-hermes-pm-lock-7085fb.json",
+    "evidence": "pinned source byte inspection only; no PM payload execution"
+  },
+  "artifact_candidates": [
+    {
+      "package_id": "agent-browser",
+      "version": "0.26.0",
+      "upstream_target": "any",
+      "artifact_index": 0,
+      "url": "https://registry.npmjs.org/agent-browser/-/agent-browser-0.26.0.tgz",
+      "sha256": "8a48cf4110d7dc2c12c1c4d6d25e0babdfa31604b537f05df0dc835fe2f854bf",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "bws",
+      "version": "2.0.0",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.0.0/bws-aarch64-unknown-linux-musl-2.0.0.zip",
+      "sha256": "de61bfbacbcf6e3648ddc8dbd6ca8bb2245438ccf5f94d54129997528f5a752d",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "chromium",
+      "version": "1208+145.0.7632.6",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1208/chromium-linux-arm64.zip",
+      "sha256": "70b4620521b1ada360475e1059dfe9d549a6461a79b9342f85b7d47e44123077",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "cua-driver",
+      "version": "0.21.0",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.21.0/cua-driver-rs-0.21.0-linux-arm64-binary.tar.gz",
+      "sha256": "6b3a308c6741dd8291aad22a308bd2ec8eb52eab64687be007ac86ceaf7e3307",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "ffmpeg",
+      "version": "9.0.1",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-linuxarm64-gpl-9.0.tar.xz",
+      "sha256": "e2dd447c8a47849c5812d87e54a47b20ae0f3603d38989440f4a5fe1af8755b1",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "gh",
+      "version": "2.97.0",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_linux_arm64.tar.gz",
+      "sha256": "73ea440ecad9c9e284429997ee6f93577bc6f7bc6fba357ef62c53ad8fb641a5",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "iron-proxy",
+      "version": "0.39.0",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/paradigmxyz/iron-proxy/releases/download/v0.39.0/iron-proxy_0.39.0_linux_arm64.tar.gz",
+      "sha256": "1316cb4f20fcfba5042b06d07cd523ffa617de9de2999cd5f1f44474777c48ad",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "iron-proxy",
+      "version": "0.39.0",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 1,
+      "url": "https://github.com/paradigmxyz/iron-proxy/releases/download/v0.39.0/checksums.txt",
+      "sha256": "8fb3193b53ca296e2f93ff0fd69d289340cffe9a36c0de22e47ea5cfea899b37",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "iron-proxy",
+      "version": "0.39.0",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 2,
+      "url": "https://github.com/paradigmxyz/iron-proxy/releases/download/v0.39.0/checksums.txt.asc",
+      "sha256": "1ff70f0bd8699b2f1c2c3545e6aa9034d24267fc01d1b9aaa93d73e893cb610b",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "iron-proxy",
+      "version": "0.39.0",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 3,
+      "url": "https://raw.githubusercontent.com/paradigmxyz/iron-proxy/be5f255d0d9d10d8573bd65f480dd48a07772bf1/public-key.asc",
+      "sha256": "ce685e36e7e7d184ffa82b35bd5cbe83db010ac38bc504a0e225333453992c56",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "llamacpp-cpu",
+      "version": "11370",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11370/llama-b11370-bin-ubuntu-arm64.tar.gz",
+      "sha256": "2589668b61f4b2a2baa1a860c45e3dbd75af89e3620340589929632d981d28f2",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "llamacpp-cpu",
+      "version": "11370",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 1,
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/g/gcc-12/libgomp1_12-20220319-1ubuntu1_arm64.deb",
+      "sha256": "c1719335234ccdef7558e97b37b1f6baf069911ce2f26d2789336051a7c929cd",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "llamacpp-cuda",
+      "version": "11370",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11370/llama-b11370-bin-ubuntu-cuda-13.4-arm64.tar.gz",
+      "sha256": "d417ce88799fb5bca9a51b53c36585fec9d7a8e7415873424919af0cb64d33e2",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "llamacpp-cuda",
+      "version": "11370",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 1,
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11370/cudart-llama-b11370-bin-ubuntu-cuda-13.4-arm64.tar.gz",
+      "sha256": "204bbe1ec25f6927163b0a765e691f8530364af005c1e1633ef0845beb80f302",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "llamacpp-cuda",
+      "version": "11370",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 2,
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/g/gcc-12/libgomp1_12-20220319-1ubuntu1_arm64.deb",
+      "sha256": "c1719335234ccdef7558e97b37b1f6baf069911ce2f26d2789336051a7c929cd",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "llamacpp-vulkan",
+      "version": "11370",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11370/llama-b11370-bin-ubuntu-vulkan-arm64.tar.gz",
+      "sha256": "cb8ab033dd9565e0d82aa3b6c407527966661d8a1736ae083c417338025d4e9d",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "llamacpp-vulkan",
+      "version": "11370",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 1,
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/g/gcc-12/libgomp1_12-20220319-1ubuntu1_arm64.deb",
+      "sha256": "c1719335234ccdef7558e97b37b1f6baf069911ce2f26d2789336051a7c929cd",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "node",
+      "version": "26.7.0",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-arm64.tar.xz",
+      "sha256": "afc7a004018485092ac8985b817b0d5684472bd9472e0b57d2ab88737e50090d",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "npm",
+      "version": "12.0.2",
+      "upstream_target": "any",
+      "artifact_index": 0,
+      "url": "https://registry.npmjs.org/npm/-/npm-12.0.2.tgz",
+      "sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "python",
+      "version": "3.14.7+20260901",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.14.7+20260901-aarch64-unknown-linux-gnu-install_only.tar.gz",
+      "sha256": "30f1cc489be654477d895b441e196bb080738bf0456da82080ad4ab66a22d80f",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "ripgrep",
+      "version": "15.2.0",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    },
+    {
+      "package_id": "uv",
+      "version": "0.12.3",
+      "upstream_target": "linux-arm64",
+      "artifact_index": 0,
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.3/uv-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "bb66cb52e7b1823aed1183630d8d8e5c958840d584a4c55ec10a4cfc168dcca2",
+      "status": "upstream source declaration only; payload/native qualification pending; not activated"
+    }
+  ],
+  "hermes_source_archive": {
+    "url": "https://github.com/NousResearch/hermes-agent/archive/7085fbf7753266fc4943c55ac04926186bc90005.tar.gz",
+    "sha256": null,
+    "bytes": null,
+    "status": "bounded64MiB verifiedTLS acquisition returnedHTTP429; source commit is pinned, complete archive hash unavailable"
+  },
+  "rules": [
+    "Protected catalog maps fixed logical IDs to exact source/version/digest/architecture/size bound and owned destination; no caller URL/digest/path/shell authority.",
+    "Artifact candidates are inventory, not automatic selection, activation, account authorization or native compatibility.",
+    "Canonical Hermes PM runtime remains separate from installer/component runtimes; no global downgrade.",
+    "Official bootstrap minor3.14 acquisition must be mediated/prestaged with reviewed PM artifacts; no arbitrary network fallback or lazy resolver.",
+    "Full dependency locks/native driver/toolchain and exact owned generation still require validation; baseline has no universal distro apt version set."
+  ]
+}

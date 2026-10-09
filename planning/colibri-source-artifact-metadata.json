@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "change": "colibri-coral",
+  "requirement_ids": [
+    "R0112",
+    "R0115"
+  ],
+  "task_ids": [
+    "HW-F01",
+    "HW-R0112",
+    "HW-R0115"
+  ],
+  "source_commit": "bf2442915d6e3dd4cdfd2eb9c2a3d2aa44a25850",
+  "url": "https://github.com/JustVugg/colibri/archive/bf2442915d6e3dd4cdfd2eb9c2a3d2aa44a25850.tar.gz",
+  "artifact_sha256": "7cc79d4bfdc851efb27b67295ceac1370312b5cd414d869887715d30b2d13174",
+  "artifact_bytes": 11412458,
+  "source_tracked_blobs": 1191,
+  "source_tracked_blob_bytes": 30936101,
+  "normalized_paths": [
+    "START-HERE.bat"
+  ],
+  "verification": "independent officialarchive bytes/hash and complete source paths/blobs; documented.gitattributes LF-to-CRLF archive normalization matches original blob when reversed",
+  "constructed_alternative": {
+    "sha256": "6997a6b9076e9053ae54215564495ec8be0fb1da411aa2052d55c32b0a5eb265",
+    "bytes": 11408501,
+    "status": "installer-constructed git archive|gzip-n, not official release"
+  },
+  "compatibility": "source lacks c/glm_tiny; no fictional optional self-test. Actual ARM64 build and full GLM5.2 inference/performance remain pending.",
+  "executed": false
+}

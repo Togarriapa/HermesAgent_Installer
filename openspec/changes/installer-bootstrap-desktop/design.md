@@ -34,3 +34,7 @@ Implement foundation tasks before dependent obligations. Stage artifacts and rev
 ## Open Questions
 
 Live target/account values and pending source selections are tracked in planning/blockers.json. The architecture supports source overrides and configure-later without deleting these requirements. New technical scope choices require a separate Sol-reviewed append-only amendment, never edits to the frozen baseline.
+
+## Protected artifact catalog refinement
+
+Read plans/amendments/2026-10-09-protected-artifact-catalog-pins-v1.md and planning/protected-artifact-source-catalog.json. Baseline official script/PM lock are verified source bytes; candidates are not automatic activation. Acquire canonical managed artifacts only through protected exact catalog, including bootstrap acquisition. Unknown sourcearchive/package artifacts remain unavailable.
