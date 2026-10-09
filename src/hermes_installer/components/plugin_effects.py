@@ -802,12 +802,18 @@ def bind_plugin_effects_to_runtime_context(*, authority: PluginAuthority,
         from hermes_installer.registry.resources_runtime import NativePluginRuntimeContext
     except ImportError:
         raise PluginEffectUnavailable("trusted native Plugin runtime context type is unavailable") from None
+    try:
+        identity = runtime_context.identity
+        selected_digest = selected_package.manifest_digest_for_adapter(identity.resource_id)
+    except (AttributeError, TypeError, ValueError, PermissionError):
+        raise PluginEffectUnavailable("runtime context does not match the selected native Plugin package") from None
     if (not isinstance(runtime_context, NativePluginRuntimeContext)
             or runtime_context.authority is not authority
             or not callable(current_binding)
-            or runtime_context.identity.kind != "plugins"
-            or selected_package.manifest_digest_for_adapter(runtime_context.identity.resource_id)
-            != runtime_context.identity.content_digest):
+            or identity.kind != "plugins"
+            or not isinstance(identity.resource_id, str) or not identity.resource_id
+            or not isinstance(identity.content_digest, str) or not _HEX.fullmatch(identity.content_digest)
+            or selected_digest != identity.content_digest):
         raise PluginEffectUnavailable("runtime context does not match the selected native Plugin package")
     pair = build_native_plugin_effect_binding(
         authority=authority, selected_package=selected_package,
