@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import unittest
@@ -36,7 +37,8 @@ checks = {
     "http_scripts": "no", "ssh_upgrade": False, "rfb_upgrade": 0,
     "rdp_upgrade": False, "daemon": False, "systemd_run": "no",
     "exit_with_children": True, "attach": False,
-    "html": "on", "bind_tcp": ["127.0.0.1:14500"],
+    "html": "on", "start_child": [sys.argv[3]],
+    "bind_tcp": ["127.0.0.1:14500"],
     "socket_dirs": [sys.argv[2]], "socket_permissions": "600",
 }
 for name, expected in checks.items():
@@ -64,12 +66,24 @@ class PinnedXpraCliTests(unittest.TestCase):
             hermes_environment={"HERMES_HOME": "/opt/hermes"},
         )
         command = build_xpra_command(spec, "/usr/bin/xpra", runtime)
+        # Xpra's ``start-*`` spellings are mode aliases, not Boolean options.
+        # The pinned parser must receive the canonical seamless mode and only
+        # actual option switches; a bare --control is also an invalid bool
+        # spelling (the supported value form is --control=no).
+        self.assertEqual(command[1:3], ["seamless", ":81"])
+        for unsupported in (
+            "--start-new-session", "--start-desktop", "--start-shadow",
+            "--start-proxy", "--control",
+        ):
+            self.assertNotIn(unsupported, command)
+        self.assertIn("--control=no", command)
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(
             value for value in (str(source), env.get("PYTHONPATH", "")) if value
         )
         result = subprocess.run(
-            [sys.executable, "-c", _PARSER_PROBE, json.dumps(command[1:]), str(runtime)],
+            [sys.executable, "-c", _PARSER_PROBE, json.dumps(command[1:]), str(runtime),
+             shlex.join([spec.hermes_executable, *spec.hermes_arguments])],
             capture_output=True, text=True, env=env, timeout=15,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
