@@ -35,7 +35,9 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
                             process_effect_handler: Any | None = None,
                             register_process_handlers: bool = True,
                             selected_operation_resolver: Any | None = None,
-                            remote_session_authority: Any | None = None) -> AuthorityService:
+                            remote_session_authority: Any | None = None,
+                            source_receipt_delivery: Any | None = None,
+                            source_observer_registry: Any | None = None) -> AuthorityService:
     """Build the root service from already validated protected enrollments.
 
     `process_profiles`, policy, rules and handler adapters must be created by
@@ -61,6 +63,8 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
         process_effect_handler=manager,
         selected_operation_resolver=selected_operation_resolver,
         remote_session_authority=remote_session_authority,
+        source_receipt_delivery=source_receipt_delivery,
+        source_observer_registry=source_observer_registry,
     )
 
 
@@ -188,34 +192,10 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
     )
     service.root_runtime_bindings = runtime_bindings
     service_ref["service"] = service
-    if enrollment.native_bridges:
-        if process_manager is None or provider_admission is None:
-            # The root source/gateway role pairing exists in config, but no
-            # route may be activated without its live provider account gate.
-            raise AuthorityDenied("native.unavailable", "native bridge requires live provider admission and process custody")
-        try:
-            from hermes_installer.provider_effect_handlers import canonical_provider_request
-        except ImportError:
-            raise AuthorityDenied("native.unavailable", "pinned provider canonicalizer is not installed") from None
-        bridge_routes: dict[str, dict[tuple[str, str], Any]] = {}
-        for bridge_id, bridge in enrollment.native_bridges.items():
-            route = typed_providers.get((bridge.target, bridge.recipient))
-            if route is None:
-                raise AuthorityDenied("native.enrollment", "native bridge provider route is not enrolled")
-            if route.principal_id != bridge.producer_principal_id:
-                raise AuthorityDenied("native.enrollment", "native bridge provider route belongs to another principal")
-            bridge_routes[bridge_id] = {(bridge.target, bridge.recipient): route}
-        for bridge in enrollment.native_bridges.values():
-            if ("provider.dispatch", bridge.target) not in handlers:
-                raise AuthorityDenied("native.unavailable", "native provider effect handler is not active")
-        from .native_bridge import NativeBridgeBroker
-        service.native_bridge_broker = NativeBridgeBroker(
-            service=service, bridges=enrollment.native_bridges,
-            process_resolver=process_manager.resolve_live_peer,
-            canonicalizer=canonical_provider_request,
-            root_selected_enrollments=bridge_routes,
-            canonicalizer_sha256=next(iter(enrollment.native_bridges.values())).canonicalizer_sha256,
-        )
+    # Native request bridging remains unavailable until the protected
+    # root-observer registry is composed with an actual ingress/terminal event
+    # source. Enrollment metadata alone cannot turn worker-submitted bytes into
+    # trusted input provenance.
     if enrollment.memory_providers:
         from hermes_installer.memory.broker import MemoryTarget, build_memory_handlers, build_memory_runtime
         targets = {}
