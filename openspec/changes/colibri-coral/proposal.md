@@ -23,3 +23,7 @@ None; no runtime capability is currently implemented in this greenfield reposito
 ## Impact
 
 Planned modules: src/hermes_installer/components/colibri.py, src/hermes_installer/components/coral.py. Depends on installer-bootstrap-desktop, providers-credentials-budgets-privacy. All implementation belongs to GPT-6 Luna; specification/refinement belongs to GPT-6.1 Sol. See design.md and explicit task/evidence DAG.
+
+## Offline package-set refinement
+
+HW01/HW-T01/EV-HW01 operationalizes original R0042 under fixed protected package.install set schema; append-only coral-protected-package-set-v1. Original HW-F03/HW-R0042 and actual delegate acceptance remain unchanged/open.

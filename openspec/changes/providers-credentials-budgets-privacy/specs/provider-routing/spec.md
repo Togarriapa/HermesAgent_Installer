@@ -229,3 +229,12 @@ The installer SHALL satisfy this obligation: Apply model allowlists, capability 
 #### Scenario: R0130 unavailable or failed prerequisite
 - **WHEN** the selected account is ineligible, the requested route exceeds budget/privacy scope or a bounded network/authentication attempt fails
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Supported ChatGPT-plan inference protocol (PR01)
+
+The supported ChatGPT-plan inference adapter SHALL follow the current documented authorization and HTTP/SSE request contract, bind normalized final payload to fresh host source/effect authority and consume through successful terminal completion. Unsupported fields/tools, missing permission, incomplete streams and usage failures SHALL not establish usable inference or trigger paid fallback.
+
+#### Scenario: Terminal stream and actual permission
+
+- **WHEN** selected ChatGPT-plan inference returns partial events or lacks granted plan permission
+- **THEN** route reports incomplete/unavailable and does not claim successful inference, entitlement or use a paid fallback
