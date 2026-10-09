@@ -36,7 +36,7 @@ Dependencies: installer-bootstrap-desktop. Full IDs and task edges: planning/dep
 
 ## 3. Supported ChatGPT-plan protocol refinement
 
-- [ ] 3.1 `PR-T01` Implement PR01 supported SIWC auth permission and HTTP/SSE normalization/completion; prerequisites PR-F01, HI-T08, HI-T09. Evidence EV-PR01: recording bounded response.completed/failed/incomplete/partial EOF/usage errors, unsupported fields/tools and source/grant/retry/cancel negatives. Keep actual enrolled-account/native inference acceptance separate and original PR-F02/03 plus PR-R0124/25/26 open.
+- [ ] 3.1 `PR-T01` Implement PR01 supported SIWC auth permission and HTTP/SSE normalization/completion; prerequisites PR-F01, HI-T08, HI-T09, HI-T11. Evidence EV-PR01: recording bounded response.completed/failed/incomplete/partial EOF/usage errors, unsupported fields/tools and source/grant/retry/cancel negatives. Keep actual enrolled-account/native inference acceptance separate and original PR-F02/03 plus PR-R0124/25/26 open.
 
 ## 4. Isolated OmniRoute runtime compatibility
 
