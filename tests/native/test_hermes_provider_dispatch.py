@@ -1,48 +1,50 @@
-"""Native selected-Hermes primary and auxiliary dispatch acceptance probe.
+"""Native Hermes provider dispatch acceptance using an external PM worker.
 
-Run only in the pinned Hermes PM interpreter with HERMES_AGENT_SOURCE_ROOT set
-to the selected upstream checkout. All upstream responses terminate at a
-recording transport; no provider account, credential, or external request is used.
+The parent owns the recording gateway and disposable profile so a Hermes PM
+bootstrap re-exec cannot destroy the listener or bypass cleanup.
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
-import shutil
 import uuid
 from pathlib import Path
 
-# Hermes bootstrap may re-exec this test after dependency preparation. Derive
-# our own source path before importing the installer, even with a sanitized env.
 INSTALLER_SRC = Path(__file__).resolve().parents[2] / "src"
 sys.path.insert(0, str(INSTALLER_SRC))
 
-from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
-from hermes_installer.provider_gateway import (
-    LOCAL_KEY_ENV, LOCAL_PROVIDER_NAME, LocalProviderGateway,
-    materialize_hermes_profile_config, materialize_hermes_provider_plugin,
-)
+from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, default_public_route
+from hermes_installer.provider_gateway import LocalProviderGateway, materialize_hermes_profile_config, materialize_hermes_provider_plugin
 from hermes_installer.state import OwnedRoot
 
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 HERMES_PIN = "7085fbf7753266fc4943c55ac04926186bc90005"
 FIXTURE_KEY = "native-local-fixture-key-0123456789abcdef"
+OPTIONS = {}
+for item in list(sys.argv[1:]):
+    if item.startswith("--hermes-source="):
+        OPTIONS["source"] = item.split("=", 1)[1]
+        sys.argv.remove(item)
+    elif item.startswith("--installer-data-root="):
+        OPTIONS["data"] = item.split("=", 1)[1]
+        sys.argv.remove(item)
+    elif item.startswith("--pm-python="):
+        OPTIONS["python"] = item.split("=", 1)[1]
+        sys.argv.remove(item)
 
 
 class RecordingTransport:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str, bytes]] = []
+    def __init__(self):
+        self.calls = []
 
     def __call__(self, route, model, payload, *, output_token_limit, timeout, trace_id, cancelled=lambda: False):
         self.calls.append((route.name, model, payload))
+        import json
         body = json.dumps({
-            "id": "chatcmpl-native-fixture",
-            "object": "chat.completion",
-            "created": 1,
+            "id": "chatcmpl-native-fixture", "object": "chat.completion", "created": 1,
             "model": MODEL,
             "choices": [{"index": 0, "message": {"role": "assistant", "content": "native fixture response"}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
@@ -51,70 +53,47 @@ class RecordingTransport:
 
 
 class NativeHermesProviderDispatchTests(unittest.TestCase):
-    def test_real_primary_and_auxiliary_entrypoints_route_through_local_gate(self):
-        source_value = os.environ.get("HERMES_AGENT_SOURCE_ROOT", "")
-        if not source_value:
-            # PM's selected interpreter lives below the installer data root.
-            # Hermes may sanitize custom environment variables during re-exec;
-            # derive the source only from that private marked root.
-            for candidate in Path(sys.executable).resolve().parents:
-                marker = candidate / ".hermes-installer-owned"
-                if (candidate.name == "data" and marker.is_file()
-                        and not marker.is_symlink()
-                        and marker.read_bytes() == b"schema=1\\n"
-                        and candidate.stat().st_uid == os.geteuid()
-                        and candidate.stat().st_mode & 0o077 == 0):
-                    source_value = str(candidate / "generations" / ("hermes-agent-" + HERMES_PIN[:12]))
-                    break
-        if not source_value:
-            self.skipTest("selected PM interpreter is not below a validated installer data root")
+    def test_primary_and_auxiliary_use_selected_pm_profile_and_local_gateway(self):
+        source_value = OPTIONS.get("source") or os.environ.get("HERMES_AGENT_SOURCE_ROOT", "")
+        data_value = OPTIONS.get("data") or os.environ.get("HERMES_INSTALLER_DATA_ROOT", "")
+        pm_python = OPTIONS.get("python") or os.environ.get("HERMES_PM_PYTHON", "")
+        if not (source_value and data_value and pm_python):
+            self.skipTest("pass --hermes-source, --installer-data-root and --pm-python for native acceptance")
         source = Path(source_value).resolve(strict=True)
-        commit = subprocess.run(
-            ["git", "-C", str(source), "rev-parse", "HEAD"],
-            cwd=source, check=True, capture_output=True, text=True,
-            env={"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_OPTIONAL_LOCKS": "0"},
-            timeout=3,
-        ).stdout.strip()
-        self.assertEqual(commit, HERMES_PIN, "native source must match the selected immutable Hermes pin")
-
-        data_value = os.environ.get("HERMES_INSTALLER_DATA_ROOT", "")
-        if not data_value:
-            # Hermes' dependency bootstrap may sanitize custom environment keys
-            # before re-executing this test. Derive the expected data root only
-            # from the exact pinned source checkout, then verify its ownership
-            # marker before any managed-profile write.
-            data_root_candidate = source.parents[1]
-            marker = data_root_candidate / ".hermes-installer-owned"
-            if (data_root_candidate.name != "data" or marker.is_symlink()
-                    or not marker.is_file() or marker.read_bytes() != b"schema=1\n"
-                    or data_root_candidate.stat().st_uid != os.geteuid()
-                    or data_root_candidate.stat().st_mode & 0o077):
-                self.skipTest("pinned source has no validated installer-owned data root")
-            data_value = str(data_root_candidate)
-        original_environment = os.environ.copy()
-        inserted = False
-        agent = None
-        with tempfile.TemporaryDirectory(prefix="hermes-native-dispatch-") as temporary:
-            root = OwnedRoot(Path(temporary) / "owned")
-            installer_src = Path(__file__).resolve().parents[2] / "src"
-            self.assertTrue((installer_src / "hermes_installer").is_dir())
+        self.assertEqual(subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"], cwd=source, check=True,
+            capture_output=True, text=True, timeout=3,
+            env={"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1",
+                 "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_OPTIONAL_LOCKS": "0"},
+        ).stdout.strip(), HERMES_PIN)
+        data_path = Path(data_value).resolve(strict=True)
+        marker = data_path / ".hermes-installer-owned"
+        self.assertTrue(marker.is_file() and not marker.is_symlink())
+        self.assertEqual(marker.read_bytes(), b"schema=1\\n")
+        self.assertEqual(data_path.stat().st_uid, os.geteuid())
+        self.assertEqual(data_path.stat().st_mode & 0o077, 0)
+        interpreter = Path(pm_python).resolve(strict=True)
+        self.assertTrue(interpreter.is_file())
+        profile_relative = "profiles/hermes-installer-native-" + uuid.uuid4().hex
+        with tempfile.TemporaryDirectory(prefix="hermes-native-parent-") as scratch:
+            root = OwnedRoot(Path(scratch) / "budget")
             root.ensure()
-            data_root_path = Path(data_value).resolve(strict=True)
-            marker = data_root_path / ".hermes-installer-owned"
-            if (data_root_path.is_symlink() or marker.is_symlink()
-                    or not marker.is_file() or marker.read_bytes() != b"schema=1\\n"
-                    or data_root_path.stat().st_uid != os.geteuid()
-                    or data_root_path.stat().st_mode & 0o077):
-                self.skipTest("installer data root ownership marker is invalid")
-            data_root = OwnedRoot(data_root_path)
-            # OwnedRoot rejects an install root that contains the current HOME.
-            # Use the separate disposable probe root for process HOME; HERMES_HOME
-            # remains the validated profile below.
-            os.environ["HOME"] = str(root.root)
-            profile_relative = "profiles/hermes-installer-native-probe"
-            plugin = materialize_hermes_provider_plugin(data_root, profile_relative=profile_relative, port=None, model=MODEL)
-            home = Path(plugin["home"])
-            materialize_hermes_profile_config(data_root, home_relative=profile_relative, port=int(plugin["port"]), model=MODEL)
+            # Keep HOME outside the shared data root while materializing the
+            # exact profile HERMES_HOME will use in the isolated worker.
+            old_home = os.environ.get("HOME")
+            os.environ["HOME"] = str(Path(scratch))
+            try:
+                data_root = OwnedRoot(data_path)
+                plugin = materialize_hermes_provider_plugin(
+                    data_root, profile_relative=profile_relative, port=None, model=MODEL)
+                profile_home = Path(plugin["home"])
+                materialize_hermes_profile_config(
+                    data_root, home_relative=profile_relative, port=int(plugin["port"]), model=MODEL)
+            finally:
+                if old_home is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = old_home
             transport = RecordingTransport()
             dispatcher = Dispatcher(
                 DispatchPolicy({"public": default_public_route()}, "public"),
@@ -122,82 +101,43 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
             )
             gateway = LocalProviderGateway(
                 dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-public",
-                sensitivity=Sensitivity.PUBLIC, model=MODEL, port=int(plugin["port"]),
+                sensitivity=__import__("hermes_installer.policy", fromlist=["Sensitivity"]).Sensitivity.PUBLIC,
+                model=MODEL, port=int(plugin["port"]),
             )
-            os.environ.clear()
-            os.environ.update({
-                "HOME": str(home),
-                "HERMES_HOME": str(home),
+            worker = Path(__file__).with_name("hermes_dispatch_worker.py")
+            env = {
+                "HOME": str(Path(scratch)),
+                "HERMES_HOME": str(profile_home),
                 "HERMES_AGENT_SOURCE_ROOT": str(source),
-                "HERMES_INSTALLER_DATA_ROOT": str(data_root.root),
-                LOCAL_KEY_ENV: FIXTURE_KEY,
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PATH": "/usr/bin:/bin",
-                # Hermes bootstrap may re-exec after imports. Preserve only the
-                # pinned source/data identities and this installer module path.
-                "PYTHONPATH": str(installer_src) + os.pathsep + str(source),
-            })
-            sys.dont_write_bytecode = True
-            sys.path.insert(0, str(source))
-            inserted = True
+                "PYTHONPATH": str(INSTALLER_SRC) + os.pathsep + str(source),
+                "HERMES_INSTALLER_DISPATCH_KEY": FIXTURE_KEY,
+            }
             try:
-                # Imports that can invoke PM bootstrap happen before a live
-                # fixture listener exists. The profile path is deterministic so
-                # a bootstrap re-exec reconciles the same owned fixture.
-                from providers import get_provider_profile
-                from run_agent import AIAgent
-                from agent.auxiliary_client import call_llm
-
-                profile = get_provider_profile(LOCAL_PROVIDER_NAME)
-                self.assertIsNotNone(profile, "Hermes native plugin discovery must load the managed ProviderProfile")
-                self.assertEqual(profile.base_url, f"http://127.0.0.1:{plugin['port']}/v1")
-                self.assertEqual(profile.default_aux_model, MODEL)
-
                 gateway.start()
-                agent = AIAgent(
-                    quiet_mode=True,
-                    enabled_toolsets=[], skip_context_files=True, load_soul_identity=False,
-                    skip_memory=True, skip_background_review=True,
+                result = subprocess.run(
+                    [str(interpreter), str(worker), "--source-root=" + str(source),
+                     "--home=" + str(profile_home), "--expected-sha=" + HERMES_PIN,
+                     "--model=" + MODEL],
+                    env=env, cwd=str(source), capture_output=True, text=True, timeout=75,
                 )
-                self.assertEqual(agent.provider, LOCAL_PROVIDER_NAME)
-                self.assertEqual(agent.model, MODEL)
-                primary = agent.client.chat.completions.create(
-                    model=MODEL, messages=[{"role": "user", "content": "native primary fixture"}],
-                    max_tokens=24,
-                )
-                self.assertEqual(primary.choices[0].message.content, "native fixture response")
-
-                auxiliary = call_llm(
-                    task="title_generation",
-                    main_runtime=None,
-                    messages=[{"role": "user", "content": "native auxiliary fixture"}],
-                    max_tokens=24, timeout=5,
-                )
-                self.assertIn("native fixture response", str(auxiliary))
+                self.assertEqual(result.returncode, 0, result.stdout[-2000:] + result.stderr[-4000:])
+                self.assertIn("NATIVE_DISPATCH_OK", result.stdout)
                 self.assertEqual(len(transport.calls), 2)
                 self.assertEqual([call[0] for call in transport.calls], ["openrouter-nemotron-free"] * 2)
                 self.assertEqual([call[1] for call in transport.calls], [MODEL, MODEL])
-                self.assertEqual(
-                    [json.loads(call[2])["messages"][0]["content"] for call in transport.calls],
-                    ["native primary fixture", "native auxiliary fixture"],
-                )
-                self.assertFalse((Path(plugin["plugin"]) / "__pycache__").exists(),
-                                 "managed launcher must suppress plugin bytecode side effects")
+                import json
+                self.assertEqual([json.loads(call[2])["messages"][0]["content"] for call in transport.calls],
+                                 ["native primary fixture", "native auxiliary fixture"])
+                self.assertFalse((Path(plugin["plugin"]) / "__pycache__").exists())
             finally:
-                if agent is not None:
-                    agent.close()
                 gateway.close()
-                marker = home / ".hermes-installer-home-owned"
-                if home.exists():
-                    if (home.parent.resolve() != data_root.path("profiles").resolve()
-                            or marker.is_symlink()
-                            or marker.read_bytes() != b"hermes-installer-managed-home-v1\n"):
-                        raise AssertionError("Refusing to remove a profile without the exact disposable fixture marker")
-                    shutil.rmtree(home)
-                if inserted:
-                    sys.path.remove(str(source))
-                os.environ.clear()
-                os.environ.update(original_environment)
+                marker_path = profile_home / ".hermes-installer-home-owned"
+                self.assertTrue(marker_path.is_file() and not marker_path.is_symlink())
+                self.assertEqual(marker_path.read_bytes(), b"hermes-installer-managed-home-v1\\n")
+                import shutil
+                shutil.rmtree(profile_home)
 
 
 if __name__ == "__main__":
