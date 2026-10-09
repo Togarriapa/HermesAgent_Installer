@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: circuit-analysis
+  version: 1.0.0
+  description: Analyze electrical circuits using topology, component models, source and load conditions, tolerances, transients, thermal limits, and verification measurements.
+  tags: [electrical, circuits, analysis]
+spec:
+  procedure:
+    - Define sources, loads, reference nodes, component values and tolerances, operating modes, frequency range, and environmental conditions.
+    - Apply appropriate DC, AC, transient, small-signal, or power analysis with units and sign conventions explicit.
+    - Check component voltage, current, power, thermal, isolation, and transient ratings under normal and fault conditions.
+    - Validate assumptions with safe measurement or simulation where useful.

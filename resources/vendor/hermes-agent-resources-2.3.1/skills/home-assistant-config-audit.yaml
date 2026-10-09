@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: home-assistant-config-audit
+  version: 1.0.0
+  description: Audit Home Assistant configuration for duplication, brittle dependencies, stale integrations, naming inconsistency, unavailable entities, and maintainability risks.
+  tags: [home-assistant, audit, configuration]
+spec:
+  procedure:
+    - Inventory integrations, devices, entities, helpers, automations, scripts, scenes, dashboards, add-ons, and recurring errors.
+    - Identify unavailable or orphaned entities, duplicate logic, fragile entity references, deprecated configuration, and unclear naming.
+    - Rank findings by safety, reliability, maintainability, performance, and user impact.
+    - Propose reversible improvements with verification and rollback steps before removal or migration.

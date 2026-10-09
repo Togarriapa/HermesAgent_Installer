@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: elastic-agent-scaling
+  version: 1.0.1
+  description: "Scale agent instances from workload evidence under bounded concurrency, isolation, resource budgets, lifecycle controls, and unchanged authority."
+  tags: [agents, scaling, orchestration, resources]
+spec:
+  purpose: "Increase parallel capacity when useful without allowing instance count or recruitment to expand permissions."
+  procedure:
+    - "Estimate workload, dependency structure, expected parallelism benefit, latency target, resource cost, shared-state contention, and host capacity before scaling."
+    - "Choose instance count and roles within explicit CPU, memory, workspace, provider, rate-limit, and concurrency budgets, preserving per-instance isolation."
+    - "Propagate only necessary task context and the same or narrower effective permissions; never treat scaling, nesting, or Team membership as an authorization mechanism."
+    - "Observe throughput, errors, contention, duplicated work, and resource pressure; reduce or release instances when marginal value falls or the work completes."
+  verification:
+    - scaling-is-supported-by-workload-and-capacity-evidence
+    - new-instances-do-not-expand-authority
+    - temporary-instances-are-released-after-use
+  sideEffects: none

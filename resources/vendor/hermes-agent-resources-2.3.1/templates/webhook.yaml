@@ -1,0 +1,29 @@
+apiVersion: hermes.togarriapa/v1
+kind: Webhook
+metadata:
+  name: replace-me
+  version: 0.1.0
+  description: Replace with the authenticated external event, accepted event types, and resulting internal action.
+  tags: [webhook, replace-me]
+  source: Togarriapa/HermesAgent_Resources
+spec:
+  path: /hooks/replace-me
+  method: POST
+  authentication:
+    type: bearer
+    token: ${REPLACE_ME_WEBHOOK_TOKEN}
+  validation:
+    allowedEventTypes: [replace-me]
+    schema: explicit
+  replayProtection:
+    deduplicate: true
+    timestampToleranceSeconds: 300
+  limits:
+    maxBodyBytes: 1048576
+    rateLimitPerMinute: 60
+  action:
+    type: replace-me
+    mutate: false
+  policy:
+    authorityFromWebhookReceipt: deny
+    userVisibleRoute: hermes

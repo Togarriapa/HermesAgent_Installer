@@ -1,0 +1,22 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: developer-agent
+  version: 1.0.0
+  description: Curated resource set for a repository development agent.
+  tags: [bundle, development]
+spec:
+  imports:
+    profiles:
+      - developer@^1.0.0
+    plugins:
+      - codex@^1.0.0
+      - github@^1.0.0
+      - web@^1.0.0
+    mcps:
+      - filesystem@^1.0.0
+      - github@^1.0.0
+    webhooks:
+      - github-push@^1.0.0
+    crons:
+      - resource-sync@^1.0.0

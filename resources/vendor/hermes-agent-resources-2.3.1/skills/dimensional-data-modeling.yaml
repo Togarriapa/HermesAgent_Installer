@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: dimensional-data-modeling
+  version: 1.0.0
+  description: Model analytical data with clear grain, keys, facts, dimensions, history semantics, and business definitions.
+  tags: [data-engineering, modeling, warehouse]
+spec:
+  procedure:
+    - State the business process and grain before choosing tables or fields.
+    - Define facts, dimensions, keys, conformed dimensions, null semantics, and slowly changing history behavior.
+    - Separate raw ingestion, standardized models, and consumption-oriented models where useful.
+    - Document metric definitions, lineage, ownership, and compatibility expectations.

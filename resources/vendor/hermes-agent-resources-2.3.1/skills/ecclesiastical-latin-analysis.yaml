@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: ecclesiastical-latin-analysis
+  version: 1.0.1
+  description: Analyze Ecclesiastical Latin grammar, syntax, vocabulary, translation, pronunciation, textual variants, and theological context with genre-aware methods.
+  tags: [latin, catholic, language, theology]
+spec:
+  purpose: Produce defensible translations and grammatical explanations without flattening liturgical, canonical, patristic, or scholastic usage into modern paraphrase.
+  procedure:
+    - Identify text source, date, author or liturgical book, genre, manuscript or edition, and whether the task is grammatical parsing, translation, pronunciation, textual criticism, or theological interpretation.
+    - Parse morphology and syntax clause by clause, identifying governing constructions, ellipsis, subordinate relationships, semantic range, and departures from Classical usage.
+    - Consult authoritative editions, lexica, parallel passages, liturgical translations, canon-law or theological terminology, and historical usage when a word or construction is ambiguous.
+    - Produce a literal structural rendering before an idiomatic translation and explain where English requires interpretation or where multiple translations remain viable.
+    - Separate grammatical conclusions from doctrinal interpretation and identify textual variants or punctuation decisions that materially affect meaning.
+  verification:
+    - Every disputed translation must be traceable to syntax, lexical evidence, genre, and textual form.
+    - Technical theological or canonical terms must be checked against their period-specific ecclesiastical usage.

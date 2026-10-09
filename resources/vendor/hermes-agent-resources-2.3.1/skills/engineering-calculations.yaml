@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: engineering-calculations
+  version: 1.0.0
+  description: Perform traceable engineering calculations with units, assumptions, boundary conditions, uncertainty, checks, and appropriate safety factors.
+  tags: [engineering, calculations, verification]
+spec:
+  procedure:
+    - Define the physical model, knowns, unknowns, units, sign conventions, assumptions, and applicability limits.
+    - Calculate symbolically where practical before numerical substitution and carry units through the work.
+    - Check order of magnitude, limiting cases, conservation relationships, and sensitivity to uncertain inputs.
+    - Separate preliminary calculations from code-compliant or professionally certified design.

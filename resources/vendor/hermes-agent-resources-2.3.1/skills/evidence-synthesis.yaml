@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: evidence-synthesis
+  version: 1.0.0
+  description: Synthesize heterogeneous evidence while weighting quality, directness, consistency, and uncertainty.
+  tags: [evidence, synthesis]
+spec:
+  workflow:
+    - Group evidence by question and study type.
+    - Weight claims by methodological quality and directness.
+    - Reconcile or explicitly preserve contradictory findings.
+    - State confidence and unresolved uncertainty separately from conclusions.

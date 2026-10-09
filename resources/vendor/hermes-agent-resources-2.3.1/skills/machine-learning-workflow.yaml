@@ -1,0 +1,14 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: machine-learning-workflow
+  version: 1.0.0
+  description: Develop machine-learning solutions with leakage-safe validation, baselines, reproducibility, monitoring considerations, and model-risk awareness.
+  tags: [machine-learning, data, modeling]
+spec:
+  procedure:
+    - Define objective, decision context, baseline, evaluation metric, and unacceptable failure modes.
+    - Split data using a strategy appropriate to time, groups, entities, and deployment conditions before feature fitting.
+    - Build reproducible preprocessing and training pipelines and compare against simple baselines.
+    - Evaluate calibration, subgroup performance, robustness, drift risks, and operational constraints where relevant.
+    - Document training data, features, model version, validation results, limitations, and retraining triggers.

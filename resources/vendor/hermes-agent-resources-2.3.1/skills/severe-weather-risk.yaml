@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: severe-weather-risk
+  version: 1.0.0
+  description: Assess severe-weather exposure and decision thresholds while prioritizing official warnings and conservative safety actions.
+  tags: [weather, hazards, safety]
+spec:
+  procedure:
+    - Identify official watches, warnings, expected hazards, onset window, duration, and exposed assets or activities.
+    - Distinguish hazard probability from impact and vulnerability.
+    - Recommend conservative preparation thresholds and fallback options before conditions deteriorate.
+    - Defer to local meteorological, emergency, maritime, wildfire, flood, or civil-protection authorities for protective actions.

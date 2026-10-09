@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: ai-evaluation-benchmarking
+  version: 1.0.1
+  description: Build repeatable AI evaluations covering correctness, safety, robustness, latency, cost, and regression behavior.
+  tags: [ai, evaluation, benchmarking, quality]
+spec:
+  principles: [representative-data, separate-metric-from-goal, preserve-failure-cases]
+  procedure:
+    - Define the deployment decision, target behaviors, unacceptable failures, operating conditions, and separate quality, safety, robustness, latency, and cost metrics before constructing the benchmark.
+    - Build a versioned evaluation set that represents normal traffic, important subgroups, boundary conditions, adversarial cases, historical failures, and held-out examples while preventing test leakage into prompt or system development.
+    - Specify deterministic scoring where possible and calibrated human or model-assisted rubrics where judgment is required, including tie handling, uncertainty, inter-rater checks, and minimum sample sizes.
+    - Establish the current production or previous-release baseline under the same runtime settings, then compare candidates with paired examples and enough repetitions to expose stochastic variance rather than relying on headline averages.
+    - Analyze failures by category and severity, preserve regressions as durable fixtures, and set explicit release gates that require both aggregate targets and no unacceptable degradation on safety-critical or high-value slices.
+  verification:
+    - Benchmark inputs, model/runtime versions, prompts, scoring logic, seeds where available, and environment assumptions are recorded for reproducibility.
+    - Candidate comparisons use the same evaluation conditions and report confidence or observed variance for stochastic metrics.
+    - Every release-blocking regression is traceable to an example, metric or rubric decision rather than an unaudited subjective impression.

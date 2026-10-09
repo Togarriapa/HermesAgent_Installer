@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: technical-portfolio-management
+  version: 1.0.1
+  description: "Manage a technical portfolio across value, architecture, reliability, security, lifecycle, capacity, dependencies, debt, risk, and delivery constraints."
+  tags: [technology, portfolio, management, architecture]
+spec:
+  purpose: "Maintain a coherent technical investment portfolio rather than optimizing individual projects independently."
+  procedure:
+    - "Inventory systems, initiatives, lifecycle state, owners, dependencies, service criticality, technical debt, security exposure, capacity, and committed work."
+    - "Normalize decision evidence and assess value, urgency, reliability, architecture fit, lifecycle risk, cost, skills, dependencies, and opportunity cost for each item."
+    - "Build candidate portfolios under real capacity and sequencing constraints, testing concentration, correlated risk, mandatory work, and deferral consequences."
+    - "Track outcome and health changes, re-evaluate priorities when evidence or dependencies change, and record exceptions rather than silently bypassing standards."
+  verification:
+    - portfolio-inventory-and-dependencies-are-current
+    - prioritization-reflects-capacity-risk-and-lifecycle
+    - exceptions-and-reprioritization-rationale-are-recorded
+  sideEffects: none

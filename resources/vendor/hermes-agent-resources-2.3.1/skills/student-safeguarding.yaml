@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: student-safeguarding
+  version: 1.0.0
+  description: Recognize safeguarding concerns, preserve factual observations, avoid inappropriate investigation, and escalate through responsible institutional or adult channels.
+  tags: [education, safeguarding, students]
+spec:
+  procedure:
+    - Treat immediate safety concerns as higher priority than routine educational work.
+    - Record factual observations and disclosures without leading questions or independent investigation.
+    - Preserve privacy while sharing necessary information with the appropriate safeguarding authority or responsible adult.
+    - Do not promise secrecy that conflicts with safeguarding duties or substitute educational judgment for professional child-protection processes.

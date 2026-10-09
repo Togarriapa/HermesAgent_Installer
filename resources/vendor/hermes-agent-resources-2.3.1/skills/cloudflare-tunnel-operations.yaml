@@ -1,0 +1,22 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: cloudflare-tunnel-operations
+  version: 1.0.0
+  description: Diagnose and perform bounded Cloudflare tunnel and DNS operations for the approved Hermes homelab services with least-privilege provider scope.
+  tags: [cloudflare, tunnel, dns, homelab, infrastructure]
+spec:
+  principles: [least-privilege-token, approved-resources-only, inspect-before-write, preserve-catch-all-ingress, verify-after-change]
+  procedure:
+    - inspect-approved-tunnel-connector-and-dns-state
+    - correlate-cloudflare-state-with-origin-service-health
+    - require-authentik-System-authorization-before-write
+    - validate-target-against-approved-zone-hostname-and-tunnel-allowlists
+    - plan-reversible-dns-or-tunnel-change
+    - execute-only-declared-provider-operation
+    - verify-dns-tunnel-and-origin-reachability
+  policy:
+    accountWideAdministration: deny
+    apiTokenAdministration: deny
+    unrelatedZoneMutation: deny
+    mutationAuthorization: authentik-System-fresh

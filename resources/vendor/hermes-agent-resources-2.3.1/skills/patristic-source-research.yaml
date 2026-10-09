@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: patristic-source-research
+  version: 1.0.1
+  description: Research patristic sources using critical editions, translations, chronology, authorship, manuscript transmission, genre, theology, and reception history.
+  tags: [patristics, theology, history, sources]
+spec:
+  purpose: Use the Church Fathers as historically situated primary sources while distinguishing authentic texts, disputed works, translation choices, and later doctrinal reception.
+  procedure:
+    - Define author, work, passage, doctrine or practice, date range, language, and whether the task concerns textual meaning, historical practice, doctrinal development, or reception.
+    - Locate the best available critical text and reliable translation, record book, section, edition, language, manuscript or fragment status, and note disputed or pseudonymous attribution.
+    - Analyze genre, audience, controversy, rhetorical purpose, scriptural citations, technical vocabulary, and historical setting before extracting theological propositions.
+    - Compare relevant Fathers and councils across chronology, identifying agreement, diversity, development, and later reception without treating isolated quotations as universal consensus.
+    - Synthesize the evidence with exact citations, translation caveats, authenticity status, and a distinction between patristic testimony and subsequent magisterial definition.
+  verification:
+    - Quotations must be traceable to a real work and section and checked against reliable editions or translations.
+    - Claims of patristic consensus must be supported across relevant authors and periods rather than a single proof text.

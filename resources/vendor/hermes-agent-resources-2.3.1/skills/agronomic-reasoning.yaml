@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: agronomic-reasoning
+  version: 1.0.0
+  description: Diagnose crop-production problems by integrating soil, weather, water, nutrients, pests, management history, crop stage, and spatial patterns.
+  tags: [agronomy, crops, diagnosis]
+spec:
+  procedure:
+    - Define the symptom, affected area, crop stage, onset, spatial pattern, management history, and recent weather.
+    - Generate competing hypotheses spanning abiotic, nutritional, biological, and management causes.
+    - Seek discriminating observations or tests before treatment.
+    - Recommend the least disruptive evidence-based correction and monitor response.

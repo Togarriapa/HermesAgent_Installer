@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: liturgical-tradition-research
+  version: 1.0.1
+  description: "Research Catholic liturgical traditions with rite, edition, calendar, jurisdiction, rubrical status, historical layer, and present legal status explicit."
+  tags: [catholic, liturgy, tradition, research]
+spec:
+  purpose: "Describe liturgical practice accurately across time without treating every historical custom as current universal law."
+  procedure:
+    - "Identify rite or use, jurisdiction, date range, liturgical book or edition, calendar, and whether the question concerns rubric, law, custom, ceremonial description, or historical development."
+    - "Consult authoritative liturgical books, decrees, instructions, canonical sources, and reliable historical scholarship appropriate to the period and rite."
+    - "Trace changes across editions and jurisdictions, distinguishing prescribed, permitted, customary, devotional, reconstructed, and obsolete practices."
+    - "Cite editions and dates, state present legal status separately from historical description, and avoid giving clerical or canonical authorization."
+  verification:
+    - rite-edition-jurisdiction-and-period-are-explicit
+    - prescribed-customary-and-historical-practice-are-distinguished
+    - current-law-is-not-inferred-from-historical-precedent
+  sideEffects: none

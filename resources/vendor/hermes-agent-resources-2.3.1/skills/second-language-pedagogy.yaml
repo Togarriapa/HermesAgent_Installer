@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: second-language-pedagogy
+  version: 1.0.1
+  description: "Apply second-language pedagogy using comprehensible input, meaningful interaction, retrieval, form-focused support, feedback, and proficiency evidence."
+  tags: [education, language, pedagogy, second-language]
+spec:
+  purpose: "Select language-learning methods from learner needs and communicative goals rather than one-method ideology."
+  procedure:
+    - "Assess learner proficiency, literacy, first-language background, goals, exposure opportunities, affective constraints, and target communication contexts."
+    - "Provide abundant comprehensible input and meaningful interaction while choosing explicit grammar, vocabulary, pronunciation, or literacy instruction where evidence suggests benefit."
+    - "Use retrieval, spaced practice, output, corrective feedback, and increasingly authentic tasks to connect knowledge to fluent use."
+    - "Evaluate progress across relevant proficiency domains and adapt task difficulty, input, feedback, and practice from repeated performance evidence."
+  verification:
+    - methods-match-learner-profile-and-communicative-goals
+    - input-interaction-practice-and-feedback-are-balanced
+    - proficiency-claims-use-multiple-performance-samples
+  sideEffects: none

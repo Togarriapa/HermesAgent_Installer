@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: editing-revision
+  version: 1.0.0
+  description: Revise writing at structural, paragraph, sentence, and copy-editing levels while preserving intent.
+  tags: [editing, writing]
+spec:
+  workflow:
+    - Diagnose the highest-level problem before line editing.
+    - Fix structure and missing logic before style and grammar.
+    - Remove repetition and ambiguity while preserving intended meaning.
+    - Perform a final consistency and mechanics pass.

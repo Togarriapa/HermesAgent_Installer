@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: web-accessibility
+  version: 1.0.0
+  description: Design and implement web experiences with semantic structure, keyboard access, readable contrast, assistive-technology compatibility, and robust states.
+  tags: [accessibility, web, frontend, ux]
+spec:
+  procedure:
+    - Use semantic elements and programmatic names before ARIA workarounds.
+    - Ensure complete keyboard operation, visible focus, logical order, and non-pointer alternatives.
+    - Check contrast, zoom/reflow, text alternatives, labels, validation, and dynamic announcements.
+    - Test critical flows with automated checks plus manual keyboard and assistive-technology reasoning.

@@ -1,0 +1,50 @@
+apiVersion: hermes.togarriapa/v1
+kind: Plugin
+metadata:
+  name: cloudflare-homelab
+  version: 1.0.0
+  description: Least-privilege Cloudflare adapter for health inspection and bounded DNS/tunnel operations covering only the approved Hermes homelab zone, hostnames, and tunnels.
+  tags: [cloudflare, homelab, infrastructure, tunnel, dns]
+spec:
+  provider: cloudflare-api
+  endpoint: https://api.cloudflare.com/client/v4
+  authentication:
+    type: bearer
+    tokenRef: ${CLOUDFLARE_API_TOKEN}
+  runtime:
+    accountIdRef: ${CLOUDFLARE_ACCOUNT_ID}
+    zoneIdRef: ${CLOUDFLARE_ZONE_ID}
+    authorizationProvider: authentik-authorization@^1.0.0
+    requiredEffectiveGroupForWrites: System
+    allowedHostnames:
+      - ha.togarriapahome.uk
+      - nc.togarriapahome.uk
+      - hr.togarriapahome.uk
+    allowedTunnelIdRefs:
+      - ${CLOUDFLARE_TUNNEL_HA_ID}
+      - ${CLOUDFLARE_TUNNEL_NC_ID}
+      - ${CLOUDFLARE_TUNNEL_HR_ID}
+  capabilities:
+    reads:
+      - read-approved-dns-records
+      - read-approved-tunnel-state
+      - read-approved-tunnel-connectors
+      - read-approved-tunnel-configuration
+    writes:
+      - update-approved-dns-record
+      - update-approved-tunnel-configuration
+  policy:
+    writesRequireFreshAuthentikSystemMembership: true
+    destructiveWritesRequireExplicitConfirmation: true
+    unrelatedZoneAccess: deny
+    unrelatedTunnelAccess: deny
+    accountAdministration: deny
+    apiTokenAdministration: deny
+    billingAccess: deny
+    broadDnsMutation: deny
+    createUnapprovedTunnel: deny
+    deleteTunnel: deny
+    credentials: runtime-only
+    leastPrivilegeTokenRequired: true
+  provenance:
+    providerDocs: official-cloudflare-required

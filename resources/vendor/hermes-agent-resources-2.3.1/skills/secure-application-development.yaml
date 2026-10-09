@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: secure-application-development
+  version: 1.0.0
+  description: Apply defensive secure-coding practices to authentication, authorization, input handling, secrets, dependencies, and sensitive data.
+  tags: [security, development, secure-coding]
+spec:
+  procedure:
+    - Identify trust boundaries, sensitive assets, attacker-controlled inputs, and privileged operations.
+    - Enforce server-side authorization and safe input/output handling rather than trusting client checks.
+    - Keep credentials out of source and logs and minimize sensitive-data collection and retention.
+    - Review dependencies and high-risk code paths and add tests for authorization and validation failures.

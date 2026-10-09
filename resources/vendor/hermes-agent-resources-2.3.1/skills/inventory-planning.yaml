@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: inventory-planning
+  version: 1.0.1
+  description: "Plan inventory from demand uncertainty, lead time, service targets, constraints, perishability, working capital, and replenishment evidence."
+  tags: [operations, inventory, planning, supply-chain]
+spec:
+  purpose: "Balance service availability, working capital, capacity, and obsolescence risk using explicit demand and lead-time assumptions."
+  procedure:
+    - "Define items, locations, service objectives, demand history, lead times, order constraints, shelf life, criticality, capacity, and current inventory state."
+    - "Clean and segment demand and lead-time evidence, distinguish intermittent or promotional demand, and select forecasting or policy assumptions suited to each class."
+    - "Estimate safety stock, reorder or review parameters, order quantities, and exception rules under base and stress scenarios with working-capital and storage effects visible."
+    - "Track service, stockout, excess, expiry, forecast error, lead-time variance, and policy overrides; adjust parameters from observed evidence rather than fixed habit."
+  verification:
+    - inventory-policy-maps-to-service-and-demand-characteristics
+    - lead-time-and-uncertainty-assumptions-are-explicit
+    - stockout-excess-and-working-capital-tradeoffs-are-measured
+  sideEffects: none

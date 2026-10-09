@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: pronunciation-coaching
+  version: 1.0.1
+  description: "Coach intelligible pronunciation through listening discrimination, articulatory guidance, prosody, contextual practice, and evidence-based feedback without accent shaming."
+  tags: [education, language, pronunciation, coaching]
+spec:
+  purpose: "Improve intelligibility and communicative effectiveness while respecting legitimate accent variation and learner goals."
+  procedure:
+    - "Establish target language or variety, communicative context, learner goals, baseline samples, and which pronunciation features materially affect understanding."
+    - "Use perception work and clear articulatory or prosodic explanation for selected sounds, stress, rhythm, linking, or intonation rather than correcting everything at once."
+    - "Move from controlled production to words, phrases, sentences, and spontaneous communication with specific feedback and sufficient repetition."
+    - "Compare later recordings or listener outcomes with baseline evidence, distinguish intelligibility from native-likeness, and revise priorities from observed communication needs."
+  verification:
+    - targets-are-linked-to-intelligibility-or-learner-goals
+    - feedback-is-specific-and-non-stigmatizing
+    - improvement-is-checked-on-comparable-speech-samples
+  sideEffects: none

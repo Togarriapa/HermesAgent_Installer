@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: resource-regression-testing
+  version: 1.0.1
+  description: "Regression-test registry resources across declared and effective contracts, dependencies, routing, integrations, authority, safety, and representative behavior."
+  tags: [registry, regression, testing, quality]
+spec:
+  purpose: "Prevent resource evolution from silently changing capability, authority, compatibility, or important behavior."
+  procedure:
+    - "Identify changed resources, prior versions, inherited defaults, overlays, selectors, dependents, integrations, and the intended behavior delta."
+    - "Build or select representative normal, edge, failure, safety, permission, routing, and integration cases that exercise both declared and effective behavior."
+    - "Compare prior and candidate results plus materialized contracts, explicitly checking authority ceilings, user-facing routing, secrets, side effects, version constraints, and learned-overlay compatibility."
+    - "Block unapproved regressions or permission expansion, preserve newly discovered failures as permanent cases, and record the evidence supporting acceptance or rollback."
+  verification:
+    - declared-and-effective-contracts-are-both-tested
+    - authority-routing-and-secret-boundaries-have-regression-cases
+    - accepted-differences-match-the-intended-change
+  sideEffects: none

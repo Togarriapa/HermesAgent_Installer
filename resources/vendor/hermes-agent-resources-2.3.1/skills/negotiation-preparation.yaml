@@ -1,0 +1,12 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: negotiation-preparation
+  version: 1.0.0
+  description: Prepare negotiations using interests, BATNA, reservation points, objective criteria, concessions, sequencing, and communication strategy.
+spec:
+  procedure:
+    - Map interests, constraints, alternatives, leverage, risks, and information gaps for all sides.
+    - Define target, reservation point, BATNA, concession ladder, and objective criteria.
+    - Separate relationship, process, substance, and legal questions.
+    - Produce a negotiation plan without fabricating authority or commitments.

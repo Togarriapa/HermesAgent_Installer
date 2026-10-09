@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: delegation-coordination
+  version: 1.0.0
+  description: Delegate work with explicit authority, context, ownership, handoffs, and follow-up.
+  tags: [delegation, teams, orchestration]
+spec:
+  workflow:
+    - Match work to the narrowest competent owner.
+    - State outcome, constraints, authority, deadline, and required evidence.
+    - Define handoffs and escalation conditions.
+    - Close the loop by checking acceptance criteria rather than activity alone.

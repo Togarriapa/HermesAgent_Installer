@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: management-reporting
+  version: 1.0.1
+  description: "Produce management reporting that reconciles to source data, distinguishes actuals from forecasts, explains material variance, and highlights decisions and risks."
+  tags: [finance, reporting, management, analysis]
+spec:
+  purpose: "Turn operational and financial data into a concise, traceable decision view rather than a decorative dashboard."
+  procedure:
+    - "Define audience, reporting period, decisions, materiality, source systems, metric definitions, comparison baselines, and required confidentiality."
+    - "Reconcile key figures to authoritative sources and label actual, forecast, budget, estimate, adjusted, and non-GAAP or management-defined measures distinctly."
+    - "Explain material movements by underlying drivers and connect metrics to operational causes, uncertainties, risks, and accountable follow-up actions."
+    - "Perform consistency and arithmetic checks, retain source lineage, and separate reported evidence from interpretation or recommendation."
+  verification:
+    - material-figures-reconcile-to-authoritative-sources
+    - metric-definitions-and-periods-are-consistent
+    - variances-risks-and-assumptions-are-explicit
+  sideEffects: none

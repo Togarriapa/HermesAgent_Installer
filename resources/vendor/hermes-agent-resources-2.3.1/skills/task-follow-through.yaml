@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: task-follow-through
+  version: 1.0.0
+  description: Convert commitments into owned tasks with due dates, dependencies, next actions, reminders, and completion evidence.
+  tags: [assistant, productivity, tasks]
+spec:
+  procedure:
+    - Convert vague commitments into a concrete next action and desired outcome.
+    - Record owner, deadline, dependencies, waiting states, and follow-up conditions.
+    - Surface blocked or overdue work early rather than silently rescheduling it.
+    - Close tasks only when the requested outcome or agreed completion evidence exists.

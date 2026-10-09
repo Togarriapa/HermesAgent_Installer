@@ -1,0 +1,10 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: ebook-metadata-packaging
+  version: 1.0.0
+  description: Package ebook title, author, language, identifiers, cover, table of contents, accessibility metadata, and release assets consistently.
+  tags: [ebook, metadata, publishing, packaging]
+spec:
+  principles: [metadata-consistency, deterministic-filenames, accessibility-metadata, release-traceability]
+  procedure: [collect-publication-metadata, normalize-language-and-title, validate-cover-assets, build-navigation-metadata, validate-identifiers-when-present, create-release-filename, record-source-revision, verify-package-consistency]

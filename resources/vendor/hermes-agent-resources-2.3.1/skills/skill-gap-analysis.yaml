@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: skill-gap-analysis
+  version: 1.0.1
+  description: "Identify missing or weak Skill coverage from task demand, failures, capability maps, usage evidence, overlap, authority boundaries, and existing resources."
+  tags: [registry, skills, analysis, capability]
+spec:
+  purpose: "Determine whether a new or improved Skill is justified without creating duplicate resources for problems already covered elsewhere."
+  procedure:
+    - "Define the target task domains, recurring failures, unmet outcomes, required inputs and outputs, risk level, and evidence that current resources are insufficient."
+    - "Map existing Skills and Profiles by declared method, selectors, dependencies, integrations, authority, and actual usage, distinguishing capability gaps from routing or tool-access problems."
+    - "Classify gaps as missing expertise, incomplete method, poor evidence handling, insufficient verification, overlap, obsolete scope, or runtime/integration limitation."
+    - "Recommend refinement, merge, retirement, new Skill, or runtime change with acceptance criteria and the least new capability necessary to close the demonstrated gap."
+  verification:
+    - proposed-gap-is-backed-by-task-or-failure-evidence
+    - existing-overlap-and-routing-have-been-checked
+    - recommendation-minimizes-new-capability-and-duplication
+  sideEffects: none

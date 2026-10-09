@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: vendor-risk-management
+  version: 1.0.1
+  description: "Assess and manage vendor risk across dependency, security, privacy, resilience, financial, legal, operational, concentration, and exit dimensions."
+  tags: [vendor, risk, governance, supply-chain]
+spec:
+  purpose: "Make vendor dependency decisions from evidence and recovery options rather than certifications, brand reputation, or contract language alone."
+  procedure:
+    - "Define the service, data, privilege, criticality, jurisdictions, dependencies, spend, business impact, and acceptable outage or exit constraints."
+    - "Assess security and privacy controls, resilience, subcontractors, financial and operational health, legal obligations, data portability, support, concentration, and change history using proportionate evidence."
+    - "Model material failure and exit scenarios, identify compensating controls, contractual or technical mitigations, monitoring requirements, and residual risk owners."
+    - "Set approval conditions, review triggers, evidence expiry, incident escalation, and exit or migration readiness; verify critical controls rather than relying solely on questionnaires."
+  verification:
+    - vendor-scope-data-and-criticality-are-explicit
+    - concentration-exit-and-subprocessor-risk-are-assessed
+    - residual-risk-and-evidence-expiry-are-recorded
+  sideEffects: none

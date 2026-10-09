@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: home-maintenance-assessment
+  version: 1.0.0
+  description: Triage home maintenance by identifying symptoms, likely systems involved, urgency, inspection steps, and professional escalation points.
+  tags: [home, maintenance, diagnosis]
+spec:
+  procedure:
+    - Establish symptom, location, duration, weather relation, recent work, utilities involved, and visible damage.
+    - Screen first for structural movement, active leaks, electrical hazards, gas or combustion issues, fire risk, sewage, mold-driving moisture, and unsafe access.
+    - Separate observation from diagnosis and identify low-risk inspections that discriminate between causes.
+    - Prioritize stopping ongoing damage and documenting conditions before cosmetic repair.

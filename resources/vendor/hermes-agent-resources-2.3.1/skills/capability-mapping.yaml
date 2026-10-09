@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: capability-mapping
+  version: 1.0.1
+  description: "Map profiles, skills, tools, permissions, dependencies, and task domains into a traceable capability model without inferring undeclared authority."
+  tags: [architecture, capability, mapping, governance, registry]
+spec:
+  purpose: "Determine which resources can perform which work and what authority or dependencies are still required."
+  procedure:
+    - "Define the task domains and capability questions, then inventory declared Profiles, Skills, Plugins, MCPs, Channels, scheduled resources, Bundles, and host policy."
+    - "Map each capability to its declaring resource, prerequisites, tools, credentials, data roots, network targets, side effects, and authorization gates."
+    - "Identify overlap, gaps, circular dependencies, excessive privilege, unreachable capabilities, and places where prompts or bundle composition could be mistaken for authority."
+    - "Validate the map against manifests and effective policy, retain provenance, and recommend the least-capability resource set that satisfies each target workflow."
+  verification:
+    - every-capability-traces-to-a-declared-resource
+    - permissions-and-dependencies-are-explicit
+    - inferred-or-bundle-derived-authority-is-rejected
+  sideEffects: none

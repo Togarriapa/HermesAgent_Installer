@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: debate-quality-analysis
+  version: 1.0.0
+  description: Evaluate debates for argument quality, evidence, framing, burden of proof, concessions, talking past, rhetoric, unresolved disagreements, and decision relevance.
+spec:
+  instructions:
+    - Separate persuasive performance from evidential strength.
+    - Identify where participants disagree on facts, definitions, values, predictions, or decision criteria.
+    - Produce the strongest unresolved questions and what evidence would resolve them.

@@ -1,0 +1,18 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: ancient-traditions-context-analysis
+  version: 1.0.1
+  description: Analyze ancient traditions, customs, rituals, and transmitted practices within chronological, regional, textual, archaeological, and social context.
+  tags: [ancient, traditions, history, religion]
+spec:
+  purpose: Evaluate claims of ancient tradition without assuming continuity, uniformity, or literal correspondence between texts and practice.
+  procedure:
+    - Define the claimed tradition, community, place, date range, source tradition, and whether the question concerns origin, practice, meaning, transmission, or later reception.
+    - Establish source chronology, genre, authorship, manuscript or inscriptional transmission, archaeological context, and the temporal gap between described events and surviving evidence.
+    - Compare independent textual, epigraphic, iconographic, archaeological, linguistic, and comparative evidence and identify where later authors retroject contemporary norms into the past.
+    - Trace continuity, adaptation, contestation, regional variation, institutional change, and reinterpretation across periods rather than assuming an unchanged lineage.
+    - Present competing scholarly models, evidence strengths, anachronism risks, and the minimum claim that can be sustained securely.
+  verification:
+    - Continuity claims must identify evidence across the intervening periods rather than relying on similar names or later assertions.
+    - Source genre and dating must be incorporated into conclusions about actual historical practice.

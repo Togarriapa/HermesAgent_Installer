@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: website-architecture
+  version: 1.0.1
+  description: "Design website architecture from user tasks, content models, navigation, URLs, accessibility, performance, search, security, analytics, and maintainability."
+  tags: [web, website, architecture, accessibility]
+spec:
+  purpose: "Create a coherent site structure that supports users and operators instead of optimizing only page appearance."
+  procedure:
+    - "Define audiences, priority user tasks, content types, ownership, languages, privacy or regulatory constraints, platform limits, and measurable site outcomes."
+    - "Design information hierarchy, navigation, URL patterns, content models, templates, search, metadata, and integration boundaries from those tasks and content relationships."
+    - "Account for responsive behavior, accessibility, performance, security, caching, publishing workflow, analytics, SEO fundamentals, and graceful error or empty states."
+    - "Validate architecture through representative journeys, content edge cases, accessibility and performance checks, operational publishing scenarios, and maintainability review."
+  verification:
+    - information-architecture-maps-to-priority-user-tasks
+    - accessibility-performance-security-and-operations-are-covered
+    - representative-navigation-and-content-edge-cases-are-tested
+  sideEffects: none

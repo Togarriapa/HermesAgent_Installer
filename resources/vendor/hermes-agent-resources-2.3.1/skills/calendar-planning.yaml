@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: calendar-planning
+  version: 1.0.0
+  description: Organize appointments, deadlines, preparation time, travel buffers, recurring commitments, and scheduling conflicts.
+  tags: [assistant, calendar, planning]
+spec:
+  procedure:
+    - Capture date, time, timezone, location, participants, duration, preparation, and dependency requirements.
+    - Detect overlaps, unrealistic transitions, and missing preparation or travel buffers.
+    - Prioritize immovable commitments and propose alternatives for flexible items.
+    - Distinguish proposed scheduling from confirmed calendar changes.

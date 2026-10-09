@@ -1,0 +1,20 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: financial-data-reconciliation
+  version: 1.0.0
+  description: Normalize and reconcile read-only balances, transactions, holdings, and account metadata across banks, brokers, exchanges, and wallets while preserving source provenance and freshness.
+  tags: [finance, reconciliation, banking, portfolio]
+spec:
+  procedure:
+    - Record provider, source account, observation timestamp, currency/asset, units, valuation currency, and freshness for every imported record.
+    - Keep cash balances, securities positions, crypto balances, pending orders, and historical transactions distinct rather than forcing them into one ambiguous amount field.
+    - Detect duplicate transfers or mirrored transactions before aggregating net worth or cash flow.
+    - Reconcile provider totals against normalized totals and flag unexplained differences instead of silently balancing them.
+    - Preserve source provenance and distinguish provider-reported values from locally calculated market values.
+    - Mark stale or consent-expired sources clearly and avoid presenting stale values as current.
+    - Never use reconciliation as authority to place a trade, move funds, sign a wallet transaction, or modify an account.
+  output:
+    includeFreshness: true
+    includeSourceProvenance: true
+    includeReconciliationExceptions: true

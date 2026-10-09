@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: blockchain-protocol-research
+  version: 1.0.1
+  description: Research blockchain protocol architecture, consensus, security assumptions, governance, upgrades, token mechanics, and ecosystem dependencies.
+  tags: [blockchain, protocol, research]
+spec:
+  purpose: Prefer primary protocol documentation, code/release evidence, and explicit technical uncertainty.
+  procedure:
+    - Identify the protocol version, network, consensus design, execution/data-availability model, and current governance process.
+    - Trace claims to primary documentation, specifications, repositories, release notes, audits, and on-chain or network evidence where available.
+    - Analyze trust and security assumptions including validator concentration, bridges, upgrade keys, oracle dependencies, client diversity, and failure modes.
+    - Evaluate token issuance, fee mechanics, incentives, governance rights, and dependency on external infrastructure or applications.
+    - Distinguish documented behavior from inferred economics or future-roadmap claims and record unresolved technical uncertainty.
+  verification:
+    - protocol-version-and-network-are-explicit
+    - material-security-assumptions-and-dependencies-are-listed
+    - primary-sources-and-uncertainties-are-traceable

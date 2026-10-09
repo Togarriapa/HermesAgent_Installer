@@ -1,0 +1,64 @@
+apiVersion: hermes.togarriapa/v1
+kind: Plugin
+metadata:
+  name: agent-live-wallet
+  version: 1.0.0
+  description: Dedicated real-value cryptocurrency wallet for Hermes-owned funds, with locally isolated keys and write capability gated by explicit user orders and fresh confirmation for every mainnet transaction.
+  tags: [crypto, wallet, mainnet, execution, explicit-order]
+spec:
+  provider: hermes-local-live-wallet
+  ownership: hermes-agent-dedicated
+  activation:
+    requireConfiguredNetworkAllowlist: true
+    allowedNetworksRef: AGENT_LIVE_WALLET_ALLOWED_NETWORKS
+    wildcardNetworks: deny
+  keyManagement:
+    generation: local
+    storage: host-encrypted-secret-store
+    exportPrivateKey: deny
+    exportSeedPhrase: deny
+    logSecretMaterial: deny
+    importUserPrivateKey: deny
+    importUserSeedPhrase: deny
+    importLedgerSecretMaterial: deny
+    separateFromUserWallets: true
+    backupPolicy: operator-managed-encrypted-backup
+  capabilities:
+    - create-live-account
+    - read-live-balances
+    - receive-assets
+    - construct-transactions
+    - simulate-transactions
+    - estimate-fees
+    - sign-user-authorized-transactions
+    - broadcast-user-authorized-transactions
+    - inspect-receipts-and-events
+  authorization:
+    explicitUserOrder: true
+    freshConfirmation: true
+    oneShot: true
+    ttlSeconds: 300
+    bindTo:
+      - chain
+      - source-account
+      - destination
+      - asset
+      - amount
+      - max-fee
+      - contract-and-calldata-when-applicable
+    wildcardAuthorization: deny
+    standingAutonomy: deny
+  guards:
+    requireNetworkAssertionBeforeSigning: true
+    requireSimulationBeforeContractCall: true
+    requireBalanceAndFeeCheckBeforeSigning: true
+    rejectUnknownNetwork: true
+    rejectUnboundedTokenApproval: true
+    rejectSeedOrPrivateKeyDisclosure: true
+    duplicateTransactionProtection: true
+  policy:
+    autonomousRealValueTrading: deny
+    autonomousRealValueTransfers: deny
+    autonomousDefiExecution: deny
+    userOrderedRealValueAction: allow-with-fresh-confirmation
+    userVisibleDeliveryViaHermesOnly: true

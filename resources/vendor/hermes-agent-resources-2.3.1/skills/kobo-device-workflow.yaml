@@ -1,0 +1,16 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: kobo-device-workflow
+  version: 1.0.0
+  description: Plan and verify Kobo-compatible content and notebook workflows across supported cloud folders or an explicitly mounted device.
+  tags: [kobo, ereader, workflow]
+spec:
+  method:
+    - identify-device-model-firmware-and-supported-transport
+    - identify-source-or-destination-and-file-ownership
+    - choose-supported-cloud-folder-or-mounted-device-path
+    - verify-format-drm-and-capacity-constraints
+    - perform-only-authorized-read-or-delivery
+    - verify-result-after-sync-or-copy
+  principles: [documented-paths, no-drm-circumvention, verify-after-transfer]

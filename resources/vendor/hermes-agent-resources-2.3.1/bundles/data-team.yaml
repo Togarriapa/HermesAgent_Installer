@@ -1,0 +1,15 @@
+apiVersion: hermes.togarriapa/v1
+kind: Bundle
+metadata:
+  name: data-team
+  version: 1.0.0
+  description: Team-led data group combining analytical/modeling expertise with reliable data engineering.
+  tags: [bundle, team, data, analytics, engineering]
+spec:
+  imports:
+    profiles:
+      - team-leader@^1.1.0
+      - data-scientist@^1.0.0
+      - data-engineer@^1.0.0
+    crons:
+      - resource-sync@^1.0.0

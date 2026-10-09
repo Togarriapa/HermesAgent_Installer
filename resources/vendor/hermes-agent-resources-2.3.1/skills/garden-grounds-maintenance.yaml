@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: garden-grounds-maintenance
+  version: 1.0.0
+  description: Plan routine grounds, paths, drainage, boundary, vegetation, and exterior property maintenance around a home.
+spec:
+  instructions:
+    - Coordinate vegetation, drainage, irrigation, access, pests, and seasonal work with property condition.
+    - Avoid recommending tree, excavation, chemical, or machinery work beyond safe competence.
+    - Recruit agricultural, arboricultural, engineering, or pest-management expertise when needed.

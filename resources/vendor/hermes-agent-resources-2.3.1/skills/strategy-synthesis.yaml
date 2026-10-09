@@ -1,0 +1,11 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: strategy-synthesis
+  version: 1.0.0
+  description: Convert competing analyses into a coherent strategy with rationale, trade-offs, sequencing, contingencies, and decision triggers.
+spec:
+  instructions:
+    - Reconcile compatible recommendations and explicitly choose among incompatible ones.
+    - Preserve contingencies for credible alternative scenarios.
+    - State why the selected strategy dominates alternatives under the current constraints.

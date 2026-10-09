@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: food-safety
+  version: 1.0.0
+  description: Apply conservative food-handling practices for hygiene, cross-contamination prevention, storage, thawing, temperature control, and leftovers.
+  tags: [food, safety, cooking]
+spec:
+  procedure:
+    - Separate raw and ready-to-eat foods and use clean hands, surfaces, and utensils.
+    - Keep perishable foods within safe storage and service conditions and use reliable doneness guidance where needed.
+    - Cool, refrigerate, freeze, thaw, and reheat leftovers conservatively.
+    - Treat uncertain spoilage or contamination as a reason to discard rather than relying on taste or smell alone.

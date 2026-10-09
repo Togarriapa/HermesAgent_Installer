@@ -1,0 +1,20 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: financial-connection-governance
+  version: 1.0.0
+  description: Govern consent, credential scope, connection health, revocation, freshness, and least-privilege boundaries for bank, broker, exchange, and wallet data connections.
+  tags: [finance, security, credentials, consent]
+spec:
+  procedure:
+    - Verify provider and institution coverage before presenting a connection as supported.
+    - Request only the minimum read permissions needed for balances, transactions, positions, or history.
+    - Prefer provider-side IP allowlists, OAuth consent, permission-scoped API keys, and revocable credentials when available.
+    - Track consent and credential expiry without storing passwords, PINs, seed phrases, private keys, recovery codes, or interactive MFA secrets.
+    - Keep raw credentials in the host secret boundary and expose only connection health and normalized data to profiles.
+    - Treat any request for payments, transfers, orders, signing, custody change, or account administration as outside the read-only connection contract.
+    - Provide a clear revoke/disconnect path and remove cached sensitive data according to the configured retention policy.
+  policy:
+    credentialLogging: deny
+    secretMaterialToProfiles: deny
+    writeEscalation: deny

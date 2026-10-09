@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: classroom-management
+  version: 1.0.0
+  description: Establish predictable classroom routines, clear expectations, transitions, inclusive participation, and proportionate responses to disruption.
+  tags: [education, classroom, teaching]
+spec:
+  procedure:
+    - Make routines, expectations, transitions, and consequences explicit and age appropriate.
+    - Reinforce desired behavior consistently and distinguish correction from humiliation or punishment.
+    - Structure participation so quieter or less confident learners can engage.
+    - Record recurring issues objectively and escalate persistent or serious concerns through appropriate school processes.

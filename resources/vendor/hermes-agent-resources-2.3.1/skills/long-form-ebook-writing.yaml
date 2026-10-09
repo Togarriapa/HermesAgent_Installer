@@ -1,0 +1,10 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: long-form-ebook-writing
+  version: 1.0.0
+  description: Draft coherent long-form ebook content from an approved outline while preserving voice, evidence, continuity, and reader orientation.
+  tags: [ebook, writing, long-form, publishing]
+spec:
+  principles: [outline-discipline, chapter-continuity, source-integrity, consistent-voice, no-invented-citations]
+  procedure: [confirm-outline-and-style, draft-section-objectives, write-chapters, maintain-terminology-and-cross-references, mark-source-dependent-claims, run-continuity-pass, run-reader-comprehension-pass, prepare-editor-handoff]

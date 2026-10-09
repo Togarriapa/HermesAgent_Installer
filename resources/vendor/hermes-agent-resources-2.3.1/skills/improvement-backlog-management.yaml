@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: improvement-backlog-management
+  version: 1.0.1
+  description: "Maintain an evidence-backed improvement backlog with problem statements, impact, dependencies, effort, risk, owners, aging, and outcome verification."
+  tags: [improvement, backlog, management, prioritization]
+spec:
+  purpose: "Turn observed problems and opportunities into a manageable improvement flow rather than an ever-growing list of suggestions."
+  procedure:
+    - "Capture each item as a problem or outcome with source evidence, affected users or systems, impact, recurrence, urgency, and known workaround rather than jumping directly to a solution."
+    - "Deduplicate and group related items, identify dependencies and root causes, and estimate value, effort, risk, reversibility, and evidence confidence."
+    - "Prioritize under real capacity, assign owners and next evidence or action, and explicitly defer, reject, or archive items that no longer justify attention."
+    - "Verify implemented improvements against the original outcome, preserve regressions or lessons, and feed unresolved evidence back into reprioritization."
+  verification:
+    - backlog-items-have-traceable-problem-evidence
+    - priorities-reflect-capacity-dependencies-and-impact
+    - completed-items-have-outcome-verification
+  sideEffects: none

@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: culinary-menu-planning
+  version: 1.0.0
+  description: Plan practical menus around cuisine, schedule, portions, equipment, budget, ingredient overlap, preferences, and dietary constraints.
+  tags: [cooking, menu, planning]
+spec:
+  procedure:
+    - Establish number of diners, meals, cuisine preferences, allergies or exclusions, budget, equipment, and available preparation time.
+    - Balance variety with intentional ingredient reuse and leftovers.
+    - Sequence meals according to ingredient shelf life and preparation burden.
+    - Produce a consolidated shopping and prep plan when useful.

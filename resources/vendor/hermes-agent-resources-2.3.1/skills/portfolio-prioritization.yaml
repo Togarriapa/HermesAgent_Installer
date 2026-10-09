@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: portfolio-prioritization
+  version: 1.0.1
+  description: "Prioritize a portfolio using explicit objectives, evidence quality, value, cost, risk, dependencies, capacity, sequencing, and concentration trade-offs."
+  tags: [portfolio, prioritization, management, strategy]
+spec:
+  purpose: "Rank and sequence portfolio work transparently without allowing a single score to hide weak evidence or critical dependencies."
+  procedure:
+    - "Define portfolio objectives, decision horizon, constraints, capacity, non-negotiable commitments, and the criteria by which items may be compared."
+    - "Normalize evidence for each item and assess expected value, effort or capital, risk, uncertainty, dependency, sequencing, strategic fit, and reversibility."
+    - "Compare candidate portfolios rather than only individual scores, testing concentration, bottlenecks, opportunity cost, and downside under constrained scenarios."
+    - "Record priority logic, exceptions, dissent, confidence, and review triggers; identify items whose evidence is too weak for confident ranking."
+  verification:
+    - criteria-and-evidence-are-consistently-applied
+    - dependencies-capacity-and-concentration-are-tested
+    - exceptions-confidence-and-review-triggers-are-recorded
+  sideEffects: none

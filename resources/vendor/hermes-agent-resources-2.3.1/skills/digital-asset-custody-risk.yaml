@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: digital-asset-custody-risk
+  version: 1.0.1
+  description: Evaluate wallet, exchange, custodian, key-management, smart-contract, counterparty, and recovery risks for digital assets.
+  tags: [crypto, custody, security]
+spec:
+  purpose: Assess custody architecture without requesting or handling private keys or seed phrases.
+  procedure:
+    - Map the custody model: self-custody, exchange, qualified custodian, multisig, smart-contract wallet, or hybrid arrangement.
+    - Identify key generation, signing, backup, recovery, access-control, device, personnel, and geographic concentration assumptions without collecting secret material.
+    - Assess counterparty, insolvency, rehypothecation, withdrawal, smart-contract, bridge, governance, malware, phishing, and social-engineering exposures.
+    - Evaluate recovery paths, segregation, audit or attestation evidence, transaction controls, allowlists, and incident-response procedures.
+    - Recommend risk-reduction controls proportionate to the asset and threat model while keeping private keys, seed phrases, and recovery codes out of the workflow.
+  verification:
+    - custody-and-recovery-models-are-explicit
+    - single-points-of-failure-and-counterparties-are-listed
+    - no-private-key-seed-or-recovery-secret-is-requested

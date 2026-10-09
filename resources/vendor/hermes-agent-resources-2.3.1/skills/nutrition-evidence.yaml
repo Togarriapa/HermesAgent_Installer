@@ -1,0 +1,13 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: nutrition-evidence
+  version: 1.0.0
+  description: Evaluate nutrition claims using study quality, totality of evidence, effect size, plausibility, and population relevance.
+  tags: [nutrition, evidence]
+spec:
+  workflow:
+    - Identify whether the claim comes from mechanistic, observational, interventional, or review evidence.
+    - Check population, comparator, outcome, duration, and effect size.
+    - Look for replication and consistency across stronger evidence.
+    - Avoid turning preliminary findings into universal dietary rules.

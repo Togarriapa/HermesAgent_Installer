@@ -1,0 +1,10 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: hermesagent-runtime-architecture
+  version: 1.0.0
+  description: Design and troubleshoot HermesAgent registry, provisioner, runtime, topology, overlays, and authorization architecture.
+  tags: [hermesagent, ai, architecture, runtime]
+spec:
+  principles: [separate-repository-contract-from-live-runtime, preserve-hermes-only-topology, host-policy-is-authority-ceiling]
+  procedure: [trace-resource-resolution, trace-provisioner-runtime-wiring, compare-declared-vs-live-state, propose-testable-reversible-change, verify]

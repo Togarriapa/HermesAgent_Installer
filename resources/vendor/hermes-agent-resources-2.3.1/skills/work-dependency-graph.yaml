@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: work-dependency-graph
+  version: 1.0.1
+  description: "Model work as a dependency graph with explicit inputs, outputs, prerequisites, shared-state constraints, critical path, cycles, and completion evidence."
+  tags: [orchestration, dependencies, planning, graph]
+spec:
+  purpose: "Expose ordering and synchronization constraints before parallel or hierarchical execution begins."
+  procedure:
+    - "Decompose the objective into work nodes with accountable owner or role, required inputs, expected outputs, evidence, authority, mutable state, and acceptance criteria."
+    - "Add directed dependencies for information, decision, resource, state, approval, or sequencing requirements and distinguish hard prerequisites from useful context."
+    - "Detect cycles, hidden shared-state contention, fan-in or fan-out bottlenecks, critical path, optional nodes, and safe parallel sets under available resource limits."
+    - "Update the graph as evidence changes, reconcile node completion against downstream contracts, and do not mark the overall task complete while required dependencies remain unresolved."
+  verification:
+    - every-required-node-has-input-output-and-acceptance-contract
+    - cycles-and-shared-state-contention-are-identified
+    - completion-respects-required-dependency-closure
+  sideEffects: none

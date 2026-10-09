@@ -1,0 +1,53 @@
+name: Validate resource registry
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  registry-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install validation dependency
+        run: python -m pip install --disable-pip-version-check pyyaml
+      - name: Compile validation scripts
+        run: python -m compileall -q scripts
+      - name: Check catalog discovery and deterministic digest
+        run: python scripts/check_catalog_consistency.py
+      - name: Validate PR versioning and canonical documentation
+        run: python scripts/check_pr_quality.py
+      - name: Validate registry discovery, dependencies and invariants
+        run: python scripts/validate_registry.py
+      - name: Validate deliberation and Hermes response contract
+        run: python scripts/validate_deliberation.py
+      - name: Preserve specialist expansion invariants
+        run: |
+          python scripts/validate_expansion_v21.py
+          python scripts/validate_expansion_v22.py
+      - name: Validate effective quality for every discovered resource
+        run: python scripts/validate_quality_v22.py
+      - name: Validate quality-overlay matching regressions
+        run: python scripts/validate_quality_overlays_v22.py
+      - name: Render manifest-derived registry reference
+        run: python scripts/render_registry_reference.py --output /tmp/registry-reference.md
+      - name: Validate effective materialization
+        run: python scripts/materialize_effective_registry.py --check-only
+      - name: Build registry update notice fixture
+        run: python scripts/build_update_notice.py --output /tmp/registry-update.json

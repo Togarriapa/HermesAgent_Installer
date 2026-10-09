@@ -1,0 +1,19 @@
+apiVersion: hermes.togarriapa/v1
+kind: Skill
+metadata:
+  name: technology-strategy
+  version: 1.0.1
+  description: "Develop technology strategy from organizational goals, current architecture, capability gaps, economics, risk, lifecycle, skills, and explicit choices."
+  tags: [technology, strategy, architecture, management]
+spec:
+  purpose: "Translate mission or business strategy into coherent technology choices and sequencing rather than a vendor or project wishlist."
+  procedure:
+    - "Define organizational outcomes, planning horizon, current architecture and operating model, constraints, non-negotiable risks, and material external changes."
+    - "Diagnose capability gaps, lifecycle exposure, technical debt, data and integration constraints, skill needs, economics, reliability, and security posture from evidence."
+    - "Choose target capabilities and architectural directions, including explicit non-goals, sourcing principles, sequencing, investment trade-offs, and migration assumptions."
+    - "Define outcome and health indicators, architecture guardrails, decision triggers, and review cadence; adapt the strategy when evidence invalidates a core assumption."
+  verification:
+    - technology-choices-link-to-organizational-outcomes
+    - target-state-tradeoffs-and-non-goals-are-explicit
+    - assumptions-and-review-triggers-are-measurable
+  sideEffects: none
