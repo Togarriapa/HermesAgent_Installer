@@ -5,7 +5,6 @@ import json
 import os
 import base64
 import sys
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -24,8 +23,8 @@ from hermes_installer.authority.types import (
 
 
 def _test_temp_parent() -> str:
-    # Linux root-owned fixtures use /tmp's root-owned sticky parent; Darwin
-    # exposes the equivalent through its /private alias.
+    # Darwin exposes its root-owned sticky temp directory at /private/tmp; Linux
+    # uses /tmp. Never make Linux tests depend on a Darwin-only alias.
     return "/private/tmp" if sys.platform == "darwin" else "/tmp"
 
 
@@ -49,8 +48,6 @@ def _owned_output_root(path: Path) -> Path:
         os.chown(path, owner_uid, -1)
     path.chmod(0o700)
     return path
-
-
 def constraints():
     return {
         "bin/colibri": BuildOutputSpec(
