@@ -116,6 +116,22 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
     # eligibility/transport implementations have been supplied by the root
     # service package. Catalog presence alone is never treated as consent.
     typed_providers: dict[tuple[str, str], Any] = {}
+    provider_normalization_policies: dict[tuple[str, str], Mapping[str, object]] = {}
+    for bridge in enrollment.native_bridges.values():
+        record = {
+            "id": bridge.normalization_policy_id,
+            "revision": bridge.normalization_policy_revision,
+            "route_schema_id": bridge.route_schema_id,
+            "output_limit_mode": bridge.output_limit_mode,
+            "output_limit_ceiling": bridge.output_limit_ceiling,
+            "canonicalizer_artifact_id": bridge.canonicalizer_artifact_id,
+            "canonicalizer_sha256": bridge.canonicalizer_sha256,
+            "normalization_policy_sha256": bridge.normalization_policy_sha256,
+        }
+        route_key = (bridge.target, bridge.recipient)
+        previous = provider_normalization_policies.setdefault(route_key, record)
+        if dict(previous) != record:
+            raise AuthorityDenied("enrollment.native_bridge", "provider route has conflicting normalization policies")
     if enrollment.provider_enrollments:
         from hermes_installer.provider_effect_handlers import ProviderEnrollment, build_provider_handlers
         for record in enrollment.provider_enrollments.values():
@@ -127,7 +143,8 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
             typed_providers[(route.target, route.recipient)] = route
         if provider_admission is not None:
             handlers.update(build_provider_handlers(enrollments=typed_providers, admission=provider_admission,
-                                                    vault=vault))
+                                                    vault=vault,
+                                                    normalization_policies=provider_normalization_policies))
 
     if enrollment.mcp_services and enrollment.mcp_http_bindings:
         # The enrolled transport owns endpoint resolution and TLS. This fixed

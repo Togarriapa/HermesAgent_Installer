@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from hermes_installer.codex_responses import (
@@ -11,6 +13,19 @@ from hermes_installer.codex_responses import (
     normalize_responses_request,
 )
 from hermes_installer.policy import PolicyDenied
+from hermes_installer.provider_effect_handlers import canonical_provider_request
+
+
+def _normalization_policy():
+    module = Path(inspect.getsourcefile(canonical_provider_request))
+    record = {"id": "siwc-output-unsupported-v1", "revision": 1,
+              "route_schema_id": "siwc-responses-preview-v1",
+              "output_limit_mode": "unsupported-field-reject", "output_limit_ceiling": None,
+              "canonicalizer_artifact_id": "provider-canonicalizer-v1",
+              "canonicalizer_sha256": hashlib.sha256(module.read_bytes()).hexdigest()}
+    record["normalization_policy_sha256"] = hashlib.sha256(
+        json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return record
 
 
 class FakeAuthority:
@@ -85,6 +100,7 @@ class CodexResponsesTests(unittest.TestCase):
         normalized, _model, _tools = normalize_responses_request(payload)
         response = transport.dispatch_native_event(
             "a" * 48, payload, retry_index=2, timeout=4,
+            normalization_policy=_normalization_policy(),
         )
         self.assertEqual((response.status, response.input_tokens, response.output_tokens), (200, 9, 4))
         self.assertEqual(len(authority.native_calls), 1)
@@ -92,7 +108,8 @@ class CodexResponsesTests(unittest.TestCase):
         self.assertEqual(authority.calls, [])
         for invalid in ("short", "x" * 129, "x" * 48 + "!"):
             with self.subTest(handle=invalid), self.assertRaises(PolicyDenied):
-                transport.dispatch_native_event(invalid, payload)
+                transport.dispatch_native_event(invalid, payload,
+                                                normalization_policy=_normalization_policy())
         self.assertEqual(len(authority.native_calls), 1)
 
     def test_fixed_responses_target_binds_canonical_payload_and_tool_capability(self):

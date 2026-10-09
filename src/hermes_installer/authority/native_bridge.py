@@ -123,8 +123,19 @@ class NativeBridgeBroker:
         if any(not set(receipt.parent_receipt_ids).issubset(closure) for receipt in closure.values()):
             raise AuthorityDenied("native.lineage", "native source receipt closure is incomplete")
 
+        normalization_policy = {
+            "id": bridge.normalization_policy_id,
+            "revision": bridge.normalization_policy_revision,
+            "route_schema_id": bridge.route_schema_id,
+            "output_limit_mode": bridge.output_limit_mode,
+            "output_limit_ceiling": bridge.output_limit_ceiling,
+            "canonicalizer_artifact_id": bridge.canonicalizer_artifact_id,
+            "canonicalizer_sha256": bridge.canonicalizer_sha256,
+            "normalization_policy_sha256": bridge.normalization_policy_sha256,
+        }
         normalized, target, recipient, capability, _model = self.canonicalizer(
-            self.root_selected_enrollments[bridge.bridge_id], raw)
+            self.root_selected_enrollments[bridge.bridge_id], raw,
+            normalization_policy=normalization_policy)
         if (not isinstance(normalized, bytes) or not 1 <= len(normalized) <= MAX_NORMALIZED_BYTES
                 or target != bridge.target or recipient != bridge.recipient
                 or capability not in {"provider-inference", "provider-tool-call"}
