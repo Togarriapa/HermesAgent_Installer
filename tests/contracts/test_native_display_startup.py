@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from hermes_installer.authority.native_display_startup import (
     NativeDisplayStartupDenied,
@@ -118,6 +119,19 @@ class XauthorityPreparationTests(unittest.TestCase):
         self.assertEqual(receipt.pid_start_ticks, identity["start_ticks"])
         self.assertEqual(receipt.xauthority_sha256, prepared.content_sha256)
         self.assertNotIn(prepared.path.read_bytes()[-32:].hex(), repr(receipt))
+        catalog_row = SimpleNamespace(
+            remote_enrollment_id=self.selection.remote_enrollment_id,
+            native_profile_id=self.selection.native_profile_id,
+            native_generation=self.selection.native_generation,
+            display_server_profile_id=self.selection.display_profile_id,
+            display_server_generation=self.selection.display_generation,
+            display_name=self.selection.display_name,
+            xauthority_receipt_handle=receipt.receipt_handle,
+        )
+        catalog = SimpleNamespace(selected_native_window=lambda _remote_id: catalog_row)
+        from_catalog = self.registry.resolve_catalog_selection(
+            catalog, self.selection.remote_enrollment_id)
+        from_catalog.close()
         selected = self.registry.resolve_selected(
             receipt.receipt_handle,
             remote_enrollment_id=self.selection.remote_enrollment_id,

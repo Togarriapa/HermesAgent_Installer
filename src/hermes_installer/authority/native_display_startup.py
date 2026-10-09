@@ -210,6 +210,34 @@ class SelectedXauthorityFile:
     def cgroup_id(self) -> str:
         return self.receipt.cgroup_identity
 
+    @property
+    def receipt_handle(self) -> str:
+        return self.receipt.receipt_handle
+
+    @property
+    def remote_enrollment_id(self) -> str:
+        return self.receipt.remote_enrollment_id
+
+    @property
+    def native_profile_id(self) -> str:
+        return self.receipt.native_profile_id
+
+    @property
+    def native_generation(self) -> str:
+        return self.receipt.native_generation
+
+    @property
+    def display_profile_id(self) -> str:
+        return self.receipt.display_profile_id
+
+    @property
+    def display_generation(self) -> str:
+        return self.receipt.display_generation
+
+    @property
+    def display_name(self) -> str:
+        return self.receipt.display_name
+
     def close(self) -> None:
         for fd_name in ("file_fd", "pidfd"):
             fd = getattr(self, fd_name)
@@ -529,9 +557,7 @@ class XauthorityStartupRegistry:
         fields = (
             "remote_enrollment_id", "native_profile_id", "native_generation",
             "display_server_profile_id", "display_server_generation", "display_name",
-            "xauthority_receipt_handle", "xauthority_device",
-            "xauthority_inode", "xauthority_uid", "xauthority_gid",
-            "xauthority_mode", "xauthority_sha256",
+            "xauthority_receipt_handle",
         )
         if any(not hasattr(selected, name) for name in fields):
             raise NativeDisplayStartupDenied("selected native-window row lacks protected receipt fields")
@@ -547,15 +573,17 @@ class XauthorityStartupRegistry:
             display_name=selected.display_name,
         )
         receipt = resolved.receipt
-        expected = (
-            receipt.xauthority_device, receipt.xauthority_inode, receipt.xauthority_uid, receipt.xauthority_gid,
-            receipt.xauthority_mode, receipt.xauthority_sha256,
+        optional_pins = (
+            ("xauthority_device", receipt.xauthority_device),
+            ("xauthority_inode", receipt.xauthority_inode),
+            ("xauthority_uid", receipt.xauthority_uid),
+            ("xauthority_gid", receipt.xauthority_gid),
+            ("xauthority_mode", receipt.xauthority_mode),
+            ("xauthority_sha256", receipt.xauthority_sha256),
+            ("xauthority_content_sha256", receipt.xauthority_sha256),
         )
-        actual = (
-            selected.xauthority_device, selected.xauthority_inode, selected.xauthority_uid, selected.xauthority_gid,
-            selected.xauthority_mode, selected.xauthority_sha256,
-        )
-        if actual != expected:
+        if any(hasattr(selected, name) and getattr(selected, name) != value
+               for name, value in optional_pins):
             resolved.close()
             raise NativeDisplayStartupDenied("selected Xauthority row differs from the sealed startup receipt")
         return resolved
