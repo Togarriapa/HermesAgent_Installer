@@ -20,6 +20,8 @@ def test_available_resource_plugins_resolve_concrete_implementations():
         "homelab-ops-broker",
         "voice-pipeline",
         "web",
+        "ebook-toolchain",
+        "kobo-bridge",
     }
     for adapter_id in expected:
         assert native_plugin_handler_available(adapter_id)
@@ -28,7 +30,7 @@ def test_available_resource_plugins_resolve_concrete_implementations():
 
 def test_unenrolled_or_unimplemented_plugins_do_not_resolve_handlers():
     expected_unavailable = {
-        "codex", "composio", "ebook-toolchain", "github", "kobo-bridge",
+        "codex", "composio", "github",
     }
     for adapter_id in expected_unavailable:
         assert not native_plugin_handler_available(adapter_id)

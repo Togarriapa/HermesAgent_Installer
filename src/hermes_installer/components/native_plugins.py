@@ -85,12 +85,19 @@ NATIVE_PLUGIN_ADAPTERS = tuple(
     NativePluginAdapterContract(
         adapter_id=plugin_id,
         resource_id=plugin_id,
-        component_adapter_id=None,
+        component_adapter_id=(plugin_id if plugin_id in {
+            "resource-overlay-store", "mcp-registry", "agent37-discovery",
+            "agent-live-wallet", "agent-sandbox-wallet", "authentik-authorization",
+            "cloudflare-homelab", "epic-kanban", "financial-data-hub",
+            "financial-execution-gateway", "homelab-ops-broker", "voice-pipeline", "web",
+            "ebook-toolchain", "kobo-bridge",
+        } else None),
         handler_available=(plugin_id in {
             "resource-overlay-store", "mcp-registry", "agent37-discovery",
             "agent-live-wallet", "agent-sandbox-wallet", "authentik-authorization",
             "cloudflare-homelab", "financial-data-hub", "financial-execution-gateway",
             "homelab-ops-broker", "epic-kanban", "voice-pipeline", "web",
+            "ebook-toolchain", "kobo-bridge",
         }),
         status=("reviewed-local-profile-handler" if plugin_id == "resource-overlay-store"
                 else "reviewed-root-brokered-public-read" if plugin_id in {"mcp-registry", "agent37-discovery"}
@@ -100,7 +107,9 @@ NATIVE_PLUGIN_ADAPTERS = tuple(
                 else "reviewed-scoped-financial-handler" if plugin_id in {
                     "agent-live-wallet", "agent-sandbox-wallet", "financial-data-hub", "financial-execution-gateway",
                 }
-                else "reviewed-profile-service-handler" if plugin_id in {"epic-kanban", "voice-pipeline", "web"}
+                else "reviewed-profile-service-handler" if plugin_id in {
+                    "epic-kanban", "voice-pipeline", "web", "ebook-toolchain", "kobo-bridge",
+                }
                 else "typed-adapter-registry-required"),
         blocker=_PLUGIN_BLOCKERS[plugin_id],
     )
@@ -440,4 +449,7 @@ def resolve_native_plugin_implementation(adapter_id: str) -> NativePluginImpleme
     if adapter_id in {"epic-kanban", "voice-pipeline", "web"}:
         from hermes_installer.components.plugin_local_voice_web import PLUGIN_IMPLEMENTATIONS
         return PLUGIN_IMPLEMENTATIONS.get(adapter_id)
+    if adapter_id in {"ebook-toolchain", "kobo-bridge"}:
+        from hermes_installer.components.plugin_documents import DOCUMENT_PLUGIN_IMPLEMENTATIONS
+        return DOCUMENT_PLUGIN_IMPLEMENTATIONS.get(adapter_id)
     return None
