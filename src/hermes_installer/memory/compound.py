@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import re
 from typing import Any, Mapping, Sequence
 from types import MappingProxyType
@@ -279,11 +280,40 @@ def validate_step_outcome(*, route_id: str, step_id: str, status: int,
             if value.get("status") != "ok" or not isinstance(value.get("result"), dict):
                 raise MemoryRecipeUnavailable("OpenViking finalize response failed source schema")
             return MemoryStepOutcome({"status": "ok"}, {})
-    if route_id.startswith("agentmemory-"):
-        # Pinned REST routes forward function payloads from the upstream
-        # memory engine. Until the selected result shape has its own reviewed
-        # schema artifact, do not convert arbitrary JSON into success.
-        raise MemoryRecipeUnavailable("AgentMemory semantic result validator is not installed")
+    if route_id == "agentmemory-search" and step_id == "search":
+        if value.get("mode") != "compact":
+            raise MemoryRecipeUnavailable("AgentMemory search returned an unsupported mode")
+        rows = value.get("results")
+        if not isinstance(rows, list) or len(rows) > 100:
+            raise MemoryRecipeUnavailable("AgentMemory compact result list is invalid")
+        records = []
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {
+                    "obsId", "sessionId", "title", "type", "score", "timestamp"}:
+                raise MemoryRecipeUnavailable("AgentMemory compact result fields differ from pin")
+            record_id = _opaque(row["obsId"], "AgentMemory observation ID")
+            _opaque(row["sessionId"], "AgentMemory source session ID")
+            title = _nonempty_text(row["title"], "AgentMemory result title", 8192)
+            if not isinstance(row["type"], str) or not row["type"] or len(row["type"]) > 64:
+                raise MemoryRecipeUnavailable("AgentMemory observation type is invalid")
+            score = row["score"]
+            if type(score) not in (int, float) or not math.isfinite(score):
+                raise MemoryRecipeUnavailable("AgentMemory search score is invalid")
+            if not isinstance(row["timestamp"], str) or len(row["timestamp"]) > 64:
+                raise MemoryRecipeUnavailable("AgentMemory timestamp is invalid")
+            records.append({"id": record_id, "source": "agentmemory", "text": title})
+        if "lessons" in value and not isinstance(value["lessons"], list):
+            raise MemoryRecipeUnavailable("AgentMemory lesson results are invalid")
+        return MemoryStepOutcome({"records": records}, {})
+    if route_id == "agentmemory-capture" and step_id == "capture":
+        memory = value.get("memory")
+        if value.get("success") is not True or not isinstance(memory, dict):
+            raise MemoryRecipeUnavailable("AgentMemory remember response failed source schema")
+        memory_id = _opaque(memory.get("id"), "AgentMemory created memory ID")
+        title = memory.get("title")
+        if title is not None and (not isinstance(title, str) or len(title.encode("utf-8")) > 8192):
+            raise MemoryRecipeUnavailable("AgentMemory created memory title is invalid")
+        return MemoryStepOutcome({"success": True, "id": memory_id}, {"memory_id": memory_id})
     if route_id == "openviking-find":
         if value.get("status") != "ok" or not isinstance(value.get("result"), dict):
             raise MemoryRecipeUnavailable("OpenViking find response failed source schema")
