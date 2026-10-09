@@ -1034,7 +1034,11 @@ class SourceObserverRegistry:
 
     def cancel_source_payload_capsule(self, handle: SourceReceiptHandle) -> bool:
         """Revoke a not-yet-consumed receipt handle and scrub its payload."""
-        if not isinstance(handle, SourceReceiptHandle):
+        return self.revoke_source_handle(handle)
+
+    def revoke_source_handle(self, handle: SourceReceiptHandle) -> bool:
+        """Root-only exact-token revocation for receipt and delivery cleanup."""
+        if type(handle) is not SourceReceiptHandle:
             raise AuthorityDenied("source.capsule", "root capsule cancellation key is invalid")
         with self._lock:
             return self._revoke_source_handle_locked(str(handle))
@@ -2018,6 +2022,18 @@ class RootNativeInputDeliveryRegistry:
                     self.source_observers.revoke_source_handle(SourceReceiptHandle(row.handle))
                     raise AuthorityDenied("native.input.wait", "selected producer did not take input before its deadline")
                 self._changed.wait(min(remaining, 0.05))
+
+    def cancel_selected_input(self, selected_execution: RootSelectedNativeExecution) -> bool:
+        """Revoke the queued handle when its root task is cancelled or fails."""
+        if type(selected_execution) is not RootSelectedNativeExecution:
+            raise AuthorityDenied("native.input.cancelled", "selected execution token is invalid")
+        with self._changed:
+            row = self._pending.get(selected_execution.selection_handle)
+            if row is None or row.selected_execution is not selected_execution:
+                return False
+            self._pending.pop(selected_execution.selection_handle, None)
+            self._changed.notify_all()
+        return self.source_observers.revoke_source_handle(SourceReceiptHandle(row.handle))
 
     def _prune_locked(self, now: float) -> None:
         for key, row in tuple(self._pending.items()):
