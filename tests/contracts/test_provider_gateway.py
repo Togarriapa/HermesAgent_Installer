@@ -66,6 +66,13 @@ class ProviderGatewayTests(unittest.TestCase):
             return exc.code,exc.read(),exc.headers
         return response.status,response.read(),response.headers
 
+    def test_host_context_factory_is_required(self):
+        with self.assertRaisesRegex(GatewayError, "host-issued context factory"):
+            LocalProviderGateway(
+                self.dispatcher, token=TOKEN, profile_id="public-demo",
+                sensitivity=Sensitivity.PUBLIC, model=MODEL,
+            )
+
     def test_plugin_port_is_stable_across_restarts_and_conflicts_are_preserved(self):
         root = OwnedRoot(Path(self.temp.name) / "stable")
         root.ensure()
