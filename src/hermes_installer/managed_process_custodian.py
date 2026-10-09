@@ -281,6 +281,9 @@ class RootTaskTerminalReceipt:
     stderr_size_bytes: int
     parent_closure_digest: str
     native_loader_ready_event_id: str | None
+    # Native execution observations are issued by the companion registry and
+    # remain separate from this immutable custody terminal receipt.
+    native_execution_receipt_handle: str | None = None
 
     @property
     def task_handle_id(self) -> str:
