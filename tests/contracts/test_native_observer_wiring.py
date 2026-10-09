@@ -55,13 +55,22 @@ class NativeTaskInputCoordinatorContracts(unittest.TestCase):
             resolve_live_peer=lambda pid, _fd, **_kw: identity if pid == 733 else None,
         )
         delivery = SimpleNamespace(resolve_delivered_source_receipt=lambda handle, **_kw: handle)
-        task_native = SimpleNamespace(bind_running_task=lambda *_a: None, bind_task_input=lambda **_k: None)
+        input_delivery = SimpleNamespace(
+            queue_selected_input=lambda *_a: None,
+            wait_delivered=lambda *_a, **_kw: None,
+            cancel_selected_input=lambda *_a: None,
+        )
+        task_native = SimpleNamespace(
+            bind_running_task=lambda *_a: None, bind_task_input=lambda **_k: None,
+            cancel_running_task=lambda *_a: None, cancel_task_input=lambda **_k: None,
+        )
         coordinator = RootTaskInputCoordinator(
             task_native_observation_registry=task_native,
             selected_native_execution_registry=selection_registry,
             initial_native_input_observer=input_observer,
             source_delivery_registry=delivery,
             process_custody_registry=custody,
+            native_input_delivery_registry=input_delivery,
             monotonic=lambda: 10.0,
         )
         source = SimpleNamespace()
@@ -106,6 +115,25 @@ class NativeTaskInputCoordinatorContracts(unittest.TestCase):
                     receipt.receipt_handle, task_handle=task,
                     stdin_sha256="d" * 64, stdin_size_bytes=receipt.stdin_size_bytes,
                 )
+        finally:
+            try:
+                os.close(read_fd)
+            except OSError:
+                pass
+
+    def test_custody_revoke_invalidates_exact_prepared_receipt(self):
+        coordinator, receipt, task, read_fd = self._coordinator()
+        try:
+            self.assertTrue(coordinator.revoke_initial_input_receipt(
+                receipt.receipt_handle, task_handle=task))
+            with self.assertRaises(AuthorityDenied):
+                coordinator.resolve_initial_input_receipt(
+                    receipt.receipt_handle, task_handle=task,
+                    stdin_sha256=receipt.stdin_sha256,
+                    stdin_size_bytes=receipt.stdin_size_bytes,
+                )
+            self.assertFalse(coordinator.revoke_initial_input_receipt(
+                receipt.receipt_handle, task_handle=task))
         finally:
             try:
                 os.close(read_fd)

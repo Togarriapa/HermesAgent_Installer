@@ -219,6 +219,36 @@ class AuthorityClient:
             raise AuthorityDenied("source.delivery", "root returned a mismatched source receipt handle")
         return receipt_handle
 
+    def take_selected_native_input(self, *,
+                                   cancelled: Callable[[], bool] | None = None
+                                   ) -> "NativeInitialInputDelivery | None":
+        """Take this live producer's one queued native input, without selectors.
+
+        The root identifies the current execution solely from SO_PEERCRED and
+        the authenticated peer PIDFD. ``None`` means that no input is queued
+        yet; callers may only retry under their bounded selected startup wait.
+        """
+        from .source_observers import NativeInitialInputDelivery
+
+        result = self._rpc("native.input.take", {"schema": 1}, timeout=min(30.0, self.timeout),
+                           cancelled=cancelled)
+        if (not isinstance(result, dict) or type(result.get("schema")) is not int
+                or result["schema"] != 1):
+            raise AuthorityDenied("native.input.take", "authority returned a malformed input delivery")
+        if set(result) == {"schema", "state"} and result.get("state") == "pending":
+            return None
+        fields = {"schema", "source_receipt_handle", "selected_execution_handle",
+                  "input_sha256", "input_size_bytes", "expires_monotonic"}
+        if set(result) != fields:
+            raise AuthorityDenied("native.input.take", "authority returned unexpected input delivery fields")
+        try:
+            delivery = NativeInitialInputDelivery(**result)
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.input.take", "authority returned an invalid input delivery") from None
+        if not self.monotonic() < delivery.expires_monotonic <= self.monotonic() + 30.0:
+            raise AuthorityDenied("native.input.take", "authority returned an expired input delivery")
+        return delivery
+
     def begin_native_invocation(self, producer_context_handle: str,
                                 observed_call_handle: str,
                                 canonical_arguments: bytes) -> NativeInvocationBinding:

@@ -188,7 +188,7 @@ class RootNativeInputTargetResolver:
             selected = resolver(selected_execution)
         except Exception:
             raise AuthorityDenied("native.input.selection", "root native execution selection is stale") from None
-        if selected is None:
+        if selected is None or selected is not selected_execution:
             raise AuthorityDenied("native.input.selection", "root native execution selection is unavailable")
         required_text = (
             "selection_handle", "kind", "profile_id", "generation",
@@ -251,6 +251,9 @@ class RootNativeInputTargetResolver:
                     or getattr(identity, "kernel_uid", None) != getattr(lease, "uid", None)
                     or getattr(identity, "start_ticks", None) != getattr(lease, "start_ticks", None)
                     or getattr(identity, "cgroup_identity", None) != getattr(lease, "cgroup_identity", None)
+                    or getattr(identity, "namespace_identity", None) != (
+                        f"mnt:{getattr(lease, 'mount_namespace_inode', None)};"
+                        f"net:{getattr(lease, 'network_namespace_inode', None)}")
                     or getattr(identity, "executable_sha256", None) != getattr(lease, "executable_sha256", None)):
                 raise AuthorityDenied("native.input.process", "selected task kernel identity is stale or substituted")
             target_fd = os.dup(borrowed_pidfd)
@@ -266,7 +269,8 @@ class RootNativeInputTargetResolver:
             proof = self.loader_observations.resolve_loaded_package_closure(
                 LivePeerProcess(peer_pid, target_fd, retained_identity), observer,
             )
-            if (proof.profile_id != selected.profile_id
+            if (not isinstance(proof, LoadedPackageClosureProof)
+                    or proof.profile_id != selected.profile_id
                     or proof.generation != selected.generation
                     or proof.package_id != selected.native_package_id
                     or proof.service_generation_digest != selected.service_generation_digest
@@ -911,7 +915,7 @@ class RootNativeLoaderObservationStore:
                     or self.clock() >= entry.deadline):
                 raise AuthorityDenied("native.loader", "loader proof launch was revoked before admission")
             previous = (entry.proofs or {}).get(observer.observer_enrollment_id)
-            mount_ns_inode = _mount_namespace_inode(identity.namespace_identity)
+            mount_ns_inode = _mount_namespace_inode(identity)
             flags = tuple(sorted(set(getattr(mount, "verified_mount_options", ()))))
             if not {"ro", "nosuid", "nodev"}.issubset(flags) or "rw" in flags:
                 raise AuthorityDenied("native.mount", "native package mount flags are incomplete")
