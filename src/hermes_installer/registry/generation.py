@@ -54,17 +54,18 @@ class GenerationStore:
         return hashlib.sha256(b"registry-manifest-v1\0" + len(raw).to_bytes(8, "big") + raw).hexdigest()
 
     @staticmethod
-    def _hash(path: Path) -> str:
+    def _hash(path: Path) -> tuple[str, int]:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
         digest = hashlib.sha256()
         try:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+            mode = stat.S_IMODE(info.st_mode)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or mode not in {0o400, 0o500, 0o600}:
                 raise GenerationError(f"file changed while verifying: {path.name}")
             with os.fdopen(fd, "rb", closefd=False) as stream:
                 for block in iter(lambda: stream.read(65536), b""): digest.update(block)
         finally: os.close(fd)
-        return digest.hexdigest()
+        return digest.hexdigest(), mode
 
     def _op(self, identity): return self.journal.operation("registry-generation:" + identity)
     def _owned(self, identity):
@@ -87,7 +88,9 @@ class GenerationStore:
             if path.is_symlink(): raise GenerationError("generation contains symlink")
             if path.is_dir(): self._private_dir(path); continue
             if not path.is_file(): raise GenerationError("generation contains special file")
-            if path != manifest_path: actual[path.relative_to(root).as_posix()] = self._hash(path)
+            if path != manifest_path:
+                content_hash, mode = self._hash(path)
+                actual[path.relative_to(root).as_posix()] = {"sha256": content_hash, "mode": mode}
         if actual != manifest["files"]: raise GenerationError("generation differs from content manifest")
         digest = self._digest(manifest)
         op = self._op(identity)
@@ -96,9 +99,19 @@ class GenerationStore:
             raise GenerationError("manifest digest is not bound to journal intent")
         return root, manifest, digest
 
-    def stage(self, identity: str, files: Mapping[str, bytes]) -> Path:
+    @staticmethod
+    def _private_mode(mode: int) -> int:
+        if mode in {0o400, 0o644}: return 0o400
+        if mode in {0o500, 0o755}: return 0o500
+        if mode == 0o600: return 0o600
+        raise GenerationError("source mode is not an approved private generation mode")
+
+    def stage(self, identity: str, files: Mapping[str, bytes], *, file_modes: Mapping[str, int] | None = None) -> Path:
         identity = self._id(identity)
         if not files: raise GenerationError("refusing empty generation")
+        modes = dict(file_modes or {})
+        if not set(modes).issubset(files):
+            raise GenerationError("mode map names a file not present in the generation")
         target = self.root / identity
         if target.exists() or target.is_symlink(): raise GenerationError("immutable generation already exists")
         staging = Path(tempfile.mkdtemp(prefix=".stage-", dir=self.root))
@@ -115,13 +128,15 @@ class GenerationStore:
                 for directory in (output.parent, *output.parent.parents):
                     if directory.is_relative_to(staging): self._private_dir(directory)
                 digest = hashlib.sha256()
-                fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                output_mode = self._private_mode(modes.get(name, 0o600))
+                fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), output_mode)
+                os.fchmod(fd, output_mode)
                 with os.fdopen(fd, "wb") as stream:
                     view = memoryview(content)
                     for offset in range(0, len(view), 65536):
                         block = view[offset:offset+65536]; stream.write(block); digest.update(block)
                     stream.flush(); os.fsync(stream.fileno())
-                hashes[name] = digest.hexdigest()
+                hashes[name] = {"sha256": digest.hexdigest(), "mode": output_mode}
             manifest = {"schema": 1, "generation": identity, "files": hashes}
             raw = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode() + b"\n"
             fd = os.open(staging / "manifest.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)

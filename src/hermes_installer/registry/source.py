@@ -123,6 +123,8 @@ class BundledRegistrySource:
             raise RegistrySourceError("vendored archive size differs from the pin")
         if hashlib.sha256(archive_bytes).hexdigest()!=self.pin.archive_sha256:
             raise RegistrySourceError("vendored archive SHA-256 does not match the pin")
+        if _git_blob(archive_bytes) != self.pin.archive_git_blob:
+            raise RegistrySourceError("vendored archive Git blob ID does not match the pin")
         files, modes = {}, {}
         expanded = 0
         try:

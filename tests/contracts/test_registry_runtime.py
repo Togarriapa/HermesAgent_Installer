@@ -41,6 +41,10 @@ class GenerationTests(unittest.TestCase):
         self.store._write_pointer("one")
         self.assertEqual(self.store.recover_pointer_transaction(),"activation_reconciled")
         self.assertEqual(self.store._read_pointer(),"one")
+    def test_source_modes_are_preserved_as_private_non_executable_data(self):
+        path=self.store.stage("source",{"helper.sh":b"#!/bin/sh\\n"},file_modes={"helper.sh":0o755})
+        self.assertEqual((path/"helper.sh").stat().st_mode&0o777,0o500)
+        self.store._verify("source")
     def test_large_asset_is_stream_verified_private_and_immutable(self):
         self.store.stage("one",{"assets/large.bin":b"x"*(2*1024*1024)})
         path=self.owned.root/"generations/one/assets/large.bin"

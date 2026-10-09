@@ -21,6 +21,7 @@ class VendoredRegistryTests(unittest.TestCase):
         self.assertIn("SPEC.md",source.files)
         self.assertNotIn(".git/config",source.files)
         self.assertEqual(source.content_digest and len(source.content_digest),64)
+        self.assertEqual(source.files["profiles/3d-model-designer.yaml"][:21],b"apiVersion: hermes.toga")
     def test_modified_or_truncated_archive_fails_before_materialization(self):
         loader=BundledRegistrySource(self.pin)
         with self.assertRaises(RegistrySourceError): loader.load(self.archive[:-1])

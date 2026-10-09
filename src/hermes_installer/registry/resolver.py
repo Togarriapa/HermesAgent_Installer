@@ -147,11 +147,18 @@ class RegistryResolver:
             or not isinstance(spec,Mapping)):
             raise RegistryError(f"manifest envelope/root/filename identity mismatch: {raw.identity}")
         refs=self._references(spec,kind)
+        extends = spec.get("extends", [])
+        if isinstance(extends, str): extends = [extends]
+        inherited = tuple(f"{kind.value}/{identity}@{expr}" for identity, expr in (self._selector(x) for x in extends))
+        required = []
+        for root, selectors in spec.get("requires", {}).items():
+            dependency_kind = _KINDS.get(root)
+            required.extend(f"{dependency_kind.value}/{identity}@{expr}" for identity, expr in
+                            (self._selector(x) for x in selectors))
         caps=spec.get("capabilities",[])
         if not isinstance(caps,(list,tuple)) or any(not isinstance(cap,str) or not cap for cap in caps):
             raise RegistryError("capabilities must be a list of nonempty strings")
-        dependency_ids=tuple(f"{dep_kind.value}/{identity}@{expr}" for dep_kind,identity,expr in refs)
-        return Resource(raw.identity,kind,raw.version,dict(spec),raw.selected_revision,dependency_ids,(),frozenset(caps),raw.content_digest)
+        return Resource(raw.identity,kind,raw.version,dict(spec),raw.selected_revision,tuple(required),inherited,frozenset(caps),raw.content_digest)
 
     @staticmethod
     def _references(spec: Mapping[str,Any], own_kind: ResourceKind):
