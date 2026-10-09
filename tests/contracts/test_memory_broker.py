@@ -2,10 +2,13 @@
 import hashlib
 import json
 import unittest
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 from hermes_installer.memory.lifecycle import MemoryRecord
 from hermes_installer.memory.providers import AgentMemoryProvider, ClaudeMemProvider, OpenVikingProvider
+from hermes_installer.memory.owner_ledger import OwnerTransitionError, SQLiteOwnerLedger
 
 
 class BrokerFixture:
@@ -88,6 +91,21 @@ class MemoryBrokerTests(unittest.TestCase):
         self.assertTrue(provider.remove("namespace-a", "r1", context=self.ctx))
         self.assertEqual([call[2] for call in self.broker.calls if call[0] == "grant"],
                          ["memory-retrieval", "memory-export", "memory-delete"])
+
+    def test_owner_journal_persists_and_blocks_unresolved_transition(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ledger = SQLiteOwnerLedger(Path(temporary) / "owned-memory-state")
+            self.assertIsNone(ledger.get_owner("profile-a"))
+            initial = ledger.begin_transition("profile-a", None, "openviking")
+            with self.assertRaises(OwnerTransitionError):
+                ledger.get_owner("profile-a")
+            ledger.commit_transition("profile-a", initial, "openviking")
+            self.assertEqual(ledger.get_owner("profile-a"), "openviking")
+            interrupted = ledger.begin_transition("profile-a", "openviking", "claude-mem")
+            with self.assertRaises(OwnerTransitionError):
+                ledger.get_owner("profile-a")
+            ledger.abort_transition("profile-a", interrupted)
+            self.assertEqual(ledger.get_owner("profile-a"), "openviking")
 
     def test_missing_context_recursion_and_service_failure_have_no_unmediated_effect(self):
         provider = OpenVikingProvider(self.broker)
