@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from hermes_installer.authority.client import (
-    AuthorityClient, canonical_digest, canonical_profile_target, profile_launch_envelope,
+    AuthorityClient, canonical_bytes, canonical_digest, canonical_profile_target, profile_launch_envelope,
 )
 from hermes_installer.managed_process import ManagedProcessSpec, ManagedProcessSupervisor
 from hermes_installer.state import Journal, OwnedRoot
@@ -73,9 +73,38 @@ async def main() -> None:
             print(json.dumps({"event": "denied", "error_type": type(exc).__name__}), flush=True)
             return
         raise
+    inspection_payload = canonical_bytes({
+        "schema": 1, "process_id": handle.identity.process_id, "generation": handle.generation,
+    })
+    inspection_digest = canonical_digest(inspection_payload)
+    inspection_context = client.context(
+        purpose="custody-kernel-ci", intent="inspect-controlled-kernel-probe",
+        trace_id=request["trace_id"], lease_seconds=20,
+        final_payload_digest=inspection_digest, operation="process.inspect",
+    )
+    inspection_target = f"{profile_id}:inspect"
+    inspection_grant = client.authorize_effect(
+        inspection_context, capability="hermes-process-control", target=inspection_target,
+        request_digest=inspection_digest, retry_index=0,
+    )
+    inspection_response = client.process_control(
+        inspection_grant, operation="process.inspect", target=inspection_target,
+        payload=inspection_payload, timeout=5,
+    )
+    if inspection_response.status != 200:
+        raise RuntimeError("root process inspection did not return success")
+    inspection = json.loads(inspection_response.body.decode("utf-8", "strict"))
+    if (inspection.get("process_id") != handle.identity.process_id
+            or inspection.get("generation") != handle.generation
+            or not inspection.get("complete")
+            or not any(member.get("role") == "main" for member in inspection.get("processes", []))
+            or any("pid" in member or "argv" in member or "path" in member
+                   for member in inspection.get("processes", []))):
+        raise RuntimeError("root process inspection returned incomplete or over-disclosed evidence")
     print(json.dumps({"event": "started", "process_id": handle.identity.process_id,
                       "pid": handle.identity.pid, "cgroup": handle.identity.cgroup,
-                      "generation": handle.generation}), flush=True)
+                      "generation": handle.generation,
+                      "inspection": inspection}), flush=True)
     if request["mode"] == "parent-death":
         await asyncio.Event().wait()
     stdout = await handle.read(65536, 5.0, stream="stdout")
