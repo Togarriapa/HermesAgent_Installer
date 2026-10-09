@@ -53,8 +53,10 @@ class RootSetupResult:
         if not self.message or len(self.message) > 512 or "\n" in self.message:
             raise ValueError("root setup message must be one bounded line")
         if self.state is RootSetupState.PENDING:
-            if (self.resume_action is not self.action
-                    or self.resume_command != f"sudo -- hermes-installer-root-setup {self.action.value}"):
+            if ((self.resume_action is None) != (self.resume_command == "")
+                    or (self.resume_action is not None and self.resume_action is not self.action)
+                    or (self.resume_command and self.resume_command !=
+                        f"sudo -- hermes-installer-root-setup {self.action.value}")):
                 raise ValueError("root setup resume command is not the fixed launcher command")
         elif self.resume_command or self.resume_action is not None:
             raise ValueError("only pending root setup results may carry a resume command")
@@ -147,8 +149,10 @@ def run_root_setup_action(
 
     factory: RootBootstrapRuntimeFactory | None = None
     session = None
+    actor_verified = False
     try:
         actor.verify_current(release)
+        actor_verified = True
         account = target_account_name if target_account_name is not None else _read_target_account_name()
         if not _ACCOUNT.fullmatch(account):
             return _result(selected_action, RootSetupState.FAILED, "admission",
@@ -160,7 +164,8 @@ def run_root_setup_action(
         factory = RootBootstrapRuntimeFactory(_release=release_for_factory, _actor=actor_for_factory)
         if selected_action is RootSetupAction.UPDATE:
             return _result(selected_action, RootSetupState.PENDING, "runtime",
-                           "Fresh-generation update and rollback publication are not yet connected to the root setup runtime.")
+                           "Fresh-generation update and rollback publication are not yet connected to the root setup runtime.",
+                           resume_allowed=True)
         mode = "resume" if selected_action is RootSetupAction.RESUME else "install"
         session = factory.begin(mode, account)
         if selected_action is RootSetupAction.RESUME:
@@ -168,7 +173,8 @@ def run_root_setup_action(
             # transaction. The actual continuation phases are connected below
             # once their sealed root APIs are available.
             return _result(selected_action, RootSetupState.PENDING, "runtime",
-                           "The owned checkpoint is valid; runtime receipt recovery and continuation are not yet connected.")
+                           "The owned checkpoint is valid; runtime receipt recovery and continuation are not yet connected.",
+                           resume_allowed=True)
         receipt = session.provision()
         if receipt.state != "prepared" or receipt.enrollment_ids:
             return _result(selected_action, RootSetupState.FAILED, "prepared",
@@ -176,15 +182,18 @@ def run_root_setup_action(
         return _result(
             selected_action, RootSetupState.PENDING, "prepared",
             "The root prepared generation is recorded; source/runtime receipts, native materialization, publication, and health checks still need their verified runtime handlers.",
+            resume_allowed=True,
             session_id=session._handle.session_id,
             transaction_ref=_report_ref(receipt.transaction_handle),
             generation_ref=_report_ref(receipt.generation_id),
             receipt_refs=(_report_ref(receipt.provision_receipt_handle),),
         )
     except BootstrapEnrollmentPending as exc:
-        return _result(selected_action, RootSetupState.PENDING, "runtime", _safe_reason(exc))
+        return _result(selected_action, RootSetupState.PENDING, "runtime", _safe_reason(exc),
+                       resume_allowed=actor_verified)
     except (OSError, RuntimeError, ValueError) as exc:
-        return _result(selected_action, RootSetupState.FAILED, "runtime", _safe_reason(exc))
+        return _result(selected_action, RootSetupState.FAILED, "runtime", _safe_reason(exc),
+                       resume_allowed=actor_verified)
     finally:
         try:
             if session is not None:
@@ -217,7 +226,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = _result(RootSetupAction(args.action), RootSetupState.FAILED,
                              "admission", _safe_reason(exc))
     print(result.message, file=sys.stderr)
-    if result.state is RootSetupState.PENDING:
+    if result.state is RootSetupState.PENDING and result.resume_command:
         print(f"Resume with: {result.resume_command}", file=sys.stderr)
     return result.exit_code
 
@@ -265,7 +274,10 @@ def _safe_reason(error: BaseException) -> str:
     return f"Root setup could not verify its required authority ({type(error).__name__})."
 
 
-def _result(action: RootSetupAction, state: RootSetupState, phase: str, message: str) -> RootSetupResult:
+def _result(action: RootSetupAction, state: RootSetupState, phase: str, message: str, *,
+            resume_allowed: bool = False, session_id: str | None = None,
+            transaction_ref: str | None = None, generation_ref: str | None = None,
+            receipt_refs: tuple[str, ...] = ()) -> RootSetupResult:
     code = {RootSetupState.ACTIVE: 0, RootSetupState.PENDING: 4, RootSetupState.FAILED: 1}[state]
     blocker = None if state is RootSetupState.ACTIVE else {
         (RootSetupState.FAILED, "admission"): "INVALID_ADMISSION",
@@ -279,10 +291,11 @@ def _result(action: RootSetupAction, state: RootSetupState, phase: str, message:
         (RootSetupState.PENDING, "materialization"): "MATERIALIZATION_UNAVAILABLE",
         (RootSetupState.PENDING, "health"): "HEALTH_UNAVAILABLE",
     }.get((state, phase), "SETUP_PENDING")
-    resume = action if state is RootSetupState.PENDING else None
+    resume = action if state is RootSetupState.PENDING and resume_allowed else None
     return RootSetupResult(action, state, phase, message,
                            f"sudo -- hermes-installer-root-setup {action.value}" if resume else "", code,
-                           blocker, resume)
+                           blocker, resume, session_id, transaction_ref, generation_ref,
+                           receipt_refs)
 
 
 def _report_ref(value: str) -> str:

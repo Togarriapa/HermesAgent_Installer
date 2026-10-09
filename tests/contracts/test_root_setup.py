@@ -71,7 +71,7 @@ class RootSetupBoundaryTests(unittest.TestCase):
             code = main(["install"])
         self.assertEqual(code, 4)
         self.assertIn("controlling terminal", output.getvalue())
-        self.assertIn("sudo -- hermes-installer-root-setup install", output.getvalue())
+        self.assertNotIn("sudo -- hermes-installer-root-setup install", output.getvalue())
         self.assertNotIn("/tmp", output.getvalue())
 
 
