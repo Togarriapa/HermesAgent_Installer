@@ -22,6 +22,7 @@ from hermes_installer.authority.source_observers import SourceObserverEnrollment
 from hermes_installer.policy import PROVIDER_RECIPIENT, canonical_provider_target
 from hermes_installer.provider_effect_handlers import (
     OPENROUTER_MODEL,
+    OpenRouterLiveAdmission,
     ProviderEnrollment,
     build_provider_handlers,
     canonical_provider_request,
@@ -87,7 +88,7 @@ def _protected_enrollment(provider_record, bridge):
     return ProtectedEnrollment(**values)
 
 
-def _fixture(*, observer=True, handler=True, inference_rule=True):
+def _fixture(*, observer=True, handler=True, inference_rule=True, admission=None):
     target = canonical_provider_target(OPENROUTER_MODEL)
     recipient = PROVIDER_RECIPIENT
     policy = _policy_record()
@@ -150,7 +151,7 @@ def _fixture(*, observer=True, handler=True, inference_rule=True):
             capture_schema_id="provider-result-schema", source_action_id="provider-result",
             target_id=target, recipient=recipient, allowed_parent_source_kinds=frozenset(),
         )
-    admission = _Admission()
+    admission = admission if admission is not None else OpenRouterLiveAdmission()
     provider_handlers = build_provider_handlers(
         enrollments={(target, recipient): ProviderEnrollment(
             provider="openrouter", account_id="account-ref-fingerprint",
@@ -274,6 +275,17 @@ class ProviderRuntimeCompositionTests(unittest.TestCase):
 
     def test_required_request_derived_capability_rules_are_independent(self):
         service, enrollment, bindings, bridges, observers, handlers, vault = _fixture(inference_rule=False)
+        with self.assertRaises(ProviderRuntimeUnavailable):
+            build_provider_runtime_selection(
+                service=service, enrollment=enrollment, bindings=bindings,
+                bridges=bridges, provider_handlers=handlers, vault=vault,
+                source_observer_enrollments=observers,
+            )
+
+    def test_callable_but_unreviewed_admission_is_not_account_eligibility(self):
+        service, enrollment, bindings, bridges, observers, handlers, vault = _fixture(
+            admission=_Admission(),
+        )
         with self.assertRaises(ProviderRuntimeUnavailable):
             build_provider_runtime_selection(
                 service=service, enrollment=enrollment, bindings=bindings,
