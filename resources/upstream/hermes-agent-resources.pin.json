@@ -50,6 +50,13 @@
   "resource_manifest_count": 692,
   "license_status": "No LICENSE, LICENCE, COPYING, or NOTICE file found at the selected commit; no redistribution permission is inferred.",
   "repository_asset_status": "Selected catalog roots contain YAML manifests only at this commit; no nested asset directories were present.",
-  "private_import": "Fetch the exact commit into installer-owned private staging, verify the commit and all root tree IDs, and preserve upstream paths and provenance.",
-  "vendored": false
+  "private_import": "Read from the checked-in archive; no network request is required. Preserve upstream paths and source provenance in installer-owned runtime storage.",
+  "vendored": true,
+  "archive": {
+    "path": "hermes-agent-resources-2.3.1.tar.gz",
+    "size": 295368,
+    "sha256": "b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1",
+    "git_blob": "bf9eb708f16c05aea54359ab2688ea14b4cff865"
+  },
+  "snapshot_file_count": 739
 }
