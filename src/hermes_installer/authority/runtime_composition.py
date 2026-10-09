@@ -688,11 +688,12 @@ def compose_root_authority_runtime(
             )
             for key, handler in generated.items():
                 operation, target = key
-                if operation != "memory.search":
+                if operation not in {"memory.search", "memory.doctor"}:
                     continue
+                action = operation.removeprefix("memory.")
                 target_entry = next((value for value in memory_runtime["targets"].values()
-                                     if "memory:" + value.provider + ":search" == target), None)
-                route_id = target_entry.route_for("search") if target_entry is not None else None
+                                     if "memory:" + value.provider + ":" + action == target), None)
+                route_id = target_entry.route_for(action) if target_entry is not None else None
                 connector_key = (("connector.open", target_entry.enrollment.target_id)
                                  if target_entry is not None and target_entry.enrollment is not None
                                  else None)
