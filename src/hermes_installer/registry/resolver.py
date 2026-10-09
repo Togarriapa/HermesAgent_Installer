@@ -108,8 +108,11 @@ def satisfies(version: str, expression: str) -> bool:
     return True
 
 class RegistryResolver:
-    def __init__(self, resources: Mapping[str, RawResource], *, now: Callable[[], float] = time.time):
+    def __init__(self, resources: Mapping[str, RawResource], *,
+                 source_verifier: Callable[[str, str], bool] | None = None,
+                 now: Callable[[], float] = time.time):
         self.raw = dict(resources)
+        self.source_verifier = source_verifier
         self.now = now
 
     @staticmethod
@@ -131,8 +134,11 @@ class RegistryResolver:
         return tuple(result)
 
     def _parse(self, raw: RawResource) -> Resource:
-        if raw.selected_revision != raw.observed_revision or not re.fullmatch(r"[a-fA-F0-9]{40,64}", raw.selected_revision):
-            raise RegistryError(f"source revision was not verified: {raw.identity}")
+        if (raw.selected_revision != raw.observed_revision
+            or not re.fullmatch(r"[a-fA-F0-9]{40,64}", raw.selected_revision)
+            or self.source_verifier is None
+            or not self.source_verifier(raw.repository, raw.selected_revision)):
+            raise RegistryError(f"selected source commit was not independently verified: {raw.identity}")
         if not raw.repository.startswith("https://") or "@" in raw.repository:
             raise RegistryError("resource repository must use HTTPS without embedded credentials")
         if self.document_digest(raw.document) != raw.content_digest: raise RegistryError(f"resource digest mismatch: {raw.identity}")

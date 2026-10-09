@@ -177,7 +177,9 @@ class GenerationStore:
             if not record or record.get("status") not in {"active", "activation_prepared", "rollback_prepared"}:
                 raise GenerationError("refusing to replace foreign pointer")
             actual = self._id(pointer.read_text(encoding="utf-8").strip())
-            expected = record.get("payload", {}).get("generation")
+            payload = record.get("payload", {})
+            status = record.get("status")
+            expected = payload.get("previous") if status == "activation_prepared" else payload.get("generation")
             if actual != expected: raise GenerationError("pointer differs from journaled transition")
         if identity is None:
             pointer.unlink(missing_ok=True); self._fsync_dir(self.owned.root); return
