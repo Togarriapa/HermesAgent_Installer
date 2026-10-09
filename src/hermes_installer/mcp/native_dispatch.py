@@ -41,7 +41,7 @@ def canonical_json(value: Any) -> bytes:
     """Canonical bounded JSON used for candidate schema identity."""
     try:
         encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
-                             ensure_ascii=True, allow_nan=False).encode("ascii")
+                             ensure_ascii=False, allow_nan=False).encode("utf-8")
     except (TypeError, ValueError, UnicodeError, RecursionError):
         raise NativeMCPBindingError("native MCP registration is not canonical JSON") from None
     if len(encoded) > _MAX_SCHEMA_BYTES:
@@ -239,11 +239,28 @@ class NativeMCPRegistrationIndex:
             raise NativeMCPBindingError("native MCP resource binding differs from its selected argument schema")
 
     def resolve(self, native_tool_name: str, schema: Mapping[str, Any]) -> NativeMCPToolBinding:
-        """Return a binding only for the exact pinned Hermes name and schema."""
+        """Return a binding only for the exact name and pinned inputSchema body.
+
+        The protected ``native_schema_sha256`` digest domain is the canonical
+        argument schema, not Hermes' surrounding ``name/description/parameters``
+        tool-registration object.
+        """
         binding = self._by_name.get(native_tool_name)
-        if binding is None or schema_sha256(schema) != binding.native_schema_sha256:
+        if (binding is None or not isinstance(schema, Mapping)
+                or schema.get("name") != native_tool_name
+                or not isinstance(schema.get("parameters"), Mapping)
+                or schema_sha256(schema["parameters"]) != binding.native_schema_sha256):
             raise NativeMCPBindingError("native MCP candidate is unknown or its registered schema changed")
         return replace(binding, native_schema=MappingProxyType(dict(schema)))
+
+    def resolve_action(self, action_id: str) -> NativeMCPToolBinding:
+        """Return a protected row by exact action ID for root invocation joins."""
+        if not isinstance(action_id, str):
+            raise NativeMCPBindingError("native MCP action selector is invalid")
+        binding = self._by_id.get(action_id)
+        if binding is None:
+            raise NativeMCPBindingError("native MCP action is not selected in this generation")
+        return binding
 
     def selected_candidates(self, candidate_schemas: Mapping[str, Mapping[str, Any]]) -> tuple[
             tuple[str, Mapping[str, Any], NativeMCPToolBinding], ...]:
@@ -267,6 +284,11 @@ class NativeMCPRegistrationIndex:
 
     def by_id(self, binding_id: str) -> NativeMCPToolBinding | None:
         return self._by_id.get(binding_id)
+
+    @property
+    def bindings(self) -> tuple[NativeMCPToolBinding, ...]:
+        """Return the immutable root-selected bindings in stable identity order."""
+        return tuple(self._by_id[key] for key in sorted(self._by_id))
 
     def __len__(self) -> int:
         return len(self._by_id)
