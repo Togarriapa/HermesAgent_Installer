@@ -160,6 +160,7 @@ class PolicyVerifierClient:
         self._used_nonces = {key: expiry for key, expiry in self._used_nonces.items() if expiry > now}
 
     def _check_server_peer(self, conn: socket.socket | None) -> None:
+        _assert_client_socket_path(self.socket_path, self.verifier_uid)
         if conn is None or not hasattr(socket, "SO_PEERCRED"):
             raise VerifierIPCError("authenticated Unix peer credentials are unavailable")
         raw = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
@@ -242,8 +243,9 @@ class PolicyVerifierService:
         if not socket_path.is_absolute() or socket_path.exists() or socket_path.is_symlink():
             raise RuntimeError("verifier socket path must be absolute and unoccupied")
         parent = socket_path.parent
-        info = parent.stat()
-        if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o022 or info.st_uid not in {0, self.service_uid}:
+        _assert_safe_socket_directories(parent, allowed_owners={0, self.service_uid})
+        info = parent.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid not in {0, self.service_uid}:
             raise RuntimeError("verifier socket parent must be root/service-owned and not group/world writable")
         self._server = await asyncio.start_unix_server(self._handle, path=str(socket_path), limit=MAX_REQUEST_BYTES + 1)
         try:
@@ -484,3 +486,28 @@ def _finite_number(value: Any) -> float:
     if not math.isfinite(number):
         raise VerifierIPCError("non-finite verifier deadline")
     return number
+
+
+def _assert_safe_socket_directories(path: Path, *, allowed_owners: set[int]) -> None:
+    """Reject symlinked, foreign-owned, or group/world-writable socket ancestors."""
+    if not path.is_absolute():
+        raise RuntimeError("verifier socket directory must be absolute")
+    current = Path("/")
+    for part in path.parts[1:]:
+        current = current / part
+        info = os.stat(current, follow_symlinks=False)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError("verifier socket ancestry contains a symlink or non-directory")
+        if info.st_uid not in allowed_owners or info.st_mode & 0o022:
+            raise RuntimeError("verifier socket ancestry is not privately owned")
+
+
+def _assert_client_socket_path(path: Path, verifier_uid: int) -> None:
+    _assert_safe_socket_directories(path.parent, allowed_owners={0, os.geteuid(), verifier_uid})
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except OSError:
+        raise VerifierIPCError("verifier socket is unavailable") from None
+    if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != verifier_uid
+            or info.st_mode & 0o007):
+        raise VerifierIPCError("verifier socket identity or permissions mismatch")
