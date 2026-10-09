@@ -434,10 +434,11 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             f"_entrypoint={binding.entrypoint_sha256!r}\n"
             f"_resolver={binding.resolver_sha256!r}\n"
             "for _seq,_phase in enumerate(('entrypoint-imported','actions-registered','ready')):\n"
+            "    _actions=[] if _seq==0 else ['ci-native-action']\n"
             "    _record={'schema':1,'launch_nonce':_nonce.decode('ascii'),'sequence':_seq,"
             "'phase':_phase,'package_id':_package,'generation':_generation,"
             "'entrypoint_sha256':_entrypoint,'resolver_sha256':_resolver,"
-            "'registered_action_ids':['ci-native-action']}\n"
+            "'registered_action_ids':_actions}\n"
             "    _body=json.dumps(_record,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')\n"
             "    _sock.sendall(struct.pack('!I',len(_body))+_body)\n"
             "_sock.close()\n"
@@ -473,7 +474,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
     def _native_package_fixture(self) -> ManagedNativePackageMount:
         from types import SimpleNamespace
 
-        root = self.stage / "native-fixture"
+        root = self.stage / f"native-fixture-{uuid.uuid4().hex}"
         closure = root / "closure"
         closure.mkdir(parents=True, mode=0o755)
         module = closure / "adapter.py"
@@ -613,6 +614,29 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             self.assertEqual(origin_identity.pid_starttime_ticks, process_handle.start_ticks)
             self.assertEqual(origin_identity.executable_sha256, self.digest)
             self.assertEqual(origin_identity.cgroup_id, started["cgroup"])
+            exact_handle_lease = self.handler.resolve_owned_process_handle(process_handle)
+            self.assertIsNotNone(exact_handle_lease,
+                "exact manager-owned handle did not resolve to its PIDFD identity lease")
+            self.assertEqual(exact_handle_lease.process_id, process_handle.process_id)
+            self.assertEqual(exact_handle_lease.pid, process_handle.pid)
+            self.assertEqual(exact_handle_lease.start_ticks, process_handle.start_ticks)
+            self.assertNotEqual(exact_handle_lease.pidfd, process_handle.child_pidfd)
+            exact_handle_lease.close()
+            identity_lease = self.handler.resolve_active_process_handle(
+                self.profile_id, self.profile.generation)
+            self.assertIsNotNone(identity_lease,
+                "active root process did not resolve to an owned PIDFD lease")
+            self.assertEqual(identity_lease.process_id, started["process_id"])
+            self.assertEqual(identity_lease.profile_id, self.profile_id)
+            self.assertEqual(identity_lease.generation, self.profile.generation)
+            self.assertEqual(identity_lease.uid, self.uid)
+            self.assertEqual(identity_lease.pid, started["pid"])
+            self.assertEqual(identity_lease.start_ticks, process_handle.start_ticks)
+            self.assertEqual(identity_lease.executable_sha256, self.digest)
+            self.assertNotEqual(identity_lease.pidfd, process_handle.child_pidfd)
+            identity_lease.close()
+            self.assertIsNone(self.handler.resolve_active_process_handle(
+                self.profile_id, "stale-generation"))
             live_peer = self.handler.resolve_live_peer(
                 started["pid"], process_handle.child_pidfd,
                 profile_id=self.profile_id, generation=self.profile.generation,
