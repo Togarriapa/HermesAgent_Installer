@@ -87,6 +87,14 @@ def test_selected_schema_must_match_source_and_webhook_pin(mutation):
         discovery(broker).select(ROW["slug"])
 
 
+def test_schema_drift_between_catalog_and_selected_get_type_fails_closed():
+    changed = deepcopy(ROW)
+    changed["payload"]["fixture_value"]["maxLength"] = 10
+    broker = RecordingRootGet(selected=changed)
+    with pytest.raises(ComposioTriggerSetupUnavailable, match="schema changed"):
+        discovery(broker).select(ROW["slug"])
+
+
 def test_polling_trigger_type_can_still_use_authenticated_webhook_delivery():
     selected = deepcopy(ROW)
     selected["type"] = "poll"
