@@ -177,6 +177,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                     nonce="fixture-context-nonce", grant_id="fixture-context-grant",
                     signature="fixture-context-signature",
                     final_payload_digest=_kwargs.get("final_payload_digest"),
+                    operation=_kwargs.get("operation"),
                 )
                 self.context_value = ctx
                 return ctx
@@ -198,6 +199,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                     context_digest=canonical_digest(context.claims()),
                     signature="fixture-effect-signature",
                     final_payload_digest=context.final_payload_digest,
+                    operation=context.operation,
                 )
 
             def mcp_request(self, authorization, *, target, payload, timeout, cancelled=None):
@@ -206,6 +208,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                         or self.context_value is None
                         or canonical_digest(payload) != self.context_value.final_payload_digest
                         or authorization.final_payload_digest != self.context_value.final_payload_digest
+                        or authorization.operation != self.context_value.operation
                         or cancelled and cancelled()):
                     raise PermissionError("fixture authority binding mismatch")
                 envelope = json.loads(payload.decode("utf-8"))
