@@ -397,7 +397,7 @@
       "channel_id": "issuer_channel_id",
       "source_action_id": "one exact selected source_action_ids entry; current canonical channels each have their fixed action",
       "profile_id": "producer_profile_id",
-      "generation": "issuer generation equals current service/process profile and package generation join",
+      "generation": "issuer generation equals actual selected service/process profile generation, never native package generation",
       "principal_id": "selected service profile principal_id",
       "namespace_id": "selected service profile namespace_identity joined actual authority principal binding",
       "enrollment_id": "selected service profile enrollment_id",
@@ -414,7 +414,8 @@
       "recipient": "joined adapter recipient",
       "allowed_parent_source_kinds": "exact fixed mapping of issuer allowed_parent_channels; unknown channel denies",
       "max_event_bytes": "min(1048576, selected actual schema/service byte bound)",
-      "lease_seconds": "minimum30s and current selected service/source policy deadline; never extends original job/consent"
+      "lease_seconds": "minimum30s and current selected service/source policy deadline; never extends original job/consent",
+      "native_package_generation": "unique joined selected native package generation; distinct from process/profile generation and compared only to package/adapter/compiled closure records"
     },
     "kind_mapping": {
       "native-input": "native-input",
@@ -428,7 +429,8 @@
     "schema_and_action": "resolve_observer_schema(capture_schema_id,role_artifact_id,role_sha256) uses root fixed registered schema/action map in actual sealed role closure. Adapter request/result schemas and actual observed event operation/action must match selected channel. No caller dynamic import/validator. Missing static validator or root observer code remains unavailable, not guessed.",
     "loaded_proof_call": "resolve_loaded_package_closure(live_peer_identity,derived_observer) -> existing LoadedPackageClosureProof from current custody private registry; exact code role/action proof and actual immutable mount/entrypoint/resolver/peer PIDFD/generation required. Do not construct proof from source_issuers or package metadata.",
     "target_peer_call": "resolve_source_target_peer(derived_observer,root_parent_context) -> {pid,pidfd,uid,profile_id,generation,identity}; root live registry resolves same enrolled producer by default. A distinct counterpart is allowed ONLY from exact current HI11 native_bridges producer/gateway pair and root pending request/result registry. Never caller target PID/profile or generic role routing. Root duplicates owned PIDFD, independently resolves current kernel identity and closes FD on cancel/expiry.",
-    "source_event": "RootSourceObservationRegistry receives these derived typed records and actual pending event/context; current exact full closure/action/bytes/peer proof verification remains mandatory. Multiple matches or no actual loaded/delivery peer proof denies."
+    "source_event": "RootSourceObservationRegistry receives these derived typed records and actual pending event/context; current exact full closure/action/bytes/peer proof verification remains mandatory. Multiple matches or no actual loaded/delivery peer proof denies.",
+    "generation_join": "SourceObserverEnrollment gains explicit native_package_generation opaque str. All live peer/SourceReceipt.process_generation/RootSelectedNativeExecution.generation checks use generation (process domain); package lookup/loaded closure package joins use native_package_generation. No equality requirement or use of one field for both. Both exact protected source issuer and package joins remain bound by active service snapshot digest."
   },
   "adapter_workflow_binding_schema": {
     "fields": [
