@@ -27,6 +27,11 @@ class RecordingAuthorityClient:
                               "sequence": fields["sequence"] + 1}
         elif payload["operation"] == "process.stop":
             default_result = {"closed": True, "reap_state": "complete"}
+        elif payload["operation"] == "process.inspect":
+            default_result = {
+                "profile_id": "profile:fixture", "cgroup_identity": "cgroup:fixture",
+                "observation_monotonic": 99.0, "complete": True, "processes": [{}],
+            }
         body = self.result or {
             "schema": 1, "process_id": payload["process_id"],
             "generation": payload["generation"], "operation": payload["operation"],
@@ -85,6 +90,8 @@ class ProcessControlContracts(unittest.TestCase):
                                       {"reason": "cancel", "grace_seconds": 0})
         inspected = process_control_operation(client, "process.inspect", "a" * 32, "gen:7")
         self.assertEqual(inspected.operation, "process.inspect")
+        self.assertEqual(inspected.result["profile_id"], "profile:fixture")
+        self.assertEqual(inspected.receipt_id, "receipt:fixture")
         self.assertEqual(len(client.calls), 1)
 
     def test_cancellation_and_malformed_or_oversized_response_fail_closed(self):

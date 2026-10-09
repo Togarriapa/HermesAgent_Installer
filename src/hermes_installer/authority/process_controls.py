@@ -34,6 +34,7 @@ class ProcessControlResponse:
     state: str
     result: Mapping[str, Any]
     expires_monotonic: float
+    receipt_id: str
 
 
 def _control_fields(operation: str, fields: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -96,6 +97,7 @@ def _decode_response(value: Any, *, operation: str, process_id: str,
            or any(char in key + item for char in "\r\n\x00")
            for key, item in value["headers"].items()):
         raise AuthorityDenied("effect.invalid", "root process control broker headers are malformed")
+    receipt_id = value["receipt_id"]
     try:
         body = base64.b64decode(value["body"], validate=True)
         if base64.b64encode(body).decode("ascii") != value["body"]:
@@ -154,10 +156,24 @@ def _decode_response(value: Any, *, operation: str, process_id: str,
         exit_code = result.get("exit_code")
         if set(result) != {"exit_code"} or (exit_code is not None and type(exit_code) is not int):
             raise AuthorityDenied("effect.invalid", "root process status result is malformed")
+    elif operation == "process.inspect":
+        if (set(result) != {"profile_id", "cgroup_identity", "observation_monotonic", "complete", "processes"}
+                or not isinstance(result.get("profile_id"), str)
+                or not 1 <= len(result["profile_id"]) <= 128
+                or not isinstance(result.get("cgroup_identity"), str)
+                or not 1 <= len(result["cgroup_identity"]) <= 512
+                or type(result.get("complete")) is not bool
+                or not isinstance(result.get("processes"), list)
+                or not 1 <= len(result["processes"]) <= 128):
+            raise AuthorityDenied("effect.invalid", "root process inspection result is malformed")
+        observed = result.get("observation_monotonic")
+        if (isinstance(observed, bool) or not isinstance(observed, (int, float))
+                or not math.isfinite(observed) or observed > now):
+            raise AuthorityDenied("effect.invalid", "root process inspection observation is malformed")
     return ProcessControlResponse(
         schema=1, process_id=process_id, generation=generation, operation=operation,
         state=value["state"], result=MappingProxyType(dict(result)),
-        expires_monotonic=float(expires),
+        expires_monotonic=float(expires), receipt_id=receipt_id,
     )
 
 
