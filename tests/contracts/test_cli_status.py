@@ -92,7 +92,7 @@ class RecordedStatusTests(unittest.TestCase):
                 pass
             database = root.path("journal.sqlite3")
             script = (
-                "import os,sqlite3,sys; "
+                "import os,sqlite3,sys; os.umask(0o077); "
                 "db=sqlite3.connect(sys.argv[1]); "
                 "db.execute('PRAGMA journal_mode=WAL'); "
                 "db.execute('CREATE TABLE operations (id TEXT PRIMARY KEY,status TEXT NOT NULL,updated_at REAL NOT NULL,payload TEXT NOT NULL)'); "
