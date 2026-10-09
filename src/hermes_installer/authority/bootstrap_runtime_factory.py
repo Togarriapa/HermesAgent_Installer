@@ -520,6 +520,11 @@ class RootComposioCatalogExchangeReceipt:
     expires_monotonic: float
 
 
+# v68/v77 use the domain name "catalog read receipt" for the one immutable
+# exchange object that carries both request and response digest domains.
+RootComposioCatalogReadReceipt = RootComposioCatalogExchangeReceipt
+
+
 class InstalledBootstrapPolicyResolver:
     """Resolve the strict extended selection and its exact deployed policy."""
 
@@ -1746,6 +1751,9 @@ class RootComposioSetupSelectionAuthority:
         self._last_page_receipt: dict[str, str | None] = {}
         self._catalog_records: dict[str, dict[str, tuple[Mapping[str, Any], str]]] = {}
         self._listed_rows: dict[str, int] = {}
+        self._exchange_receipts: dict[str, RootComposioCatalogReadReceipt] = {}
+        self._exchange_authorizations: dict[str, str] = {}
+        self._exchange_detail_slugs: dict[str, str] = {}
 
     @staticmethod
     def _verify_reader_policy(release: Any) -> None:
@@ -1928,8 +1936,7 @@ class RootComposioSetupSelectionAuthority:
             _COMPOSIO_POLICY_ARTIFACT_ID, authorization.request_policy_sha256,
             request_sha, response_sha, len(response_body),
             self._page_count[authorization.authorization_handle],
-            (self._last_page_receipt[authorization.authorization_handle]
-             if grant._detail_slug is None else None),
+            self._last_page_receipt[authorization.authorization_handle],
             grant._detail_slug, now, authorization.expires_monotonic)
         journal = {
             "schema": receipt.schema, "receipt_handle": receipt.receipt_handle,
@@ -1954,12 +1961,92 @@ class RootComposioSetupSelectionAuthority:
                           _canonical(journal, ensure_ascii=True), 0o600)
         self._used_grants.add(grant.grant_id)
         self._grants.pop(grant.grant_id, None)
-        if grant._detail_slug is None and 200 <= http_status < 300:
+        if grant._detail_slug is None and http_status == 200:
             self._observe_list_page(authorization, response_body)
             self._last_page_receipt[authorization.authorization_handle] = exchange_handle
-        elif grant._detail_slug is not None and 200 <= http_status < 300:
+        elif grant._detail_slug is not None and http_status == 200:
             self._observe_detail(authorization, grant._detail_slug, response_body)
+        if http_status == 200:
+            self._exchange_receipts[exchange_handle] = receipt
+            self._exchange_authorizations[exchange_handle] = authorization.authorization_handle
+            if grant._detail_slug is not None:
+                self._exchange_detail_slugs[exchange_handle] = grant._detail_slug
         return exchange_handle
+
+    def resolve_catalog_exchange_receipt(
+            self, exchange_receipt_handle: str) -> RootComposioCatalogReadReceipt:
+        """Resolve one live, root-retained exchange receipt from this setup."""
+        if (os.geteuid() != 0 or not isinstance(exchange_receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", exchange_receipt_handle)):
+            raise BootstrapEnrollmentPending("Composio exchange receipt handle is malformed or unavailable")
+        receipt = self._exchange_receipts.get(exchange_receipt_handle)
+        authorization_handle = self._exchange_authorizations.get(exchange_receipt_handle)
+        if (not isinstance(receipt, RootComposioCatalogReadReceipt)
+                or authorization_handle != receipt.authorization_handle
+                or receipt.receipt_handle != exchange_receipt_handle):
+            raise BootstrapEnrollmentPending("Composio exchange receipt is not retained by this live setup authority")
+        authorization = self._resolve_authorization(authorization_handle)
+        if (receipt.session_handle != authorization.session_handle
+                or receipt.transaction_handle != authorization.transaction_handle
+                or receipt.principal_id != authorization.principal_id
+                or receipt.project_id != authorization.project_id
+                or receipt.toolkit_version != authorization.toolkit_version
+                or receipt.operation != authorization.operation
+                or receipt.request_policy_artifact_id != authorization.request_policy_artifact_id
+                or receipt.request_policy_sha256 != authorization.request_policy_sha256
+                or receipt.expires_monotonic > authorization.expires_monotonic
+                or not receipt.issued_monotonic < time.monotonic() < receipt.expires_monotonic):
+            raise BootstrapEnrollmentPending("Composio exchange receipt no longer joins the live selected setup")
+        receipt_path = self._root / "exchanges" / f"{exchange_receipt_handle}.json"
+        try:
+            raw = _read_secure_root_bytes(receipt_path, 32 * 1024, 0o600)
+            journal = json.loads(raw.decode("ascii"), object_pairs_hook=_unique_pairs)
+        except Exception:
+            raise BootstrapEnrollmentPending("Composio exchange receipt journal is absent or malformed") from None
+        expected = {
+            "schema": receipt.schema, "receipt_handle": receipt.receipt_handle,
+            "authorization_handle": receipt.authorization_handle,
+            "session_handle": receipt.session_handle,
+            "transaction_handle": receipt.transaction_handle,
+            "principal_id": receipt.principal_id, "project_id": receipt.project_id,
+            "operation": receipt.operation, "toolkit_version": receipt.toolkit_version,
+            "request_policy_artifact_id": receipt.request_policy_artifact_id,
+            "request_policy_sha256": receipt.request_policy_sha256,
+            "request_sha256": receipt.request_sha256,
+            "response_sha256": receipt.response_sha256,
+            "response_size_bytes": receipt.response_size_bytes,
+            "page_sequence": receipt.page_sequence,
+            "parent_response_receipt_handle": receipt.parent_response_receipt_handle,
+            "selected_slug": receipt.selected_slug,
+            "issued_monotonic": receipt.issued_monotonic,
+            "expires_monotonic": receipt.expires_monotonic,
+        }
+        if not isinstance(journal, dict) or journal != expected:
+            raise BootstrapEnrollmentPending("Composio exchange receipt journal differs from retained root facts")
+        return receipt
+
+    def read_verified_trigger_detail(self, exchange_receipt_handle: str,
+                                     selected_returned_slug: str
+                                     ) -> tuple[RootComposioCatalogReadReceipt, bytes]:
+        """Return exact detail bytes only for the selected authenticated GET."""
+        receipt = self.resolve_catalog_exchange_receipt(exchange_receipt_handle)
+        slug = self._exchange_detail_slugs.get(exchange_receipt_handle)
+        if (not isinstance(selected_returned_slug, str)
+                or selected_returned_slug != slug or receipt.selected_slug != slug
+                or slug not in self._catalog_records.get(receipt.authorization_handle, {})):
+            raise BootstrapEnrollmentPending("Composio detail exchange did not inspect the selected catalog slug")
+        response_path = self._root / "responses" / f"{receipt.response_sha256}.json"
+        try:
+            body = _read_secure_root_bytes(
+                response_path, _COMPOSIO_POLICY["max_response_bytes"], 0o600)
+        except Exception:
+            raise BootstrapEnrollmentPending("Composio detail response bytes are absent from root CAS") from None
+        if (len(body) != receipt.response_size_bytes
+                or hashlib.sha256(body).hexdigest() != receipt.response_sha256):
+            raise BootstrapEnrollmentPending("Composio detail response bytes differ from retained exchange receipt")
+        authorization = self._resolve_authorization(receipt.authorization_handle)
+        self._observe_detail(authorization, slug, body)
+        return receipt, body
 
     def _observe_list_page(self, authorization: RootComposioCatalogReadAuthorization,
                            raw: bytes) -> None:
