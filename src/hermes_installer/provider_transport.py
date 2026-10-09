@@ -12,7 +12,7 @@ from .policy import PolicyDenied, ProviderResponse, Route
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1"
 ALLOWED_MODELS = frozenset({"nvidia/nemotron-3-ultra-550b-a55b:free"})
-MAX_REQUEST_BYTES = 4 * 1024 * 1024
+MAX_REQUEST_BYTES = 1_048_576
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
@@ -29,16 +29,26 @@ class OpenRouterTransport:
                  network_factory: Callable[..., BoundedNetwork] = BoundedNetwork):
         if not isinstance(credential_ref, str) or not credential_ref.startswith(("file://", "keyring://", "secret://")):
             raise CredentialError("Provider credential must use a private file or secure store reference")
-        try:
-            self._api_key = secret_reader(credential_ref)
-        except Exception:
-            raise CredentialError("Provider credential reference could not be resolved") from None
-        if not isinstance(self._api_key, str) or not self._api_key or len(self._api_key) > 4096 or any(ord(c) < 32 for c in self._api_key):
-            raise CredentialError("Provider credential reference is invalid")
+        self._credential_ref = credential_ref
+        self._secret_reader = secret_reader
+        self._api_key: str | None = None
+        self._credential_lock = __import__("threading").Lock()
         self._network_factory = network_factory
 
     def __repr__(self) -> str:
-        return "OpenRouterTransport(credential_ref=<redacted>)"
+        return "OpenRouterTransport(credential_ref=<redacted>, key=<redacted>)"
+
+    def _credential(self) -> str:
+        with self._credential_lock:
+            if self._api_key is None:
+                try:
+                    value = self._secret_reader(self._credential_ref)
+                except Exception:
+                    raise CredentialError("Provider credential reference could not be resolved") from None
+                if not isinstance(value, str) or not value or len(value) > 4096 or any(ord(c) < 32 for c in value):
+                    raise CredentialError("Provider credential reference is invalid")
+                self._api_key = value
+            return self._api_key
 
     @staticmethod
     def _request_body(payload: bytes, model: str, output_limit: int) -> bytes:
@@ -89,7 +99,7 @@ class OpenRouterTransport:
                 OPENROUTER_ENDPOINT + "/chat/completions",
                 method="POST",
                 headers={
-                    "Authorization": "Bearer " + self._api_key,
+                    "Authorization": "Bearer " + self._credential(),
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                     "X-Client-Request-Id": trace_id,
@@ -115,5 +125,8 @@ class OpenRouterTransport:
         except (ValueError, UnicodeDecodeError):
             pass
         retry_after = result.headers.get("Retry-After") or result.headers.get("retry-after")
-        safe_headers = {"Retry-After": str(retry_after)} if retry_after is not None and len(str(retry_after)) <= 128 else {}
+        content_type = result.headers.get("Content-Type") or result.headers.get("content-type") or "application/json"
+        safe_headers = {"Content-Type": str(content_type)[:128]}
+        if retry_after is not None and len(str(retry_after)) <= 128:
+            safe_headers["Retry-After"] = str(retry_after)
         return ProviderResponse(result.status, result.body, safe_headers, input_tokens, output_tokens)

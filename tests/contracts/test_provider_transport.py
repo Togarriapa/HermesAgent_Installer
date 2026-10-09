@@ -47,6 +47,8 @@ class ProviderTransportTests(unittest.TestCase):
         sent=json.loads(body)
         self.assertEqual(sent["model"],MODEL)
         self.assertEqual(sent["max_tokens"],77)
+        self.assertEqual(sent["provider"],{"allow_fallbacks":False,"require_parameters":True,"data_collection":"deny"})
+        self.assertTrue(all(plugin["enabled"] is False for plugin in sent["plugins"]))
         self.assertNotIn("max_completion_tokens",sent)
         self.assertNotIn("fixture-secret-r",repr(transport))
 
@@ -67,7 +69,7 @@ class ProviderTransportTests(unittest.TestCase):
         response=transport(route,MODEL,payload,output_token_limit=8,timeout=2,trace_id="trace")
         self.assertEqual(response.status,200)
         self.assertEqual(json.loads(networks[0].calls[0][3])["model"],MODEL)
-        for bad in (b"[]",b"not-json",b'{"messages":"not-an-array"}'):
+        for bad in (b"[]",b"not-json",b'{"messages":"not-an-array"}', b'{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://image.invalid/a"}}]}]}', b'{"messages":[],"response_format":{"type":"json_object"}}', b'{"messages":[],"models":["paid/model"]}', b'{"messages":[],"fallbacks":["paid/model"]}', b'{"messages":[],"tools":[{"type":"openrouter:web_search"}]}', b'{"messages":[],"plugins":[{"id":"web"}]}'):
             with self.assertRaises(PolicyDenied):
                 transport(route,MODEL,bad,output_token_limit=8,timeout=2,trace_id="trace")
 
@@ -77,6 +79,14 @@ class ProviderTransportTests(unittest.TestCase):
             transport(default_public_route(),"attacker/model",b'{"messages":[]}',output_token_limit=8,timeout=2,trace_id="trace")
         with self.assertRaisesRegex(PolicyDenied,"hard bound"):
             transport(default_public_route(),MODEL,b'{"messages":[]}',output_token_limit=8,timeout=31,trace_id="trace")
+
+    def test_oversized_request_is_rejected_before_secret_resolution(self):
+        resolved=[]
+        transport=OpenRouterTransport("file:///secure/provider-token",secret_reader=lambda ref:resolved.append(ref) or "fixture",network_factory=lambda **kwargs:None)
+        route=default_public_route()
+        with self.assertRaisesRegex(PolicyDenied,"byte limit"):
+            transport(route,MODEL,b'{"messages":[]}' + b"x"*1_048_577,output_token_limit=8,timeout=2,trace_id="trace")
+        self.assertEqual(resolved,[])
 
     def test_secret_reference_cannot_use_environment(self):
         with self.assertRaisesRegex(Exception,"private file or secure store"):

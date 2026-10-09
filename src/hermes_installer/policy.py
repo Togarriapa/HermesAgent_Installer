@@ -129,24 +129,67 @@ class Transport(Protocol):
 
 def normalize_chat_request(payload: bytes, model: str, output_token_limit: int) -> bytes:
     """Override caller-controlled model/token fields before any provider transport."""
-    if not isinstance(payload, bytes) or len(payload) > 4 * 1024 * 1024:
-        raise PolicyDenied("request.bounds", "Serialized request must be bytes and at most 4 MiB")
+    if not isinstance(payload, bytes) or len(payload) > 1_048_576:
+        raise PolicyDenied("request.bounds", "Serialized request must be bytes and at most 1 MiB")
     try:
         value = json.loads(payload)
     except (ValueError, UnicodeDecodeError):
         raise PolicyDenied("request.format", "Provider request must be valid JSON") from None
     if not isinstance(value, dict) or not isinstance(value.get("messages"), list):
         raise PolicyDenied("request.format", "Provider request must contain a messages array")
+    allowed = {"model", "messages", "max_tokens", "max_completion_tokens", "max_output_tokens",
+               "temperature", "top_p", "n", "stream", "stream_options", "stop",
+               "presence_penalty", "frequency_penalty", "seed", "tools", "tool_choice",
+               "parallel_tool_calls", "user", "metadata", "logit_bias", "logprobs", "top_logprobs",
+               "plugins", "provider", "response_format"}
+    forbidden = {"models", "fallbacks", "route", "transforms", "modalities", "audio", "video",
+                 "images", "response_format"}
+    if set(value) - allowed or set(value) & forbidden:
+        raise PolicyDenied("request.features", "Request contains an unsupported routing, plugin, format or modality feature")
+    messages = value["messages"]
+    if not 1 <= len(messages) <= 2048:
+        raise PolicyDenied("request.bounds", "Message count is outside the supported range")
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") not in {"system", "developer", "user", "assistant", "tool"}:
+            raise PolicyDenied("request.format", "Message role or structure is unsupported")
+        content = message.get("content")
+        if content is not None and not isinstance(content, str):
+            if not isinstance(content, list) or any(not isinstance(part, dict) or part.get("type") != "text" or not isinstance(part.get("text"), str) for part in content):
+                raise PolicyDenied("request.modality", "Only text message content is eligible for the public route")
+        if content is None and not (message.get("role") == "assistant" and isinstance(message.get("tool_calls"), list)):
+            raise PolicyDenied("request.format", "Message content is missing")
+        calls = message.get("tool_calls", [])
+        if not isinstance(calls, list) or any(not isinstance(call, dict) or call.get("type") != "function" or not isinstance(call.get("function"), dict) for call in calls):
+            raise PolicyDenied("request.tools", "Only ordinary function tool calls are eligible")
+    tools = value.get("tools", [])
+    if not isinstance(tools, list) or len(tools) > 64 or any(not isinstance(tool, dict) or tool.get("type") != "function" or not isinstance(tool.get("function"), dict) for tool in tools):
+        raise PolicyDenied("request.tools", "Only ordinary function tools are eligible; provider server tools are disabled")
+    if value.get("tool_choice") not in (None, "none", "auto", "required") and not (
+        isinstance(value.get("tool_choice"), dict) and value["tool_choice"].get("type") == "function"
+        and isinstance(value["tool_choice"].get("function"), dict)
+    ):
+        raise PolicyDenied("request.tools", "Tool choice must select an ordinary function tool")
+    if "n" in value and (not isinstance(value["n"], int) or value["n"] < 1):
+        raise PolicyDenied("request.bounds", "Completion count must be a positive integer")
+    value["n"] = 1
     value["model"] = model
     value.pop("max_completion_tokens", None)
     value.pop("max_output_tokens", None)
+    # Explicitly turn off every currently documented account-default plugin.
+    # Provider-side prevent-overrides may reject this request; that remains a
+    # closed failure and must not be bypassed with a fallback.
+    value["plugins"] = [{"id": ident, "enabled": False} for ident in
+                        ("web", "file-parser", "response-healing", "pareto-router", "context-compression")]
+    value["provider"] = {"allow_fallbacks": False, "require_parameters": True, "data_collection": "deny"}
     value["max_tokens"] = output_token_limit
+    value["stream"] = bool(value.get("stream", False))
+    value.pop("stream_options", None)
     try:
         normalized = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     except (TypeError, ValueError, UnicodeEncodeError):
         raise PolicyDenied("request.format", "Provider request could not be serialized safely") from None
-    if len(normalized) > 4 * 1024 * 1024:
-        raise PolicyDenied("request.bounds", "Normalized request exceeds its byte limit")
+    if len(normalized) > 1_048_576:
+        raise PolicyDenied("request.bounds", "Normalized request exceeds its 1 MiB byte limit")
     return normalized
 
 

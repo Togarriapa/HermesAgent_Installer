@@ -47,6 +47,7 @@ class ProviderPolicyTests(unittest.TestCase):
             self.assertEqual(provider.calls[0][0:2], ("openrouter-nemotron-free", MODEL))
             self.assertEqual(json.loads(provider.calls[0][2])["model"], MODEL)
             self.assertEqual(json.loads(provider.calls[0][2])["max_tokens"], 128)
+            self.assertEqual(json.loads(provider.calls[0][2])["provider"]["allow_fallbacks"], False)
 
     def test_private_derived_memory_is_blocked_before_public_dispatch(self):
         with tempfile.TemporaryDirectory() as td:
