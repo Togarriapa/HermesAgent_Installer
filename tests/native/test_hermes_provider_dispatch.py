@@ -237,14 +237,30 @@ def _run_native_worker():
         "plugin_name": profile.name,
         "plugin_aux_model": profile.default_aux_model,
     }, sort_keys=True))
+    configured_provider = model_config.get("provider")
+    configured_model = model_config.get("default")
+    if configured_provider != provider_name or configured_model != model:
+        raise SystemExit("managed Hermes config model selection is malformed")
+    # Match the pinned CLI path: requested=None reads model.provider from config.
+    # Do not hardcode a provider or model into AIAgent and accidentally mask
+    # configuration/routing errors.
+    from hermes_cli.runtime_provider import resolve_runtime_provider
+    runtime = resolve_runtime_provider(requested=None, target_model=configured_model)
+    if runtime.get("provider") != configured_provider:
+        raise SystemExit("Hermes runtime provider resolution bypassed the managed profile")
+    if not isinstance(runtime.get("base_url"), str) or not runtime["base_url"].startswith("http://127.0.0.1:"):
+        raise SystemExit("Hermes runtime provider did not resolve to the owned loopback gateway")
     from run_agent import AIAgent
     agent = None
     try:
         agent = AIAgent(
+            base_url=runtime["base_url"], api_key=runtime.get("api_key"),
+            provider=runtime["provider"], api_mode=runtime.get("api_mode"),
+            model=configured_model,
             quiet_mode=True, enabled_toolsets=[], skip_context_files=True,
             load_soul_identity=False, skip_memory=True, skip_background_review=True,
         )
-        if agent.provider != provider_name or agent.model != model:
+        if agent.provider != configured_provider or agent.model != configured_model:
             raise SystemExit("Hermes native config selection mismatch: provider="
                              + str(agent.provider) + ", model=" + str(agent.model))
         primary = agent.client.chat.completions.create(
