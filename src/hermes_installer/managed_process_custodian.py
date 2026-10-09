@@ -2775,6 +2775,7 @@ class ManagedBuildJobRunner:
                  identity_digest: Callable[..., str], mount_targets: Mapping[str, str]):
         manager = self.manager
         job_id = uuid.uuid4().hex
+        service_generation = profile.generation
         unit = f"hermes-installer-build-{job_id}.service"
         cgroup = f"/system.slice/{unit}"
         # Authorization is checked again at the launch effect point below.
@@ -2882,7 +2883,9 @@ class ManagedBuildJobRunner:
                 "--property=BindReadOnlyPaths=" + str(inputs.toolchain_root) + ":" + mount_targets["toolchain"],
                 "--property=BindPaths=" + str(work) + ":" + mount_targets["work"],
                 "--property=BindPaths=" + str(inputs.output_root) + ":" + mount_targets["output"],
-                "--property=InaccessiblePaths=/etc/hermes-installer /var/lib/hermes-installer /etc/ssh /etc/ssl/private",
+                # Every mask is optional on a clean development host: systemd
+                # rejects the namespace if an unprefixed masked path is absent.
+                "--property=InaccessiblePaths=-/etc/hermes-installer -/var/lib/hermes-installer -/etc/ssh -/etc/ssl/private",
             ]
             if profile.memory_max_bytes is not None:
                 properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
@@ -2914,7 +2917,7 @@ class ManagedBuildJobRunner:
             # effect point, after mounts and unit properties are prepared.
             self._verify_inputs(inputs)
             command = [str(manager.systemd_run), "--system", "--unit=" + unit,
-                "--service-type=exec", "--wait", "--collect", "--pipe",
+                "--service-type=exec", "--wait", "--pipe",
                 "--working-directory=" + mount_targets["work"], *properties, *env_args, *argv]
             require_active()
             if manager.monotonic() >= authorization.monotonic_expires_at:
@@ -3028,17 +3031,16 @@ class ManagedBuildJobRunner:
                 diagnostic_bytes = [bytes(log)]
                 if exit_code == 226:
                     try:
-                        journal = subprocess.run(["/usr/bin/journalctl", "--no-pager", "-n", "200",
-                            "-o", "cat", "--since=-30s"], stdin=subprocess.DEVNULL,
+                        journal = subprocess.run([str(manager.systemctl), "--system", "status",
+                            "--no-pager", "--full", unit], stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
-                            timeout=.75, check=False)
-                        if journal.returncode == 0 and len(journal.stdout) <= 16384:
-                            unit_lines = [line for line in journal.stdout.splitlines() if job_id.encode() in line]
-                            if unit_lines:
-                                selected = b"\n".join(unit_lines)
-                                diagnostic_bytes.append(selected)
-                                diagnostic_sources.append(selected.decode("utf-8", "replace").casefold())
+                            timeout=1.0, check=False)
+                        # `systemctl status` returns nonzero for a failed unit
+                        # while still placing the diagnostic status on stdout.
+                        if len(journal.stdout) <= 16384 and journal.stdout:
+                            diagnostic_bytes.append(journal.stdout)
+                            diagnostic_sources.append(journal.stdout.decode("utf-8", "replace").casefold())
                     except (OSError, subprocess.TimeoutExpired):
                         pass
                 for needle, category in (
@@ -3081,7 +3083,7 @@ class ManagedBuildJobRunner:
                 "timed_out": timed_out, "cancelled": was_cancelled, "cleanup": cgroup_empty and pidfd_gone and launcher_reaped,
                 "limits": kernel_limits, "cgroup_limits": cgroup_limits,
                 "log_digest": log_digest, "log_bytes": len(log),
-                "started": start, "finished": finished,
+                "started": started, "finished": finished,
             }
             if successful:
                 with self._lock:
@@ -3091,7 +3093,7 @@ class ManagedBuildJobRunner:
                 pid=main_pid, start_ticks=start_ticks, exit_code=exit_code,
                 timed_out=timed_out, cancelled=was_cancelled,
                 cleanup_verified=bool(cgroup_empty and pidfd_gone and launcher_reaped),
-                started_monotonic=start, finished_monotonic=finished,
+                started_monotonic=started, finished_monotonic=finished,
                 kernel_limits=dict(kernel_limits), terminal_success_record_id=terminal_id,
                 process_identity_digest=identity, cgroup_id=observed_cgroup,
                 mount_namespace_inode=mount_ns, network_namespace_inode=network_ns,
@@ -3129,6 +3131,17 @@ class ManagedBuildJobRunner:
                     raise AuthorityDenied("build.mount_cleanup", "private build input mount could not be removed") from exc
             if job_root.exists():
                 shutil.rmtree(job_root)
+            # The unique transient unit is not auto-collected, so status can
+            # be inspected on failure. Remove its manager record after process
+            # and mount cleanup on every path.
+            subprocess.run([str(manager.systemctl), "--system", "stop", unit],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=1.0, check=False)
+            subprocess.run([str(manager.systemctl), "--system", "reset-failed", unit],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=1.0, check=False)
 
     def _capture_build_identity(self, unit: str, cgroup: str, inputs: Any,
                                 profile: ManagedProfileCustody) -> Mapping[str, Any] | None:

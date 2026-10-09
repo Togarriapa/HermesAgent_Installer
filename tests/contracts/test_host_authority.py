@@ -806,6 +806,37 @@ class NativeEventClientContracts(unittest.TestCase):
             client._exchange(ByteSocket(), {"hello": 1}, time.monotonic() + 1)
 
 
+class RootMemoryStepAuthorityContracts(unittest.TestCase):
+    def test_internal_step_callback_is_typed_one_shot_attachment_not_rpc(self):
+        binding = PrincipalBinding(1234, "principal:memory", "profile:memory", "namespace:memory",
+                                   frozenset({"memory.search"}))
+        calls = []
+
+        class StepAuthority:
+            def perform_memory_connector_step(self, *args, **kwargs):
+                calls.append((args, kwargs))
+                return 200, b'{"ok":true}'
+
+        service = AuthorityService(
+            signing_key=b"m" * 32, key_id="memory-step-fixture",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={}, policy=FixturePolicy(),
+        )
+        service.attach_memory_step_effect_authority(StepAuthority())
+        self.assertEqual(service.perform_memory_connector_step(
+            "r" * 40, b'{"schema":1}', "a" * 64, timeout=5,
+            cancelled=lambda: False,
+        ), (200, b'{"ok":true}'))
+        self.assertEqual(calls[0][0], ("r" * 40, b'{"schema":1}', "a" * 64))
+        with self.assertRaises(AuthorityDenied):
+            service._dispatch(binding.uid, 100, 4, "perform_memory_connector_step", {},
+                              cancelled=lambda: False)
+        with self.assertRaises(AuthorityDenied):
+            service.perform_memory_connector_step(
+                "bad", b'{"schema":1}', "a" * 64, timeout=5,
+                cancelled=lambda: False,
+            )
+
+
 class RootResolvedProcessControlContracts(unittest.TestCase):
     def test_control_selects_target_and_binds_exact_nested_body(self):
         binding = PrincipalBinding(1234, "principal:proc", "profile:proc", "namespace:proc",

@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping
 from ..credentials import CredentialError
 from ..setup_wizard import CloudflareDesktopAdapter
 from ..state import Journal
+from ..authority.remote_origin import ReceiptSigner, RootOriginReadinessReceipt
 from .cloudflare import CloudflareClient, CloudflareError
 from .cloudflare_setup import PreparedAccessResources, RemoteCloudflareProvisioner, RemoteConflict
 from .config import RemoteConfigError, collect_remote_setup
@@ -93,8 +94,13 @@ def run_remote_desktop_enrollment(
     *,
     client_factory: Callable[[str], Any] | None = None,
     activate_route: bool = False,
-    origin_ready: Callable[[], bool] | None = None,
-    runtime_token_writer: Callable[[str], Any] | None = None,
+    setup_transaction_handle: str | None = None,
+    runtime_token_writer: Callable[..., Any] | None = None,
+    tunnel_enrollment_id: str | None = None,
+    tunnel_generation: str | None = None,
+    remote_enrollment_id: str | None = None,
+    origin_receipt: RootOriginReadinessReceipt | None = None,
+    receipt_signer: ReceiptSigner | None = None,
     resume_command: str = "hermes-installer setup",
 ) -> RemoteEnrollmentResult:
     """Stage owned Access resources, prove read authority, and optionally activate.
@@ -102,8 +108,9 @@ def run_remote_desktop_enrollment(
     `journal` must be the caller's active private installer Journal. The caller
     already holds the installer process lock; this function intentionally does
     not acquire another lock. `runtime_token_writer` must be an enrolled
-    protected host sink. It is required before any tunnel/DNS activation and is
-    never constructed by this module.
+    protected host sink. Route activation additionally requires a root-issued
+    setup transaction handle, selected enrollment generations, and a signed
+    private-origin receipt. No caller boolean is treated as readiness.
 
     The default path stages only Cloudflare Access resources and performs the
     exact app/policy/OTP reads with the separate policy token. A verified policy
@@ -199,7 +206,6 @@ def run_remote_desktop_enrollment(
         setup,
         remote_journal,
         checkpoint=lambda value: save_remote(value),
-        origin_ready=origin_ready or (lambda: False),
         policy_read_check=policy_check,
         gateway_port=8765,
     )
@@ -256,13 +262,20 @@ def run_remote_desktop_enrollment(
             _resource_ids(remote_journal), True,
         )
 
-    if origin_ready is None or runtime_token_writer is None:
+    if (not setup_transaction_handle or runtime_token_writer is None
+            or not tunnel_enrollment_id or not tunnel_generation
+            or not remote_enrollment_id or origin_receipt is None
+            or receipt_signer is None):
         save_remote(remote_journal, "pending")
         missing = []
-        if origin_ready is None:
-            missing.append("a real protected-origin readiness check")
+        if not setup_transaction_handle:
+            missing.append("a root-issued setup transaction handle")
         if runtime_token_writer is None:
-            missing.append("an enrolled protected tunnel-token sink")
+            missing.append("an enrolled protected tunnel-token writer")
+        if not tunnel_enrollment_id or not tunnel_generation or not remote_enrollment_id:
+            missing.append("the root-selected remote and tunnel enrollment generations")
+        if origin_receipt is None or receipt_signer is None:
+            missing.append("a signed private-origin readiness receipt and verifier")
         return RemoteEnrollmentResult(
             "pending", "ready", "verified", "pending", remote_journal.phase.value,
             "Route activation is blocked until " + " and ".join(missing) + ".",
@@ -276,7 +289,15 @@ def run_remote_desktop_enrollment(
         activate = getattr(provisioner, "provision_protected", None)
         if not callable(activate):
             raise RuntimeError("protected tunnel-token gate is not available")
-        provisioned = activate(runtime_token_writer=runtime_token_writer)
+        provisioned = activate(
+            runtime_token_writer=runtime_token_writer,
+            setup_transaction_handle=setup_transaction_handle,
+            tunnel_enrollment_id=tunnel_enrollment_id,
+            tunnel_generation=tunnel_generation,
+            remote_enrollment_id=remote_enrollment_id,
+            origin_receipt=origin_receipt,
+            receipt_signer=receipt_signer,
+        )
         if provisioned is None or not getattr(provisioned, "tunnel_id", None):
             raise RuntimeError("route activation did not return a verified owned tunnel result")
         save_remote(remote_journal, "active")

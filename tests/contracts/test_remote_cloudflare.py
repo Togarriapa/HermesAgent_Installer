@@ -27,14 +27,15 @@ class Recorder:
   return {"id":path.rsplit("/",1)[-1]}
 class RemoteProvisionerTests(unittest.TestCase):
  def setUp(self):self.setup=RemoteSetup("desk.example.net",("owner@example.net",),CloudflareZone("z1","example.net","a1","active"),"team.cloudflareaccess.com","setup-secret","keyring://hermes/access-read")
- def make(self,api,operation="op1",ready=True):
+ def make(self,api,operation="op1"):
   snapshots=[];p=RemoteCloudflareProvisioner(api,self.setup,RemoteJournal(operation,self.setup.hostname),checkpoint=lambda j:snapshots.append((j.operation_id,set(j.completed))),policy_read_check=lambda _journal:True);return p,snapshots
  def receipts(self):
   from hermes_installer.authority.remote_origin import _canonical
   signer=HMACReceiptSigner(b"t"*32);now=time.monotonic()
   origin=RootOriginReadinessReceipt(1,"origin-receipt","remote-enrollment","a"*64,"desktop-generation","xpra-native","b"*64,"policy-revision","c"*64,"p"*43,("probe:http","probe:websocket"),now,now+20,b"")
+  origin=RootOriginReadinessReceipt(1,"origin-receipt","remote-enrollment","a"*64,"desktop-generation","xpra-native","b"*64,"policy-revision","c"*64,"p"*43,("probe:http","probe:websocket"),now,now+20,b"")
   origin=RootOriginReadinessReceipt(*[getattr(origin,f) for f in ("schema","receipt_id","remote_enrollment_id","gateway_identity_digest","desktop_generation","connector_target_id","policy_config_digest","policy_revision","service_generation_digest","probe_receipt_handle","observed_assertion_ids","issued_monotonic","expires_monotonic")],signer.sign(origin.payload()))
-  def writer(enrollment,token,*,setup_transaction_handle,account_id,tunnel_id,generation):
+  def writer(enrollment,token,*,account_id,tunnel_id,generation,setup_transaction_handle):
    if setup_transaction_handle!="setup-handle-"+"x"*32:raise AssertionError("setup transaction binding missing")
    receipt=ProtectedTunnelTokenReceipt(1,"token-receipt",enrollment,tunnel_id,generation,"sink",1,2,0,0o400,now,now+20,b"")
    return ProtectedTunnelTokenReceipt(*[getattr(receipt,f) for f in ("schema","receipt_id","tunnel_enrollment_id","tunnel_id","generation","sink_id","file_device","file_inode","owner_uid","mode","issued_monotonic","expires_monotonic")],signer.sign(receipt.payload()))
@@ -96,10 +97,10 @@ class RemoteProvisionerTests(unittest.TestCase):
        tunnel_enrollment_id="tunnel-enrollment",tunnel_generation="cloudflared-generation",
        remote_enrollment_id="remote-enrollment",origin_receipt=origin,receipt_signer=signer)
   self.assertEqual(api.calls,[])
- def test_unready_origin_rolls_back_owned_resources_and_never_publishes_dns(self):
-  api=Recorder();p,_=self.make(api,"op2",False)
+ def test_expired_root_origin_receipt_never_publishes_dns(self):
+  api=Recorder();p,_=self.make(api,"op2")
   signer,origin,_=self.receipts()
-  expired=RootOriginReadinessReceipt(1,"bad","remote-enrollment","a"*64,"desktop-generation","xpra-native","b"*64,"policy-revision","c"*64,"q"*43,("probe",),time.monotonic()-40,time.monotonic()-10,b"")
+  expired=RootOriginReadinessReceipt(1,"bad","remote-enrollment","a"*64,"desktop-generation","xpra-native","b"*64,"policy-revision","c"*64,"ppppppppppppppppppppppppppppppppppppppppppp",("probe",),time.monotonic()-40,time.monotonic()-10,b"")
   with self.assertRaises(Exception):self.activation(p,None,expired,signer)
   self.assertFalse(any(m=="POST" and path.endswith("/dns_records") for m,path,_ in api.calls));self.assertTrue({"identity_provider","access_app","access_policy"}.issubset(p.journal.resources));self.assertEqual(p.journal.phase,RemotePhase.ACCESS_READY)
  def test_missing_policy_read_reference_checkpoints_access_and_never_activates(self):

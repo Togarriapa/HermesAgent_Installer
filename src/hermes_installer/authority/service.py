@@ -192,6 +192,7 @@ class AuthorityService:
                  source_observer_registry: Any | None = None,
                  native_runtime_observer: Any | None = None,
                  native_invocation_registry: Any | None = None,
+                 memory_step_effect_authority: Any | None = None,
                  service_generation_digest: str | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
@@ -228,6 +229,7 @@ class AuthorityService:
         self.source_observer_registry = source_observer_registry
         self.native_runtime_observer = native_runtime_observer
         self.native_invocation_registry = native_invocation_registry
+        self.memory_step_effect_authority = memory_step_effect_authority
         if (service_generation_digest is not None
                 and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
             raise ValueError("active service generation digest is invalid")
@@ -282,6 +284,48 @@ class AuthorityService:
                 or not callable(getattr(registry, "take_native_response_metadata", None))):
             raise AuthorityDenied("native.invocation", "root invocation registry binding is invalid")
         self.native_invocation_registry = registry
+
+    def attach_memory_step_effect_authority(self, authority: Any) -> None:
+        """Attach the root-only memory compound step issuer exactly once."""
+        if (self.memory_step_effect_authority is not None
+                or not callable(getattr(authority, "perform_memory_connector_step", None))):
+            raise AuthorityDenied("memory.step", "root memory step authority binding is invalid")
+        self.memory_step_effect_authority = authority
+
+    def perform_memory_connector_step(self, reservation_handle: str,
+                                     canonical_connector_payload_bytes: bytes,
+                                     serialized_service_request_sha256: str, *,
+                                     timeout: float,
+                                     cancelled: Callable[[], bool]) -> tuple[int, bytes]:
+        """Root-private fixed memory step call; never exposed as a worker RPC.
+
+        The attached typed authority must consume the durable one-use step
+        reservation, re-resolve the enrolled route and current consent, then
+        issue and consume a fresh connector HI12 grant before any service I/O.
+        """
+        authority = self.memory_step_effect_authority
+        if authority is None or not callable(getattr(authority, "perform_memory_connector_step", None)):
+            raise AuthorityDenied("memory.step", "root memory step effect authority is unavailable")
+        if (not isinstance(reservation_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", reservation_handle)
+                or not isinstance(canonical_connector_payload_bytes, bytes)
+                or not 1 <= len(canonical_connector_payload_bytes) <= 4 * 1024 * 1024
+                or not isinstance(serialized_service_request_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", serialized_service_request_sha256)
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= MAX_CONTEXT_LEASE
+                or not callable(cancelled) or cancelled()):
+            raise AuthorityDenied("memory.step", "root memory step request is malformed, expired, or cancelled")
+        result = authority.perform_memory_connector_step(
+            reservation_handle, canonical_connector_payload_bytes,
+            serialized_service_request_sha256, timeout=float(timeout), cancelled=cancelled,
+        )
+        if (not isinstance(result, tuple) or len(result) != 2
+                or type(result[0]) is not int or not 100 <= result[0] <= 599
+                or not isinstance(result[1], bytes) or len(result[1]) > 4 * 1024 * 1024
+                or cancelled()):
+            raise AuthorityDenied("memory.step", "root memory connector returned an invalid or cancelled result")
+        return result
 
     def perform_delegated_effect(self, parent_authorization: EffectAuthorization, *,
                                  delegation_id: str, payload: bytes, peer_pid: int,
@@ -580,7 +624,10 @@ class AuthorityService:
             raise AuthorityDenied("source.expired", "root observation lease is too short")
         receipt = self.issue_source_receipt(
             context, source_kind=observation.source_kind,
-            origin_id=f"{observation.origin_id}:{observation.event_record_id}",
+            # VerifiedSourceObservation.origin_id is already derived by the
+            # registry from its protected origin and event_record_id. Appending
+            # the event here a second time breaks the registry's receipt join.
+            origin_id=observation.origin_id,
             payload=observation.payload_bytes, ttl_seconds=ttl,
         )
         receipt = replace(
