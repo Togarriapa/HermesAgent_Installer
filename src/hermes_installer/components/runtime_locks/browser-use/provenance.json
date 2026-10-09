@@ -9,6 +9,6 @@
   "runner_architecture": "aarch64",
   "source_revision": "c75e8476e26d18b7617643bc2ae082fae8eae431",
   "source_url": "https://github.com/browser-use/browser-use",
-  "uv_lock_sha256": "d6798e0a02810515973a6fabd87ec9db7d9bcf77ac6a54a78cc15f04112c9b38",
+  "uv_lock_sha256": "51a998bc09c355b39ca5979a4ffd5e05fe3daf8b6d423151df4add75b83ffeb4",
   "uv_version": "uv 0.12.23 (aarch64-unknown-linux-gnu)"
 }

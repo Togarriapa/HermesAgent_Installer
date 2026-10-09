@@ -117,7 +117,8 @@ jobs:
           asyncio.run(asyncio.wait_for(main(), timeout=150))
           PY
           mkdir -m 0700 -p "$output_dir"
-          cp pyproject.toml uv.lock "$RUNNER_TEMP/browser-use-upstream-pyproject.toml" "$output_dir/"
+          cp pyproject.toml uv.lock "$output_dir/"
+          cp "$RUNNER_TEMP/browser-use-upstream-pyproject.toml" "$output_dir/upstream-pyproject.toml"
           python - <<'PY'
           import hashlib, json, os, pathlib, platform, subprocess
           directory = pathlib.Path(os.environ["RUNNER_TEMP"]) / "browser-use-lock-evidence"
