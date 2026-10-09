@@ -157,6 +157,25 @@ class ResourcesRuntimeTests(unittest.TestCase):
         with self.assertRaises(ResourceRuntimeError):
             verifier.verify("example", spec, {**headers, "X-Signature": "sha256=" + "0" * 64}, body, secret)
 
+        # The source catalog's registry-update notice stores the bounded
+        # delivery-ID policy under `policy`, not `replayProtection`.
+        policy_spec = {
+            "path": "/hooks/registry/update", "method": "POST",
+            "authentication": {"type": "hmac-sha256", "signatureHeader": "X-Signature"},
+            "action": {"type": "registry-update-assessment", "mutate": False},
+            "policy": {
+                "authorityFromWebhookReceipt": "deny",
+                "deliveryIdHeader": "X-Delivery", "deduplicateByDeliveryId": True,
+            },
+        }
+        policy_signature = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+        policy_receipt = WebhookVerifier(_ReplayStore(), now=lambda: 101.0).verify(
+            "registry-update-notice", policy_spec,
+            {"Content-Type": "application/json", "X-Signature": policy_signature, "X-Delivery": "d-2"},
+            body, secret,
+        )
+        self.assertEqual(policy_receipt.event_id, "d-2")
+
     def test_cron_and_channel_fail_closed_on_missing_policy(self):
         with self.assertRaisesRegex(ResourceRuntimeError, "authority"):
             materialize_runtime_resource("crons", "daily", "1.0.0", "crons/daily.yaml", {}, {

@@ -197,9 +197,19 @@ class ReviewedPluginAdapterRegistry:
     """Lazy bridge to the source-reviewed native plugin adapter table."""
 
     def resolve_plugin_adapter(self, adapter_id: str) -> NativePluginImplementation | None:
-        from hermes_installer.components.native_plugins import resolve_native_plugin_implementation
+        from hermes_installer.components import native_plugins
 
-        return resolve_native_plugin_implementation(adapter_id)
+        resolver = getattr(native_plugins, "resolve_native_plugin_implementation", None)
+        if callable(resolver):
+            return resolver(adapter_id)
+        contract = native_plugins.resolve_native_plugin_adapter(adapter_id)
+        if not contract.handler_available:
+            return None
+        # The reviewed local implementation is present in this component
+        # cohort, but older crosswalk snapshots expose only its implementation
+        # constant rather than the later resolver function.
+        implementation = getattr(native_plugins, "RESOURCE_OVERLAY_STORE_IMPLEMENTATION", None)
+        return implementation if adapter_id == "resource-overlay-store" else None
 
 
 class PluginAdapterUnavailable(ResourceRuntimeError):
@@ -1416,9 +1426,19 @@ def _validate_webhook_declaration(spec: Mapping[str, Any]) -> None:
                               or not isinstance(event.get("allowed"), (list, tuple)) or not event["allowed"]):
         raise ResourceRuntimeError("webhook event types must be explicitly allowlisted")
     replay = spec.get("replayProtection")
-    if not isinstance(replay, Mapping) or not (replay.get("deliveryIdHeader") or replay.get("requireEventIdentity") is True
-                                                or policy.get("deliveryIdHeader")):
+    if replay is not None and not isinstance(replay, Mapping):
+        raise ResourceRuntimeError("webhook replay protection must be a mapping")
+    replay_header = replay.get("deliveryIdHeader") if isinstance(replay, Mapping) else None
+    policy_header = policy.get("deliveryIdHeader")
+    policy_id_enabled = policy.get("deduplicateByDeliveryId") is True
+    body_digest_enabled = isinstance(replay, Mapping) and replay.get("requireEventIdentity") is True
+    if (not isinstance(replay_header, str) and not (policy_id_enabled and isinstance(policy_header, str))
+            and not body_digest_enabled):
         raise ResourceRuntimeError("webhook requires a provider event identity or bounded body deduplication")
+    if replay_header is not None and not isinstance(replay_header, str):
+        raise ResourceRuntimeError("webhook delivery identity header is invalid")
+    if policy_id_enabled and (not isinstance(policy_header, str) or not policy_header):
+        raise ResourceRuntimeError("webhook delivery-ID deduplication requires an exact header")
     if policy.get("staticRecipientListAsAuthority") not in (None, "deny"):
         raise ResourceRuntimeError("webhook static recipients cannot create authority")
 
