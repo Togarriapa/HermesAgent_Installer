@@ -58,6 +58,29 @@ class ProviderPolicyTests(unittest.TestCase):
                     input_tokens=2, output_token_limit=8)
             self.assertEqual(provider.calls, [])
 
+    def test_authorizer_return_after_deadline_is_rejected_before_transport(self):
+        with tempfile.TemporaryDirectory() as td:
+            now = [0.0]
+            provider = RecordingProvider()
+            def late_authorizer(context, capability, intent_id, issued_at, timeout, cancelled):
+                grant = synthetic_authorizer(context, capability, intent_id, issued_at, timeout, cancelled)
+                now[0] = 2.0
+                return grant
+            dispatcher = Dispatcher(
+                DispatchPolicy({"public": default_public_route()}, "public", max_dispatch_seconds=1),
+                BudgetLedger(self.ledger_root(Path(td))), provider,
+                context_authorizer=late_authorizer, clock=lambda: now[0],
+            )
+            with self.assertRaisesRegex(PolicyDenied, "exceeded the request deadline"):
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL,
+                    b'{"messages":[{"role":"user","content":"late auth"}]}',
+                    input_tokens=2, output_token_limit=8)
+            self.assertEqual(provider.calls, [])
+
+    def test_boolean_monotonic_deadline_is_rejected(self):
+        with self.assertRaisesRegex(PolicyDenied, "finite monotonic timestamp"):
+            DispatchContext("hermes", "chat", Sensitivity.PUBLIC, deadline=True)
+
     def test_tool_body_cannot_downgrade_to_inference_capability(self):
         with tempfile.TemporaryDirectory() as td:
             provider = RecordingProvider()
