@@ -87,7 +87,17 @@ class MemoryManager:
         if old == name:
             return
         get_owner_state = getattr(self.owner_ledger, "get_owner_state", None)
-        old_generation = get_owner_state(profile)[1] if old and get_owner_state else None
+        old_generation = None
+        if old and self.capture_queue is not None:
+            if get_owner_state is None:
+                raise MemoryUnavailable("durable capture revocation requires an owner epoch")
+            state_owner, old_generation = get_owner_state(profile)
+            if (state_owner != old or type(old_generation) is not int or old_generation < 1):
+                raise MemoryUnavailable("durable memory owner epoch is inconsistent")
+        elif old and get_owner_state is not None:
+            state_owner, old_generation = get_owner_state(profile)
+            if state_owner != old:
+                raise MemoryUnavailable("durable memory owner changed concurrently")
         previous = self.providers.get(old) if old else None
         selected = self.providers.get(name) if name else None
         if old and previous is None:
