@@ -412,6 +412,34 @@
     "closed_template_bindings": "Every leaf exact {root_binding:<enum>} resolved only from actual root-held trusted facts: principal.principal_id from selected verified authoritative principal binding; transaction.process_generation/namespace_identity root-issued currenttransaction; nss.service_uid/gid actualdedicatedexclusiveaccount; roots.home/work/data heldnofollow createdownedprivatechildren; pm.catalog_executable_path/executable_sha256/runtime_artifact_ids/package_runtime_records actual selected officialPM receipt+ArtifactCatalog currentresolvedimmutable runtime; native.child_artifact_refs actualpreparednative output receipt closure. No arbitrary binding expression/path/field interpolation, caller values or ambient defaults. Missingbinding leaves preparedemptyrecords. Namespace identity is observed issued namespace enrollment, not caller-generated token.",
     "stage_executor": "RootPreparedHermesStageExecutor.run_selected_stage(setup_session_handle,prepared_receipt_handle)->tuple[RootRuntimeArtifactReceipt,...] root-private fixedstage operation/hermes-agent-stage:start independent activeworker; exact source/script/PM lock and current ownedstaging roots selected from closedtemplate+rootreceipts, uses official stage adapter checkpoint bounded600s, no callerargv/path/flags. Produces actual officialPM/native runtime artifacts and receipt verification before runnable activation. Health/task recipes are separate committed runnable profile operations; stage not forced into that later profile process.start target.",
     "policy_rows": "Compiler renders existing exact bootstrap_policy_artifact document from these closed literal identity/root/profile/recipe shapes, full selected reviewed installed authoritybase schema plus actualprincipal binding and actual artifact/action selections. No invented static Authentik claims, secrets or permissive principal/allowance maps. Ordinaryeffects require actual selected authoritative principal proof; preparedsetup still proceeds from rootsession. Additional original components/profiles derive their existing reviewed finite templates and actual source/consent/account/runtime receipts, never omit original scope because one primaryprofile template exists.",
-    "principal_selection": "Template root_binding nodes are source-only. Null selected_principal_binding_receipt_handle permits source verification/private-root preparation but returns pending-principal-selection and does not publish a compiled bootstrap policy whose identity_policy requires a concrete principal_id. Compilation requires actual root-verified selected PrincipalBinding; no disabled synthetic principal, empty authority alias or worker claim. This is original setup input, not additional confirmation."
+    "principal_selection": "Template root_binding nodes are source-only. Null selected_principal_binding_receipt_handle permits source verification/private-root preparation but returns pending-principal-selection and does not publish a compiled bootstrap policy whose identity_policy requires a concrete principal_id. Compilation requires actual root-verified selected PrincipalBinding; no disabled synthetic principal, empty authority alias or worker claim. This is original setup input, not additional confirmation.",
+    "principal_selection_receipt": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "class": "RootSetupPrincipalSelectionRegistry",
+      "constructor": "from_root_setup(setup_session_store, verified_authentik_identity_resolver, reviewed_capability_selection, root_journal)",
+      "select_call": "select_principal(setup_session_handle, authenticated_identity_receipt_handle) -> selected_principal_binding_receipt_handle",
+      "resolve_call": "resolve_selected_principal(receipt_handle, setup_session_handle, transaction_handle, plan_digest) -> VerifiedRootSetupPrincipalSelection",
+      "dto_fields": [
+        "schema",
+        "receipt_id",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_digest",
+        "principal_id",
+        "username",
+        "email",
+        "authentik_subject_id",
+        "actor_credential_ref",
+        "service_profile_id",
+        "namespace_id",
+        "capabilities",
+        "identity_receipt_handle",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "semantics": "Root private registry stores actual authenticated Authentik identity receipt/current System authority selection plus reviewed capability selection. All identifiers are bounded opaque strings, capabilities finite reviewed tuple, schema1, deadlines monotonic and no longer than setup session. principal_id is root-issued stable selected subject identity ID bound Authentik subject, never input user labels. Credential reference is existing secure root store reference; no token/secret in receipt. No worker RPC accepts identity/profile/capability assertions. Resolve verifies exact session/transaction/plan/issuer registry instance/current identity lease/revocation before compilation. DTO is root-local immutable, opaque lookup handles cannot be used as standalone proof.",
+      "binding_join": "Existing authority.service.PrincipalBinding requires uid>0, principal_id,profile_id,namespace_id,capabilities. Compiler uses verified selection principal/profile/namespace/capabilities and actual dedicated NSS UID allocated under same prepared transaction. Full authority principals row additionally uses verified username/email/authentik_subject_id/actor_credential_ref. Do not require preexisting active worker binding before first provisioning; do not confuse root operator UID0 with selected service UID.",
+      "unavailable": "Without actual authenticated identity resolver/receipt, return pending-principal-selection with supported identity setup/resume; never fabricate identity or enable private/public effects. Existing original Authentik/System policy scope remains mandatory."
+    }
   }
 }

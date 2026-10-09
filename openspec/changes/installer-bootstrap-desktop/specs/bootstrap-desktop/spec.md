@@ -331,3 +331,10 @@ The implementation SHALL apply the exact root registry, principal-selection and 
 #### Scenario: Static selection lacks actual runtime proof
 - **WHEN** an actual current role, display, source event or terminal execution receipt is absent
 - **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence
+
+### Requirement: Root observed first setup principal selection
+The compiler SHALL resolve selected authenticated principal receipt through the root setup registry before publishing concrete identity rows.
+
+#### Scenario: No active worker exists during first setup
+- **WHEN** actual selected authenticated identity and dedicated NSS allocation are verified in the root setup transaction
+- **THEN** the compiler binds the exact principal fields without requiring a previous active worker profile or fabricating a principal from operator UID
