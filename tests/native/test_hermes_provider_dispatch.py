@@ -86,8 +86,18 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
             installer_src = Path(__file__).resolve().parents[2] / "src"
             self.assertTrue((installer_src / "hermes_installer").is_dir())
             root.ensure()
-            data_root = OwnedRoot(Path(data_value).resolve(strict=True))
-            data_root.ensure()
+            data_root_path = Path(data_value).resolve(strict=True)
+            marker = data_root_path / ".hermes-installer-owned"
+            if (data_root_path.is_symlink() or marker.is_symlink()
+                    or not marker.is_file() or marker.read_bytes() != b"schema=1\\n"
+                    or data_root_path.stat().st_uid != os.geteuid()
+                    or data_root_path.stat().st_mode & 0o077):
+                self.skipTest("installer data root ownership marker is invalid")
+            data_root = OwnedRoot(data_root_path)
+            # OwnedRoot rejects an install root that contains the current HOME.
+            # Use the separate disposable probe root for process HOME; HERMES_HOME
+            # remains the validated profile below.
+            os.environ["HOME"] = str(root.root)
             profile_relative = "profiles/hermes-installer-native-probe"
             plugin = materialize_hermes_provider_plugin(data_root, profile_relative=profile_relative, port=None, model=MODEL)
             home = Path(plugin["home"])
