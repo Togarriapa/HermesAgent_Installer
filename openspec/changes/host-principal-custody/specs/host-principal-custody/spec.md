@@ -90,3 +90,12 @@ Host enrollment SHALL resolve opaque profile/generation IDs into immutable execu
 
 - **WHEN** a caller confuses its journal root with a service home or supplies a physical cwd/socket/PID override
 - **THEN** host rejects before effects; valid enrollment uses distinct owner-scoped roots, correct process identity and preserved unrelated files
+
+### Requirement: Registered native process attestation (HI10)
+
+Native process inspection SHALL resolve only opaque registered process/generation handles and attest current cgroup descendants with stable kernel identity, pinned executable and renderer lineage/sandbox evidence. Caller PID/path/argv claims SHALL not authorize inspection or exposure; incomplete or stale attestation SHALL deny affected remote readiness.
+
+#### Scenario: Changed renderer identity
+
+- **WHEN** native renderer relaunch changes process identity or caller supplies a sibling PID
+- **THEN** host denies or reports incomplete before remote exposure; only current registered descendants are attested
