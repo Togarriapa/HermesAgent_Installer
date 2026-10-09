@@ -30,8 +30,12 @@ def test_device_selection_refuses_ambiguity_and_missing_access() -> None:
 
 def test_selected_device_binding_requires_exact_kernel_node_identity() -> None:
     selected = CoralDevice("usb", "1-1", "18d1", "9302", "/dev/bus/usb/001/002", "accessible",
-                           "/sys/devices/platform/usb/1-1", 189, 1, 4242)
+                           "/sys/devices/platform/usb/1-1", 189, 1, 4242,
+                           "1-1:1.0", "/sys/devices/platform/usb/1-1/1-1:1.0")
     binding = selected.host_binding_request()
+    assert binding["physical_identity"] == "1-1"
+    assert binding["interface_identity"] == "1-1:1.0"
+    assert binding["major"] == 189 and binding["inode"] == 4242
     assert binding["device_node"] == "/dev/bus/usb/001/002"
     assert binding["device_major"] == 189 and binding["device_minor"] == 1
     assert binding["identity_sha256"] == selected.identity_sha256

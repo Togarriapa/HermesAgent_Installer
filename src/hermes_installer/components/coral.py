@@ -56,6 +56,9 @@ class CoralDevice:
     device_major: int | None = None
     device_minor: int | None = None
     device_inode: int | None = None
+    interface_identity: str | None = None
+    interface_sysfs_path: str | None = None
+    driver_identity: str | None = None
 
     @property
     def delegate_selector(self) -> str:
@@ -76,6 +79,9 @@ class CoralDevice:
             "device_major": self.device_major,
             "device_minor": self.device_minor,
             "device_inode": self.device_inode,
+            "interface_identity": self.interface_identity,
+            "interface_sysfs_path": self.interface_sysfs_path,
+            "driver_identity": self.driver_identity,
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
                                            ensure_ascii=True).encode("ascii")).hexdigest()
@@ -86,9 +92,14 @@ class CoralDevice:
                 or type(self.device_major) is not int or type(self.device_minor) is not int
                 or type(self.device_inode) is not int):
             raise CoralError("Coral device lacks a complete kernel identity for root-owned binding")
+        if self.transport == "usb" and (not self.interface_identity or not self.interface_sysfs_path):
+            raise CoralError("Coral USB device lacks the exact interface identity required for root-owned binding")
+        if self.transport == "pcie" and not self.driver_identity:
+            raise CoralError("Coral PCIe device lacks the bound driver identity required for root-owned binding")
         return {
             "schema": 1,
             "transport": self.transport,
+            "physical_identity": self.address,
             "address": self.address,
             "vendor_id": self.vendor_id,
             "product_id": self.product_id,
@@ -97,6 +108,13 @@ class CoralDevice:
             "device_major": self.device_major,
             "device_minor": self.device_minor,
             "device_inode": self.device_inode,
+            "major": self.device_major,
+            "minor": self.device_minor,
+            "inode": self.device_inode,
+            "interface_identity": self.interface_identity,
+            "interface_sysfs_path": self.interface_sysfs_path,
+            "driver_identity": self.driver_identity,
+            "driver": self.driver_identity,
             "identity_sha256": self.identity_sha256,
         }
 
@@ -136,12 +154,23 @@ def probe_coral_devices(*, sys_root: Path = Path("/sys"), dev_root: Path = Path(
                 except OSError:
                     pass
                 is_device = node_info is not None and stat.S_ISCHR(node_info.st_mode)
-                found.append(CoralDevice("usb", entry.name, vendor, product,
-                    str(node) if is_device else None,
-                    "accessible" if is_device and os.access(node, os.R_OK | os.W_OK) else "permission_denied",
-                    str(entry.resolve(strict=True)), os.major(node_info.st_rdev) if is_device else None,
-                    os.minor(node_info.st_rdev) if is_device else None,
-                    node_info.st_ino if is_device else None))
+                interface_entries = sorted((sys_root / "bus" / "usb" / "devices").glob(entry.name + ":*"))
+                for interface in interface_entries:
+                    try:
+                        interface_id = interface.name
+                        if not re.fullmatch(re.escape(entry.name) + r":[0-9]+\.[0-9]+", interface_id):
+                            continue
+                        (interface / "bInterfaceNumber").read_text(encoding="ascii").strip()
+                        interface_path = str(interface.resolve(strict=True))
+                    except (OSError, UnicodeError):
+                        continue
+                    found.append(CoralDevice("usb", entry.name, vendor, product,
+                        str(node) if is_device else None,
+                        "accessible" if is_device and os.access(node, os.R_OK | os.W_OK) else "permission_denied",
+                        str(entry.resolve(strict=True)), os.major(node_info.st_rdev) if is_device else None,
+                        os.minor(node_info.st_rdev) if is_device else None,
+                        node_info.st_ino if is_device else None,
+                        interface_id, interface_path))
     pci_root = sys_root / "bus" / "pci" / "devices"
     if pci_root.is_dir():
         for entry in sorted(pci_root.iterdir()):
@@ -158,12 +187,17 @@ def probe_coral_devices(*, sys_root: Path = Path("/sys"), dev_root: Path = Path(
                 except OSError:
                     pass
                 is_device = node_info is not None and stat.S_ISCHR(node_info.st_mode)
+                driver_link = entry / "driver"
+                try:
+                    driver_identity = driver_link.resolve(strict=True).name if driver_link.is_symlink() else None
+                except OSError:
+                    driver_identity = None
                 found.append(CoralDevice("pcie", entry.name, vendor, product,
                     str(node) if is_device else None,
                     "accessible" if is_device and os.access(node, os.R_OK | os.W_OK) else "driver_or_permission_pending",
                     str(entry.resolve(strict=True)), os.major(node_info.st_rdev) if is_device else None,
                     os.minor(node_info.st_rdev) if is_device else None,
-                    node_info.st_ino if is_device else None))
+                    node_info.st_ino if is_device else None, driver_identity=driver_identity))
     return tuple(found)
 
 
