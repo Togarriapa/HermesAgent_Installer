@@ -1253,20 +1253,28 @@ class SetupProbeConnectorBackend:
 
     def snapshot_remote_probe_bytes(self, capability: Any) -> RemoteProbeByteSnapshot:
         """Return root-owned counters only for a live, root-verified observer capability."""
-        if (not callable(self.verify_observer_capability)
-                or self.verify_observer_capability(capability) is not True
-                or not self.monotonic() < capability.expires_monotonic
-                or capability.issued_monotonic > self.monotonic()
-                or capability.expires_monotonic - capability.issued_monotonic > 25.0
-                or type(capability.gateway_identity_digest) is not str
-                or not re.fullmatch(r"[0-9a-f]{64}", capability.gateway_identity_digest)
-                or type(capability.native_enrollment_id) is not str
-                or not capability.native_enrollment_id
-                or type(capability.session_id) is not str
-                or not capability.session_id):
+        try:
+            verified = (callable(self.verify_observer_capability)
+                        and self.verify_observer_capability(capability) is True)
+            issued = getattr(capability, "issued_monotonic", None)
+            expires = getattr(capability, "expires_monotonic", None)
+            gateway_digest = getattr(capability, "gateway_identity_digest", None)
+            native_enrollment = getattr(capability, "native_enrollment_id", None)
+            session_id = getattr(capability, "session_id", None)
+            now = self.monotonic()
+            valid = (verified
+                     and type(issued) in {int, float} and type(expires) in {int, float}
+                     and math.isfinite(issued) and math.isfinite(expires)
+                     and issued <= now < expires and expires - issued <= 25.0
+                     and type(gateway_digest) is str
+                     and re.fullmatch(r"[0-9a-f]{64}", gateway_digest) is not None
+                     and type(native_enrollment) is str and bool(_ID.fullmatch(native_enrollment))
+                     and type(session_id) is str and bool(_ID.fullmatch(session_id)))
+        except Exception:
+            valid = False
+        if not valid:
             raise AuthorityDenied("connector.ledger", "root observer capability is unavailable or expired")
-        key = (capability.gateway_identity_digest, capability.native_enrollment_id,
-               capability.session_id)
+        key = (gateway_digest, native_enrollment, session_id)
         with self._probe_ledger_lock:
             counts = tuple(self._probe_ledger.get(key, (0, 0, 0, 0)))
         return RemoteProbeByteSnapshot(*counts)
