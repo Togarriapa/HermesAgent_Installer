@@ -36,28 +36,26 @@ CAPABILITIES = {
     "export": "memory-export", "backup": "memory-backup",
     "restore": "memory-restore", "delete": "memory-delete", "result": "memory-retrieval",
 }
-ROUTES = {
+ROUTE_IDS = {
     "openviking": {
-        "doctor": "GET /ready",
-        "search": "POST /api/v1/search/find",
-        "capture": "openviking.session.capture.v1",
-        # OpenViking's documented API has session deletion, not per-memory
-        # deletion; do not mislabel deleting a session as memory removal.
+        "doctor": "memory.openviking.ready.v1",
+        "search": "memory.openviking.search.find.v1",
+        "capture": "memory.openviking.session.capture.v1",
     },
     "claude-mem": {
-        "doctor": "GET /healthz",
-        "search": "POST /v1/search",
-        "capture": "POST /v1/memories",
-        "delete": "DELETE /v1/memories/{id}",
+        "doctor": "memory.claude-mem.healthz.v1",
+        "search": "memory.claude-mem.search.v1",
+        "capture": "memory.claude-mem.create.v1",
+        "delete": "memory.claude-mem.delete.v1",
     },
     "agentmemory": {
-        "doctor": "GET /agentmemory/livez",
-        "search": "POST /agentmemory/smart-search",
-        "capture": "POST /agentmemory/remember",
-        "delete": "POST /agentmemory/forget",
-        "export": "GET /agentmemory/export",
-        "backup": "GET /agentmemory/export",
-        "restore": "POST /agentmemory/import",
+        "doctor": "memory.agentmemory.livez.v1",
+        "search": "memory.agentmemory.smart-search.v1",
+        "capture": "memory.agentmemory.remember.v1",
+        "delete": "memory.agentmemory.forget.v1",
+        "export": "memory.agentmemory.export.v1",
+        "backup": "memory.agentmemory.export.v1",
+        "restore": "memory.agentmemory.import.v1",
     },
 }
 
@@ -72,9 +70,11 @@ class BrokerDenied(PermissionError):
 
 class ServiceIPC(Protocol):
     """Root-owned broker transport. No endpoint, method, path, or key from a worker."""
-    def request(self, *, service_id: str, service_generation: int, provider: str, fixed_route: str,
-                payload: bytes, timeout: float,
-                cancelled: Callable[[], bool]) -> bytes: ...
+    def request(self, *, context: HostContext, authorization: EffectAuthorization,
+                service_id: str, service_generation: int, provider: str,
+                route_id: str, session_id: str, deadline_monotonic: float,
+                payload: bytes, timeout: float, peer_pid: int,
+                peer_pidfd: int | None, cancelled: Callable[[], bool]) -> bytes: ...
 
 
 class PrivateEngine(Protocol):
@@ -126,6 +126,7 @@ class MemoryTarget:
     service_generation: int
     data_root_id: str
     dedicated_store: bool = True
+    approved_route_ids: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.provider not in PROVIDERS or not all(
@@ -136,6 +137,16 @@ class MemoryTarget:
             raise ValueError("provider source revision differs from the reviewed pin")
         if type(self.service_generation) is not int or self.service_generation < 1:
             raise ValueError("supervised service generation is required")
+        allowed_routes = frozenset(ROUTE_IDS[self.provider].values())
+        if isinstance(self.approved_route_ids, (str, bytes)):
+            raise ValueError("protected approved route IDs must be a sequence of opaque IDs")
+        try:
+            approved = frozenset(self.approved_route_ids)
+        except TypeError as exc:
+            raise ValueError("protected approved route IDs are malformed") from exc
+        if any(not isinstance(route, str) or route not in allowed_routes for route in approved):
+            raise ValueError("memory enrollment contains an unknown provider route ID")
+        object.__setattr__(self, "approved_route_ids", approved)
         if self.provider == "agentmemory" and self.dedicated_store is not True:
             raise ValueError("AgentMemory requires an isolated per-profile service and data store")
 
@@ -469,13 +480,24 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
              maximum_timeout: float):
     def handle(*, context: HostContext, authorization: EffectAuthorization,
                payload: bytes, timeout: float, peer_pid: int,
-               cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+               cancelled: Callable[[], bool], peer_pidfd: int | None = None) -> Mapping[str, Any]:
         try:
             if (authorization.target != "memory:" + target.provider + ":" + action
-                    or authorization.profile_id != target.profile_id
-                    or authorization.namespace_id != target.namespace_id
+                    or authorization.capability != CAPABILITIES[action]
+                    or authorization.principal_id != context.principal_id
+                    or authorization.uid != context.uid
+                    or authorization.profile_id != context.profile_id
+                    or authorization.namespace_id != context.namespace_id
+                    or authorization.purpose != context.purpose
+                    or authorization.intent_id != context.intent_id
+                    or authorization.trace_id != context.trace_id
+                    or authorization.policy_revision != context.policy_revision
+                    or authorization.sensitivity != context.sensitivity
+                    or authorization.lineage_hash != context.lineage_hash
+                    or authorization.source_receipts != context.source_receipts
+                    or authorization.final_payload_digest != context.final_payload_digest
                     or authorization.request_digest != hashlib.sha256(payload).hexdigest()):
-                raise BrokerDenied("effect grant is not bound to this exact payload and target")
+                raise BrokerDenied("effect grant is not bound to this exact host context, capability, target and payload")
             if not 0 < timeout <= maximum_timeout:
                 raise ValueError("memory timeout is out of bounds")
             body = parse_request(payload)
@@ -571,7 +593,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 else:
                     raise BrokerUnavailable("OpenViking pinned API has no per-memory delete operation")
             elif action in {"export","backup","restore"}:
-                if action not in ROUTES[target.provider]:
+                if action not in ROUTE_IDS[target.provider]:
                     raise BrokerUnavailable(target.provider+" has no pinned safe "+action+" API")
                 if action=="restore":
                     if not target.dedicated_store:
@@ -582,8 +604,12 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     request={"profile_id":context.profile_id,"namespace_id":context.namespace_id}
             else:
                 raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
-            route=ROUTES[target.provider].get(action)
-            if route is None or ipc is None:
+            route_id=ROUTE_IDS[target.provider].get(action)
+            if route_id is None:
+                raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
+            if route_id not in target.approved_route_ids:
+                raise BrokerDenied("memory route is not in the protected enrollment")
+            if ipc is None:
                 raise BrokerUnavailable("root-owned authenticated memory service connector is unavailable")
             if action=="restore":
                 import base64
@@ -604,9 +630,17 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 if not isinstance(export_data,dict):
                     raise ValueError("restore archive must contain a provider export object")
                 request={"exportData":export_data,"strategy":"replace"}
-            raw_result=ipc.request(service_id=target.service_id,
-                service_generation=target.service_generation,provider=target.provider,
-                fixed_route=route,payload=canonical(request),timeout=timeout,cancelled=cancelled)
+            session_id = context.trace_id
+            if not isinstance(session_id, str) or not session_id or len(session_id) > 256:
+                raise BrokerDenied("signed host context has no valid session ID")
+            if cancelled():
+                return _reply({"error":"cancelled"}, 499)
+            raw_result=ipc.request(context=context, authorization=authorization,
+                service_id=target.service_id, service_generation=target.service_generation,
+                provider=target.provider, route_id=route_id, session_id=session_id,
+                deadline_monotonic=time.monotonic()+timeout, payload=canonical(request),
+                timeout=timeout, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                cancelled=cancelled)
             result=_result(raw_result)
             if action=="search":
                 if target.provider=="openviking":
@@ -685,14 +719,16 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
             binding=("memory."+action,opaque)
             def dispatch(*, context: HostContext, authorization: EffectAuthorization,
                          payload: bytes, timeout: float, peer_pid: int,
-                         cancelled: Callable[[], bool], _provider=provider, _action=action):
+                         cancelled: Callable[[], bool], peer_pidfd: int | None = None,
+                         _provider=provider, _action=action):
                 target=table.get((context.profile_id,context.namespace_id,_provider))
                 if target is None:
                     return _reply({"error":"no enrolled memory target for signed profile"},403)
                 return _handler(target,_action,ipc=ipc,queue=queue,owner_state=owner_state,
                     engines=engines,eligibility=eligibility,maximum_timeout=maximum_timeout)(
                         context=context,authorization=authorization,payload=payload,
-                        timeout=timeout,peer_pid=peer_pid,cancelled=cancelled)
+                        timeout=timeout,peer_pid=peer_pid,cancelled=cancelled,
+                        peer_pidfd=peer_pidfd)
             result[binding]=dispatch
     return result
 
