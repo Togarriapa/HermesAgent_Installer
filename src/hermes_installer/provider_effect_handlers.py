@@ -206,6 +206,47 @@ def _canonical_request(enrollment: ProviderEnrollment, payload: bytes) -> tuple[
     return body, model, "provider-tool-call" if uses_tools else "provider-inference"
 
 
+def canonical_provider_request(
+    current_eligible_enrollments: Mapping[tuple[str, str], ProviderEnrollment], payload: bytes,
+) -> tuple[bytes, str, str, str, str]:
+    """Purely normalize a request using one root-selected, currently eligible route.
+
+    This helper is suitable for pinning as the host bridge's canonicalizer
+    artifact. Its mapping must be produced by the root service's current route
+    selection/admission step, not from a provider catalog or caller configuration
+    candidates. The regular effect handler still rechecks account eligibility,
+    price, budget, and cancellation immediately before every network effect. This
+    helper accepts no URL, credential, callback, or route label and performs no
+    network or vault operation. The explicit request model must resolve to one
+    exact `(target, recipient)` entry; ambiguous or absent enrollment is denied.
+    """
+    if not isinstance(payload, bytes) or not 1 <= len(payload) <= MAX_REQUEST_BYTES:
+        raise ProviderHandlerDenied("provider.request_bounds", "Provider request exceeds its byte limit")
+    if not isinstance(current_eligible_enrollments, Mapping) or not current_eligible_enrollments:
+        raise ProviderHandlerDenied("provider.not_enrolled", "No protected provider enrollment is available")
+    try:
+        decoded = json.loads(payload)
+    except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+        raise ProviderHandlerDenied("provider.request_format", "Provider request is invalid JSON") from None
+    if not isinstance(decoded, dict) or not isinstance(decoded.get("model"), str):
+        raise ProviderHandlerDenied("provider.model", "Provider request must name an enrolled model")
+    model = decoded["model"]
+    matches: list[ProviderEnrollment] = []
+    for key, enrollment in current_eligible_enrollments.items():
+        if (not isinstance(enrollment, ProviderEnrollment)
+                or not isinstance(key, tuple) or key != (enrollment.target, enrollment.recipient)):
+            raise ProviderHandlerDenied("provider.enrollment", "Protected provider enrollment map is malformed")
+        if model in enrollment.models:
+            matches.append(enrollment)
+    if len(matches) != 1:
+        raise ProviderHandlerDenied("provider.not_enrolled", "Provider model is absent or ambiguous in protected enrollment")
+    enrollment = matches[0]
+    body, normalized_model, capability = _canonical_request(enrollment, payload)
+    if normalized_model != model:
+        raise ProviderHandlerDenied("provider.model", "Canonical request changed the selected model")
+    return body, enrollment.target, enrollment.recipient, capability, normalized_model
+
+
 def _safe_headers(headers: Mapping[str, str]) -> dict[str, str]:
     result = {"Content-Type": "application/json"}
     content_type = headers.get("Content-Type") or headers.get("content-type")

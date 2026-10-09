@@ -12,7 +12,8 @@ from hermes_installer.policy import (
 )
 from hermes_installer.provider_effect_handlers import (
     CODEX_ENDPOINT, OPENROUTER_ENDPOINT, OPENROUTER_MODEL,
-    OpenRouterLiveAdmission, ProviderEnrollment, ProviderHandlerDenied, build_provider_handlers,
+    OpenRouterLiveAdmission, ProviderEnrollment, ProviderHandlerDenied,
+    build_provider_handlers, canonical_provider_request,
 )
 
 
@@ -166,6 +167,35 @@ class ProviderEffectHandlerTests(unittest.TestCase):
         self.handler(context=context, authorization=grant, payload=payload,
                      timeout=2.0, peer_pid=88, cancelled=lambda: False)
         self.assertEqual(self.admission.calls[-1]["capability"], "provider-tool-call")
+
+    def test_host_canonicalizer_uses_only_one_protected_model_enrollment(self):
+        raw = json.dumps({"model": OPENROUTER_MODEL, "max_tokens": 128,
+                          "messages": [{"role": "user", "content": "hello"}]},
+                         separators=(",", ":")).encode()
+        result = canonical_provider_request(
+            {(self.enrollment.target, self.enrollment.recipient): self.enrollment}, raw)
+        expected = normalize_chat_request(raw, OPENROUTER_MODEL, 128)
+        self.assertEqual(result, (expected, self.enrollment.target,
+                                  self.enrollment.recipient, "provider-inference",
+                                  OPENROUTER_MODEL))
+
+    def test_host_canonicalizer_denies_missing_malformed_and_ambiguous_enrollment(self):
+        raw = json.dumps({"model": OPENROUTER_MODEL,
+                          "messages": [{"role": "user", "content": "hello"}]}).encode()
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request({}, raw)
+        malformed_map = {("https://attacker.invalid", self.enrollment.recipient): self.enrollment}
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request(malformed_map, raw)
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request({
+                (self.enrollment.target, self.enrollment.recipient): self.enrollment,
+                (self.enrollment.target + "#duplicate", self.enrollment.recipient): self.enrollment,
+            }, raw)
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request(
+                {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
+                b'{"model":"nvidia/nemotron-3-ultra-550b-a55b","messages":[]}')
 
     def test_no_handlers_without_root_admission_or_vault(self):
         self.assertEqual(build_provider_handlers(
