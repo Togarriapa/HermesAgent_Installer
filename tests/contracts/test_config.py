@@ -52,7 +52,7 @@ class ConfigContractTests(unittest.TestCase):
     def test_remote_selection_requires_explicit_hostname_emails_and_secret_reference(self) -> None:
         with self.assertRaises(ConfigError):
             validate_config({"schema_version": 1, "components": {"remote_desktop": True}})
-        config = validate_config({"schema_version": 1, "components": {"remote_desktop": True}, "remote_desktop": {"hostname": "desktop.example.org", "allowed_emails": ["owner@example.org"], "management_token_ref": "keyring://hermes/cloudflare"}})
+        config = validate_config({"schema_version": 1, "components": {"remote_desktop": True}, "remote_desktop": {"hostname": "desktop.example.org", "allowed_emails": ["owner@example.org"], "management_token_ref": "keyring://hermes/cloudflare/manage", "policy_read_token_ref": "secret://hermes/cloudflare/access-read"}})
         self.assertEqual(config.remote_desktop["hostname"], "desktop.example.org")
         with self.assertRaises(ConfigError):
             validate_config({"schema_version": 1, "components": {"remote_desktop": True}, "remote_desktop": {"hostname": "desktop.example.org", "allowed_emails": ["owner@example.org"], "management_token_ref": "cf-secret-value"}})
