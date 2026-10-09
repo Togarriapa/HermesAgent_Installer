@@ -336,13 +336,14 @@ class ManagedProcessHandle:
         except (OSError, ValueError):
             raise ManagedProcessError("owned cgroup membership cannot be observed") from None
         by_pid: dict[int, tuple[int, int, str, int]] = {}
-        for pid in pids:
-            try:
-                parent, ticks, digest, fd = _observe_process(pid, self.cgroup)
-                by_pid[pid] = (parent, ticks, digest, fd)
-            except (OSError, ValueError, ManagedProcessError):
-                continue
-        out = []
+        out: list[ChildIdentity] = []
+        try:
+            for pid in pids:
+                try:
+                    parent, ticks, digest, fd = _observe_process(pid, self.cgroup)
+                    by_pid[pid] = (parent, ticks, digest, fd)
+                except (OSError, ValueError, ManagedProcessError):
+                    continue
             pins = self.spec.child_artifact_hashes or {}
             for pid, (parent, ticks, digest, fd) in tuple(by_pid.items()):
                 role = next((name for name, pin in pins.items() if pin == digest), None)
@@ -358,15 +359,14 @@ class ManagedProcessHandle:
                 if role and valid and _proc_cgroup(pid) == self.cgroup and not _pidfd_exited(fd):
                     out.append(ChildIdentity(role, pid, ticks, parent, digest, self.cgroup, fd))
                     by_pid.pop(pid, None)
-            for _, _, _, fd in by_pid.values():
-                os.close(fd)
             return tuple(out)
         except BaseException:
             for _, _, _, fd in by_pid.values():
-                try:
+                with contextlib.suppress(OSError):
                     os.close(fd)
-                except OSError:
-                    pass
+            for child in out:
+                with contextlib.suppress(OSError):
+                    os.close(child.pidfd)
             raise
 
     async def read(self, maximum_bytes: int, timeout: float) -> bytes:
