@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio, uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Mapping, Sequence
-from .broker import DispatchBroker, SpecialistCall
+from .broker import BrokerDenied, DispatchBroker, SpecialistCall
 from hermes_installer.policy import DispatchContext
 
 class RecruitmentDenied(PermissionError):
@@ -91,7 +91,7 @@ class Orchestrator:
                 await asyncio.gather(*children.values(), return_exceptions=True)
                 error = failures[0]
                 if isinstance(error, asyncio.CancelledError): raise error
-                if isinstance(error, (RecruitmentDenied,)):
+                if isinstance(error, (RecruitmentDenied, BrokerDenied)):
                     raise error
                 raise RuntimeError("specialist failed; siblings cancelled and joined") from error
             return RecruitmentReport(rid, tuple(values))

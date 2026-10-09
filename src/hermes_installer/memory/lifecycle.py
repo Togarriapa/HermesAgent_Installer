@@ -83,7 +83,7 @@ class MemoryManager:
         owner = self.owner_ledger.get_owner(record.profile)
         if owner is None or owner not in self.providers:
             raise MemoryUnavailable("profile has no available persistent capture owner")
-        self.trusted_authorizer(context, "memory_embedding", record.profile, record.namespace)
+        self._authorize(context, "memory_embedding", record.profile, record.namespace)
         self.providers[owner].capture(record)
 
     def search(self, name: str, namespace: str, query: str, limit: int = 10, *,
