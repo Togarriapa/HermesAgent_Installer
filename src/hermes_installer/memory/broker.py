@@ -135,9 +135,23 @@ class MemoryTarget:
             raise ValueError("invalid protected provider enrollment")
         if self.source_revision != SOURCE_REVISIONS[self.provider]:
             raise ValueError("provider source revision differs from the reviewed pin")
-        if type(self.service_generation) is not int or self.service_generation < 1:
-            raise ValueError("supervised service generation is required")
-        allowed_routes = frozenset(ROUTE_IDS[self.provider].values())
+        if self.enrollment is None:
+            if type(self.service_generation) is not int or self.service_generation < 1:
+                raise ValueError("legacy fixture generation must be a positive integer")
+            allowed_routes = frozenset(ROUTE_IDS[self.provider].values())
+        else:
+            e = self.enrollment
+            if not isinstance(self.service_generation, str) or not self.service_generation:
+                raise ValueError("opaque host service generation is required")
+            if (self.service_generation != e.service_generation
+                    or self.service_id != e.service_enrollment_id
+                    or self.profile_id != e.profile_id
+                    or self.namespace_id != e.namespace_identity
+                    or self.data_root_id != e.data_root_id
+                    or self.provider != e.provider
+                    or self.source_revision != e.source_revision):
+                raise ValueError("memory target differs from strict protected enrollment")
+            allowed_routes = frozenset(e.fixed_route_map)
         if isinstance(self.approved_route_ids, (str, bytes)):
             raise ValueError("protected approved route IDs must be a sequence of opaque IDs")
         try:
