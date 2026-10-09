@@ -182,6 +182,10 @@
       "expires_monotonic": "root float bounded by context/source/process lease"
     },
     "API": "NativeBridgeBroker.resolve_native_request_observation(receipt_handle,*,turn_handle)->RootNativeRequestObservation root-private; revalidates retained actual request, authenticated live producer PIDFD, current bridge/process/package generations, exact root turn/source ancestry and lease. Worker cannot supply record fields. Root prepare creates record atomically with pending request handle after canonicalization and source admission; gateway authentication is not required to observe the authenticated producer request. Broker privately retains duplicate PIDFD and exact request bytes; closes/wipes at revocation/expiry/completion retention policy.",
-    "turn_join": "RootNativeTurnObservationRegistry.register_native_request resolves this record through broker, not SourceObserverRegistry. request_receipt_handle names this domain, never a SourceReceipt or new native-request source_kind. Consuming effect attempt stays one-use; stable record lookup may repeat for current turn validation without reusing grants. Request record proves bytes/request lineage only and never upgrades input origin/sensitivity. Missing ancestry remains UNKNOWN/private under existing route admission."
+    "turn_join": "RootNativeTurnObservationRegistry.register_native_request resolves this record through broker, not SourceObserverRegistry. request_receipt_handle names this domain, never a SourceReceipt or new native-request source_kind. Consuming effect attempt stays one-use; stable record lookup may repeat for current turn validation without reusing grants. Request record proves bytes/request lineage only and never upgrades input origin/sensitivity. Missing ancestry remains UNKNOWN/private under existing route admission.",
+    "private_result_fields": {
+      "native_request_handle": "retained exact pending request correlation string, root-only",
+      "canonical_request_bytes": "actual retained immutable bytes, SHA/size equal record; root-only"
+    }
   }
 }
