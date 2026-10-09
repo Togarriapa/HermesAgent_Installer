@@ -31,8 +31,9 @@ class PreflightContractTests(unittest.TestCase):
 
             def run(self, argv, **_kwargs):
                 if argv[1] == "list-sessions":
-                    return type("Result", (), {"returncode": 0, "stdout": "3 1000 admin seat0 tty2\\n"})()
-                return type("Result", (), {"returncode": 0, "stdout": "Name=admin\\nClass=user\\nType=wayland\\nState=active\\n"})()
+                    return type("Result", (), {"returncode": 0, "stdout": chr(10).join(("3 1000 admin seat0 tty2", ""))})()
+                props = ("Name=admin", "Class=user", "Type=wayland", "State=active", "")
+                return type("Result", (), {"returncode": 0, "stdout": chr(10).join(props)})()
 
         with patch("hermes_installer.runner.CommandRunner", FakeRunner):
             self.assertTrue(_graphical_session({}, True))
