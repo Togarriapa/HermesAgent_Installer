@@ -43,6 +43,8 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             service_profile_id="hermes-profile", principal_id="hermes-service",
             generation_id="prepared-fixture", source_artifact_id="hermes-source",
             records=(), activation_state="prepared",
+            resource_controller_roles=(), native_mcp_tool_bindings=(),
+            remote_observation_enrollments=(),
             root_journal_roots=({"root_id": "installer-authority-journal-v1"},),
         )
         _validate_prepared_policy(policy)
@@ -51,6 +53,8 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
                 service_profile_id="hermes-profile", principal_id="hermes-service",
                 generation_id="prepared-fixture", source_artifact_id="hermes-source",
                 records=(), activation_state="prepared",
+                resource_controller_roles=(), native_mcp_tool_bindings=(),
+                remote_observation_enrollments=(),
                 root_journal_roots=policy.root_journal_roots,
                 native_packages=({"id": "must-not-enable"},),
             ))
@@ -451,11 +455,6 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
             policy_resolver=policy_resolver, receipt_resolver=FixtureResolver(),
             identity=adapter, record_builder=record_builder,
             authority_path=fixture / "authority.json", transaction_root=txroot,
-            artifact_root=store,
-        )
-        setup_proof = VerifiedRootSetupAuthorization(
-            "service-generation:bootstrap:install", "fixture-setup-" + fixture_id,
-            "a" * 64, os.getuid(), "transaction:fixture-" + fixture_id)
             artifact_root=store, root_journal_path=fixture,
         )
         journal_info = fixture.lstat()
