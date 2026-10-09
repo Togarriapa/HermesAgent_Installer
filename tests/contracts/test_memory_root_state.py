@@ -87,6 +87,17 @@ class MemoryRootStateTests(unittest.TestCase):
                 state.root.chmod(0o700)
                 state.close()
 
+    def test_production_resolution_rejects_nonroot_process(self):
+        if os.geteuid() == 0:
+            self.skipTest("running as root already exercises production UID")
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as temporary:
+            root = self._selection(Path(temporary) / "journal")
+            enrollment = SimpleNamespace(authority_state_root_id=root.root_id,
+                profile_id="profile-a", data_root_id="service-data-a")
+            with self.assertRaisesRegex(MemoryStateDenied, "protected root UID"):
+                resolve_memory_state_directory(enrollment, self._resolver(root),
+                    expected_active_generation_digest="a" * 64)
+
 
 if __name__ == "__main__":
     unittest.main()
