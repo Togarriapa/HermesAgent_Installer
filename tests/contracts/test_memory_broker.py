@@ -7,7 +7,7 @@ from pathlib import Path
 
 from hermes_installer.memory.broker import (
     BrokerDenied, DurableMemoryQueue, MemoryTarget, build_memory_handlers,
-    canonical, ROUTES, build_memory_runtime,
+    canonical, ROUTE_IDS, build_memory_runtime,
 )
 
 
@@ -49,7 +49,8 @@ class IPC:
 def target(profile, namespace, service):
     return MemoryTarget("agentmemory", profile, namespace, service,
                         "df3d4a83b966d8d415cb9180d5a4724b07f729dc", 1,
-                        "root-data-" + profile)
+                        "root-data-" + profile,
+                        approved_route_ids=frozenset(ROUTE_IDS["agentmemory"].values()))
 
 
 def call(handler, context, action, value, *, digest_override=None, provider="agentmemory"):
@@ -76,6 +77,13 @@ class MemoryBrokerTests(unittest.TestCase):
         self.assertEqual(second["status"], 200)
         self.assertEqual([item["service_id"] for item in ipc.calls], ["service-one", "service-two"])
         self.assertEqual([item["service_generation"] for item in ipc.calls], [1, 1])
+        self.assertEqual([item["route_id"] for item in ipc.calls],
+                         ["memory.agentmemory.livez.v1"] * 2)
+        self.assertEqual(ipc.calls[0]["context"].profile_id, "p1")
+        self.assertEqual(ipc.calls[0]["authorization"].target, "memory:agentmemory:doctor")
+        self.assertEqual(ipc.calls[0]["session_id"], "trace-one")
+        self.assertGreater(ipc.calls[0]["deadline_monotonic"], 0)
+        self.assertNotIn("fixed_route", ipc.calls[0])
 
     def test_payload_mutation_and_sibling_scope_fail_before_service_effect(self):
         t = target("p1", "n1", "service-one")
@@ -90,6 +98,19 @@ class MemoryBrokerTests(unittest.TestCase):
         self.assertEqual(ipc.calls, [])
         denied_scope = call(handler, Context("p2", "n2"), "doctor", {"schema": 1})
         self.assertEqual(denied_scope["status"], 403)
+        self.assertEqual(ipc.calls, [])
+
+    def test_unenrolled_opaque_route_denied_before_connector_bytes(self):
+        t = MemoryTarget("agentmemory", "p1", "n1", "service-one",
+            "df3d4a83b966d8d415cb9180d5a4724b07f729dc", 1, "root-data-p1",
+            approved_route_ids=frozenset())
+        ipc = IPC()
+        handlers = build_memory_handlers(
+            targets={("p1","n1","agentmemory"):t},
+            owner_state=lambda _: (None,0), queue=None, ipc=ipc)
+        result = call(handlers[("memory.doctor","memory:agentmemory:doctor")],
+                      Context(), "doctor", {"schema":1})
+        self.assertEqual(result["status"], 403)
         self.assertEqual(ipc.calls, [])
 
     def test_private_transform_is_unavailable_without_enrolled_local_engine(self):
@@ -190,12 +211,13 @@ class MemoryBrokerTests(unittest.TestCase):
 
     def test_pinned_provider_routes_and_payloads_match_upstream_contracts(self):
         # Fixed routes were checked against each provider's exact enrolled source.
-        self.assertEqual(ROUTES["agentmemory"]["doctor"], "GET /agentmemory/livez")
-        self.assertEqual(ROUTES["agentmemory"]["delete"], "POST /agentmemory/forget")
-        self.assertEqual(ROUTES["claude-mem"]["capture"], "POST /v1/memories")
-        self.assertEqual(ROUTES["claude-mem"]["delete"], "DELETE /v1/memories/{id}")
+        self.assertEqual(ROUTE_IDS["agentmemory"]["doctor"], "memory.agentmemory.livez.v1")
+        self.assertEqual(ROUTE_IDS["agentmemory"]["delete"], "memory.agentmemory.forget.v1")
+        self.assertEqual(ROUTE_IDS["claude-mem"]["capture"], "memory.claude-mem.create.v1")
+        self.assertEqual(ROUTE_IDS["claude-mem"]["delete"], "memory.claude-mem.delete.v1")
         t = MemoryTarget("claude-mem", "p1", "n1", "claude-service",
-            "fa8ab09f06aa05f958c5225cf3756ce52a3ebb96", 2, "claude-data-p1")
+            "fa8ab09f06aa05f958c5225cf3756ce52a3ebb96", 2, "claude-data-p1",
+            approved_route_ids=frozenset(ROUTE_IDS["claude-mem"].values()))
         ipc = IPC()
         handlers = build_memory_handlers(
             targets={("p1", "n1", "claude-mem"): t},
@@ -206,7 +228,8 @@ class MemoryBrokerTests(unittest.TestCase):
                 "source": "hermes-session:synthetic", "facts": ["synthetic fact"],
                 "embeddings": [[0.1, 0.2]], "provenance": ["a" * 64]}, provider="claude-mem")
         self.assertEqual(response["status"], 200)
-        self.assertEqual(ipc.calls[0]["fixed_route"], "POST /v1/memories")
+        self.assertEqual(ipc.calls[0]["route_id"], "memory.claude-mem.create.v1")
+        self.assertNotIn("fixed_route", ipc.calls[0])
         body = json.loads(ipc.calls[0]["payload"])
         self.assertEqual(body["projectId"], "n1")
         self.assertEqual(body["kind"], "manual")
