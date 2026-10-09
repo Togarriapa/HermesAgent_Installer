@@ -102,7 +102,8 @@ def root_invocation_source_receipt_handles(
                 for handle in handles)
     )
     expires = getattr(lineage, "expires_monotonic", None)
-    if (getattr(lineage, "schema", None) != 1
+    if (type(getattr(lineage, "schema", None)) is not int
+            or lineage.schema != 1
             or not isinstance(getattr(lineage, "invocation_handle", None), str)
             or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", lineage.invocation_handle)
             or not _HEX.fullmatch(getattr(lineage, "parent_closure_digest", ""))

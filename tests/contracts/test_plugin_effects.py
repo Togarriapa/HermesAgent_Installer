@@ -207,6 +207,17 @@ def test_empty_provenance_and_authority_context_mismatch_never_perform():
         client.invoke("web", "retrieve-public-web-content", {"url": "https://example.com"})
     assert authority.calls == []
 
+    bad_lineage = SimpleNamespace(
+        schema=True, invocation_handle="i" * 32, source_receipt_handles=(),
+        parent_closure_digest="c" * 64,
+        arguments_sha256=hashlib.sha256(b'{"url":"https://example.com"}').hexdigest(),
+        expires_monotonic=time.monotonic() + 10,
+    )
+    client, _, authority = dispatcher(invocation_contexts=lambda **_: bad_lineage)
+    with pytest.raises(PluginEffectUnavailable, match="lineage"):
+        client.invoke("web", "retrieve-public-web-content", {"url": "https://example.com"})
+    assert authority.calls == []
+
     class MismatchAuthority(Authority):
         def context(self, **kwargs):
             self.calls.append(("context", kwargs))
