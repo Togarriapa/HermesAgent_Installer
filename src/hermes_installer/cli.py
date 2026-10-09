@@ -8,6 +8,7 @@ import os
 import sys
 import sqlite3
 import stat
+import contextlib
 import shlex
 from dataclasses import asdict
 from pathlib import Path
@@ -138,7 +139,7 @@ def _resume_checkpoint_exists(state_path: Path) -> bool:
             or db_info.st_uid != os.getuid() or stat.S_IMODE(db_info.st_mode) & 0o077):
             return False
         uri = database.as_uri() + "?mode=ro"
-        with sqlite3.connect(uri, uri=True, timeout=2) as db:
+        with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=2)) as db:
             row = db.execute("SELECT 1 FROM operations WHERE id='installer:selection'").fetchone()
         return row is not None
     except (OSError, sqlite3.Error, ValueError):

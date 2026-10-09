@@ -36,7 +36,9 @@ class CliLifecycleTests(unittest.TestCase):
                  patch("hermes_installer.cli.HermesBootstrap") as bootstrap:
                 result=run(args)
             self.assertEqual(result.state,OutcomeState.FAILED)
-            self.assertIn("no installer operation",result.message)
+            self.assertIn("no readable installer checkpoint",result.message)
+            self.assertFalse((root/"data").exists())
+            self.assertFalse((root/"state").exists())
             bootstrap.assert_not_called()
     def test_selected_config_is_durable_and_mismatch_resume_is_denied(self):
         with tempfile.TemporaryDirectory() as td:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -67,7 +68,7 @@ def validate_config(data: Any) -> InstallerConfig:
     if not isinstance(privacy, dict) or set(privacy) - _PRIVACY:
         raise ConfigError("privacy may contain only additional_metered_budget")
     budget = privacy.get("additional_metered_budget", 0)
-    if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not __import__("math").isfinite(budget) or budget != 0:
+    if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not math.isfinite(budget) or budget != 0:
         raise ConfigError("additional_metered_budget must remain zero until a reviewed budget is configured")
 
     remote = data.get("remote_desktop", {})
