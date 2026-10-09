@@ -49,7 +49,7 @@ jobs:
           from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
           from threading import Thread
 
-from browser_use import Browser, BrowserProfile
+          from browser_use import Browser, BrowserProfile
 
           class Fixture(BaseHTTPRequestHandler):
               def do_GET(self):
