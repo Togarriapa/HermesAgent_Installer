@@ -116,13 +116,19 @@ class SQLiteOwnerLedger:
             finally:
                 db.close()
 
-    def abort_transition(self, profile: str, transition_id: str) -> None:
+    def abort_transition(self, profile: str, transition_id: str, *, recovered: bool = True) -> None:
         with process_lock(self.owned.path("owner-ledger.lock")):
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
-                db.execute("UPDATE transitions SET state='aborted' WHERE id=? AND profile=? AND state='prepared'",
-                           (transition_id, profile))
+                row = db.execute("SELECT state FROM transitions WHERE id=? AND profile=?",
+                                 (transition_id, profile)).fetchone()
+                if not row or row[0] != "prepared":
+                    raise OwnerTransitionError("cannot abort a non-prepared owner transition")
+                if recovered:
+                    db.execute("UPDATE transitions SET state='aborted' WHERE id=? AND profile=? AND state='prepared'",
+                               (transition_id, profile))
+                # If live compensation is uncertain, retain prepared state and block reads.
                 db.commit()
             finally:
                 db.close()

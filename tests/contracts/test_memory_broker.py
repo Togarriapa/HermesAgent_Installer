@@ -131,6 +131,16 @@ class MemoryBrokerTests(unittest.TestCase):
             ledger.abort_transition("profile-a", interrupted)
             self.assertEqual(ledger.get_owner("profile-a"), "openviking")
 
+    def test_uncertain_owner_compensation_keeps_profile_blocked(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            ledger = SQLiteOwnerLedger(Path(temporary) / "owned-memory-state")
+            transition = ledger.begin_transition("profile-a", None, "openviking")
+            ledger.abort_transition("profile-a", transition, recovered=False)
+            with self.assertRaises(OwnerTransitionError):
+                ledger.get_owner("profile-a")
+            with self.assertRaises(OwnerTransitionError):
+                ledger.begin_transition("profile-a", None, "claude-mem")
+
     def test_grant_binds_exact_payload_and_caller_scope_cannot_expand(self):
         provider = AgentMemoryProvider(self.broker)
         original = b'{"schema":1,"namespace":"namespace-a","query":"x","limit":1}'
