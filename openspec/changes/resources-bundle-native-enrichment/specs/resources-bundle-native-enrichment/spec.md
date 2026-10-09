@@ -62,3 +62,10 @@ Selected cron, webhook, channel and bundle resources SHALL use protected enrollm
 
 - **WHEN** a selected recurring/webhook/channel event starts a multi-child workflow
 - **THEN** root authenticates event and current selection, consumes one job admission, issues fresh scoped per-child grants and denies replay/unselected/private-route/overlimit/stale generation before effects
+
+### Requirement: RB08 Protected original plugin effects
+The installer SHALL enforce the pinned manifest obligations through protected finite selected action schemas, immutable handler identity, exact operation/target grants, current private source lineage and scoped root credential references. External writes SHALL require independent runtime task/user-order authority and required one-shot human confirmation of the exact final payload; durable duplicate/ambiguity journals SHALL prevent blind retries.
+
+#### Scenario: Forged or ambiguous plugin effect
+- **WHEN** a native plugin supplies an unenrolled action, altered digest, caller confirmation, sibling account, consumed grant or ambiguous prior write
+- **THEN** reject before backend bytes, retain truthful state and require the exact missing scope, reconciliation or fresh authority without weakening original functionality.
