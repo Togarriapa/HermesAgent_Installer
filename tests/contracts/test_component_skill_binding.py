@@ -155,6 +155,21 @@ class ComponentSkillBindingTests(unittest.TestCase):
                 replace(binding, external_dir=outside), Resolver(), expected_config_sha256=None
             )
 
+    def test_selected_profile_writer_rejects_user_controlled_symlink_ancestors(self):
+        class Resolver:
+            def resolve_selected_profile(inner_self):
+                return SelectedProfileConfigTarget("default", linked_home, self.profile_root, os.getuid())
+
+        real_home = self.profile_root.parent / "real-home"
+        real_home.mkdir(mode=0o700)
+        linked_home = self.profile_root.parent / "linked-home"
+        linked_home.symlink_to(real_home, target_is_directory=True)
+        binding = self.with_store(lambda store: stage_component_skill(
+            self.source, store, profile_id="default", profile_data_root=self.profile_root
+        ))
+        with self.assertRaisesRegex(ComponentBindingError, "may not contain symlinks"):
+            configure_selected_profile_skill(binding, Resolver(), expected_config_sha256=None)
+
 
 if __name__ == "__main__":
     unittest.main()
