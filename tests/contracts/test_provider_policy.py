@@ -42,7 +42,7 @@ class ProviderPolicyTests(unittest.TestCase):
     def test_public_nemotron_tool_call_hits_only_exact_free_route(self):
         with tempfile.TemporaryDirectory() as td:
             provider = RecordingProvider()
-            result = self.make(Path(td), provider).dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL, b'{"tool_choice":"auto"}', input_tokens=8, output_token_limit=128, tool_request=True)
+            result = self.make(Path(td), provider).dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL, b'{"messages":[{"role":"user","content":"hi"}],"tool_choice":"auto"}', input_tokens=8, output_token_limit=128, tool_request=True)
             self.assertEqual(result.status, 200)
             self.assertEqual(provider.calls[0][0:2], ("openrouter-nemotron-free", MODEL))
             self.assertEqual(json.loads(provider.calls[0][2])["model"], MODEL)
@@ -65,7 +65,7 @@ class ProviderPolicyTests(unittest.TestCase):
             dispatcher.policy = replace(dispatcher.policy, fallbacks={"private": ("public",)})
             ctx = DispatchContext("hermes-private", "tool-result", Sensitivity.PRIVATE)
             with self.assertRaisesRegex(PolicyDenied, "No eligible provider route"):
-                dispatcher.dispatch(ctx, MODEL, b"private result", input_tokens=20, output_token_limit=32, tool_request=True)
+                dispatcher.dispatch(ctx, MODEL, b'{"messages":[{"role":"user","content":"private result"}]}', input_tokens=20, output_token_limit=32, tool_request=True)
             self.assertTrue(provider.calls)
             self.assertTrue(all(call[0] == "private" for call in provider.calls))
 
@@ -73,7 +73,7 @@ class ProviderPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             provider = RecordingProvider([ProviderResponse(429, b"", {"Retry-After": "999"}), ProviderResponse(200, b"ok")])
             sleeps = []
-            result = self.make(Path(td), provider, sleep=sleeps.append).dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL, b"{}", input_tokens=1, output_token_limit=5)
+            result = self.make(Path(td), provider, sleep=sleeps.append).dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL, b'{"messages":[]}', input_tokens=1, output_token_limit=5)
             self.assertEqual(result.status, 200)
             self.assertEqual(len(provider.calls), 2)
             self.assertAlmostEqual(sum(sleeps), 15.0)
@@ -117,7 +117,7 @@ class ProviderPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root=self.ledger_root(Path(td))
             paid=Route("private","http://127.0.0.1:8811/v1",frozenset({"local/test"}),Sensitivity.CONFIDENTIAL,False,True,1.0,1.0)
-            policy=DispatchPolicy({"public":default_public_route(),"private":paid},"public","private",metered_budget_usd=0.000002,max_attempts=2)
+            policy=DispatchPolicy({"public":default_public_route(),"private":paid},"public","private",metered_budget_usd=0.00002,max_attempts=2)
             calls=[]
             def transport(route,model,payload,*,output_token_limit,timeout,trace_id):
                 calls.append(route.name)
@@ -125,9 +125,9 @@ class ProviderPolicyTests(unittest.TestCase):
             ledger=BudgetLedger(root)
             dispatcher=Dispatcher(policy,ledger,transport)
             with self.assertRaisesRegex(PolicyDenied,"Aggregate metered budget"):
-                dispatcher.dispatch(DispatchContext("private","chat",Sensitivity.PRIVATE),"local/test",b"x",input_tokens=1,output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("private","chat",Sensitivity.PRIVATE),"local/test",b'{"messages":[]}',input_tokens=1,output_token_limit=1)
             self.assertEqual(calls,["private"])
-            self.assertAlmostEqual(ledger.spent(),0.000002)
+            self.assertAlmostEqual(ledger.spent(),0.000016)
 
     def test_retry_delay_observes_cancellation_and_dispatch_deadline(self):
         with tempfile.TemporaryDirectory() as td:
@@ -138,7 +138,7 @@ class ProviderPolicyTests(unittest.TestCase):
             dispatcher=self.make(Path(td),provider,sleep=sleep)
             context=DispatchContext("hermes","chat",Sensitivity.PUBLIC,cancelled=lambda:cancelled[0])
             with self.assertRaisesRegex(PolicyDenied,"cancelled during retry delay"):
-                dispatcher.dispatch(context,MODEL,b"{}",input_tokens=1,output_token_limit=2)
+                dispatcher.dispatch(context,MODEL,b'{"messages":[]}',input_tokens=1,output_token_limit=2)
             self.assertEqual(len(provider.calls),1)
 
     def test_policy_bounds_retry_after_and_fallback_graph(self):
@@ -152,11 +152,11 @@ class ProviderPolicyTests(unittest.TestCase):
             provider = RecordingProvider()
             dispatcher = self.make(Path(td), provider)
             with self.assertRaisesRegex(PolicyDenied, "cancelled"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC, cancelled=lambda: True), MODEL, b"{}", input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC, cancelled=lambda: True), MODEL, b'{"messages":[]}', input_tokens=1, output_token_limit=1)
             with self.assertRaisesRegex(PolicyDenied, "No private-capable route"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.UNKNOWN), MODEL, b"{}", input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.UNKNOWN), MODEL, b'{"messages":[]}', input_tokens=1, output_token_limit=1)
             with self.assertRaisesRegex(PolicyDenied, "deadline"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC, deadline=1), MODEL, b"{}", input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC, deadline=1), MODEL, b'{"messages":[]}', input_tokens=1, output_token_limit=1)
             self.assertEqual(provider.calls, [])
 
 
