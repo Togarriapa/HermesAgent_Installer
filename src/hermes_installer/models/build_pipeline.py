@@ -27,6 +27,7 @@ _BUILD_TARGETS = {
     CORAL_CPYTHON_BUILD: "coral-cpython-build:start",
 }
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
+_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:-]{1,256}\Z")
 _RECEIPT_FIELDS = {
     "schema", "receipt_id", "build_target_id", "build_generation",
     "service_generation_digest", "recipe_digest", "source_artifact_id",
@@ -105,6 +106,23 @@ def _version_tuple(value: Any, label: str) -> tuple[int, ...]:
     return tuple(int(part) for part in value.split("."))
 
 
+def _validate_dependency_closure(closure: Any, *, required: set[str] | None = None) -> None:
+    if not isinstance(closure, list) or not closure:
+        raise AuthorityDenied("model-build.target-facts", "native runtime dependency closure is missing")
+    names: set[str] = set()
+    for row in closure:
+        if (not isinstance(row, dict) or set(row) != {"name", "absolute_path", "sha256", "owner_uid", "mode"}
+                or not isinstance(row["name"], str) or not row["name"]
+                or not isinstance(row["absolute_path"], str) or not row["absolute_path"].startswith("/")
+                or type(row["owner_uid"]) is not int or row["owner_uid"] < 0
+                or type(row["mode"]) is not int or row["mode"] & 0o111):
+            raise AuthorityDenied("model-build.target-facts", "runtime dependency custody facts are incomplete")
+        _digest(row["sha256"], "resolved runtime dependency")
+        names.add(row["name"])
+    if required is not None and not required <= names:
+        raise AuthorityDenied("model-build.target-facts", "native runtime dependency closure is incomplete")
+
+
 def _validate_observed_facts(operation_id: str, item: Mapping[str, Any]) -> None:
     name = item["relative_path"]
     facts = item["observed_target_facts"]
@@ -114,21 +132,8 @@ def _validate_observed_facts(operation_id: str, item: Mapping[str, Any]) -> None
     if not isinstance(facts, dict) or any(facts.get(key) != expected for key, expected in spec[2].items()):
         raise AuthorityDenied("model-build.target-facts", "native output does not meet the reviewed target facts")
     if operation_id == COLIBRI_BUILD:
-        closure = facts.get("resolved_dependency_closure")
-        if (not isinstance(closure, list) or not closure
-                or not {row.get("name") for row in closure if isinstance(row, dict)}
-                    >= {"libgomp.so.1", "libm", "libc"}):
-            raise AuthorityDenied("model-build.target-facts", "Colibri runtime dependency closure is incomplete")
-        for row in closure:
-            if (not isinstance(row, dict) or set(row) != {"name", "path", "sha256", "owner_uid", "mode"}
-                    or not isinstance(row["name"], str) or not row["name"]
-                    or not isinstance(row["path"], str) or not row["path"].startswith("/")
-                    or type(row["owner_uid"]) is not int or row["owner_uid"] < 0):
-                raise AuthorityDenied("model-build.target-facts", "Colibri dependency custody facts are incomplete")
-            _digest(row["sha256"], "resolved runtime dependency")
-        for row in closure:
-            if type(row.get("mode")) is not int or row["mode"] & 0o111:
-                raise AuthorityDenied("model-build.target-facts", "Colibri dependency mode is not a reviewed runtime file")
+        _validate_dependency_closure(facts.get("resolved_dependency_closure"),
+            required={"libgomp.so.1", "libm", "libc"})
     elif name == "runtime/bin/python3.9":
         minimum = (2, 34)
         if facts.get("glibc_minimum") != "2.34 for selected TFLite wheel":
@@ -136,26 +141,22 @@ def _validate_observed_facts(operation_id: str, item: Mapping[str, Any]) -> None
         observed = _version_tuple(facts.get("observed_glibc_version"), "observed glibc version")
         if observed < minimum:
             raise AuthorityDenied("model-build.target-facts", "target glibc does not satisfy the pinned wheel ABI")
+        _validate_dependency_closure(facts.get("resolved_dependency_closure"))
     else:
         extensions = facts.get("native_extension_manifest")
         if (facts.get("all_native_extensions") != "ELF64EM_AARCH64, actual dependency closure verified"
                 or not isinstance(extensions, list) or not extensions):
             raise AuthorityDenied("model-build.target-facts", "CPython native extension closure is unverified")
         for extension in extensions:
-            if (not isinstance(extension, dict) or set(extension) != {"path", "sha256", "dependencies"}
-                    or not isinstance(extension["path"], str) or extension["path"].startswith("/")
-                    or ".." in extension["path"].split("/")
-                    or not isinstance(extension["dependencies"], list)):
+            if (not isinstance(extension, dict) or set(extension) != {"relative_path", "sha256",
+                    "elf_class", "elf_machine", "os", "resolved_dependency_closure"}
+                    or not isinstance(extension["relative_path"], str) or extension["relative_path"].startswith("/")
+                    or ".." in extension["relative_path"].split("/")
+                    or extension["elf_class"] != 64 or extension["elf_machine"] != "EM_AARCH64"
+                    or extension["os"] != "linux"):
                 raise AuthorityDenied("model-build.target-facts", "CPython extension record is malformed")
             _digest(extension["sha256"], "native extension")
-            for dependency in extension["dependencies"]:
-                if (not isinstance(dependency, dict)
-                        or set(dependency) != {"name", "path", "sha256"}
-                        or not isinstance(dependency["name"], str)
-                        or not isinstance(dependency["path"], str)
-                        or not dependency["path"].startswith("/")):
-                    raise AuthorityDenied("model-build.target-facts", "CPython dependency closure record is malformed")
-                _digest(dependency["sha256"], "native dependency")
+            _validate_dependency_closure(extension["resolved_dependency_closure"])
 
 
 def parse_native_build_receipt(response: BrokeredEffectResponse, *, operation_id: str,
@@ -206,6 +207,7 @@ def parse_native_build_receipt(response: BrokeredEffectResponse, *, operation_id
         if not isinstance(item, dict) or set(item) != fields:
             raise AuthorityDenied("model-build.outputs", "root build output record is malformed")
         name = item["relative_path"]
+        facts = item["observed_target_facts"]
         if name not in expected:
             raise AuthorityDenied("model-build.outputs", "root output path is outside the reviewed finite set")
         _validate_observed_facts(operation_id, item)
@@ -242,8 +244,8 @@ def run_fixed_native_build(authority_client: Any, *, operation_id: str,
     """Ask the protected root executor to build exactly one enrolled target."""
     if operation_id not in _BUILD_TARGETS:
         raise ValueError("only the two fixed enrolled model build recipes may be selected")
-    if (not isinstance(enrollment_id, str) or not enrollment_id
-            or not isinstance(generation, str) or not generation
+    if (not isinstance(enrollment_id, str) or not _IDENTIFIER.fullmatch(enrollment_id)
+            or not isinstance(generation, str) or not _IDENTIFIER.fullmatch(generation)
             or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
             or not 0 < timeout <= 600):
         raise ValueError("selected enrollment, generation, and bounded build timeout are required")

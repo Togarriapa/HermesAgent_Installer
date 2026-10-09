@@ -15,7 +15,7 @@ from hermes_installer.models.build_pipeline import (
 
 def receipt(operation: str, *, generation: str = "service-gen-4") -> dict:
     if operation == COLIBRI_BUILD:
-        target = "colibri-source-build"
+        target = "colibri-source-build:start"
         source_id = "colibri-source"
         source_sha = "7cc79d4bfdc851efb27b67295ceac1370312b5cd414d869887715d30b2d13174"
         outputs = [{"relative_path": "c/colibri", "kind": "file", "sha256": "a" * 64,
@@ -24,12 +24,12 @@ def receipt(operation: str, *, generation: str = "service-gen-4") -> dict:
                 "os": "linux", "required_runtime_dependencies": ["libgomp.so.1", "libm", "libc"],
                 "resolved_dependency_closure": [
                     {"name": name, "sha256": "b" * 64, "owner_uid": 0,
-                     "path": f"/usr/lib/aarch64-linux-gnu/{name}", "mode": 0o644}
+                     "absolute_path": f"/usr/lib/aarch64-linux-gnu/{name}", "mode": 0o644}
                     for name in ("libgomp.so.1", "libm", "libc")],
                 "instruction_policy": "actual target compatible ARM64 flags; no x86 default or unmeasured CPUflags"},
             "tree_file_manifest_sha256": None}]
     else:
-        target = "coral-cpython-build"
+        target = "coral-cpython-build:start"
         source_id = "coral-python39-source"
         source_sha = "00e07d7c0f2f0cc002432d1ee84d2a40dae404a99303e3f97701c10966c91834"
         outputs = [
@@ -38,15 +38,19 @@ def receipt(operation: str, *, generation: str = "service-gen-4") -> dict:
                 "observed_target_facts": {"elf_class": 64, "elf_machine": "EM_AARCH64",
                     "python_version": "3.9.25", "soabi": "cpython-39-aarch64-linux-gnu",
                     "debug": False, "glibc_minimum": "2.34 for selected TFLite wheel",
-                    "observed_glibc_version": "2.36"},
+                    "observed_glibc_version": "2.36",
+                    "resolved_dependency_closure": [{"name": "libc.so.6", "sha256": "6" * 64,
+                        "owner_uid": 0, "absolute_path": "/lib/aarch64-linux-gnu/libc.so.6", "mode": 0o644}]},
                 "tree_file_manifest_sha256": None},
             {"relative_path": "runtime/lib/python3.9", "kind": "tree", "sha256": "d" * 64,
                 "size_bytes": 40_000_000, "executable_role": "cpython-stdlib-and-extension-closure",
                 "observed_target_facts": {"python_version": "3.9.25", "target": "linux-aarch64",
                     "all_native_extensions": "ELF64EM_AARCH64, actual dependency closure verified",
-                    "native_extension_manifest": [{"path": "lib-dynload/example.so", "sha256": "5" * 64,
-                        "dependencies": [{"name": "libc.so.6", "path": "/lib/aarch64-linux-gnu/libc.so.6",
-                            "sha256": "6" * 64}]}]}, "tree_file_manifest_sha256": "e" * 64},
+                    "native_extension_manifest": [{"relative_path": "lib-dynload/example.so", "sha256": "5" * 64,
+                        "elf_class": 64, "elf_machine": "EM_AARCH64", "os": "linux",
+                        "resolved_dependency_closure": [{"name": "libc.so.6", "absolute_path": "/lib/aarch64-linux-gnu/libc.so.6",
+                            "sha256": "6" * 64, "owner_uid": 0, "mode": 0o644}]}]},
+                "tree_file_manifest_sha256": "e" * 64},
         ]
     value = {"schema": 1, "receipt_id": "build-receipt-1", "build_target_id": target,
         "build_generation": generation, "service_generation_digest": "f" * 64,
