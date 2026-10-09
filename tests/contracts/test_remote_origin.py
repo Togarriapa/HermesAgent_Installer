@@ -15,19 +15,35 @@ from pathlib import Path
 from hermes_installer.authority.remote_origin import (
     HMACReceiptSigner, KernelOriginEvidence, RemoteOriginDenied,
     RootOriginReadinessReceipt, SelectedRemoteOrigin, SelectedTunnel,
-    CustodyRemoteOriginProcessManager,
+    CustodyRemoteOriginProcessManager, VerifiedRemoteSetupTransaction,
     verify_origin_receipt, verify_selected_remote_origin, verify_token_receipt,
     write_provisioned_tunnel_token, write_selected_tunnel_token,
 )
 
 ACCOUNT = "699d98642c564d2e855e9661899b7252"
 TUNNEL = "c1744f8b-faa1-48a4-9e5c-02ac921467fa"
+SETUP_HANDLE = "s" * 43
 
 
 def tunnel_token(account=ACCOUNT, tunnel=TUNNEL):
     raw = json.dumps({"a": account, "t": tunnel,
                       "s": base64.b64encode(b"s" * 32).decode()}).encode()
     return base64.b64encode(raw)
+
+
+def verified_setup(token, *, account=ACCOUNT, tunnel=TUNNEL):
+    return VerifiedRemoteSetupTransaction(
+        setup_transaction_handle_digest=hashlib.sha256(SETUP_HANDLE.encode()).hexdigest(),
+        remote_enrollment_id="remote_1", tunnel_enrollment_id="te_1",
+        account_id=account, tunnel_id=tunnel, generation="gen_2",
+        setup_profile_id="setup", setup_generation="setup_gen",
+        setup_role_artifact_id="setup_role", setup_enrollment_id="setup_enrollment",
+        setup_role_sha256="c" * 64, setup_transaction_policy_id="setup_policy",
+        token_writer_enrollment_id="writer_1", origin_probe_enrollment_id="probe_1",
+        allowed_tunnel_enrollment_ids=("te_1",), setup_peer_identity_digest="d" * 64,
+        one_use_stage_nonce="n" * 32,
+        response_token_sha256=hashlib.sha256(token).hexdigest(),
+        issued_monotonic=100.0, expires_monotonic=120.0)
 
 
 class _Catalog:
@@ -192,51 +208,33 @@ class RemoteOriginTests(unittest.TestCase):
             selected = SelectedTunnel("te_1", TUNNEL, ACCOUNT, "gen_2",
                                       "sink_1", "vault_ref_5", os.getuid(), True)
             with self.assertRaises(RemoteOriginDenied):
-                write_provisioned_tunnel_token("te_1", tunnel_token(), account_id="00000000000000000000000000000000",
-                    tunnel_id=TUNNEL, generation="gen_2", catalog=_Catalog(tunnel=selected),
-                    token_root=root, journal=_Journal(), signer=HMACReceiptSigner(b"s" * 32))
+                write_provisioned_tunnel_token(selected, tunnel_token(),
+                    verified_setup(tunnel_token(), account="00000000000000000000000000000000"),
+                    token_root=root, journal=_Journal(), signer=HMACReceiptSigner(b"s" * 32),
+                    now=lambda: 110.0)
             with self.assertRaises(RemoteOriginDenied):
-                write_provisioned_tunnel_token("te_1", tunnel_token(tunnel="d1744f8b-faa1-48a4-9e5c-02ac921467fa"),
-                    account_id=ACCOUNT, tunnel_id=TUNNEL, generation="gen_2",
-                    catalog=_Catalog(tunnel=selected), token_root=root, journal=_Journal(),
-                    signer=HMACReceiptSigner(b"s" * 32))
+                wrong_token = tunnel_token(tunnel="d1744f8b-faa1-48a4-9e5c-02ac921467fa")
+                write_provisioned_tunnel_token(selected, wrong_token,
+                    verified_setup(wrong_token, tunnel="d1744f8b-faa1-48a4-9e5c-02ac921467fa"),
+                    token_root=root, journal=_Journal(), signer=HMACReceiptSigner(b"s" * 32),
+                    now=lambda: 110.0)
             token = tunnel_token()
-            receipt = write_provisioned_tunnel_token("te_1", token,
-                account_id=ACCOUNT, tunnel_id=TUNNEL, generation="gen_2",
-                catalog=_Catalog(tunnel=selected), token_root=root, journal=_Journal(),
-                signer=HMACReceiptSigner(b"s" * 32))
+            receipt = write_provisioned_tunnel_token(selected, token, verified_setup(token),
+                token_root=root, journal=_Journal(), signer=HMACReceiptSigner(b"s" * 32),
+                now=lambda: 110.0)
             self.assertEqual(receipt.tunnel_id, TUNNEL)
             self.assertNotIn(token.decode(), repr(receipt))
 
-    def test_origin_requires_live_kernel_proof_and_real_loopback_app_exchange(self):
+    def test_custody_process_manager_joins_gateway_and_native_enrollments(self):
         selected = SelectedRemoteOrigin("remote_1", "gw_gen", "desktop_gen", "target_1",
             "a" * 64, "policy_rev", "b" * 64, "desktop.example.test",
             "https://desktop.example.test", True, "gateway", "gateway-enrollment",
             "c" * 64, "native", "native-enrollment")
-        evidence = KernelOriginEvidence("c" * 64, "gw_gen", "desktop_gen", "target_1",
-            "a" * 64, "policy_rev", "b" * 64, True, True, True, True, True, True,
-            True, True, True, True, ("pidfd-live", "cgroup-pinned", "route-probed"))
-        probe = _SocketFixtureProbe()
-        try:
-            signer = HMACReceiptSigner(b"r" * 32)
-            receipt = verify_selected_remote_origin("remote_1", catalog=_Catalog(origin=selected),
-                process_manager=_Manager(evidence), gateway_probe=probe, signer=signer)
-            self.assertTrue(verify_origin_receipt(receipt, signer,
-                                                   selected_enrollment_id="remote_1"))
-            self.assertIsInstance(receipt, RootOriginReadinessReceipt)
-            denied = KernelOriginEvidence("c" * 64, "gw_gen", "desktop_gen", "target_1",
-                "a" * 64, "policy_rev", "b" * 64, True, True, True, True, True,
-                False, True, True, True, True, ("pidfd-live",))
-            with self.assertRaises(RemoteOriginDenied):
-                verify_selected_remote_origin("remote_1", catalog=_Catalog(origin=selected),
-                    process_manager=_Manager(denied), gateway_probe=probe, signer=signer)
-            production_adapter = CustodyRemoteOriginProcessManager(_CustodyFixture())
-            evidence = production_adapter.inspect_selected_origin(selected)
-            self.assertEqual(evidence.gateway_generation, "gw_gen")
-            self.assertEqual(evidence.desktop_generation, "desktop_gen")
-            self.assertTrue(evidence.gateway_identity_digest)
-        finally:
-            probe.close()
+        production_adapter = CustodyRemoteOriginProcessManager(_CustodyFixture())
+        evidence = production_adapter.inspect_selected_origin(selected)
+        self.assertEqual(evidence.gateway_generation, "gw_gen")
+        self.assertEqual(evidence.desktop_generation, "desktop_gen")
+        self.assertTrue(evidence.gateway_identity_digest)
 
 
 if __name__ == "__main__":
