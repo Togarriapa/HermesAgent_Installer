@@ -258,6 +258,27 @@ class RootNativeInputObserver:
             raise AuthorityDenied("native.input.delivery", "source and delivery handles differ")
         return receipt
 
+    def discard_task_input_observation(self, *, source_receipt_handle: str,
+                                      receipt_handle: str | None = None) -> None:
+        """Scrub a captured input if task binding fails before custody writes it."""
+        if not isinstance(source_receipt_handle, str) or not source_receipt_handle:
+            return
+        with self._lock:
+            if receipt_handle is not None:
+                self._task_receipts.pop(receipt_handle, None)
+            for event_id, event in tuple(self._events.items()):
+                if event.source_receipt_handle == source_receipt_handle:
+                    self._events.pop(event_id, None)
+        cancel = getattr(self.source_observers, "cancel_source_payload_capsule", None)
+        if callable(cancel):
+            try:
+                from .source_observers import SourceReceiptHandle
+                cancel(SourceReceiptHandle(source_receipt_handle))
+            except Exception:
+                # Revocation failures leave the coordinator fail-closed; this
+                # helper must not mask the original pre-stdin failure.
+                pass
+
     def record_admitted_task_input(self, root_admission_handle: str, node_id: str,
                                    owned_process_handle: Any,
                                    exact_initial_stdin_bytes: bytes) -> RootNativeInputEvent:

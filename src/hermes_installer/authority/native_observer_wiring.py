@@ -59,6 +59,7 @@ class RootTaskInputCoordinator:
                 or not callable(getattr(initial_native_input_observer, "record_selected_task_input", None))
                 or not callable(getattr(initial_native_input_observer, "retain_task_input_receipt", None))
                 or not callable(getattr(initial_native_input_observer, "resolve_task_input_receipt", None))
+                or not callable(getattr(initial_native_input_observer, "discard_task_input_observation", None))
                 or not callable(getattr(source_delivery_registry, "resolve_delivered_source_receipt", None))
                 or not callable(getattr(process_custody_registry, "resolve_managed_task_process_handle", None))
                 or not callable(monotonic)):
@@ -135,6 +136,9 @@ class RootTaskInputCoordinator:
             raise AuthorityDenied("native.input.selection", "selected native execution differs from the live task")
 
         target = None
+        source_handle = None
+        receipt_handle = None
+        initial_receipt = None
         try:
             target = self.selected_executions.resolve_selected_native_input_target(selected)
             self._check_cancelled(cancelled)
@@ -194,11 +198,6 @@ class RootTaskInputCoordinator:
                 issued_monotonic=self.monotonic(), expires_monotonic=expires,
             )
             self.input_observer.retain_task_input_receipt(initial_receipt)
-            self.task_native_observations.bind_task_input(
-                task_handle=managed_task_handle, admission=admission_handle,
-                source=source, selected_execution=selected,
-                initial_input=initial_receipt,
-            )
             with self._lock:
                 if receipt_handle in self._records:
                     raise AuthorityDenied("native.input.replay", "task input receipt handle collided")
@@ -210,8 +209,21 @@ class RootTaskInputCoordinator:
                     peer_identity=peer_identity, profile_id=target_profile_id,
                     generation=target_generation,
                 )
+            self.task_native_observations.bind_task_input(
+                task_handle=managed_task_handle, admission=admission_handle,
+                source=source, selected_execution=selected,
+                initial_input=initial_receipt,
+            )
             return initial_receipt
         except BaseException:
+            if receipt_handle is not None:
+                with self._lock:
+                    self._records.pop(receipt_handle, None)
+            if source_handle is not None:
+                self.input_observer.discard_task_input_observation(
+                    source_receipt_handle=str(source_handle),
+                    receipt_handle=receipt_handle,
+                )
             if target is not None:
                 self._close_target(target)
             self._release_selection(selected)

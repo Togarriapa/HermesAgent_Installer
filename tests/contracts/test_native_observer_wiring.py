@@ -43,6 +43,7 @@ class NativeTaskInputCoordinatorContracts(unittest.TestCase):
             resolve_task_input_receipt=lambda handle: receipt,
             retain_task_input_receipt=lambda value: None,
             record_selected_task_input=lambda **_kw: None,
+            discard_task_input_observation=lambda **_kw: None,
         )
         selection_registry = SimpleNamespace(
             resolve_current_execution=lambda value: value,
