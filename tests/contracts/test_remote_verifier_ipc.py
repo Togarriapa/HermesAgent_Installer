@@ -78,10 +78,10 @@ class PolicyVerifierUnixIPCTests(unittest.IsolatedAsyncioTestCase):
         self.identity = AccessPolicyIdentity(
             "acct-1", "app-1", "policy-1", "idp-1", "desk.example.net",
             "HermesInstaller:op:desktop", "HermesInstaller:op:allowed-emails",
-            "HermesInstaller:op:email-code", frozenset({"owner@example.net"}),
+            "HermesInstaller:op:email-code", frozenset({"owner@example.net"}), "app-aud",
         )
         self.app = {
-            "id": "app-1", "name": self.identity.application_name, "type": "self_hosted",
+            "id": "app-1", "aud": self.identity.audience, "name": self.identity.application_name, "type": "self_hosted",
             "domain": "desk.example.net", "allowed_idps": ["idp-1"], "self_hosted_domains": [],
         }
         self.idp = {"id": "idp-1", "name": self.identity.identity_provider_name, "type": "onetimepin"}
@@ -98,10 +98,10 @@ class PolicyVerifierUnixIPCTests(unittest.IsolatedAsyncioTestCase):
         )
         self.wall = int(time.time())
         self.remote_policy = RemotePolicy(
-            "desk.example.net", "https://team.cloudflareaccess.com", "app-1",
+            "desk.example.net", "https://team.cloudflareaccess.com", self.identity.audience,
             frozenset({"owner@example.net"}), {"ipc-fixture": jwk},
         )
-        self.digest = verifier_config_digest(self.identity, issuer=self.remote_policy.issuer, audience="app-1")
+        self.digest = verifier_config_digest(self.identity, issuer=self.remote_policy.issuer, audience=self.identity.audience)
         runtime = VerifierRuntime(self.remote_policy, authority, "hermes-desktop", self.digest)
         self.temp = tempfile.TemporaryDirectory()
         self.socket_path = Path(self.temp.name) / "policy.sock"

@@ -171,6 +171,8 @@ class PolicyVerifierClient:
 def verifier_config_digest(identity, *, issuer: str, audience: str,
                            profile_id: str = PROFILE_ID) -> str:
     """Canonical nonsecret digest binding journal IDs and all policy inputs."""
+    if audience != identity.audience:
+        raise ValueError("Access audience must match the journaled application audience tag")
     fields = {
         "account_id": identity.account_id,
         "application_id": identity.application_id,
@@ -181,6 +183,7 @@ def verifier_config_digest(identity, *, issuer: str, audience: str,
         "policy_name": identity.policy_name,
         "identity_provider_name": identity.identity_provider_name,
         "allowed_emails": sorted(x.casefold() for x in identity.allowed_emails),
+        "application_audience": identity.audience,
         "issuer": issuer,
         "audience": audience,
         "profile_id": profile_id,
@@ -202,7 +205,7 @@ class VerifierRuntime:
             raise ValueError("fixed policy verifier profile/config digest required")
         identity = self.authority.identity
         if (self.policy.hostname.casefold() != identity.hostname
-                or self.policy.audience != identity.application_id
+                or self.policy.audience != identity.audience
                 or frozenset(x.casefold() for x in self.policy.allowed_emails) != identity.allowed_emails
                 or verifier_config_digest(identity,issuer=self.policy.issuer,audience=self.policy.audience,profile_id=self.profile_id)!=self.config_digest):
             raise ValueError("verifier JWT and exact Cloudflare resource identities differ")

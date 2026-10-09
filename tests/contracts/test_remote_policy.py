@@ -45,9 +45,11 @@ class FreshAccessPolicyAuthorityTests(unittest.TestCase):
             policy_name="HermesInstaller:operation-1:allowed-emails",
             identity_provider_name="HermesInstaller:operation-1:email-code",
             allowed_emails=frozenset({"owner@example.net"}),
+            audience="audience-1",
         )
         self.app = {
             "id": "app-1",
+            "aud": self.identity.audience,
             "name": self.identity.application_name,
             "type": "self_hosted",
             "domain": "desk.example.net",

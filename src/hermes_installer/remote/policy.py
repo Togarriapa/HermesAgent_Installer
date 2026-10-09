@@ -56,6 +56,7 @@ class AccessPolicyIdentity:
     policy_name: str
     identity_provider_name: str
     allowed_emails: frozenset[str]
+    audience: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,8 @@ class FreshAccessPolicyAuthority:
             raise ValueError("canonical hostname is required")
         if not i.application_name or not i.policy_name or not i.identity_provider_name or not i.allowed_emails:
             raise ValueError("exact journal-owned Access identity is required")
+        if not isinstance(i.audience, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", i.audience):
+            raise ValueError("exact Cloudflare Access application audience tag is required")
         normalized = frozenset(e.casefold() for e in i.allowed_emails)
         if len(normalized) != len(i.allowed_emails) or any(
             not re.fullmatch(r"[^@\s]{1,64}@[^@\s.]+(?:\.[^@\s.]+)+", e) for e in normalized
@@ -94,7 +97,7 @@ class FreshAccessPolicyAuthority:
         object.__setattr__(self, "identity", AccessPolicyIdentity(
             i.account_id, i.application_id, i.policy_id, i.identity_provider_id,
             i.hostname.casefold(), i.application_name, i.policy_name,
-            i.identity_provider_name, normalized,
+            i.identity_provider_name, normalized, i.audience,
         ))
 
     def allows(self, email: str, *, cancel_event: threading.Event | None = None,
@@ -106,7 +109,7 @@ class FreshAccessPolicyAuthority:
         started = self.clock()
         deadline = min(started + self.MAX_READ_SECONDS,
                        deadline_monotonic if deadline_monotonic is not None else started + self.MAX_READ_SECONDS)
-        if deadline <= started:
+        if deadline <= started or cancel.is_set() or self.clock() >= deadline:
             return False
         client = None
         try:
@@ -183,6 +186,7 @@ class FreshAccessPolicyAuthority:
         return (
             app.get("id") == i.application_id
             and app.get("name") == i.application_name
+            and app.get("aud") == i.audience
             and app.get("type") in {"self_hosted", "self_hosted_app"}
             and isinstance(app.get("domain"), str)
             and app["domain"].casefold() == i.hostname
