@@ -65,6 +65,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "source_issuers": [], "resource_jobs": [],
             "remote_session_enrollments": [],
             "resource_backend_enrollments": [], "resource_body_recipes": [],
+            "resource_scope_bindings": [], "resource_validators": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -109,6 +110,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "source_issuers": [source], "resource_jobs": [],
             "remote_session_enrollments": [],
             "resource_backend_enrollments": [], "resource_body_recipes": [],
+            "resource_scope_bindings": [], "resource_validators": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -160,6 +162,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "source_issuers": [], "resource_jobs": [],
                 "remote_session_enrollments": rows,
                 "resource_backend_enrollments": [], "resource_body_recipes": [],
+                "resource_scope_bindings": [], "resource_validators": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -200,6 +203,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "native_packages": [], "memory_enrollments": [], "operation_parameter_schemas": [],
             "source_issuers": [], "resource_jobs": [], "remote_session_enrollments": [],
             "resource_backend_enrollments": [backend], "resource_body_recipes": [body],
+            "resource_scope_bindings": [], "resource_validators": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -210,6 +214,53 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         malformed["resource_body_recipes"] = [{**body, "unreviewed": True}]
         with self.assertRaises(AuthorityDenied):
             _validate_service_generations(malformed)
+
+    def test_resource_scope_and_validator_catalogs_are_digest_bound_and_strict(self):
+        scope = {
+            "id": "scope-a", "resource_id": "resource-a", "profile_id": "profile-a",
+            "principal_id": "principal-a", "resource_generation": "resource-gen-a",
+            "profile_generation": "profile-gen-a", "backend_enrollment_id": "backend-a",
+            "fixed_fields": {"region": "eu"}, "credential_reference_ids": ["credential-key-a"],
+            "recipient": None,
+        }
+        validator = {
+            "id": "string-v1", "kind": "utf8-string", "maximum_bytes": 1024,
+            "minimum": None, "maximum": None, "allowed_values": None,
+            "schema_artifact_id": None, "schema_sha256": None,
+        }
+        snapshot = {
+            "schema": 1, "generation_id": "root-generation-a",
+            "service_records": [], "protected_devices": [], "protected_build_records": [],
+            "native_packages": [], "memory_enrollments": [], "operation_parameter_schemas": [],
+            "source_issuers": [], "resource_jobs": [], "remote_session_enrollments": [],
+            "resource_backend_enrollments": [], "resource_body_recipes": [],
+            "resource_scope_bindings": [scope], "resource_validators": [validator],
+        }
+        snapshot["generation_digest"] = hashlib.sha256(json.dumps(
+            snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        parsed = _validate_service_generations(snapshot)
+        self.assertEqual(parsed["resource_scope_bindings"][0]["fixed_fields"], {"region": "eu"})
+        self.assertEqual(parsed["resource_validators"][0]["kind"], "utf8-string")
+
+        for field, value in (("recipient", {"path": "/etc/passwd"}),
+                             ("fixed_fields", {"api_key": "secret"}),):
+            malformed = dict(snapshot)
+            malformed["resource_scope_bindings"] = [{**scope, field: value}]
+            malformed["generation_digest"] = hashlib.sha256(json.dumps(
+                {key: item for key, item in malformed.items() if key != "generation_digest"},
+                sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ).encode("utf-8")).hexdigest()
+            with self.assertRaises(AuthorityDenied):
+                _validate_service_generations(malformed)
+        malformed_validator = dict(snapshot)
+        malformed_validator["resource_validators"] = [{**validator, "maximum_bytes": 0}]
+        malformed_validator["generation_digest"] = hashlib.sha256(json.dumps(
+            {key: item for key, item in malformed_validator.items() if key != "generation_digest"},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(malformed_validator)
 
     def test_duplicate_json_keys_and_secret_values_are_rejected(self):
         with self.assertRaises(ValueError):

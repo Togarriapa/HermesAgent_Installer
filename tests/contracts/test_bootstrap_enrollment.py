@@ -49,7 +49,8 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             "protected_build_records", "native_packages", "memory_enrollments",
             "operation_parameter_schemas", "source_issuers", "resource_jobs",
             "remote_session_enrollments", "resource_backend_enrollments",
-            "resource_body_recipes", "generation_digest",
+            "resource_body_recipes", "resource_scope_bindings", "resource_validators",
+            "generation_digest",
         })
         expected = hashlib.sha256(json.dumps(
             {key: value for key, value in snapshot.items() if key != "generation_digest"},
@@ -299,14 +300,16 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
             "native_bridges", "normalization_policies", "delegations", "service_generations",
         )}
         base_authority["schema"] = 1
+        phase = {"value": "prepared"}
 
         def policy_resolver(request, proof):
             self.assertEqual(request.operation_intent, proof.transaction_handle)
             return EnrollmentPolicy(
                 service_profile_id="hermes-profile", principal_id="hermes-service",
-                generation_id="fixture-generation-" + fixture_id,
+                generation_id="fixture-generation-" + phase["value"] + "-" + fixture_id,
                 source_artifact_id="hermes-fixture-source", records=(),
                 authority_base=base_authority,
+                activation_state=phase["value"],
                 home_root=roots[0], work_root=roots[1], data_root=roots[2],
             )
 
@@ -346,11 +349,17 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
             },)
 
         class FixtureResolver:
-            def resolve(self, handle):
+            def resolve(self, handle, *, setup_authorization):
+                self.assert_setup(setup_authorization)
                 if handle != "source-fixture":
                     raise BootstrapEnrollmentError("fixture handle is not enrolled")
                 return VerifiedArtifactReceipt("fixture-receipt", "hermes-fixture-source",
                                                digest, source, 1024)
+
+            @staticmethod
+            def assert_setup(proof):
+                if proof.target_id != "service-generation:bootstrap:install":
+                    raise BootstrapEnrollmentError("fixture setup scope does not match")
 
         transaction = RootBootstrapEnrollment(
             policy_resolver=policy_resolver, receipt_resolver=FixtureResolver(),
@@ -363,6 +372,12 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
             "a" * 64, os.getuid(), "transaction:fixture-" + fixture_id)
         request = BootstrapEnrollmentRequest(("source-fixture",), setup_proof.transaction_handle)
         try:
+            prepared = transaction.enroll(request, setup_authorization=setup_proof)
+            self.assertEqual(prepared.state, "prepared")
+            self.assertEqual(prepared.enrollment_ids, ())
+            prepared_snapshot = json.loads((fixture / "authority.json").read_text())
+            self.assertEqual(prepared_snapshot["service_generations"]["service_records"], [])
+            phase["value"] = "active"
             result = transaction.enroll(request, setup_authorization=setup_proof)
             self.assertEqual(result.state, "committed")
             snapshot = json.loads((fixture / "authority.json").read_text())
@@ -372,7 +387,8 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
                 "protected_build_records", "native_packages", "memory_enrollments",
                 "operation_parameter_schemas", "source_issuers", "resource_jobs",
                 "remote_session_enrollments", "resource_backend_enrollments",
-                "resource_body_recipes", "generation_digest",
+                "resource_body_recipes", "resource_scope_bindings", "resource_validators",
+                "generation_digest",
             })
             for root in roots:
                 info = root.lstat()
@@ -384,6 +400,11 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
 
             self.assertEqual(transaction.rollback(result.provision_receipt_handle,
                                                   expected_generation_digest=result.generation_digest),
+                             "rolled_back")
+            self.assertEqual(json.loads((fixture / "authority.json").read_text())
+                             ["service_generations"]["generation_digest"], prepared.generation_digest)
+            self.assertEqual(transaction.rollback(prepared.provision_receipt_handle,
+                                                  expected_generation_digest=prepared.generation_digest),
                              "rolled_back")
             self.assertFalse((fixture / "authority.json").exists())
             self.assertFalse(any(root.exists() for root in roots))

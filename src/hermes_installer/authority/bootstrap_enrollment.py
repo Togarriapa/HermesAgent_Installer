@@ -77,6 +77,9 @@ class EnrollmentPolicy:
     remote_session_enrollments: tuple[Mapping[str, Any], ...] = ()
     resource_backend_enrollments: tuple[Mapping[str, Any], ...] = ()
     resource_body_recipes: tuple[Mapping[str, Any], ...] = ()
+    resource_scope_bindings: tuple[Mapping[str, Any], ...] = ()
+    resource_validators: tuple[Mapping[str, Any], ...] = ()
+    activation_state: str = "active"
     authority_base: Mapping[str, Any] | None = None
     home_root: Path = Path("/var/lib/hermes-installer/services/default/home")
     work_root: Path = Path("/var/lib/hermes-installer/services/default/work")
@@ -213,7 +216,8 @@ class IdentityAdapter(Protocol):
 
 
 class ReceiptResolver(Protocol):
-    def resolve(self, handle: str) -> VerifiedArtifactReceipt: ...
+    def resolve(self, handle: str, *,
+                setup_authorization: VerifiedRootSetupAuthorization) -> VerifiedArtifactReceipt: ...
 
 
 class ArtifactStoreReceiptResolver:
@@ -224,18 +228,19 @@ class ArtifactStoreReceiptResolver:
     may provide the store ID, digest, or path as artifact proof.
     """
     def __init__(self, *, catalog: Any, artifact_root: Path,
-                 lookup: Callable[[str], tuple[str, str]]):
+                 lookup: Callable[[str, VerifiedRootSetupAuthorization], tuple[str, str]]):
         if not artifact_root.is_absolute() or not callable(lookup):
             raise ValueError("root artifact store and opaque receipt lookup are required")
         self.catalog = catalog
         self.artifact_root = artifact_root
         self.lookup = lookup
 
-    def resolve(self, handle: str) -> VerifiedArtifactReceipt:
+    def resolve(self, handle: str, *,
+                setup_authorization: VerifiedRootSetupAuthorization) -> VerifiedArtifactReceipt:
         if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
             raise BootstrapEnrollmentError("artifact receipt handle is malformed")
         try:
-            artifact_id, digest = self.lookup(handle)
+            artifact_id, digest = self.lookup(handle, setup_authorization)
             resolved = self.catalog.resolve(artifact_id, digest, self.artifact_root, expected_uid=0)
             spec = self.catalog._artifact(artifact_id, digest)
         except Exception:
@@ -245,6 +250,59 @@ class ArtifactStoreReceiptResolver:
                 or not 1 <= spec.max_bytes <= 8 * 1024**3):
             raise BootstrapEnrollmentError("root artifact receipt no longer matches protected catalog custody")
         return VerifiedArtifactReceipt(handle, artifact_id, digest, resolved.path, spec.max_bytes)
+
+
+class RootArtifactReceiptRegistry:
+    """Durable opaque handles scoped to the root-issued setup transaction."""
+    def __init__(self, root: Path = Path("/var/lib/hermes-installer/bootstrap-receipts")):
+        if not root.is_absolute():
+            raise ValueError("root artifact receipt registry path must be absolute")
+        self.root = root
+
+    def mint(self, *, store_id: str, receipt_id: str,
+             setup_authorization: VerifiedRootSetupAuthorization) -> str:
+        if os.geteuid() != 0:
+            raise BootstrapEnrollmentError("artifact receipt registration requires root")
+        _validate_setup_authorization(setup_authorization)
+        match = re.fullmatch(r"artifact:([A-Za-z0-9_.-]{1,128}):([0-9a-f]{64})", store_id)
+        if (match is None or not isinstance(receipt_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", receipt_id)):
+            raise BootstrapEnrollmentError("verified artifact-store receipt is malformed")
+        _ensure_root_directory(self.root)
+        handle = secrets.token_urlsafe(32)
+        record = {"schema": 1, "handle": handle, "receipt_id": receipt_id,
+                  "setup_session_id": setup_authorization.setup_session_id,
+                  "transaction_handle": setup_authorization.transaction_handle,
+                  "target_id": setup_authorization.target_id,
+                  "plan_digest": setup_authorization.plan_digest,
+                  "operator_uid": setup_authorization.operator_uid,
+                  "artifact_id": match.group(1), "sha256": match.group(2)}
+        _atomic_root_file(self.root / f"{handle}.json", _canonical(record), 0o600)
+        return handle
+
+    def lookup(self, handle: str, setup_authorization: VerifiedRootSetupAuthorization) -> tuple[str, str]:
+        if os.geteuid() != 0:
+            raise BootstrapEnrollmentError("artifact receipt lookup requires root")
+        _validate_setup_authorization(setup_authorization)
+        if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+            raise BootstrapEnrollmentPending("artifact receipt handle is malformed")
+        path = self.root / f"{handle}.json"
+        value = _read_json_if_owned(path)
+        if (not isinstance(value, dict)
+                or set(value) != {"schema", "handle", "receipt_id", "setup_session_id",
+                                  "transaction_handle", "target_id", "plan_digest", "operator_uid",
+                                  "artifact_id", "sha256"}
+                or value.get("schema") != 1 or value.get("handle") != handle
+                or value.get("setup_session_id") != setup_authorization.setup_session_id
+                or value.get("transaction_handle") != setup_authorization.transaction_handle
+                or value.get("target_id") != setup_authorization.target_id
+                or value.get("plan_digest") != setup_authorization.plan_digest
+                or value.get("operator_uid") != setup_authorization.operator_uid
+                or value.get("target_id") != RootBootstrapProvisionOperation.target
+                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", str(value.get("artifact_id", "")))
+                or not re.fullmatch(r"[0-9a-f]{64}", str(value.get("sha256", "")))):
+            raise BootstrapEnrollmentPending("artifact receipt is absent or belongs to another setup transaction")
+        return value["artifact_id"], value["sha256"]
 
 
 class SystemIdentityAdapter:
@@ -357,8 +415,13 @@ class RootBootstrapEnrollment:
         if os.geteuid() != 0:
             raise BootstrapEnrollmentPending("service-generation enrollment requires the root authority process")
         policy = self.policy_resolver(request, setup_authorization)
-        _validate_policy(policy, records_required=self.record_builder is None)
-        receipts = tuple(self.receipt_resolver.resolve(handle) for handle in request.artifact_receipt_handles)
+        _validate_policy(policy, records_required=(policy.activation_state == "active"
+                                                     and self.record_builder is None))
+        if policy.activation_state == "prepared":
+            _validate_prepared_policy(policy)
+        receipts = tuple(self.receipt_resolver.resolve(
+            handle, setup_authorization=setup_authorization)
+            for handle in request.artifact_receipt_handles)
         _validate_receipts(receipts)
         if not receipts or not any(item.artifact_id == policy.source_artifact_id for item in receipts):
             raise BootstrapEnrollmentPending("verified pinned Hermes source artifact receipt is not enrolled")
@@ -380,6 +443,8 @@ class RootBootstrapEnrollment:
             authority.get("service_generations", {}).get("generation_digest")
             if previous is not None and isinstance(authority.get("service_generations"), dict) else None
         )
+        if policy.activation_state == "prepared" and previous is not None:
+            raise BootstrapEnrollmentPending("prepared first-snapshot enrollment cannot replace an existing authority generation")
         if "service_generations" not in authority:
             raise BootstrapEnrollmentError("root authority file does not accept service-generation publication")
         transaction_id = secrets.token_hex(16)
@@ -439,15 +504,17 @@ class RootBootstrapEnrollment:
                                identity=identity, provision_receipt_handle=provision_receipt_handle,
                                request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests,
                                setup_authorization=setup_authorization)
-            if self.record_builder is not None:
+            if policy.activation_state == "active" and self.record_builder is not None:
                 policy = replace(policy, records=tuple(self.record_builder(policy, identity)))
                 _validate_policy(policy)
-            service = _verify_service_records(policy, identity)
+            service = None if policy.activation_state == "prepared" else _verify_service_records(policy, identity)
             if self.authority_builder is not None:
                 authority = dict(self.authority_builder(authority, policy, identity))
                 _validate_authority_base(authority)
             if authority is None:
                 raise BootstrapEnrollmentPending("root-selected base authority enrollment policy is required")
+            if policy.activation_state == "prepared":
+                _validate_prepared_authority(authority)
             # Artifacts remain root-owned and content-addressed. Receipt source paths
             # come only from the root resolver; bytes are rehashed during copy.
             _ensure_root_directory(self.artifact_root)
@@ -499,7 +566,8 @@ class RootBootstrapEnrollment:
                     generation_id=service_generations["generation_id"],
                     generation_digest=service_generations["generation_digest"],
                     previous_generation_digest=previous_generation_digest,
-                    state="committed", enrollment_ids=(service.enrollment_id,),
+                state="prepared" if service is None else "committed",
+                enrollment_ids=() if service is None else (service.enrollment_id,),
                     issued_monotonic=issued, expires_monotonic=issued + 300.0,
                 )
         except Exception:
@@ -701,7 +769,9 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "resource_jobs": [dict(row) for row in policy.resource_jobs],
              "remote_session_enrollments": [dict(row) for row in policy.remote_session_enrollments],
              "resource_backend_enrollments": [dict(row) for row in policy.resource_backend_enrollments],
-             "resource_body_recipes": [dict(row) for row in policy.resource_body_recipes]}
+             "resource_body_recipes": [dict(row) for row in policy.resource_body_recipes],
+             "resource_scope_bindings": [dict(row) for row in policy.resource_scope_bindings],
+             "resource_validators": [dict(row) for row in policy.resource_validators]}
     value["generation_digest"] = hashlib.sha256(_canonical(value, ensure_ascii=False)).hexdigest()
     from .enrollment import _validate_service_generations
     try:
@@ -779,9 +849,20 @@ def _validate_request(request: BootstrapEnrollmentRequest) -> None:
         raise BootstrapEnrollmentError("bootstrap enrollment request is malformed")
 
 
+def _validate_setup_authorization(value: VerifiedRootSetupAuthorization) -> None:
+    if (not isinstance(value, VerifiedRootSetupAuthorization)
+            or value.target_id != RootBootstrapProvisionOperation.target
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value.setup_session_id)
+            or not re.fullmatch(r"[0-9a-f]{64}", value.plan_digest)
+            or type(value.operator_uid) is not int or value.operator_uid <= 0
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", value.transaction_handle)):
+        raise BootstrapEnrollmentError("verified root setup authorization is malformed")
+
+
 def _validate_policy(policy: EnrollmentPolicy, *, records_required: bool = True) -> None:
     if (not isinstance(policy, EnrollmentPolicy) or not policy.service_profile_id
             or not policy.principal_id or not policy.generation_id
+            or policy.activation_state not in {"prepared", "active"}
             or records_required and not policy.records
             or not policy.source_artifact_id
             or len(policy.records) > 1024 or len({policy.home_root, policy.work_root, policy.data_root}) != 3):
@@ -799,6 +880,25 @@ def _validate_authority_base(value: Mapping[str, Any]) -> None:
         _reject_secret_material(dict(value))
     except Exception:
         raise BootstrapEnrollmentError("base authority documents may contain credential references only") from None
+
+
+def _validate_prepared_policy(policy: EnrollmentPolicy) -> None:
+    if policy.records:
+        raise BootstrapEnrollmentError("prepared generation cannot publish runnable service records")
+    catalog_names = ("protected_devices", "protected_build_records", "native_packages",
+                     "memory_enrollments", "operation_parameter_schemas", "source_issuers",
+                     "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
+                     "resource_body_recipes", "resource_scope_bindings", "resource_validators")
+    if any(getattr(policy, name) for name in catalog_names):
+        raise BootstrapEnrollmentError("prepared generation cannot activate dependent catalogs")
+
+
+def _validate_prepared_authority(authority: Mapping[str, Any]) -> None:
+    inactive_maps = ("principals", "rules", "process_profiles", "provider_enrollments",
+                     "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges",
+                     "normalization_policies", "delegations")
+    if any(authority.get(name) != {} for name in inactive_maps):
+        raise BootstrapEnrollmentError("prepared authority snapshot cannot expose active worker effects")
 
 
 def _validate_receipts(receipts: tuple[VerifiedArtifactReceipt, ...]) -> None:
