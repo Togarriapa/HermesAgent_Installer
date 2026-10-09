@@ -26,6 +26,8 @@ class NativePluginToolResultTests(unittest.TestCase):
     def test_non_json_and_oversized_values_use_static_safe_error(self):
         self.assertEqual(_plugin_tool_result({"credential": object()}), _UNSAFE_PLUGIN_RESULT)
         self.assertEqual(_plugin_tool_result({"large": "x" * (2 * 1024 * 1024)}), _UNSAFE_PLUGIN_RESULT)
+        self.assertEqual(_plugin_tool_result(["x" * 1_100_000, "y" * 1_100_000]),
+                         _UNSAFE_PLUGIN_RESULT)
 
     def test_proxy_preserves_registration_options_and_wraps_handler(self):
         class Context:
