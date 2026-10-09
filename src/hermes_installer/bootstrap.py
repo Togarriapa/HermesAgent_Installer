@@ -80,12 +80,13 @@ def _stop_group(proc: subprocess.Popen) -> None:
 class HermesBootstrap:
     """Runs exact upstream script content and stage names; callers cannot inject commands."""
     def __init__(self, data_root: OwnedRoot, state: Journal, *, network: BoundedNetwork | None = None,
-                 runner: Callable | None = None, desktop_builder: Callable | None = None, expected_script_blob: str = INSTALL_SCRIPT_BLOB):
+                 runner: Callable | None = None, desktop_builder: Callable | None = None, agent_probe: Callable | None = None, expected_script_blob: str = INSTALL_SCRIPT_BLOB):
         self.data_root = data_root
         self.state = state
         self.network = network or BoundedNetwork(deadline_seconds=20, socket_timeout=8, max_response_bytes=128 * 1024)
         self.runner = runner or self._run_process
         self.desktop_builder = desktop_builder or self._run_desktop_source_build
+        self.agent_probe = agent_probe or self._verify_agent_runtime
         self.expected_script_blob = expected_script_blob
         self.install_dir = data_root.path("generations/hermes-agent-" + HERMES_COMMIT[:12])
         self.hermes_home = data_root.path("profiles/default")
@@ -359,7 +360,7 @@ class HermesBootstrap:
             complete = json.loads(completion.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             complete = {}
-        if complete.get("pinnedCommit") != HERMES_COMMIT or not self._verify_agent_runtime():
+        if complete.get("pinnedCommit") != HERMES_COMMIT or not self.agent_probe():
             raise BootstrapError("Pinned Hermes source or executable runtime verification failed")
         desktop_dir = self.install_dir / "apps" / "desktop"
         desktop_built = False

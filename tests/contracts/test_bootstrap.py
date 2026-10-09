@@ -49,6 +49,13 @@ class FakeRunner:
                 (directory/"apps"/"desktop"/"release"/"linux-arm64-unpacked").mkdir(parents=True)
         return 0,b""
 
+def fake_desktop(data):
+    def build(*, timeout):
+        dist=data.path("generations/hermes-agent-"+HERMES_COMMIT[:12]+"/apps/desktop/dist")
+        dist.mkdir(parents=True,exist_ok=True); (dist/"index.html").write_text("<html>"+"x"*200+"</html>")
+        return 0,b""
+    return build
+
 class BootstrapTests(unittest.TestCase):
     def test_git_blob_identity_is_content_sensitive(self):
         self.assertEqual(git_blob_sha1(SCRIPT),hashlib.sha1(b"blob "+str(len(SCRIPT)).encode()+b"\0"+SCRIPT).hexdigest())
@@ -63,7 +70,7 @@ class BootstrapTests(unittest.TestCase):
                 out=Path(runner.calls[0][0][runner.calls[0][0].index("--dir")+1])/"apps/desktop/dist"
                 out.mkdir(parents=True,exist_ok=True); (out/"index.html").write_text("<html>"+"x"*200+"</html>")
                 return 0,b""
-            bootstrap=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,desktop_builder=desktop_build,expected_script_blob=git_blob_sha1(SCRIPT))
+            bootstrap=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
             bootstrap.install(include_desktop=True)
             first_stage_count=sum(1 for call in runner.calls if "--stage" in call[0])
             bootstrap.install(include_desktop=True)
@@ -77,7 +84,7 @@ class BootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
             journal=Journal(state_root.path("journal.sqlite3")); runner=FakeRunner(fail_once="products")
-            boot=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,expected_script_blob=git_blob_sha1(SCRIPT))
+            boot=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
             with self.assertRaisesRegex(BootstrapError,"stage products"):
                 boot.install()
             prior=sum(1 for call in runner.calls if "--stage" in call[0])
@@ -90,7 +97,7 @@ class BootstrapTests(unittest.TestCase):
             with self.subTest(partial=partial), tempfile.TemporaryDirectory() as td:
                 data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
                 runner=FakeRunner(fail_once="repository",partial_repository=partial)
-                boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=runner,expected_script_blob=git_blob_sha1(SCRIPT))
+                boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
                 with self.assertRaisesRegex(BootstrapError,"stage repository"):
                     boot.install()
                 boot.install(include_desktop=False)
@@ -99,7 +106,7 @@ class BootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
             runner=FakeRunner(); journal=Journal(state_root.path("journal.sqlite3"))
-            boot=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,expected_script_blob=git_blob_sha1(SCRIPT))
+            boot=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
             boot.install()
             head=boot.install_dir/".git"/"HEAD"; head.write_text("0"*40)
             with self.assertRaisesRegex(Exception,"resumable"):
@@ -108,7 +115,7 @@ class BootstrapTests(unittest.TestCase):
     def test_agent_only_install_can_add_desktop_later(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
-            runner=FakeRunner(); boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=runner,expected_script_blob=git_blob_sha1(SCRIPT))
+            runner=FakeRunner(); boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
             boot.install(include_desktop=False)
             desktop_before=sum(1 for call in runner.calls if "--include-desktop" in call[0])
             report=boot.install(include_desktop=True)
@@ -124,7 +131,7 @@ class BootstrapTests(unittest.TestCase):
                     self.calls.append((args,timeout,capture))
                     return (0,json.dumps({"protocol_version":1,"stages":[{"name":"other"}]}).encode()) if capture else (0,b"")
             runner=BadRunner()
-            boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=runner,expected_script_blob=git_blob_sha1(SCRIPT))
+            boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
             with self.assertRaisesRegex(BootstrapError,"stage protocol changed"): boot.install()
             self.assertFalse(any("--stage" in call[0] for call in runner.calls))
     def test_modified_script_is_rejected_before_execution(self):
