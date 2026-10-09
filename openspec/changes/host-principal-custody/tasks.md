@@ -123,3 +123,7 @@ Private origin probe connector v11: plans/amendments/2026-10-09-private-origin-p
 ### v11 protocol refinement
 
 HI-T08 / HI-T09: use planning/protected-runtime-assembly-contract.json native_custody_proof_protocol; immutable mount metadata alone cannot establish readiness, source provenance or action success. Existing task IDs and unchecked acceptance states are preserved.
+
+### v12 loader progress framing
+
+HI-T08/HI-T09 use native_custody_proof_protocol.progress_wire in planning/protected-runtime-assembly-contract.json; concrete root receiver and actual selected loader observations are required. Acceptance remains unchecked.

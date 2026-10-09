@@ -408,6 +408,13 @@
       "identity"
     ],
     "target_peer": "Resolver returns duplicated owned PIDFD and actual kernel identity; same producer by default. Different peer only from exact current root pending HI11 producer/gateway bridge binding and full parent context. No caller PID/profile selector or relabelled gateway context. Root closes duplicates on cancellation/expiry.",
-    "evidence": "HI-T08 / HI-T09 and EV-HI08 / EV-HI09 remain pending: real launch/import/register/ready/action boundary observations plus forged worker ready, substituted closure/module/action, stale PIDFD, replay/relaunch and expiry negatives."
+    "evidence": "HI-T08 / HI-T09 and EV-HI08 / EV-HI09 remain pending: real launch/import/register/ready/action boundary observations plus forged worker ready, substituted closure/module/action, stale PIDFD, replay/relaunch and expiry negatives.",
+    "progress_wire": {
+      "encoding": "4-byte unsigned big-endian payload length followed by UTF8 canonical JSON: sort_keys=true, separators=(comma,colon), ensure_ascii=false, allow_nan=false; strict duplicate-key/unknown-field rejection, no ancillary FDs accepted from loader.",
+      "limits": "Each payload <=65536 bytes, exactly three phase records; sequence 0/1/2 in listed phase order; registered_action_ids sorted unique exact manifest finite allowlist <=256 IDs; empty until actions-registered, ready must repeat identical registered tuple. Root-created 256-bit base64url launch_nonce, no worker chosen nonce. Socket closes after ready or any failure.",
+      "receiver": "RootNativeLoaderObservationStore(custody_resolver,active_catalog_resolver,clock); root composition supplies concrete custody manager and digest-bound catalog, not worker callbacks. register_launch(owned_process_handle,parent_socket,expected_loader_role_artifact_id,expected_loader_role_sha256,launch_nonce,deadline_monotonic) -> opaque launch_observation_handle; root-private selected launch only. receive_loader_progress(launch_observation_handle,cancelled) -> immutable ready_event_id; bounded frame reads authenticate retained actual PIDFD/current kernel identity and selected role on every frame.",
+      "proof": "resolve_loaded_package_closure(live_peer,observer) resolves immutable ready record and current mount receipt, joins current observer adapter/action/role and returns existing exact DTO. No caller receiver/role/socket/nonce selector. Root record constructor owns fixed issued/expires; expiry <= original launch observation deadline and current service lease.",
+      "failure": "Unexpected EOF before ready, extra frame, malformed/noncanonical JSON, phase/sequence/nonce/hash/action mismatch, peer exit/relaunch or cancellation invalidates observation. Any restart loses active observations and requires a fresh actual launch; no ready-state file recovery."
+    }
   }
 }

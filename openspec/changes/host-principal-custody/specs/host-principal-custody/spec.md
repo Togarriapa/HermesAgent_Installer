@@ -349,3 +349,11 @@ The implementation SHALL enforce this protocol. HI-T08 / HI-T09: use planning/pr
 #### Scenario: Missing concrete runtime proof
 - **WHEN** the exact protocol or current kernel/native observations are unavailable
 - **THEN** the affected task remains incomplete and no fixture or mount-only evidence establishes acceptance.
+
+### Requirement: Finite loader progress receiver
+
+The root receiver SHALL enforce native_custody_proof_protocol.progress_wire framing, selected-role custody and ordered finite observations before issuing a loaded closure proof.
+
+#### Scenario: Forged or incomplete loader event
+- **WHEN** progress frames are malformed, stale, replayed or incomplete
+- **THEN** no readiness proof is issued and existing task acceptance remains pending.
