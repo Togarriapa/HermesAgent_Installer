@@ -166,7 +166,7 @@ def fixture_echo(args, **kwargs):
     if not marker:
         raise RuntimeError("fixture marker path missing")
     with open(marker, "a", encoding="utf-8") as stream:
-        stream.write("fixture_echo_invoked\n")
+        stream.write("x")
     return json.dumps({"result": "SYNTHETIC_PRIVATE_CANARY_7f4c"})
 ''', encoding="utf-8")
                 (fixture_plugin / "__init__.py").write_text('''from .schemas import FIXTURE_ECHO
@@ -284,7 +284,7 @@ plugins:
                     + " recording_requests=" + json.dumps(request_summaries, sort_keys=True))
                 self.assertTrue(fixture_marker.is_file(),
                     "native AIAgent cycle did not invoke the real fixture tool handler")
-                self.assertEqual(fixture_marker.read_text(encoding="utf-8"), "fixture_echo_invoked\n")
+                self.assertEqual(fixture_marker.read_text(encoding="utf-8"), "x")
                 self.assertIn("NATIVE_DISPATCH_OK", result.stdout)
                 self.assertEqual(len(transport.calls), 6)
                 self.assertEqual([call[0] for call in transport.calls],
