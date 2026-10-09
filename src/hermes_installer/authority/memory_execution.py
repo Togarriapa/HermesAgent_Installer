@@ -849,11 +849,17 @@ class RootMemoryStepEffectAuthority:
             "owner_generation": enrollment.memory_owner_generation,
         }, min(4 * 1024 * 1024, enrollment.limits["request_bytes"] + 32_768))
         payload_digest = canonical_digest(child_payload)
+        # Context issuance itself takes time; reserve a small monotonic margin
+        # so the signed child lease can never extend past the durable job's
+        # original hard deadline.
+        child_lease = min(remaining, binding["deadline_monotonic"] - self.monotonic(), 30.0) - 0.05
+        if child_lease <= 0:
+            raise MemoryExecutionDenied("memory step deadline expired before child grant")
         context_wire = self.service._issue_context(source.uid, {
             "purpose": "memory-service-connector",
             "intent": f"{reservation_handle}:{step.step_id}:{binding['sequence']}",
             "trace_id": source.trace_id,
-            "lease_seconds": min(remaining, 30.0),
+            "lease_seconds": child_lease,
             "source_contexts": [source.to_wire()],
             "final_payload_digest": payload_digest,
             "operation": "connector.open",
