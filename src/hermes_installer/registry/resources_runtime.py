@@ -1853,10 +1853,23 @@ class WebhookVerifier:
 
         try:
             decoded = json.loads(body, object_pairs_hook=unique_object, parse_constant=reject_constant)
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
             raise ResourceRuntimeError("webhook body is invalid JSON or contains duplicate fields") from None
         if not isinstance(decoded, (dict, list)):
             raise ResourceRuntimeError("webhook JSON root must be an object or array")
+        stack: list[tuple[Any, int]] = [(decoded, 0)]
+        member_count = 0
+        while stack:
+            current, depth = stack.pop()
+            if depth > 32:
+                raise ResourceRuntimeError("webhook JSON exceeds the protocol nesting bound")
+            if isinstance(current, Mapping):
+                member_count += len(current)
+                if member_count > 4096:
+                    raise ResourceRuntimeError("webhook JSON exceeds the protocol member bound")
+                stack.extend((value, depth + 1) for value in current.values())
+            elif isinstance(current, list):
+                stack.extend((value, depth + 1) for value in current)
 
         event = spec.get("event")
         event_type = ""

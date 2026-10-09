@@ -88,6 +88,7 @@ class SelectedWebhookIngressTests(unittest.TestCase):
             resource_id="github-push", kind="webhooks", selected_enabled=True,
             generation=resource_generation, profile_id="hermes", profile_generation="e" * 64,
             principal_id="principal-hermes", observer_enrollment_id="observer-github-push",
+            max_payload_bytes=1_048_576,
             backends={backend.backend_id: backend},
             nodes=(SimpleNamespace(backend_enrollment_id=backend.backend_id),),
         )

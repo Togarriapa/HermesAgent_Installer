@@ -259,6 +259,23 @@ class ResourcesRuntimeTests(unittest.TestCase):
         self.assertEqual(receipt.event_id, "strict-1")
         self.assertEqual(store.ids, {("strict-hook", "strict-1")})
 
+        bounded_store = _ReplayStore()
+        bounded_verifier = WebhookVerifier(bounded_store, now=lambda: 100.0)
+        too_deep = (b'{"a":' * 34) + b'0' + (b'}' * 34)
+        deep_headers = {**headers, "X-Delivery": "strict-deep"}
+        deep_signature = "sha256=" + hmac.new(secret, too_deep, hashlib.sha256).hexdigest()
+        with self.assertRaisesRegex(ResourceRuntimeError, "nesting bound"):
+            bounded_verifier.verify("strict-hook", spec,
+                                    {**deep_headers, "X-Signature": deep_signature}, too_deep, secret)
+        too_many_members = ("{" + ",".join(f'"k{i}":0' for i in range(4097)) + "}").encode()
+        member_headers = {**headers, "X-Delivery": "strict-members"}
+        member_signature = "sha256=" + hmac.new(secret, too_many_members, hashlib.sha256).hexdigest()
+        with self.assertRaisesRegex(ResourceRuntimeError, "member bound"):
+            bounded_verifier.verify("strict-hook", spec,
+                                    {**member_headers, "X-Signature": member_signature},
+                                    too_many_members, secret)
+        self.assertEqual(bounded_store.ids, set())
+
     def test_durable_webhook_replay_store_survives_restart_and_fails_closed_when_full(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

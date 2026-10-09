@@ -223,10 +223,13 @@ class SelectedWebhookIngress:
         selected_and_enrollment = self._routes.get(path)
         if selected_and_enrollment is None:
             raise ResourceObservationError("webhook route is not selected")
-        observation = WebhookRequestObservation.from_headers(
-            selected_and_enrollment[0].identity.resource_id, headers, body,
-        )
         selected, enrollment = selected_and_enrollment
+        if (not isinstance(body, bytes)
+                or len(body) > min(1_048_576, enrollment.max_payload_bytes)):
+            raise ResourceObservationError("webhook body exceeds the selected root ingress byte bound")
+        observation = WebhookRequestObservation.from_headers(
+            selected.identity.resource_id, headers, body,
+        )
         if (getattr(getattr(self._bindings, "enrollment_catalog", None), "digest", None)
                 != self._service_generation_digest
                 or self._selected_resources.resolve(selected.identity) is not selected
