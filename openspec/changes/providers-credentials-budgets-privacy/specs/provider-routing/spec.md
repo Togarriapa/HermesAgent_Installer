@@ -261,3 +261,10 @@ The installer SHALL validate strict root-owned package/issuer catalogs and disti
 #### Scenario: Partial hash or unobserved configured issuer
 - **WHEN** policy/module digest is missing or source observer only exists as configuration text
 - **THEN** keep affected native effect unavailable and require actual identity/observer evidence.
+
+### Requirement: Root-observed native invocation ancestry
+The installer SHALL bind native tool and memory invocation ancestry to actual root-observed response/event handles and selected loaded actions, with fresh per-effect authority.
+
+#### Scenario: Worker invents current invocation
+- **WHEN** a worker supplies a forged response/call handle or changes observed action arguments
+- **THEN** root rejects before effects and does not mint source or user provenance from caller assertions

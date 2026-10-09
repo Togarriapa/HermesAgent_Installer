@@ -76,3 +76,5 @@ Closed memory/model recipe identities v6: plans/amendments/2026-10-09-closed-mem
 Original R0092/R0093 functional fixture refinement: plans/amendments/2026-10-09-local-component-functional-fixtures-v1.md and planning/local-component-functional-fixture-contract.json require actual pinned source+locks/upstreampipeline, syntheticvision/localHTML and real mockedLLMboundary, not skill references/surrogateprotocol. ExistingSK-R0092/0093 and EV-R0092/0093 remainopen.
 
 Pinned source document link v1: plans/amendments/2026-10-09-pinned-source-document-link-v1.md and pinned-source-document-link-contract.json preserveoriginalGitlink metadata and allowonly exactpinnedrootstable regularcompiled documentcopy. Upstreamdocs notgovernance; R0092/SK-R0092/EV-R0092 remainopen.
+
+Additive root-state/build-mount refinement (SK01 / SK-T01): see plans/amendments/2026-10-09-root-memory-state-build-mounts-v1.md; selected protected mount nodes and separate UID0 authority journal state are mandatory. Original scope and pending target acceptance unchanged.
