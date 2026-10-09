@@ -477,6 +477,7 @@ class ResourceJobEnrollment:
     profile_generation: str = ""
     scope_bindings: Mapping[str, ResourceScopeBinding] = field(default_factory=dict)
     validators: Mapping[str, ResourceValidator] = field(default_factory=dict)
+    source_parent_channels: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         for key in ("resource_id", "kind", "profile_id", "principal_id", "consent_revision", "schedule_or_route_id"):
@@ -493,6 +494,11 @@ class ResourceJobEnrollment:
             raise ResourceJobDenied("source action IDs must be a protected set")
         object.__setattr__(self, "source_action_ids",
                            frozenset(_ident(item, "source action ID") for item in self.source_action_ids))
+        if not isinstance(self.source_parent_channels, (set, frozenset)):
+            raise ResourceJobDenied("source parent channels must be a protected set")
+        object.__setattr__(self, "source_parent_channels",
+                           frozenset(_ident(item, "source parent channel")
+                                     for item in self.source_parent_channels))
         if not isinstance(self.credential_reference_ids, (set, frozenset)):
             raise ResourceJobDenied("credential references must be a protected set")
         object.__setattr__(self, "credential_reference_ids",
@@ -712,6 +718,69 @@ class ResourceJobAdmission:
         copied = {_ident(key, "node id"): _ident(value, "child admission id")
                   for key, value in self.child_admission_ids.items()}
         object.__setattr__(self, "child_admission_ids", MappingProxyType(copied))
+
+
+@dataclass(frozen=True, slots=True)
+class RootResourceJobAdmissionHandle:
+    """Root-only one-attempt handle used to launch a selected Hermes task.
+
+    Instances are minted by ResourceJobAuthority after a durable child claim
+    and passed only between root in-process services. This DTO has no wire
+    encoder and is not a worker bearer credential.
+    """
+
+    handle_id: str
+    job_id: str
+    node_id: str
+    child_admission_id: str
+    attempt_index: int
+    backend_enrollment_id: str
+    resource_generation: str
+    profile_id: str
+    profile_generation: str
+    native_package_id: str
+    native_package_generation: str
+    process_enrollment_id: str
+    process_generation: str
+    operation_id: str
+    child_target_id: str
+    child_capability: str
+    task_body_recipe_id: str
+    task_request_schema_id: str
+    task_payload: bytes = field(repr=False)
+    task_payload_sha256: str
+    parent_closure_digest: str
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        for name in (
+            "handle_id", "job_id", "node_id", "child_admission_id", "backend_enrollment_id",
+            "resource_generation", "profile_id", "profile_generation", "native_package_id",
+            "native_package_generation", "process_enrollment_id", "process_generation",
+            "operation_id", "child_target_id", "child_capability", "task_body_recipe_id",
+            "task_request_schema_id",
+        ):
+            _ident(getattr(self, name), f"root task handle {name}")
+        if (type(self.attempt_index) is not int or not 0 <= self.attempt_index <= 9
+                or self.operation_id != "hermes-resource-profile-task-v1"):
+            raise ResourceJobDenied("root task handle operation or attempt is invalid")
+        if (not isinstance(self.task_payload, bytes) or not 1 <= len(self.task_payload) <= 262_144
+                or hashlib.sha256(self.task_payload).hexdigest() != self.task_payload_sha256
+                or not _DIGEST.fullmatch(self.parent_closure_digest)):
+            raise ResourceJobDenied("root task handle payload or closure digest is invalid")
+        try:
+            value = json.loads(self.task_payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ResourceJobDenied("root task handle payload is malformed") from None
+        if (not isinstance(value, dict) or set(value) != {"prompt"}
+                or not isinstance(value["prompt"], str) or not value["prompt"]
+                or _canonical(value) != self.task_payload):
+            raise ResourceJobDenied("root task handle payload is not the fixed prompt schema")
+        if (isinstance(self.expires_monotonic, bool)
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not __import__("math").isfinite(self.expires_monotonic)
+                or self.expires_monotonic <= 0):
+            raise ResourceJobDenied("root task handle lease is invalid")
 
 
 @dataclass(frozen=True, slots=True)

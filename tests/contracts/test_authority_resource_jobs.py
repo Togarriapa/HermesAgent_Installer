@@ -148,6 +148,8 @@ def _fixture():
     observer = SimpleNamespace(
         observer_enrollment_id="observer-1", channel_id="source-channel", profile_id="profile-1",
         principal_id="principal-1", generation="service-generation", source_kind="schedule-event",
+        origin_id="schedule-1", capture_schema_id="event-schema",
+        source_action_id="root-timer-event",
     )
     return (row, raw_backend, [raw_recipe, raw_task_recipe], scope,
             [validator, raw_task_validator], source_issuer, observer, enrollment)
@@ -208,3 +210,23 @@ def test_root_process_receipt_binds_task_attempt_and_full_lineage():
     with pytest.raises(AuthorityDenied, match="does not bind this selected task"):
         receipt.assert_bound(job_id="job-1", node_id="other-node", backend=backend, payload=payload,
                              parent_closure_digest=closure, now=10.0, job_expires_monotonic=50.0)
+
+
+def test_protected_resource_job_index_rejects_wrong_observer_origin_or_action():
+    row, raw_backend, raw_recipes, raw_scope, raw_validators, issuer, observer, _ = _fixture()
+    from hermes_installer.authority.resource_jobs import (
+        parse_resource_backend_records, parse_resource_body_recipes,
+        parse_resource_scope_binding_records, parse_resource_validator_records,
+    )
+
+    kwargs = {
+        "backend_enrollments": parse_resource_backend_records([raw_backend]),
+        "body_recipes": parse_resource_body_recipes(raw_recipes),
+        "scope_bindings": parse_resource_scope_binding_records([raw_scope]),
+        "validators": parse_resource_validator_records(raw_validators),
+        "source_issuers": (issuer,),
+    }
+    wrong_origin = SimpleNamespace(**{**observer.__dict__, "origin_id": "another-schedule"})
+    assert not index_resource_job_records([row], **kwargs, source_observers=(wrong_origin,))
+    wrong_action = SimpleNamespace(**{**observer.__dict__, "source_action_id": "unselected-action"})
+    assert not index_resource_job_records([row], **kwargs, source_observers=(wrong_action,))

@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    "HI09",
+    "HI10",
+    "HI08"
+  ],
+  "tasks": [
+    "HI-T09",
+    "HI-T10",
+    "HI-T08",
+    "LC-F02",
+    "LC-F03",
+    "LC-F04",
+    "BD-F03"
+  ],
+  "state": "specified roottransaction/control; actualprovision/recovery/nativeproofpending",
+  "provision": {
+    "operation": "enrollment.provision",
+    "capability": "installer-bootstrap-enrollment",
+    "target": "service-generation:bootstrap:install",
+    "request_fields": [
+      "schema=1",
+      "artifact_receipt_handles",
+      "operation_intent"
+    ],
+    "artifact_receipt_handles": "finiteuniqueopaquehandles<=64, rootregistryexactactualartifactbytes/source/catalogrole/currentgenerationreceipt; no callerpath/URL/hash-as-proof",
+    "operation_intent": "Opaque rootissued currentbootstrap transaction handle string, not freetext/mutableconfig. Root transaction stores selected mode install|repair|resume, targetfacts/user/session/privacyownership/currentexpectedgeneration/approvedsources/planrecipe and permittedchanges; user/operator collection source secure trustedsetup, not ordinary workerRPCidentityclaims.",
+    "initial_snapshot": "First authority snapshot created ONLY root-owned reviewed installer provisioner in identified authorized target rootsetup execution, with rootobserved localoperator/setupsession and selected trustedplan/artifactreceipts/actualsysteminventory. Ordinaryworker enrollment.provision requires alreadyactive exactroot rule/context; no firstsnapshot bypass throughpublic socket/claimeduidroot/env. Initialrootlocal bootstrap path validatesfixedcapability/target/intent and exactpayload itself, journal thenwritesstrictrootauthoritysnapshot atomically; recordsinitialtrust provenance/targetauthorization notpretendexistingHostContext. Doesnotself-authorizeaccountwrites/spend/adminunrelatedtargets.",
+    "identity_roots": "Root derives actualUID/GID/username fromidentifiedtargetaccount and freshauthoritative identity when required, separateunique managedserviceUIDs and callerjournal/servicehome/work/data roots fromfixedreviewedtemplate; rootowned ancestors/noescape/ownershipclaimsverified. RejectwrongUID/preexistingunownedroot/symlink/unrelatedserviceconflict. No callerphysicalroot/UID/serviceflags.",
+    "receipt_fields": [
+      "schema=1",
+      "transaction_handle",
+      "provision_receipt_handle",
+      "generation_id",
+      "generation_digest",
+      "previous_generation_digest",
+      "state=prepared|committed|incomplete|rolled-back",
+      "enrollment_ids",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "receipt": "Opaque rootregistry lookup, readonly ID/digestcorrelation notbearerauthority/no paths/secrets; actualenrollment_ids fromnewstrictsnapshot. Rootfreshpolicy/publicunknown/budget0/accountdependencydenyinitial defaults preserveallrequiredscope incomplete ratherthanomit.",
+    "recovery": "Durablerootjournal storesintent/payloadartifactreceiptdigests/ownershipprestate/previoussnapshot/atomicstages beforeeffects; pertargetlock+CAS expectedgeneration preventsconcurrentoverwrite. Resumeconsumesfresh exactprovisiongrant/transactionadmission, verifiesactualcurrentrootbytes/receipts/inventory andidempotentstage; unknownpartialeffects remainincomplete/reconcile notblindrerun. Cancel/failure beforecommit leavesprevioussnapshotactive, removestemporaryownedbytes only; aftercommithealthfailure rootatomicrollback previousgeneration preservingprivate/userdata/secrets. Restartsinvalidatecontexts/receipts unlessrootjournalexplicitrevalidates, neverreviveconsumedgrants."
+  },
+  "process_controls": {
+    "client_signature": "process_control_operation(client, operation, process_id, generation, fields={})",
+    "rpc_operation": "process.control",
+    "request_fields": [
+      "schema=1",
+      "operation",
+      "process_id",
+      "generation",
+      "fields"
+    ],
+    "operations": [
+      "process.status",
+      "process.read",
+      "process.write",
+      "process.stop",
+      "process.inspect"
+    ],
+    "capability": "hermes-process-control",
+    "root_target": "Rootlivehandle selectedprofile operation_targets exacttarget for requestedverb; defaultnoinventedcallerprofile target. inspect exact<profile>:inspect fromHI10. Otherssameprotectedoperation_targets bystatus/read/write/stop.",
+    "fields": {
+      "process.status": {},
+      "process.read": {
+        "maximum_bytes": "int1..1048576",
+        "stream": "stdout|stderr; selectedboundedrootringonly"
+      },
+      "process.write": {
+        "data_bytes": "boundedbytes<=262144, exactprotectedstdin typedprotocol only; no shellcontrol",
+        "sequence": "nonnegativeint exactnextoneuseframe"
+      },
+      "process.stop": {
+        "reason": "cancel|shutdown|rollback",
+        "grace_seconds": "int0..10, rootmaytighten"
+      },
+      "process.inspect": {}
+    },
+    "identity": "Authenticateactualsocketpeer rootprincipal/profile fromactivebinding, rootprocessregistry currentopaqueprocess_id/generation/PIDFD/starttime/exe/cgroup/logicalownerprincipal/controladmission. ActualserviceUIDseparatefromcontrollerUID, explicitroot owner/controllerbinding permittedonlyregisteredowner/selectedrootlifecycle, nevercallerUID/profile assertion. No PID/path/signal/argv/env/target/context/bearergrant input.",
+    "effect": "Rootderives canonicalfullcontrolpayload/context/target andfreshoneuse exacteffect operation requestedverb (NOT genericprocess.control wildcardgrant), verifiescurrent policy/sourceclosure/owner/gen/lease beforecustodyeffect. process.control is fixedfacadeRPC only. Stopowner/rootwatchdogcleanup allowed afterexpiredprocesslease withoutfreshpermission for sibling/newprocess effects. Replayed/concurrentwrite/changedgen/restart stalehandle denies.",
+    "response_fields": [
+      "schema=1",
+      "process_id",
+      "generation",
+      "operation",
+      "state",
+      "result",
+      "expires_monotonic"
+    ],
+    "result": "Finiteperverbtypedresult: statusstate/exitcode; readboundedbytes/eof/redacted; writeaccepted_bytes/sequence; stopclosed/reapstate; inspectHI10rootkernelattestation. No secrets/hostpath/unrelatedlogs. Missinghandleauthority/runtime actualunavailable notfabricatedstatus."
+  },
+  "loaded_proof_sufficiency": {
+    "sufficient_for": "Immutable selectedpackage/mount/role/entrypoint/actionresolver binding ONLY afteractualrootcustodylaunch/pinnedloaderprivatecontrol readiness event and sourceboundaryregistered action invocation. It isnot proofcontentsarepublic/authentic userorbackendfunctional/nativeAC passed.",
+    "required_actual_observations": [
+      "currenttargetpeer kernelidentity/PIDFD/exe/cgroup/profilegen",
+      "sealedreadonlynamespace mount/tree/manifest/resolver hashes",
+      "rootselected fixedlauncher/allowedimports/dependencyartifact execution",
+      "rootregisteredpendingloader/actionevent invoking exactselectedaction through actualnativeboundary"
+    ],
+    "insufficient": [
+      "worker ready/loaded boolean",
+      "worker suppliedmodulefile/digest/PID/parentlist",
+      "source-onlymanifest/config/mountID metadata",
+      "globalconstructable proof token",
+      "successfultest ofdifferentprofile/nativefixture"
+    ],
+    "enforcement": "Rootinstanceprivateproofregistry onactualobservations withnonce/lease/event/peer/closurefullparentjoin; sourceobserversrevalidateeachactualinvocation. Ifrootcannotobserve actuallaunch/action boundary, onlymetadatareadiness, affectednativefunctionremainsincomplete withconcreteinstrumentationstep, no impossibleacceptancefromworkerassertions."
+  }
+}

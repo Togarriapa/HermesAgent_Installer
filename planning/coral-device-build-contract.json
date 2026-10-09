@@ -90,14 +90,16 @@
     ],
     "caller_payload": [
       "schema=1",
-      "build_profile_id",
       "enrollment_id",
-      "generation"
+      "generation",
+      "operation_id",
+      "parameters={}"
     ],
     "constraint": "no shell/script/compiler flag/source path/URL/output path from caller. Reviewed builder runs unprivileged dedicated build UID in custody private namespace, immutable fixed recipe over exact staged sources/toolchain. Upstream scripts with dynamic downloads not run generically.",
     "outputs": "root attests produced nativeARM64 executable/module/tree digests + source/compiler/recipe/build generation before runtime enrollment; exact failure/cancel logs redacted and prior valid outputs preserved",
     "bounds": "finite existing custody operation lease/resource limits, no unlimited compiler worker. Native build may be resumable distinct bounded stages each freshly authorized, never extend consumed grant.",
-    "pending": "missing compiler/build deps, driver or native ABI qualification stays blocked with exact resume; no source metadata/build fixture treated as built binary"
+    "pending": "missing compiler/build deps, driver or native ABI qualification stays blocked with exact resume; no source metadata/build fixture treated as built binary",
+    "profile_resolution": "root derives selected build_profile_id from fixedoperation recipe/enrollment/currentgeneration, no caller secondselector"
   },
   "evidence": "actual selected device inference/kernel denial of siblingUSB/apex/unowned devices, hotplug/reuse/stale binding, caller device injection; actual source nativeARM64 build and wrong source/toolchain/recipe/path/network/timeout/recovery failures; fixture/native/hardware separate",
   "sources": [

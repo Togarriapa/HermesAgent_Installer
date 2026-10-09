@@ -7,15 +7,20 @@ registrations plus the already verified, consumed host effect grant.
 from __future__ import annotations
 
 import base64
+import contextlib
+import ctypes
 import hashlib
 import hmac
 import json
+import math
 import os
 import pwd
 import re
 import select
+import shutil
 import stat
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -56,6 +61,75 @@ class ManagedProfileCustody:
     operation_targets: Mapping[str, str] | None = None
     operation_recipes: Mapping[str, Mapping[str, Any]] | None = None
     parameter_schemas: Mapping[str, Mapping[str, Any]] | None = None
+    # Root-materialized protected package binding; never supplied in an RPC.
+    native_package: Any | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedNativePackageMount:
+    """Root-only verified inputs for one immutable native package mount.
+
+    The enrollment/runtime binder constructs this from NativePackageBinding
+    and ArtifactCatalog results. Its filesystem paths never cross Authority RPC.
+    """
+
+    binding: Any
+    profile_id: str
+    generation: str
+    closure_root: Path
+    entrypoint_path: Path
+    resolver_path: Path
+    adapter_paths: Mapping[str, Path]
+    dependency_paths: Mapping[str, Path]
+
+
+@dataclass(frozen=True, slots=True)
+class NativePackageMountReceipt:
+    package_id: str
+    profile_id: str
+    generation: str
+    service_mount_id: str
+    compiled_closure_sha256: str
+    entrypoint_sha256: str
+    resolver_sha256: str
+    mount_path: str
+    mount_source_device: int
+    mount_source_inode: int
+    manifest_sha256: str
+    verified_mount_options: tuple[str, ...] = ("ro", "nosuid", "nodev", "noexec")
+    private_propagation: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedNativePackageProof:
+    """Root-observed package mount joined to the active registered process."""
+
+    process_id: str
+    profile_id: str
+    generation: str
+    kernel_uid: int
+    pid_start_ticks: int
+    cgroup_identity: str
+    namespace_identity: str
+    executable_sha256: str
+    mount: NativePackageMountReceipt
+    observed_monotonic: float
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessCleanupProof:
+    """Root-observed teardown facts for one managed generation."""
+
+    process_id: str
+    generation: str
+    cgroup_identity: str
+    cgroup_empty: bool
+    main_pidfd_gone: bool
+    parent_pidfd_gone: bool
+    launcher_reaped: bool
+    cleanup_verified: bool
+    evidence_digest: str
+    observed_monotonic: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +143,32 @@ class LivePeerIdentity:
     executable_sha256: str
     cgroup_identity: str
     namespace_identity: str
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteOriginKernelProof:
+    """Private root observation of the sole active enrolled process.
+
+    This is kernel identity evidence only. It carries no route, config, token,
+    application-window or origin-readiness claims.
+    """
+
+    process_id: str
+    enrollment_id: str
+    profile_id: str
+    profile_generation: str
+    uid: int
+    gid: int
+    pid: int
+    pid_starttime_ticks: int
+    executable_device: int
+    executable_inode: int
+    executable_sha256: str
+    cgroup_id: str
+    mount_namespace_inode: int
+    network_namespace_inode: int
+    pidfd_registry_handle: str
+    expires_monotonic: float
 
 
 @dataclass(slots=True)
@@ -112,11 +212,14 @@ class _Handle:
     expires: float
     output_cap: int
     artifact_mount_dir: Path
+    native_mount_source: Path | None = None
+    native_mount_receipt: NativePackageMountReceipt | None = None
     network_namespace_fd: int | None = None
     child_artifact_identities: tuple[tuple[str, int, int], ...] = ()
     stdin_cursor: int = 0
     stdout_cursor: int = 0
     stderr_cursor: int = 0
+    stdin_sequence: int = 0
     stopped: bool = False
     lock: threading.RLock | None = None
     # The immutable profile registered by the root daemon. ``profile`` may be a
@@ -431,6 +534,70 @@ def _remove_artifact_mount(slot: Path) -> None:
     slot.rmdir()
 
 
+def native_package_mount_target(*, package_id: str, profile_id: str, generation: str,
+                               compiled_closure_sha256: str) -> Path:
+    """Derive the only worker-visible native package target from protected claims."""
+    if (not all(isinstance(value, str) and value and "\x00" not in value
+                for value in (package_id, profile_id, generation))
+            or not re.fullmatch(r"[0-9a-f]{64}", compiled_closure_sha256)):
+        raise AuthorityDenied("native.mount_binding", "native package mount claims are malformed")
+    identity = "\x00".join((package_id, profile_id, generation, compiled_closure_sha256)).encode("utf-8")
+    return Path("/run/hermes-installer/native") / hashlib.sha256(identity).hexdigest()
+
+
+def _resolved_artifact(value: Any, *, artifact_id: str, digest: str,
+                       directory: bool = False) -> tuple[Path, Any]:
+    path = Path(getattr(value, "path", value))
+    if path != path.resolve(strict=True):
+        raise AuthorityDenied("native.artifact", "native package artifact path is not canonical")
+    info = path.lstat()
+    if (info.st_uid != 0 or info.st_mode & 0o022
+            or (directory and not stat.S_ISDIR(info.st_mode))
+            or (not directory and not stat.S_ISREG(info.st_mode))):
+        raise AuthorityDenied("native.artifact", "native package artifact custody is invalid")
+    if hasattr(value, "artifact_id") and value.artifact_id != artifact_id:
+        raise AuthorityDenied("native.artifact", "native artifact ID differs from enrollment")
+    if hasattr(value, "sha256") and value.sha256 != digest:
+        raise AuthorityDenied("native.artifact", "native artifact digest differs from enrollment")
+    if not directory:
+        if info.st_nlink != 1 or info.st_size > 256 * 1024 * 1024:
+            raise AuthorityDenied("native.artifact", "native artifact exceeds custody or size bounds")
+        actual = hashlib.sha256()
+        with path.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                actual.update(chunk)
+        if actual.hexdigest() != digest:
+            raise AuthorityDenied("native.artifact", "native artifact bytes changed after catalog resolution")
+    return path, value
+
+
+def _native_relative(value: Any) -> str:
+    if (not isinstance(value, str) or not value or "\\" in value or "\x00" in value
+            or value.startswith("/") or any(part in {"", ".", ".."} for part in value.split("/"))):
+        raise AuthorityDenied("native.manifest", "native package relative path is invalid")
+    return value
+
+
+def _native_manifest_bytes(path: Path) -> bytes:
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222 or info.st_nlink != 1 or info.st_size > 4 * 1024 * 1024:
+        raise AuthorityDenied("native.manifest", "native entrypoint manifest custody is invalid")
+    return path.read_bytes()
+
+
+def _native_canonical(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
 class ManagedProcessEffectHandler:
     """Root-only process.start/status/read/write/stop fixed-verb adapter."""
 
@@ -438,6 +605,7 @@ class ManagedProcessEffectHandler:
                  systemd_run: Path = Path("/usr/bin/systemd-run"),
                  systemctl: Path = Path("/usr/bin/systemctl"),
                  artifact_resolver: Callable[[str, str], Any] | None = None,
+                 native_package_resolver: Callable[[str, str], ManagedNativePackageMount | None] | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if not profiles or any(key != item.profile_id for key, item in profiles.items()):
             raise ValueError("root process custody requires an explicit profile registry")
@@ -446,8 +614,9 @@ class ManagedProcessEffectHandler:
         self.systemctl = _root_path(systemctl, directory=False)
         self.monotonic = monotonic
         self.artifact_resolver = artifact_resolver
+        self.native_package_resolver = native_package_resolver
         self._handles: dict[str, _Handle] = {}
-        self._finished: dict[str, tuple[str, float]] = {}
+        self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
         self._lock = threading.RLock()
         self._member_key = os.urandom(32)
@@ -456,6 +625,436 @@ class ManagedProcessEffectHandler:
         self._diagnostic_sink: Callable[[bytes], None] | None = None
         for profile in self.profiles.values():
             self._validate_profile(profile)
+
+    def _prepare_native_package_mount(self, profile: ManagedProfileCustody,
+                                      process_id: str) -> tuple[Path | None, NativePackageMountReceipt | None]:
+        resolver = self.native_package_resolver
+        if resolver is None:
+            if profile.native_package is not None:
+                raise AuthorityDenied("native.mount", "root native package resolver is unavailable")
+            return None, None
+        try:
+            package = resolver(profile.profile_id, profile.generation)
+        except Exception:
+            raise AuthorityDenied("native.mount", "root native package enrollment could not be resolved") from None
+        if package is None:
+            if profile.native_package is not None:
+                raise AuthorityDenied("native.mount", "selected native package is missing")
+            return None, None
+        if not isinstance(package, ManagedNativePackageMount):
+            raise AuthorityDenied("native.mount", "root native package resolver returned an invalid object")
+        binding = package.binding
+        names = ("package_id", "profile_id", "generation", "compiled_closure_artifact_id",
+                 "compiled_closure_sha256", "entrypoint_artifact_id", "entrypoint_sha256",
+                 "resolver_artifact_id", "resolver_sha256", "service_mount_id", "adapter_records")
+        if any(not hasattr(binding, name) for name in names):
+            raise AuthorityDenied("native.mount", "protected native package binding is incomplete")
+        if (binding.profile_id != profile.profile_id or binding.generation != profile.generation
+                or package.profile_id != profile.profile_id or package.generation != profile.generation
+                or (profile.native_package is not None and profile.native_package != binding)):
+            raise AuthorityDenied("native.mount", "native package does not join the active profile generation")
+        closure, closure_artifact = _resolved_artifact(
+            package.closure_root, artifact_id=binding.compiled_closure_artifact_id,
+            digest=getattr(package.closure_root, "sha256", binding.compiled_closure_sha256), directory=True)
+        # ArtifactCatalog's archive/tree-manifest digest has a distinct schema
+        # from the HI08 compiled_closure_sha256 (which hashes the native
+        # closure_files rows below). Do not conflate those digest domains: the
+        # complete freshly observed tree is compared byte-for-byte with the
+        # selected HI08 manifest before any bind mount is created.
+        entrypoint, _ = _resolved_artifact(package.entrypoint_path,
+            artifact_id=binding.entrypoint_artifact_id, digest=binding.entrypoint_sha256)
+        resolver_path, _ = _resolved_artifact(package.resolver_path,
+            artifact_id=binding.resolver_artifact_id, digest=binding.resolver_sha256)
+        manifest_bytes = _native_manifest_bytes(entrypoint)
+        if hashlib.sha256(manifest_bytes).hexdigest() != binding.entrypoint_sha256:
+            raise AuthorityDenied("native.manifest", "native manifest digest changed")
+        try:
+            manifest = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+        except (UnicodeError, ValueError, json.JSONDecodeError):
+            raise AuthorityDenied("native.manifest", "native package manifest is malformed") from None
+        if not isinstance(manifest, dict) or _native_canonical(manifest) != manifest_bytes:
+            raise AuthorityDenied("native.manifest", "native package manifest is not canonical JSON")
+        required_top = {"schema", "package_id", "profile_id", "generation", "closure_files", "adapters", "dependencies"}
+        if (not isinstance(manifest, dict) or set(manifest) != required_top or manifest.get("schema") != 1
+                or manifest.get("package_id") != binding.package_id
+                or manifest.get("profile_id") != binding.profile_id
+                or manifest.get("generation") != binding.generation
+                or not isinstance(manifest.get("closure_files"), list)
+                or not isinstance(manifest.get("adapters"), list)
+                or not isinstance(manifest.get("dependencies"), list)):
+            raise AuthorityDenied("native.manifest", "native package manifest does not match protected enrollment")
+        rows = manifest["closure_files"]
+        if not rows or len(rows) > 16384:
+            raise AuthorityDenied("native.closure", "native closure file manifest is empty or oversized")
+        listed: dict[str, tuple[str, int, int]] = {}
+        keys: set[str] = set()
+        for row in rows:
+            if (not isinstance(row, dict) or set(row) != {"relative_path", "sha256", "size_bytes", "mode"}
+                    or not isinstance(row["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
+                    or type(row["size_bytes"]) is not int or row["size_bytes"] < 0
+                    or type(row["mode"]) is not int or row["mode"] & ~0o777 or row["mode"] & 0o222):
+                raise AuthorityDenied("native.closure", "native closure manifest entry is invalid")
+            relative = _native_relative(row["relative_path"])
+            if relative in listed or relative.casefold() in keys:
+                raise AuthorityDenied("native.closure", "native closure contains duplicate or case-colliding files")
+            keys.add(relative.casefold())
+            listed[relative] = (row["sha256"], row["size_bytes"], row["mode"])
+        if rows != sorted(rows, key=lambda row: row["relative_path"]):
+            raise AuthorityDenied("native.closure", "native closure manifest is not canonically ordered")
+        if hashlib.sha256(_native_canonical(rows)).hexdigest() != binding.compiled_closure_sha256:
+            raise AuthorityDenied("native.closure", "compiled closure digest does not bind the canonical file manifest")
+        observed: dict[str, tuple[str, int, int]] = {}
+        for current, dirs, files in os.walk(closure, topdown=True, followlinks=False):
+            base = Path(current)
+            for name in dirs:
+                info = (base / name).lstat()
+                if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022):
+                    raise AuthorityDenied("native.closure", "native closure directory custody is invalid")
+            for name in files:
+                path = base / name
+                info = path.lstat()
+                relative = _native_relative(path.relative_to(closure).as_posix())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222
+                        or info.st_nlink != 1 or relative in observed or info.st_size > 256 * 1024 * 1024):
+                    raise AuthorityDenied("native.closure", "native closure contains a mutable or special file")
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                observed[relative] = (digest, info.st_size, stat.S_IMODE(info.st_mode))
+        if observed != listed:
+            raise AuthorityDenied("native.closure", "materialized native closure differs from its complete manifest")
+        adapters = manifest["adapters"]
+        binding_adapters = dict(binding.adapter_records)
+        if (len(adapters) != len(binding_adapters) or set(package.adapter_paths) != set(binding_adapters)):
+            raise AuthorityDenied("native.adapters", "native adapters differ from the selected protected package")
+        for row in adapters:
+            fields = {"adapter_id", "relative_module_path", "module_name", "entrypoint_symbol",
+                      "artifact_sha256", "allowed_internal_modules", "allowed_dependency_artifact_ids", "action_ids"}
+            if not isinstance(row, dict) or set(row) != fields:
+                raise AuthorityDenied("native.adapters", "native adapter manifest row is invalid")
+            adapter_id = row["adapter_id"]
+            enrolled = binding_adapters.get(adapter_id)
+            relative = _native_relative(row["relative_module_path"])
+            path_row = listed.get(relative)
+            adapter_path, adapter_artifact = _resolved_artifact(package.adapter_paths.get(adapter_id),
+                artifact_id=getattr(enrolled, "adapter_artifact_id", ""),
+                digest=getattr(enrolled, "adapter_sha256", "")) if enrolled is not None else (None, None)
+            if (enrolled is None or path_row is None or row["artifact_sha256"] != enrolled.adapter_sha256
+                    or path_row[0] != enrolled.adapter_sha256
+                    or hashlib.sha256(adapter_path.read_bytes()).hexdigest() != row["artifact_sha256"]
+                    or row["action_ids"] != [enrolled.action_id]
+                    or not isinstance(row["module_name"], str)
+                    or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", row["module_name"])
+                    or not isinstance(row["entrypoint_symbol"], str)
+                    or row["entrypoint_symbol"] not in {"register", "PluginContext.register"}
+                    or not isinstance(row["allowed_internal_modules"], list)
+                    or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", name)
+                           for name in row["allowed_internal_modules"])
+                    or not isinstance(row["allowed_dependency_artifact_ids"], list)
+                    or any(item not in package.dependency_paths for item in row["allowed_dependency_artifact_ids"])
+                    or not isinstance(row["action_ids"], list)):
+                raise AuthorityDenied("native.adapters", "native adapter manifest differs from protected adapter enrollment")
+        dependencies = manifest["dependencies"]
+        if len(dependencies) > 256 or len(package.dependency_paths) != len(dependencies):
+            raise AuthorityDenied("native.dependencies", "native dependency set is incomplete or oversized")
+        dependency_ids: set[str] = set()
+        for row in dependencies:
+            if not isinstance(row, dict) or set(row) != {"artifact_id", "sha256", "module_names"}:
+                raise AuthorityDenied("native.dependencies", "native dependency row is invalid")
+            artifact_id = row["artifact_id"]
+            if (not isinstance(artifact_id, str) or artifact_id in dependency_ids
+                    or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", artifact_id)
+                    or not isinstance(row["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
+                    or not isinstance(row["module_names"], list) or len(row["module_names"]) > 512):
+                raise AuthorityDenied("native.dependencies", "native dependency binding is malformed")
+            if any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", name)
+                   for name in row["module_names"]):
+                raise AuthorityDenied("native.dependencies", "native dependency module allowlist is malformed")
+            dependency_ids.add(artifact_id)
+            dependency = package.dependency_paths.get(artifact_id)
+            dependency_path, dep_artifact = _resolved_artifact(dependency, artifact_id=artifact_id,
+                digest=row["sha256"], directory=Path(getattr(dependency, "path", dependency)).is_dir())
+            if dependency_path.is_dir():
+                tree_files = getattr(dep_artifact, "tree_files", None)
+                if not isinstance(tree_files, tuple) or not tree_files:
+                    raise AuthorityDenied("native.dependencies", "dependency tree has no protected file manifest")
+                expected_files = {}
+                for tree_file in tree_files:
+                    relative = _native_relative(tree_file.path)
+                    if tree_file.kind != "file":
+                        raise AuthorityDenied("native.dependencies", "dependency tree contains a non-file entry")
+                    expected_files[relative] = (tree_file.sha256, tree_file.size_bytes,
+                        0o555 if tree_file.executable else 0o444)
+                self._verify_native_tree(dependency_path, expected_files)
+        if dependency_ids != set(package.dependency_paths):
+            raise AuthorityDenied("native.dependencies", "native dependency mapping has unlisted artifacts")
+        target = native_package_mount_target(package_id=binding.package_id,
+            profile_id=binding.profile_id, generation=binding.generation,
+            compiled_closure_sha256=binding.compiled_closure_sha256)
+        source = self._stage_native_package(process_id, target, manifest_bytes, closure,
+            resolver_path, package.adapter_paths, package.dependency_paths, listed)
+        source_info = source.stat(follow_symlinks=False)
+        receipt = NativePackageMountReceipt(binding.package_id, binding.profile_id,
+            binding.generation, binding.service_mount_id, binding.compiled_closure_sha256,
+            binding.entrypoint_sha256, binding.resolver_sha256, str(target),
+            source_info.st_dev, source_info.st_ino, hashlib.sha256(manifest_bytes).hexdigest())
+        return source, receipt
+
+    def _stage_native_package(self, process_id: str, target: Path, manifest: bytes,
+                              closure: Path, resolver_path: Path,
+                              adapters: Mapping[str, Any], dependencies: Mapping[str, Any],
+                              closure_manifest: Mapping[str, tuple[str, int, int]]) -> Path:
+        base = Path("/run/hermes-installer/native-staging")
+        self._ensure_root_runtime_directory(base, 0o711)
+        stage = base / process_id
+        stage.mkdir(mode=0o700)
+        os.chown(stage, 0, 0)
+        self._write_native_file(stage / "manifest.json", manifest, 0o444)
+        self._copy_native_tree(closure, stage / "closure", closure_manifest)
+        resolved = Path(getattr(resolver_path, "path", resolver_path))
+        self._write_native_file(stage / "resolver" / "resolver", resolved.read_bytes(), 0o444)
+        for artifact_id, value in sorted(dependencies.items()):
+            source = Path(getattr(value, "path", value))
+            destination = stage / "dependencies" / artifact_id
+            if source.is_dir():
+                self._copy_native_tree(source, destination, None)
+            else:
+                self._write_native_file(destination / source.name, source.read_bytes(), 0o444)
+        self._make_native_tree_readonly(stage)
+        self._protect_native_staging_mount(stage)
+        parent = target.parent
+        self._ensure_root_runtime_directory(parent, 0o711)
+        try:
+            target.mkdir(mode=0o755)
+            os.chown(target, 0, 0)
+            os.chmod(target, 0o755)
+        except FileExistsError:
+            info = target.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022):
+                raise AuthorityDenied("native.mount", "derived native mountpoint has unsafe custody")
+        return stage
+
+    @staticmethod
+    def _mount_call(source: Path, target: Path, flags: int) -> None:
+        """Apply a Linux mount operation to one root-owned staging path."""
+        libc = ctypes.CDLL(None, use_errno=True)
+        mount = libc.mount
+        mount.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+                          ctypes.c_ulong, ctypes.c_char_p)
+        mount.restype = ctypes.c_int
+        result = mount(os.fsencode(source), os.fsencode(target), None, flags, None)
+        if result != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error), str(target))
+
+    @classmethod
+    def _protect_native_staging_mount(cls, stage: Path) -> None:
+        """Give the immutable staging tree its own private restricted mount.
+
+        systemd's BindReadOnlyPaths has no syntax for per-bind nosuid/nodev
+        mount options. Prepare those flags on a self-bind before handing the
+        source to systemd; the service then gets a second read-only bind.
+        """
+        if not sys.platform.startswith("linux"):
+            raise AuthorityDenied("native.mount", "native package mounts require Linux mount namespaces")
+        info = stage.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222:
+            raise AuthorityDenied("native.mount", "native staging directory is not sealed")
+        ms_bind, ms_rec = 4096, 16384
+        ms_private = 1 << 18
+        ms_remount, ms_readonly, ms_nosuid, ms_nodev, ms_noexec = 32, 1, 2, 4, 8
+        cls._mount_call(stage, stage, ms_bind | ms_rec)
+        try:
+            cls._mount_call(stage, stage, ms_private | ms_rec)
+            cls._mount_call(stage, stage, ms_bind | ms_remount | ms_readonly |
+                            ms_nosuid | ms_nodev | ms_noexec)
+        except BaseException:
+            try:
+                cls._umount_native_staging(stage)
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _umount_native_staging(stage: Path) -> None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        umount2 = libc.umount2
+        umount2.argtypes = (ctypes.c_char_p, ctypes.c_int)
+        umount2.restype = ctypes.c_int
+        if umount2(os.fsencode(stage), 0) != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error), str(stage))
+
+    @staticmethod
+    def _ensure_root_runtime_directory(path: Path, mode: int) -> None:
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            path.mkdir(mode=mode)
+            os.chown(path, 0, 0)
+            os.chmod(path, mode)
+            info = path.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != mode):
+            raise AuthorityDenied("native.mount", "fixed runtime mount directory custody is invalid")
+
+    @staticmethod
+    def _write_native_file(path: Path, contents: bytes, mode: int) -> None:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            os.fchown(fd, 0, 0)
+            view = memoryview(contents)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fchmod(fd, mode)
+        finally:
+            os.close(fd)
+
+    @classmethod
+    def _copy_native_tree(cls, source: Path, destination: Path,
+                          expected: Mapping[str, tuple[str, int, int]] | None) -> None:
+        destination.mkdir(mode=0o700, parents=True)
+        for current, dirs, files in os.walk(source, topdown=True, followlinks=False):
+            base = Path(current)
+            rel_dir = base.relative_to(source)
+            target_dir = destination / rel_dir
+            for name in dirs:
+                src_dir = base / name
+                info = src_dir.lstat()
+                if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                    raise AuthorityDenied("native.mount", "native package tree contains an unsafe directory")
+                (target_dir / name).mkdir(mode=0o700)
+            for name in files:
+                src = base / name
+                info = src.lstat()
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222
+                        or info.st_nlink != 1):
+                    raise AuthorityDenied("native.mount", "native package tree contains an unsafe file")
+                relative = src.relative_to(source).as_posix()
+                data = src.read_bytes()
+                if expected is not None:
+                    row = expected.get(relative)
+                    if row != (hashlib.sha256(data).hexdigest(), len(data), stat.S_IMODE(info.st_mode)):
+                        raise AuthorityDenied("native.mount", "native closure changed while staging")
+                    mode = row[2]
+                else:
+                    # Catalog materialization already matched its protected
+                    # tree manifest; preserve executable metadata while
+                    # stripping every write bit in the mount staging copy.
+                    mode = 0o555 if info.st_mode & 0o111 else 0o444
+                cls._write_native_file(target_dir / name, data, mode)
+        cls._make_native_tree_readonly(destination)
+
+    @staticmethod
+    def _verify_native_tree(source: Path,
+                            expected: Mapping[str, tuple[str, int, int]]) -> None:
+        observed: dict[str, tuple[str, int, int]] = {}
+        total = 0
+        for current, dirs, files in os.walk(source, topdown=True, followlinks=False):
+            base = Path(current)
+            for name in dirs:
+                info = (base / name).lstat()
+                if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                    raise AuthorityDenied("native.dependencies", "dependency tree directory custody is invalid")
+            for name in files:
+                path = base / name
+                info = path.lstat()
+                relative = _native_relative(path.relative_to(source).as_posix())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222
+                        or info.st_nlink != 1 or info.st_size > 256 * 1024 * 1024):
+                    raise AuthorityDenied("native.dependencies", "dependency tree has unsafe file custody")
+                total += info.st_size
+                if total > 2 * 1024**3:
+                    raise AuthorityDenied("native.dependencies", "dependency tree exceeds aggregate size bound")
+                digest = hashlib.sha256()
+                with path.open("rb") as stream:
+                    while chunk := stream.read(1024 * 1024):
+                        digest.update(chunk)
+                observed[relative] = (digest.hexdigest(), info.st_size, stat.S_IMODE(info.st_mode))
+        if observed != dict(expected):
+            raise AuthorityDenied("native.dependencies", "dependency tree differs from its protected catalog manifest")
+
+    @staticmethod
+    def _make_native_tree_readonly(root: Path) -> None:
+        for current, dirs, _files in os.walk(root, topdown=False, followlinks=False):
+            for name in dirs:
+                path = Path(current) / name
+                info = path.lstat()
+                if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
+                    raise AuthorityDenied("native.mount", "staged native package directory changed")
+                os.chmod(path, 0o555)
+            info = Path(current).lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
+                raise AuthorityDenied("native.mount", "staged native package root changed")
+            os.chmod(current, 0o555)
+
+    @staticmethod
+    def _remove_native_staging(stage: Path) -> None:
+        if stage.parent != Path("/run/hermes-installer/native-staging"):
+            raise AuthorityDenied("native.cleanup", "native staging path is outside fixed custody")
+        info = stage.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
+            raise AuthorityDenied("native.cleanup", "native staging tree custody changed")
+        ManagedProcessEffectHandler._umount_native_staging(stage)
+        for current, dirs, files in os.walk(stage, topdown=False, followlinks=False):
+            base = Path(current)
+            for name in files:
+                item = base / name
+                item_info = item.lstat()
+                if not stat.S_ISREG(item_info.st_mode) or item_info.st_uid != 0 or item_info.st_nlink != 1:
+                    raise AuthorityDenied("native.cleanup", "native staged file changed custody")
+                item.chmod(0o600)
+                item.unlink()
+            for name in dirs:
+                item = base / name
+                item_info = item.lstat()
+                if not stat.S_ISDIR(item_info.st_mode) or item_info.st_uid != 0:
+                    raise AuthorityDenied("native.cleanup", "native staged directory changed custody")
+                item.chmod(0o700)
+                item.rmdir()
+        stage.chmod(0o700)
+        stage.rmdir()
+
+    def _verify_native_package_mount(self, pid: int, receipt: NativePackageMountReceipt) -> None:
+        failure_code = "procfs"
+        try:
+            raw = Path(f"/proc/{pid}/mountinfo").read_text()
+            if len(raw) > 4 * 1024 * 1024:
+                raise ValueError("mount table oversized")
+            candidates = []
+            for line in raw.splitlines():
+                fields = line.split()
+                if "-" not in fields:
+                    continue
+                separator = fields.index("-")
+                mountpoint = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), fields[4])
+                if mountpoint == receipt.mount_path:
+                    candidates.append((fields, separator))
+            if len(candidates) != 1:
+                failure_code = "target"
+                raise ValueError("mount target absent or ambiguous")
+            fields, separator = candidates[0]
+            options = set(fields[5].split(","))
+            propagation = fields[6:separator]
+            missing = sorted({"ro", "nosuid", "nodev", "noexec"} - options)
+            if missing:
+                failure_code = "mount_missing_" + "_".join(missing)
+                raise ValueError("mount flags are not constrained")
+            propagation_flags = [item.split(":", 1)[0] for item in propagation
+                                 if item.startswith(("shared:", "master:", "propagate_from:"))]
+            if propagation_flags:
+                failure_code = "mount_propagation_" + "_".join(sorted(set(propagation_flags)))
+                raise ValueError("mount flags are not constrained")
+            observed = os.stat(f"/proc/{pid}/root{receipt.mount_path}", follow_symlinks=False)
+            if (observed.st_dev, observed.st_ino) != (receipt.mount_source_device, receipt.mount_source_inode):
+                failure_code = "source_identity"
+                raise ValueError("mounted root inode differs from the staged package")
+        except (OSError, ValueError, IndexError):
+            if self._diagnostic_sink is not None:
+                # Deliberately exclude filesystem paths and exception strings;
+                # this bounded code is sufficient to diagnose kernel proof.
+                self._diagnostic_sink(("native-mount-verification-failed:" + failure_code).encode("ascii"))
+            raise AuthorityDenied("native.mount_effect", "kernel did not establish the exact private read-only package mount") from None
 
     @staticmethod
     def _validate_profile(profile: ManagedProfileCustody) -> None:
@@ -590,6 +1189,10 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.request", "process request is malformed") from None
         if not isinstance(value, dict):
             raise AuthorityDenied("process.request", "process request must be an object")
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=True, allow_nan=False).encode("ascii")
+        if canonical != payload:
+            raise AuthorityDenied("process.request", "process request is not canonical JSON")
         return value
 
     def _start(self, profile: ManagedProfileCustody, context: HostContext,
@@ -885,6 +1488,8 @@ class ManagedProcessEffectHandler:
         process_id = uuid.uuid4().hex
         artifact_mount_dir: Path | None = None
         artifact_target: Path | None = None
+        native_mount_source: Path | None = None
+        native_mount_receipt: NativePackageMountReceipt | None = None
         artifact_path: Path | None = resolved_children.get(selected_child_ref) if selected_child_ref else None
         if selected_child_ref is not None and artifact_path is None:
             os.close(parent_fd)
@@ -993,10 +1598,23 @@ class ManagedProcessEffectHandler:
                     os.close(fd)
                 argv[artifact_args[0]] = str(artifact_target)
                 properties.append(f"--property=BindReadOnlyPaths={artifact_path}:{artifact_target}")
+            native_mount_source, native_mount_receipt = self._prepare_native_package_mount(profile, process_id)
+            if native_mount_source is not None and native_mount_receipt is not None:
+                properties.append(
+                    "--property=BindReadOnlyPaths=" + str(native_mount_source) + ":"
+                    + native_mount_receipt.mount_path)
+                # systemd's bind tuple supports only recursion options. Apply
+                # the other mount restrictions through its dedicated namespace
+                # properties so mountinfo reflects kernel-enforced flags.
+                properties.append("--property=PrivateMounts=yes")
+                properties.append("--property=MountFlags=private")
+                properties.append("--property=NoExecPaths=" + native_mount_receipt.mount_path)
         except BaseException:
             os.close(parent_fd)
             if artifact_mount_dir is not None:
                 _remove_artifact_mount(artifact_mount_dir)
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise
         command = [str(self.systemd_run), "--system", "--unit=" + unit, "--service-type=exec",
                    "--wait", "--collect", "--pipe", "--quiet", "--working-directory=" + target_cwd,
@@ -1007,6 +1625,8 @@ class ManagedProcessEffectHandler:
             os.close(parent_fd)
             if artifact_mount_dir is not None:
                 _remove_artifact_mount(artifact_mount_dir)
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise
         try:
             require_live_start(parent_fd)
@@ -1032,11 +1652,15 @@ class ManagedProcessEffectHandler:
             os.close(parent_fd)
             if artifact_mount_dir is not None:
                 _remove_artifact_mount(artifact_mount_dir)
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.launcher_start", "root process manager could not start the enrolled service") from None
         except BaseException:
             os.close(parent_fd)
             if artifact_mount_dir is not None:
                 _remove_artifact_mount(artifact_mount_dir)
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise
         started = self.monotonic()
         deadline = min(launch_deadline, started + 10.0)
@@ -1121,6 +1745,8 @@ class ManagedProcessEffectHandler:
             if identity is None:
                 raise AuthorityDenied("process.admission_deadline", "service did not become ready before its deadline")
             pid, ticks, dev, ino = identity
+            if native_mount_receipt is not None:
+                self._verify_native_package_mount(pid, native_mount_receipt)
             if Path(cgroup).name != unit or ".." in Path(cgroup).parts:
                 raise AuthorityDenied("process.cgroup", "service did not receive its exact cgroup")
             expected_props = {
@@ -1193,6 +1819,8 @@ class ManagedProcessEffectHandler:
             handle = _Handle(process_id, profile, unit, cgroup, launcher, parent_fd, child_fd, pid,
                 ticks, f"mnt:{mnt};net:{net}", context.principal_id, context.namespace_id,
                 started, started + float(lifetime), output_cap, artifact_mount_dir,
+                native_mount_source=native_mount_source,
+                native_mount_receipt=native_mount_receipt,
                 network_namespace_fd=network_namespace_fd,
                 child_artifact_identities=child_artifact_identities,
                 lock=threading.RLock(),
@@ -1219,12 +1847,16 @@ class ManagedProcessEffectHandler:
                     if artifact_mount_dir is not None:
                         _remove_artifact_mount(artifact_mount_dir)
                 finally:
-                    for fd in (parent_fd, child_fd, network_namespace_fd):
-                        if fd is not None:
-                            try:
-                                os.close(fd)
-                            except OSError:
-                                pass
+                    try:
+                        if native_mount_source is not None:
+                            self._remove_native_staging(native_mount_source)
+                    finally:
+                        for fd in (parent_fd, child_fd, network_namespace_fd):
+                            if fd is not None:
+                                try:
+                                    os.close(fd)
+                                except OSError:
+                                    pass
             raise
 
     def _opaque_member_id(self, *, process_id: str, pid: int, ticks: int,
@@ -1246,8 +1878,10 @@ class ManagedProcessEffectHandler:
                  payload: bytes, timeout: float,
                  cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         item = self._json(payload)
-        if (set(item) != {"schema", "process_id", "generation"} or item.get("schema") != 1
+        if (set(item) != {"schema", "operation", "process_id", "generation", "fields"}
+                or item.get("schema") != 1 or item.get("operation") != "process.inspect"
                 or not isinstance(item.get("process_id"), str)
+                or item.get("fields") != {}
                 or item.get("generation") != profile.generation):
             raise AuthorityDenied("process.inspect", "inspection request is malformed or stale")
         with self._lock:
@@ -1411,12 +2045,16 @@ class ManagedProcessEffectHandler:
             })
         if cancelled() or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd):
             raise AuthorityDenied("process.expired", "process expired during inspection")
+        # HI10's public inspection wire is intentionally a small top-level
+        # attestation. It excludes raw host PIDs, paths, argv and environments;
+        # per-member identities are opaque handles tied to this root registry.
         return _response(200, {
-            "schema": 1, "process_id": handle.process_id, "generation": profile.generation,
-            "profile_id": profile.profile_id, "cgroup_identity": handle.cgroup,
-            "observation_monotonic": observed,
+            "schema": 1, "process_id": handle.process_id,
+            "generation": profile.generation, "operation": "process.inspect",
+            "state": "running", "result": {"profile_id": profile.profile_id,
+            "cgroup_identity": handle.cgroup, "observation_monotonic": observed,
+            "complete": stable, "processes": processes},
             "expires_monotonic": min(handle.expires, observed + min(max(timeout, 0.1), 30.0)),
-            "complete": stable, "processes": processes,
         })
 
     def resolve_namespace_lease(self, binding: Any) -> ManagedNamespaceLease | None:
@@ -1507,6 +2145,192 @@ class ManagedProcessEffectHandler:
         except (OSError, ValueError, StopIteration):
             return None
 
+    def inspect_enrolled_process(self, profile_id: str,
+                                 generation: str) -> RemoteOriginKernelProof | None:
+        """Inspect exactly one root-registered live process for an enrolled profile.
+
+        This root-only API is intended for the remote-origin authority. It
+        selects from the protected manager registry, rechecks the retained
+        PIDFD/start time/executable inode and both namespaces, and returns no
+        caller-selected PID/path. Application readiness and route/config
+        evidence must be joined by their own authority catalogs.
+        """
+        if (not isinstance(profile_id, str) or not profile_id
+                or not isinstance(generation, str) or not generation):
+            return None
+        registered = self.profiles.get(profile_id)
+        if registered is None or registered.generation != generation:
+            return None
+        with self._lock:
+            matches = [handle for handle in self._handles.values()
+                       if handle.profile.profile_id == profile_id
+                       and handle.profile.generation == generation
+                       and handle.registered_profile is registered]
+        if len(matches) != 1:
+            return None
+        handle = matches[0]
+        pidfd = None
+        try:
+            if (handle.stopped or self.monotonic() >= handle.expires
+                    or _pidfd_exited(handle.child_pidfd)):
+                return None
+            pidfd = os.dup(handle.child_pidfd)
+            pid = self._pidfd_target(pidfd)
+            if pid != handle.pid or _pidfd_exited(pidfd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or pid not in self._pids(handle.cgroup)):
+                return None
+            status = Path(f"/proc/{pid}/status").read_text().splitlines()
+            uid_fields = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            gid_fields = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            if (len(uid_fields) != 4 or any(int(value) != handle.profile.owner_uid for value in uid_fields)
+                    or len(gid_fields) != 4 or any(int(value) != handle.profile.owner_gid for value in gid_fields)):
+                return None
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            try:
+                observed = os.fstat(exe_fd)
+                if ((observed.st_dev, observed.st_ino) != (executable.st_dev, executable.st_ino)
+                        or (device, inode) != (executable.st_dev, executable.st_ino)):
+                    return None
+                digest = hashlib.sha256()
+                while True:
+                    chunk = os.read(exe_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                executable_sha256 = digest.hexdigest()
+            finally:
+                os.close(exe_fd)
+            if executable_sha256 != handle.profile.artifact_sha256:
+                return None
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            if (f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or _pid_identity(pid) != (ticks, cgroup, device, inode)
+                    or self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)):
+                return None
+            enrollment_id = handle.profile.enrollment_id
+            if not isinstance(enrollment_id, str) or not enrollment_id:
+                return None
+            registry_handle = self._opaque_member_id(process_id=handle.process_id,
+                pid=pid, ticks=ticks, device=device, inode=inode, cgroup=cgroup)
+            return RemoteOriginKernelProof(
+                handle.process_id, enrollment_id, profile_id, generation,
+                handle.profile.owner_uid, handle.profile.owner_gid, pid, ticks,
+                device, inode, executable_sha256, cgroup, mount_ns, network_ns,
+                registry_handle, handle.expires,
+            )
+        except (OSError, ValueError, StopIteration):
+            return None
+        finally:
+            if pidfd is not None:
+                os.close(pidfd)
+
+    def resolve_process_operation(self, process_id: str, generation: str, operation: str, *,
+                                  peer_uid: int, peer_pid: int,
+                                  peer_pidfd: int) -> tuple[ManagedProfileCustody, str] | None:
+        """Resolve an opaque live handle to its fixed root-enrolled control target.
+
+        This root-only method accepts no target, path, PID selector, or caller
+        profile label.  The supplied peer identity must be a live, pinned member
+        of the same enrolled process generation.
+        """
+        if (not isinstance(process_id, str) or not re.fullmatch(r"[0-9a-f]{32}", process_id)
+                or not isinstance(generation, str)
+                or operation not in {"process.status", "process.read", "process.write", "process.stop", "process.inspect"}
+                or type(peer_uid) is not int or peer_uid <= 0):
+            return None
+        with self._lock:
+            handle = self._handles.get(process_id)
+        if (handle is None or handle.stopped or handle.profile.generation != generation
+                or handle.registered_profile is not self.profiles.get(handle.profile.profile_id)
+                or peer_uid != handle.profile.owner_uid):
+            return None
+        if (self._pidfd_target(peer_pidfd) != peer_pid or _pidfd_exited(peer_pidfd)):
+            return None
+        # The control caller is either the exact root-captured process that
+        # created this handle, or a pinned descendant in this same cgroup.
+        parent_pid = self._pidfd_target(handle.parent_pidfd)
+        identity = (self.resolve_live_peer(peer_pid, peer_pidfd,
+                    profile_id=handle.profile.profile_id, generation=generation)
+                    if peer_pid != parent_pid else None)
+        if peer_pid == parent_pid:
+            try:
+                status = Path(f"/proc/{peer_pid}/status").read_text().splitlines()
+                uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+                allowed = len(uids) == 4 and all(int(uid) == peer_uid for uid in uids)
+            except (OSError, ValueError, StopIteration):
+                return None
+            if not allowed or _pidfd_exited(handle.parent_pidfd):
+                return None
+        elif identity is None or identity.kernel_uid != peer_uid:
+            return None
+        target = (process_inspect_target(handle.registered_profile) if operation == "process.inspect"
+                  else process_control_target(handle.registered_profile, operation))
+        return handle.registered_profile, target
+
+    def resolve_loaded_native_package(self, process_id: str, generation: str) -> LoadedNativePackageProof | None:
+        """Resolve the package actually mounted in one active registered process."""
+        if (not isinstance(process_id, str) or not re.fullmatch(r"[0-9a-f]{32}", process_id)
+                or not isinstance(generation, str)):
+            return None
+        with self._lock:
+            handle = self._handles.get(process_id)
+        if (handle is None or handle.profile.generation != generation or handle.stopped
+                or self.profiles.get(handle.profile.profile_id) is not handle.registered_profile
+                or handle.native_mount_receipt is None or handle.native_mount_source is None
+                or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
+                or handle.pid not in self._pids(handle.cgroup)):
+            return None
+        try:
+            self._verify_native_package_mount(handle.pid, handle.native_mount_receipt)
+            ticks, cgroup, device, inode = _pid_identity(handle.pid)
+            pinned = handle.profile.executable.stat(follow_symlinks=False)
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or (device, inode) != (pinned.st_dev, pinned.st_ino)
+                    or _pidfd_exited(handle.child_pidfd)):
+                return None
+        except (OSError, AuthorityDenied):
+            return None
+        return LoadedNativePackageProof(
+            process_id, handle.profile.profile_id, generation, handle.profile.owner_uid,
+            ticks, cgroup, handle.kernel_namespace_id, handle.profile.artifact_sha256,
+            handle.native_mount_receipt, self.monotonic(),
+        )
+
+    def resolve_native_package_for_peer(self, peer_pid: int,
+                                        peer_pidfd: int) -> LoadedNativePackageProof | None:
+        """Resolve package custody for the authenticated RPC peer, without a worker selector.
+
+        The only identity inputs are the SO_PEERCRED PID and pidfd captured by
+        AuthorityService. The root registry selects the unique active process
+        generation; callers cannot submit process IDs, profile IDs or paths.
+        """
+        if (type(peer_pid) is not int or peer_pid <= 0 or type(peer_pidfd) is not int
+                or peer_pidfd < 0 or self._pidfd_target(peer_pidfd) != peer_pid
+                or _pidfd_exited(peer_pidfd)):
+            return None
+        with self._lock:
+            candidates = [handle for handle in self._handles.values()
+                          if not handle.stopped and handle.native_mount_receipt is not None
+                          and handle.profile.generation == handle.native_mount_receipt.generation
+                          and peer_pid in self._pids(handle.cgroup)]
+        if len(candidates) != 1:
+            return None
+        handle = candidates[0]
+        identity = self.resolve_live_peer(peer_pid, peer_pidfd,
+            profile_id=handle.profile.profile_id, generation=handle.profile.generation)
+        if identity is None or identity.kernel_uid != handle.profile.owner_uid:
+            return None
+        proof = self.resolve_loaded_native_package(handle.process_id, handle.profile.generation)
+        if (proof is None or self._pidfd_target(peer_pidfd) != peer_pid
+                or _pidfd_exited(peer_pidfd)):
+            return None
+        return proof
+
     @staticmethod
     def _read_environment(pid: int) -> dict[str, str]:
         try:
@@ -1526,17 +2350,32 @@ class ManagedProcessEffectHandler:
     def _control(self, profile: ManagedProfileCustody, context: HostContext, operation: str,
                  payload: bytes, timeout: float, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         item = self._json(payload)
-        common = {"schema", "process_id", "generation"}
-        extras = {"process.status": set(), "process.stop": set(),
-                  "process.read": {"stream", "after_cursor", "max_bytes"},
-                  "process.write": {"data", "stdin_cursor"}}[operation]
-        if set(item) != common | extras or item.get("schema") != 1 or not isinstance(item.get("process_id"), str):
+        common = {"schema", "operation", "process_id", "generation", "fields"}
+        extras = {"process.status": set(), "process.stop": {"reason", "grace_seconds"},
+                  "process.read": {"stream", "maximum_bytes"},
+                  "process.write": {"data_bytes", "sequence"}}[operation]
+        if (set(item) != common or item.get("schema") != 1 or item.get("operation") != operation
+                or not isinstance(item.get("process_id"), str)
+                or not re.fullmatch(r"[0-9a-f]{32}", item["process_id"])
+                or not isinstance(item.get("fields"), dict) or set(item["fields"]) != extras
+                or item.get("generation") != profile.generation):
             raise AuthorityDenied("process.control", "control envelope is malformed")
+        fields = item["fields"]
+        if operation == "process.stop" and (
+                fields["reason"] not in {"cancel", "shutdown", "rollback"}
+                or type(fields["grace_seconds"]) is not int
+                or not 0 <= fields["grace_seconds"] <= 10):
+            raise AuthorityDenied("process.stop", "stop reason or grace period is invalid")
         with self._lock:
             handle = self._handles.get(item["process_id"])
             finished = self._finished.get(item["process_id"])
         if handle is None and operation == "process.stop" and finished and finished[0] == profile.generation:
-            return _response(200, {"schema": 1, "stopped": True, "cleanup_verified": True})
+            proof = finished[2]
+            return _response(200, {"schema": 1, "process_id": item["process_id"],
+                "generation": profile.generation, "operation": operation, "state": "stopped",
+                "result": {"closed": proof.cleanup_verified,
+                    "reap_state": "reaped" if proof.cleanup_verified else "unverified"},
+                "expires_monotonic": self.monotonic() + 5.0})
         if (handle is None or handle.profile.profile_id != profile.profile_id
                 or item["generation"] != profile.generation
                 or context.principal_id != handle.principal_id
@@ -1548,57 +2387,73 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.expired", "parent, lease or service lifetime ended")
         if operation == "process.status":
             code = handle.launcher.poll()
-            if item.get("include_children", False):
-                raise AuthorityDenied("process.status", "child snapshots are not available through this fixed status schema")
-            return _response(200, {"schema": 1, "state": "running" if code is None else "exited",
-                "pid": handle.pid, "uid": profile.owner_uid, "namespace_id": handle.kernel_namespace_id,
-                "generation": profile.generation, "stdout_cursor": handle.stdout_cursor,
-                "stderr_cursor": handle.stderr_cursor, "expires_at_monotonic": handle.expires,
-                "exit_code": code, "cgroup": handle.cgroup, "kernel_limits": self._limits(handle.cgroup)})
+            # Control status is deliberately non-identifying. Detailed host
+            # identity is available only through the separately authorized,
+            # bounded process.inspect attestation.
+            result = {"exit_code": code}
+            return _response(200, {"schema": 1, "process_id": handle.process_id,
+                "generation": profile.generation, "operation": operation,
+                "state": "running" if code is None else "exited", "result": result,
+                "expires_monotonic": min(handle.expires, self.monotonic() + 5.0)})
         if operation == "process.read":
-            stream_name, cursor, maximum = item["stream"], item["after_cursor"], item["max_bytes"]
-            if (stream_name not in {"stdout", "stderr"} or type(cursor) is not int
-                    or type(maximum) is not int or not 1 <= maximum <= 65536):
+            stream_name, maximum = fields["stream"], fields["maximum_bytes"]
+            if (stream_name not in {"stdout", "stderr"} or type(maximum) is not int
+                    or not 1 <= maximum <= 1_048_576):
                 raise AuthorityDenied("process.read", "stream or read bounds are invalid")
-            current = handle.stdout_cursor if stream_name == "stdout" else handle.stderr_cursor
-            if cursor != current:
-                raise AuthorityDenied("process.cursor", "read cursor is stale")
-            remaining_output = handle.output_cap - handle.stdout_cursor - handle.stderr_cursor
-            if remaining_output <= 0:
-                self._stop(handle, timeout=min(timeout, 5.0))
-                raise AuthorityDenied("process.output", "managed process exceeded its output cap")
-            maximum = min(maximum, remaining_output)
-            stream = getattr(handle.launcher, stream_name)
-            ready, _, _ = select.select([stream.fileno()], [], [], min(max(timeout, 0), .75))
-            data = os.read(stream.fileno(), maximum) if ready else b""
-            eof = bool(ready and not data)
-            if stream_name == "stdout":
-                handle.stdout_cursor += len(data)
-                current = handle.stdout_cursor
-            else:
-                handle.stderr_cursor += len(data)
-                current = handle.stderr_cursor
-            return _response(200, {"schema": 1, "stream": stream_name, "cursor": current,
-                "data": base64.b64encode(data).decode("ascii"), "eof": eof})
+            with handle.lock or contextlib.nullcontext():
+                remaining_output = handle.output_cap - handle.stdout_cursor - handle.stderr_cursor
+                if remaining_output <= 0:
+                    self._stop(handle, timeout=min(timeout, 5.0))
+                    raise AuthorityDenied("process.output", "managed process exceeded its output cap")
+                maximum = min(maximum, remaining_output)
+                stream = getattr(handle.launcher, stream_name)
+                ready, _, _ = select.select([stream.fileno()], [], [], min(max(timeout, 0), .75))
+                data = os.read(stream.fileno(), maximum) if ready else b""
+                eof = bool(ready and not data)
+                if stream_name == "stdout":
+                    handle.stdout_cursor += len(data)
+                else:
+                    handle.stderr_cursor += len(data)
+            return _response(200, {"schema": 1, "process_id": handle.process_id,
+                "generation": profile.generation, "operation": operation,
+                "state": "running" if handle.launcher.poll() is None else "exited",
+                "result": {"data_bytes": base64.b64encode(data).decode("ascii"),
+                    "eof": eof, "redacted": False},
+                "expires_monotonic": min(handle.expires, self.monotonic() + 5.0)})
         if operation == "process.write":
-            cursor = item["stdin_cursor"]
+            cursor = fields["sequence"]
             try:
-                data = base64.b64decode(item["data"], validate=True)
+                data = base64.b64decode(fields["data_bytes"], validate=True)
             except Exception:
                 raise AuthorityDenied("process.write", "stdin data is malformed") from None
-            if (type(cursor) is not int or cursor != handle.stdin_cursor or len(data) > 65536
+            if (type(cursor) is not int or cursor != handle.stdin_sequence or len(data) > 262144
+                    or base64.b64encode(data).decode("ascii") != fields["data_bytes"]
                     or handle.launcher.stdin is None):
                 raise AuthorityDenied("process.cursor", "stdin cursor or data length is invalid")
-            fd = handle.launcher.stdin.fileno()
-            _, writable, _ = select.select([], [fd], [], min(max(timeout, 0), .75))
-            try:
-                written = os.write(fd, data) if writable else 0
-            except BlockingIOError:
-                written = 0
-            handle.stdin_cursor += written
-            return _response(200, {"schema": 1, "stdin_cursor": handle.stdin_cursor, "bytes_written": written})
-        self._stop(handle, timeout=min(timeout, 5.0))
-        return _response(200, {"schema": 1, "stopped": True, "cleanup_verified": True})
+            with handle.lock or contextlib.nullcontext():
+                fd = handle.launcher.stdin.fileno()
+                _, writable, _ = select.select([], [fd], [], min(max(timeout, 0), .75))
+                try:
+                    written = os.write(fd, data) if writable else 0
+                except BlockingIOError:
+                    written = 0
+                handle.stdin_cursor += written
+                # A request sequence is consumed once admitted, even if the pipe
+                # cannot currently accept bytes. The caller retries with a fresh
+                # sequence, never replaying an ambiguous partial frame.
+                handle.stdin_sequence += 1
+            return _response(200, {"schema": 1, "process_id": handle.process_id,
+                "generation": profile.generation, "operation": operation,
+                "state": "running", "result": {"accepted_bytes": written,
+                    "sequence": handle.stdin_sequence},
+                "expires_monotonic": min(handle.expires, self.monotonic() + 5.0)})
+        reason, grace = fields["reason"], fields["grace_seconds"]
+        proof = self._stop(handle, timeout=min(timeout, max(.1, float(grace))))
+        return _response(200, {"schema": 1, "process_id": handle.process_id,
+            "generation": profile.generation, "operation": operation, "state": "stopped",
+            "result": {"closed": proof.cleanup_verified,
+                "reap_state": "reaped" if proof.cleanup_verified else "unverified"},
+            "expires_monotonic": self.monotonic() + 5.0})
 
     def _watch_parent(self, handle: _Handle) -> None:
         poller = select.poll()
@@ -1662,66 +2517,91 @@ class ManagedProcessEffectHandler:
                 out[name] = "unavailable"
         return out
 
-    def _stop(self, handle: _Handle, *, timeout: float) -> None:
+    def _stop(self, handle: _Handle, *, timeout: float) -> ProcessCleanupProof:
         with handle.lock:
             if handle.stopped:
-                return
+                with self._lock:
+                    prior = self._finished.get(handle.process_id)
+                if prior and prior[0] == handle.profile.generation:
+                    return prior[2]
+                raise AuthorityDenied("process.cleanup", "stopped handle has no retained cleanup proof")
             deadline = time.monotonic() + min(max(timeout, .1), 10)
             try:
-                try:
-                    owned = self._show(handle.unit, "ControlGroup") == handle.cgroup
-                except AuthorityDenied:
-                    owned = False
-                if owned:
-                    if self._pids(handle.cgroup):
-                        try:
-                            self._ctl(["kill", "--kill-whom=all", "--signal=SIGTERM", handle.unit], 1)
-                        except AuthorityDenied:
-                            if self._pids(handle.cgroup):
-                                raise AuthorityDenied("process.cleanup", "owned unit rejected termination") from None
-                    if self._pids(handle.cgroup):
-                        time.sleep(min(.25, max(0, deadline - time.monotonic())))
-                    if self._pids(handle.cgroup):
-                        try:
-                            self._ctl(["kill", "--kill-whom=all", "--signal=SIGKILL", handle.unit], 1)
-                        except AuthorityDenied:
-                            if self._pids(handle.cgroup):
-                                raise AuthorityDenied("process.cleanup", "owned unit rejected forced termination") from None
-                    if self._pids(handle.cgroup):
-                        try:
-                            self._ctl(["stop", handle.unit], min(1, max(.1, deadline - time.monotonic())))
-                        except AuthorityDenied:
-                            if self._pids(handle.cgroup):
-                                raise AuthorityDenied("process.cleanup", "owned unit could not be stopped") from None
-                while self._pids(handle.cgroup) and time.monotonic() < deadline:
-                    time.sleep(.02)
+                owned = self._show(handle.unit, "ControlGroup") == handle.cgroup
+            except AuthorityDenied:
+                owned = False
+            if owned:
                 if self._pids(handle.cgroup):
-                    raise AuthorityDenied("process.cleanup", "manager failed to empty the owned cgroup")
-                handle.stopped = True
-            finally:
-                if handle.stopped:
-                    with self._lock:
-                        self._handles.pop(handle.process_id, None)
-                        self._finished[handle.process_id] = (handle.profile.generation, self.monotonic() + 600)
-                        now = self.monotonic()
-                        self._finished = {key: item for key, item in self._finished.items() if item[1] > now}
-                    for fd in (handle.parent_pidfd, handle.child_pidfd, handle.network_namespace_fd):
-                        try:
-                            if fd is not None:
-                                os.close(fd)
-                        except OSError:
-                            pass
-                    for stream in (handle.launcher.stdin, handle.launcher.stdout, handle.launcher.stderr):
-                        if stream:
-                            stream.close()
-                    if handle.launcher.poll() is None:
-                        handle.launcher.kill()
                     try:
-                        handle.launcher.wait(timeout=1.0)
-                    except subprocess.TimeoutExpired:
-                        raise AuthorityDenied("process.cleanup", "root service launcher did not reap")
-                    finally:
-                        _remove_artifact_mount(handle.artifact_mount_dir)
+                        self._ctl(["kill", "--kill-whom=all", "--signal=SIGTERM", handle.unit], 1)
+                    except AuthorityDenied:
+                        if self._pids(handle.cgroup):
+                            raise AuthorityDenied("process.cleanup", "owned unit rejected termination") from None
+                if self._pids(handle.cgroup):
+                    time.sleep(min(.25, max(0, deadline - time.monotonic())))
+                if self._pids(handle.cgroup):
+                    try:
+                        self._ctl(["kill", "--kill-whom=all", "--signal=SIGKILL", handle.unit], 1)
+                    except AuthorityDenied:
+                        if self._pids(handle.cgroup):
+                            raise AuthorityDenied("process.cleanup", "owned unit rejected forced termination") from None
+                if self._pids(handle.cgroup):
+                    try:
+                        self._ctl(["stop", handle.unit], min(1, max(.1, deadline - time.monotonic())))
+                    except AuthorityDenied:
+                        if self._pids(handle.cgroup):
+                            raise AuthorityDenied("process.cleanup", "owned unit could not be stopped") from None
+            while self._pids(handle.cgroup) and time.monotonic() < deadline:
+                time.sleep(.02)
+            cgroup_empty = not self._pids(handle.cgroup)
+            if not cgroup_empty:
+                raise AuthorityDenied("process.cleanup", "manager failed to empty the owned cgroup")
+            while not _pidfd_exited(handle.child_pidfd) and time.monotonic() < deadline:
+                select.select([handle.child_pidfd], [], [], min(.02, max(0, deadline - time.monotonic())))
+            main_gone = _pidfd_exited(handle.child_pidfd)
+            if not main_gone:
+                raise AuthorityDenied("process.cleanup", "main process pidfd remained live after cgroup cleanup")
+            handle.stopped = True
+            with self._lock:
+                self._handles.pop(handle.process_id, None)
+            for stream in (handle.launcher.stdin, handle.launcher.stdout, handle.launcher.stderr):
+                if stream:
+                    stream.close()
+            if handle.launcher.poll() is None:
+                handle.launcher.kill()
+            try:
+                handle.launcher.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                raise AuthorityDenied("process.cleanup", "root service launcher did not reap") from None
+            if handle.launcher.returncode is None:
+                raise AuthorityDenied("process.cleanup", "root service launcher was not reaped")
+            try:
+                _remove_artifact_mount(handle.artifact_mount_dir)
+            finally:
+                if handle.native_mount_source is not None:
+                    self._remove_native_staging(handle.native_mount_source)
+            parent_gone = _pidfd_exited(handle.parent_pidfd)
+            evidence = {
+                "process_id": handle.process_id, "generation": handle.profile.generation,
+                "cgroup": handle.cgroup, "cgroup_empty": cgroup_empty,
+                "main_pidfd_gone": main_gone, "parent_pidfd_gone": parent_gone,
+                "launcher_reaped": True,
+            }
+            proof = ProcessCleanupProof(handle.process_id, handle.profile.generation,
+                handle.cgroup, cgroup_empty, main_gone, parent_gone, True, True,
+                canonical_digest(evidence), self.monotonic())
+            for fd in (handle.parent_pidfd, handle.child_pidfd, handle.network_namespace_fd):
+                try:
+                    if fd is not None:
+                        os.close(fd)
+                except OSError:
+                    pass
+            with self._lock:
+                self._finished[handle.process_id] = (handle.profile.generation,
+                    self.monotonic() + 600, proof)
+                now = self.monotonic()
+                self._finished = {key: item for key, item in self._finished.items() if item[1] > now}
+            return proof
 
     def _stop_partial(self, unit: str, launcher: subprocess.Popen[bytes]) -> None:
         if unit.startswith("hermes-installer-"):

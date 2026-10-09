@@ -758,6 +758,11 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
         _fsync_dir(destination_parent)
         installed_digest = _verify_installed_package_set(destination, spec, runtime)
         return destination, installed_digest
+    except AuthorityDenied:
+        # AuthorityDenied is a PermissionError/OSError subclass. Preserve the
+        # original typed denial instead of converting custody/policy failures
+        # into a misleading storage error.
+        raise
     except OSError as exc:
         if exc.errno == errno.ENOSPC:
             raise AuthorityDenied("package.storage", "isolated package-set staging ran out of space; retry after freeing owned storage") from None
@@ -1668,8 +1673,13 @@ def _secure_executable(path: Path, expected_uid: int) -> Path:
         for part in path.parts[1:-1]:
             current = current / part
             ancestor = current.lstat()
+            # Root-owned immutable ancestors and service-owned private runtime
+            # directories are both valid. Requiring every ancestor to have the
+            # leaf's owner rejects normal protected paths such as
+            # /var/lib/hermes/... while still allowing no writable ancestor.
             if (not stat.S_ISDIR(ancestor.st_mode) or stat.S_ISLNK(ancestor.st_mode)
-                    or ancestor.st_uid != expected_uid or ancestor.st_mode & 0o022):
+                    or ancestor.st_uid not in {0, expected_uid}
+                    or ancestor.st_mode & 0o022):
                 raise OSError
         info = path.lstat()
         parent = path.parent.lstat()

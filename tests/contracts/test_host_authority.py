@@ -133,96 +133,20 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
         self.assertEqual(effects, [("profile:a", payload)])
         self.assertEqual(result["status"], 200)
 
-    def test_root_observed_source_is_private_one_use_and_not_a_worker_operation(self):
-        from hermes_installer.authority.source_observers import (
-            VerifiedSourceObservation, _OBSERVATION_ISSUER, SourceReceiptHandle,
-        )
-
-        uid = 1234
+    def test_root_observed_source_is_unavailable_without_composed_registry(self):
         binding = PrincipalBinding(
-            uid, "principal:source", "profile:source", "namespace:source",
+            1234, "principal:source", "profile:source", "namespace:source",
             frozenset({"provider-inference"}),
         )
-        rule = EffectRule("provider-inference", "provider.dispatch", "provider.fixed", "public-provider")
-
-        @dataclass(frozen=True)
-        class Identity:
-            profile_id: str = "profile:source"
-            generation: str = "generation:source"
-            kernel_uid: int = uid
-            start_ticks: int = 77
-            executable_sha256: str = "a" * 64
-            cgroup_identity: str = "cgroup:fixture"
-            namespace_identity: str = "namespace:fixture"
-
-        identity = Identity()
-
-        class ProofRegistry:
-            proof = None
-            consumed = False
-
-            def consume_observation_proof(self, value):
-                if self.consumed or value is not self.proof:
-                    return False
-                self.consumed = True
-                return True
-
-        class Manager:
-            @staticmethod
-            def resolve_live_peer(peer_pid, peer_pidfd, *, profile_id, generation):
-                if (peer_pid == 4321 and peer_pidfd == 7 and profile_id == identity.profile_id
-                        and generation == identity.generation):
-                    return identity
-                return None
-
         service = AuthorityService(
-            signing_key=b"s" * 32, key_id="observed-source-fixture",
-            bindings_by_uid={uid: binding}, profile_generations={binding.profile_id: identity.generation},
-            rules={(rule.capability, rule.operation, rule.target): rule}, handlers={}, policy=FixturePolicy(),
-            process_effect_handler=Manager(), source_observer_registry=ProofRegistry(),
+            signing_key=b"s" * 32, key_id="observed-source-unavailable",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={}, policy=FixturePolicy(),
         )
-        payload = b'{"messages":[]}'
-        with patch.object(AuthorityService, "_native_process_identity", return_value="native:fixture"):
-            context = HostContext.from_wire(service._issue_context(uid, {
-                "purpose": "native-event", "intent": "capture observed request", "trace_id": "trace-root",
-                "lease_seconds": 20, "source_contexts": [], "operation": "native.event.prepare",
-                "final_payload_digest": canonical_digest(payload),
-            }, peer_pid=4321))
-            now = service.monotonic()
-            proof = VerifiedSourceObservation(
-                observer_enrollment_id="observer:fixture", event_record_id="e" * 40,
-                source_kind="native-input", origin_id="hermes.input", payload_bytes=payload,
-                payload_sha256=canonical_digest(payload), parent_context=context,
-                parent_receipts=(), parent_receipt_handles=(), profile_id=binding.profile_id,
-                principal_id=binding.principal_id, namespace_id=binding.namespace_id,
-                enrollment_id=context.enrollment_id, generation=identity.generation,
-                producer_uid=uid, producer_pid=4321, producer_pidfd=7, producer_identity=identity,
-                package_id="package:fixture", package_sha256="b" * 64,
-                source_revision="source:fixture", source_tree_sha256="c" * 64,
-                compiled_closure_artifact_id="closure:fixture", entrypoint_artifact_id="entry:fixture",
-                entrypoint_sha256="d" * 64, resolver_artifact_id="resolver:fixture",
-                resolver_sha256="e" * 64, service_package_root_id="root:fixture",
-                service_mount_id="mount:fixture", role_id="role:fixture", role_sha256="a" * 64,
-                action_id="chat.complete", argument_schema_id="args:fixture",
-                result_schema_id="result:fixture", effect_enrollment_id="provider:fixture",
-                operation=rule.operation, capability=rule.capability, invocation_id=context.grant_id,
-                channel_id="channel:fixture", target_id=rule.target, recipient=rule.recipient,
-                authority_epoch=service.authority_epoch, issued_monotonic=now,
-                expires_monotonic=min(context.monotonic_expires_at, now + 10),
-                _issuer=_OBSERVATION_ISSUER,
-            )
-            service.source_observer_registry.proof = proof
-            handle = service.issue_observed_source(proof)
-            self.assertIsInstance(handle, SourceReceiptHandle)
-            receipt = service._source_receipt_handles[str(handle)]
-            self.assertEqual(receipt.sensitivity, Sensitivity.PRIVATE)
-            self.assertEqual(receipt.payload_digest, canonical_digest(payload))
-            self.assertEqual(receipt.origin_id, f"hermes.input:{proof.event_record_id}")
-            with self.assertRaises(AuthorityDenied):
-                service.issue_observed_source(proof)
-            with self.assertRaises(AuthorityDenied) as raised:
-                service._dispatch(uid, 4321, 7, "issue_observed_source", {}, cancelled=lambda: False)
-            self.assertEqual(raised.exception.code, "protocol.operation")
+        with self.assertRaises(AuthorityDenied):
+            service.issue_observed_source(object())
+        with self.assertRaises(AuthorityDenied):
+            service._dispatch(binding.uid, 4321, 7, "issue_observed_source", {},
+                              cancelled=lambda: False)
 
     def test_process_start_target_is_resolved_from_protected_enrollment(self):
         binding = PrincipalBinding(1234, "principal:a", "profile:a", "namespace:a",
@@ -664,6 +588,62 @@ class NativeEventClientContracts(unittest.TestCase):
         client._rpc = lambda operation, value, **_kwargs: requests.append((operation, value)) or value
         self.assertEqual(client.take_source_receipt("h" * 40), "h" * 40)
         self.assertEqual(requests, [("source.receipt.take", payload)])
+
+
+class RootResolvedProcessControlContracts(unittest.TestCase):
+    def test_control_selects_target_and_binds_exact_nested_body(self):
+        binding = PrincipalBinding(1234, "principal:proc", "profile:proc", "namespace:proc",
+                                   frozenset({"hermes-process-control"}))
+        profile = SimpleNamespace(profile_id="profile:proc", generation="generation-1",
+                                  owner_uid=1234,
+                                  operation_targets={"process.read": "profile:proc:data:read"})
+        target = profile.operation_targets["process.read"]
+        rule = EffectRule("hermes-process-control", "process.read", target)
+        effects = []
+
+        class Manager:
+            def resolve_process_operation(self, process_id, generation, operation, *,
+                                          peer_uid, peer_pid, peer_pidfd):
+                self.args = (process_id, generation, operation, peer_uid, peer_pid, peer_pidfd)
+                return profile, target
+
+        def handler(*, context, authorization, payload, timeout, peer_pid, peer_pidfd, cancelled):
+            effects.append((context.operation, authorization.target, payload))
+            return {"status": 200, "body": b"{}", "headers": {}, "receipt_id": "fixed"}
+
+        service = AuthorityService(
+            signing_key=b"p" * 32, key_id="process-control-fixture",
+            bindings_by_uid={binding.uid: binding},
+            rules={(rule.capability, rule.operation, rule.target): rule},
+            handlers={(rule.operation, rule.target): handler}, policy=FixturePolicy(),
+            profile_generations={binding.profile_id: "generation-1"},
+            process_effect_handler=Manager(),
+        )
+        service._native_process_identity = lambda pid, uid: f"test-peer:{pid}:{uid}"
+        request = {"schema": 1, "operation": "process.read", "process_id": "a" * 32,
+                   "generation": "generation-1",
+                   "fields": {"stream": "stdout", "maximum_bytes": 128}}
+        result = service._dispatch(binding.uid, 4567, 8, "process.control", request,
+                                   cancelled=lambda: False)
+        expected = canonical_bytes(request)
+        self.assertEqual(result["receipt_id"], "fixed")
+        self.assertEqual(effects, [("process.read", target, expected)])
+
+    def test_control_rejects_worker_target_and_missing_manager_resolver(self):
+        binding = PrincipalBinding(1234, "principal:proc", "profile:proc", "namespace:proc",
+                                   frozenset({"hermes-process-control"}))
+        service = AuthorityService(signing_key=b"q" * 32, key_id="process-control-unavailable",
+                                   bindings_by_uid={binding.uid: binding}, rules={}, handlers={})
+        request = {"schema": 1, "operation": "process.stop", "process_id": "b" * 32,
+                   "generation": "generation-1", "fields": {}, "target": "attacker"}
+        with self.assertRaises(AuthorityDenied):
+            service._dispatch(binding.uid, 4567, 8, "process.control", request,
+                              cancelled=lambda: False)
+        request.pop("target")
+        with self.assertRaises(AuthorityDenied) as denied:
+            service._dispatch(binding.uid, 4567, 8, "process.control", request,
+                              cancelled=lambda: False)
+        self.assertEqual(denied.exception.code, "process.control")
 
 
 class AuthorityRestartReplayContracts(unittest.TestCase):
