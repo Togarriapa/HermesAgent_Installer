@@ -209,7 +209,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
             rule = EffectRule(
                 capability=capability, operation="mcp.request", target="mcp:fixture:http",
             )
-            rules[(rule.capability, rule.operation, rule.target)] = rule
+            rules[(rule.capability, rule.target)] = rule
         authority_service = AuthorityService(
             signing_key=b"fixture-authority-key-32-bytes-long!!",
             key_id="mcp-http-fixture", bindings_by_uid={uid: binding},
