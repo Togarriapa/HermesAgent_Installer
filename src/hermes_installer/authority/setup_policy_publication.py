@@ -773,6 +773,8 @@ def _build_descriptor(compiled: CompiledRootSetupPublication,
         session_handle = getattr(compiled, "setup_session_id", None)
     if session_handle is None:
         session_handle = getattr(session, "session_handle", None)
+    if session_handle is None:
+        session_handle = getattr(getattr(session, "_handle", None), "session_id", None)
     input_receipt_handles = list(source_receipts)
     for name in ("runtime_receipt_handles", "materialization_receipt_handles"):
         for handle in getattr(compiled, name, ()):
