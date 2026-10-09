@@ -18,8 +18,10 @@ class RecordingAuthorityClient:
         self.calls.append((operation, payload, timeout, cancelled))
         default_result = {}
         fields = payload["fields"]
-        if payload["operation"] == "process.read":
-            default_result = {"data_bytes": "", "eof": True}
+        if payload["operation"] == "process.status":
+            default_result = {"exit_code": None}
+        elif payload["operation"] == "process.read":
+            default_result = {"data_bytes": "", "eof": True, "redacted": False}
         elif payload["operation"] == "process.write":
             default_result = {"accepted_bytes": len(base64.b64decode(fields["data_bytes"])),
                               "sequence": fields["sequence"] + 1}

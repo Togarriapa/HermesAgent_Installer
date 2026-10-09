@@ -126,7 +126,9 @@ def _decode_response(value: Any, *, operation: str, process_id: str,
         raise AuthorityDenied("effect.bounds", "root process control result exceeds its operation bound")
     if operation == "process.read":
         data_value = result.get("data_bytes")
-        if not isinstance(data_value, str) or type(result.get("eof")) is not bool:
+        if (set(result) != {"data_bytes", "eof", "redacted"}
+                or not isinstance(data_value, str) or type(result.get("eof")) is not bool
+                or type(result.get("redacted")) is not bool):
             raise AuthorityDenied("effect.invalid", "root process read result is malformed")
         try:
             data = base64.b64decode(data_value, validate=True)
@@ -138,14 +140,20 @@ def _decode_response(value: Any, *, operation: str, process_id: str,
     elif operation == "process.write":
         accepted, sequence = result.get("accepted_bytes"), result.get("sequence")
         submitted = base64.b64decode(fields["data_bytes"], validate=True)
-        if (type(accepted) is not int or not 0 <= accepted <= len(submitted)
+        if (set(result) != {"accepted_bytes", "sequence"}
+                or type(accepted) is not int or not 0 <= accepted <= len(submitted)
                 or type(sequence) is not int or sequence != fields["sequence"] + 1):
             raise AuthorityDenied("effect.invalid", "root process write result is malformed")
     elif operation == "process.stop":
-        if (type(result.get("closed")) is not bool
+        if (set(result) != {"closed", "reap_state"}
+                or type(result.get("closed")) is not bool
                 or not isinstance(result.get("reap_state"), str)
                 or not 1 <= len(result["reap_state"]) <= 64):
             raise AuthorityDenied("effect.invalid", "root process stop result is malformed")
+    elif operation == "process.status":
+        exit_code = result.get("exit_code")
+        if set(result) != {"exit_code"} or (exit_code is not None and type(exit_code) is not int):
+            raise AuthorityDenied("effect.invalid", "root process status result is malformed")
     return ProcessControlResponse(
         schema=1, process_id=process_id, generation=generation, operation=operation,
         state=value["state"], result=MappingProxyType(dict(result)),
