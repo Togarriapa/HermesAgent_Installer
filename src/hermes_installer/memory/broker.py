@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from hermes_installer.authority.types import EffectAuthorization, HostContext
 from hermes_installer.state import OwnedRoot, process_lock
 from hermes_installer.memory.owner_ledger import SQLiteOwnerLedger
+from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+from hermes_installer.memory.transport import MemoryServiceIPC, RootConnectorFactory
 
 MAX_REQUEST = 256 * 1024
 MAX_RESPONSE = 1024 * 1024
@@ -127,6 +129,48 @@ class MemoryTarget:
     data_root_id: str
     dedicated_store: bool = True
     approved_route_ids: frozenset[str] = frozenset()
+    enrollment: MemoryServiceEnrollment | None = None
+
+    @classmethod
+    def from_enrollment(cls, enrollment: MemoryServiceEnrollment) -> "MemoryTarget":
+        if not isinstance(enrollment, MemoryServiceEnrollment):
+            raise TypeError("MemoryServiceEnrollment is required")
+        return cls(
+            provider=enrollment.provider, profile_id=enrollment.profile_id,
+            namespace_id=enrollment.namespace_identity,
+            service_id=enrollment.service_enrollment_id,
+            source_revision=enrollment.source_revision,
+            service_generation=enrollment.service_generation,
+            data_root_id=enrollment.data_root_id, dedicated_store=True,
+            approved_route_ids=frozenset(enrollment.fixed_route_map),
+            enrollment=enrollment,
+        )
+
+    def route_for(self, action: str) -> str | None:
+        if self.enrollment is None:
+            return ROUTE_IDS[self.provider].get(action)
+        e = self.enrollment
+        if self.provider == "openviking":
+            choices = {"doctor": "openviking-ready", "search": "openviking-find",
+                       "capture": "openviking-session-capture"}
+        elif self.provider == "agentmemory":
+            choices = {"doctor": "agentmemory-ready", "search": "agentmemory-search",
+                       "capture": "agentmemory-capture", "delete": "agentmemory-delete",
+                       "export": "agentmemory-export", "backup": "agentmemory-backup",
+                       "restore": "agentmemory-restore"}
+        elif e.backend_variant == "server-v1-sqlite":
+            choices = {"doctor": "claude-sqlite-ready", "search": "claude-sqlite-search",
+                       "capture": "claude-sqlite-capture"}
+        elif e.backend_variant == "server-v1-postgres":
+            choices = {"doctor": "claude-postgres-ready", "search": "claude-postgres-search",
+                       "capture": "claude-postgres-capture", "delete": "claude-postgres-delete"}
+        elif e.backend_variant == "worker-observation":
+            choices = {"capture": "claude-worker-capture", "search": "claude-worker-search-get",
+                       "delete": "claude-worker-delete"}
+        else:
+            return None
+        route_id = choices.get(action)
+        return route_id if route_id in e.fixed_route_map else None
 
     def __post_init__(self) -> None:
         if self.provider not in PROVIDERS or not all(
