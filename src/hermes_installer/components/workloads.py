@@ -15,6 +15,7 @@ from typing import Callable, Mapping
 from hermes_installer.components.application_handlers import (
     ComponentInvocation,
     build_graphify_code_fixture,
+    build_hyperframes_render_fixture,
 )
 from hermes_installer.components.browser_use import build_browser_use_fixture_invocation
 
@@ -57,6 +58,15 @@ def _graphify_fixture(args, runtime_roots, work_roots):
     )
 
 
+def _hyperframes_fixture(args, runtime_roots, work_roots):
+    if args:
+        raise ValueError("hyperframes-render-fixture takes no caller-controlled paths")
+    return (build_hyperframes_render_fixture(
+        runtime_roots["hyperframes"], work_roots["hyperframes-fixture"],
+        work_roots["hyperframes"],
+    ),)
+
+
 _REGISTERED: Mapping[str, _Definition] = MappingProxyType({
     "browser-fixture": _Definition(
         frozenset({"fixture_url"}),
@@ -67,6 +77,11 @@ _REGISTERED: Mapping[str, _Definition] = MappingProxyType({
         frozenset(),
         frozenset({"component.graphify.read-fixture", "component.graphify.write-private-work", "component.graphify.read-private-work"}),
         1024, 120, "deny", None, Decimal("0"), _graphify_fixture,
+    ),
+    "hyperframes-render-fixture": _Definition(
+        frozenset(),
+        frozenset({"component.hyperframes.read-fixture", "component.hyperframes.write-private-work"}),
+        2048, 180, "deny", None, Decimal("0"), _hyperframes_fixture,
     ),
 })
 
@@ -134,7 +149,7 @@ class WorkloadScheduler:
         if any(item.timeout_seconds > definition.timeout_seconds
                or item.memory_limit_mb > definition.memory_mb
                or item.network not in {"deny", definition.network_scope}
-               or item.component_id not in {"browser-use", "graphify"}
+                or item.component_id not in {"browser-use", "graphify", "hyperframes"}
                or not set(item.capability_scopes).issubset(definition.capabilities)
                for item in invocations):
             raise PermissionError("registered invocation exceeds its workload policy")

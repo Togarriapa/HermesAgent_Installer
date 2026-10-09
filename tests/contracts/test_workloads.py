@@ -19,15 +19,19 @@ class WorkloadSchedulerTests(unittest.TestCase):
                 "component.browser-use.local-fixture", "network:localhost",
                 "component.graphify.read-fixture", "component.graphify.write-private-work",
                 "component.graphify.read-private-work",
+                "component.hyperframes.read-fixture", "component.hyperframes.write-private-work",
             }),
             runtime_roots={
                 "browser-use": "/owned/browser/bin/python",
                 "graphify": "/owned/graphify",
+                "hyperframes": "/owned/hyperframes",
             },
             work_roots={
                 "browser-use": "/owned/work/browser",
                 "graphify": "/owned/work/graphify",
                 "graphify-fixture": "/owned/fixtures/graphify",
+                "hyperframes": "/owned/hyperframes",
+                "hyperframes-fixture": "/owned/fixtures/hyperframes",
             },
             memory_budget_mb=2048,
             max_workers=1,
@@ -96,6 +100,33 @@ class WorkloadSchedulerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "dependent stages were not launched"):
             scheduler.execute(Workload("graphify-code-fixture"))
         self.assertEqual(1, len(failed_calls))
+
+    def test_hyperframes_fixture_is_fixed_private_on_demand_and_unmetered(self):
+        result = self.scheduler.execute(Workload("hyperframes-render-fixture"))
+        self.assertEqual("fixture-complete", result["output"])
+        invocation = self.calls[0]
+        self.assertEqual("hyperframes", invocation.component_id)
+        self.assertEqual("/owned/hyperframes/bin/hyperframes", invocation.executable)
+        self.assertEqual(("render", "-c", "/owned/fixtures/hyperframes/composition.html",
+                          "-o", "/owned/hyperframes/rendered.mp4"), invocation.argv)
+        self.assertEqual("deny", invocation.network)
+        self.assertEqual(180, invocation.timeout_seconds)
+        self.assertEqual(2048, invocation.memory_limit_mb)
+        self.assertEqual(Decimal("0"), self.scheduler.metered_spend_usd)
+
+    def test_hyperframes_fixture_rejects_caller_paths_and_missing_capabilities(self):
+        with self.assertRaisesRegex(ValueError, "parameters do not match"):
+            self.scheduler.execute(Workload("hyperframes-render-fixture", {"output": "/tmp/x.mp4"}))
+        denied = WorkloadScheduler(
+            lambda invocation: self.calls.append(invocation), frozenset(),
+            runtime_roots={"hyperframes": "/owned/hyperframes"},
+            work_roots={"hyperframes-fixture": "/owned/fixtures/hyperframes",
+                        "hyperframes": "/owned/hyperframes"},
+            memory_budget_mb=4096,
+        )
+        with self.assertRaisesRegex(PermissionError, "capability denied"):
+            denied.execute(Workload("hyperframes-render-fixture"))
+        self.assertEqual([], self.calls)
 
 
 if __name__ == "__main__":
