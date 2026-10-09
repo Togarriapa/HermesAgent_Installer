@@ -54,14 +54,23 @@ selected account and tunnel UUID using the pinned [`cloudflared` 2026.10.0 token
 Cloudflare route activation requires a signed, short-lived
 `RootOriginReadinessReceipt` from the root authority. It binds the active
 gateway and Desktop generations, connector target, policy digest/revision and
-service generation. The receipt is issued only after the process manager
-checks the live PIDFD, start time, pinned executable, cgroup, namespaces, mount,
-configuration and fixed route, followed by bounded loopback checks for
-authorized native app assets and WebSocket pixels and denials for unauthorized,
-shell, arbitrary route and whole-host desktop requests. Missing native or
-kernel evidence leaves the route pending; process metadata or a live PID alone
-does not satisfy readiness. Receipts expire after 30 seconds and must pass root
-signature, selection, digest and expiry checks at the activation boundary.
+service generation, and the opaque handle for one root-registered probe. Root
+checks the gateway and native Desktop PIDFDs, start time, pinned executable,
+cgroup, namespaces and mount. A separate setup transaction binds the current
+setup process, selected tunnel response, dedicated writer role and probe role;
+its one-use origin-probe handle expires within 30 seconds. The root client
+connects only to the active catalog's private AF_UNIX socket, verifies the
+gateway peer PID/UID/GID, and sends a fixed selection plus challenge and digest.
+The private gateway operation must collect the exact HTTP asset, WebSocket and
+native-window observations from its selected app-only connector and deny
+unauthenticated, arbitrary, shell and whole-host routes. The root verifies the
+challenge echoes and registers its own signed probe receipt before issuing
+readiness. Neither endpoint-provided booleans nor a live PID alone satisfy the
+check. Receipts expire after 30 seconds and must pass root signature, selection,
+digest and expiry checks at the activation boundary. Until the root HI12 setup
+probe connector and native-window observer are assembled, readiness remains
+unavailable; the isolated loopback/AF_UNIX fixture proves protocol behavior,
+not production connector or target readiness.
 
 Fixture evidence exercises private file effects, collision refusal, signed
 receipt validation and real isolated loopback socket exchanges. It does not
