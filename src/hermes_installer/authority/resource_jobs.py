@@ -272,6 +272,13 @@ def resource_job_enrollment_from_record(
     profile_generations = {backend_enrollments[item].profile_generation for item in backend_ids}
     if len(profile_generations) != 1:
         raise AuthorityDenied("resource.enrollment", "selected DAG spans service profile generations")
+    required_recipe_ids = {node.body_recipe_id for node in nodes}
+    for backend_id in backend_ids:
+        binding = backend_enrollments[backend_id].execution_binding
+        if binding is not None:
+            required_recipe_ids.add(binding["task_body_recipe_id"])
+    if not required_recipe_ids <= set(body_recipes):
+        raise AuthorityDenied("resource.enrollment", "selected node or task body recipe is absent")
     try:
         for name in ("approved_action_ids", "fixed_target_ids", "credential_reference_ids",
                      "recipient_scope", "source_policy"):
@@ -299,15 +306,14 @@ def resource_job_enrollment_from_record(
             backend_enrollment_id="",
             credential_reference_ids=frozenset(record["credential_reference_ids"]),
             backend=None,
-            body_recipes={node.body_recipe_id: body_recipes[node.body_recipe_id]
-                          for node in nodes},
+            body_recipes={recipe_id: body_recipes[recipe_id] for recipe_id in required_recipe_ids},
             backends={node.backend_enrollment_id: backend_enrollments[node.backend_enrollment_id]
                       for node in nodes},
             profile_generation=next(iter(profile_generations)),
             scope_bindings={backend.scope_binding_id: scope_bindings[backend.scope_binding_id]
                             for backend in (backend_enrollments[item] for item in backend_ids)},
                 validators={validator_id: validators[validator_id] for recipe in
-                        (body_recipes[node.body_recipe_id] for node in nodes)
+                        (body_recipes[recipe_id] for recipe_id in required_recipe_ids)
                         for validator_id in ({field.validator_id for field in recipe.output_fields}
                                              | {field.validator_id for field in recipe.scope_bindings})
                         if validator_id in validators},

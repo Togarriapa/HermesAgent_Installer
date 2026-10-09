@@ -585,8 +585,12 @@ class ResourceJobEnrollment:
         if any(key != recipe.recipe_id or not isinstance(recipe, ResourceBodyRecipe)
                for key, recipe in recipes.items()):
             raise ResourceJobDenied("selected body recipe index is malformed")
-        if recipes and set(recipes) != {node.body_recipe_id for node in self.nodes}:
-            raise ResourceJobDenied("selected body recipes do not exactly cover the approved DAG")
+        required_recipe_ids = {node.body_recipe_id for node in self.nodes}
+        for backend in backend_rows.values():
+            if backend.execution_binding is not None:
+                required_recipe_ids.add(backend.execution_binding["task_body_recipe_id"])
+        if recipes and set(recipes) != required_recipe_ids:
+            raise ResourceJobDenied("selected body recipes do not exactly cover node and task recipes")
         for node in self.nodes:
             recipe = recipes.get(node.body_recipe_id)
             if recipe is not None and (recipe.schema_id != node.request_schema_id
@@ -630,6 +634,13 @@ class ResourceJobEnrollment:
                     field.scope_binding_id != backend.scope_binding_id
                     for field in recipe.scope_bindings):
                 raise ResourceJobDenied("body recipe scope does not exactly bind its node backend")
+            binding = backend.execution_binding if backend is not None else None
+            task_recipe = recipes.get(binding["task_body_recipe_id"]) if binding is not None else None
+            if binding is not None and (task_recipe is None
+                                        or task_recipe.schema_id != binding["task_request_schema_id"]
+                                        or any(field.scope_binding_id != backend.scope_binding_id
+                                               for field in task_recipe.scope_bindings)):
+                raise ResourceJobDenied("profile task recipe does not exactly join its backend execution binding")
         object.__setattr__(self, "scope_bindings", MappingProxyType(scopes))
         object.__setattr__(self, "validators", MappingProxyType(validators))
         if sum(len(node.payload) for node in self.nodes) > self.max_payload_bytes:

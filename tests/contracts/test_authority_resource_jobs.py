@@ -35,6 +35,11 @@ def _fixture():
         "recipe", "request-schema", "recipe-artifact", handler_digest,
         (ResourceBodyRecipeField("action", "literal", "run", "run-action"),), {}, 512,
     )
+    task_recipe = ResourceBodyRecipe(
+        "task-recipe", "hermes-resource-profile-query-v1", "task-recipe-artifact", handler_digest,
+        (ResourceBodyRecipeField("prompt", "literal", "perform the selected action", "task-prompt"),),
+        (), 1024,
+    )
     node = ResourceJobNode(
         "node-1", "run-action", "resource.cron.run",
         f"resource:demo:run-action:{generation}", None, recipe.template_payload(),
@@ -57,15 +62,19 @@ def _fixture():
     validator_record = ResourceValidator(
         "run-action", "enum", None, None, None, ("run",), None, None,
     )
+    task_validator = ResourceValidator(
+        "task-prompt", "utf8-string", 262_144, None, None, None, None, None,
+    )
     enrollment = ResourceJobEnrollment(
         "demo", "crons", generation, True, "profile-1", "principal-1", "consent-1",
         frozenset({"run-action"}), frozenset({node.target}), frozenset(),
         frozenset({"schedule-event"}), "schedule-1", (node,), 1, 1, 30, 2048, 10,
         enrollment_id="profile-enrollment-1", source_issuer_channel_id="source-channel",
-        observer_enrollment_id="observer-1", body_recipes={"recipe": recipe},
+        observer_enrollment_id="observer-1",
+        body_recipes={"recipe": recipe, "task-recipe": task_recipe},
         backends={"backend-1": backend}, profile_generation="service-generation",
         scope_bindings={"scope-binding": scope_record},
-        validators={"run-action": validator_record},
+        validators={"run-action": validator_record, "task-prompt": task_validator},
     )
     raw_backend = {
         "id": "backend-1", "resource_id": "demo", "profile_id": "profile-1",
@@ -89,6 +98,13 @@ def _fixture():
                            "validator_id": "run-action"}],
         "scope_bindings": [], "maximum_bytes": 512,
     }
+    raw_task_recipe = {
+        "id": "task-recipe", "schema_id": "hermes-resource-profile-query-v1",
+        "source_artifact_id": "task-recipe-artifact", "source_sha256": handler_digest,
+        "output_fields": [{"name": "prompt", "source": "literal",
+                           "value": "perform the selected action", "validator_id": "task-prompt"}],
+        "scope_bindings": [], "maximum_bytes": 1024,
+    }
     scope = {
         "id": "scope-binding", "resource_id": "demo", "profile_id": "profile-1",
         "principal_id": "principal-1", "resource_generation": generation,
@@ -98,6 +114,11 @@ def _fixture():
     validator = {
         "id": "run-action", "kind": "enum", "maximum_bytes": None,
         "minimum": None, "maximum": None, "allowed_values": ["run"],
+        "schema_artifact_id": None, "schema_sha256": None,
+    }
+    raw_task_validator = {
+        "id": "task-prompt", "kind": "utf8-string", "maximum_bytes": 262144,
+        "minimum": None, "maximum": None, "allowed_values": None,
         "schema_artifact_id": None, "schema_sha256": None,
     }
     row = {
@@ -128,7 +149,8 @@ def _fixture():
         observer_enrollment_id="observer-1", channel_id="source-channel", profile_id="profile-1",
         principal_id="principal-1", generation="service-generation", source_kind="schedule-event",
     )
-    return row, raw_backend, raw_recipe, scope, validator, source_issuer, observer, enrollment
+    return (row, raw_backend, [raw_recipe, raw_task_recipe], scope,
+            [validator, raw_task_validator], source_issuer, observer, enrollment)
 
 
 def test_protected_resource_job_index_requires_exact_active_source_backend_and_recipe_joins():
@@ -139,11 +161,11 @@ def test_protected_resource_job_index_requires_exact_active_source_backend_and_r
         parse_resource_validator_records,
     )
 
-    row, raw_backend, raw_recipe, raw_scope, raw_validator, issuer, observer, expected = _fixture()
+    row, raw_backend, raw_recipes, raw_scope, raw_validators, issuer, observer, expected = _fixture()
     backends = parse_resource_backend_records([raw_backend])
-    recipes = parse_resource_body_recipes([raw_recipe])
+    recipes = parse_resource_body_recipes(raw_recipes)
     scopes = parse_resource_scope_binding_records([raw_scope])
-    validators = parse_resource_validator_records([raw_validator])
+    validators = parse_resource_validator_records(raw_validators)
     result = index_resource_job_records(
         [row], backend_enrollments=backends, body_recipes=recipes,
         scope_bindings=scopes, validators=validators,
