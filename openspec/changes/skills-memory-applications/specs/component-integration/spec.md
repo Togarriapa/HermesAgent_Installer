@@ -579,3 +579,10 @@ The installer SHALL enforce canonical typed memory compound write envelopes with
 #### Scenario: Forged HTTP frame or skipped compound step
 - **WHEN** caller submits arbitrary HTTP bytes, wrong job/step or reused frame grant
 - **THEN** reject before backend bytes with owned failure/cleanup journal and no sibling scope mutation.
+
+### Requirement: Closed selected recipe identities
+The installer SHALL use finite source-bound request/recipe/validator IDs with root-enforced scope and fixed parameter-free model launches; absent actual validator identity SHALL remain unavailable.
+
+#### Scenario: Caller supplies scope or model launch parameters
+- **WHEN** caller attempts to replace root scope, URI, device or fixed build/inference parameters
+- **THEN** reject before backend/launch bytes and preserve exact incomplete native evidence.

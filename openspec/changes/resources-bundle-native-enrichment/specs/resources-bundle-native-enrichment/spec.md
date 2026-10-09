@@ -104,3 +104,10 @@ The installer SHALL validate strict root-owned package/issuer catalogs and disti
 #### Scenario: Partial hash or unobserved configured issuer
 - **WHEN** policy/module digest is missing or source observer only exists as configuration text
 - **THEN** keep affected native effect unavailable and require actual identity/observer evidence.
+
+### Requirement: Protected voice result receipts
+The installer SHALL expose only strict bounded transcript/source receipt or owned audio artifact receipt fields; raw PCM, paths, URLs and credentials SHALL not appear in tool results.
+
+#### Scenario: Voice service returns raw or extra fields
+- **WHEN** result violates selected strict receipt schema or lacks actual root-observed provenance
+- **THEN** reject result and preserve exact incomplete action state without leaking raw capture.

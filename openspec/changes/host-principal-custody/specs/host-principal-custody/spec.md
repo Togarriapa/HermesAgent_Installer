@@ -194,3 +194,31 @@ The installer SHALL verify actual Access JWT and fresh root selected policy at r
 #### Scenario: Forged gateway claims or expired active stream
 - **WHEN** root JWT/policy/principal verification fails or active lease revokes/expires
 - **THEN** deny before bytes or close both stream directions within tested bounded lease and preserve setup/read/tunnel credential separation.
+
+### Requirement: Closed selected recipe identities
+The installer SHALL use finite source-bound request/recipe/validator IDs with root-enforced scope and fixed parameter-free model launches; absent actual validator identity SHALL remain unavailable.
+
+#### Scenario: Caller supplies scope or model launch parameters
+- **WHEN** caller attempts to replace root scope, URI, device or fixed build/inference parameters
+- **THEN** reject before backend/launch bytes and preserve exact incomplete native evidence.
+
+### Requirement: Independent device profile epoch join
+The installer SHALL compare selected device identity generation to protected expected_device_generation independently from process profile generation.
+
+#### Scenario: Device epoch changes under live profile
+- **WHEN** hotplug or replacement changes selected device identity epoch
+- **THEN** invalidate inference enrollment/active grant and require root reattestation without sibling/all-device fallback.
+
+### Requirement: Root private observed source capture
+The installer SHALL issue qualified source receipts only through root-private actual registered observer/event joins and exact bounded observed bytes, with peer, generation, parent closure, recipient and lease bindings. Worker submitted capture SHALL remain UNKNOWN/private.
+
+#### Scenario: Worker claims tool result or authentic user input
+- **WHEN** actual registered root observer/event/invocation evidence is absent, stale or replayed
+- **THEN** deny qualified receipt before effect and preserve private unknown provenance without omitted original functionality.
+
+### Requirement: Typed remote root session wire
+The installer SHALL expose distinct one-shot asset and leased WebSocket admissions through peer-bound opaque root handles and finite typed connector operations that check current session state and fresh exact grants internally.
+
+#### Scenario: Asset handle reused for WebSocket or caller chooses connector
+- **WHEN** caller reuses consumed asset admission, selects target/path or sends frame after root lease expiry
+- **THEN** reject before bytes and close owned relay without localcontext or raw FD bypass.
