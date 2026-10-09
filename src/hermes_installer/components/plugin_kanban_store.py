@@ -80,7 +80,7 @@ class SQLiteEpicBoardStore:
     def create(self, epic_id: str, title: str) -> str:
         if not isinstance(epic_id, str) or not self._EPIC.fullmatch(epic_id):
             raise BoardStoreError("invalid Epic identity")
-        _text(title, "board title", 200)
+        _text(title, "board title", 256)
         board_id = secrets.token_hex(16)
         with self._locked(), self._transaction() as db:
             try:
@@ -96,50 +96,62 @@ class SQLiteEpicBoardStore:
             if row is None:
                 return None
             items = db.execute("SELECT item_id,item_type,title,state,summary FROM items WHERE board_id=? ORDER BY item_id", (board_id,)).fetchall()
-        return {"id": board_id, "epic_id": row[0], "title": row[1], "created_at": row[2],
-                "items": [dict(zip(("id", "type", "title", "state", "summary"), item)) for item in items]}
+        return {"board_id": board_id, "epic_id": row[0], "title": row[1],
+                "items": [dict(zip(("item_id", "item_type", "title", "state", "description"), item)) for item in items]}
 
-    def mutate(self, board_id: str, operation: str, item: dict[str, Any]) -> dict[str, Any]:
+    def add_item(self, board_id: str, item_type: str, title: str, description: str) -> dict[str, str]:
         board_id = self._board(board_id)
-        if operation not in {"add_item", "move_item"}:
-            raise BoardStoreError("unsupported board mutation")
-        values = _validate_item(item)
+        _text(title, "item title", 256)
+        if item_type not in {"epic", "user-story", "task", "defect", "spike", "risk", "decision"}:
+            raise BoardStoreError("item type is outside the Epic board schema")
+        if not isinstance(description, str) or len(description) > 16384 or any(
+            ord(c) < 32 and c not in "\n\t" for c in description
+        ):
+            raise BoardStoreError("item description is invalid")
+        item_id = secrets.token_hex(12)
         with self._locked(), self._transaction() as db:
             if db.execute("SELECT 1 FROM boards WHERE board_id=?", (board_id,)).fetchone() is None:
                 raise BoardStoreError("board does not exist in the selected profile")
-            if operation == "add_item":
-                try:
-                    db.execute("INSERT INTO items VALUES(?,?,?,?,?,?)",
-                               (board_id, *values))
-                except sqlite3.IntegrityError:
-                    raise BoardStoreError("board item already exists") from None
-            else:
-                cursor = db.execute("UPDATE items SET state=? WHERE board_id=? AND item_id=?",
-                                    (values[3], board_id, values[0]))
-                if cursor.rowcount != 1:
-                    raise BoardStoreError("board item does not exist")
-        result = self.read(board_id)
-        if result is None:
-            raise BoardStoreError("board disappeared during update")
-        return result
+            db.execute("INSERT INTO items VALUES(?,?,?,?,?,?)",
+                       (board_id, item_id, item_type, title, "backlog", description))
+        return {"item_id": item_id}
 
-    def delete_after_accepted_done(self, board_id: str, accepted_summary: str) -> bool:
+    def move_item(self, board_id: str, item_id: str, state: str) -> dict[str, str]:
         board_id = self._board(board_id)
-        _text(accepted_summary, "accepted summary", 4000)
+        if not isinstance(item_id, str) or not self._ITEM.fullmatch(item_id):
+            raise BoardStoreError("invalid item id")
+        if state not in {"backlog", "ready", "in-progress", "review", "blocked", "done"}:
+            raise BoardStoreError("item state is outside the Epic workflow")
+        with self._locked(), self._transaction() as db:
+            cursor = db.execute("UPDATE items SET state=? WHERE board_id=? AND item_id=?",
+                                (state, board_id, item_id))
+            if cursor.rowcount != 1:
+                raise BoardStoreError("board item does not exist")
+        return {"state": state}
+
+    def delete_after_accepted_done(self, board_id: str,
+                                   accepted_lifecycle_attestation_id: str) -> dict[str, str] | bool:
+        board_id = self._board(board_id)
+        if not isinstance(accepted_lifecycle_attestation_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_-]{7,127}", accepted_lifecycle_attestation_id
+        ):
+            raise BoardStoreError("accepted lifecycle attestation ID is invalid")
         with self._locked(), self._transaction() as db:
             row = db.execute("SELECT epic_id FROM boards WHERE board_id=?", (board_id,)).fetchone()
             if row is None:
-                return False
+                raise BoardStoreError("board does not exist in the selected profile")
             items = db.execute("SELECT COUNT(*), COALESCE(SUM(state='done'),0) FROM items WHERE board_id=?", (board_id,)).fetchone()
             if items[0] == 0 or items[0] != items[1]:
-                return False
-            if not self._verify_acceptance(self.profile_id, board_id, accepted_summary):
+                raise BoardStoreError("all board items must be done before accepted deletion")
+            if not self._verify_acceptance(self.profile_id, board_id, accepted_lifecycle_attestation_id):
                 raise BoardStoreError("trusted accepted-completion evidence is missing")
-            digest = hashlib.sha256(accepted_summary.encode("utf-8")).hexdigest()
+            digest = hashlib.sha256(accepted_lifecycle_attestation_id.encode("utf-8")).hexdigest()
+            summary = "accepted lifecycle attestation verified"
             db.execute("INSERT OR REPLACE INTO accepted_summaries VALUES(?,?,?,?,?)",
-                       (board_id, row[0], accepted_summary, time.time(), digest))
+                       (board_id, row[0], summary, time.time(), digest))
             db.execute("DELETE FROM boards WHERE board_id=?", (board_id,))
-        return True
+        receipt_id = hashlib.sha256(f"{self.profile_id}\0{board_id}\0{digest}".encode()).hexdigest()
+        return {"receipt_id": receipt_id}
 
     def accepted_summary(self, board_id: str) -> dict[str, Any] | None:
         board_id = self._board(board_id)

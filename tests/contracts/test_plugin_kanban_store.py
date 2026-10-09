@@ -19,24 +19,28 @@ def make_store(tmp_path, *, accepted=False):
 def test_private_sqlite_board_lifecycle_and_completion_summary_archive(tmp_path):
     _root, store, approvals=make_store(tmp_path, accepted=True)
     board=store.create("EPIC-42", "Ship installer")
-    store.mutate(board, "add_item", {"id":"TASK-1", "type":"task", "title":"Implement", "state":"ready"})
+    item=store.add_item(board, "task", "Implement", "Bounded description")
     assert store.read(board)["epic_id"] == "EPIC-42"
-    assert store.delete_after_accepted_done(board, "accepted by operator") is False
-    store.mutate(board, "move_item", {"id":"TASK-1", "type":"task", "title":"Implement", "state":"done"})
-    assert store.delete_after_accepted_done(board, "accepted by operator") is True
+    attestation="attest-accepted-123"
+    with pytest.raises(BoardStoreError, match="must be done"):
+        store.delete_after_accepted_done(board, attestation)
+    store.move_item(board, item["item_id"], "done")
+    receipt=store.delete_after_accepted_done(board, attestation)
+    assert receipt["receipt_id"]
     assert store.read(board) is None
     archived=store.accepted_summary(board)
-    assert archived["summary"] == "accepted by operator"
-    assert approvals == [("profile_one", board, "accepted by operator")]
+    assert archived["summary"] == "accepted lifecycle attestation verified"
+    assert approvals == [("profile_one", board, attestation)]
     assert store.path.stat().st_mode & 0o777 == 0o600
 
 
-def test_board_deletion_requires_trusted_acceptance_even_when_text_is_present(tmp_path):
+def test_board_deletion_requires_trusted_acceptance_attestation(tmp_path):
     _, store, _=make_store(tmp_path, accepted=False)
     board=store.create("EPIC-7", "Do")
-    store.mutate(board, "add_item", {"id":"T-1", "type":"task", "title":"Done", "state":"done"})
+    item=store.add_item(board, "task", "Done", "")
+    store.move_item(board, item["item_id"], "done")
     with pytest.raises(BoardStoreError, match="trusted accepted-completion"):
-        store.delete_after_accepted_done(board, "looks accepted")
+        store.delete_after_accepted_done(board, "attest-accepted-123")
     assert store.read(board) is not None
 
 
@@ -55,8 +59,8 @@ def test_profile_separation_and_invalid_item_schema(tmp_path):
     store2=SQLiteEpicBoardStore(root, "profile_two", lambda *_: True)
     board=store1.create("E-2", "one")
     assert store2.read(board) is None
-    with pytest.raises(BoardStoreError, match="outside the Epic board schema"):
-        store1.mutate(board, "add_item", {"id":"T", "type":"task", "title":"x", "state":"ready", "command":"rm"})
+    with pytest.raises(BoardStoreError, match="item type"):
+        store1.add_item(board, "exec", "x", "")
 
 
 def test_database_symlink_is_rejected(tmp_path):

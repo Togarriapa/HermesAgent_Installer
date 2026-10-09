@@ -132,3 +132,17 @@ def test_root_handler_rejects_wrong_generation_and_payload_without_network(monke
     with pytest.raises(PublicHttpsDenied,match="grant"):
         handler(context=context,authorization=grant,payload=payload,timeout=5,
                 peer_pid=123,cancelled=lambda:False)
+
+
+def test_root_web_target_rejects_parallel_effects():
+    scope=EnrolledPublicWebScope("enrollment-1","target-1","generation-1",
+        "principal-1","profile-1","public-web",
+        (PublicReadTarget("example.com",("/docs",)),))
+    handler=PluginWebReadEffectHandler(scope,DirectPublicHttpsReader())
+    assert handler._lock.acquire(blocking=False)
+    try:
+        with pytest.raises(PublicHttpsDenied,match="already has an active request"):
+            handler(context=None,authorization=None,payload=b"",timeout=1,
+                    peer_pid=1,cancelled=lambda:False)
+    finally:
+        handler._lock.release()

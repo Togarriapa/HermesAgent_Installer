@@ -8,6 +8,7 @@ import json
 import re
 import socket
 import ssl
+import threading
 import time
 from ipaddress import ip_address
 from typing import Any, Callable, Mapping
@@ -276,10 +277,23 @@ class PluginWebReadEffectHandler:
         if type(enrollment) is not EnrolledPublicWebScope or type(reader) is not DirectPublicHttpsReader:
             raise TypeError("web handler requires protected enrollment and reviewed direct reader")
         self.enrollment, self.reader = enrollment, reader
+        self._lock = threading.Lock()
 
     def __call__(self, *, context: object, authorization: object, payload: bytes,
                  timeout: float, peer_pid: int, cancelled: Callable[[], bool],
                  peer_pidfd: int | None = None) -> Mapping[str, Any]:
+        if not self._lock.acquire(blocking=False):
+            raise PublicHttpsDenied("selected web target already has an active request")
+        try:
+            return self._handle(context=context, authorization=authorization, payload=payload,
+                                timeout=timeout, peer_pid=peer_pid, cancelled=cancelled,
+                                peer_pidfd=peer_pidfd)
+        finally:
+            self._lock.release()
+
+    def _handle(self, *, context: object, authorization: object, payload: bytes,
+                timeout: float, peer_pid: int, cancelled: Callable[[], bool],
+                peer_pidfd: int | None = None) -> Mapping[str, Any]:
         del peer_pidfd
         scope = self.enrollment
         if (not callable(cancelled) or cancelled() or type(peer_pid) is not int or peer_pid <= 0
@@ -309,7 +323,12 @@ class PluginWebReadEffectHandler:
             max_bytes=min(MAX_RESPONSE_BYTES, scope.response_bytes_limit),
             cancelled=cancelled,
         )
-        body = json.dumps({"schema": 1, "state": "read-complete", "result": result},
+        result_body = json.dumps(result, sort_keys=True, separators=(",", ":"),
+                                  ensure_ascii=False).encode("utf-8")
+        operation_id = hashlib.sha256(payload + b"\0" + result_body).hexdigest()
+        body = json.dumps({"schema": 1, "operation_id": operation_id,
+                           "state": "read-complete", "result": result,
+                           "verification_status": "verified", "resume_action_id": None},
                           sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         if len(body) > scope.response_bytes_limit:
             raise PublicHttpsDenied("web result exceeds its protected response limit")

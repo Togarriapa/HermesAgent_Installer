@@ -6,10 +6,15 @@ contains no shell, socket, microphone, credential, or persistence discovery.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from ipaddress import ip_address
+import json
 import re
+import time
 from typing import Any, Protocol
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
+
+from hermes_installer.components.plugin_local_voice_web_schemas import PLUGIN_ACTION_SCHEMAS
 
 
 class PluginAdapterError(RuntimeError):
@@ -19,25 +24,6 @@ class PluginAdapterError(RuntimeError):
 class ToolContext(Protocol):
     def register_tool(self, name: str, toolset: str, schema: dict[str, Any],
                       handler: Any, **kwargs: Any) -> object: ...
-
-
-class LocalBoardStore(Protocol):
-    """Already profile-scoped local store with ephemeral owned-root semantics."""
-    def create(self, epic_id: str, title: str) -> str: ...
-    def read(self, board_id: str) -> dict[str, Any] | None: ...
-    def mutate(self, board_id: str, operation: str,
-               item: dict[str, Any]) -> dict[str, Any]: ...
-    def delete_after_accepted_done(self, board_id: str,
-                                   accepted_summary: str) -> bool: ...
-
-
-class VoiceSession(Protocol):
-    """Trusted current-session boundary; it owns mic permission and audio lifetime."""
-    def current(self) -> tuple[str, bool]: ...  # (session id, microphone authorized)
-    def capture_current_session(self, *, max_bytes: int, timeout: float) -> bytes: ...
-    def transcribe_local(self, endpoint: str, audio: bytes, *, timeout: float) -> str: ...
-    def synthesize_local(self, endpoint: str, text: str, *, timeout: float) -> bytes: ...
-    def play_current_session(self, session_id: str, audio: bytes) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,51 +38,47 @@ class WebResponse:
     tls_peer_sha256: str = ""
 
 
-class DirectHttpsReader(Protocol):
-    """One-hop HTTPS fetcher, configured without environment proxy inheritance."""
-    def get_one_hop(self, url: str, *, timeout: float, max_bytes: int) -> WebResponse: ...
-
-
 class PluginRuntime(Protocol):
     """Protected runtime extension surface; never populated from resource YAML."""
     identity: object
-    local_board_store: LocalBoardStore | None
-    voice_session: VoiceSession | None
-    voice_endpoints: dict[str, str]
-    plugin_effect_dispatcher: object | None
+    plugin_effects: object | None
+    voice_session_enrollment_id: str | None
+
+
+class PluginEffectResolver(Protocol):
+    """Root-authorized finite action resolver. Tool args never select targets."""
+    def invoke(self, *, adapter_id: str, action_id: str,
+               arguments: dict[str, Any], idempotency_key: str | None = None,
+               opaque_confirmation_attestation_id: str | None = None) -> object: ...
 
 
 class LocalKanbanImplementation:
     def register(self, ctx: ToolContext, runtime_context: PluginRuntime) -> None:
         _require_plugin_identity(runtime_context, "epic-kanban")
-        store = getattr(runtime_context, "local_board_store", None)
-        if not _has_methods(store, "create", "read", "mutate", "delete_after_accepted_done"):
-            raise PluginAdapterError("protected profile-bound local board store is not enrolled")
-        LocalKanbanPlugin(store).register(ctx, runtime_context)
+        effects = getattr(runtime_context, "plugin_effects", None)
+        if not callable(getattr(effects, "invoke", None)):
+            raise PluginAdapterError("protected selected-plugin effects are not enrolled")
+        LocalKanbanPlugin(effects).register(ctx, runtime_context)
 
 
 class WyomingVoiceImplementation:
     def register(self, ctx: ToolContext, runtime_context: PluginRuntime) -> None:
         _require_plugin_identity(runtime_context, "voice-pipeline")
-        session = getattr(runtime_context, "voice_session", None)
-        if not _has_methods(session, "current", "capture_current_session", "transcribe_local",
-                            "synthesize_local", "play_current_session"):
-            raise PluginAdapterError("trusted current-session voice boundary is not enrolled")
-        endpoints = getattr(runtime_context, "voice_endpoints", None)
-        if not isinstance(endpoints, dict) or set(endpoints) - {"stt", "home_stt", "tts"}:
-            raise PluginAdapterError("protected local Wyoming endpoint configuration is unavailable")
-        WyomingVoicePlugin(session, stt_endpoint=endpoints.get("stt"),
-                           home_stt_endpoint=endpoints.get("home_stt"),
-                           tts_endpoint=endpoints.get("tts")).register(ctx, runtime_context)
+        effects = getattr(runtime_context, "plugin_effects", None)
+        if not callable(getattr(effects, "invoke", None)):
+            raise PluginAdapterError("protected selected-plugin effects are not enrolled")
+        enrollment_id = getattr(runtime_context, "voice_session_enrollment_id", None)
+        _bounded_text(enrollment_id, "root-selected voice session enrollment", 128)
+        WyomingVoicePlugin(effects, enrollment_id).register(ctx, runtime_context)
 
 
 class PublicWebImplementation:
     def register(self, ctx: ToolContext, runtime_context: PluginRuntime) -> None:
         _require_plugin_identity(runtime_context, "web")
-        dispatcher = getattr(runtime_context, "plugin_effect_dispatcher", None)
-        if not callable(getattr(dispatcher, "perform_plugin_action", None)):
-            raise PluginAdapterError("protected plugin effect dispatcher is not enrolled")
-        PublicWebPlugin(dispatcher).register(ctx, runtime_context)
+        effects = getattr(runtime_context, "plugin_effects", None)
+        if not callable(getattr(effects, "invoke", None)):
+            raise PluginAdapterError("protected selected-plugin effects are not enrolled")
+        PublicWebPlugin(effects).register(ctx, runtime_context)
 
 
 PLUGIN_IMPLEMENTATIONS = {
@@ -108,8 +90,12 @@ PLUGIN_IMPLEMENTATIONS = {
 
 class LocalKanbanPlugin:
     """Per-profile ephemeral board CRUD; GitHub Projects is intentionally separate."""
-    def __init__(self, store: LocalBoardStore):
-        self.store = store
+    ACTIONS = {"create": "create", "read": "read", "add_item": "add_item",
+               "move_item": "move_item", "delete_accepted": "delete_accepted"}
+    def __init__(self, effects: PluginEffectResolver):
+        if not callable(getattr(effects, "invoke", None)):
+            raise TypeError("Epic board tools require the root plugin effect resolver")
+        self.effects = effects
 
     def register(self, ctx: ToolContext, runtime_context: object) -> None:
         ctx.register_tool("epic_board", "epic_kanban", {
@@ -117,81 +103,121 @@ class LocalKanbanPlugin:
                 "operation": {"enum": ["create", "read", "add_item", "move_item", "delete_accepted"]},
                 "epic_id": {"type": "string", "maxLength": 80},
                 "board_id": {"type": "string", "maxLength": 80},
-                "title": {"type": "string", "maxLength": 200},
-                "item": {"type": "object"}, "accepted_summary": {"type": "string", "maxLength": 4000},
+                "title": {"type": "string", "maxLength": 256},
+                "item_type": {"enum": ["epic", "user-story", "task", "defect", "spike", "risk", "decision"]},
+                "description": {"type": "string", "maxLength": 16384},
+                "item_id": {"type": "string", "maxLength": 80},
+                "state": {"enum": ["backlog", "ready", "in-progress", "review", "blocked", "done"]},
+                "accepted_lifecycle_attestation_id": {"type": "string", "minLength": 8, "maxLength": 128},
             }, "required": ["operation"], "additionalProperties": False,
         }, self.invoke, description="Manage one local ephemeral board for the selected Epic.")
 
     def invoke(self, *, operation: str, epic_id: str | None = None,
-               board_id: str | None = None, title: str = "", item: dict[str, Any] | None = None,
-               accepted_summary: str = "") -> dict[str, Any]:
+               board_id: str | None = None, title: str = "", item_type: str | None = None,
+               description: str = "", item_id: str | None = None, state: str | None = None,
+               accepted_lifecycle_attestation_id: str | None = None) -> dict[str, Any]:
         if operation == "create":
             _bounded_text(epic_id, "epic_id", 80)
-            _bounded_text(title, "title", 200)
-            return {"board_id": self.store.create(epic_id or "", title)}
+            _bounded_text(title, "title", 256)
+            return _invoke_plugin_effect(self.effects, "epic-kanban", self.ACTIONS[operation],
+                                         {"epic_id": epic_id, "title": title})
         if operation == "read":
-            return {"board": self.store.read(_board_id(board_id))}
-        if operation in {"add_item", "move_item"}:
-            validated = _validate_item(item)
-            return {"board": self.store.mutate(_board_id(board_id), operation, validated)}
+            return _invoke_plugin_effect(self.effects, "epic-kanban", self.ACTIONS[operation],
+                                         {"board_id": _board_id(board_id)})
+        if operation == "add_item":
+            _bounded_text(item_type, "item_type", 32)
+            if item_type not in {"epic", "user-story", "task", "defect", "spike", "risk", "decision"}:
+                raise PluginAdapterError("item_type is outside the enrolled Epic schema")
+            _bounded_text(title, "title", 256)
+            if not isinstance(description, str) or len(description) > 16384:
+                raise PluginAdapterError("description exceeds the enrolled Epic schema")
+            return _invoke_plugin_effect(self.effects, "epic-kanban", self.ACTIONS[operation],
+                                         {"board_id": _board_id(board_id), "item_type": item_type,
+                                          "title": title, "description": description})
+        if operation == "move_item":
+            _bounded_text(item_id, "item_id", 80)
+            if state not in {"backlog", "ready", "in-progress", "review", "blocked", "done"}:
+                raise PluginAdapterError("state is outside the enrolled Epic workflow")
+            return _invoke_plugin_effect(self.effects, "epic-kanban", self.ACTIONS[operation],
+                                         {"board_id": _board_id(board_id), "item_id": item_id,
+                                          "state": state})
         if operation == "delete_accepted":
-            _bounded_text(accepted_summary, "accepted_summary", 4000)
-            return {"deleted": self.store.delete_after_accepted_done(
-                _board_id(board_id), accepted_summary)}
+            _bounded_text(accepted_lifecycle_attestation_id, "accepted_lifecycle_attestation_id", 128)
+            return _invoke_plugin_effect(self.effects, "epic-kanban", self.ACTIONS[operation],
+                                         {"board_id": _board_id(board_id),
+                                          "accepted_lifecycle_attestation_id": accepted_lifecycle_attestation_id})
         raise PluginAdapterError("unsupported local board operation")
 
 
 class WyomingVoicePlugin:
     """Session-only local voice adapter; never stores or returns raw audio."""
-    def __init__(self, session: VoiceSession, *, stt_endpoint: str | None,
-                 tts_endpoint: str | None, home_stt_endpoint: str | None = None):
-        self.session, self.stt, self.tts, self.home_stt = session, stt_endpoint, tts_endpoint, home_stt_endpoint
-        for value in (stt_endpoint, tts_endpoint, home_stt_endpoint):
-            if value is not None and not _local_endpoint(value):
-                raise ValueError("Wyoming endpoints must be explicitly configured local endpoints")
+    def __init__(self, effects: PluginEffectResolver, session_enrollment_id: str):
+        if not callable(getattr(effects, "invoke", None)):
+            raise TypeError("voice tools require the root plugin effect resolver")
+        _bounded_text(session_enrollment_id, "root-selected voice session enrollment", 128)
+        self.effects, self.session_enrollment_id = effects, session_enrollment_id
 
     def register(self, ctx: ToolContext, runtime_context: object) -> None:
         ctx.register_tool("voice_transcribe", "voice_pipeline", {
-            "type": "object", "properties": {"utterance_kind": {"enum": ["general", "home_control"]}},
-            "required": ["utterance_kind"], "additionalProperties": False,
+            "type": "object", "properties": {"mode": {"enum": ["general", "home_control"]}},
+            "required": ["mode"], "additionalProperties": False,
         }, self.transcribe, description="Transcribe microphone input captured from the authorized current session.")
         ctx.register_tool("voice_speak", "voice_pipeline", {
-            "type": "object", "properties": {"text": {"type": "string", "maxLength": 4000}},
+            "type": "object", "properties": {"text": {"type": "string", "maxLength": 16384}},
             "required": ["text"], "additionalProperties": False,
         }, self.speak, description="Speak text through the enrolled local Piper endpoint in the current session.")
 
-    def transcribe(self, *, utterance_kind: str) -> dict[str, str]:
-        if utterance_kind not in {"general", "home_control"}:
+    def transcribe(self, *, mode: str) -> dict[str, Any]:
+        if mode not in {"general", "home_control"}:
             raise PluginAdapterError("unknown utterance kind")
-        session_id, authorized = self.session.current()
-        if not authorized:
-            raise PluginAdapterError("microphone input is not authorized for this session")
-        endpoint = self.home_stt if utterance_kind == "home_control" else self.stt
-        if endpoint is None:
-            raise PluginAdapterError("selected local Wyoming STT endpoint is not enrolled")
+        session = _invoke_plugin_effect(self.effects, "voice-pipeline", "open_session", {
+            "session_enrollment_id": self.session_enrollment_id,
+            "direction": "input", "requested_lease_seconds": 60})
+        session_handle, expires = _voice_session(session)
         try:
-            audio = self.session.capture_current_session(max_bytes=900_000, timeout=10.0)
-        except Exception as exc:
-            raise PluginAdapterError("authorized session microphone capture failed") from exc
-        if not isinstance(audio, bytes) or not audio or len(audio) > 900_000:
-            raise PluginAdapterError("audio payload exceeds the session limit")
-        transcript = self.session.transcribe_local(endpoint, audio, timeout=15.0)
-        if not isinstance(transcript, str) or len(transcript) > 4000:
-            raise PluginAdapterError("local STT returned an invalid transcript")
-        del audio
-        return {"transcript": transcript}
+            artifact = _invoke_plugin_effect(self.effects, "voice-pipeline", "capture_audio", {
+                "session_handle": session_handle, "maximum_seconds": 30})
+            audio_id = _opaque_handle(artifact, "audio_artifact_id")
+            if type(artifact.get("size_bytes")) is not int or not 1 <= artifact["size_bytes"] <= 16_777_216:
+                raise PluginAdapterError("root voice capture returned an invalid bounded audio receipt")
+            if not isinstance(artifact.get("sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", artifact["sha256"]):
+                raise PluginAdapterError("root voice capture returned an invalid content digest")
+            if time.monotonic() >= expires:
+                raise PluginAdapterError("root voice capture session expired before transcription")
+            result = _invoke_plugin_effect(self.effects, "voice-pipeline", "voice_transcribe", {
+                "session_handle": session_handle, "audio_artifact_id": audio_id, "mode": mode})
+            if (set(result) != {"schema", "transcript", "source_receipt_handle", "profile_id",
+                                "owner_generation", "operation_id", "expires_monotonic"}
+                    or result.get("schema") != 1
+                    or not isinstance(result.get("transcript"), str)
+                    or len(result["transcript"]) > 65_536
+                    or not _opaque_value(result.get("source_receipt_handle"))
+                    or not all(isinstance(result.get(k), str) and result[k]
+                               for k in ("profile_id", "owner_generation", "operation_id"))
+                    or isinstance(result.get("expires_monotonic"), bool)
+                    or not isinstance(result.get("expires_monotonic"), (int, float))
+                    or result["expires_monotonic"] <= time.monotonic()):
+                raise PluginAdapterError("local STT returned invalid transcript provenance")
+            return result
+        finally:
+            _invoke_plugin_effect(self.effects, "voice-pipeline", "close_session",
+                                  {"session_handle": session_handle})
 
-    def speak(self, *, text: str) -> dict[str, bool]:
-        _bounded_text(text, "text", 4000)
-        session_id, _ = self.session.current()
-        if self.tts is None:
-            raise PluginAdapterError("selected local Piper endpoint is not enrolled")
-        audio = self.session.synthesize_local(self.tts, text, timeout=15.0)
-        if not isinstance(audio, bytes) or not audio or len(audio) > 2_000_000:
-            raise PluginAdapterError("local Piper returned invalid or oversized audio")
-        self.session.play_current_session(session_id, audio)
-        del audio
-        return {"played": True}
+    def speak(self, *, text: str) -> dict[str, Any]:
+        _bounded_text(text, "text", 16384)
+        session = _invoke_plugin_effect(self.effects, "voice-pipeline", "open_session", {
+            "session_enrollment_id": self.session_enrollment_id,
+            "direction": "output", "requested_lease_seconds": 60})
+        session_handle, _expires = _voice_session(session)
+        try:
+            result = _invoke_plugin_effect(self.effects, "voice-pipeline", "voice_speak",
+                                           {"session_handle": session_handle, "text": text})
+            if set(result) != {"audio_artifact"} or not _valid_artifact_receipt(result["audio_artifact"]):
+                raise PluginAdapterError("local Piper returned no bounded output receipt")
+            return result
+        finally:
+            _invoke_plugin_effect(self.effects, "voice-pipeline", "close_session",
+                                  {"session_handle": session_handle})
 
 
 class PublicWebPlugin:
@@ -199,9 +225,9 @@ class PublicWebPlugin:
     MAX_BYTES = 1_000_000
     MAX_REDIRECTS = 4
 
-    def __init__(self, dispatcher: object):
-        if not callable(getattr(dispatcher, "perform_plugin_action", None)):
-            raise TypeError("web retrieval requires a protected plugin effect dispatcher")
+    def __init__(self, dispatcher: PluginEffectResolver):
+        if not callable(getattr(dispatcher, "invoke", None)):
+            raise TypeError("web retrieval requires the root plugin effect resolver")
         self.dispatcher = dispatcher
 
     def register(self, ctx: ToolContext, runtime_context: object) -> None:
@@ -212,12 +238,7 @@ class PublicWebPlugin:
 
     def retrieve(self, *, url: str) -> dict[str, Any]:
         canonical = _public_https_url(url)
-        result = self.dispatcher.perform_plugin_action(
-            adapter_id="web", action_id="retrieve", arguments={"url": canonical})
-        if (not isinstance(result, dict) or result.get("state") != "read-complete"
-                or not isinstance(result.get("result"), dict)):
-            raise PluginAdapterError("protected web read effect returned an invalid response")
-        value = result["result"]
+        value = _invoke_plugin_effect(self.dispatcher, "web", "retrieve", {"url": canonical})
         if (value.get("untrusted_source") is not True or value.get("authority") != "none"
                 or not isinstance(value.get("source_receipt"), dict)):
             raise PluginAdapterError("protected web read result lacks untrusted source provenance")
@@ -229,6 +250,106 @@ def _bounded_text(value: object, label: str, maximum: int) -> None:
         raise PluginAdapterError(f"{label} must be bounded non-empty text")
 
 
+def _invoke_plugin_effect(effects: PluginEffectResolver, adapter_id: str, action_id: str,
+                          arguments: dict[str, Any]) -> dict[str, Any]:
+    invoke = getattr(effects, "invoke", None)
+    if not callable(invoke):
+        raise PluginAdapterError("protected selected-plugin effects are unavailable")
+    actions = {"epic-kanban": {"create", "read", "add_item", "move_item", "delete_accepted"},
+               "voice-pipeline": {"open_session", "capture_audio", "close_session",
+                                  "voice_transcribe", "voice_speak"},
+               "web": {"retrieve"}}
+    if (adapter_id not in actions or action_id not in actions[adapter_id]
+            or not isinstance(arguments, dict)):
+        raise PluginAdapterError("plugin action is outside the fixed local schema")
+    action_schema = PLUGIN_ACTION_SCHEMAS[(adapter_id, action_id)]
+    invoke_options: dict[str, Any] = {}
+    if action_schema.requires_idempotency:
+        canonical = json.dumps({"adapter_id": adapter_id, "action_id": action_id,
+                                "arguments": arguments}, sort_keys=True,
+                               separators=(",", ":"), ensure_ascii=False,
+                               allow_nan=False).encode("utf-8")
+        invoke_options["idempotency_key"] = hashlib.sha256(canonical).hexdigest()
+    envelope = invoke(adapter_id=adapter_id, action_id=action_id,
+                      arguments=arguments, **invoke_options)
+    expected_envelope = {"schema", "operation_id", "state", "result", "verification_status", "resume_action_id"}
+    if (not isinstance(envelope, dict) or set(envelope) != expected_envelope
+            or type(envelope.get("schema")) is not int or envelope["schema"] != 1
+            or not isinstance(envelope.get("operation_id"), str)
+            or not 1 <= len(envelope["operation_id"]) <= 128
+            or envelope.get("state") not in {"read-complete", "committed", "pending", "ambiguous", "unavailable"}
+            or not isinstance(envelope.get("verification_status"), str)
+            or (envelope.get("resume_action_id") is not None
+                and not isinstance(envelope["resume_action_id"], str))):
+        raise PluginAdapterError("root plugin effect returned an invalid operation envelope")
+    if envelope["state"] not in {"read-complete", "committed"}:
+        raise PluginAdapterError(f"plugin action is {envelope['state']}; use its root resume action if provided")
+    if envelope["state"] != action_schema.expected_state:
+        raise PluginAdapterError("root plugin effect state does not match the selected action")
+    result = envelope["result"]
+    result_fields = {
+        "create": {"board_id"}, "read": {"board"}, "add_item": {"item_id"},
+        "move_item": {"state"}, "delete_accepted": {"receipt_id"},
+        "open_session": {"session_handle", "expires_monotonic"},
+        "capture_audio": {"audio_artifact_id", "sha256", "size_bytes"},
+        "close_session": {"closed"},
+        "voice_transcribe": {"schema", "transcript", "source_receipt_handle", "profile_id",
+                             "owner_generation", "operation_id", "expires_monotonic"},
+        "voice_speak": {"audio_artifact"},
+        "retrieve": {"url", "content_type", "content", "untrusted_source", "authority",
+                     "redirects", "source_receipt"},
+    }[action_id]
+    if not isinstance(result, dict) or set(result) != result_fields:
+        raise PluginAdapterError("root plugin effect result must be a schema-bound object")
+    try:
+        encoded_result = json.dumps(result, sort_keys=True, separators=(",", ":"),
+                                    ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, RecursionError):
+        raise PluginAdapterError("root plugin effect result is not valid JSON data") from None
+    if len(encoded_result) > 2_097_152:
+        raise PluginAdapterError("root plugin effect result exceeds its byte limit")
+    return result
+
+
+def _opaque_handle(result: dict[str, Any], field: str) -> str:
+    value = result.get(field) if isinstance(result, dict) else None
+    if not isinstance(value, str) or not 8 <= len(value) <= 128 or any(ord(c) < 33 for c in value):
+        raise PluginAdapterError(f"root voice effect returned an invalid {field}")
+    return value
+
+
+def _opaque_value(value: object) -> bool:
+    return isinstance(value, str) and 8 <= len(value) <= 128 and not any(ord(c) < 33 for c in value)
+
+
+def _valid_artifact_receipt(receipt: object) -> bool:
+    if not isinstance(receipt, dict) or set(receipt) != {
+        "artifact_id", "sha256", "size_bytes", "media_type", "profile_id",
+        "owner_generation", "operation_id", "source_receipt_handle", "expires_monotonic",
+    }:
+        return False
+    return (_opaque_value(receipt.get("artifact_id"))
+            and isinstance(receipt.get("sha256"), str)
+            and re.fullmatch(r"[a-f0-9]{64}", receipt["sha256"]) is not None
+            and type(receipt.get("size_bytes")) is int
+            and 1 <= receipt["size_bytes"] <= 16_777_216
+            and all(isinstance(receipt.get(k), str) and receipt[k]
+                    for k in ("media_type", "profile_id", "owner_generation", "operation_id"))
+            and _opaque_value(receipt.get("source_receipt_handle"))
+            and isinstance(receipt.get("expires_monotonic"), (int, float))
+            and not isinstance(receipt.get("expires_monotonic"), bool)
+            and receipt["expires_monotonic"] > time.monotonic())
+
+
+def _voice_session(result: dict[str, Any]) -> tuple[str, float]:
+    handle = _opaque_handle(result, "session_handle")
+    expiry = result.get("expires_monotonic") if isinstance(result, dict) else None
+    if (isinstance(expiry, bool) or not isinstance(expiry, (int, float))
+            or not time.monotonic() < expiry <= time.monotonic() + 60.0):
+        raise PluginAdapterError("root voice session returned an invalid or expired lease")
+    return handle, float(expiry)
+
+
 def _require_plugin_identity(runtime_context: object, expected: str) -> None:
     identity = getattr(runtime_context, "identity", None)
     if (getattr(identity, "kind", None) != "plugins"
@@ -236,39 +357,11 @@ def _require_plugin_identity(runtime_context: object, expected: str) -> None:
         raise PluginAdapterError(f"trusted selected Plugin identity must be {expected}")
 
 
-def _has_methods(value: object, *names: str) -> bool:
-    return value is not None and all(callable(getattr(value, name, None)) for name in names)
-
-
 def _board_id(value: object) -> str:
     _bounded_text(value, "board_id", 80)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", value):
         raise PluginAdapterError("invalid board id")
     return value
-
-
-def _validate_item(item: object) -> dict[str, Any]:
-    if not isinstance(item, dict) or set(item) - {"id", "type", "title", "state", "summary"}:
-        raise PluginAdapterError("board item has unsupported fields")
-    _bounded_text(item.get("id"), "item.id", 80)
-    _bounded_text(item.get("title"), "item.title", 200)
-    if item.get("type") not in {"epic", "user-story", "task", "defect", "spike", "risk", "decision"}:
-        raise PluginAdapterError("unsupported item type")
-    if item.get("state") not in {"backlog", "ready", "in-progress", "review", "blocked", "done"}:
-        raise PluginAdapterError("unsupported workflow state")
-    return dict(item)
-
-
-def _local_endpoint(value: str) -> bool:
-    p = urlsplit(value)
-    if (p.scheme != "tcp" or not p.hostname or p.username or p.password or p.query
-            or p.fragment or p.path or p.port is None):
-        return False
-    try:
-        address = ip_address(p.hostname)
-        return _is_trusted_local_ip(address)
-    except ValueError:
-        return False
 
 
 def _public_https_url(value: str) -> str:
@@ -300,26 +393,3 @@ def _public_https_url(value: str) -> str:
         raise PluginAdapterError("control characters are denied")
     rendered_host = f"[{host}]" if ":" in host else host
     return urlunsplit(("https", rendered_host, p.path or "/", p.query, ""))
-
-
-def _public_ip(value: str) -> bool:
-    try:
-        return ip_address(value).is_global
-    except ValueError:
-        return False
-
-
-def _is_trusted_local_ip(value: object) -> bool:
-    from ipaddress import IPv4Address, IPv6Address, ip_network
-    if not isinstance(value, (IPv4Address, IPv6Address)) or value.is_link_local or value.is_unspecified or value.is_multicast:
-        return False
-    if value.is_loopback:
-        return True
-    ranges = ((ip_network("10.0.0.0/8"), ip_network("172.16.0.0/12"),
-               ip_network("192.168.0.0/16")) if value.version == 4 else
-              (ip_network("fc00::/7"),))
-    return any(value in block for block in ranges)
-
-
-def _header(headers: dict[str, str], name: str) -> str | None:
-    return next((v for k, v in headers.items() if k.lower() == name), None)
