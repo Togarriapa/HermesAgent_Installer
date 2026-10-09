@@ -449,8 +449,9 @@ time.sleep(30)
                           f"stderr={error_output[-4096:]!r}; root-manager-diagnostic={diagnostics[-2048:]}")
             result = json.loads(receipt_line)
             self.assertEqual(result.get("event"), "stopped", result)
-            self.assertTrue(result.get("stdout_complete"),
-                            f"child stdout lacked its bounded JSON line; stderr={result.get('stderr')!r}")
+            self.assertTrue(result.get("stdout_complete") and result.get("stdout", "").strip(),
+                            f"child stdout lacked its bounded JSON line; stdout={result.get('stdout')!r}; "
+                            f"stderr={result.get('stderr')!r}")
             child_effects = json.loads(result["stdout"])
             self.assertEqual(child_effects["environment_exact"], True)
             for key in ("root_home_hidden", "credential_directory_hidden", "root_proc_hidden",
