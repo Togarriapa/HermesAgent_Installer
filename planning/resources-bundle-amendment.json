@@ -88,6 +88,13 @@
       "text": "Selected cron, webhook, channel and bundle resources SHALL use protected enrollment and authenticated event provenance before effects. Root SHALL admit bounded immutable jobs and issue fresh reduced-scope grants separately for every child/attempt, preserving complete source lineage, recipient scope, private routing, concurrency limits and generation revocation. Registration SHALL not auto-enable resources.",
       "when": "a selected recurring/webhook/channel event starts a multi-child workflow",
       "then": "root authenticates event and current selection, consumes one job admission, issues fresh scoped per-child grants and denies replay/unselected/private-route/overlimit/stale generation before effects"
+    },
+    {
+      "id": "RB08",
+      "name": "Protected original plugin effects",
+      "text": "All original plugins SHALL use source-bound selected action schemas and root-enrolled exact operation/target handlers with fresh authority, private lineage, scoped credentials, required one-shot human confirmations and durable idempotency.",
+      "when": "native plugin requests an effect",
+      "then": "authenticate exact selected action and normalized final payload before backend bytes; reject forged scope, confirmation, replay and unknown outcome retry"
     }
   ],
   "tasks": [
@@ -185,6 +192,21 @@
       "evidence": "EV-RB07",
       "state": "implementation-pending",
       "method": "Exercise actual selected native/backend jobs plus timer/HMAC/replay/account/childgrant/concurrency/cycle/source/revocation negatives; fixture and target evidence distinct."
+    },
+    {
+      "id": "RB-T09",
+      "requirement": "RB08",
+      "evidence": "EV-RB08",
+      "depends_on": [
+        "RB-T02",
+        "RB-T03",
+        "HI-T03",
+        "HI-T08",
+        "HI-T09",
+        "HI-T12"
+      ],
+      "state": "implementation-pending",
+      "method": "Implement protected original plugin effects per planning/protected-plugin-effect-contract.json; native/account evidence separate"
     }
   ],
   "acceptance": [
@@ -197,7 +219,8 @@
         "RB04",
         "RB05",
         "RB06",
-        "RB07"
+        "RB07",
+        "RB08"
       ],
       "tasks": [
         "RB-T01",
@@ -207,7 +230,8 @@
         "RB-T05",
         "RB-T06",
         "RB-T07",
-        "RB-T08"
+        "RB-T08",
+        "RB-T09"
       ],
       "method": "On an identified authorized isolated target, block Resources network/upstream; install from release artifact, invoke native discovery and representative workflows for every kind plus all per-resource required functions; assert all739 pristine paths/digests,692 declaration crosswalk, full enrichment tree/hooks, user overlay preservation, conflict quarantine, failed-generation rollback and account/dependency incomplete statuses. Record exhaustive item ledger; sampling cannot establish all-item functional completion.",
       "state": "not-run"
@@ -230,6 +254,7 @@
   "resolved_blocker_scope": "B-LICENSE no longer blocks vendoring user-owned Resources snapshot; retain third-party license and upstream notice review.",
   "refinement_amendments": [
     "plans/amendments/2026-10-09-fixed-registry-discovery-v1.md",
-    "plans/amendments/2026-10-09-protected-resource-jobs-v1.md"
+    "plans/amendments/2026-10-09-protected-resource-jobs-v1.md",
+    "plans/amendments/2026-10-09-protected-plugin-effects-v1.md"
   ]
 }

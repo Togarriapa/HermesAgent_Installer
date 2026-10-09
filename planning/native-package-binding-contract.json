@@ -1,0 +1,291 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    "HI08",
+    "HI09",
+    "RB08"
+  ],
+  "tasks": [
+    "HI-T08",
+    "HI-T09",
+    "RB-T09"
+  ],
+  "evidence": "Actual selected native loader/register/tool/memory dispatch through immutable closure and root observed issuer; mutated closure/resolver/parent, caller channel/role, wrong PID/profile/generation, sibling artifact, dynamic import/path escape, grant replay and private/public leak negatives; source inventory fixtures alone do not qualify native issuer.",
+  "state": "specification; installed closure and rooted source issuer not yet qualified",
+  "root_catalog": "native_packages strict root-owned immutable selected profile/generation records",
+  "package_record_fields": [
+    "package_id",
+    "profile_id",
+    "generation",
+    "source_revision",
+    "source_tree_sha256",
+    "compiled_closure_artifact_id",
+    "compiled_closure_sha256",
+    "entrypoint_artifact_id",
+    "entrypoint_sha256",
+    "resolver_artifact_id",
+    "resolver_sha256",
+    "service_package_root_id",
+    "service_mount_id",
+    "adapter_records"
+  ],
+  "adapter_record_fields": [
+    "adapter_id",
+    "manifest_sha256",
+    "adapter_artifact_id",
+    "adapter_sha256",
+    "action_id",
+    "argument_schema_id",
+    "result_schema_id",
+    "effect_enrollment_id",
+    "operation",
+    "capability",
+    "target_id",
+    "recipient",
+    "generation"
+  ],
+  "mount": "Root resolves opaque package root/mount from custody profile enrollment; immutable read-only closure visible only to selected service UID/private mount namespace. Caller journal root is separate. Root verifies all closure files/digests/path containment/no symlink escape/executable roles; no caller path/mount/loader/module or mutable profile plugin injection. Native package absence leaves native adapter unavailable.",
+  "binder": {
+    "method": "bind_native_package",
+    "request_fields": [
+      "schema=1",
+      "package_id",
+      "generation"
+    ],
+    "caller": "Only authenticated enrolled running native producer through profile-specific authority socket; root joins SO_PEERCRED UID/PID starttime/PIDFD/exe/cgroup/current profile generation, never caller profile/role claims",
+    "response_fields": [
+      "schema=1",
+      "opaque_binding_handle",
+      "package_id",
+      "generation",
+      "resolver_digest",
+      "expires_monotonic",
+      "compiled_closure_sha256"
+    ],
+    "semantics": "Opaque binding resolves fixed in-process immutable loader/resolver only; not bearer authority. Root registry fixes issuer channels and action enrollment. No root access to arbitrary plugin imports from caller paths.",
+    "selected_boot_api": {
+      "signature": "bind_selected_native_package()",
+      "operation": "native.package.bind",
+      "request_fields": [
+        "schema=1"
+      ],
+      "selection": "Root resolves exactly one active package from authenticated live peer/process profile/generation and protected package catalog; zero or ambiguous denies. No caller env/path/profile/package ID supplies authority. Existing explicit bind_native_package(package_id,generation) only optional equality assertion against same root-resolved selection, never choice.",
+      "loader": "Returned opaque binding and read_native_resolver result feed fixed root-installed loader; actual entrypoint imports only root-selected compiled closure verified digest/read-only mount. No user site/plugins/PYTHONPATH/importlib caller path/fallback discovery. Closure module mapping and allowed imports pinned by package artifact, external dependencies root attested catalog only.",
+      "response_fields": [
+        "schema=1",
+        "opaque_binding_handle",
+        "package_id",
+        "profile_id",
+        "generation",
+        "resolver_digest",
+        "compiled_closure_sha256",
+        "expires_monotonic"
+      ],
+      "response_note": "Closure digest non-authoritative presentation only permits fixedmount derivation; service_mount_id/path selection rootonly, actualmount/closure verifiedroot. Existingresolver preimage unchanged."
+    }
+  },
+  "plugin_effects": {
+    "signature": "invoke(adapter_id, action_id, arguments, idempotency_key=None, opaque_confirmation_attestation_id=None)",
+    "operation": "Exact selected plugin.<adapter-id>.<verb> from RB08; method name invoke is local facade, never unconstrained root generic proxy",
+    "semantics": "Facade derives immutable selected effect enrollment from bound package resolver; root verifies peer/package/generation/action/schema plus canonical complete argument digest and trusted source closure, issues fresh exact effect authorization and calls fixed backend handler. No source sensitivity/credential/role/capability/target supplied by worker.",
+    "result": "Typed RB08 result schema or owned immutable output artifact receipt; source receipt for effect result created only by root observing bounded actual backend result."
+  },
+  "source_issuer": {
+    "root_channels": [
+      "native-input",
+      "tool-result",
+      "memory-result",
+      "effect-result",
+      "delegated-child",
+      "schedule-event"
+    ],
+    "enrollment_fields": [
+      "issuer_channel_id",
+      "producer_profile_id",
+      "producer_role_artifact_id",
+      "producer_role_sha256",
+      "capture_schema_id",
+      "allowed_parent_channels",
+      "generation"
+    ],
+    "capture_api": "capture_source(payload:bytes,parent_receipt_handles=()) -> opaque peer-bound provenance handle; channel/role selected by root listener and live registry, never caller source_kind/sensitivity",
+    "trust": "Native-input requires root-observed selected authenticated user ingress/channel and exact event bytes; arbitrary worker submitted bytes remain UNKNOWN/private rather than proof of user/public origin. Tool/memory/effect results require root-observed registered invocation/result binding, not a worker claim; child joins exact parent/delegation/child peer admission, schedule root timer issuer. Missing actual observer preserves unavailable qualified capability, not permanently omitted original scope.",
+    "context": "All actual parent receipt closure inherited; receipt ancestry is provenance not repeat-effect authorization. Public clearance separate trusted exact-payload user review, no labels.",
+    "root_private_api": {
+      "signature": "capture_observed_source(observer_enrollment_id, event_record_id, payload:bytes, parent_receipt_handles=()) -> SourceReceiptHandle",
+      "availability": "Root-private in-daemon callback only, NOT AuthorityClient worker RPC or generic IPC verb. Observer channel/action selected from immutable observer enrollment and actual registered pending event/invocation, never functioncaller labels. Worker capture_source remains UNKNOWN/private exactbytes provenance only.",
+      "observer_record_fields": [
+        "id",
+        "issuer_channel_id",
+        "source_action_id",
+        "observer_role_artifact_id",
+        "observer_role_sha256",
+        "producer_profile_id",
+        "generation",
+        "capture_schema_id",
+        "result_schema_id",
+        "maximum_bytes",
+        "maximum_lease_seconds",
+        "target_role_enrollment_id"
+      ],
+      "event_record_fields": [
+        "event_record_id",
+        "observer_id",
+        "registered_invocation_id",
+        "target_peer_identity",
+        "producer_profile_id",
+        "profile_generation",
+        "parent_closure_digest",
+        "observed_payload_sha256",
+        "source_channel",
+        "source_action_id",
+        "issued_monotonic",
+        "expires_monotonic",
+        "consumed_source_admission"
+      ],
+      "observations": {
+        "native-input": "Actual authenticated root ingress request/session verifier record and exact observed user input bytes; verified requester/profile join, no worker boolean",
+        "tool-result": "Actual registered selected root tool invocation operation/target/grant/digest and bounded verified backend result bytes",
+        "memory-result": "Actual selected memory broker step/backend result/current owner epoch/scope/private route/source closure",
+        "effect-result": "Actual root selected backend handler successful or failed result bound invocation/current effect; result content untrusted data, never authority",
+        "delegated-child": "Actual admitted parent/delegation/child peer PIDFD/generation/operation plus bounded root-observed result and full closure; worker parentID insufficient",
+        "schedule-event": "Root selected enabled timer occurrence/schedule gen/freshbackgroundconsent/private closure, not caller timestamp"
+      },
+      "response": "Opaque SourceReceiptHandle only delivered through root-created peer-bound receipt channel to actual enrolled target role process. Worker facade receives no signed receipt wire/sensitivity/credentials. Root bridges references to another enrolled role only via HI11 selected peer mapping, never bearer transfer.",
+      "receipt_binding": "Root retained record binds actual observer artifact/enrollment/channel/action/event/invocation, exact bytes SHA, full parent closure, target peer UID/PIDFD/starttime/exe/profile/generation, current policy/recipient ceiling, finite monotonic lease and random handle nonce. Root private signature/HMAC ifserialized, key root-only; handle possession alone notproof. Source facts authenticated from observer record; UNKNOWN remains private.",
+      "replay": "Atomically claim observed event record once for source admission; immutable ancestry retained within lease for allowed descendant provenance. Effect/retry always freshHI11/rootgrant, never repeat source permission. Wrongpeer/event/digest/observer/gen/parents/replayed admission expired lease denies. Actualroottrustedobserver absence makes qualifiedchannel unavailable."
+    }
+  },
+  "artifacts": {
+    "receipt_fields": [
+      "artifact_id",
+      "sha256",
+      "size_bytes",
+      "media_type",
+      "profile_id",
+      "owner_generation",
+      "operation_id",
+      "source_receipt_handle",
+      "expires_monotonic"
+    ],
+    "read": "Opaque owned artifact ID with separate typed bounded root reads; no filesystem path/URL in response and no cross-profile receipt transfer"
+  },
+  "resolver_reader": {
+    "method": "read_native_resolver(binding_handle)",
+    "operation": "native.resolver.read",
+    "request_fields": [
+      "schema=1",
+      "opaque_binding_handle"
+    ],
+    "response_fields": [
+      "schema=1",
+      "package_id",
+      "profile_id",
+      "generation",
+      "resolver_sha256",
+      "adapters"
+    ],
+    "adapters": "Finite list of records with adapter_id,manifest_sha256,adapter_sha256,action_id,argument_schema_id,result_schema_id,effect_enrollment_id,operation,capability,target_id,recipient,generation matching package catalog; extra fields forbidden",
+    "semantics": "Root returns canonical bounded immutable resolver document from selected closure after same actual peer/package/generation validation; maximum2MiB and <=692 selected declarations. No request path, FD, module import or caller mount choice. Root selected loader reads only enrolled read-only namespace closure internally. Facade resolver is presentation/routing only: root re-resolves current effect enrollment and all identity/authority/schema/source conditions EVERY effect, never trusts returned record as permission.",
+    "digest": "SHA256 of UTF-8 canonical JSON object {schema,package_id,profile_id,generation,adapters}, excluding resolver_sha256, sorted keys, compact separators comma/colon, ensure_ascii=false, no trailing newline. Reject duplicate JSON keys and unknown fields. Protected resolver artifact stores exact canonical document bytes for same artifact/document SHA; wrapper archive must retain separately named artifact SHA and document SHA, never conflate. Worker verifies presentation digest/bounds, root re-resolves effect authority."
+  },
+  "operation_recipes": {
+    "enrollment_field": "operation_recipes",
+    "key": "fixed root-reviewed operation_id; unique exact per selected profile/generation",
+    "record_fields": [
+      "executable_artifact_id",
+      "executable_sha256",
+      "argv_recipe",
+      "cwd_root_id",
+      "cwd_subpath",
+      "environment",
+      "child_artifact_refs",
+      "max_lifetime_seconds",
+      "max_output_bytes",
+      "stdin_mode",
+      "parameter_schema_id"
+    ],
+    "worker_request_fields": [
+      "enrollment_id",
+      "generation",
+      "operation_id",
+      "parameters"
+    ],
+    "constraints": "Root resolves executable/cwd/child artifacts from protected catalog and opaque roots, verifies actual pins. argv_recipe finite literals and typed parameter placeholders only; no caller shell/argv/path/env/URL/executable/substitution. cwd_subpath protected enrollment literal validated containment/no symlinks. environment root finite sanitized literals/ref bindings, never caller env or secret argv. stdin_mode closed|bounded-typed-bytes per schema, max lifetime<=600s unless separately reviewed existing operation cap. Parameters exact schema extra fields forbidden, argument output bounds required. Operation recipe selection not independent authorization: fixed process.start effect target and exact operation_id/parameters digest in grant. Missing recipe/pin/build dependencies unavailable.",
+    "typed_parameter_catalog": {
+      "file": "/etc/hermes-installer/operation-parameters.json",
+      "top_level_fields": [
+        "schema=1",
+        "parameter_schemas"
+      ],
+      "parameter_schemas": "list unique exact records {id,fields}; fields list unique {name,type,required,enum,max_length,minimum,maximum}; only applicable bounds populated, unknown keys forbidden",
+      "types": [
+        "string",
+        "integer",
+        "boolean"
+      ],
+      "constraints": "Finite fields, exact required/optional keys; extra parameters forbidden. Every string requires max_length<=4096 and either finite enum or reviewed plain-text validator, reject NUL/newline and all control chars; no path/URL/shell/secret fields. Every integer explicit inclusive min/max (not bool). Boolean exact JSON true/false. Structured arrays/maps disallowed in argv parameters. Opaque resource selections resolved by root enrollment before recipe, never substituted caller path. Missing required bounds/validator unavailable.",
+      "argv_recipe": "list token objects, each EXACTLY {literal:string} or {parameter:string}; parameter names refer to schema fields. No concatenation/interpolation/conditional/default/shell expansion. Each token yields exactly one argv element; literals protected exact strings; strings preserved, integers canonical base10, booleans literal true or false. Optional absent parameter cannot occur in argv recipe; choose separately enrolled recipe instead. First executable not an argv token, fixed enrolled executable.",
+      "operation_id": "Opaque finite recipe ID, distinct from effect operation process.start. operation_targets maps process.start exact admission target; selected recipe ID+parameters+enrollment/generation all part of canonical effect request digest. Reject unsupported recipe before custody launch.",
+      "device_join": "Protected inference process profile includes device_enrollment_id and expected_device_generation (opaque nonempty string); root DeviceIdentity.generation must equal expected_device_generation, NOT process profile generation. Process profile generation separately binds process/enrollment/grants. Any device epoch/hotplug identity change invalidates joined launch and active inference, requires root reenrollment/attestation. HW03 builder no TPU access by default."
+    },
+    "model_recipe_bindings": [
+      {
+        "operation_id": "colibri-source-build-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "colibri-source-build:start"
+      },
+      {
+        "operation_id": "coral-cpython39-source-build-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "coral-cpython-build:start"
+      },
+      {
+        "operation_id": "coral-selected-inference-worker-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "coral-inference:start"
+      }
+    ],
+    "empty_parameter_schema": {
+      "id": "no-caller-parameters-v1",
+      "fields": []
+    },
+    "model_recipe_note": "All parameters {}, no caller model/input/device/path/buildflag. Root pins actual source/toolchain/builder/fixedargv/worker and selecteddevice. Inference input/model supplied only through separately authorized exact root-enrolled fixed worker protocol, not arbitrary process.start argv. coral-inference:start is fixed root-selected inference profile target, not existing successful enrollment claim.",
+    "hermes_recipe_bindings": [
+      {
+        "operation_id": "hermes-agent-stage-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "hermes-agent-stage:start"
+      },
+      {
+        "operation_id": "hermes-agent-health-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "hermes-agent-health:start"
+      }
+    ],
+    "hermes_recipe_constraints": {
+      "stage": "Root reviewed immutable installer bootstrap adapter artifact/SHA resolves selected owned staging checkout/HERMES_HOME/PM runtime IDs and exact pinned script034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86 at7085fbf7753266fc4943c55ac04926186bc90005. Script supportedflags --commit exactpin --dir rootstagedcheckout --hermes-home rootselectedownedservicehome --non-interactive; browser/computer-use stage flags only reviewedplan and no permanent originalscope omission. Callerparameters{}; script/args/paths/env notworkerselected. Rootfixedverifiedscript invocation by reviewed adapter is allowed official thin shell bootstrap, genericcaller shell/physicalrun envelope remainsforbidden. Dependencies/downloads only protectedroot artifact catalog/broker fixedsource selection, networkdeniedworker or reviewedfiniteeffectthroughroot; no arbitraryscriptnetwork/apt takeover or globaldowngrade. Missingwhole pinnedsource/PM payloadhashes/deps prevents stagecompletion.",
+      "runtime": "OfficialPM Python3.14 observed; exactselected PMlock/source/python/toolchain catalog pin actualstagedbytes/attestation required, no componentPython39 substitution. Rootseparatecallerjournal andservicehome/work/data/credentials, preserve prioruser/private state.",
+      "health": "Reviewed immutable rootselected health adapter with exactinstalledPMinterpreter/Agentclosure/profile generation/control handle. Observe actualprocess start+ownedpidfd/cgroup/namespace +nativeAgent registration/request/result through HI08/HI11 source issuer and selected safe local tool fixture plus compatible private/zero-budget provider workflow when selected. Sourcehash/version/import/status alone readiness only, not functionalhealth. Missingprovider/account/model/native observer yields exactincomplete resume notfakepassed/no hugeweights. No outboundmessage/writes/spend.",
+      "control": "Root derives active lifecycle operation enrollment/target/generation from selectedbootstrap transaction; client receives opaque controlhandle only. Every stage/health attempt fresh exactoperation grant+fullrecipe/paramsdigest, bounded<=600s plusownedchildcleanup/canceljournal; profileartifact/catalogtransition currentrootepoch invalidatespriorhandles. Failedhealthrollback preserves priorowned generation/userdata."
+    }
+  },
+  "protected_file_schema": {
+    "file": "/etc/hermes-installer/native-packages.json",
+    "owner_mode": "root-owned regular file0600, no symlink; parent root-owned no worker writes",
+    "top_level_fields": [
+      "schema=1",
+      "native_packages",
+      "source_issuers"
+    ],
+    "native_packages": "list exact package_record_fields above; adapter_records is list exact adapter_record_fields; unknown/duplicate keys or IDs denied. All package/adapter generations opaque strings. Resolve artifact IDs/root mount IDs only against existing protected enrollment catalogs.",
+    "source_issuers": "list records exactly issuer_channel_id,producer_profile_id,producer_role_artifact_id,producer_role_sha256,capture_schema_id,allowed_parent_channels,generation,observer_enrollment_id,source_action_ids",
+    "source_action_ids": "finite root-selected actions per channel; native-input=authenticated-input; tool-result=registered-tool-result; memory-result=registered-memory-result; effect-result=registered-effect-result; delegated-child=registered-child-result; schedule-event=root-timer-event. These are observer contract IDs, not caller selectable source kinds.",
+    "joins": "source observer_enrollment_id joins actual root registered ingress/backend result/job observer; channel/actions must match captured actual event/action. Package profile/generation joins root process_profiles/principals; adapter effect_enrollment_id joins selected_plugin_effects finite operation/schema/recipient. Missing actual observer/mount/closure identity remains unavailable; file presence not execution proof."
+  }
+}

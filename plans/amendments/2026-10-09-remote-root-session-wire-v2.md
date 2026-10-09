@@ -1,0 +1,3 @@
+# Remote root session wire v2
+
+Sol additive HI13/HI-T13/EV-HI13 typed response/API clarification. planning/remote-root-session-bridge-contract.json defines opaque random handle form, strict admission/renewal/challenge/close response fields, distinct one-shot asset vs leased WebSocket state, root-selected open_remote_connector and typed per-frame read/write/close. Root internally issues fresh exact HI12 grants; no caller localcontext/selfsignedgatewayclaims or unrestricted socket FD bypass. Root relay observes lease/revocation and owns cancellation. All original scope/credential separation/baseline/tag and native/account acceptance preserved.

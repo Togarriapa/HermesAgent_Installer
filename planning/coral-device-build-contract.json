@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "change": "colibri-coral",
+  "requirement_ids": [
+    "HW02",
+    "HW03"
+  ],
+  "task_ids": [
+    "HW-T02",
+    "HW-T03"
+  ],
+  "state": "specified; target device/build/kernel qualification pending",
+  "device_enrollment": {
+    "profile_id": "coral-inference",
+    "root_owned_fields": [
+      "device_binding_id",
+      "transport",
+      "generation",
+      "source_device_sysfs_identity",
+      "usb_bus",
+      "usb_device",
+      "usb_interface",
+      "usb_vendor_product",
+      "usb_serial_if_available",
+      "pci_bdf_if_applicable",
+      "driver_identity",
+      "resolved_device_node",
+      "device_major",
+      "device_minor",
+      "device_inode",
+      "selection_observation",
+      "runtime_artifact_id",
+      "worker_artifact_id",
+      "model_artifact_id"
+    ],
+    "usb": "root resolves exact selected USB sysfs/bus/interface to current /dev/bus/usb/<bus>/<device>; no generic allUSB allow",
+    "pcie": "root resolves exact selected PCI BDF/driver to corresponding /dev/apex_N, e.g. /dev/apex_0 only when actual mapping proves selection; no allapex wildcard",
+    "caller_fields": [
+      "enrollment_id",
+      "generation",
+      "approved_inference_operation",
+      "model_artifact_id"
+    ],
+    "caller_model_constraint": "only fixed enrolled official sample or previously reviewed selected model, not arbitrary artifact selector",
+    "forbidden": [
+      "device path",
+      "USB bus/device selector",
+      "PCI BDF",
+      "driver command",
+      "privilege flag",
+      "PrivateDevices override"
+    ]
+  },
+  "isolation": "root constructs private device view exposing only standard safe process devices and exact selected TPU node; exact major/minor rw access, deny all other hardware, mknod/namespace/sysraw privilege; no broad PrivateDevices=no, wildcard USB/apex permissions or privileged worker. Filtered read-only selected sysfs metadata only as reviewed runtime requires; actual kernel proofs required.",
+  "reenumeration": "detach/replug/reset/firmware reenumeration invalidates active binding/grants; root reattests same selected physical identity under fresh generation before exposure. Ambiguous identity/device replacement denies, never silently follows a reused path.",
+  "result_binding": [
+    "device_binding_id",
+    "transport",
+    "root_attested_device_identity_digest",
+    "device_major_minor",
+    "generation",
+    "runtime_digest",
+    "model_digest",
+    "worker_digest",
+    "delegate_used",
+    "delegated_operation_count",
+    "output_digest"
+  ],
+  "result_rule": "root checks same selected launch/device binding and complete actual delegate evidence; enumeration/outputCPU alone not accepted",
+  "build_profiles": {
+    "operation": "process.start",
+    "capability": "root-enrolled installer build capability bound exact protected profile target; not caller-defined",
+    "targets": [
+      "coral-cpython-build:start",
+      "colibri-source-build:start"
+    ],
+    "protected_spec": [
+      "build_profile_id",
+      "generation",
+      "source_artifact_ids_and_hashes",
+      "compiler_toolchain_artifact_ids_and_hashes",
+      "reviewed_builder_executable_digest",
+      "fixed_argv_recipe_digest",
+      "environment_allowlist",
+      "readonly_source_roots",
+      "owned_staging_output_id",
+      "resource_limits",
+      "deadline",
+      "network_denied"
+    ],
+    "caller_payload": [
+      "schema=1",
+      "enrollment_id",
+      "generation",
+      "operation_id",
+      "parameters={}"
+    ],
+    "constraint": "no shell/script/compiler flag/source path/URL/output path from caller. Reviewed builder runs unprivileged dedicated build UID in custody private namespace, immutable fixed recipe over exact staged sources/toolchain. Upstream scripts with dynamic downloads not run generically.",
+    "outputs": "root attests produced nativeARM64 executable/module/tree digests + source/compiler/recipe/build generation before runtime enrollment; exact failure/cancel logs redacted and prior valid outputs preserved",
+    "bounds": "finite existing custody operation lease/resource limits, no unlimited compiler worker. Native build may be resumable distinct bounded stages each freshly authorized, never extend consumed grant.",
+    "pending": "missing compiler/build deps, driver or native ABI qualification stays blocked with exact resume; no source metadata/build fixture treated as built binary",
+    "profile_resolution": "root derives selected build_profile_id from fixedoperation recipe/enrollment/currentgeneration, no caller secondselector"
+  },
+  "evidence": "actual selected device inference/kernel denial of siblingUSB/apex/unowned devices, hotplug/reuse/stale binding, caller device injection; actual source nativeARM64 build and wrong source/toolchain/recipe/path/network/timeout/recovery failures; fixture/native/hardware separate",
+  "sources": [
+    "https://coral.ai/docs/accelerator/get-started/",
+    "https://coral.ai/docs/m2/get-started/"
+  ],
+  "source_note": "official transport/driver/sample background reviewed; protected enrollment/node policy is installer design, not upstream guaranteed sandbox behavior"
+}

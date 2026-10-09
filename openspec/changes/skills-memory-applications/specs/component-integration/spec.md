@@ -378,12 +378,12 @@ The installer SHALL satisfy this obligation: screenshot to code: Separate web ap
 The installer SHALL satisfy this obligation: scrapegraph-ai: Local library/tool adapter. Its current `pyproject.toml` requires Python `>=3.12,<4.0`; resolve an isolated runtime. Distinguish it from separately offered cloud/MCP products and billing.
 
 #### Scenario: R0093 fulfilled constraint
-- **WHEN** the selected scrapegraph-ai source tree contains a native skill, referenced helper/assets and shared root data and the importer registers it for one selected profile
+- **WHEN** the actual pinned ScrapeGraphAI local library/tool adapter runs its source graph over owned local HTML with an allowlisted compatible model fixture and isolated lock-resolved runtime
 - **THEN** scrapegraph-ai: Local library/tool adapter. Its current `pyproject.toml` requires Python `>=3.12,<4.0`; resolve an isolated runtime. Distinguish it from separately offered cloud/MCP products and billing.
 - **AND** evidence SHALL demonstrate the observable outcome using Scrape local HTML fixture into expected structured result with allowlisted model; cloud/MCP products and billing remain distinct optional items; fixture and pending/live states remain separate
 
 #### Scenario: R0093 unavailable or failed prerequisite
-- **WHEN** a scrapegraph-ai relative reference is missing or its host hook is unavailable despite portable Markdown being present
+- **WHEN** the pinned ScrapeGraphAI source, uv.lock, isolated Python/dependency/model route or actual local library operation is unavailable
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
 
 ### Requirement: R0094 source line 160
@@ -549,3 +549,47 @@ The installer SHALL satisfy this obligation: Match capabilities to tasks: a text
 #### Scenario: R0140 unavailable or failed prerequisite
 - **WHEN** a required helper/native library/provider capability is absent, a path escapes managed scope or an optional worker exceeds its configured limit
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Fixed protected memory service connectors (SK01)
+
+Selected memory services SHALL use profile/generation-bound protected connectors with source-verified finite backend-specific routes and owned stores. Root SHALL enforce exact provider variant, private extraction/embedding, one automatic owner and fresh effect/source policy; caller destinations/scopes or incompatible routes SHALL deny. Missing required native operations SHALL remain incomplete rather than be optionalized.
+
+#### Scenario: Mismatched backend or profile route
+
+- **WHEN** memory request uses another profile/project or assumes a route absent from selected packaged backend
+- **THEN** root denies before bytes or reports exact incomplete integration, preserving private store/owner and original mandatory memory scope
+
+### Requirement: SK01 Exact memory route identity
+The installer SHALL bind distinct outer memory effect and profile connector targets through protected same-generation enrollment and select only the exact backend approved_route_id in planning/memory-service-connector-contract.json.
+
+#### Scenario: Wrong backend route or sibling target
+- **WHEN** a caller substitutes another profile, backend variant or unsupported delete/health route
+- **THEN** reject before service bytes and preserve the exact incomplete requirement.
+
+### Requirement: Selected package and compound memory admission
+The installer SHALL resolve native package from actual enrolled peer and SHALL authorize each fixed compound memory step separately under same bounded root-owned admission and source lineage.
+
+#### Scenario: Caller chooses package or reuses compound grant
+- **WHEN** caller claims alternate package/scope or repeats one consumed authorization across steps
+- **THEN** reject before bytes and retain owned cleanup journal with no sibling deletion.
+
+### Requirement: Fixed memory compound wire
+The installer SHALL enforce canonical typed memory compound write envelopes with root-derived HTTP frames and atomic root current-step state, separate from stream protocols.
+
+#### Scenario: Forged HTTP frame or skipped compound step
+- **WHEN** caller submits arbitrary HTTP bytes, wrong job/step or reused frame grant
+- **THEN** reject before backend bytes with owned failure/cleanup journal and no sibling scope mutation.
+
+### Requirement: Closed selected recipe identities
+The installer SHALL use finite source-bound request/recipe/validator IDs with root-enforced scope and fixed parameter-free model launches; absent actual validator identity SHALL remain unavailable.
+
+#### Scenario: Caller supplies scope or model launch parameters
+- **WHEN** caller attempts to replace root scope, URI, device or fixed build/inference parameters
+- **THEN** reject before backend/launch bytes and preserve exact incomplete native evidence.
+
+### Requirement: Actual pinned local component fixtures
+The installer SHALL exercise actual pinned screenshot application vision pipeline and ScrapeGraphAI local library graph with preserved dependency locks and isolated compatible runtime; synthetic image/local HTML and real upstream mock boundaries SHALL remain distinct from live vision/model/account proof.
+
+#### Scenario: Source library or lock absent despite adapter inventory
+- **WHEN** only custom protocol/parser or skill metadata exists without actual pinned upstream pipeline execution
+- **THEN** keep R0092/R0093 incomplete and report exact missing source/runtime/model fixture, never claim native functionality.

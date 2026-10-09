@@ -1,0 +1,11 @@
+# Protected native renderer and bridge enrollment v1
+
+Sol append-only implementation/schema clarification of HI10/HI-T10/EV-HI10 and HI11/HI-T11/EV-HI11 within original native Desktop and provider mediation requirements. Existing tasks/prerequisites retained, frozen baseline/tag/all18AC unchanged. No new product scope or fabricated installed digest.
+
+## Protected native enrollment proof fields
+
+HI10 protected Desktop enrollment requires actual immutable app manifest and renderer role/exe/tree digests, sandbox policy, relaunch monitor artifact/digest and window-denial patch artifact/digest. Missing installed value is incomplete; planning never invents a binary or patch SHA. Renderer flags/kernel namespace/seccomp/parent lineage and actual relaunch/window control observations must come from root inspector, not caller booleans. Role-specific browser/renderer/helper expectations are pinned; mainPID-only flags/seccomp do not prove renderer sandbox. sandbox_attestation schema1 fields and invalidation rules are in native-host-service-contract.json. New process/member/exe/generation/monitor/patch change invalidates exposure until fresh complete proof; preserve original actual native negative probes.
+
+HI11 authority.json may contain strict native_bridges list with id,producer_profile_id,gateway_profile_id,canonicalizer_artifact_id,canonicalizer_sha256,approved_operation. Root joins principals/process_profiles for actual protected roles/UID/exe/profile and provider_enrollments for exact selected effect target/recipient/model/account; current peer PIDFD/starttime/cgroup/generation comes from trusted live process registry. Unique exact producer/operation mapping; duplicate/missing/ambiguous joins or absent immutable canonicalizer digest deny. Config lists no arbitrary process/URL/role supplied by worker. Complete request capture and same protected canonicalizer semantics from v2 stay required.
+
+Evidence: actual enrolled renderer binary/role/kernel sandbox and relaunch/window-denial probes; native two-peer bridge with fixed protected joins/canonicalizer, wrong role/digest/UID/PID/generation and missing-proof negatives. Fixture config acceptance alone does not satisfy native acceptance.
