@@ -12,6 +12,7 @@ from hermes_installer.authority.initial_policy_compiler import (
     _RootBindings,
     _render_closed_template,
     _parse_receipt_bindings_template,
+    _render_prepared_receipt_bindings,
     _render_prepared_authority_base,
 )
 
@@ -122,6 +123,7 @@ def test_v63_prepared_authority_binds_actual_key_and_exact_dormant_snapshot():
         "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
         "resource_body_recipes", "resource_scope_bindings", "resource_validators", "root_journal_roots",
         "resource_controller_roles", "native_mcp_tool_bindings", "remote_observation_enrollments",
+        "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings",
         "generation_digest",
     }
 
@@ -174,3 +176,64 @@ def test_v72_literal_receipt_bindings_reject_source_drift():
     raw = RECEIPT_BINDINGS.read_bytes()
     with pytest.raises(InitialPolicyCompilationError, match="wrong size"):
         _parse_receipt_bindings_template(raw + b" ")
+
+
+def test_prepared_receipt_rules_resolve_only_pinned_source_ids_and_keep_future_roles_empty():
+    raw = RECEIPT_BINDINGS.read_bytes()
+    record = _render_closed_template(raw=TEMPLATE.read_bytes(), bindings=_RootBindings(
+        values={"transaction.process_generation": "tx-" + "a" * 32,
+                "transaction.namespace_identity": "namespace-reviewed",
+                "roots.home": "/var/lib/hermes-installer/services/hermes-agent-native-v1/home",
+                "roots.work": "/var/lib/hermes-installer/services/hermes-agent-native-v1/work",
+                "roots.data": "/var/lib/hermes-installer/services/hermes-agent-native-v1/data"},
+        principal_id="principal-reviewed"))["service_record_template"]
+    catalog = json.loads((REPO / "src/hermes_installer/authority/artifact-catalog.json").read_text())
+    # The fixture models the reviewed Resources archive already present in a
+    # future release catalog. Production compilation still requires the actual
+    # installed catalog to carry its byte-verified entry.
+    catalog["artifacts"].append({"artifact_id": "resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83"})
+    allowed = tuple(sorted(row["artifact_id"] for row in catalog["artifacts"]))
+    rules, service = _render_prepared_receipt_bindings(
+        raw, source_template_raw=TEMPLATE.read_bytes(), service_record=record, artifact_catalog=catalog,
+        allowed_plan_artifact_ids=allowed)
+    assert service["id"] == "hermes-agent-native-template-v1"
+    assert service["record"] == record
+    assert service["record"]["executable"] is None
+    assert service["record"]["service_uid"] is None
+    assert next(row for row in rules if row["receipt_role"] == "official-installer-script")[
+        "allowed_artifact_ids"] == ["hermes-agent-install-script"]
+    assert all(row["allowed_artifact_ids"] == [] for row in rules
+               if row["required_phase"] in {"runnable", "functional-health"})
+
+
+def test_prepared_receipt_rules_reject_wrong_script_or_future_receipt_ids():
+    raw = RECEIPT_BINDINGS.read_bytes()
+    record = {"profile_id": "hermes-agent-native-v1"}
+    catalog = json.loads((REPO / "src/hermes_installer/authority/artifact-catalog.json").read_text())
+    catalog["artifacts"].append({"artifact_id": "resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83"})
+    allowed = tuple(sorted(row["artifact_id"] for row in catalog["artifacts"]))
+    wrong = json.loads(json.dumps(catalog))
+    script = next(row for row in wrong["artifacts"] if row["artifact_id"] == "hermes-agent-install-script")
+    script["sha256"] = "0" * 64
+    with pytest.raises(InitialPolicyCompilationError, match="script catalog role"):
+        _render_prepared_receipt_bindings(raw, service_record=record,
+                                          source_template_raw=TEMPLATE.read_bytes(),
+                                          artifact_catalog=wrong,
+                                          allowed_plan_artifact_ids=allowed)
+
+
+def test_prepared_receipt_rules_fail_closed_when_installed_catalog_lacks_resources_role():
+    raw = RECEIPT_BINDINGS.read_bytes()
+    record = _render_closed_template(raw=TEMPLATE.read_bytes(), bindings=_RootBindings(
+        values={"transaction.process_generation": "tx-" + "a" * 32,
+                "transaction.namespace_identity": "namespace-reviewed",
+                "roots.home": "/var/lib/hermes-installer/services/hermes-agent-native-v1/home",
+                "roots.work": "/var/lib/hermes-installer/services/hermes-agent-native-v1/work",
+                "roots.data": "/var/lib/hermes-installer/services/hermes-agent-native-v1/data"},
+        principal_id="principal-reviewed"))["service_record_template"]
+    catalog = json.loads((REPO / "src/hermes_installer/authority/artifact-catalog.json").read_text())
+    allowed = tuple(sorted(row["artifact_id"] for row in catalog["artifacts"]))
+    with pytest.raises(InitialPolicyCompilationError, match="escapes the selected plan/catalog"):
+        _render_prepared_receipt_bindings(
+            raw, source_template_raw=TEMPLATE.read_bytes(), service_record=record,
+            artifact_catalog=catalog, allowed_plan_artifact_ids=allowed)
