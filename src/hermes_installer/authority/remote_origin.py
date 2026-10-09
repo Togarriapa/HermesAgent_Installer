@@ -13,6 +13,7 @@ import os
 import re
 import secrets
 import stat
+import sys
 import time
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -170,6 +171,31 @@ def _validate_id(value: Any, label: str) -> str:
     return value
 
 
+def _canonical_system_path(path: Path) -> Path:
+    """Resolve only Darwin's documented /var and /tmp aliases.
+
+    tempfile paths on macOS commonly arrive through /var/folders while the
+    same directory is visible beneath /private/var.  Keep all subsequent
+    checks anchored at the canonical path, and refuse a changed system alias.
+    Other symlinks remain subject to the normal no-symlink policy.
+    """
+    if sys.platform != "darwin" or not path.is_absolute():
+        return path
+    raw = os.fspath(path)
+    for alias, targets in (("/var", {"/private/var", "private/var"}),
+                           ("/tmp", {"/private/tmp", "private/tmp"})):
+        if raw == alias or raw.startswith(alias + os.sep):
+            try:
+                observed = os.readlink(alias)
+            except OSError:
+                return path
+            if observed not in targets:
+                raise RemoteOriginDenied("selected token sink uses an unexpected system alias")
+            target = "/" + observed.lstrip("/")
+            return Path(target + raw[len(alias):])
+    return path
+
+
 def _secure_parent(path: Path) -> None:
     """Require an existing non-symlink root-owned directory with no group/world access."""
     if not path.is_absolute():
@@ -203,6 +229,7 @@ def write_selected_tunnel_token(
                         (selected.generation, "generation"), (selected.sink_id, "sink ID"),
                         (selected.secret_reference_id, "secret reference")):
         _validate_id(value, name)
+    token_root = _canonical_system_path(token_root)
     if token_root != token_root.absolute() or token_root.is_symlink():
         raise RemoteOriginDenied("token root must be an absolute trusted directory")
     sink = token_root / selected.tunnel_id / "tunnel.token"
