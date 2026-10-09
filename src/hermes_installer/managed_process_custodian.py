@@ -1627,8 +1627,10 @@ class ManagedProcessEffectHandler:
         if not state.input_closed:
             raise AuthorityDenied("resource.task_stdin", "task has not received its one stdin frame and EOF")
         if (isinstance(deadline_monotonic, bool) or not isinstance(deadline_monotonic, (int, float))
-                or not math.isfinite(deadline_monotonic) or deadline_monotonic > state.deadline):
-            raise AuthorityDenied("resource.task_deadline", "task wait cannot extend the admitted deadline")
+                or not math.isfinite(deadline_monotonic)):
+            raise AuthorityDenied("resource.task_deadline", "task wait deadline is invalid")
+        # The root may pass the original task deadline even when the manager
+        # imposed a tighter per-operation cap. Intersect them; never extend.
         state.deadline = min(state.deadline, float(deadline_monotonic))
         handle, admission = state.handle, state.admission
         timed_out = False
