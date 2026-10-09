@@ -182,6 +182,14 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         self.data_root.mkdir(mode=0o700)
         os.chown(self.data_root, self.uid, self.gid)
         os.chmod(self.data_root, 0o700)
+        self.home_root = self.stage / "home"
+        self.work_root = self.stage / "work"
+        for root in (self.home_root, self.work_root):
+            root.mkdir(mode=0o700)
+            os.chown(root, self.uid, self.gid)
+            os.chmod(root, 0o700)
+        (self.work_root / "ci").mkdir(mode=0o700)
+        os.chown(self.work_root / "ci", self.uid, self.gid)
 
         self.executable = Path(sys.executable).resolve(strict=True)
         self.artifact_root = self.executable.parent.resolve(strict=True)
@@ -204,14 +212,37 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         self.run_store_id, self.run_digest, self.run_script = self._enroll_script("run", self._run_probe_source())
         self.parent_store_id, self.parent_digest, self.parent_script = self._enroll_script("parent", self._parent_probe_source())
         self.child_refs = {self.run_store_id: self.run_digest, self.parent_store_id: self.parent_digest}
+        self.enrollment_id = "ci-enrollment-" + self.token[:16]
+        self.home_id = "ci-home-" + self.token[:16]
+        self.work_id = "ci-work-" + self.token[:16]
+        self.data_id = "ci-data-" + self.token[:16]
         self.profile = ManagedProfileCustody(
             profile_id=self.profile_id, owner_uid=self.uid, owner_gid=self.gid,
             service_user=self.service_user, executable=self.executable,
             artifact_sha256=self.digest, artifact_root=self.artifact_root,
-            data_root=self.data_root, generation="ci-" + self.token[:16],
+            data_root=self.data_root, home_root=self.home_root, work_root=self.work_root,
+            generation="ci-" + self.token[:16],
             max_lifetime_seconds=60,
             child_artifact_refs=self.child_refs,
             argv_recipe=(str(self.executable), "{child_artifact}"),
+            enrollment_id=self.enrollment_id,
+            home_id=self.home_id,
+            work_id=self.work_id,
+            data_id=self.data_id,
+            operation_targets={
+                "process.start": "hermes-profile-invoke:" + self.profile_id + ":operation",
+                "process.status": "hermes-profile-control:" + self.profile_id + ":operation:status",
+                "process.read": "hermes-profile-control:" + self.profile_id + ":operation:read",
+                "process.write": "hermes-profile-control:" + self.profile_id + ":operation:write",
+                "process.stop": "hermes-profile-control:" + self.profile_id + ":operation:stop",
+                "process.inspect": self.profile_id + ":inspect",
+            },
+            operation_recipes={
+                "run": self._operation_recipe(self.run_store_id, self.run_digest, "run"),
+                "parent-death": self._operation_recipe(
+                    self.parent_store_id, self.parent_digest, "parent-death"),
+            },
+            parameter_schemas={"ci-empty": {"id": "ci-empty", "fields": []}},
             authority_socket=DEFAULT_SOCKET_DIR / f"{self.uid}.sock",
         )
         self.socket_path = self.profile.authority_socket
@@ -312,12 +343,32 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         return f"artifact:ci-{label}-{self.token[:16]}:{digest}", digest, path
 
     def _resolve_artifact(self, store_id: str, digest: str) -> Path:
+        executable_id = "ci-python-" + self.token[:16]
+        if store_id == f"artifact:{executable_id}:{self.digest}" and digest == self.digest:
+            return self.executable
         for enrolled_id, enrolled_digest, path in (
                 (self.run_store_id, self.run_digest, self.run_script),
                 (self.parent_store_id, self.parent_digest, self.parent_script)):
             if store_id == enrolled_id and digest == enrolled_digest:
                 return path
         raise ValueError("test artifact is not enrolled")
+
+    def _operation_recipe(self, store_id: str, digest: str, operation: str) -> dict:
+        artifact_id = store_id.split(":", 2)[1]
+        return {
+            "executable_artifact_id": "ci-python-" + self.token[:16],
+            "executable_sha256": self.digest,
+            "argv_recipe": [{"literal": artifact_id}],
+                "cwd_root_id": self.work_id,
+            "cwd_subpath": "ci",
+            "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes",
+                            "PATH": "/usr/bin", "LANG": "C", "LC_ALL": "C"},
+            "child_artifact_refs": {artifact_id: digest},
+            "max_lifetime_seconds": 60,
+            "max_output_bytes": 65536,
+            "stdin_mode": "closed",
+            "parameter_schema_id": "ci-empty",
+        }
 
     def _run_probe_source(self) -> str:
         return (_RUN_PROBE_SOURCE.replace("__ROOT_PID__", str(os.getpid()))
@@ -328,17 +379,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
     def _parent_probe_source() -> str:
         return _PARENT_PROBE_SOURCE
 
-    def _client(self, *, mode: str) -> subprocess.Popen[str]:
-        config = {
-            "profile_id": self.profile_id, "data_root": str(self.data_root),
-            "executable": str(self.executable), "artifact_root": str(self.artifact_root),
-            "artifact_sha256": self.digest, "service_user": self.service_user,
-            "trace_id": "ci-trace-" + self.token[:12], "operation_id": "ci-op-" + self.token[:12],
-            "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes",
-                            "PATH": "/usr/bin", "LANG": "C", "LC_ALL": "C"},
-            "mode": mode, "artifact_ref": self.run_store_id if mode == "run" else self.parent_store_id,
-            "child_artifact_refs": self.child_refs,
-        }
+    def _client(self) -> subprocess.Popen[str]:
         env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent",
                "PYTHONPATH": str(self.client_source_root), "PYTHONDONTWRITEBYTECODE": "1"}
         client = subprocess.Popen(
@@ -350,24 +391,18 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         self.clients.append(client)
         return client
 
-    def _start_client(self, *, mode: str, child_code: str = "", child_args: list[str] | None = None,
-                      wait_ready: bool = True, argv_override: list[str] | None = None,
+    def _start_client(self, *, mode: str, wait_ready: bool = True,
+                      selection_parameters: dict | None = None,
                       expect_denial: bool = False, startup_timeout: float = 12):
-        client = self._client(mode=mode)
+        client = self._client()
         config = {
-            "profile_id": self.profile_id, "data_root": str(self.data_root),
-            "executable": str(self.executable), "artifact_root": str(self.artifact_root),
-            "artifact_sha256": self.digest, "service_user": self.service_user,
-            "trace_id": "ci-trace-" + self.token[:12], "operation_id": "ci-op-" + self.token[:12],
-            "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes",
-                            "PATH": "/usr/bin", "LANG": "C", "LC_ALL": "C"},
-            "mode": mode, "artifact_ref": self.run_store_id if mode == "run" else self.parent_store_id,
-            "child_artifact_refs": self.child_refs,
+            "enrollment_id": self.profile.enrollment_id,
+            "generation": self.profile.generation,
+            "operation_id": mode,
+            "parameters": selection_parameters if selection_parameters is not None else {},
             "expect_denial": expect_denial,
             "startup_timeout": startup_timeout,
         }
-        if argv_override is not None:
-            config["argv_override"] = argv_override
         assert client.stdin is not None
         client.stdin.write(json.dumps(config) + "\n")
         client.stdin.close()
@@ -407,47 +442,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         return wrapper
 
     def test_authority_rpc_enforces_kernel_boundaries_and_stubborn_descendant_cleanup(self) -> None:
-        child = r'''import json,os,signal,socket,subprocess,sys,time
-root_pid=int(sys.argv[1]); home_secret=sys.argv[2]; credential=sys.argv[3]
-expected=json.loads(sys.argv[4])
-def denied(path):
-    try:
-        with open(path,'rb') as source: source.read(1)
-        return False
-    except OSError:
-        return True
-actual_env=dict(os.environ)
-result={"environment_exact":actual_env==expected,
-        "environment_keys":sorted(actual_env),
-        "environment_unexpected_keys":sorted(set(actual_env)-set(expected)),
-        "environment_missing_keys":sorted(set(expected)-set(actual_env)),
-        "environment_mismatch_keys":sorted(key for key in set(expected)&set(actual_env)
-                                              if expected[key]!=actual_env[key]),
-        "root_home_hidden":denied(home_secret),"credential_directory_hidden":denied(credential),
-        "root_proc_hidden":denied('/proc/'+str(root_pid)+'/environ')}
-try:
-    os.kill(root_pid,signal.SIGTERM); result['root_signal_denied']=False
-except OSError:
-    result['root_signal_denied']=True
-try:
-    socket.socket(socket.AF_INET,socket.SOCK_STREAM); result['ipv4_denied']=False
-except OSError:
-    result['ipv4_denied']=True
-try:
-    socket.socket(socket.AF_INET6,socket.SOCK_STREAM); result['ipv6_denied']=False
-except OSError:
-    result['ipv6_denied']=True
-descendant=subprocess.Popen([sys.executable,'-c',
-    'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(30)'],
-    stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True)
-result['descendant_pid']=descendant.pid
-print(json.dumps(result,sort_keys=True),flush=True)
-time.sleep(30)
-'''
-        env_allowlist = {"HOME": "/hermes", "HERMES_HOME": "/hermes", "PATH": "/usr/bin",
-                         "LANG": "C", "LC_ALL": "C"}
-        args = [str(os.getpid()), str(self.home_secret), str(self.credential_path), json.dumps(env_allowlist)]
-        client, started = self._start_client(mode="run", child_code=child, child_args=args)
+        client, started = self._start_client(mode="run")
         try:
             assert client.stdout is not None
             ready, _, _ = __import__("select").select([client.stdout], [], [], 20)
@@ -491,11 +486,7 @@ time.sleep(30)
                 self.assertEqual(error_output, "")
 
     def test_parent_pidfd_death_stops_generation_and_reaps_descendant_cgroup(self) -> None:
-        child = "import signal,subprocess,sys,time; subprocess.Popen([sys.executable,'-c'," \
-                "'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(30)']," \
-                "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True); " \
-                "print('parent-death-ready',flush=True); time.sleep(30)"
-        client, started = self._start_client(mode="parent-death", child_code=child)
+        client, started = self._start_client(mode="parent-death")
         process_id, cgroup = started["process_id"], started["cgroup"]
         try:
             deadline = time.monotonic() + 5
@@ -567,11 +558,11 @@ time.sleep(30)
     def test_signed_but_unenrolled_python_code_argv_is_denied_before_unit_creation(self) -> None:
         launch_marker = self.stage / "systemd-run-invoked-for-unenrolled-argv"
         self.handler.systemd_run = self._root_wrapper("systemd-run-argv-trap", launch_marker)
-        for argv in (
-                [str(self.executable), "-c", "open('/tmp/forbidden','w').close()"],
-                [str(self.executable), "/tmp/untrusted-script.py"],
-                [str(self.executable), "-m", "http.server"]):
-            client, event = self._start_client(mode="reject", argv_override=argv, expect_denial=True)
+        for attempted_argument in (
+                "-c open('/tmp/forbidden','w').close()",
+                "/tmp/untrusted-script.py", "-m http.server"):
+            client, event = self._start_client(
+                mode="run", selection_parameters={"argv": attempted_argument}, expect_denial=True)
             self.assertEqual(event["event"], "denied")
             self.assertEqual(client.wait(timeout=5), 0)
             self.assertFalse(self.handler._handles)
