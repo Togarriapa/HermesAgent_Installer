@@ -10,13 +10,19 @@ import urllib.request
 import unittest
 from pathlib import Path
 
-from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
+from hermes_installer.policy import BudgetLedger, DispatchAuthorization, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
 from hermes_installer.provider_gateway import (GatewayError, LOCAL_KEY_ENV, LOCAL_PROVIDER_NAME, LocalProviderGateway, materialize_hermes_provider_plugin, materialize_hermes_profile_config)
 from hermes_installer.state import OwnedRoot
 
 
 MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
 TOKEN="local-fixture-token-value-0123456789abcdef"
+
+
+def synthetic_authorizer(context, capability, now):
+    return DispatchAuthorization("fixture-principal", context.profile_id, context.profile_id,
+        context.trace_id, frozenset({"inference", "tool-call"}),
+        context.effective_sensitivity, "fixture-revision", "fixture-grant", now + 60)
 
 
 class RecordingTransport:
@@ -32,7 +38,7 @@ class ProviderGatewayTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory()
         root=OwnedRoot(Path(self.temp.name)/"owned");root.ensure()
         self.transport=RecordingTransport()
-        self.dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),self.transport)
+        self.dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),self.transport,context_authorizer=synthetic_authorizer)
         self.gateway=LocalProviderGateway(self.dispatcher,token=TOKEN,profile_id="public-demo",sensitivity=Sensitivity.PUBLIC,model=MODEL,max_output_tokens=32)
         self.port=self.gateway.start()
         self.addCleanup(self.gateway.close)
@@ -215,7 +221,7 @@ class ProviderGatewayTests(unittest.TestCase):
     def test_gateway_body_read_has_deadline(self):
         root=OwnedRoot(Path(self.temp.name)/"slow"); root.ensure()
         transport=RecordingTransport()
-        dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),transport)
+        dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),transport,context_authorizer=synthetic_authorizer)
         gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="slow",sensitivity=Sensitivity.PUBLIC,
                                      model=MODEL,read_timeout_seconds=0.15,max_connections=1)
         port=gateway.start()
@@ -236,7 +242,7 @@ class ProviderGatewayTests(unittest.TestCase):
 
     def test_connection_limit_closes_excess_slow_clients(self):
         root=OwnedRoot(Path(self.temp.name)/"limited"); root.ensure()
-        dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),RecordingTransport())
+        dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),RecordingTransport(),context_authorizer=synthetic_authorizer)
         gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="limited",sensitivity=Sensitivity.PUBLIC,
                                      model=MODEL,read_timeout_seconds=1,max_connections=1)
         port=gateway.start()
@@ -269,7 +275,7 @@ class ProviderGatewayTests(unittest.TestCase):
 
         root=OwnedRoot(Path(self.temp.name)/"cancel"); root.ensure()
         downstream=CancellableTransport()
-        dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),downstream)
+        dispatcher=Dispatcher(DispatchPolicy({"public":default_public_route()},"public"),BudgetLedger(root),downstream,context_authorizer=synthetic_authorizer)
         gateway=LocalProviderGateway(dispatcher,token=TOKEN,profile_id="cancel",sensitivity=Sensitivity.PUBLIC,model=MODEL)
         port=gateway.start()
         self.addCleanup(gateway.close)
