@@ -30,6 +30,9 @@ def _registry(receipts, payloads=None):
     registry.source_observers = source
     registry.monotonic = lambda: 10.0
     registry._issued = {}
+    registry._completed_tasks = {}
+    registry._runs = {}
+    registry._closed = False
     registry._lock = threading.RLock()
     return registry
 
@@ -102,10 +105,26 @@ def test_issued_receipt_is_identity_bound_and_one_use():
     registry = _registry({})
     value = _dto()
     registry._issued[value.native_execution_receipt_handle] = value
+    registry._completed_tasks[value.task_handle] = 20.0
     clone = _dto()
     assert registry.verify_receipt(clone) is False
     assert registry.verify_receipt(value) is True
     assert registry.verify_receipt(value) is False
+
+
+def test_issued_receipt_expires_and_close_revokes_pending_receipts():
+    registry = _registry({})
+    expired = _dto(native_execution_receipt_handle="x" * 40)
+    registry._issued[expired.native_execution_receipt_handle] = expired
+    registry._completed_tasks[expired.task_handle] = 9.0
+    assert registry.verify_receipt(expired) is False
+    assert expired.native_execution_receipt_handle not in registry._issued
+
+    pending = _dto(native_execution_receipt_handle="y" * 40)
+    registry._issued[pending.native_execution_receipt_handle] = pending
+    registry._completed_tasks[pending.task_handle] = 20.0
+    registry.close()
+    assert registry.verify_receipt(pending) is False
 
 
 def test_model_receipt_requires_complete_task_source_ancestry():

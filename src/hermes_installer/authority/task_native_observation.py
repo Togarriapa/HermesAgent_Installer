@@ -342,6 +342,7 @@ class RootTaskNativeObservationRegistry:
         with self._lock:
             self._runs.pop(task_handle.handle_id, None)
             key = (task_handle.handle_id, terminal_receipt_handle)
+            self._prune_receipts_locked()
             if (key in self._consumed_terminals
                     or task_handle.handle_id in self._completed_tasks
                     or len(self._issued) >= 4096):
@@ -356,6 +357,9 @@ class RootTaskNativeObservationRegistry:
         if type(receipt) is not RootTaskNativeExecutionReceipt:
             return False
         with self._lock:
+            self._prune_receipts_locked()
+            if self._closed:
+                return False
             if self._issued.get(receipt.native_execution_receipt_handle) is not receipt:
                 return False
             self._issued.pop(receipt.native_execution_receipt_handle, None)
@@ -366,10 +370,21 @@ class RootTaskNativeObservationRegistry:
             self._closed = True
             runs = tuple(self._runs.values())
             self._runs.clear()
+            self._issued.clear()
+            self._completed_tasks.clear()
         for run in runs:
             run.stop.set()
             if run.watcher is not None and run.watcher is not threading.current_thread():
                 run.watcher.join(timeout=1.0)
+
+    def _prune_receipts_locked(self) -> None:
+        now = self.monotonic()
+        for handle_id, expiry in tuple(self._completed_tasks.items()):
+            if expiry <= now:
+                self._completed_tasks.pop(handle_id, None)
+        for receipt_handle, receipt in tuple(self._issued.items()):
+            if self._completed_tasks.get(receipt.task_handle, 0) <= now:
+                self._issued.pop(receipt_handle, None)
 
     def _watch(self, run: _TaskRun) -> None:
         while not run.stop.wait(_POLL_SECONDS):
