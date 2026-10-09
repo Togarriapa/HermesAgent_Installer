@@ -160,7 +160,7 @@ def _recorded_component_findings(state_path: Path, component: str | None = None)
                 or stat.S_IMODE(root_info.st_mode) & 0o077
                 or marker.is_symlink() or not stat.S_ISREG(marker_info.st_mode)
                 or marker_info.st_uid != os.getuid() or stat.S_IMODE(marker_info.st_mode) & 0o077
-                or marker.read_bytes() != b"schema=1\\n"
+                or marker.read_bytes() != b"schema=1\n"
                 or database.is_symlink() or not stat.S_ISREG(db_info.st_mode)
                 or db_info.st_uid != os.getuid() or stat.S_IMODE(db_info.st_mode) & 0o077):
             return (Finding("installer.state", "Installer state ownership could not be verified", OutcomeState.PENDING),)
@@ -181,7 +181,7 @@ def _recorded_component_findings(state_path: Path, component: str | None = None)
         payload = json.loads(row["payload"])
         if not isinstance(payload, dict):
             raise ValueError("invalid journal payload")
-        report = payload.get("report", {})
+        report = payload.get("report", payload)
         if not isinstance(report, dict):
             report = {}
         findings = [
