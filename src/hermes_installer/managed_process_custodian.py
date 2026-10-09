@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import pwd
+import re
 import select
 import stat
 import subprocess
@@ -155,7 +156,7 @@ class ManagedProcessEffectHandler:
 
     @staticmethod
     def _validate_profile(profile: ManagedProfileCustody) -> None:
-        if (not profile.profile_id or profile.profile_id in {".", ".."}
+        if (not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", profile.profile_id)
                 or profile.owner_uid <= 0 or profile.owner_gid <= 0):
             raise ValueError("protected process profile identity is invalid")
         expected_user = "hermes-" + hashlib.sha256(profile.profile_id.encode()).hexdigest()[:16]
@@ -191,8 +192,13 @@ class ManagedProcessEffectHandler:
         sock = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
         if sock != Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock"):
             raise ValueError("profile authority socket path is not the per-UID endpoint")
-        if not profile.generation or not 0 < profile.max_lifetime_seconds <= 600:
+        if (not re.fullmatch(r"[A-Za-z0-9_.-]{1,96}", profile.generation)
+                or type(profile.max_lifetime_seconds) is not int
+                or not 0 < profile.max_lifetime_seconds <= 600):
             raise ValueError("profile generation or maximum lifetime is invalid")
+        for path in (profile.executable, profile.artifact_root, profile.data_root, sock):
+            if any(char.isspace() for char in str(path)) or ":" in str(path):
+                raise ValueError("protected process paths cannot contain systemd property delimiters")
         for value, lower, upper, label in (
             (profile.memory_max_bytes, 16 * 1024 * 1024, 64 * 1024**3, "memory"),
             (profile.cpu_quota_percent, 1, 10_000, "CPU"),
