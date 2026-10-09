@@ -464,5 +464,51 @@
     ],
     "origin_kind": "root-admitted-task|selected-health-fixture|authenticated-desktop-input only selected by separate root observer methods, not worker wire.",
     "evidence": "Actual native request reaches allowed selected private backend from admitted input and actual source closure; caller forged origin/receipt/mismatched bytes/PIDFD/generation/replay/expiry/empty ancestry denies; fixtures do not establish live target acceptance."
+  },
+  "native_mcp_dispatch": {
+    "task": "MC-F01/MC-F02 + HI-T04/HI-T08/HI-T09 original supported native MCP mediation; no new task ID.",
+    "source": {
+      "revision": "7085fbf7753266fc4943c55ac04926186bc90005",
+      "tools/mcp_tool_registration.py": "7e73a415283c5255fedeb9318fceeb556eb31a19cea2e9bd3d9fdfc0f9297ade",
+      "tools/mcp_tool_discovery.py": "cf2dc204fd293727e0e13a045428152f8e1925aa48ea521f6ec97035dd1e86d9",
+      "tools/mcp_tool.py": "12943abb2e38657d2d467ad97a589c021fba79ad5bc2a33c3c7e0b8a55278700"
+    },
+    "seam": "Pinned _register_candidates registers exact candidate native name/schema/handler and captures server ownership only after registry registration succeeds. Installer-owned reviewed in-process hook replaces only selected owned MCP candidate handler with fixed root broker adapter; preserves actual native registration/name/collision decisions and unowned config entries. Direct upstream MCP effect bypass cannot be enabled for installer-managed selected entries. No source normalization guessed from display names.",
+    "active_catalog": "service_generations.native_mcp_tool_bindings bounded<=1024 list, entire generation_digest covered. Exact rows below join actual selected MCP backend enrollment/current native package/action registration; unavailable unknown server/tool/schema never auto-enables after discovery.",
+    "row_fields": [
+      "id",
+      "profile_id",
+      "process_generation",
+      "native_package_id",
+      "native_package_generation",
+      "native_server_name",
+      "native_tool_name",
+      "native_schema_sha256",
+      "mcp_enrollment_id",
+      "mcp_generation",
+      "mcp_tool_name",
+      "request_schema_id",
+      "result_schema_id",
+      "effect_operation",
+      "effect_target",
+      "capability",
+      "recipient",
+      "scope_bindings",
+      "handler_artifact_id",
+      "handler_artifact_sha256"
+    ],
+    "scope_binding_fields": [
+      "argument_field",
+      "selected_resource_id"
+    ],
+    "scope": "Each selected_resource_id is opaque root-owned account/resource selection already enrolled for that MCP backend; exact argument_field belongs pinned request schema. Root resolves finite resource value/credential handle, validates allowed operation/read-write policy and caller arguments before root-forced scope. Conflicting caller resource/account/project fields rejected, not permission to switch. No URL/credential/device/path selectors in native caller authority.",
+    "call": "AuthorityClient.dispatch_native_mcp(invocation_handle:str,canonical_arguments:bytes)->BrokeredEffectResponse, fixed lookup-only RPC native.mcp.dispatch strict {schema:1,invocation_handle,canonical_arguments_b64}. Root validates same actual native producer PIDFD/profile/generation/loaded package, exact root-observed tool_call_name/arguments digest/one-use invocation handle and selected current native_mcp_tool_bindings row. Worker cannot choose server/tool/target/capability/recipient/role in RPC.",
+    "effect": "Root fresh independent context/grant for existing mcp.request (HTTP) or mcp.stdio (local) exact protected enrollment rule/target/capability/recipient/full normalized scoped args digest. Existing MCPClient actual initialize/tools-list/call/reconnect/cancel/revoke bounded interfaces execute; no generic external proxy or arbitrary subprocess. Credentials only root vault reference resolver, worker no reusable secrets.",
+    "result": "Root validates selected result schema/size/privacy then emits actual tool-result source receipt with full invocation/input lineage and peer-delivery handle through existing root observer registry. MCP output is untrusted data, cannot mint instruction/human/PUBLIC/permission claims. Native lexical tool hook consumes only root metadata handles.",
+    "packaging": "Fixed handler_artifact_id hermes-installer.native-mcp-dispatch.v1 actual implemented reviewed module SHA and native package closure/entrypoint pins required. Planning ID is not a fake runnable artifact hash. In-process hook avoids new stdio proxy peer/context transport; native supported stdio/HTTP discovery/config semantics remain selected bounded broker operations.",
+    "evidence": "MC-F01 initialization+actual native tool registration/discovery/call/result/reconnect/cancel plus unknownname/schema/resource/scope/credential/replay/currentPIDFD/grant/bypass negatives. Fixture success distinct from actual account/native ARM64 acceptance.",
+    "row_types": "All scalar fields nonempty strings<=128 except native_tool_name/mcp_tool_name<=256, SHA256 fields exactly64lowercasehex; generation opaque string. effect_operation enum mcp.request|mcp.stdio, target must current selected rule mcp:<selectedservice>:http|stdio. scope_bindings list<=64 strict records {argument_field:string selected input field,selected_resource_id:string opaque enrolled ID}. Duplicate bindingID/native(profile,generation,toolname)/scopefield denied; no aliases hermes_tool_name/schema_sha256/service_id/tool_name accepted.",
+    "invocation_mapping": "Existing NativeInvocationBinding reused: adapter_id fixed hermes-installer.native-mcp-dispatch.v1, action_id exact selected native_mcp_tool_bindings.id, arguments_sha256 actual root observed canonical original call args. Root selected native package resolver/action registry includes this fixed adapter/action/schema/handler row and actual registered native_tool_name. begin_native_invocation matches exact observed call before lexical native.mcp.dispatch; original provider/input parent handles remain unchanged. New MCP RPC consumes this same one-use invocation, no separate worker provenance DTO.",
+    "native_config": "Native Hermes config file resolved by pinned Hermes config mechanism below exact selected HERMES_HOME; root-owned generated merge patches preserve unowned mcp_servers entries. Each installer-owned native_server_name entry is kept as selected metadata with enabled:false for direct upstream worker transport; root in-process hook supplies current verified native candidates to _register_candidates and routes handlers to broker. This disables only direct worker stdio/HTTP effects, not the mediated MCP capability. Native registration/status/discovery hook must represent actual root-backed tools/protocol/functionality and report blockers truthfully, not configured-only success. Do not enable upstream candidate handler or invent arbitrary stdio proxy command. Selected native server label is protected row native_server_name, never inferred from tool name; direct calls still mandatory host gated."
   }
 }

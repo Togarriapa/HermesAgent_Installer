@@ -216,3 +216,27 @@ The implementation SHALL use explicit protected observer delivery role joins and
 #### Scenario: Unenrolled cross-peer selection
 - **WHEN** no exact current observer delivery mapping exists
 - **THEN** cross-peer delivery is denied without target-string inference.
+
+### Requirement: Actual root resource controller enrollment
+
+Root event context issuance SHALL require the exact active daemon/module/observer/backend role record and current kernel identity before fresh child effects.
+
+#### Scenario: Unverified root dispatcher role
+- **WHEN** role/module/kernel/event/body bindings are absent or stale
+- **THEN** no context or child effect is fabricated.
+
+### Requirement: Prepared native materialization receipt closure
+
+Root materialization SHALL occur under verified prepared transaction and exact fixed CAS output roles before runnable activation. HERMES_HOME SHALL equal selected service_home_root_id. Resources source proof SHALL remain independent from Hermes source proof.
+
+#### Scenario: Source or role substitution
+- **WHEN** a native output receipt substitutes another source or role
+- **THEN** active record publication is denied.
+
+### Requirement: Actual task native and credential closure
+
+Successful task completion SHALL bind actual native execution receipts and distinct service/resource epochs. Webhook verification SHALL use explicit protected placeholder-to-vault-role mapping.
+
+#### Scenario: Native or credential mapping absence
+- **WHEN** the current exact native or scoped credential join is missing
+- **THEN** no successful task capsule or authenticated webhook event is fabricated.
