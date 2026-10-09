@@ -31,3 +31,5 @@ HW01/HW-T01/EV-HW01 operationalizes original R0042 under fixed protected package
 ## Exact device and compiler refinement
 
 HW02/HW-T02/EV-HW02 and HW03/HW-T03/EV-HW03 operationalize original R0042/R0115 with exact selected-device custody and reviewed fixed bounded build profiles.
+
+Closed memory/model recipe identities v6: plans/amendments/2026-10-09-closed-memory-model-recipe-ids-v6.md and protected contract JSON define finite schema/recipe IDs, empty model launch parameters and root-owned forced scope. Actual serializer/result/ARM64 effect evidence remains pending, existing tasks open.
