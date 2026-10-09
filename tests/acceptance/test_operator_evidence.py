@@ -121,8 +121,11 @@ class OperatorEvidenceTests(unittest.TestCase):
             },
             ("AC16", "EV-RB08"): {
                 "root_enrolled_finite_action_and_handler_digest_bound", "exact_capability_operation_target_generation_bound",
+                "immutable_native_package_resolver_and_root_observed_source_closure_bound",
+                "every_required_manifest_action_functional_or_exact_incomplete_recorded",
+                "actual_native_selected_backend_effect_and_verified_result_observed",
                 "canonical_arguments_and_final_digest_bound_to_one_use_grant", "principal_profile_recipient_and_credential_scope_verified",
-                "confirmation_and_idempotency_enforced",
+                "confirmation_and_idempotency_enforced", "durable_ambiguous_outcome_reconciliation_and_restart_replay_denied",
                 "wrong_action_identity_scope_confirmation_replay_and_duplicate_denied_before_effect",
                 "private_recipient_and_cancellation_preserved", "unsupported_or_unqualified_actions_unavailable",
             },

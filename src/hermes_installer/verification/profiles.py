@@ -72,7 +72,20 @@ _ROWS = {
     "EV-HW01": ProbeProfile(("AC10",), ("protected_manifest_runtime_and_generation_bound", "only_exact_pinned_numpy_tflite_wheels_selected", "target_abi_and_attested_runtime_match", "offline_fixed_install_succeeds_without_host_or_hermes_mutation", "caller_paths_urls_pip_args_extra_wheels_rejected", "wrong_hash_runtime_abi_root_network_enospc_cancel_preserve_prior_generation")),
     "EV-RB06": ProbeProfile(("AC16",), ("fixed_service_action_and_public_query_bound", "bounded_metadata_parameters_before_network", "redirects_private_unknown_query_and_arbitrary_destination_denied", "read_results_untrusted_and_never_activate_resources")),
     "EV-RB07": ProbeProfile(("AC16",), ("selected_enabled_generation_and_authenticated_event_verified", "single_bounded_job_admission_consumed", "fresh_reduced_grant_per_child_and_attempt", "source_lineage_sensitivity_and_recipient_bound", "budget_concurrency_runtime_payload_replay_limits_enforced", "unselected_stale_or_replayed_event_denied_before_effect")),
-    "EV-RB08": ProbeProfile(("AC16",), ("root_enrolled_finite_action_and_handler_digest_bound", "exact_capability_operation_target_generation_bound", "canonical_arguments_and_final_digest_bound_to_one_use_grant", "principal_profile_recipient_and_credential_scope_verified", "confirmation_and_idempotency_enforced", "wrong_action_identity_scope_confirmation_replay_and_duplicate_denied_before_effect", "private_recipient_and_cancellation_preserved", "unsupported_or_unqualified_actions_unavailable")),
+    "EV-RB08": ProbeProfile(("AC16",), (
+        "root_enrolled_finite_action_and_handler_digest_bound",
+        "immutable_native_package_resolver_and_root_observed_source_closure_bound",
+        "every_required_manifest_action_functional_or_exact_incomplete_recorded",
+        "actual_native_selected_backend_effect_and_verified_result_observed",
+        "exact_capability_operation_target_generation_bound",
+        "canonical_arguments_and_final_digest_bound_to_one_use_grant",
+        "principal_profile_recipient_and_credential_scope_verified",
+        "confirmation_and_idempotency_enforced",
+        "durable_ambiguous_outcome_reconciliation_and_restart_replay_denied",
+        "wrong_action_identity_scope_confirmation_replay_and_duplicate_denied_before_effect",
+        "private_recipient_and_cancellation_preserved",
+        "unsupported_or_unqualified_actions_unavailable",
+    )),
     "EV-PR01": ProbeProfile(("AC08",), ("public_client_pkce_state_nonce_loopback_bound", "id_token_signature_issuer_audience_expiry_nonce_account_checked", "documented_plan_usage_scope_granted", "credential_reference_single_host_custody_and_rotation", "root_only_tls_sse_store_false_stream_true", "response_completed_required_and_failed_partial_or_cancelled_streams_rejected", "unsupported_fields_tools_and_retries_rejected_without_paid_fallback")),
 }
 

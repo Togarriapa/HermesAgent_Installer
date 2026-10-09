@@ -102,7 +102,7 @@ class PiLeaseTests(unittest.TestCase):
         self.assertEqual("-m", request.argv[1])
         self.assertEqual("unittest", request.argv[2])
         self.assertNotIn(request.argv[0].rsplit("/", 1)[-1], {"sh", "bash", "dash", "zsh"})
-        self.assertEqual(8, len(request.expected_assertions))
+        self.assertEqual(12, len(request.expected_assertions))
 
     def test_contract_request_rejects_candidate_mismatch_interpreter_and_expired_lease(self):
         other_checkout = build_pi_read_only_lease(self.observation, candidate_sha="a" * 40, now=self.now)
