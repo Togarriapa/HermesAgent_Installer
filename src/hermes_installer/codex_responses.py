@@ -59,7 +59,7 @@ def _text(value: object, *, maximum: int = 256_000) -> bool:
         return False
 
 
-def _validate_input(value: object, *, function_names: frozenset[str]) -> None:
+def _validate_input(value: object, *, function_names: frozenset[tuple[str, str]]) -> None:
     if _text(value):
         return
     if not isinstance(value, list) or len(value) > 4096:
