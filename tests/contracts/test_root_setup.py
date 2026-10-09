@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import builtins
 import contextlib
 import io
 import unittest
 from unittest.mock import patch
 
 from hermes_installer.root_setup import (
+    RootBootstrapCandidateSelectionRegistry,
     RootSetupAction,
+    RootSetupExplicitChoices,
     RootSetupResult,
     RootSetupState,
     launcher_status,
@@ -16,6 +19,37 @@ from hermes_installer.root_setup import (
 
 
 class RootSetupBoundaryTests(unittest.TestCase):
+    def test_candidate_choice_is_exact_root_tty_input_and_one_use(self) -> None:
+        registry = RootBootstrapCandidateSelectionRegistry()
+        candidate = "a" * 40
+        with patch("hermes_installer.root_setup.sys.platform", "linux"), \
+             patch("hermes_installer.root_setup.os.getuid", return_value=0), \
+             patch("hermes_installer.root_setup.os.geteuid", return_value=0), \
+             patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \
+             patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=True), \
+             patch.object(builtins, "input", return_value=candidate):
+            choice = registry.issue_explicit_tty_choice()
+        self.assertEqual(choice.candidate_git_sha, candidate)
+        receipt = registry.resolve(choice)
+        self.assertEqual(receipt.candidate_git_sha, candidate)
+        self.assertEqual(receipt.input_origin, "root_tty_explicit")
+        self.assertEqual(len(receipt.choice_sha256), 64)
+        with self.assertRaises(RuntimeError):
+            registry.resolve(choice)
+
+    def test_candidate_choice_rejects_forgery_and_noncanonical_sha(self) -> None:
+        with self.assertRaises(TypeError):
+            RootSetupExplicitChoices("a" * 40)
+        registry = RootBootstrapCandidateSelectionRegistry()
+        with patch("hermes_installer.root_setup.sys.platform", "linux"), \
+             patch("hermes_installer.root_setup.os.getuid", return_value=0), \
+             patch("hermes_installer.root_setup.os.geteuid", return_value=0), \
+             patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \
+             patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=True), \
+             patch.object(builtins, "input", return_value="A" * 40):
+            with self.assertRaises(ValueError):
+                registry.issue_explicit_tty_choice()
+
     def test_action_schema_is_finite_and_extra_arguments_are_rejected(self) -> None:
         for action in ("install", "resume", "update"):
             with self.subTest(action=action):

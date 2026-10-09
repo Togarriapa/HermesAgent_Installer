@@ -89,6 +89,74 @@ class LauncherStatus:
 
 _ACCOUNT = re.compile(r"[a-z_][a-z0-9_-]{0,31}\Z")
 _HANDLE = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
+_CANDIDATE_SHA = re.compile(r"[0-9a-f]{40}\Z")
+_CHOICE_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class RootSetupExplicitChoices:
+    """Nonsecret source choice captured by the root process from its TTY."""
+
+    candidate_git_sha: str
+    _seal: object
+
+    def __init__(self, candidate_git_sha: str, *, _seal: object | None = None):
+        if _seal is not _CHOICE_SEAL:
+            raise TypeError("root setup choices must be issued by the root TTY selection registry")
+        if not isinstance(candidate_git_sha, str) or not _CANDIDATE_SHA.fullmatch(candidate_git_sha):
+            raise ValueError("candidate source choice must be an exact lowercase 40-character Git SHA")
+        object.__setattr__(self, "candidate_git_sha", candidate_git_sha)
+        object.__setattr__(self, "_seal", _seal)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class VerifiedRootBootstrapCandidateSelection:
+    """Sealed proof that a candidate SHA was read from the root controlling TTY."""
+
+    candidate_git_sha: str
+    input_origin: str
+    choice_sha256: str
+    _seal: object
+
+    def __init__(self, candidate_git_sha: str, choice_sha256: str, *, _seal: object | None = None):
+        if _seal is not _CHOICE_SEAL:
+            raise TypeError("candidate selection proofs can only be minted by the root selection registry")
+        if (not isinstance(candidate_git_sha, str) or not _CANDIDATE_SHA.fullmatch(candidate_git_sha)
+                or not isinstance(choice_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", choice_sha256)):
+            raise ValueError("candidate selection proof is malformed")
+        object.__setattr__(self, "candidate_git_sha", candidate_git_sha)
+        object.__setattr__(self, "input_origin", "root_tty_explicit")
+        object.__setattr__(self, "choice_sha256", choice_sha256)
+        object.__setattr__(self, "_seal", _seal)
+
+
+class RootBootstrapCandidateSelectionRegistry:
+    """One-use in-process proof that an exact source SHA came from root TTY input."""
+
+    def __init__(self) -> None:
+        self._choices: dict[int, RootSetupExplicitChoices] = {}
+
+    def issue_explicit_tty_choice(self) -> RootSetupExplicitChoices:
+        if not sys.platform.startswith("linux") or os.getuid() != 0 or os.geteuid() != 0:
+            raise RuntimeError("candidate source choice requires the Linux root setup process")
+        if not (sys.stdin.isatty() and sys.stderr.isatty()):
+            raise RuntimeError("candidate source choice requires the root controlling terminal")
+        candidate = input("Exact Hermes installer source commit (40 lowercase hex characters): ").strip()
+        choice = RootSetupExplicitChoices(candidate, _seal=_CHOICE_SEAL)
+        self._choices[id(choice)] = choice
+        return choice
+
+    def resolve(self, choices: RootSetupExplicitChoices) -> VerifiedRootBootstrapCandidateSelection:
+        if not isinstance(choices, RootSetupExplicitChoices) or choices._seal is not _CHOICE_SEAL:
+            raise RuntimeError("root source choice was not issued by this selection registry")
+        issued = self._choices.pop(id(choices), None)
+        if issued is not choices:
+            raise RuntimeError("root source choice is absent, foreign, or already consumed")
+        return VerifiedRootBootstrapCandidateSelection(
+            choices.candidate_git_sha,
+            hashlib.sha256(choices.candidate_git_sha.encode("ascii")).hexdigest(),
+            _seal=_CHOICE_SEAL,
+        )
 
 
 def verify_installed_launcher() -> bool:
@@ -302,5 +370,7 @@ def _report_ref(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
-__all__ = ["LauncherStatus", "RootSetupAction", "RootSetupResult", "RootSetupState",
+__all__ = ["LauncherStatus", "RootBootstrapCandidateSelectionRegistry", "RootSetupAction",
+           "RootSetupExplicitChoices", "RootSetupResult", "RootSetupState",
+           "VerifiedRootBootstrapCandidateSelection",
            "launcher_status", "main", "run_root_setup_action", "verify_installed_launcher"]
