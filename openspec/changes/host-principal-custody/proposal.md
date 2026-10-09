@@ -117,3 +117,7 @@ HI-T08 / HI-T09: use planning/protected-runtime-assembly-contract.json native_cu
 ### v12 loader progress framing
 
 HI-T08/HI-T09 use native_custody_proof_protocol.progress_wire in planning/protected-runtime-assembly-contract.json; concrete root receiver and actual selected loader observations are required. Acceptance remains unchecked.
+
+### v13 private probe joins
+
+HI-T12/HI-T13 use private_origin_probe.connector_authority principal_join, sequence_domains and per_action_probe in planning/remote-root-session-bridge-contract.json; current protected native principal and immutable root child handles are mandatory. Acceptance remains pending.

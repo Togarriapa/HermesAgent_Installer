@@ -357,3 +357,11 @@ The root receiver SHALL enforce native_custody_proof_protocol.progress_wire fram
 #### Scenario: Forged or incomplete loader event
 - **WHEN** progress frames are malformed, stale, replayed or incomplete
 - **THEN** no readiness proof is issued and existing task acceptance remains pending.
+
+### Requirement: Private probe principal and sequence joins
+
+The private probe issuer SHALL resolve the actual protected native PrincipalBinding, separate effect and connector frame sequences, and admit only immutable per-action child probe handles.
+
+#### Scenario: Child action substitution
+- **WHEN** an asset, action, principal or sequence differs from current root selection
+- **THEN** admission is denied before connector bytes.
