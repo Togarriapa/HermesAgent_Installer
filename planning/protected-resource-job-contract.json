@@ -408,5 +408,33 @@
       "root_event_context": "issue_resource_job_context(root_event_handle,node_id,operation,canonical_payload_sha256)->fresh internal HostContext/effect pair. Root-private event registry resolves actual scheduler timer tick or authenticated HMAC/replay webhook or selected authenticated channel ingress + consent/full lineage/current backend/profile recipient. Root controller role actual registry/PIDFD mandatory, source_kind fixed by observer entrypoint. Unknown/private source sensitivity preserved; no public admission from timer/event labels. No AuthorityClient RPC can mint this context."
     },
     "recipe_domain": "task_body_recipe_id/task_request_schema_id select inner Hermes prompt recipe/schema; node/body_recipe_id and backend/body_recipe_id select outer resource request recipe/schema. Distinct domains, no automatic equality requirement. Both protected/current/source-pinned/forced-scope joins are mandatory; caller cannot choose either."
+  },
+  "task_result_validator": {
+    "task": "RB-T08 / EV-RB07, existing result_schema_id/resource_validators/parent result capsules, no new product task.",
+    "artifact": {
+      "artifact_id": "schema-hermes-task-text-result-v1",
+      "schema_id": "hermes-task-text-result-v1",
+      "sha256": "c25ec49ca4546e96f8f2f2daed6d8ab4b4ba425d1fd9e77ba8d551f7e4749bcb",
+      "size_bytes": 360,
+      "ledger_path": "plans/amendments/2026-10-09-task-result-validator-v18/hermes-task-text-result-v1.json"
+    },
+    "API": "RootArtifactValidator.resolve_selected_result(backend_enrollment_id,result_schema_id,expected_active_generation_digest)->RootSelectedResultValidator; resolve exact active backend node result schema and resource_validators row schema_artifact_id/schema_sha256, actual protected ArtifactCatalog bytes and static registered validator implementation. No dynamic imports, arbitrary JSON schema execution, caller schema/validator selection or sidecar fallback.",
+    "call": "validate_owned_task_result(task_handle,terminal_receipt_handle)->ValidatedRootTaskResult; root registry supplies actual bounded stdout/stderr, current selected backend and full source closure. Verify actual completed exit0/EOF/native boundary and admitted prompt/body digest. No worker result bytes or status booleans accepted.",
+    "text_mode": "hermes-task-text-result-v1 maps actual whole stdout bytes to strict UTF8 text (no replacement decoding), rejects NUL/control characters except newline/tab, invalid UTF8, empty/oversized/truncated output. Do not trim, extract lines or parse model statements as authoritative fields. Build exact {text,stdout_sha256,stdout_size_bytes}, digest over actual stdout. STDERR retained bounded private diagnostic separately, not successful capsule text.",
+    "meaning": "Validated text proves observed bounded task response completion, not correctness of model assertions or native capability acceptance. Health uses its separate actual event/result contract. Downstream recipe may consume only declared text field as untrusted PRIVATE/UNKNOWN full-lineage input, never command/path/account/permission authority.",
+    "json_mode": "Other selected result_schema_id requires its own actual protected strict schema artifact with same finite schema1 envelope (id,type=object,additional_fields=false,max_bytes,fields). Fields unique<=64, scalar types string/integer/boolean/enum/sha256/opaque-id with required flag and applicable finite bounds/allowed_values; nested object/array allowed only independently pinned explicit finite shape with max depth4 and max items256, no refs/pattern/code/unknown fields. Parse whole stdout UTF8 JSON with duplicate-key/NaN/extra-field reject. No substring/fence extraction or generic bounded-json bypass. Missing registered finite schema validator remains unavailable.",
+    "result_DTO_fields": [
+      "schema=1",
+      "task_handle",
+      "terminal_receipt_handle",
+      "result_schema_id",
+      "validator_artifact_sha256",
+      "canonical_payload_bytes",
+      "payload_sha256",
+      "result_fields",
+      "parent_closure_digest"
+    ],
+    "capsule": "Only validated canonical payload bytes become existing root result capsule, signed/registry peer-job-node-generation bound full source closure/recipient ceiling. result_fields exact schema whitelist, not generic stdout projection. Consume once via existing consume_resource_task_completion; failure never advances DAG.",
+    "tests": "Actual selected Hermes stdout+EOF+nativeboundary positive; invalidUTF8/truncation/empty/stderr-only/exitfailure/forgedschema/duplicateJSON/extra outputfields/changedartifact/currentgeneration/sourceclosure negatives. Fixtures separated from real target proof."
   }
 }

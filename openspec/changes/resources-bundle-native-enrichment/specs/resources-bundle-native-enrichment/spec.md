@@ -192,3 +192,11 @@ The implementation SHALL use the exact named systemd FD transfer and kernel-auth
 #### Scenario: Historical capsule mistaken for current peer
 - **WHEN** only serialized source metadata or manager socket credentials are available
 - **THEN** no live producer or loader proof is fabricated.
+
+### Requirement: Selected task result artifact validation
+
+The root SHALL validate actual complete task stdout using its exact selected protected result schema before result capsule or DAG advancement. Generic text or exit0 SHALL NOT create authoritative output fields.
+
+#### Scenario: Unregistered output schema
+- **WHEN** output lacks a current registered finite schema validator or violates its exact bounds
+- **THEN** completion fails and no success capsule advances dependent nodes.

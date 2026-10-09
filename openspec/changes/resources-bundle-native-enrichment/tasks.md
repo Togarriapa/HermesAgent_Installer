@@ -57,3 +57,7 @@ Use the exact installed_selection_catalog.release_root, task_runner_protocol.sou
 ### v17 supported loader and task controller
 
 Use assembly native_custody_proof_protocol.systemd_transport/pending_pair_selector and resource task_runner_protocol.neutral_types/controller_source_split/root_event_context. Existing HI/RB tasks remain open; actual kernel effects required.
+
+### v18 root result schema validation
+
+RB-T08 uses protected-resource-job-contract.json task_result_validator and immutable schema-hermes-task-text-result-v1 artifact. Other JSON output requires exact registered strict protected schema; acceptance remains pending.
