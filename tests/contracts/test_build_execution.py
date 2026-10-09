@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 import base64
 import sys
 import tempfile
@@ -29,6 +28,13 @@ def _test_temp_parent() -> str:
     return "/private/tmp" if sys.platform == "darwin" else "/tmp"
 
 
+@pytest.mark.parametrize(("platform_name", "expected"),
+                         [("darwin", "/private/tmp"), ("linux", "/tmp")])
+def test_temp_parent_uses_only_the_platform_specific_sticky_root(monkeypatch, platform_name, expected):
+    monkeypatch.setattr(sys, "platform", platform_name)
+    assert _test_temp_parent() == expected
+
+
 def _test_builder_uid() -> int:
     # Root-run Linux custody CI must still model the dedicated unprivileged
     # builder identity used by production.
@@ -42,15 +48,6 @@ def _owned_output_root(path: Path) -> Path:
         os.chown(path, owner_uid, -1)
     path.chmod(0o700)
     return path
-
-
-@pytest.mark.parametrize(("platform_name", "expected"),
-                         [("darwin", "/private/tmp"), ("linux", "/tmp")])
-def test_temp_parent_uses_only_the_platform_specific_sticky_root(monkeypatch, platform_name, expected):
-    monkeypatch.setattr(sys, "platform", platform_name)
-    assert _test_temp_parent() == expected
-
-
 def constraints():
     return {
         "bin/colibri": BuildOutputSpec(

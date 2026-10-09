@@ -246,7 +246,31 @@ class _ReceiptProcessBinding:
     generation: str
     uid: int
     expires: float
+    authority_epoch: str = ""
+    observer_enrollment_id: str = ""
+    source_action_id: str = ""
+    channel_id: str = ""
+    loaded_package_proof: Any = None
     delivered: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class LiveSourceProducer:
+    """One-use root-only process evidence; caller owns and closes ``pidfd``."""
+
+    receipt_id: str
+    pid: int
+    pidfd: int
+    identity: Any
+    uid: int
+    profile_id: str
+    generation: str
+    expires_monotonic: float
+    authority_epoch: str
+    observer_enrollment_id: str
+    source_action_id: str
+    channel_id: str
+    loaded_package_proof: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,6 +335,7 @@ class SourceObserverRegistry:
         self._payload_capsules: dict[str, tuple[SourceReceipt, RootSourcePayloadCapsule, bytearray, str]] = {}
         self._invocation_receipt_handles: dict[str, set[str]] = {}
         self._handle_invocations: dict[str, str] = {}
+        self._source_producer_resolved: set[str] = set()
         self._capsule_bytes = 0
         self._capsule_slots_reserved = 0
         self._capsule_bytes_reserved = 0
@@ -371,37 +396,46 @@ class SourceObserverRegistry:
         if not callable(self.target_peer_resolver):
             raise AuthorityDenied("source.target", "root-selected target peer channel is unavailable")
         selected_target = self.target_peer_resolver(observer, parent_context)
-        if (selected_target is None or type(getattr(selected_target, "pid", None)) is not int
-                or type(getattr(selected_target, "pidfd", None)) is not int
-                or type(getattr(selected_target, "uid", None)) is not int
-                or not isinstance(getattr(selected_target, "profile_id", None), str)
-                or not isinstance(getattr(selected_target, "generation", None), str)):
-            raise AuthorityDenied("source.target", "root-selected target peer binding is malformed")
-        selected_target_identity = self.process_resolver(
-            selected_target.pid, selected_target.pidfd,
-            profile_id=selected_target.profile_id, generation=selected_target.generation)
-        if (selected_target_identity is None or selected_target_identity != selected_target.identity
-                or selected_target_identity.kernel_uid != selected_target.uid):
-            raise AuthorityDenied("source.target", "selected target role is not a live enrolled peer")
-        parents = self._resolve_parent_closure(
-            observer, parent_receipt_handles, parent_context, binding, peer_pid, identity)
-        pinned_fd = os.dup(peer_pidfd)
-        pinned_target_fd = os.dup(selected_target.pidfd)
-        event_id = secrets.token_urlsafe(32)
-        # The signed parent context is root-created for this actual operation;
-        # caller-provided trace or intent text is not invocation identity.
-        invocation_id = parent_context.grant_id
-        digest = hashlib.sha256(payload_bytes).hexdigest()
-        entry = _PendingObservation(
-            observer, event_id, invocation_id, bytes(payload_bytes), digest,
-            parent_context, parents, tuple(parent_receipt_handles), peer_pid, pinned_fd,
-            identity, package, adapter, loaded_package_proof,
-            selected_target.pid, pinned_target_fd,
-            selected_target.uid, selected_target.profile_id, selected_target.generation,
-            selected_target_identity, self.service.authority_epoch, now,
-            min(parent_context.monotonic_expires_at, now + observer.lease_seconds),
-        )
+        target_owned_fd = getattr(selected_target, "pidfd", None)
+        pinned_target_fd = -1
         try:
+            if (selected_target is None or type(getattr(selected_target, "pid", None)) is not int
+                    or type(target_owned_fd) is not int or target_owned_fd < 0
+                    or type(getattr(selected_target, "uid", None)) is not int
+                    or not isinstance(getattr(selected_target, "profile_id", None), str)
+                    or not isinstance(getattr(selected_target, "generation", None), str)):
+                raise AuthorityDenied("source.target", "root-selected target peer binding is malformed")
+            selected_target_identity = self.process_resolver(
+                selected_target.pid, target_owned_fd,
+                profile_id=selected_target.profile_id, generation=selected_target.generation)
+            if (selected_target_identity is None or selected_target_identity != selected_target.identity
+                    or selected_target_identity.kernel_uid != selected_target.uid):
+                raise AuthorityDenied("source.target", "selected target role is not a live enrolled peer")
+            parents = self._resolve_parent_closure(
+                observer, parent_receipt_handles, parent_context, binding, peer_pid, identity)
+            # The resolver transfers an owned PIDFD. Copy it into the event and
+            # close the transferred descriptor on both success and failure.
+            pinned_target_fd = os.dup(target_owned_fd)
+        finally:
+            if type(target_owned_fd) is int and target_owned_fd >= 0:
+                os.close(target_owned_fd)
+        pinned_fd = -1
+        try:
+            pinned_fd = os.dup(peer_pidfd)
+            event_id = secrets.token_urlsafe(32)
+            # The signed parent context is root-created for this actual operation;
+            # caller-provided trace or intent text is not invocation identity.
+            invocation_id = parent_context.grant_id
+            digest = hashlib.sha256(payload_bytes).hexdigest()
+            entry = _PendingObservation(
+                observer, event_id, invocation_id, bytes(payload_bytes), digest,
+                parent_context, parents, tuple(parent_receipt_handles), peer_pid, pinned_fd,
+                identity, package, adapter, loaded_package_proof,
+                selected_target.pid, pinned_target_fd,
+                selected_target.uid, selected_target.profile_id, selected_target.generation,
+                selected_target_identity, self.service.authority_epoch, now,
+                min(parent_context.monotonic_expires_at, now + observer.lease_seconds),
+            )
             with self._lock:
                 if self._closed:
                     raise AuthorityDenied("source.closed", "root source observer is shutting down")
@@ -500,7 +534,7 @@ class SourceObserverRegistry:
                 observer_enrollment_id=observer.observer_enrollment_id,
                 event_record_id=event.event_record_id,
                 source_kind=observer.source_kind,
-                origin_id=f"{observer.origin_id}:{event.event_record_id}",
+                origin_id=observer.origin_id,
                 payload_bytes=event.payload,
                 payload_sha256=event.payload_sha256,
                 parent_context=event.parent_context,
@@ -612,11 +646,17 @@ class SourceObserverRegistry:
             binding = _ReceiptProcessBinding(
                 receipt.receipt_id, str(result), event.producer_pid, receipt_fd,
                 identity, observer.profile_id, observer.generation,
-                observer.producer_uid, receipt.monotonic_expires_at)
+                observer.producer_uid, receipt.monotonic_expires_at,
+                authority_epoch=event.authority_epoch,
+                observer_enrollment_id=observer.observer_enrollment_id,
+                source_action_id=observer.source_action_id,
+                channel_id=observer.channel_id,
+                loaded_package_proof=event.loaded_package_proof)
             delivery_binding = _ReceiptProcessBinding(
                 receipt.receipt_id, str(result), event.target_peer_pid, delivery_fd,
                 target_identity, event.target_peer_profile_id, event.target_peer_generation,
-                event.target_peer_uid, receipt.monotonic_expires_at)
+                event.target_peer_uid, receipt.monotonic_expires_at,
+                authority_epoch=event.authority_epoch)
             try:
                 with self._lock:
                     if self._closed:
@@ -684,6 +724,94 @@ class SourceObserverRegistry:
                 raise AuthorityDenied("source.delivery", "receipt target PIDFD identity changed")
             binding.delivered = True
             return SourceReceiptHandle(handle)
+
+    def capture_observed_ingress(self, observer_enrollment_id: str, *,
+                                 payload_bytes: bytes, parent_context: HostContext,
+                                 peer_pid: int, peer_pidfd: int,
+                                 parent_receipt_handles: Sequence[str] = ()) -> SourceReceiptHandle:
+        """Atomically register and capture bytes from a root-selected ingress.
+
+        The generated event ID never crosses this in-process call boundary.
+        The caller must itself be a fixed root ingress adapter that selected
+        the protected observer row and verified its live peer/context.
+        """
+        event_id = self.record_observed_event(
+            observer_enrollment_id, payload_bytes=payload_bytes,
+            parent_context=parent_context, peer_pid=peer_pid,
+            peer_pidfd=peer_pidfd,
+            parent_receipt_handles=parent_receipt_handles,
+        )
+        return self.capture_observed_source(
+            observer_enrollment_id, event_id, payload_bytes,
+            parent_receipt_handles,
+        )
+
+    def resolve_live_source_producer(self, receipt_id: str, *, profile_id: str,
+                                     generation: str, native_process_identity: str,
+                                     expires_monotonic: float) -> LiveSourceProducer:
+        """Resolve one receipt to bounded live producer evidence for a root handler.
+
+        This is an in-process root API. It returns at most one duplicated PIDFD
+        per receipt; the caller owns and must close that descriptor.
+        """
+        if (not isinstance(receipt_id, str) or not receipt_id
+                or not isinstance(profile_id, str) or not profile_id
+                or not isinstance(generation, str) or not generation
+                or not isinstance(native_process_identity, str) or not native_process_identity
+                or type(expires_monotonic) not in (int, float)
+                or not math.isfinite(expires_monotonic)):
+            raise AuthorityDenied("source.producer", "source producer resolution request is malformed")
+        with self._lock:
+            if self._closed:
+                raise AuthorityDenied("source.closed", "root source observer is shutting down")
+            if receipt_id in self._source_producer_resolved:
+                raise AuthorityDenied("source.producer", "source producer evidence was already resolved")
+            binding = self._receipt_process_bindings.get(receipt_id)
+            now = self.service.monotonic()
+            if (binding is None or binding.authority_epoch != self.service.authority_epoch
+                    or binding.expires <= now or expires_monotonic != binding.expires
+                    or profile_id != binding.profile_id or generation != binding.generation
+                    or native_process_identity != self.service._native_process_identity(binding.pid, binding.uid)):
+                raise AuthorityDenied("source.producer", "source receipt producer binding is stale or mismatched")
+            with self.service._lock:
+                receipt = self.service._source_receipt_handles.get(binding.handle)
+            if (receipt is None or receipt.receipt_id != receipt_id
+                    or receipt.profile_id != profile_id or receipt.process_generation != generation
+                    or receipt.native_process_identity != native_process_identity
+                    or receipt.monotonic_expires_at != expires_monotonic
+                    or receipt.uid != binding.uid):
+                raise AuthorityDenied("source.producer", "signed source receipt does not match its producer binding")
+            self.service._verify_source_receipt(receipt, self.service._binding(receipt.uid))
+            live = self.process_resolver(binding.pid, binding.pidfd,
+                                         profile_id=profile_id, generation=generation)
+            if (live is None or live != binding.identity
+                    or live.profile_id != profile_id or live.generation != generation
+                    or live.kernel_uid != binding.uid):
+                raise AuthorityDenied("source.producer", "source producer PIDFD identity is no longer current")
+            observer = self.observers.get(binding.observer_enrollment_id)
+            if (observer is None or observer.source_action_id != binding.source_action_id
+                    or observer.channel_id != binding.channel_id):
+                raise AuthorityDenied("source.producer", "source producer action enrollment is no longer selected")
+            package, _adapter = self._resolve_package_role(observer)
+            current_proof = self._resolve_loaded_package_proof(
+                live, observer, package, now, peer_pid=binding.pid, peer_pidfd=binding.pidfd)
+            if current_proof != binding.loaded_package_proof:
+                raise AuthorityDenied("source.producer", "source producer loaded closure or action changed")
+            try:
+                duplicate = os.dup(binding.pidfd)
+            except OSError:
+                raise AuthorityDenied("source.producer", "source producer PIDFD could not be retained") from None
+            self._source_producer_resolved.add(receipt_id)
+            return LiveSourceProducer(
+                receipt_id=receipt_id, pid=binding.pid, pidfd=duplicate,
+                identity=live, uid=binding.uid, profile_id=profile_id,
+                generation=generation, expires_monotonic=binding.expires,
+                authority_epoch=binding.authority_epoch,
+                observer_enrollment_id=observer.observer_enrollment_id,
+                source_action_id=observer.source_action_id,
+                channel_id=observer.channel_id,
+                loaded_package_proof=current_proof,
+            )
 
     def lookup_source_handle(self, receipt_id: str, *, signed_context: HostContext,
                              peer_uid: int, peer_pid: int,
@@ -814,6 +942,7 @@ class SourceObserverRegistry:
             receipt_id = delivery.receipt_id if delivery is not None else None
         if receipt_id is None:
             return False
+        self._source_producer_resolved.discard(receipt_id)
         delivery = self._receipt_delivery_bindings.pop(handle, None)
         if delivery is not None:
             os.close(delivery.pidfd)
@@ -1047,6 +1176,7 @@ class SourceObserverRegistry:
             if binding.expires <= now:
                 self._receipt_process_bindings.pop(receipt_id, None)
                 os.close(binding.pidfd)
+                self._source_producer_resolved.discard(receipt_id)
         for handle, binding in tuple(self._receipt_delivery_bindings.items()):
             if binding.expires <= now:
                 self._receipt_delivery_bindings.pop(handle, None)
@@ -1076,6 +1206,7 @@ class SourceObserverRegistry:
             for binding in self._receipt_process_bindings.values():
                 os.close(binding.pidfd)
             self._receipt_process_bindings.clear()
+            self._source_producer_resolved.clear()
             for binding in self._receipt_delivery_bindings.values():
                 os.close(binding.pidfd)
             self._receipt_delivery_bindings.clear()
