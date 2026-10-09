@@ -678,7 +678,7 @@ The acceptance verifier SHALL provide installer-owned assertion profiles for eve
 - **THEN** each ID SHALL map to its exact requirement dimensions under AC16, AC16, AC16, AC18, AC18, AC18, AC18, AC10, or AC08 respectively, with no generic placeholder assertion
 - **AND** every unobserved assertion SHALL remain null/pending; an observed false assertion or nonzero command exit SHALL fail; only authenticated retained results can contribute to acceptance
 
- ### Requirement: Installer-owned target and result verification
+### Requirement: Installer-owned target and result verification
 
 The executable verifier SHALL bind actual selected installer target/current candidate and each original assertion to root-observed concrete workflow receipts.
 

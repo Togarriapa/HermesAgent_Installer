@@ -534,9 +534,9 @@ class SourceObserverRegistry:
                 observer_enrollment_id=observer.observer_enrollment_id,
                 event_record_id=event.event_record_id,
                 source_kind=observer.source_kind,
-                # Keep the event identity in the signed receipt. The authority
-                # now preserves this root-derived origin verbatim rather than
-                # appending a second event suffix.
+                # Bind the event identifier in the proof itself. AuthorityService
+                # preserves this root-derived value; it must not append a second
+                # suffix while signing the receipt.
                 origin_id=f"{observer.origin_id}:{event.event_record_id}",
                 payload_bytes=event.payload,
                 payload_sha256=event.payload_sha256,
