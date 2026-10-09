@@ -30,6 +30,7 @@ from hermes_installer.registry.resource_jobs import (
     ResourceJobEnrollment,
     ResourceJobLedger,
     ResourceJobNode,
+    RootResourceJobAdmissionHandle,
     ResourceScopeBinding,
     ResourceValidator,
 )
@@ -414,70 +415,7 @@ class _JobEvent:
     sensitivity: Sensitivity
     lineage_hash: str
     event_fields: Mapping[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class RootResourceProcessReceipt:
-    """Validated wire receipt from the root-only profile task launcher.
-
-    This DTO does not prove a task completed. The terminal and result-capsule
-    handles must still be resolved by the root-owned process/result services.
-    """
-
-    job_id: str
-    node_id: str
-    backend_enrollment_id: str
-    process_id: str
-    process_generation: str
-    native_package_generation: str
-    task_payload_sha256: str
-    parent_closure_digest: str
-    terminal_receipt_handle: str
-    result_capsule_handle: str
-    expires_monotonic: float
-
-    @classmethod
-    def from_wire(cls, value: Any) -> "RootResourceProcessReceipt":
-        fields = {
-            "schema", "job_id", "node_id", "backend_enrollment_id", "process_id",
-            "process_generation", "native_package_generation", "task_payload_sha256",
-            "parent_closure_digest", "terminal_receipt_handle", "result_capsule_handle",
-            "expires_monotonic",
-        }
-        if (not isinstance(value, Mapping) or set(value) != fields
-                or type(value["schema"]) is not int or value["schema"] != 1):
-            raise AuthorityDenied("resource.process_receipt", "root process receipt fields are invalid")
-        try:
-            receipt = cls(**{key: value[key] for key in fields - {"schema"}})
-        except (TypeError, ValueError):
-            raise AuthorityDenied("resource.process_receipt", "root process receipt is malformed") from None
-        for name in ("job_id", "node_id", "backend_enrollment_id", "process_id",
-                     "process_generation", "native_package_generation",
-                     "terminal_receipt_handle", "result_capsule_handle"):
-            if not isinstance(getattr(receipt, name), str) or not getattr(receipt, name):
-                raise AuthorityDenied("resource.process_receipt", "root process receipt identity is invalid")
-        for name in ("task_payload_sha256", "parent_closure_digest"):
-            digest = getattr(receipt, name)
-            if not isinstance(digest, str) or len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
-                raise AuthorityDenied("resource.process_receipt", "root process receipt digest is invalid")
-        if (isinstance(receipt.expires_monotonic, bool)
-                or not isinstance(receipt.expires_monotonic, (int, float))
-                or not math.isfinite(receipt.expires_monotonic)):
-            raise AuthorityDenied("resource.process_receipt", "root process receipt expiry is invalid")
-        return receipt
-
-    def assert_bound(self, *, job_id: str, node_id: str, backend: ResourceBackendEnrollment,
-                     payload: bytes, parent_closure_digest: str, now: float,
-                     job_expires_monotonic: float) -> None:
-        if (self.job_id != job_id or self.node_id != node_id
-                or self.backend_enrollment_id != backend.backend_id
-                or backend.execution_binding is None
-                or self.process_generation != backend.execution_binding["process_generation"]
-                or self.native_package_generation != backend.native_package_generation
-                or self.task_payload_sha256 != hashlib.sha256(payload).hexdigest()
-                or self.parent_closure_digest != parent_closure_digest
-                or not now < self.expires_monotonic <= job_expires_monotonic):
-            raise AuthorityDenied("resource.process_receipt", "root process receipt does not bind this selected task")
+    parent_results: Mapping[str, tuple[str, Mapping[str, Any]]]
 
 
 class ResourceJobAuthority:
@@ -494,6 +432,7 @@ class ResourceJobAuthority:
                  enrollments: Mapping[tuple[str, str], ResourceJobEnrollment],
                  ledger: ResourceJobLedger,
                  selected_generation: Callable[[str], str] | None = None,
+                 profile_task_adapters: Mapping[tuple[str, str], Any] | None = None,
                  capability: str = _CAPABILITY):
         if not isinstance(service, AuthorityService) or not isinstance(ledger, ResourceJobLedger):
             raise ValueError("root authority service and private resource job ledger are required")
@@ -510,8 +449,25 @@ class ResourceJobAuthority:
         self.enrollments = MappingProxyType(dict(enrollments))
         self.ledger = ledger
         self.selected_generation = selected_generation
+        adapters = dict(profile_task_adapters or {})
+        if adapters:
+            try:
+                from hermes_installer.registry.resource_backends import ResourceProfileTaskAdapter
+            except ImportError:
+                raise ValueError("fixed Hermes resource profile-task adapter is unavailable") from None
+            if any(not isinstance(key, tuple) or len(key) != 2
+                   or not all(isinstance(part, str) and part for part in key)
+                   or not isinstance(value, ResourceProfileTaskAdapter)
+                   for key, value in adapters.items()):
+                raise ValueError("root selected profile-task adapter map is malformed")
+        self.profile_task_adapters = MappingProxyType(adapters)
+        self._task_handle_lock = threading.RLock()
+        self._task_handles: dict[str, tuple[Any, ResourceChildAdmission, ResourceJobEnrollment]] = {}
+        self._running_task_handles: dict[str, tuple[Any, ResourceChildAdmission, ResourceJobEnrollment]] = {}
         self._event_lock = threading.RLock()
         self._event_fields_by_job: dict[str, tuple[bytearray, float]] = {}
+        self._result_fields_by_job: dict[str, dict[str, tuple[str, bytearray]]] = {}
+        self._result_fields_expiry: dict[str, float] = {}
         self._event_field_reservations: dict[str, bytearray] = {}
         self._event_field_bytes = 0
 
@@ -528,6 +484,19 @@ class ResourceJobAuthority:
                 # Metadata-only jobs are never routable. The root assembly
                 # must supply a fully joined backend and all fixed recipes.
                 continue
+            if any(backend.execution_binding is not None
+                   and (backend.backend_id, node.node_id) not in self.profile_task_adapters
+                   for node in enrollment.nodes
+                   for backend in (enrollment.backends[node.backend_enrollment_id],)):
+                continue
+            if (any(backend.execution_binding is not None for backend in enrollment.backends.values())
+                    and (getattr(self.service, "resource_job_authority", None) is not self
+                         or not callable(getattr(self.service, "launch_resource_profile_task", None))
+                         or not callable(getattr(self.service, "consume_resource_task_completion", None)))):
+                # A selected task backend requires both the service launcher
+                # and its terminal/result capsule consumer before admission is
+                # routable. Do not admit a job that can never complete safely.
+                continue
             job_target = self._job_target(enrollment)
             self._require_rule("resource.job.admit", job_target, None, require_handler=False)
             handlers[("resource.job.admit", job_target)] = self._admit_handler(enrollment)
@@ -542,12 +511,18 @@ class ResourceJobAuthority:
                         or node.request_schema_id != backend.request_schema_id
                         or node.body_recipe_id != backend.body_recipe_id):
                     raise AuthorityDenied("resource.unavailable", "selected node is outside its protected backend")
-                self._require_rule(node.effect, node.target, node.recipient, require_handler=True)
-                effect_handler = self.service.handlers.get((node.effect, node.target))
-                if (getattr(effect_handler, "resource_backend_enrollment_id", None) != backend.backend_id
-                        or getattr(effect_handler, "handler_artifact_id", None) != backend.handler_artifact_id
-                        or getattr(effect_handler, "handler_sha256", None) != backend.handler_sha256):
-                    raise AuthorityDenied("resource.unavailable", "selected backend handler is not artifact-bound")
+                if backend.execution_binding is None:
+                    self._require_rule(node.effect, node.target, node.recipient, require_handler=True)
+                    effect_handler = self.service.handlers.get((node.effect, node.target))
+                    if (getattr(effect_handler, "resource_backend_enrollment_id", None) != backend.backend_id
+                            or getattr(effect_handler, "handler_artifact_id", None) != backend.handler_artifact_id
+                            or getattr(effect_handler, "handler_sha256", None) != backend.handler_sha256):
+                        raise AuthorityDenied("resource.unavailable", "selected backend handler is not artifact-bound")
+                elif (backend.execution_binding["operation_id"] != "hermes-resource-profile-task-v1"
+                      or (backend.backend_id, node.node_id) not in self.profile_task_adapters):
+                    # A metadata row never becomes an effect handler by itself.
+                    handlers.pop(("resource.job.admit", job_target), None)
+                    continue
                 key = ("resource.job.child.admit", child_target)
                 if key in handlers:
                     raise AuthorityDenied("resource.enrollment", "resource child route is duplicated")
@@ -662,9 +637,20 @@ class ResourceJobAuthority:
                         pass
                 raise
             successful = 200 <= response["status"] < 400
-            self.ledger.finish_child(child, result_receipt_ids=(response["receipt_id"],),
-                                     success=successful,
-                                     current_generation=self._resource_generation(enrollment))
+            stored_result = False
+            if successful and "result_fields" in response:
+                self._store_result_fields(child, response["receipt_id"], response["result_fields"],
+                                          expires=event.admission.expires_monotonic,
+                                          maximum_bytes=enrollment.backends[node.backend_enrollment_id].maximum_response_bytes)
+                stored_result = True
+            try:
+                self.ledger.finish_child(child, result_receipt_ids=(response["receipt_id"],),
+                                         success=successful,
+                                         current_generation=self._resource_generation(enrollment))
+            except Exception:
+                if stored_result:
+                    self._discard_result_fields(child.job_id, child.node_id)
+                raise
             if not self.ledger.is_job_active(
                     child.job_id, current_generation=self._resource_generation(enrollment)):
                 self._discard_job_event_fields(child.job_id)
@@ -697,12 +683,17 @@ class ResourceJobAuthority:
         try:
             request_body = recipe.render(
                 backend=backend, scope_bindings=enrollment.scope_bindings,
-                validators=enrollment.validators, event_fields=event.event_fields, parent_results={},
+                validators=enrollment.validators, event_fields=event.event_fields,
+                parent_results={node_id: fields for node_id, (receipt_id, fields)
+                                in event.parent_results.items()
+                                if receipt_id in child.parent_result_receipt_ids},
             )
         except ResourceJobDenied:
             raise AuthorityDenied("resource.backend", "dynamic body recipe resolver is unavailable") from None
         if len(request_body) > backend.maximum_request_bytes:
             raise AuthorityDenied("resource.backend", "rendered request exceeds protected backend bounds")
+        if backend.execution_binding is not None:
+            return self._launch_profile_task(child, event, backend, timeout, cancelled)
         binding = next((item for item in self.service.bindings_by_uid.values()
                         if item.profile_id == enrollment.profile_id), None)
         if (binding is None or binding.principal_id != enrollment.principal_id
@@ -771,6 +762,237 @@ class ResourceJobAuthority:
             raise AuthorityDenied("resource.backend", "backend response exceeds the protected byte limit")
         return {"status": response["status"], "body": response_body,
                 "headers": response["headers"], "receipt_id": response["receipt_id"]}
+
+    def _launch_profile_task(self, child: ResourceChildAdmission, event: _JobEvent,
+                             backend: ResourceBackendEnrollment, timeout: float,
+                             cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Invoke only the fixed root-selected Hermes profile-task adapter."""
+        binding = backend.execution_binding
+        node = event.enrollment.node_map.get(child.node_id)
+        if binding is None or node is None:
+            raise AuthorityDenied("resource.backend", "selected profile-task binding is unavailable")
+        adapter = self.profile_task_adapters.get((backend.backend_id, node.node_id))
+        if adapter is None or getattr(getattr(adapter, "selection", None), "resource_backend_id", None) != backend.backend_id:
+            raise AuthorityDenied("resource.backend", "fixed selected profile-task adapter is unavailable")
+        task_recipe = event.enrollment.body_recipes.get(binding["task_body_recipe_id"])
+        if not isinstance(task_recipe, ResourceBodyRecipe):
+            raise AuthorityDenied("resource.backend", "selected task body recipe is unavailable")
+        try:
+            task_payload = task_recipe.render(
+                backend=backend, scope_bindings=event.enrollment.scope_bindings,
+                validators=event.enrollment.validators, event_fields=event.event_fields,
+                parent_results={node_id: fields for node_id, (receipt_id, fields)
+                                in event.parent_results.items()
+                                if receipt_id in child.parent_result_receipt_ids},
+            )
+        except ResourceJobDenied:
+            raise AuthorityDenied("resource.backend", "selected profile task input is unavailable") from None
+        if len(task_payload) > min(262_144, backend.maximum_request_bytes):
+            raise AuthorityDenied("resource.backend", "selected task input exceeds its protected bound")
+        now = self.service.monotonic()
+        expires = min(event.admission.expires_monotonic,
+                      now + max(1.0, min(float(timeout), backend.maximum_seconds)))
+        if expires <= now:
+            raise AuthorityDenied("resource.child", "selected task lease is expired")
+        closure = canonical_digest({
+            "lineage_hash": event.lineage_hash,
+            "source_receipt_ids": sorted(event.source_receipt_ids),
+            "parent_result_receipt_ids": list(child.parent_result_receipt_ids),
+            "job_id": child.job_id, "node_id": node.node_id,
+            "child_admission_id": child.admission_id, "attempt": child.retry_index,
+        })
+        handle = RootResourceJobAdmissionHandle(
+            handle_id=secrets.token_urlsafe(32), job_id=child.job_id, node_id=node.node_id,
+            child_admission_id=child.admission_id, attempt_index=child.retry_index,
+            backend_enrollment_id=backend.backend_id,
+            resource_generation=event.enrollment.generation,
+            profile_id=backend.profile_id, profile_generation=backend.profile_generation,
+            native_package_id=backend.native_package_id,
+            native_package_generation=backend.native_package_generation,
+            process_enrollment_id=binding["process_enrollment_id"],
+            process_generation=binding["process_generation"], operation_id=binding["operation_id"],
+            child_target_id=binding["child_target_id"], child_capability=binding["child_capability"],
+            task_body_recipe_id=binding["task_body_recipe_id"],
+            task_request_schema_id=binding["task_request_schema_id"], task_payload=task_payload,
+            task_payload_sha256=hashlib.sha256(task_payload).hexdigest(),
+            parent_closure_digest=closure, expires_monotonic=expires,
+        )
+        if (cancelled() or not self.ledger.is_child_admitted(
+                child, current_generation=self._resource_generation(event.enrollment))):
+            raise AuthorityDenied("resource.child", "selected profile-task attempt was cancelled before launch")
+        with self._task_handle_lock:
+            if handle.handle_id in self._task_handles or len(self._task_handles) >= 256:
+                raise AuthorityDenied("resource.capacity", "root profile-task admission handle store is full")
+            self._task_handles[handle.handle_id] = (handle, child, event.enrollment)
+        try:
+            response = adapter.launch_resource_profile_task(handle, node.node_id)
+            with self._task_handle_lock:
+                consumed = self._running_task_handles.get(handle.handle_id)
+            if (consumed is None or consumed[0] is not handle
+                    or not self.ledger.is_active(child,
+                        current_generation=self._resource_generation(event.enrollment))):
+                raise AuthorityDenied("resource.process_task", "root launcher did not consume the one-use job handle")
+            if not isinstance(response, RootResourceProcessReceipt):
+                raise AuthorityDenied("resource.process_receipt", "root launcher did not return a typed process receipt")
+            response.assert_bound(
+                job_id=child.job_id, node_id=node.node_id, backend=backend, payload=task_payload,
+                parent_closure_digest=closure, now=self.service.monotonic(),
+                job_expires_monotonic=event.admission.expires_monotonic,
+            )
+            # Receipt creation alone does not establish clean terminal completion
+            # or result-capsule validity. The AuthorityService owns that join.
+            completion = getattr(self.service, "consume_resource_task_completion", None)
+            if not callable(completion):
+                raise AuthorityDenied("resource.result", "root terminal/result capsule consumer is unavailable")
+            result = completion(response, cancelled=cancelled)
+            if not isinstance(result, Mapping) or set(result) != {
+                    "status", "body", "headers", "receipt_id", "result_fields"}:
+                raise AuthorityDenied("resource.result", "root task completion result has an invalid shape")
+            if (type(result["status"]) is not int or not isinstance(result["body"], bytes)
+                    or not isinstance(result["headers"], Mapping) or not isinstance(result["receipt_id"], str)
+                    or not result["receipt_id"] or not isinstance(result["result_fields"], Mapping)
+                    or len(result["body"]) > backend.maximum_response_bytes):
+                raise AuthorityDenied("resource.result", "root task completion result exceeds its schema")
+            result_value = dict(result)
+            result_value["result_fields"] = MappingProxyType(dict(result["result_fields"]))
+            return result_value
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("resource.result", "root task result capsule failed validation") from None
+        finally:
+            with self._task_handle_lock:
+                self._task_handles.pop(handle.handle_id, None)
+                self._running_task_handles.pop(handle.handle_id, None)
+
+    def consume_task_handle(self, handle: Any, node_id: str) -> RootResourceJobAdmissionHandle:
+        """Consume exactly the issued root token before AuthorityService launches it."""
+        if not isinstance(handle, RootResourceJobAdmissionHandle) or node_id != handle.node_id:
+            raise AuthorityDenied("resource.process_task", "root task handle is not selected for this node")
+        with self._task_handle_lock:
+            registered = self._task_handles.pop(handle.handle_id, None)
+        if registered is None or registered[0] is not handle:
+            raise AuthorityDenied("resource.process_task", "root task handle was forged, replayed, or consumed")
+        _, child, enrollment = registered
+        backend = enrollment.backends.get(handle.backend_enrollment_id)
+        binding = backend.execution_binding if backend is not None else None
+        if (backend is None or binding is None or child.admission_id != handle.child_admission_id
+                or child.job_id != handle.job_id or child.node_id != handle.node_id
+                or child.retry_index != handle.attempt_index
+                or enrollment.generation != handle.resource_generation
+                or backend.profile_id != handle.profile_id
+                or backend.profile_generation != handle.profile_generation
+                or backend.native_package_id != handle.native_package_id
+                or backend.native_package_generation != handle.native_package_generation
+                or binding["process_enrollment_id"] != handle.process_enrollment_id
+                or binding["process_generation"] != handle.process_generation
+                or binding["operation_id"] != handle.operation_id
+                or binding["child_target_id"] != handle.child_target_id
+                or binding["child_capability"] != handle.child_capability
+                or binding["task_body_recipe_id"] != handle.task_body_recipe_id
+                or binding["task_request_schema_id"] != handle.task_request_schema_id
+                or self.service.monotonic() >= handle.expires_monotonic
+                or not self.ledger.is_child_admitted(child,
+                    current_generation=self._resource_generation(enrollment))):
+            raise AuthorityDenied("resource.process_task", "root task handle is stale or outside its admitted node")
+        with self._task_handle_lock:
+            if handle.handle_id in self._running_task_handles:
+                raise AuthorityDenied("resource.process_task", "root task handle is already running")
+            self._running_task_handles[handle.handle_id] = registered
+        return handle
+
+    def start_task_handle(self, handle: Any, node_id: str) -> None:
+        """Move the claimed child to running immediately before process.start bytes."""
+        if not isinstance(handle, RootResourceJobAdmissionHandle) or node_id != handle.node_id:
+            raise AuthorityDenied("resource.process_task", "root task start identity is invalid")
+        with self._task_handle_lock:
+            registered = self._running_task_handles.get(handle.handle_id)
+        if registered is None or registered[0] is not handle:
+            raise AuthorityDenied("resource.process_task", "root task handle is not consumed")
+        _handle, child, enrollment = registered
+        if self.task_handle_cancelled(handle, node_id):
+            raise AuthorityDenied("resource.process_task", "root task was cancelled before process start")
+        try:
+            self.ledger.start_child(child, current_generation=self._resource_generation(enrollment))
+        except ResourceJobDenied:
+            raise AuthorityDenied("resource.process_task", "root child attempt cannot start") from None
+
+    def task_handle_cancelled(self, handle: Any, node_id: str) -> bool:
+        """Root launcher poll hook; stale, revoked, or unknown tokens cancel."""
+        if not isinstance(handle, RootResourceJobAdmissionHandle) or node_id != handle.node_id:
+            return True
+        with self._task_handle_lock:
+            registered = self._running_task_handles.get(handle.handle_id)
+        if registered is None or registered[0] is not handle:
+            return True
+        _, child, enrollment = registered
+        try:
+            generation = self._resource_generation(enrollment)
+            return (self.service.monotonic() >= handle.expires_monotonic
+                    or not self.ledger.is_job_active(child.job_id, current_generation=generation)
+                    or not (self.ledger.is_child_admitted(child, current_generation=generation)
+                            or self.ledger.is_active(child, current_generation=generation)))
+        except Exception:
+            return True
+
+    def release_task_handle(self, handle: Any, node_id: str) -> None:
+        """Drop root-local task handle state after terminal/result reconciliation."""
+        if not isinstance(handle, RootResourceJobAdmissionHandle) or node_id != handle.node_id:
+            raise AuthorityDenied("resource.process_task", "root task handle release identity is invalid")
+        with self._task_handle_lock:
+            registered = self._running_task_handles.pop(handle.handle_id, None)
+        if registered is None or registered[0] is not handle:
+            raise AuthorityDenied("resource.process_task", "root task handle is not actively owned")
+
+    def _store_result_fields(self, child: ResourceChildAdmission, receipt_id: str,
+                             fields: Mapping[str, Any], *, expires: float,
+                             maximum_bytes: int) -> None:
+        if not isinstance(fields, Mapping) or len(fields) > 64:
+            raise AuthorityDenied("resource.result", "selected result fields are malformed")
+        payload = bytearray(_canonical(dict(fields)))
+        if (type(maximum_bytes) is not int or not 1 <= maximum_bytes <= 2 * 1024 * 1024
+                or len(payload) > maximum_bytes):
+            payload[:] = b"\x00" * len(payload)
+            raise AuthorityDenied("resource.result", "selected result fields exceed their bound")
+        try:
+            _ident(receipt_id, "root result receipt id")
+        except ResourceJobDenied:
+            payload[:] = b"\x00" * len(payload)
+            raise AuthorityDenied("resource.result", "root result receipt identity is invalid") from None
+        with self._event_lock:
+            self._prune_event_fields_locked(self.service.monotonic())
+            rows = self._result_fields_by_job.setdefault(child.job_id, {})
+            if (child.node_id in rows or self._event_field_bytes + len(payload) > 8 * 1024 * 1024):
+                payload[:] = b"\x00" * len(payload)
+                raise AuthorityDenied("resource.capacity", "root result-field store is full or duplicated")
+            rows[child.node_id] = (receipt_id, payload)
+            self._result_fields_expiry[child.job_id] = expires
+            self._event_field_bytes += len(payload)
+
+    def _load_parent_results(self, job_id: str) -> Mapping[str, tuple[str, Mapping[str, Any]]]:
+        with self._event_lock:
+            self._prune_event_fields_locked(self.service.monotonic())
+            result: dict[str, tuple[str, Mapping[str, Any]]] = {}
+            for node_id, (receipt_id, payload) in self._result_fields_by_job.get(job_id, {}).items():
+                try:
+                    fields = json.loads(bytes(payload).decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    raise AuthorityDenied("resource.result", "root result-field capsule is corrupt") from None
+                if not isinstance(fields, dict):
+                    raise AuthorityDenied("resource.result", "root result-field capsule has invalid shape")
+                result[node_id] = (receipt_id, MappingProxyType(fields))
+            return MappingProxyType(result)
+
+    def _discard_result_fields(self, job_id: str, node_id: str) -> None:
+        with self._event_lock:
+            rows = self._result_fields_by_job.get(job_id)
+            row = rows.pop(node_id, None) if rows is not None else None
+            if row is not None:
+                self._event_field_bytes -= len(row[1])
+                row[1][:] = b"\x00" * len(row[1])
+            if rows == {}:
+                self._result_fields_by_job.pop(job_id, None)
+                self._result_fields_expiry.pop(job_id, None)
 
     def _consume_selected_event_capsule(
             self, enrollment: ResourceJobEnrollment, *, context: HostContext,
@@ -893,6 +1115,11 @@ class ResourceJobAuthority:
             if row is not None:
                 self._event_field_bytes -= len(row[0])
                 row[0][:] = b"\x00" * len(row[0])
+            results = self._result_fields_by_job.pop(job_id, {})
+            for _receipt_id, payload in results.values():
+                self._event_field_bytes -= len(payload)
+                payload[:] = b"\x00" * len(payload)
+            self._result_fields_expiry.pop(job_id, None)
 
     def _prune_event_fields_locked(self, now: float) -> None:
         for job_id, (payload, expires) in tuple(self._event_fields_by_job.items()):
@@ -900,6 +1127,13 @@ class ResourceJobAuthority:
                 self._event_fields_by_job.pop(job_id, None)
                 self._event_field_bytes -= len(payload)
                 payload[:] = b"\x00" * len(payload)
+        for job_id, expires in tuple(self._result_fields_expiry.items()):
+            if expires <= now:
+                results = self._result_fields_by_job.pop(job_id, {})
+                self._result_fields_expiry.pop(job_id, None)
+                for _receipt_id, payload in results.values():
+                    self._event_field_bytes -= len(payload)
+                    payload[:] = b"\x00" * len(payload)
 
     def _load_event_fields(self, job_id: str) -> Mapping[str, Any]:
         now = self.service.monotonic()
@@ -921,6 +1155,8 @@ class ResourceJobAuthority:
     def _assert_selected_context(self, context: HostContext, authorization: EffectAuthorization,
                                  enrollment: ResourceJobEnrollment, operation: str) -> None:
         if (context.profile_id != enrollment.profile_id or context.principal_id != enrollment.principal_id
+                or context.uid != authorization.uid
+                or context.operation != operation
                 or authorization.profile_id != enrollment.profile_id
                 or authorization.principal_id != enrollment.principal_id
                 or authorization.operation != operation
@@ -928,6 +1164,10 @@ class ResourceJobAuthority:
                 or authorization.generation != self.service.profile_generations.get(enrollment.profile_id)
                 or context.generation != authorization.generation):
             raise AuthorityDenied("resource.selection", "resource job caller is outside the current selected profile")
+        context_receipts = tuple(sorted(item.receipt_id for item in context.source_receipts))
+        authorization_receipts = tuple(sorted(item.receipt_id for item in authorization.source_receipts))
+        if context_receipts != authorization_receipts:
+            raise AuthorityDenied("resource.source", "job context and effect source closure differ")
 
     def _resource_generation(self, enrollment: ResourceJobEnrollment) -> str:
         # Every admission, retry, and cancellation callback re-reads the
@@ -948,7 +1188,7 @@ class ResourceJobAuthority:
             admission = self.ledger.load_admission(job_id, enrollment=enrollment)
             receipts, lineage, sensitivity = self.ledger.job_provenance(job_id, enrollment=enrollment)
             event = _JobEvent(enrollment, admission, receipts, Sensitivity(sensitivity), lineage,
-                              self._load_event_fields(job_id))
+                              self._load_event_fields(job_id), self._load_parent_results(job_id))
         except (ResourceJobDenied, ValueError):
             raise AuthorityDenied("resource.job", "job is outside the selected resource generation") from None
         if not self.ledger.is_job_active(job_id, current_generation=self._resource_generation(enrollment)):

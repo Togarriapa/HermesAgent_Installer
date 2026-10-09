@@ -1308,6 +1308,22 @@ class ResourceJobLedger:
         finally:
             db.close()
 
+    def is_child_admitted(self, child: ResourceChildAdmission, *, current_generation: str) -> bool:
+        """Check a claimed child before its first effect has started."""
+        if current_generation != child.generation:
+            return False
+        db = self._connect()
+        try:
+            row = db.execute(
+                "SELECT j.generation,j.expires,j.status,c.status FROM jobs j "
+                "JOIN children c ON c.job_id=j.job_id WHERE j.job_id=? AND c.admission_id=?",
+                (child.job_id, child.admission_id),
+            ).fetchone()
+            return bool(row and row[0] == current_generation and row[1] > self.monotonic()
+                        and row[2] == "running" and row[3] == "admitted")
+        finally:
+            db.close()
+
     def _finish_job_if_terminal(self, job_id: str) -> None:
         db = self._connect()
         try:
