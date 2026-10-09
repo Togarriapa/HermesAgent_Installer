@@ -325,3 +325,51 @@ class RootComposioCatalogTransport:
         if not isinstance(exchange_handle, str) or not exchange_handle:
             raise ComposioCatalogTransportDenied("root source receipt handles are invalid")
         return ComposioCatalogResponse(document, exchange_handle, status)
+
+
+class RootComposioCatalogReader:
+    """Setup call point that joins a selected root session to fixed reads.
+
+    This facade intentionally exposes only list and inspect operations. It
+    cannot create a Composio trigger/account or activate inbound delivery.
+    """
+
+    def __init__(self, authority: Any, authorization: object,
+                 *, network: _Network | None = None, monotonic=time.monotonic):
+        from .composio_trigger_setup import ComposioWhatsAppTriggerDiscovery
+
+        self._transport = RootComposioCatalogTransport(
+            authority, authorization, network=network, monotonic=monotonic)
+        self._discovery = ComposioWhatsAppTriggerDiscovery(
+            self._transport,
+            credential_reference_id=getattr(authorization, "credential_reference_id"),
+            toolkit_version=COMPOSIO_TOOLKIT_VERSION,
+            monotonic=monotonic)
+
+    @classmethod
+    def from_root_setup(cls, authority: Any, session_handle: object, *,
+                        project_id: str, project_api_key_reference: str,
+                        principal_selection_receipt_handle: str,
+                        network: _Network | None = None,
+                        monotonic=time.monotonic) -> "RootComposioCatalogReader":
+        authorize = getattr(authority, "authorize_whatsapp_catalog_read", None)
+        if not callable(authorize):
+            raise ComposioCatalogTransportDenied("root Composio setup selection authority is unavailable")
+        try:
+            authorization = authorize(
+                session_handle, project_id=project_id,
+                project_api_key_reference=project_api_key_reference,
+                principal_selection_receipt_handle=principal_selection_receipt_handle,
+                toolkit_version=COMPOSIO_TOOLKIT_VERSION)
+        except Exception:
+            raise ComposioCatalogTransportDenied(
+                "current root setup session cannot authorize the Composio catalog read") from None
+        return cls(authority, authorization, network=network, monotonic=monotonic)
+
+    def list_types(self):
+        """Return source-discovered types; these are not configured resources."""
+        return self._discovery.discover()
+
+    def inspect_returned_type(self, selected_slug: str):
+        """Re-list and re-fetch only a slug returned by the current catalog."""
+        return self._discovery.select(selected_slug)

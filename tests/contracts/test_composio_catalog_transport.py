@@ -10,6 +10,7 @@ from hermes_installer.components.composio_catalog_transport import (
     COMPOSIO_ORIGIN,
     COMPOSIO_TOOLKIT_VERSION,
     ComposioCatalogTransportDenied,
+    RootComposioCatalogReader,
     RootComposioCatalogTransport,
 )
 
@@ -51,6 +52,11 @@ class Authority:
         self.grants = list(grants)
         self.used = []
         self.receipts = []
+        self.setup_selection = None
+
+    def authorize_whatsapp_catalog_read(self, session_handle, **selection):
+        self.setup_selection = (session_handle, selection)
+        return Authorization()
 
     def authorize_catalog_get(self, authorization_handle, *, trigger_slug=None):
         assert authorization_handle == "opaque-auth-handle"
@@ -207,3 +213,31 @@ def test_http_error_response_is_receipted_before_failure():
             max_response_bytes=2 * 1024 * 1024, timeout_seconds=15)
     assert len(auth.receipts) == 1
     assert auth.receipts[0][1] == 401
+
+
+def test_root_setup_reader_joins_selected_session_then_lists_and_inspects_only():
+    query = list_query()
+    detail = {"toolkit_versions": {"whatsapp": PIN}}
+    auth = Authority([make_grant("/api/v3.1/triggers_types", query),
+                      make_grant(f"/api/v3.1/triggers_types/{SLUG}", detail)])
+    list_response = Response(200, __import__("json").dumps(
+        {"items": [ROW], "next_cursor": None}).encode())
+    network = Network([list_response, Response(200, __import__("json").dumps(ROW).encode())])
+    reader = RootComposioCatalogReader.from_root_setup(
+        auth, "selected-root-session", project_id="project_1",
+        project_api_key_reference="composio_fixture_project_key",
+        principal_selection_receipt_handle="selected-principal-receipt",
+        network=network)
+    candidates = reader.list_types()
+    selected, receipt = reader.inspect_returned_type(SLUG)
+    assert auth.setup_selection == ("selected-root-session", {
+        "project_id": "project_1",
+        "project_api_key_reference": "composio_fixture_project_key",
+        "principal_selection_receipt_handle": "selected-principal-receipt",
+        "toolkit_version": PIN,
+    })
+    assert tuple(item.slug for item in candidates) == (SLUG,)
+    assert selected.slug == SLUG
+    assert receipt.status == "discovered-not-configured"
+    assert receipt.source_exchange_receipt_handles == ("exchange-1", "exchange-2")
+    assert len(network.calls) == 2

@@ -81,6 +81,8 @@ class ComposioTriggerCatalogReceipt:
 
 def _json_bytes(value: object, *, maximum: int) -> bytes:
     try:
+        if isinstance(value, Mapping):
+            value = dict(value)
         encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
                               ensure_ascii=False, allow_nan=False).encode("utf-8")
     except (TypeError, ValueError, RecursionError):
@@ -170,6 +172,7 @@ class ComposioWhatsAppTriggerDiscovery:
         self._toolkit_version = toolkit_version
         self._monotonic = monotonic
         self._source_receipts: list[str] = []
+        self._catalog_rows: tuple[ComposioTriggerType, ...] | None = None
 
     def _get_json(self, *, path: str, query: Mapping[str, Any], deadline: float) -> Mapping[str, Any]:
         remaining = deadline - self._monotonic()
@@ -198,7 +201,11 @@ class ComposioWhatsAppTriggerDiscovery:
 
     def discover(self) -> tuple[ComposioTriggerType, ...]:
         """Read all pages at the exact toolkit version, without guessing a slug."""
-        return self._discover(deadline=self._monotonic() + _MAX_DEADLINE_SECONDS)
+        if self._catalog_rows is not None:
+            return self._catalog_rows
+        self._source_receipts = []
+        self._catalog_rows = self._discover(deadline=self._monotonic() + _MAX_DEADLINE_SECONDS)
+        return self._catalog_rows
 
     def _discover(self, *, deadline: float) -> tuple[ComposioTriggerType, ...]:
         cursor: str | None = None
@@ -239,11 +246,13 @@ class ComposioWhatsAppTriggerDiscovery:
         return tuple(rows)
 
     def select(self, selected_slug: str) -> tuple[ComposioTriggerType, ComposioTriggerCatalogReceipt]:
-        """Confirm a displayed catalog choice against a fresh exact-version GET."""
+        """Confirm a displayed catalog choice against a fresh exact-version detail GET."""
         selected_slug = _required_text(selected_slug, _SLUG, "selected trigger slug")
-        self._source_receipts = []
         deadline = self._monotonic() + _MAX_DEADLINE_SECONDS
-        catalog = self._discover(deadline=deadline)
+        if self._catalog_rows is None:
+            self._source_receipts = []
+            self._catalog_rows = self._discover(deadline=deadline)
+        catalog = self._catalog_rows
         selected = next((item for item in catalog if item.slug == selected_slug), None)
         if selected is None:
             raise ComposioTriggerSetupUnavailable("selected trigger is not in the pinned WhatsApp catalog")
