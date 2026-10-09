@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import secrets
+from dataclasses import replace
 from typing import Any, Callable
 
 from .types import AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest
@@ -138,16 +139,41 @@ class ResourceEventContextIssuer:
                 or proof.issuer_token is not self._registry_capability._token
                 or binding is None):
             raise AuthorityDenied("resource.source", "root source proof is stale or already consumed")
+        producer_observer = getattr(binding.producer, "observer", None)
+        consume = getattr(producer_observer, "consume", None)
+        try:
+            return self._capture_consumed_source(proof, binding, controller_proof)
+        finally:
+            if callable(consume):
+                try:
+                    consume(proof.verified_provenance)
+                except Exception:
+                    pass
+
+    def _capture_consumed_source(self, proof: RootResourceSourceEventProof,
+                                 binding: _SourceProducerBinding,
+                                 controller_proof: Any) -> RootResourceIssuedSourceEvent:
         self._validate_initial_source(proof, binding)
         parent_context, role_proof, role, enrollment, observer = self._source_parent_context(
             proof, controller_proof)
+        parent_receipts = self._resolve_parent_receipts(proof, binding, enrollment, parent_context)
+        if parent_receipts:
+            parent_context = replace(parent_context, source_receipts=parent_receipts,
+                                     monotonic_expires_at=min(
+                                         parent_context.monotonic_expires_at,
+                                         *(item.monotonic_expires_at for item in parent_receipts)),
+                                     signature="pending")
+            parent_context = HostContext.from_wire(self.service._signed_context(
+                parent_context, self.service._sign(parent_context.claims())))
         receipt = self.service.issue_source_receipt(
             parent_context, source_kind=proof.source_kind,
             origin_id=f"{observer.origin_id}:{proof.event_id}", payload=proof.payload,
             ttl_seconds=min(300, max(1, int(role_proof.expires_monotonic - self.monotonic()))),
         )
+        complete_receipts = tuple(sorted((*parent_receipts, receipt),
+                                         key=lambda item: item.receipt_id))
         event_context = replace(
-            parent_context, source_receipts=(receipt,),
+            parent_context, source_receipts=complete_receipts,
             monotonic_expires_at=min(parent_context.monotonic_expires_at,
                                      receipt.monotonic_expires_at),
             nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24),
@@ -160,7 +186,7 @@ class ResourceEventContextIssuer:
         self.service._verify_source_receipt(receipt, self.controller_registry._profile_binding(enrollment))
         return RootResourceIssuedSourceEvent(
             source_context=source_context, receipt=receipt,
-            parent_receipts=(receipt,), payload=proof.payload,
+            parent_receipts=complete_receipts,
             producer_handle=proof.producer_handle, event_id=proof.event_id,
             resource_id=proof.resource_id,
             resource_generation=proof.resource_generation,
@@ -181,6 +207,68 @@ class ResourceEventContextIssuer:
                 or not producer.validator(proof.verified_provenance)):
             raise AuthorityDenied("resource.source", "source provenance or selected source bytes changed")
         self._require_canonical_event(proof.payload)
+
+    def _resolve_parent_receipts(self, proof: RootResourceSourceEventProof,
+                                 producer: _SourceProducerBinding,
+                                 enrollment: Any, parent_context: HostContext) -> tuple[Any, ...]:
+        """Resolve native proof receipt handles through its exact root observer.
+
+        Receipt handles never enter the public event DTO. The registered adapter
+        must expose its concrete root observer, which consumes those handles once
+        and resolves them to real service-signed receipts.
+        """
+        observer = getattr(producer.producer, "observer", None)
+        consume = getattr(observer, "consume_source_receipts", None)
+        if not callable(consume):
+            return ()
+        try:
+            receipts = consume(proof.verified_provenance)
+        except Exception:
+            raise AuthorityDenied("resource.source", "native source receipt closure is stale or unavailable") from None
+        from .types import SourceReceipt
+        if (not isinstance(receipts, tuple) or len(receipts) > _MAX_RECEIPTS
+                or any(type(item) is not SourceReceipt for item in receipts)):
+            raise AuthorityDenied("resource.source", "native source receipt closure is malformed")
+        if not receipts:
+            return ()
+        by_id = {item.receipt_id: item for item in receipts}
+        if len(by_id) != len(receipts):
+            raise AuthorityDenied("resource.source", "native source receipt closure has duplicates")
+        allowed_kinds = getattr(
+            self.controller_registry.source_observers.observers.get(
+                enrollment.observer_enrollment_id), "allowed_parent_source_kinds", frozenset())
+        for receipt in receipts:
+            try:
+                self.service._verify_source_receipt(
+                    receipt, self.controller_registry._profile_binding(enrollment))
+            except Exception:
+                raise AuthorityDenied("resource.source", "native source parent receipt signature is invalid") from None
+            if (receipt.source_kind not in allowed_kinds
+                    or receipt.profile_id != enrollment.profile_id
+                    or receipt.principal_id != enrollment.principal_id
+                    or receipt.namespace_id != parent_context.namespace_id
+                    or receipt.uid != parent_context.uid
+                    or receipt.process_generation != self.service.profile_generations.get(
+                        enrollment.profile_id, "unversioned")
+                    or receipt.monotonic_expires_at <= self.monotonic()):
+                raise AuthorityDenied("resource.source", "native source parent receipt is outside the active selection")
+            if any(parent_id not in by_id for parent_id in receipt.parent_receipt_ids):
+                raise AuthorityDenied("resource.source", "native source parent receipt closure is incomplete")
+        referenced = {parent_id for item in receipts for parent_id in item.parent_receipt_ids}
+        reachable: set[str] = set()
+        pending = list(set(by_id) - referenced)
+        while pending:
+            receipt_id = pending.pop()
+            if receipt_id in reachable:
+                continue
+            row = by_id.get(receipt_id)
+            if row is None:
+                raise AuthorityDenied("resource.source", "native source parent closure is incomplete")
+            reachable.add(receipt_id)
+            pending.extend(row.parent_receipt_ids)
+        if reachable != set(by_id):
+            raise AuthorityDenied("resource.source", "native source parent closure contains unrelated receipts")
+        return tuple(sorted(receipts, key=lambda item: item.receipt_id))
 
     def _source_parent_context(self, proof: RootResourceSourceEventProof,
                                controller_proof: Any) -> tuple[Any, Any, Any, Any, Any]:

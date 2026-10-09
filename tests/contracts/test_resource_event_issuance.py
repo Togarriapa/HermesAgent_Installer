@@ -338,3 +338,50 @@ def test_initial_source_proof_is_producer_bound_opaque_and_one_use():
         issuer.capture_selected_ingress(SimpleNamespace(), proof, issuer._registry_capability)
     with pytest.raises(AuthorityDenied, match="stale or already consumed"):
         issuer.capture_selected_ingress(SimpleNamespace(), proof, issuer._registry_capability)
+
+
+def test_initial_source_resolves_only_signed_current_parent_receipts_from_exact_observer():
+    issuer, _request, registry, service, record = _case()
+    observer_row = registry.source_observers.observers["observer-schedule"]
+    observer_row.allowed_parent_source_kinds = frozenset({"static-context"})
+    base = replace(record.parent_context, source_receipts=(), signature="pending")
+    base = HostContext.from_wire(service._signed_context(base, service._sign(base.claims())))
+    parent = service.issue_source_receipt(
+        base, source_kind="static-context", origin_id="http-subject:session-1",
+        payload=b"subject", ttl_seconds=30,
+    )
+    provenance = object()
+
+    class _Observer:
+        def consume_source_receipts(self, candidate):
+            assert candidate is provenance
+            return (parent,)
+
+    producer = SimpleNamespace(observer=_Observer())
+    binding = issuer.register_source_producer(
+        producer, source_kind="schedule-event", observer_enrollment_id="observer-schedule",
+        validate_provenance=lambda candidate: candidate is provenance,
+    )
+    proof = issuer.mint_source_proof(
+        binding, event_id="e" + secrets.token_urlsafe(32), resource_id="demo",
+        resource_generation=record.handle.resource_generation,
+        source_observer_enrollment_id="observer-schedule",
+        payload=b'{"event":"timer-fire"}', provenance=provenance,
+    )
+    resolved = issuer._resolve_parent_receipts(
+        proof, issuer._producer_bindings[id(producer)],
+        SimpleNamespace(resource_id="demo", generation=record.handle.resource_generation,
+                        observer_enrollment_id="observer-schedule", profile_id=base.profile_id,
+                        principal_id=base.principal_id), base,
+    )
+    assert resolved == (parent,)
+
+    tampered = replace(parent, signature="forged")
+    producer.observer.consume_source_receipts = lambda _candidate: (tampered,)
+    with pytest.raises(AuthorityDenied, match="signature is invalid"):
+        issuer._resolve_parent_receipts(
+            proof, issuer._producer_bindings[id(producer)],
+            SimpleNamespace(resource_id="demo", generation=record.handle.resource_generation,
+                            observer_enrollment_id="observer-schedule", profile_id=base.profile_id,
+                            principal_id=base.principal_id), base,
+        )

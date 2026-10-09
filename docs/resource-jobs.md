@@ -102,7 +102,14 @@ PIDFD, executable, namespace, and loaded-role evidence. The registry's
 observation together. The issuer rechecks current resource generation and
 consent, the selected observer and source policy, and the live controller
 proof, then signs the original private `HostContext` and source receipt. The
-registry atomically retains that signed closure as the root event; child-node
+HTTP/audio adapter's exact proof-bound receipt handles are resolved once by
+its root observer to actual service-signed `SourceReceipt` objects; the issuer
+rechecks signature, current profile/principal/generation, source-kind policy,
+expiry, and complete parent closure before signing the event receipt with those
+parents. The event context carries the sorted parent receipts and event receipt
+together, so the registry can verify the full signed closure without trusting
+receipt objects supplied in an RPC or event DTO. Missing resolver wiring fails
+closed. The registry atomically retains that signed closure as the root event; child-node
 issuance separately revalidates the selected backend/body recipe and current
 controller custody.
 
