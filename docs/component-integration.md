@@ -18,6 +18,10 @@ Application profiles retain exact manifest and lock digests and validate lockfil
 
 The Browser Use lock, both manifest variants, and provenance are packaged in the installer so runtime staging does not depend on Actions artifact retention. `components.locked_runtime` validates the fixed hashes against the selected source and stages a separate immutable runtime tree with the original manifest retained.
 
+## Scientific Agent Skills (R0074)
+
+The selected source remains `K-Dense-AI/scientific-agent-skills` at commit `92ace75ac21efe19a620434e0ca4e356081fe807`, with Git tree `9a2d8a9b7d7cf9a89fcf31a25e826838f735d764`. The component fetch allows the observed 241 MB archive within a 320 MB compressed and 2 GiB expanded bound, verifies the full Git tree, then audits and stages only the selected skill's complete closure into the selected profile. The Polars closure contains eight files (101,491 bytes), including reference pages named both as Markdown links and inline-code paths. Its feature environment pins `polars==1.44.2` and `polars-runtime-32==1.44.2` separately from Hermes, on demand. The grouped-measurement fixture passes in an isolated Python 3.12 environment on this development Mac. Matching Linux ARM64 Python 3.14 wheels were downloaded, but installation and execution on a Pi, native Hermes discovery and activation remain pending. Other scientific skills need their own readiness-specific runtime pins before execution.
+
 Memory has one automatic capture owner per profile and separate user/profile namespaces. Extraction and embedding recheck privacy, capability and budget policy. Generated memory cannot recursively enter capture. Retrieval filters again by namespace. Provider-specific export and removal preserve other namespaces.
 
 OpenViking uses the native Hermes catalog plugin and a separately prestarted server with sanitized environment; lazy installs are disabled. OpenViking, claude-mem and Agent Memory remain separate engines with their own extraction policy.

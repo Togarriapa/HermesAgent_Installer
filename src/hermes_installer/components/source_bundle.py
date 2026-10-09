@@ -271,7 +271,12 @@ class GitHubComponentSourceFetcher:
             raise ComponentSourceError("component source identity is not an owner/repository")
         return identity, revision
 
-    def fetch(self, contract: ComponentAdapterContract) -> VerifiedComponentSource:
+    def fetch(
+        self,
+        contract: ComponentAdapterContract,
+        *,
+        skill_files: tuple[str, ...] | None = None,
+    ) -> VerifiedComponentSource:
         if contract.unresolved_reason():
             raise ComponentSourceError(contract.unresolved_reason())
         identity, revision = self._identity(contract)
@@ -328,7 +333,7 @@ class GitHubComponentSourceFetcher:
             raise ComponentSourceError("component archive contents differ from the pinned Git tree")
         if not files:
             raise ComponentSourceError("refusing an empty component source tree")
-        audit = audit_skill_file_map(files)
+        audit = audit_skill_file_map(files, skill_files=skill_files)
         if audit.problems:
             first = audit.problems[0]
             raise ComponentSourceError(
