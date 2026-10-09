@@ -113,7 +113,8 @@ def parse_package_set_receipt(response: BrokeredEffectResponse, *,
     tree_digest = value["installed_tree_sha256"]
     if (not isinstance(runtime_digest, str) or not _SHA.fullmatch(runtime_digest)
             or not isinstance(tree_digest, str) or not _SHA.fullmatch(tree_digest)
-            or not isinstance(response.receipt_id, str) or not response.receipt_id):
+            or not isinstance(response.receipt_id, str)
+            or response.receipt_id != f"package-set:{package_set_id}:{manifest_sha256}"):
         raise AuthorityDenied("package-set.receipt", "package-set receipt digest is invalid")
     return PackageSetInstallReceipt(
         package_set_id, manifest_sha256, enrollment_id, generation,
