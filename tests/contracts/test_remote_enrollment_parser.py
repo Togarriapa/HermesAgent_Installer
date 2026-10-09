@@ -81,6 +81,7 @@ class RemoteEnrollmentParserTests(unittest.TestCase):
         result = parse_remote_session_enrollments(
             [self.row], principal_bindings=self.principals,
             process_profiles=self.profiles,
+            role_artifacts={"gateway-role-v1": "a" * 64},
         )
         enrolled = result["remote-enrollment"]
         self.assertEqual(enrolled.session.gateway_generation, "gateway-gen")
@@ -99,6 +100,7 @@ class RemoteEnrollmentParserTests(unittest.TestCase):
             parse_remote_session_enrollments(
                 [row], principal_bindings=self.principals,
                 process_profiles=self.profiles,
+                role_artifacts={"gateway-role-v1": "a" * 64},
             )
 
     def test_rejects_wrong_gateway_role_and_non_xpra_target(self):
@@ -108,6 +110,7 @@ class RemoteEnrollmentParserTests(unittest.TestCase):
                 parse_remote_session_enrollments(
                     [{**self.row, **changes}], principal_bindings=self.principals,
                     process_profiles=self.profiles,
+                    role_artifacts={"gateway-role-v1": "a" * 64},
                 )
 
     def test_rejects_extra_fields_and_duplicate_email_mapping(self):
@@ -115,6 +118,7 @@ class RemoteEnrollmentParserTests(unittest.TestCase):
             parse_remote_session_enrollments(
                 [{**self.row, "caller_policy_grant": "forbidden"}],
                 principal_bindings=self.principals, process_profiles=self.profiles,
+                role_artifacts={"gateway-role-v1": "a" * 64},
             )
         ambiguous = {
             **self.row,
@@ -131,7 +135,12 @@ class RemoteEnrollmentParserTests(unittest.TestCase):
                     "access-subject-2": {"principal_id": "principal-2", "profile_id": "owner-profile",
                                           "email": "owner@example.org"},
                 }, process_profiles=self.profiles,
+                role_artifacts={"gateway-role-v1": "a" * 64},
             )
+
+    def test_empty_active_catalog_is_unavailable_without_principal_rows(self):
+        self.assertEqual(parse_remote_session_enrollments(
+            [], principal_bindings={}, process_profiles={}), {})
 
 
 if __name__ == "__main__":

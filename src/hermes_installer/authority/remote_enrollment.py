@@ -111,6 +111,7 @@ def parse_remote_session_enrollments(
     records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]], *,
     principal_bindings: Mapping[str, Mapping[str, str]],
     process_profiles: Mapping[str, Any],
+    role_artifacts: Mapping[str, str] | None = None,
 ) -> Mapping[str, EnrolledRemoteSession]:
     """Validate active records against root principal and managed-process joins.
 
@@ -122,6 +123,15 @@ def parse_remote_session_enrollments(
             or not isinstance(principal_bindings, Mapping)
             or not isinstance(process_profiles, Mapping)):
         raise _deny("active HI13 enrollment catalog is malformed")
+    # An empty active catalog means that no HI13 service is enrolled. It is a
+    # valid unavailable state and does not require unrelated principal rows.
+    if not records:
+        return MappingProxyType({})
+    if not isinstance(role_artifacts, Mapping):
+        raise _deny("root gateway role artifact catalog is unavailable")
+    for artifact_id, digest in role_artifacts.items():
+        _id(artifact_id, "gateway role artifact ID")
+        _digest(digest, "gateway role artifact digest")
     by_subject: dict[str, Mapping[str, str]] = {}
     profile_generations: dict[str, str] = {}
     profiles_by_id: dict[str, Any] = {}
@@ -170,8 +180,7 @@ def parse_remote_session_enrollments(
             raise _deny("native Desktop generation differs from active process custody")
         gateway_role_artifact_id = _id(row["gateway_role_artifact_id"], "gateway role artifact ID")
         gateway_role_sha256 = _digest(row["gateway_role_sha256"], "gateway role digest")
-        role_hashes = getattr(gateway, "process_role_artifact_hashes", None) or {}
-        if role_hashes.get(gateway_role_artifact_id) != gateway_role_sha256:
+        if role_artifacts.get(gateway_role_artifact_id) != gateway_role_sha256:
             raise _deny("gateway role artifact does not match the active pinned process recipe")
         if row["connector_target_id"] != "xpra-native":
             raise _deny("remote connector target is not the fixed native Xpra target")
