@@ -1533,6 +1533,7 @@ class SQLiteReplayStore:
                 raise ResourceRuntimeError("replay database permissions could not be restricted") from exc
 
     def _connect(self) -> sqlite3.Connection:
+        db: sqlite3.Connection | None = None
         try:
             db = sqlite3.connect(self.path, timeout=self.timeout_seconds, isolation_level=None)
             db.execute("PRAGMA journal_mode=DELETE")
@@ -1540,6 +1541,8 @@ class SQLiteReplayStore:
             db.execute(f"PRAGMA busy_timeout={int(self.timeout_seconds * 1000)}")
             return db
         except sqlite3.Error as exc:
+            if db is not None:
+                db.close()
             raise ResourceRuntimeError("replay ledger is unavailable") from exc
 
     @staticmethod
