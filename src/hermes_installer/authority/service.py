@@ -21,6 +21,7 @@ import stat
 import struct
 import threading
 import time
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -28,7 +29,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity, SourceReceipt,
-    canonical_digest,
+    canonical_bytes, canonical_digest,
 )
 
 MAX_REQUEST = 4 * 1024 * 1024 + 16_384
@@ -61,6 +62,7 @@ _OPERATIONS = frozenset({
     "process.start", "process.status",
     "process.read", "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.webhook.run", "resource.channel.run", "resource.bundle.node.run",
     "resource.job.admit", "resource.job.child.admit",
     "resource.orchestrator.recruit",
     "process.inspect", "connector.open", "connector.read",
@@ -187,7 +189,8 @@ class AuthorityService:
                  selected_operation_resolver: Callable[[str, str, str, str], Any] | None = None,
                  remote_session_authority: Any | None = None,
                  source_receipt_delivery: Any | None = None,
-                 source_observer_registry: Any | None = None):
+                 source_observer_registry: Any | None = None,
+                 service_generation_digest: str | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
@@ -221,6 +224,10 @@ class AuthorityService:
         self.remote_session_authority = remote_session_authority
         self.source_receipt_delivery = source_receipt_delivery
         self.source_observer_registry = source_observer_registry
+        if (service_generation_digest is not None
+                and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
+            raise ValueError("active service generation digest is invalid")
+        self.service_generation_digest = service_generation_digest
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -477,6 +484,24 @@ class AuthorityService:
                 or context.native_process_identity != self._native_process_identity(
                     observation.producer_pid, observation.producer_uid)):
             raise AuthorityDenied("source.peer", "root observer producer identity is no longer current")
+        proof = observation.loaded_package_proof
+        if (self.service_generation_digest is None or proof is None
+                or getattr(proof, "service_generation_digest", None) != self.service_generation_digest
+                or getattr(proof, "target_peer_identity", None) != observation.target_peer_identity
+                or hashlib.sha256(observation.payload_bytes).hexdigest() != observation.payload_sha256):
+            raise AuthorityDenied("source.observation", "loaded source proof is not bound to the active generation")
+        try:
+            current_target_identity = resolve_live_peer(
+                observation.target_peer_pid, observation.target_peer_pidfd,
+                profile_id=observation.target_peer_profile_id,
+                generation=observation.target_peer_generation,
+            )
+        except Exception:
+            current_target_identity = None
+        if (current_target_identity is None
+                or current_target_identity != observation.target_peer_identity
+                or current_target_identity.kernel_uid != observation.target_peer_uid):
+            raise AuthorityDenied("source.target_peer", "root observer target peer identity is no longer current")
         binding = self._binding(context.uid)
         self._verify_context_signature(context)
         self._assert_current_context(context, binding, context.uid)
@@ -730,6 +755,10 @@ class AuthorityService:
         if operation == "perform_effect":
             return self._perform_effect(uid, peer_pid, payload, cancelled=cancelled,
                                         peer_pidfd=peer_pidfd)
+        if operation == "process.control":
+            return self._dispatch_process_control(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
         if operation == "prepare_native_event":
             broker = self.native_bridge_broker
             if broker is None or peer_pidfd is None:
@@ -768,6 +797,116 @@ class AuthorityService:
                 operation, uid, peer_pid, peer_pidfd, payload,
             )
         raise AuthorityDenied("protocol.operation", "authority operation is unavailable")
+
+    def _dispatch_process_control(self, uid: int, peer_pid: int,
+                                  peer_pidfd: int | None, payload: Any, *,
+                                  cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Resolve an active process handle and authorize its fixed control verb.
+
+        The caller supplies only an opaque handle, generation, operation, and
+        bounded operation fields. The root process manager selects the profile
+        and target from its live handle registry; target/capability/grant are
+        never accepted from the worker.
+        """
+        if (peer_pidfd is None or not isinstance(payload, dict)
+                or set(payload) != {"schema", "operation", "process_id", "generation", "fields"}
+                or payload.get("schema") != 1):
+            raise AuthorityDenied("process.control", "process control request is malformed")
+        operation = payload.get("operation")
+        process_id, generation, fields = (payload.get("process_id"), payload.get("generation"),
+                                           payload.get("fields"))
+        if (operation not in {"process.status", "process.read", "process.write", "process.stop", "process.inspect"}
+                or not isinstance(process_id, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", process_id)
+                or not isinstance(generation, str)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", generation)
+                or not isinstance(fields, dict)):
+            raise AuthorityDenied("process.control", "process control selection is invalid")
+        expected = {
+            "process.status": set(), "process.inspect": set(),
+            "process.stop": {"reason", "grace_seconds"},
+            "process.read": {"stream", "maximum_bytes"},
+            "process.write": {"data_bytes", "sequence"},
+        }[operation]
+        if set(fields) != expected:
+            raise AuthorityDenied("process.control", "process control fields do not match the fixed verb")
+        if operation == "process.read":
+            if (fields.get("stream") not in {"stdout", "stderr"}
+                    or type(fields.get("maximum_bytes")) is not int
+                    or not 1 <= fields["maximum_bytes"] <= 1_048_576):
+                raise AuthorityDenied("process.control", "process read bounds are invalid")
+        if operation == "process.write":
+            data = fields.get("data_bytes")
+            if (not isinstance(data, str) or len(data) > 349_528
+                    or type(fields.get("sequence")) is not int
+                    or fields["sequence"] < 0):
+                raise AuthorityDenied("process.control", "process write bounds are invalid")
+            try:
+                decoded = base64.b64decode(data, validate=True)
+            except Exception:
+                raise AuthorityDenied("process.control", "process write data is malformed") from None
+            if len(decoded) > 262_144 or base64.b64encode(decoded).decode("ascii") != data:
+                raise AuthorityDenied("process.control", "process write data exceeds its bound")
+        if operation == "process.stop":
+            if (fields.get("reason") not in {"cancel", "shutdown", "rollback"}
+                    or type(fields.get("grace_seconds")) is not int
+                    or not 0 <= fields["grace_seconds"] <= 10):
+                raise AuthorityDenied("process.control", "process stop bounds are invalid")
+
+        manager = self.process_effect_handler
+        resolver = getattr(manager, "resolve_process_operation", None)
+        if not callable(resolver):
+            raise AuthorityDenied("process.control", "root process handle resolver is unavailable")
+        try:
+            selected = resolver(process_id, generation, operation, peer_uid=uid,
+                                peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+        except Exception:
+            selected = None
+        if (not isinstance(selected, tuple) or len(selected) != 2
+                or not isinstance(selected[1], str)):
+            raise AuthorityDenied("process.handle", "process handle is stale or not owned by this peer")
+        profile, target = selected
+        binding = self._binding(uid)
+        if (getattr(profile, "profile_id", None) != binding.profile_id
+                or getattr(profile, "generation", None) != generation
+                or self.profile_generations.get(binding.profile_id) != generation):
+            raise AuthorityDenied("process.binding", "process handle profile or generation changed")
+        enrolled_target = getattr(profile, "operation_targets", {}).get(operation)
+        if enrolled_target is None:
+            from hermes_installer.managed_process_custodian import (
+                process_control_target, process_inspect_target,
+            )
+            enrolled_target = (process_inspect_target(profile) if operation == "process.inspect"
+                               else process_control_target(profile, operation))
+        if target != enrolled_target:
+            raise AuthorityDenied("process.target", "process manager returned a non-enrolled control target")
+        rule = self.rules.get(("hermes-process-control", operation, target))
+        if rule is None or rule.recipient is not None:
+            raise AuthorityDenied("process.target", "process control effect is not enrolled")
+
+        request_body = {"schema": 1, "operation": operation,
+                        "process_id": process_id, "generation": generation,
+                        "fields": fields}
+        request_bytes = canonical_bytes(request_body)
+        request_digest = canonical_digest(request_bytes)
+        context_wire = self._issue_context(uid, {
+            "purpose": "managed-process-control",
+            "intent": f"{operation}:{process_id}:{generation}:{request_digest}",
+            "trace_id": secrets.token_urlsafe(24),
+            "lease_seconds": 5.0,
+            "source_contexts": [], "final_payload_digest": request_digest,
+            "operation": operation,
+        }, peer_pid=peer_pid)
+        grant_wire = self._authorize_effect(uid, {
+            "context": context_wire, "capability": rule.capability,
+            "target": target, "recipient": rule.recipient,
+            "request_digest": request_digest, "retry_index": 0,
+        }, peer_pid=peer_pid)
+        return self._perform_effect(uid, peer_pid, {
+            "authorization": grant_wire, "operation": operation,
+            "payload": base64.b64encode(request_bytes).decode("ascii"),
+            "timeout": 5.0,
+        }, cancelled=cancelled, peer_pidfd=peer_pidfd)
 
     def _dispatch_remote_session(self, operation: str, peer_uid: int, peer_pid: int,
                                  peer_pidfd: int | None, payload: Any) -> Mapping[str, Any]:
