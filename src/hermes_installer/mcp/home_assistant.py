@@ -15,7 +15,7 @@ from .adapters import MCPService, ReadOnlyAdapter
 from .transports import StreamableHTTPTransport
 
 
-_ENTITY_ID = re.compile(r"[a-z0-9_]+.[a-z0-9_]+\\Z")
+_ENTITY_ID = re.compile(r"[a-z0-9_]+\.[a-z0-9_]+\Z")
 
 
 def adapter(client, *, entity_ids: Iterable[str], allowed_tools: Iterable[str]) -> ReadOnlyAdapter:
