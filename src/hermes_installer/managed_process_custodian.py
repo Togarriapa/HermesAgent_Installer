@@ -714,6 +714,12 @@ class ManagedProcessEffectHandler:
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
         self._lock = threading.RLock()
+        self._member_key = os.urandom(32)
+        # Root-only test harness may capture bounded manager diagnostics. This
+        # is never serialized to a worker or populated from caller text.
+        self._diagnostic_sink: Callable[[bytes], None] | None = None
+        for profile in self.profiles.values():
+            self._validate_profile(profile)
 
     def set_native_loader_observation_store(self, store: Any) -> None:
         """Install the root-owned loader observer after manager construction.
@@ -786,12 +792,6 @@ class ManagedProcessEffectHandler:
                 self._systemd_openfile_supported = False
         if not self._systemd_openfile_supported:
             raise AuthorityDenied("native.loader", "systemd v253 OpenFile support is required")
-        self._member_key = os.urandom(32)
-        # Root-only test harness may capture bounded manager diagnostics. This
-        # is never serialized to a worker or populated from caller text.
-        self._diagnostic_sink: Callable[[bytes], None] | None = None
-        for profile in self.profiles.values():
-            self._validate_profile(profile)
 
     def _prepare_native_package_mount(self, profile: ManagedProfileCustody,
                                       process_id: str) -> tuple[Path | None, NativePackageMountReceipt | None]:
@@ -2717,10 +2717,45 @@ class ManagedProcessEffectHandler:
         namespace_identity = getattr(binding, "namespace_identity", None)
         if not isinstance(profile_id, str) or not isinstance(generation, str) or not isinstance(namespace_identity, str):
             return None
+        return self._resolve_profile_namespace_lease(profile_id, generation, namespace_identity)
+
+    def resolve_observer_namespace_lease(self, profile_id: str, generation: str,
+                                         expected_namespace_identity: str
+                                         ) -> ManagedNamespaceLease | None:
+        """Return a short-lived namespace FD for one exact enrolled live process.
+
+        This is the bounded root-only seam for observers that must inspect a
+        protected service namespace. It selects no process or namespace from a
+        caller PID/path and requires the supplied identity to equal both the
+        current profile enrollment and its live manager-owned handle.
+        """
+        if (not isinstance(profile_id, str) or not profile_id
+                or not isinstance(generation, str) or not generation
+                or not isinstance(expected_namespace_identity, str)
+                or not re.fullmatch(r"mnt:[1-9][0-9]*;net:[1-9][0-9]*",
+                                    expected_namespace_identity)):
+            return None
+        registered = self.profiles.get(profile_id)
+        if registered is None or registered.generation != generation:
+            return None
+        return self._resolve_profile_namespace_lease(
+            profile_id, generation, expected_namespace_identity,
+            registered_profile=registered,
+        )
+
+    def _resolve_profile_namespace_lease(self, profile_id: str, generation: str,
+                                         namespace_identity: str, *,
+                                         registered_profile: ManagedProfileCustody | None = None
+                                         ) -> ManagedNamespaceLease | None:
         with self._lock:
+            registered = registered_profile or self.profiles.get(profile_id)
+            if (registered is None or registered.profile_id != profile_id
+                    or registered.generation != generation):
+                return None
             matches = [handle for handle in self._handles.values()
                        if handle.profile.profile_id == profile_id
                        and handle.profile.generation == generation
+                       and handle.registered_profile is registered
                        and handle.kernel_namespace_id == namespace_identity]
         if len(matches) != 1:
             return None
@@ -2728,6 +2763,7 @@ class ManagedProcessEffectHandler:
         with handle.lock:
             if (handle.stopped or handle.network_namespace_fd is None
                     or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
+                    or handle.registered_profile is not registered
                     or handle.pid not in self._pids(handle.cgroup)):
                 return None
             expected_net = int(namespace_identity.rsplit("net:", 1)[1])
