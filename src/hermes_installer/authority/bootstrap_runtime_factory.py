@@ -112,9 +112,39 @@ class RootRuntimeArtifactReceipt:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
-class NativeMaterializationSelection:
-    """Path-free, one-session authorization for root-owned source staging."""
+class RootSelectedInstallationBinding:
+    """Opaque session binding; never exposes service or journal paths."""
 
+    _session: "RootBootstrapSession" = field(repr=False)
+    _seal: str = field(repr=False)
+
+    def authorize_native_materialization(
+            self, *, enrollment_id: str, service_generation: str,
+            resource_profile_id: str) -> NativeMaterializationSelection:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentError("installation binding does not belong to its root setup session")
+        selected = self._session._authorize_native_materialization(
+            enrollment_id=enrollment_id, service_generation=service_generation,
+            resource_profile_id=resource_profile_id)
+        from .native_materialization import NativeMaterializationSelection
+        return NativeMaterializationSelection(
+            enrollment_id=selected.enrollment_id,
+            service_generation=selected.service_generation,
+            service_profile_id=selected.service_profile_id,
+            protected_enrollment_digest=selected.protected_enrollment_digest,
+            service_uid=selected.service_uid, service_gid=selected.service_gid,
+            home_root_id=selected.home_root_id, data_root_id=selected.data_root_id,
+            source_artifact_id=selected.source_artifact_id,
+            source_receipt_handle=selected.source_receipt_handle)
+
+    def resolve_private_roots(self, selection: Any) -> "_RootPrivateInstallationRoots":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentError("installation binding does not belong to its root setup session")
+        return self._session._resolve_private_installation_roots(selection)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _BoundNativeSelection:
     enrollment_id: str
     service_generation: str
     service_profile_id: str
@@ -127,23 +157,6 @@ class NativeMaterializationSelection:
     source_receipt_handle: str
     _session_id: str = field(repr=False)
     _seal: str = field(repr=False)
-
-
-@dataclass(frozen=True, slots=True, repr=False)
-class RootSelectedInstallationBinding:
-    """Opaque session binding; never exposes service or journal paths."""
-
-    _session: "RootBootstrapSession" = field(repr=False)
-    _seal: str = field(repr=False)
-
-    def authorize_native_materialization(
-            self, *, enrollment_id: str, service_generation: str,
-            resource_profile_id: str) -> NativeMaterializationSelection:
-        if not secrets.compare_digest(self._seal, self._session._seal):
-            raise BootstrapEnrollmentError("installation binding does not belong to its root setup session")
-        return self._session._authorize_native_materialization(
-            enrollment_id=enrollment_id, service_generation=service_generation,
-            resource_profile_id=resource_profile_id)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -428,7 +441,14 @@ class InstalledBootstrapPolicyResolver:
                 path = binding["field_path"]
                 if (not isinstance(path, list) or not path
                         or any(type(part) not in {str, int} or type(part) is int and part < 0 for part in path)
-                        or binding["receipt_role"] not in {"official-pm-runtime", "native-launcher", "installed-agent-closure"}
+                        or not isinstance(binding["receipt_role"], str)
+                        or binding["receipt_role"] not in {
+                            "official-agent-source", "official-installer-script", "official-pm-lock",
+                            "official-pm-runtime", "native-launcher", "installed-agent-closure",
+                            "resources-source-bundle", "native-compiled-closure",
+                            "native-entrypoint-manifest", "native-action-resolver",
+                            "native-boundary-overlay", "native-health"}
+                        or not isinstance(binding["receipt_field"], str)
                         or binding["receipt_field"] not in {"artifact_id", "sha256", "generation", "receipt_handle"}):
                     _fail("bootstrap receipt binding role, path, or field is unsupported")
                 frozen_path = tuple(path)
@@ -456,9 +476,8 @@ class InstalledBootstrapPolicyResolver:
             # validator and selected policy receipts. The current bootstrap
             # policy supports only the finite service profile and source set.
             _fail("bootstrap policy requests an unimplemented protected catalog enrollment")
-        binding_rules = doc["receipt_binding_rules"]
-        if not isinstance(binding_rules, list) or len(binding_rules) > 256:
-            _fail("bootstrap receipt binding rules are malformed")
+        binding_rules = self._validate_receipt_binding_rules(
+            doc["receipt_binding_rules"], plan_row["allowed_artifact_ids"])
         return VerifiedRootBootstrapPolicy(
             artifact_id=_POLICY_ID, sha256=digest, plan_artifact_id=plan_row["artifact_id"],
             source_artifact_id=source_id, identity_policy=dict(identity), root_policy=dict(roots),
@@ -466,6 +485,68 @@ class InstalledBootstrapPolicyResolver:
             service_record_templates=tuple(normalized_templates),
             catalog_selections=clean_catalogs, receipt_binding_rules=tuple(copy.deepcopy(binding_rules)),
         )
+
+    @staticmethod
+    def _validate_receipt_binding_rules(value: Any,
+                                        allowed_plan_artifacts: list[str]) -> list[dict[str, Any]]:
+        """Validate the finite role/output/phase join before any receipt is used."""
+        roles = {
+            "official-agent-source", "official-installer-script", "official-pm-lock",
+            "official-pm-runtime", "resources-source-bundle", "native-compiled-closure",
+            "native-entrypoint-manifest", "native-action-resolver", "native-boundary-overlay",
+            "native-health",
+        }
+        outputs = {"source-archive", "compiled-closure", "entrypoint-json",
+                   "resolver-json", "boundary-overlay"}
+        phases = {"prepared-source", "runnable", "functional-health"}
+        if not isinstance(value, list) or len(value) > 256:
+            _fail("bootstrap receipt binding rules are malformed")
+        result: list[dict[str, Any]] = []
+        seen_roles: set[str] = set()
+        for row in value:
+            if not isinstance(row, dict) or set(row) != {
+                    "receipt_role", "allowed_artifact_ids", "allowed_output_kinds",
+                    "required_phase", "field_bindings"}:
+                _fail("bootstrap receipt binding rule has unknown or missing fields")
+            role = row["receipt_role"]
+            ids, kinds, phase, bindings = (row["allowed_artifact_ids"],
+                                           row["allowed_output_kinds"],
+                                           row["required_phase"], row["field_bindings"])
+            if (not isinstance(role, str) or role not in roles or role in seen_roles or not isinstance(ids, list)
+                    or not ids or len(ids) > 256
+                    or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in ids)
+                    or len(set(ids)) != len(ids)
+                    or not isinstance(kinds, list) or not kinds
+                    or any(not isinstance(item, str) or item not in outputs for item in kinds)
+                    or len(set(kinds)) != len(kinds)
+                    or not isinstance(phase, str) or phase not in phases
+                    or not isinstance(bindings, list) or len(bindings) > 256):
+                _fail("bootstrap receipt binding rule values are malformed")
+            if role in {"official-agent-source", "official-installer-script", "official-pm-lock",
+                        "official-pm-runtime", "resources-source-bundle"}:
+                if any(item not in allowed_plan_artifacts for item in ids):
+                    _fail("source receipt rule allows an artifact outside the selected plan")
+            if role == "native-health" and phase != "functional-health":
+                _fail("native health receipt can bind only functional-health fields")
+            if role != "native-health" and phase == "functional-health":
+                _fail("functional-health phase is reserved for native health receipts")
+            clean_bindings = []
+            for binding in bindings:
+                if (not isinstance(binding, dict)
+                        or set(binding) != {"field_path", "receipt_role", "receipt_field"}
+                        or binding["receipt_role"] != role
+                        or not isinstance(binding["field_path"], list) or not binding["field_path"]
+                        or any(type(part) not in {str, int} or type(part) is int and part < 0
+                               for part in binding["field_path"])
+                        or not isinstance(binding["receipt_field"], str)
+                        or binding["receipt_field"] not in {"artifact_id", "sha256", "generation", "receipt_handle"}):
+                    _fail("bootstrap receipt rule field binding is malformed or cross-role")
+                clean_bindings.append(copy.deepcopy(binding))
+            result.append({"receipt_role": role, "allowed_artifact_ids": list(ids),
+                           "allowed_output_kinds": list(kinds), "required_phase": phase,
+                           "field_bindings": clean_bindings})
+            seen_roles.add(role)
+        return result
 
     @staticmethod
     def _validate_authority_base_template(value: Any) -> None:
@@ -609,9 +690,13 @@ class RootSetupPolicyFactory:
             for binding in template["receipt_bindings"]:
                 role = binding["receipt_role"]
                 receipt = receipts.get(role)
-                if (not isinstance(receipt, RootRuntimeArtifactReceipt)
+                rule = next((item for item in policy.receipt_binding_rules
+                             if item["receipt_role"] == role), None)
+                if (rule is None or rule["required_phase"] != "runnable"
+                        or not isinstance(receipt, RootRuntimeArtifactReceipt)
                         or not secrets.compare_digest(receipt._seal, seal)
                         or receipt.role != role or not _ID.fullmatch(receipt.artifact_id)
+                        or receipt.artifact_id not in rule["allowed_artifact_ids"]
                         or not _SHA.fullmatch(receipt.sha256)
                         or receipt.generation != authorization.transaction_handle):
                     _fail(f"required root runtime receipt for {role} is absent or not transaction-bound")
@@ -836,11 +921,15 @@ class RootBootstrapSession:
                                 generation: str) -> RootRuntimeArtifactReceipt:
         """Mint a runtime receipt only from a current transaction-scoped CAS handle."""
         self._check_live()
-        if role not in {"official-pm-runtime", "native-launcher", "installed-agent-closure"}:
+        rule = next((item for item in self._policy.receipt_binding_rules
+                     if item["receipt_role"] == role), None)
+        if rule is None or rule["required_phase"] != "runnable":
             raise BootstrapEnrollmentError("runtime receipt role is not a reviewed first-setup role")
         if not isinstance(generation, str) or generation != self._authorization.transaction_handle:
             raise BootstrapEnrollmentError("runtime receipt generation is not bound to this setup transaction")
         artifact_id, digest = self._factory._receipt_registry.lookup(receipt_handle, self._authorization)
+        if artifact_id not in rule["allowed_artifact_ids"]:
+            raise BootstrapEnrollmentError("runtime receipt artifact is outside its exact selected role")
         resolved = self._factory._catalog.resolve(artifact_id, digest,
                                                   self._factory._receipt_registry.artifact_root, expected_uid=0)
         receipt = RootRuntimeArtifactReceipt(role, artifact_id, digest, generation, receipt_handle,
@@ -873,7 +962,7 @@ class RootBootstrapSession:
 
     def _authorize_native_materialization(
             self, *, enrollment_id: str, service_generation: str,
-            resource_profile_id: str) -> NativeMaterializationSelection:
+            resource_profile_id: str) -> _BoundNativeSelection:
         self._check_live()
         if self._last_receipt is None or self._last_receipt.state != "prepared":
             raise BootstrapEnrollmentPending("native materialization requires a committed prepared generation")
@@ -890,7 +979,7 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentError("native materialization enrollment is not uniquely selected by policy")
         identity = self._identity.ensure()
         source_receipt = self._source_receipt(self._authorization)
-        return NativeMaterializationSelection(
+        return _BoundNativeSelection(
             enrollment_id=enrollment_id, service_generation=self._last_receipt.generation_id,
             service_profile_id=resource_profile_id,
             protected_enrollment_digest=self._last_receipt.generation_digest,
@@ -903,9 +992,9 @@ class RootBootstrapSession:
         )
 
     def _resolve_private_installation_roots(
-            self, selection: NativeMaterializationSelection) -> _RootPrivateInstallationRoots:
+            self, selection: Any) -> _RootPrivateInstallationRoots:
         self._check_live()
-        if (not isinstance(selection, NativeMaterializationSelection)
+        if (not isinstance(selection, _BoundNativeSelection)
                 or selection._session_id != self._handle.session_id
                 or not secrets.compare_digest(selection._seal, self._seal)
                 or self._last_receipt is None

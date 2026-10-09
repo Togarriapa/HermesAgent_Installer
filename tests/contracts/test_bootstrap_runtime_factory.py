@@ -6,6 +6,7 @@ from pathlib import Path
 
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending, VerifiedRootSetupAuthorization
 from hermes_installer.authority.bootstrap_runtime_factory import (
+    InstalledBootstrapPolicyResolver,
     RootBootstrapRuntimeFactory,
     RootSetupPolicyFactory,
     VerifiedRootBootstrapPolicy,
@@ -69,6 +70,40 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         self.assertEqual(prepared.root_journal_roots, (dict(authorization.root_journal_root),))
         self.assertEqual(prepared.home_root.as_posix(), "/var/lib/hermes-installer/services/home")
         self.assertEqual(prepared.data_root.as_posix(), "/var/lib/hermes-installer/services/data")
+
+    def test_receipt_rules_bind_one_exact_role_artifact_phase_and_output_kind(self):
+        row = {"receipt_role": "official-pm-runtime",
+               "allowed_artifact_ids": ["pm-runtime-314"],
+               "allowed_output_kinds": ["source-archive"],
+               "required_phase": "runnable", "field_bindings": []}
+        parsed = InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
+            [row], ["pm-runtime-314"])
+        self.assertEqual(parsed, [row])
+        for mutate in (
+                lambda value: value.update(allowed_artifact_ids=["unselected-runtime"]),
+                lambda value: value.update(required_phase="functional-health"),
+                lambda value: value.update(allowed_output_kinds=["shell-script"]),
+                lambda value: value.update(receipt_role=["official-pm-runtime"]),
+                lambda value: value.update(allowed_artifact_ids=[{}]),
+                lambda value: value.update(allowed_output_kinds=[{}]),
+                lambda value: value.update(unreviewed=True)):
+            invalid = dict(row)
+            mutate(invalid)
+            with self.subTest(invalid=invalid), self.assertRaises(BootstrapEnrollmentPending):
+                InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
+                    [invalid], ["pm-runtime-314"])
+
+    def test_receipt_rules_reject_cross_role_field_binding(self):
+        row = {"receipt_role": "official-pm-runtime",
+               "allowed_artifact_ids": ["pm-runtime-314"],
+               "allowed_output_kinds": ["source-archive"],
+               "required_phase": "runnable",
+               "field_bindings": [{"field_path": ["executable_sha256"],
+                                    "receipt_role": "official-agent-source",
+                                    "receipt_field": "sha256"}]}
+        with self.assertRaises(BootstrapEnrollmentPending):
+            InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
+                [row], ["pm-runtime-314"])
 
 
 if __name__ == "__main__":
