@@ -18,7 +18,9 @@ from hermes_installer.authority import artifacts as derivation
 from hermes_installer.authority.artifacts import RootSchemaDerivationReceiptRegistry
 from hermes_installer.authority.bootstrap_enrollment import RootArtifactReceiptRegistry
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
-from hermes_installer.authority.setup_policy_publication import RootSetupPublicationReceipt
+from hermes_installer.authority.setup_policy_publication import (
+    PolicyPublicationReceiptResolver, RootSetupPublicationReceipt,
+)
 from hermes_installer.authority.source_artifact_receipts import build_root_schema_receipt_runtime
 from hermes_installer.protected_enrollment import ProtectedRootJournalCatalog, RootJournalSelection
 
@@ -148,7 +150,24 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
 
             schema_row["source_receipt_handle"] = handle
             active = self._publication(journal_dir, generation, (parent, handle))
-            with mock.patch.object(derivation, "_active_publication", lambda: active):
+            unlisted_parent = self._publication(journal_dir, generation, (handle,))
+            with mock.patch.object(PolicyPublicationReceiptResolver, "resolve_current",
+                                   return_value=unlisted_parent):
+                with self.assertRaises(derivation.SchemaDerivationDenied):
+                    registry.resolve_schema_derivation(
+                        handle, artifact_id=child.artifact_id, artifact_sha256=child.sha256,
+                        size_bytes=len(schema), service_generation_digest=generation,
+                    )
+            prepared = self._publication(journal_dir, generation, (parent, handle), state="prepared")
+            with mock.patch.object(PolicyPublicationReceiptResolver, "resolve_current",
+                                   return_value=prepared):
+                with self.assertRaises(derivation.SchemaDerivationPending):
+                    registry.resolve_schema_derivation(
+                        handle, artifact_id=child.artifact_id, artifact_sha256=child.sha256,
+                        size_bytes=len(schema), service_generation_digest=generation,
+                    )
+            with mock.patch.object(PolicyPublicationReceiptResolver, "resolve_current",
+                                   return_value=active):
                 receipt = registry.resolve_schema_derivation(
                     handle, artifact_id=child.artifact_id, artifact_sha256=child.sha256,
                     size_bytes=len(schema), service_generation_digest=generation,
@@ -184,13 +203,13 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
         os.chmod(path, 0o600)
 
     @staticmethod
-    def _publication(root: Path, generation: str, handles: tuple[str, ...]):
+    def _publication(root: Path, generation: str, handles: tuple[str, ...], *, state: str = "active"):
         from hermes_installer.authority.setup_policy_publication import _SEAL
         info = root.stat()
         return RootSetupPublicationReceipt(
             1, "receipt-handle", "transaction-handle", "generation-id", "d" * 64,
             root, info.st_dev, info.st_ino, "e" * 64, "f" * 64, "a" * 64,
-            "b" * 64, None, "c" * 64, handles, "active", _SEAL,
+            "b" * 64, None, "c" * 64, handles, state, _SEAL,
         )
 
     @staticmethod
