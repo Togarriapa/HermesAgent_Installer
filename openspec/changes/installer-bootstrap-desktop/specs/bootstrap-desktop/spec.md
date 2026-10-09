@@ -492,3 +492,10 @@ The installer SHALL verify actual selected source, isolated interpreter and curr
 #### Scenario: Raw root identity or source receipt only
 - **WHEN** a bootstrap caller supplies only UID0 or source inventory without actual interpreter/module closure proof
 - **THEN** privileged release publication remains denied
+
+### Requirement: Closed prepared base and reader policy
+The installer SHALL render dormant prepared authority and catalog read policy from exact verified source templates and actual root receipt bindings.
+
+#### Scenario: Prepared authority treated as active
+- **WHEN** a dormant empty prepared policy is used to authorize runtime effects
+- **THEN** authorization denies until actual active compilation and receipts exist

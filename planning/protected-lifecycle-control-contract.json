@@ -401,7 +401,8 @@
           "initial_acceptance_ids"
         ],
         "plan_generation": "RootInstalledReleaseBuilder generates plans/root-setup-plan-v1.json actualcanonicalbytes from exact verified template; id installer-root-setup-plan-v1, candidateGitactualverifieddistribution. amendment_manifest_sha256 = SHA256 canonical sortedcompact path->actualSHA map of selected source plans/amendments files (including template) BEFORE rendered output; no selfreference. allowed_artifact_ids sortedunique exact nonnullhash reviewed ArtifactCatalog record IDs in actualverifiedrelease catalog, not caller list. Generated nativeoutputroles are separately rootreceipt-bound dynamicoutputs, not unconstrained source allowlist. Reverify sourcecatalog/modulebuilderclosure and entire rendered plan before receipt. Actualdeployed planSHA comes buildreceipt, not fake fixedsourcehash. Fields strict, IDs/digests bounded existinggrammar, <=4096artifactIDs/<=128templates/18exactAC list."
-      }
+      },
+      "fixed_manifest_path": "release-manifest.json at immutable release root; closure_manifest_relative_path must equal this literal. Builder writes canonical existing manifest schema and excludes manifest itself from file rows to avoid self-hash; descriptor/CAS independently pins its exact SHA. Build receipt gains closure_manifest_relative_path literal release-manifest.json. No caller-selected manifest path."
     },
     "first_source_bootstrap": {
       "owner_module": "hermes_installer.authority.installer_release_build",
@@ -843,7 +844,18 @@
         "expires_monotonic": "finite float"
       },
       "custody": "Actual current verified root installed actor/session required before issuance. Root creates fresh32byte key once using existing create_authority_signing_key when absent, persists separate random nonsecret key_id selection and private retained receipt binding actual inode/key bytes. Existing key never rotated/overwritten; adoption only actual secure root nofollow file + verified existing active key_id, or explicitly journaled first-install key creation with no active policy. Ambiguous key/selection mismatch denies/resumes. Key hash/bytes never exposed in source/evidence/argv/compiler policy. Held FD actualowner/mode/inode and private key continuity rechecked before issuance/publication. Atomic journal/fsync recovery preserves key on failure.",
-      "compiler": "authority_base.key_id comes only this actual root receipt; the closed template contains a root binding to this source, not a literal guessed ID or credential. Every published authority snapshot and signer resolves same selected key_id; first publication needs no active worker."
+      "compiler": "authority_base.key_id comes only this actual root receipt; the closed template contains a root binding to this source, not a literal guessed ID or credential. Every published authority snapshot and signer resolves same selected key_id; first publication needs no active worker.",
+      "descriptor": "Persist selection file exact {schema:1,key_id,algorithm:HMAC-SHA256,key_device,key_inode,key_uid:0,key_mode:384,key_binding_hmac}; key_binding_hmac is root-private HMAC of canonical descriptor excluding itself under actual held key, domain installer-authority-key-selection-v1. Operational RootAuthorityKeyReceipt separately binds actual current actor/session/release and lease; new session re-observes descriptor/key and mints fresh receipt preserving key_id. Descriptor contains no expired session as permanent selection and cannot by itself authorize effects. Never export key/tag in public evidence."
+    },
+    "prepared_authority_base_template": {
+      "artifact_id": "installer-prepared-authority-base-template-v1",
+      "source": {
+        "path": "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/prepared-authority-base-template-v1.json",
+        "sha256": "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953",
+        "size_bytes": 369
+      },
+      "installed_relative_path": "templates/prepared-authority-base-template-v1.json",
+      "render": "Render only actual RootAuthorityKeyReceipt.key_id and existing exact empty prepared service_generations snapshot. All authority capability/principal/profile/rule/provider/MCP/memory/bridge/delegation maps remain empty, including authentik. This prepared snapshot is dormant, no worker authorization and no process executable. Active compiler populates actual authenticated principal/policy/vault/service/runtime selections using closed template receipts before active loader; never pretend empty Authentik is operational. Prepared parser allows exact dormant empty maps only; active parser retains full required policy checks."
     }
   },
   "official_pm_runtime": {

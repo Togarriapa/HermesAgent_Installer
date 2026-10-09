@@ -854,6 +854,38 @@
     },
     "vault": "RootCredentialVault.resolve_reference(reference,peer_uid=0,required_scope=composio-project-catalog-read,principal_id=verified principal). Project API key ref must belong exact selected project/principal/scope; webhook verification secret is a different ref/role and cannot satisfy this selection. No key bytes in DTO/logs/journal.",
     "effect": "Actual fixed root reader only GET official /api/v3.1/triggers_types toolkit_slugs=whatsapp toolkit_versions exact selected version limit<=50/cursor, then GET returned slug detail. Existing bounds and source artifact derivation apply. This separate setup authorization never comes from bootstrap enrollment.provision or confers upsert/subscription/account/channel activation/message permission. Root actual selected catalog request+response receipt and derived type artifact required; unknown slug remains pending until authenticated discovery.",
-    "lifecycle": "Authorize exact current root actor/session/principal/explicit project choice, lease<=30s/original session, fresh one-use grant per actual request/page/detail; recheck current vault scope/project/session before bytes. Revocation/expiry/crossproject/crossprincipal/version change/replay deny. No caller method/URL/header or generic Composio HTTP proxy. No live external writes/test messages."
+    "lifecycle": "Authorize exact current root actor/session/principal/explicit project choice, lease<=30s/original session, fresh one-use grant per actual request/page/detail; recheck current vault scope/project/session before bytes. Revocation/expiry/crossproject/crossprincipal/version change/replay deny. No caller method/URL/header or generic Composio HTTP proxy. No live external writes/test messages.",
+    "request_policy_artifact": {
+      "artifact_id": "installer-composio-whatsapp-catalog-read-policy-v1",
+      "source": {
+        "path": "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/composio-whatsapp-catalog-read-policy-v1.json",
+        "sha256": "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5",
+        "size_bytes": 528
+      },
+      "installed_relative_path": "templates/composio-whatsapp-catalog-read-policy-v1.json"
+    },
+    "reader_API": "RootComposioCatalogReader.from_root_setup(selection_authority,credential_vault,fixed_policy_artifact,root_journal).list_types(authorization_handle,cursor=None)->RootComposioCatalogReadReceipt; inspect_returned_type(authorization_handle,slug)->same typed receipt. Cursor and slug must come current retained previous root response, no arbitrary path/query. Root issues independent one-use internal request grant for each page/detail after selected scope/session check. Transport only fixed pinned policy origin/path/TLS, x-api-key injected root vault, no redirects.",
+    "read_receipt_fields": [
+      "schema",
+      "receipt_handle",
+      "authorization_handle",
+      "session_handle",
+      "transaction_handle",
+      "principal_id",
+      "project_id",
+      "toolkit_version",
+      "operation",
+      "request_policy_artifact_id",
+      "request_policy_sha256",
+      "request_sha256",
+      "response_sha256",
+      "response_size_bytes",
+      "page_sequence",
+      "parent_response_receipt_handle",
+      "selected_slug",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "read_receipt_semantics": "Actual root-held bounded request/response bytes and parsed selected rows retained behind receipt; first page parent null, detail binds returned slug/current parent. No credential values/headers in receipt. Derivation registry reads exact response/schema member under actual receipt; root caller cannot inject response dictionary."
   }
 }
