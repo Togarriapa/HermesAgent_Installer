@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
-from hermes_installer.provider_gateway import LOCAL_KEY_ENV, LOCAL_PROVIDER_NAME, LocalProviderGateway, materialize_hermes_provider_plugin
+from hermes_installer.provider_gateway import (GatewayError, LOCAL_KEY_ENV, LOCAL_PROVIDER_NAME, LocalProviderGateway, materialize_hermes_provider_plugin, materialize_hermes_profile_config)
 from hermes_installer.state import OwnedRoot
 
 
@@ -56,7 +56,7 @@ class ProviderGatewayTests(unittest.TestCase):
         second = materialize_hermes_provider_plugin(root, profile_relative="hermes", port=None, model=MODEL)
         self.assertEqual(second["port"], first["port"])
         self.assertEqual(Path(first["entrypoint"]).read_text().count(f"127.0.0.1:{selected}/v1"), 1)
-        with self.assertRaisesRegex(Exception, "different gateway port"):
+        with self.assertRaisesRegex(GatewayError, "different gateway port"):
             materialize_hermes_provider_plugin(root, profile_relative="hermes", port=selected + 1, model=MODEL)
         # A listener that acquires the persisted endpoint causes startup to
         # fail closed; the service never silently moves away from the plugin URL.
@@ -69,6 +69,30 @@ class ProviderGatewayTests(unittest.TestCase):
         with self.assertRaises(OSError):
             gateway.start()
         self.assertIsNone(gateway._server)
+
+    def test_managed_home_config_selects_local_primary_and_aux_profile(self):
+        root = OwnedRoot(Path(self.temp.name) / "managed-config")
+        root.ensure()
+        profile = materialize_hermes_provider_plugin(root, profile_relative="home", port=None, model=MODEL)
+        config_path = materialize_hermes_profile_config(root, home_relative="home", port=int(profile["port"]), model=MODEL)
+        text = config_path.read_text()
+        self.assertIn("provider: hermes-installer-dispatch", text)
+        self.assertIn("api_key_env: " + LOCAL_KEY_ENV, text)
+        self.assertIn("127.0.0.1:" + profile["port"] + "/v1", text)
+        self.assertNotIn(TOKEN, text)
+        self.assertEqual(materialize_hermes_profile_config(root, home_relative="home", port=int(profile["port"]), model=MODEL), config_path)
+        with self.assertRaises(Exception):
+            materialize_hermes_profile_config(root, home_relative="home", port=int(profile["port"]) + 1, model=MODEL)
+
+    def test_materializer_refuses_to_adopt_existing_unowned_home(self):
+        root = OwnedRoot(Path(self.temp.name) / "unowned-home")
+        root.ensure()
+        home = root.path("home")
+        home.mkdir(mode=0o700)
+        (home / "config.yaml").write_text("model: user-owned\\n")
+        with self.assertRaisesRegex(Exception, "explicit adoption"):
+            materialize_hermes_provider_plugin(root, profile_relative="home", port=None, model=MODEL)
+        self.assertEqual((home / "config.yaml").read_text(), "model: user-owned\\n")
 
     def test_gateway_authenticates_and_routes_native_chat_to_dispatcher(self):
         payload=json.dumps({"model":MODEL,"messages":[{"role":"user","content":"hello"}],"max_tokens":999}).encode()

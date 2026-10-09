@@ -21,6 +21,8 @@ from .provider_transport import ALLOWED_MODELS, MAX_REQUEST_BYTES
 
 LOCAL_PROVIDER_NAME = "hermes-installer-dispatch"
 LOCAL_KEY_ENV = "HERMES_INSTALLER_DISPATCH_KEY"
+HOME_MARKER = ".hermes-installer-home-owned"
+HOME_MARKER_CONTENT = b"hermes-installer-managed-home-v1\n"
 
 
 class GatewayError(RuntimeError):
@@ -153,6 +155,29 @@ def _persist_gateway_port(root: OwnedRoot, plugin: str, requested: int | None) -
     return selected
 
 
+def _verify_home_ownership(root: OwnedRoot, home_relative: str, *, create: bool) -> Path:
+    if not isinstance(home_relative, str) or not home_relative.strip() or home_relative.startswith("/"):
+        raise GatewayError("HERMES_HOME must be a non-empty installer-owned relative path")
+    home_relative = home_relative.strip("/")
+    home = root.path(home_relative)
+    created = _ensure_private_directory(root, home_relative)
+    marker_path = root.path(home_relative + "/" + HOME_MARKER)
+    if created and create:
+        if not _write_owned_once(root, home_relative + "/" + HOME_MARKER, HOME_MARKER_CONTENT):
+            created = False
+    if created and create:
+        return home
+    try:
+        info = marker_path.lstat()
+        if (marker_path.is_symlink() or not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077
+                or marker_path.read_bytes() != HOME_MARKER_CONTENT):
+            raise OwnershipError("HERMES_HOME ownership marker is invalid")
+    except FileNotFoundError:
+        raise OwnershipError("Existing HERMES_HOME is not installer-owned; explicit adoption is required") from None
+    return home
+
+
 def materialize_hermes_provider_plugin(root: OwnedRoot, *, profile_relative: str,
                                        port: int | None, model: str) -> dict[str, str]:
     """Write or safely reconcile the supported Hermes provider plugin."""
@@ -161,6 +186,7 @@ def materialize_hermes_provider_plugin(root: OwnedRoot, *, profile_relative: str
     root.ensure()
     if model not in ALLOWED_MODELS:
         raise GatewayError("Invalid managed local provider model")
+    home = _verify_home_ownership(root, profile_relative, create=True)
     plugin = f"{profile_relative.rstrip('/')}/plugins/model-providers/{LOCAL_PROVIDER_NAME}"
     plugin_path = root.path(plugin)
     created = _ensure_private_directory(root, plugin)
@@ -180,6 +206,9 @@ def materialize_hermes_provider_plugin(root: OwnedRoot, *, profile_relative: str
         allowed_entries = {".hermes-installer-owned", ".gateway-port", "__init__.py", "plugin.yaml"}
         if any(entry.name not in allowed_entries for entry in plugin_path.iterdir()):
             raise OwnershipError("Existing provider plugin directory contains unrelated files")
+    else:
+        if not _write_owned_once(root, marker_relative, marker, 0o600):
+            raise OwnershipError("Provider plugin ownership marker raced with another writer")
     port = _persist_gateway_port(root, plugin, port)
     init = f'''"""Installer-managed provider profile. Dispatch is local and policy-gated."""
 from providers import register_provider
@@ -206,11 +235,33 @@ register_provider(ProviderProfile(
         "version: 1.0.0\n"
         "description: Installer-managed local privacy and budget gateway\n"
     ).encode("utf-8")
-    if created:
-        _write_owned(root, marker_relative, marker, 0o600)
     init_path = _write_owned(root, plugin + "/__init__.py", init, 0o600)
     manifest_path = _write_owned(root, plugin + "/plugin.yaml", manifest, 0o600)
-    return {"plugin": str(plugin_path), "entrypoint": str(init_path), "manifest": str(manifest_path), "port": str(port)}
+    return {"home": str(home), "plugin": str(plugin_path), "entrypoint": str(init_path),
+            "manifest": str(manifest_path), "port": str(port)}
+
+
+def materialize_hermes_profile_config(root: OwnedRoot, *, home_relative: str,
+                                       port: int, model: str) -> Path:
+    """Write a minimal native Hermes primary/auxiliary profile in an owned HERMES_HOME."""
+    if model not in ALLOWED_MODELS or not 1024 <= port <= 65535:
+        raise GatewayError("Invalid managed Hermes provider configuration")
+    home = _verify_home_ownership(root, home_relative, create=False)
+    text = (
+        "model:\n"
+        f"  provider: {LOCAL_PROVIDER_NAME}\n"
+        f"  default: {model}\n"
+        "providers:\n"
+        f"  {LOCAL_PROVIDER_NAME}:\n"
+        f"    name: {LOCAL_PROVIDER_NAME}\n"
+        f"    base_url: http://127.0.0.1:{port}/v1\n"
+        f"    default_model: {model}\n"
+        f"    api_key_env: {LOCAL_KEY_ENV}\n"
+        "    transport: chat_completions\n"
+    ).encode("utf-8")
+    config = root.path(home_relative.strip("/") + "/config.yaml")
+    _write_owned(root, home_relative.strip("/") + "/config.yaml", text, 0o600)
+    return config
 
 
 class _BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):

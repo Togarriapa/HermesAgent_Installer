@@ -1,0 +1,137 @@
+"""Native selected-Hermes primary and auxiliary dispatch acceptance probe.
+
+Run only in the pinned Hermes PM interpreter with HERMES_AGENT_SOURCE_ROOT set
+to the selected upstream checkout. All upstream responses terminate at a
+recording transport; no provider account, credential, or external request is used.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
+from hermes_installer.provider_gateway import (
+    LOCAL_KEY_ENV, LOCAL_PROVIDER_NAME, LocalProviderGateway,
+    materialize_hermes_profile_config, materialize_hermes_provider_plugin,
+)
+from hermes_installer.state import OwnedRoot
+
+MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+HERMES_PIN = "7085fbf7753266fc4943c55ac04926186bc90005"
+FIXTURE_KEY = "native-local-fixture-key-0123456789abcdef"
+
+
+class RecordingTransport:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, bytes]] = []
+
+    def __call__(self, route, model, payload, *, output_token_limit, timeout, trace_id, cancelled=lambda: False):
+        self.calls.append((route.name, model, payload))
+        body = json.dumps({
+            "id": "chatcmpl-native-fixture",
+            "object": "chat.completion",
+            "created": 1,
+            "model": MODEL,
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "native fixture response"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+        }, separators=(",", ":")).encode("utf-8")
+        return ProviderResponse(200, body, {"Content-Type": "application/json"}, 5, 3)
+
+
+class NativeHermesProviderDispatchTests(unittest.TestCase):
+    def test_real_primary_and_auxiliary_entrypoints_route_through_local_gate(self):
+        source_value = os.environ.get("HERMES_AGENT_SOURCE_ROOT", "")
+        if not source_value:
+            self.skipTest("set HERMES_AGENT_SOURCE_ROOT to the exact selected Hermes source checkout")
+        source = Path(source_value).resolve(strict=True)
+        commit = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            cwd=source, check=True, capture_output=True, text=True,
+            env={"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_OPTIONAL_LOCKS": "0"},
+            timeout=3,
+        ).stdout.strip()
+        self.assertEqual(commit, HERMES_PIN, "native source must match the selected immutable Hermes pin")
+
+        original_environment = os.environ.copy()
+        inserted = False
+        agent = None
+        with tempfile.TemporaryDirectory(prefix="hermes-native-dispatch-") as temporary:
+            root = OwnedRoot(Path(temporary) / "owned")
+            root.ensure()
+            plugin = materialize_hermes_provider_plugin(root, profile_relative="home", port=None, model=MODEL)
+            home = Path(plugin["home"])
+            materialize_hermes_profile_config(root, home_relative="home", port=int(plugin["port"]), model=MODEL)
+            transport = RecordingTransport()
+            dispatcher = Dispatcher(
+                DispatchPolicy({"public": default_public_route()}, "public"),
+                BudgetLedger(root), transport,
+            )
+            gateway = LocalProviderGateway(
+                dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-public",
+                sensitivity=Sensitivity.PUBLIC, model=MODEL, port=int(plugin["port"]),
+            )
+            try:
+                gateway.start()
+                os.environ.clear()
+                os.environ.update({
+                    "HOME": str(home),
+                    "HERMES_HOME": str(home),
+                    LOCAL_KEY_ENV: FIXTURE_KEY,
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PATH": "/usr/bin:/bin",
+                })
+                sys.path.insert(0, str(source))
+                inserted = True
+
+                from providers import get_provider_profile
+                profile = get_provider_profile(LOCAL_PROVIDER_NAME)
+                self.assertIsNotNone(profile, "Hermes native plugin discovery must load the managed ProviderProfile")
+                self.assertEqual(profile.base_url, f"http://127.0.0.1:{plugin['port']}/v1")
+                self.assertEqual(profile.default_aux_model, MODEL)
+
+                from run_agent import AIAgent
+                agent = AIAgent(
+                    provider=LOCAL_PROVIDER_NAME, model=MODEL, quiet_mode=True,
+                    enabled_toolsets=[], skip_context_files=True, load_soul_identity=False,
+                    skip_memory=True, skip_background_review=True,
+                )
+                primary = agent.client.chat.completions.create(
+                    model=MODEL, messages=[{"role": "user", "content": "native primary fixture"}],
+                    max_tokens=24,
+                )
+                self.assertEqual(primary.choices[0].message.content, "native fixture response")
+
+                from agent.auxiliary_client import call_llm
+                auxiliary = call_llm(
+                    task="title_generation",
+                    main_runtime={"provider": LOCAL_PROVIDER_NAME, "model": MODEL},
+                    messages=[{"role": "user", "content": "native auxiliary fixture"}],
+                    max_tokens=24, timeout=5,
+                )
+                self.assertIn("native fixture response", str(auxiliary))
+                self.assertEqual(len(transport.calls), 2)
+                self.assertEqual([call[0] for call in transport.calls], ["openrouter-nemotron-free"] * 2)
+                self.assertEqual([call[1] for call in transport.calls], [MODEL, MODEL])
+                self.assertEqual(
+                    [json.loads(call[2])["messages"][0]["content"] for call in transport.calls],
+                    ["native primary fixture", "native auxiliary fixture"],
+                )
+                self.assertFalse((Path(plugin["plugin"]) / "__pycache__").exists(),
+                                 "managed launcher must suppress plugin bytecode side effects")
+            finally:
+                if agent is not None:
+                    agent.close()
+                gateway.close()
+                if inserted:
+                    sys.path.remove(str(source))
+                os.environ.clear()
+                os.environ.update(original_environment)
+
+
+if __name__ == "__main__":
+    unittest.main()
