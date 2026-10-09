@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import uuid
 from dataclasses import dataclass
@@ -51,12 +52,53 @@ class CoralDevice:
     product_id: str
     device_node: str | None
     access_status: str
+    sysfs_path: str | None = None
+    device_major: int | None = None
+    device_minor: int | None = None
+    device_inode: int | None = None
 
     @property
     def delegate_selector(self) -> str:
         if self.transport == "usb":
             return "usb:0"
         return "pci:0"
+
+    @property
+    def identity_sha256(self) -> str:
+        """Stable selected-device identity; never treats a transport enum as identity."""
+        payload = {
+            "transport": self.transport,
+            "address": self.address,
+            "vendor_id": self.vendor_id,
+            "product_id": self.product_id,
+            "sysfs_path": self.sysfs_path,
+            "device_node": self.device_node,
+            "device_major": self.device_major,
+            "device_minor": self.device_minor,
+            "device_inode": self.device_inode,
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                                           ensure_ascii=True).encode("ascii")).hexdigest()
+
+    def host_binding_request(self) -> dict[str, object]:
+        """Return the exact identity a root enrollment must bind to a private worker."""
+        if (self.device_node is None or self.sysfs_path is None
+                or type(self.device_major) is not int or type(self.device_minor) is not int
+                or type(self.device_inode) is not int):
+            raise CoralError("Coral device lacks a complete kernel identity for root-owned binding")
+        return {
+            "schema": 1,
+            "transport": self.transport,
+            "address": self.address,
+            "vendor_id": self.vendor_id,
+            "product_id": self.product_id,
+            "sysfs_path": self.sysfs_path,
+            "device_node": self.device_node,
+            "device_major": self.device_major,
+            "device_minor": self.device_minor,
+            "device_inode": self.device_inode,
+            "identity_sha256": self.identity_sha256,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,9 +130,18 @@ def probe_coral_devices(*, sys_root: Path = Path("/sys"), dev_root: Path = Path(
                 if not bus.is_file() or not address.is_file():
                     continue
                 node = dev_root / "bus" / "usb" / bus.read_text().strip() / address.read_text().strip()
+                node_info = None
+                try:
+                    node_info = node.lstat()
+                except OSError:
+                    pass
+                is_device = node_info is not None and stat.S_ISCHR(node_info.st_mode)
                 found.append(CoralDevice("usb", entry.name, vendor, product,
-                    str(node) if node.exists() else None,
-                    "accessible" if node.exists() and os.access(node, os.R_OK | os.W_OK) else "permission_denied"))
+                    str(node) if is_device else None,
+                    "accessible" if is_device and os.access(node, os.R_OK | os.W_OK) else "permission_denied",
+                    str(entry.resolve(strict=True)), os.major(node_info.st_rdev) if is_device else None,
+                    os.minor(node_info.st_rdev) if is_device else None,
+                    node_info.st_ino if is_device else None))
     pci_root = sys_root / "bus" / "pci" / "devices"
     if pci_root.is_dir():
         for entry in sorted(pci_root.iterdir()):
@@ -101,9 +152,18 @@ def probe_coral_devices(*, sys_root: Path = Path("/sys"), dev_root: Path = Path(
                 continue
             if vendor == PCI_VENDOR and product == PCI_DEVICE:
                 node = dev_root / "apex_0"
+                node_info = None
+                try:
+                    node_info = node.lstat()
+                except OSError:
+                    pass
+                is_device = node_info is not None and stat.S_ISCHR(node_info.st_mode)
                 found.append(CoralDevice("pcie", entry.name, vendor, product,
-                    str(node) if node.exists() else None,
-                    "accessible" if node.exists() and os.access(node, os.R_OK | os.W_OK) else "driver_or_permission_pending"))
+                    str(node) if is_device else None,
+                    "accessible" if is_device and os.access(node, os.R_OK | os.W_OK) else "driver_or_permission_pending",
+                    str(entry.resolve(strict=True)), os.major(node_info.st_rdev) if is_device else None,
+                    os.minor(node_info.st_rdev) if is_device else None,
+                    node_info.st_ino if is_device else None))
     return tuple(found)
 
 
@@ -388,6 +448,7 @@ class CoralInferenceEvidence:
     elapsed_seconds: float | None
     python_version: str
     architecture: str
+    device_identity_sha256: str
     failure_reason: str | None = None
 
     def to_json(self) -> str:
@@ -405,6 +466,9 @@ def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
         raise ArtifactError("evidence does not identify the pinned official compiled Coral model")
     if raw.get("transport") != device.transport or raw.get("device_address") != device.address:
         raise ArtifactError("inference evidence does not match the selected physical Coral device")
+    identity = raw.get("device_identity_sha256")
+    if identity != device.identity_sha256 or not isinstance(identity, str):
+        raise ArtifactError("inference evidence does not match the root-selected kernel device identity")
     delegate_loaded = raw.get("delegate_loaded") is True
     delegate_used = raw.get("delegate_used") is True
     performed = raw.get("inference_performed") is True
@@ -435,7 +499,7 @@ def assess_inference_evidence(raw: Mapping[str, object], device: CoralDevice,
         device.vendor_id, device.product_id, CORAL_SAMPLE_SHA256, runtime_sha,
         str(raw.get("runtime_version", "")), str(raw.get("delegate_library", "libedgetpu.so.1")),
         True, True, delegated_ops, True, output_sha, elapsed,
-        str(raw.get("python_version", "")), str(raw.get("architecture", "")))
+        str(raw.get("python_version", "")), str(raw.get("architecture", "")), identity)
 
 
 def _sha256(path: Path) -> str:

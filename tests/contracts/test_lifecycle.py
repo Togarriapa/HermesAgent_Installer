@@ -84,9 +84,8 @@ class LifecycleRecoveryTests(unittest.TestCase):
             names = archive.getnames()
         self.assertNotIn("data/profiles/default/.env", names)
 
-    def test_uninstall_removes_only_marked_generation_and_retains_user_data(self) -> None:
+    def test_uninstall_removes_only_marked_inactive_generation_and_retains_user_data(self) -> None:
         generation = self.store.stage("agent-v1", {"bin/hermes": b"installer product"})
-        self.store.activate(generation, health_check=lambda _: True)
         overlay = self.data.path("profiles/default/SOUL.md")
         overlay.parent.mkdir(parents=True)
         overlay.write_text("keep")
@@ -103,6 +102,27 @@ class LifecycleRecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as outside:
             with self.assertRaises(OwnershipError):
                 LifecycleRecovery(self.data, self.state, self.journal).restore(Path(outside))
+
+    def test_restore_checks_each_file_against_manifest_before_installing_any_file(self) -> None:
+        first = self.data.path("profiles/default/SOUL.md")
+        second = self.data.path("overlays/private.md")
+        first.parent.mkdir(parents=True)
+        second.parent.mkdir(parents=True)
+        first.write_bytes(b"profile snapshot")
+        second.write_bytes(b"overlay snapshot")
+        recovery = LifecycleRecovery(self.data, self.state, self.journal)
+        backup = recovery.backup()
+        manifest_path = backup / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["entries"][0]["sha256"] = "0" * 64
+        manifest_path.write_text(json.dumps(manifest))
+
+        first.unlink()
+        second.unlink()
+        with self.assertRaisesRegex(LifecycleError, "manifest digest"):
+            recovery.restore(backup)
+        self.assertFalse(first.exists())
+        self.assertFalse(second.exists())
 
 
 def tarfile_open(path: Path):

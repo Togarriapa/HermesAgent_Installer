@@ -94,7 +94,8 @@
     ],
     "HW-F01": [
       "BD-F01",
-      "PR-F01"
+      "PR-F01",
+      "HW-T03"
     ],
     "HW-F02": [
       "HW-F01",
@@ -104,7 +105,9 @@
     "HW-F03": [
       "HW-F01",
       "BD-F01",
-      "PR-F01"
+      "PR-F01",
+      "HW-T01",
+      "HW-T02"
     ],
     "SK-F01": [
       "BD-F01",
@@ -865,7 +868,8 @@
       "HW-F01"
     ],
     "HW-R0042": [
-      "HW-F01"
+      "HW-F01",
+      "HW-T01"
     ],
     "HW-R0043": [
       "HW-F01"
@@ -1111,13 +1115,16 @@
       "HW-F01"
     ],
     "PR-R0124": [
-      "PR-F01"
+      "PR-F01",
+      "PR-T01"
     ],
     "PR-R0125": [
-      "PR-F01"
+      "PR-F01",
+      "PR-T01"
     ],
     "PR-R0126": [
-      "PR-F01"
+      "PR-F01",
+      "PR-T01"
     ],
     "PR-R0127": [
       "PR-F01"
@@ -2173,7 +2180,9 @@
       "RB-T04"
     ],
     "RB-T06": [
-      "RB-T05"
+      "RB-T05",
+      "RB-T07",
+      "RB-T08"
     ],
     "RP-T01": [
       "RT-F01"
@@ -2221,7 +2230,8 @@
       "PR-F03",
       "HI-T07",
       "HI-T08",
-      "HI-T09"
+      "HI-T09",
+      "HI-T11"
     ],
     "HI-T05": [
       "HI-T01",
@@ -2238,7 +2248,9 @@
       "HI-T05",
       "HI-T07",
       "HI-T08",
-      "HI-T09"
+      "HI-T09",
+      "HI-T10",
+      "HI-T11"
     ],
     "HI-T07": [
       "HI-T01",
@@ -2254,6 +2266,52 @@
     "HI-T09": [
       "HI-T01",
       "HI-T02"
+    ],
+    "RB-T07": [
+      "RB-T02",
+      "RB-T03",
+      "HI-T03",
+      "HI-T08",
+      "HI-T09"
+    ],
+    "HI-T10": [
+      "HI-T01",
+      "HI-T02",
+      "HI-T09"
+    ],
+    "RB-T08": [
+      "RB-T02",
+      "RB-T03",
+      "HI-T03",
+      "HI-T08",
+      "HI-T09"
+    ],
+    "HW-T01": [
+      "HI-T01",
+      "HI-T09",
+      "BD-F01",
+      "HW-T03"
+    ],
+    "PR-T01": [
+      "PR-F01",
+      "HI-T08",
+      "HI-T09",
+      "HI-T11"
+    ],
+    "HI-T11": [
+      "HI-T08",
+      "HI-T09"
+    ],
+    "HW-T02": [
+      "HI-T02",
+      "HI-T09",
+      "HW-T01"
+    ],
+    "HW-T03": [
+      "HI-T01",
+      "HI-T02",
+      "HI-T09",
+      "BD-F01"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."

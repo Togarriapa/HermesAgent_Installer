@@ -28,6 +28,17 @@ def test_device_selection_refuses_ambiguity_and_missing_access() -> None:
         choose_coral_device((CoralDevice("usb", "1-1", "18d1", "9302", None, "permission_denied"),))
 
 
+def test_selected_device_binding_requires_exact_kernel_node_identity() -> None:
+    selected = CoralDevice("usb", "1-1", "18d1", "9302", "/dev/bus/usb/001/002", "accessible",
+                           "/sys/devices/platform/usb/1-1", 189, 1, 4242)
+    binding = selected.host_binding_request()
+    assert binding["device_node"] == "/dev/bus/usb/001/002"
+    assert binding["device_major"] == 189 and binding["device_minor"] == 1
+    assert binding["identity_sha256"] == selected.identity_sha256
+    with pytest.raises(CoralError, match="complete kernel identity"):
+        device().host_binding_request()
+
+
 def test_legacy_runtime_is_separate_and_exactly_reports_unavailable_interpreter(tmp_path: Path) -> None:
     plan = runtime_plan(device(), component_root=tmp_path / "component", architecture="aarch64",
         hermes_python=Path("/usr/bin/python3"))
@@ -140,7 +151,7 @@ def test_delegate_use_and_actual_output_required_even_for_selected_device(tmp_pa
         "runtime_version": "2.14", "python_version": "3.9", "architecture": "aarch64",
         "delegate_loaded": True, "delegate_used": True, "delegated_operation_count": 1,
         "inference_performed": True, "output_sha256": "b" * 64, "elapsed_seconds": 0.04,
-        "hermes_python_changed": False}
+        "hermes_python_changed": False, "device_identity_sha256": device().identity_sha256}
     assert assess_inference_evidence(base, device(), sample_path=sample, runtime_path=runtime).status == "verified_delegate_used"
     for patch, message in (({"delegate_used": False}, "completed inference"),
                            ({"delegated_operation_count": 0}, "completed inference"),
@@ -151,6 +162,9 @@ def test_delegate_use_and_actual_output_required_even_for_selected_device(tmp_pa
             assess_inference_evidence(base | patch, device(), sample_path=sample, runtime_path=runtime)
     with pytest.raises(ArtifactError, match="model"):
         assess_inference_evidence(base | {"model_sha256": "0" * 64}, device(), sample_path=sample, runtime_path=runtime)
+    with pytest.raises(ArtifactError, match="kernel device identity"):
+        assess_inference_evidence(base | {"device_identity_sha256": "0" * 64}, device(),
+                                  sample_path=sample, runtime_path=runtime)
 
 
 def test_worker_calls_delegate_invokes_model_and_requires_delegate_operation(tmp_path: Path, monkeypatch) -> None:
@@ -195,7 +209,7 @@ def test_worker_calls_delegate_invokes_model_and_requires_delegate_operation(tmp
     monkeypatch.setitem(sys.modules, "tflite_runtime", parent_runtime)
     monkeypatch.setitem(sys.modules, "tflite_runtime.interpreter", fake_tflite)
     evidence = worker.run_inference(model, transport="usb", address="1-1", device_selector="usb:0",
-                                    runtime_library=str(runtime))
+                                    device_identity_sha256="c" * 64, runtime_library=str(runtime))
     assert evidence["delegate_loaded"] and evidence["delegate_used"]
     assert evidence["delegated_operation_count"] == 1 and evidence["inference_performed"]
     assert evidence["output_sha256"] == __import__("hashlib").sha256(b"input").hexdigest()
@@ -204,4 +218,4 @@ def test_worker_calls_delegate_invokes_model_and_requires_delegate_operation(tmp
     monkeypatch.setitem(sys.modules, "tflite_runtime.interpreter", no_delegate)
     with pytest.raises(RuntimeError, match="fallback is disabled"):
         worker.run_inference(model, transport="usb", address="1-1", device_selector="usb:0",
-                             runtime_library=str(runtime))
+                             device_identity_sha256="c" * 64, runtime_library=str(runtime))
