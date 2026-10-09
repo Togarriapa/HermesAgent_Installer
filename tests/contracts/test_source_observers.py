@@ -317,9 +317,15 @@ class SourceObserverContracts(unittest.TestCase):
         delivered = self.registry.take_source_receipt(
             str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
         self.assertEqual(delivered, result)
+        current_handle = self.registry.resolve_delivered_source_receipt(
+            str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        self.assertEqual(current_handle, result)
         with self.assertRaises(AuthorityDenied):
             self.registry.take_source_receipt(
                 str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        with self.assertRaises(AuthorityDenied):
+            self.registry.resolve_delivered_source_receipt(
+                str(result), peer_uid=2003, peer_pid=844, peer_pidfd=1501)
 
     def test_atomic_root_ingress_capture_does_not_expose_generated_event_id(self):
         result = self.registry.capture_observed_ingress(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import math
 import os
 import secrets
@@ -347,7 +348,8 @@ class SourceObserverRegistry:
 
     def record_observed_event(self, observer_enrollment_id: str, *, payload_bytes: bytes,
                               parent_context: HostContext, peer_pid: int, peer_pidfd: int,
-                              parent_receipt_handles: Sequence[str] = ()) -> str:
+                              parent_receipt_handles: Sequence[str] = (),
+                              _selected_native_target: Any = None) -> str:
         """Capture exact bytes already observed by a selected root ingress/result adapter.
 
         The adapter selects the observer ID from protected dispatch state. This
@@ -393,23 +395,32 @@ class SourceObserverRegistry:
             raise AuthorityDenied("source.package", "root loaded-package custody proof is unavailable")
         loaded_package_proof = self._resolve_loaded_package_proof(
             identity, observer, package, now, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
-        if not callable(self.target_peer_resolver):
+        if _selected_native_target is None and not callable(self.target_peer_resolver):
             raise AuthorityDenied("source.target", "root-selected target peer channel is unavailable")
-        selected_target = self.target_peer_resolver(observer, parent_context)
-        target_owned_fd = getattr(selected_target, "pidfd", None)
+        selected_target = (_selected_native_target if _selected_native_target is not None
+                           else self.target_peer_resolver(observer, parent_context))
+        selected_pid = getattr(selected_target, "peer_pid", getattr(selected_target, "pid", None))
+        selected_identity = getattr(selected_target, "live_peer_identity",
+                                    getattr(selected_target, "identity", None))
+        selected_uid = getattr(selected_target, "uid",
+                               getattr(selected_identity, "kernel_uid", None))
+        selected_profile_id = getattr(selected_target, "profile_id", None)
+        selected_generation = getattr(selected_target, "generation", None)
+        target_owned_fd = getattr(selected_target, "peer_pidfd",
+                                  getattr(selected_target, "pidfd", None))
         pinned_target_fd = -1
         try:
-            if (selected_target is None or type(getattr(selected_target, "pid", None)) is not int
+            if (selected_target is None or type(selected_pid) is not int
                     or type(target_owned_fd) is not int or target_owned_fd < 0
-                    or type(getattr(selected_target, "uid", None)) is not int
-                    or not isinstance(getattr(selected_target, "profile_id", None), str)
-                    or not isinstance(getattr(selected_target, "generation", None), str)):
+                    or type(selected_uid) is not int
+                    or not isinstance(selected_profile_id, str)
+                    or not isinstance(selected_generation, str)):
                 raise AuthorityDenied("source.target", "root-selected target peer binding is malformed")
             selected_target_identity = self.process_resolver(
-                selected_target.pid, target_owned_fd,
-                profile_id=selected_target.profile_id, generation=selected_target.generation)
-            if (selected_target_identity is None or selected_target_identity != selected_target.identity
-                    or selected_target_identity.kernel_uid != selected_target.uid):
+                selected_pid, target_owned_fd,
+                profile_id=selected_profile_id, generation=selected_generation)
+            if (selected_target_identity is None or selected_target_identity != selected_identity
+                    or selected_target_identity.kernel_uid != selected_uid):
                 raise AuthorityDenied("source.target", "selected target role is not a live enrolled peer")
             parents = self._resolve_parent_closure(
                 observer, parent_receipt_handles, parent_context, binding, peer_pid, identity)
@@ -431,8 +442,8 @@ class SourceObserverRegistry:
                 observer, event_id, invocation_id, bytes(payload_bytes), digest,
                 parent_context, parents, tuple(parent_receipt_handles), peer_pid, pinned_fd,
                 identity, package, adapter, loaded_package_proof,
-                selected_target.pid, pinned_target_fd,
-                selected_target.uid, selected_target.profile_id, selected_target.generation,
+                selected_pid, pinned_target_fd,
+                selected_uid, selected_profile_id, selected_generation,
                 selected_target_identity, self.service.authority_epoch, now,
                 min(parent_context.monotonic_expires_at, now + observer.lease_seconds),
             )
@@ -728,6 +739,43 @@ class SourceObserverRegistry:
             binding.delivered = True
             return SourceReceiptHandle(handle)
 
+    def resolve_delivered_source_receipt(self, handle: str, *, peer_uid: int,
+                                         peer_pid: int, peer_pidfd: int
+                                         ) -> SourceReceiptHandle:
+        """Revalidate an already-delivered opaque receipt for a root coordinator.
+
+        This is deliberately a non-consuming lookup: the producer delivery was
+        consumed by :meth:`take_source_receipt`; callers may use this only to
+        confirm the same current target while sequencing its one-time stdin
+        phase.  It returns the same opaque token and never exposes receipt
+        claims or payload bytes.
+        """
+        if (not isinstance(handle, str) or not 32 <= len(handle) <= 128
+                or type(peer_uid) is not int or type(peer_pid) is not int
+                or type(peer_pidfd) is not int or peer_pidfd < 0):
+            raise AuthorityDenied("source.delivery", "receipt delivery lookup is malformed")
+        now = self.service.monotonic()
+        with self._lock:
+            binding = self._receipt_delivery_bindings.get(handle)
+            capsule_entry = self._payload_capsules.get(handle)
+            if (binding is None or capsule_entry is None or not binding.delivered
+                    or binding.pid != peer_pid or binding.uid != peer_uid
+                    or binding.authority_epoch != self.service.authority_epoch
+                    or now >= binding.expires
+                    or capsule_entry[0].receipt_id != binding.receipt_id
+                    or capsule_entry[3] != self.service.authority_epoch):
+                raise AuthorityDenied("source.delivery", "receipt is not delivered to this current peer")
+            live = self.process_resolver(peer_pid, peer_pidfd,
+                                         profile_id=binding.profile_id,
+                                         generation=binding.generation)
+            retained = self.process_resolver(binding.pid, binding.pidfd,
+                                             profile_id=binding.profile_id,
+                                             generation=binding.generation)
+            if (live is None or retained is None or live != binding.identity
+                    or retained != binding.identity or live.kernel_uid != peer_uid):
+                raise AuthorityDenied("source.delivery", "delivered receipt peer identity changed")
+            return SourceReceiptHandle(handle)
+
     def capture_observed_ingress(self, observer_enrollment_id: str, *,
                                  payload_bytes: bytes, parent_context: HostContext,
                                  peer_pid: int, peer_pidfd: int,
@@ -748,6 +796,63 @@ class SourceObserverRegistry:
             observer_enrollment_id, event_id, payload_bytes,
             parent_receipt_handles,
         )
+
+    def capture_selected_native_ingress(
+        self, observer_enrollment_id: str, *, payload_bytes: bytes,
+        parent_context: HostContext, selected_execution: Any,
+        target: Any, selection_registry: Any,
+        parent_receipt_handles: Sequence[str] = (),
+    ) -> SourceReceiptHandle:
+        """Capture the exact pre-EOF input for one root-selected native task.
+
+        ``target`` must be the exact live target object issued by the attached
+        selection registry. Its PIDFD ownership transfers to this call. This
+        route deliberately bypasses the later HI11 pending-pair resolver: the
+        selected task itself is the receipt target for its initial stdin.
+        """
+        if (not isinstance(observer_enrollment_id, str)
+                or not callable(getattr(selection_registry,
+                                        "consume_selected_native_input_target", None))):
+            raise AuthorityDenied("source.native_input", "selected native input proof is unavailable")
+        selected = selection_registry.resolve_current_execution(selected_execution)
+        if selected.observer_enrollment_id != observer_enrollment_id:
+            raise AuthorityDenied("source.native_input", "native input observer differs from root selection")
+        consumed_target = selection_registry.consume_selected_native_input_target(selected, target)
+        if consumed_target is not target:
+            raise AuthorityDenied("source.native_input", "native target selection was not retained by root")
+        observer = self.observers.get(observer_enrollment_id)
+        if (observer is None or observer.source_kind != "native-input"
+                or observer.profile_id != selected.profile_id
+                or observer.generation != selected.native_package_generation
+                or observer.package_id != selected.native_package_id):
+            fd = getattr(target, "peer_pidfd", -1)
+            if type(fd) is int and fd >= 0:
+                os.close(fd)
+            raise AuthorityDenied("source.native_input", "selected native observer changed")
+        try:
+            event_id = self.record_observed_event(
+                observer_enrollment_id, payload_bytes=payload_bytes,
+                parent_context=parent_context, peer_pid=target.peer_pid,
+                peer_pidfd=target.peer_pidfd,
+                parent_receipt_handles=parent_receipt_handles,
+                _selected_native_target=target,
+            )
+            return self.capture_observed_source(
+                observer_enrollment_id, event_id, payload_bytes,
+                parent_receipt_handles,
+            )
+        except BaseException:
+            # record_observed_event takes ownership once invoked and closes the
+            # target descriptor on every path. If validation failed before that
+            # call, the descriptor is still owned here.
+            if getattr(target, "peer_pidfd", -1) >= 0:
+                try:
+                    os.fstat(target.peer_pidfd)
+                except OSError:
+                    pass
+                else:
+                    os.close(target.peer_pidfd)
+            raise
 
     def resolve_live_source_producer(self, receipt_id: str, *, profile_id: str,
                                      generation: str, native_process_identity: str,
@@ -1230,6 +1335,357 @@ class SourceObserverRegistry:
                 return
             self._prune_locked(now)
             self._prune_receipt_bindings_locked(now)
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedNativeExecution:
+    """Root-local selected task/process/package/action join for initial input."""
+
+    schema: int
+    selection_handle: str
+    kind: str
+    execution_handle: Any = field(repr=False, compare=False)
+    process_handle: Any = field(repr=False, compare=False)
+    profile_id: str
+    generation: str
+    native_package_id: str
+    native_package_generation: str
+    observer_enrollment_id: str
+    source_action_id: str
+    service_generation_digest: str
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (type(self.schema) is not int or self.schema != 1
+                or not isinstance(self.selection_handle, str)
+                or not 32 <= len(self.selection_handle) <= 128
+                or any(char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+                       for char in self.selection_handle)
+                or self.kind not in {"resource-task", "native-health", "desktop-input"}
+                or any(not isinstance(getattr(self, name), str) or not getattr(self, name)
+                       for name in ("profile_id", "generation", "native_package_id",
+                                    "native_package_generation", "observer_enrollment_id",
+                                    "source_action_id", "service_generation_digest"))
+                or not math.isfinite(self.expires_monotonic)):
+            raise ValueError("selected native execution binding is malformed")
+
+
+@dataclass(frozen=True, slots=True)
+class _SelectedNativeExecutionRecord:
+    selection: RootSelectedNativeExecution = field(repr=False)
+    running_binding: Any = field(repr=False)
+    observer: SourceObserverEnrollment = field(repr=False)
+    package: Any = field(repr=False)
+    adapter: Any = field(repr=False)
+    authority_epoch: str
+
+
+class RootNativeExecutionSelectionRegistry:
+    """Select one admitted running task and its unique native-input observer.
+
+    Selection joins the exact original resource handle, already-resolved source
+    snapshot, live managed-task handle, current profile/package adapter, and
+    protected source-observer row.  A DTO copy or a handle from another task
+    cannot be resolved.  The concrete target resolver separately binds the
+    current PIDFD and loaded-package proof before any stdin capture/delivery.
+    """
+
+    def __init__(self, source_observer_registry: SourceObserverRegistry,
+                 admitted_task_registry: Any, process_custody_registry: Any,
+                 task_native_observation_registry: Any,
+                 *, monotonic: Callable[[], float] | None = None) -> None:
+        from ..managed_process_custodian import ManagedProcessEffectHandler
+        from ..registry.resource_jobs import ResourceJobAuthority
+
+        if (type(source_observer_registry) is not SourceObserverRegistry
+                or not isinstance(admitted_task_registry, ResourceJobAuthority)
+                or not isinstance(process_custody_registry, ManagedProcessEffectHandler)
+                or source_observer_registry.service is not admitted_task_registry.service
+                or not callable(getattr(task_native_observation_registry,
+                                        "resolve_running_task_binding", None))):
+            raise AuthorityDenied("resource.native_selection", "root native execution selection dependencies are unavailable")
+        self.source_observers = source_observer_registry
+        self.admitted_tasks = admitted_task_registry
+        self.process_custody = process_custody_registry
+        self.task_observations = task_native_observation_registry
+        self.service = source_observer_registry.service
+        self.monotonic = monotonic or self.service.monotonic
+        if not callable(self.monotonic):
+            raise ValueError("root native selection monotonic clock is required")
+        self._lock = threading.RLock()
+        self._selections: dict[str, _SelectedNativeExecutionRecord] = {}
+        self._targets: dict[str, Any] = {}
+        self._target_resolver: Any = None
+        self._closed = False
+
+    def select_resource_task(self, admission_handle: Any, node_id: str,
+                             managed_task_handle: Any) -> RootSelectedNativeExecution:
+        """Join exact root admission/source with the actual pre-EOF task handle."""
+        from ..managed_process_custodian import ManagedTaskHandle
+        from ..registry.resource_jobs import RootResourceJobAdmissionHandle
+
+        if (type(admission_handle) is not RootResourceJobAdmissionHandle
+                or type(managed_task_handle) is not ManagedTaskHandle
+                or node_id != admission_handle.node_id):
+            raise AuthorityDenied("resource.native_selection", "initial native selection arguments are invalid")
+        now = self.monotonic()
+        if (self._closed or now >= admission_handle.expires_monotonic
+                or admission_handle.operation_id != "hermes-resource-profile-task-v1"
+                or self.admitted_tasks.task_handle_cancelled(admission_handle, node_id)):
+            raise AuthorityDenied("resource.native_selection", "resource task admission is stale or cancelled")
+        binding = self.task_observations.resolve_running_task_binding(
+            admission_handle, node_id, managed_task_handle)
+        admitted_task = getattr(binding, "admitted_task", None)
+        try:
+            selected_prompt = json.loads(admission_handle.task_payload.decode("utf-8"))["prompt"]
+            expected_stdin_sha256 = hashlib.sha256(selected_prompt.encode("utf-8")).hexdigest()
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, AttributeError):
+            raise AuthorityDenied("resource.native_selection", "admitted task prompt is malformed") from None
+        if (getattr(binding, "admission_handle", None) is not admission_handle
+                or getattr(binding, "managed_task_handle", None) is not managed_task_handle
+                or getattr(binding, "node_id", None) != node_id
+                or getattr(binding, "service_generation_digest", None)
+                != self.service.service_generation_digest
+                or getattr(binding, "resource_generation", None) != admission_handle.resource_generation
+                or getattr(binding, "profile_id", None) != admission_handle.profile_id
+                or getattr(binding, "process_generation", None) != admission_handle.process_generation
+                or getattr(binding, "native_package_id", None) != admission_handle.native_package_id
+                or getattr(binding, "native_package_generation", None)
+                != admission_handle.native_package_generation
+                or getattr(binding, "task_payload_sha256", None) != admission_handle.task_payload_sha256
+                or getattr(binding, "parent_closure_digest", None)
+                != admission_handle.parent_closure_digest
+                or getattr(getattr(binding, "source", None), "parent_closure_digest", None)
+                != admission_handle.parent_closure_digest
+                or getattr(getattr(binding, "source", None), "expires_monotonic", 0) <= now
+                or getattr(admitted_task, "task_payload_bytes", None) != admission_handle.task_payload
+                or getattr(admitted_task, "task_payload_sha256", None) != admission_handle.task_payload_sha256
+                or getattr(admitted_task, "parent_closure_digest", None)
+                != admission_handle.parent_closure_digest
+                or getattr(admitted_task, "stdin_sha256", None) != expected_stdin_sha256
+                or now >= getattr(binding, "deadline_monotonic", 0)):
+            raise AuthorityDenied("resource.native_selection", "retained admitted-task binding is stale or mismatched")
+        process_state = self.process_custody._resolve_task_handle(managed_task_handle)
+        process_handle = getattr(process_state, "handle", None)
+        profile = getattr(process_handle, "profile", None)
+        admission = getattr(process_state, "admission", None)
+        if (process_handle is None or process_handle is not getattr(binding, "process_handle", None)
+                or getattr(process_state, "input_closed", False) is not False
+                or getattr(process_state, "consumed", True) is not False
+                or getattr(process_handle, "process_id", None) != getattr(binding, "process_handle", None).process_id
+                or getattr(profile, "profile_id", None) != admission_handle.profile_id
+                or getattr(profile, "generation", None) != admission_handle.profile_generation
+                or getattr(admission, "admission_id", None) != admission_handle.child_admission_id
+                or getattr(admission, "job_id", None) != admission_handle.job_id
+                or getattr(admission, "node_id", None) != node_id
+                or getattr(admission, "task_payload_sha256", None)
+                != admission_handle.task_payload_sha256
+                or getattr(admission, "parent_closure_digest", None)
+                != admission_handle.parent_closure_digest
+                or getattr(admission, "native_package_id", None) != admission_handle.native_package_id
+                or getattr(admission, "native_package_generation", None)
+                != admission_handle.native_package_generation):
+            raise AuthorityDenied("resource.native_selection", "managed process is not the selected pre-stdin task")
+
+        candidates: list[tuple[SourceObserverEnrollment, Any, Any]] = []
+        for observer in self.source_observers.observers.values():
+            if (observer.source_kind != "native-input"
+                    or observer.profile_id != admission_handle.profile_id
+                    or observer.package_id != admission_handle.native_package_id
+                    or observer.generation != admission_handle.native_package_generation):
+                continue
+            try:
+                package, adapter = self.source_observers._resolve_package_role(observer)
+            except AuthorityDenied:
+                continue
+            if (getattr(package, "package_id", None) == admission_handle.native_package_id
+                    and getattr(package, "profile_id", None) == admission_handle.profile_id
+                    and getattr(package, "generation", None) == admission_handle.native_package_generation
+                    and getattr(adapter, "action_id", None) == observer.source_action_id
+                    and getattr(adapter, "adapter_id", None) == observer.role_id):
+                candidates.append((observer, package, adapter))
+        if len(candidates) != 1:
+            raise AuthorityDenied("resource.native_selection", "selected package has no unique native-input observer/action join")
+        observer, package, adapter = candidates[0]
+        expiry = min(float(admission_handle.expires_monotonic),
+                     float(binding.deadline_monotonic), float(getattr(process_state, "deadline", 0)))
+        if (not math.isfinite(expiry) or expiry <= now
+                or self.service.service_generation_digest != binding.service_generation_digest):
+            raise AuthorityDenied("resource.native_selection", "selected task or package lease expired")
+        selected = RootSelectedNativeExecution(
+            schema=1, selection_handle=secrets.token_urlsafe(32), kind="resource-task",
+            execution_handle=admission_handle, process_handle=managed_task_handle,
+            profile_id=admission_handle.profile_id, generation=admission_handle.process_generation,
+            native_package_id=admission_handle.native_package_id,
+            native_package_generation=admission_handle.native_package_generation,
+            observer_enrollment_id=observer.observer_enrollment_id,
+            source_action_id=adapter.action_id,
+            service_generation_digest=self.service.service_generation_digest,
+            expires_monotonic=expiry,
+        )
+        record = _SelectedNativeExecutionRecord(
+            selected, binding, observer, package, adapter, self.service.authority_epoch)
+        with self._lock:
+            self._prune_locked(now)
+            if self._closed or len(self._selections) >= 128:
+                raise AuthorityDenied("resource.native_capacity", "root selected execution capacity is unavailable")
+            if selected.selection_handle in self._selections:
+                raise AuthorityDenied("resource.native_replay", "root selection handle collided")
+            self._selections[selected.selection_handle] = record
+        return selected
+
+    def resolve_current_execution(self, selected_execution: RootSelectedNativeExecution
+                                  ) -> RootSelectedNativeExecution:
+        """Revalidate and return only the identical root-held selection object."""
+        from ..managed_process_custodian import ManagedTaskHandle
+        from ..registry.resource_jobs import RootResourceJobAdmissionHandle
+
+        if type(selected_execution) is not RootSelectedNativeExecution:
+            raise AuthorityDenied("resource.native_selection", "selected execution proof type is invalid")
+        with self._lock:
+            record = self._selections.get(selected_execution.selection_handle)
+            if record is None or record.selection is not selected_execution or self._closed:
+                raise AuthorityDenied("resource.native_selection", "selected execution is forged, expired, or consumed")
+        admission_handle = selected_execution.execution_handle
+        task_handle = selected_execution.process_handle
+        if (type(admission_handle) is not RootResourceJobAdmissionHandle
+                or type(task_handle) is not ManagedTaskHandle
+                or self.monotonic() >= selected_execution.expires_monotonic
+                or self.service.authority_epoch != record.authority_epoch
+                or self.service.service_generation_digest != selected_execution.service_generation_digest
+                or self.admitted_tasks.task_handle_cancelled(admission_handle, admission_handle.node_id)):
+            raise AuthorityDenied("resource.native_selection", "selected task epoch or lease is stale")
+        current = self.task_observations.resolve_running_task_binding(
+            admission_handle, admission_handle.node_id, task_handle)
+        if (current is not record.running_binding
+                or getattr(current, "admission_handle", None) is not admission_handle
+                or getattr(current, "managed_task_handle", None) is not task_handle
+                or getattr(current, "service_generation_digest", None)
+                != selected_execution.service_generation_digest
+                or getattr(current, "process_generation", None) != selected_execution.generation
+                or getattr(current, "native_package_id", None) != selected_execution.native_package_id
+                or getattr(current, "native_package_generation", None)
+                != selected_execution.native_package_generation):
+            raise AuthorityDenied("resource.native_selection", "current running task differs from selected execution")
+        state = self.process_custody._resolve_task_handle(task_handle)
+        if (getattr(state, "input_closed", True) is not False
+                or getattr(state, "handle", None) is not getattr(current, "process_handle", None)
+                or getattr(state, "consumed", True) is not False):
+            raise AuthorityDenied("resource.native_selection", "selected process is not live before stdin EOF")
+        observer = self.source_observers.observers.get(selected_execution.observer_enrollment_id)
+        if observer is not record.observer:
+            raise AuthorityDenied("resource.native_selection", "selected package observer changed")
+        package, adapter = self.source_observers._resolve_package_role(observer)
+        if (package is not record.package or adapter is not record.adapter
+                or adapter.action_id != selected_execution.source_action_id
+                or package.package_id != selected_execution.native_package_id
+                or package.generation != selected_execution.native_package_generation):
+            raise AuthorityDenied("resource.native_selection", "selected package action closure changed")
+        return selected_execution
+
+    def attach_native_input_target_resolver(self, resolver: Any) -> None:
+        """Attach the concrete PIDFD/loaded-package target resolver exactly once."""
+        from .native_custody_proof import RootNativeInputTargetResolver
+
+        if (type(resolver) is not RootNativeInputTargetResolver
+                or getattr(resolver, "selection_registry", None) is not self):
+            raise ValueError("the concrete root native-input target resolver is required")
+        with self._lock:
+            if self._target_resolver is not None:
+                raise AuthorityDenied("resource.native_target", "native target resolver is already attached")
+            self._target_resolver = resolver
+
+    def resolve_selected_native_input_target(self,
+                                             selected_execution: RootSelectedNativeExecution) -> Any:
+        """Resolve one actual PIDFD/loaded-closure target for selected input."""
+        selected = self.resolve_current_execution(selected_execution)
+        with self._lock:
+            resolver = self._target_resolver
+        if resolver is None:
+            raise AuthorityDenied("resource.native_target", "root native-input target resolver is unavailable")
+        target = resolver.resolve_selected_native_input_target(selected)
+        record = self._selections[selected.selection_handle]
+        expected_process_id = getattr(getattr(record.running_binding, "process_handle", None),
+                                      "process_id", None)
+        loaded = getattr(target, "loaded_package_proof", None)
+        if (not isinstance(getattr(target, "process_id", None), str)
+                or getattr(target, "profile_id", None) != selected.profile_id
+                or getattr(target, "generation", None) != selected.generation
+                or target.process_id != expected_process_id
+                or type(getattr(target, "peer_pid", None)) is not int
+                or target.peer_pid <= 0
+                or type(getattr(target, "peer_pidfd", None)) is not int
+                or target.peer_pidfd < 0
+                or getattr(target, "live_peer_identity", None) is None
+                or getattr(loaded, "package_id", None) != selected.native_package_id
+                or getattr(loaded, "profile_id", None) != selected.profile_id
+                or getattr(loaded, "generation", None) != selected.generation
+                or getattr(loaded, "target_peer_identity", None) != target.live_peer_identity
+                or getattr(target, "service_generation_digest", None)
+                != selected.service_generation_digest
+                or getattr(target, "expires_monotonic", 0) > selected.expires_monotonic):
+            fd = getattr(target, "peer_pidfd", None)
+            if type(fd) is int and fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise AuthorityDenied("resource.native_target", "native input target differs from selected task")
+        with self._lock:
+            if (self._closed or self._selections.get(selected.selection_handle) is not record
+                    or selected.selection_handle in self._targets):
+                try:
+                    os.close(target.peer_pidfd)
+                except OSError:
+                    pass
+                raise AuthorityDenied("resource.native_target", "native input target is stale or already selected")
+            self._targets[selected.selection_handle] = target
+        return target
+
+    def consume_selected_native_input_target(
+        self, selected_execution: RootSelectedNativeExecution, target: Any,
+    ) -> Any:
+        """Consume the exact PIDFD target previously issued for this selection."""
+        selected = self.resolve_current_execution(selected_execution)
+        with self._lock:
+            retained = self._targets.pop(selected.selection_handle, None)
+        if retained is None or retained is not target:
+            raise AuthorityDenied("resource.native_target", "native target was not issued for this selection")
+        return retained
+
+    def release_selection(self, selected_execution: RootSelectedNativeExecution) -> None:
+        if type(selected_execution) is not RootSelectedNativeExecution:
+            raise AuthorityDenied("resource.native_selection", "selected execution proof type is invalid")
+        with self._lock:
+            record = self._selections.get(selected_execution.selection_handle)
+            if record is None or record.selection is not selected_execution:
+                raise AuthorityDenied("resource.native_selection", "selected execution is forged or consumed")
+            self._selections.pop(selected_execution.selection_handle, None)
+            target = self._targets.pop(selected_execution.selection_handle, None)
+        if target is not None:
+            try:
+                os.close(target.peer_pidfd)
+            except OSError:
+                pass
+
+    def _prune_locked(self, now: float) -> None:
+        for handle, record in tuple(self._selections.items()):
+            if (record.selection.expires_monotonic <= now
+                    or record.authority_epoch != self.service.authority_epoch
+                    or record.selection.service_generation_digest != self.service.service_generation_digest):
+                self._selections.pop(handle, None)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._selections.clear()
+            targets = tuple(self._targets.values())
+            self._targets.clear()
+        for target in targets:
+            try:
+                os.close(target.peer_pidfd)
+            except OSError:
+                pass
 
 
 def _identifier(value: Any, name: str) -> None:
