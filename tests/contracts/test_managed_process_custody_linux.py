@@ -22,6 +22,7 @@ import threading
 import time
 import unittest
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -418,10 +419,62 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             "time.sleep(30)\n"
         )
 
+    @staticmethod
+    def _native_loader_progress_source(binding) -> str:
+        return (
+            "import json,socket,struct\n"
+            "_sock=socket.socket(fileno=3)\n"
+            "_nonce=b''\n"
+            "while len(_nonce)<43:\n"
+            "    _part=_sock.recv(43-len(_nonce))\n"
+            "    if not _part: raise SystemExit(91)\n"
+            "    _nonce+=_part\n"
+            f"_package={binding.package_id!r}\n"
+            f"_generation={binding.generation!r}\n"
+            f"_entrypoint={binding.entrypoint_sha256!r}\n"
+            f"_resolver={binding.resolver_sha256!r}\n"
+            "for _seq,_phase in enumerate(('entrypoint-imported','actions-registered','ready')):\n"
+            "    _actions=[] if _seq==0 else ['ci-native-action']\n"
+            "    _record={'schema':1,'launch_nonce':_nonce.decode('ascii'),'sequence':_seq,"
+            "'phase':_phase,'package_id':_package,'generation':_generation,"
+            "'entrypoint_sha256':_entrypoint,'resolver_sha256':_resolver,"
+            "'registered_action_ids':_actions}\n"
+            "    _body=json.dumps(_record,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')\n"
+            "    _sock.sendall(struct.pack('!I',len(_body))+_body)\n"
+            "_sock.close()\n"
+        )
+
+    def _install_native_loader_store(self, package: ManagedNativePackageMount) -> None:
+        from hermes_installer.authority.native_custody_proof import (
+            NativeLoaderSelection, RootNativeLoaderObservationStore,
+        )
+
+        binding = package.binding
+        self.profile = replace(self.profile, native_package=binding)
+        self.handler.profiles[self.profile.profile_id] = self.profile
+        self.handler.native_package_resolver = lambda profile_id, generation: (
+            package if profile_id == binding.profile_id and generation == binding.generation else None)
+
+        def resolve(owned_handle):
+            return NativeLoaderSelection(
+                process_id=owned_handle.process_id, package_id=binding.package_id,
+                profile_id=binding.profile_id, generation=binding.generation,
+                compiled_closure_sha256=binding.compiled_closure_sha256,
+                entrypoint_sha256=binding.entrypoint_sha256,
+                resolver_sha256=binding.resolver_sha256,
+                service_generation_digest="d" * 64,
+                loader_role_artifact_id=binding.entrypoint_artifact_id,
+                loader_role_sha256=binding.entrypoint_sha256,
+                registered_action_ids=("ci-native-action",),
+            )
+
+        self.handler.set_native_loader_observation_store(RootNativeLoaderObservationStore(
+            self.handler, resolve, source_target_selector=lambda *_args: None))
+
     def _native_package_fixture(self) -> ManagedNativePackageMount:
         from types import SimpleNamespace
 
-        root = self.stage / "native-fixture"
+        root = self.stage / f"native-fixture-{uuid.uuid4().hex}"
         closure = root / "closure"
         closure.mkdir(parents=True, mode=0o755)
         module = closure / "adapter.py"
@@ -650,8 +703,10 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
 
     def test_native_package_mount_is_verified_before_exec_and_live_proof_is_handle_bound(self) -> None:
         package = self._native_package_fixture()
-        self.handler.native_package_resolver = lambda profile_id, generation: (
-            package if profile_id == self.profile_id and generation == self.profile.generation else None)
+        self._install_native_loader_store(package)
+        self.native_store_id, self.native_digest, self.native_script = self._enroll_script(
+            "native-loader", self._native_loader_progress_source(package.binding)
+            + self._native_mount_probe_source())
         client, started = self._start_client(mode="native-package")
         try:
             proof = self.handler.resolve_loaded_native_package(

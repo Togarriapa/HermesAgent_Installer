@@ -12,6 +12,9 @@ import hashlib
 import inspect
 import secrets
 import threading
+import math
+import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -39,6 +42,54 @@ class _PendingEvent:
     event_receipt_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class RootPendingNativePeer:
+    """Root-selected live bridge peer; ``pidfd`` ownership belongs to broker."""
+
+    role: str
+    principal_id: str
+    profile_id: str
+    generation: str
+    pid: int
+    pidfd: int
+    uid: int
+    identity: Any
+    role_artifact_id: str
+    role_artifact_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class RootObserverDeliveryBinding:
+    observer_enrollment_id: str
+    delivery_role: str
+
+
+@dataclass(frozen=True, slots=True)
+class RootPendingNativePair:
+    """Immutable root-private pair record. Never serialized to a worker."""
+
+    schema: int
+    pair_id: str
+    bridge_enrollment_id: str
+    native_request_handle: str
+    parent_context_sha256: str
+    parent_grant_id: str
+    intent_id: str
+    trace_id: str
+    parent_closure_digest: str
+    service_generation_digest: str
+    producer: RootPendingNativePeer
+    gateway: RootPendingNativePeer
+    observer_delivery_bindings: tuple[RootObserverDeliveryBinding, ...]
+    expires_monotonic: float
+
+
+@dataclass(slots=True)
+class _PendingPairRecord:
+    pair: RootPendingNativePair
+    context_key: tuple[str, str, str, str, str]
+
+
 class NativeBridgeBroker:
     """Root-only atomic event admission and gateway dispatch coordinator."""
 
@@ -46,7 +97,10 @@ class NativeBridgeBroker:
                  process_resolver: Callable[..., Any], canonicalizer: Callable[..., Any],
                  root_selected_enrollments: Mapping[str, Mapping[tuple[str, str], Any]],
                  canonicalizer_sha256: str,
-                 provider_response_registry: Any | None = None):
+                 provider_response_registry: Any | None = None,
+                 observer_delivery_bindings: Mapping[str, tuple[RootObserverDeliveryBinding, ...]] | None = None,
+                 peer_role_artifact_resolver: Callable[[Any, str], tuple[str, str]] | None = None,
+                 monotonic: Callable[[], float] = time.monotonic):
         if (not bridges or not callable(process_resolver) or not callable(canonicalizer)
                 or not root_selected_enrollments
                 or set(root_selected_enrollments) != set(bridges)
@@ -67,7 +121,18 @@ class NativeBridgeBroker:
                                           for key, value in root_selected_enrollments.items()}
         self.canonicalizer_sha256 = canonicalizer_sha256
         self.provider_response_registry = provider_response_registry
+        if (observer_delivery_bindings is not None
+                and (not isinstance(observer_delivery_bindings, Mapping)
+                     or set(observer_delivery_bindings) != set(bridges))):
+            raise ValueError("native bridge observer delivery map must match exact enrolled bridges")
+        self.observer_delivery_bindings = dict(observer_delivery_bindings or {})
+        if peer_role_artifact_resolver is not None and not callable(peer_role_artifact_resolver):
+            raise ValueError("native bridge peer role artifact resolver must be root-callable")
+        self.peer_role_artifact_resolver = peer_role_artifact_resolver
+        self.monotonic = monotonic
         self._pending: dict[str, _PendingEvent] = {}
+        self._pending_pairs: dict[str, _PendingPairRecord] = {}
+        self._context_pair_index: dict[tuple[str, str, str, str, str], set[str]] = {}
         self._lock = threading.RLock()
 
     def prepare(self, *, uid: int, peer_pid: int, peer_pidfd: int,
@@ -92,6 +157,7 @@ class NativeBridgeBroker:
             pending = self._pending.pop(handle, None)
         if pending is None:
             raise AuthorityDenied("native.replay", "native event is unknown, expired, or already consumed")
+        pair_id: str | None = None
         try:
             if self.service.monotonic() >= pending.expires or retry != pending.retry_index:
                 raise AuthorityDenied("native.expired", "native event lease or retry binding is stale")
@@ -113,6 +179,10 @@ class NativeBridgeBroker:
                     or canonical_digest(normalized) != pending.context.final_payload_digest
                     or cancelled()):
                 raise AuthorityDenied("native.binding", "native producer, gateway, digest, or lease changed")
+            pair_id = self._register_pending_pair(
+                bridge=bridge, pending=pending, gateway_pid=peer_pid,
+                gateway_pidfd=peer_pidfd, gateway_identity=gateway_identity,
+            )
             grant_wire = self.service._authorize_effect(pending.context.uid, {
                 "context": pending.context.to_wire(), "capability": pending.capability,
                 "target": bridge.target, "recipient": bridge.recipient,
@@ -174,7 +244,181 @@ class NativeBridgeBroker:
                 result["headers"]["X-Hermes-Native-Response-Ref"] = delivery_handle
             return result
         finally:
+            if pair_id is not None:
+                self._retire_pending_pair(pair_id)
             __import__("os").close(pending.producer_pidfd)
+
+    def resolve_pending_pair_for_context(self, parent_context: HostContext) -> RootPendingNativePair:
+        """Return fresh peer PIDFD duplicates for the one active exact context pair.
+
+        The index includes the signed context's full canonical digest and its
+        grant/intent/trace/lineage fields. It cannot select by profile, target,
+        recipient, caller-provided PID, or an opaque worker handle.
+        """
+        if not isinstance(parent_context, HostContext):
+            raise AuthorityDenied("native.pair.context", "signed root context is required")
+        key = self._context_key(parent_context)
+        with self._lock:
+            now = self.monotonic()
+            self._prune(now)
+            pair_ids = tuple(self._context_pair_index.get(key, ()))
+            records = [self._pending_pairs[item] for item in pair_ids
+                       if item in self._pending_pairs]
+            if len(records) != 1:
+                raise AuthorityDenied("native.pair.unavailable", "no unique active pending native pair")
+            record = records[0]
+            pair = record.pair
+            bridge = self.bridges.get(pair.bridge_enrollment_id)
+            if (record.context_key != key or now >= pair.expires_monotonic
+                    or bridge is None
+                    or pair.service_generation_digest != getattr(
+                        self.service, "service_generation_digest", None)
+                    or pair.parent_context_sha256 != canonical_digest(parent_context.to_wire())
+                    or pair.parent_grant_id != parent_context.grant_id
+                    or pair.intent_id != parent_context.intent_id
+                    or pair.trace_id != parent_context.trace_id
+                    or pair.parent_closure_digest != parent_context.lineage_hash):
+                raise AuthorityDenied("native.pair.stale", "pending native pair no longer matches its context")
+            self.service._verify_context_signature(parent_context)
+            self.service._assert_current_context(
+                parent_context, self.service._binding(pair.producer.uid), pair.producer.uid,
+                peer_pid=pair.producer.pid,
+            )
+            for peer, selected_profile, selected_generation, selected_uid, selected_executable in (
+                    (pair.producer, bridge.producer_profile_id, bridge.producer_generation,
+                     bridge.producer_uid, bridge.producer_executable_sha256),
+                    (pair.gateway, bridge.gateway_profile_id, bridge.gateway_generation,
+                     bridge.gateway_uid, bridge.gateway_executable_sha256)):
+                current = self.process_resolver(
+                    peer.pid, peer.pidfd, profile_id=selected_profile,
+                    generation=selected_generation,
+                )
+                if (current is None or current != peer.identity
+                        or current.profile_id != selected_profile
+                        or current.generation != selected_generation
+                        or current.kernel_uid != selected_uid
+                        or current.executable_sha256 != selected_executable
+                        or peer.uid != selected_uid):
+                    raise AuthorityDenied("native.pair.peer", "pending native pair peer is no longer live")
+            try:
+                producer = RootPendingNativePeer(**{
+                    **{name: getattr(pair.producer, name)
+                       for name in pair.producer.__dataclass_fields__},
+                    "pidfd": os.dup(pair.producer.pidfd),
+                })
+                gateway = RootPendingNativePeer(**{
+                    **{name: getattr(pair.gateway, name)
+                       for name in pair.gateway.__dataclass_fields__},
+                    "pidfd": os.dup(pair.gateway.pidfd),
+                })
+            except BaseException:
+                for peer in locals().get("producer", ()), locals().get("gateway", ()):
+                    if isinstance(peer, RootPendingNativePeer):
+                        try:
+                            os.close(peer.pidfd)
+                        except OSError:
+                            pass
+                raise
+            return RootPendingNativePair(
+                schema=pair.schema, pair_id=pair.pair_id,
+                bridge_enrollment_id=pair.bridge_enrollment_id,
+                native_request_handle=pair.native_request_handle,
+                parent_context_sha256=pair.parent_context_sha256,
+                parent_grant_id=pair.parent_grant_id, intent_id=pair.intent_id,
+                trace_id=pair.trace_id, parent_closure_digest=pair.parent_closure_digest,
+                service_generation_digest=pair.service_generation_digest,
+                producer=producer, gateway=gateway,
+                observer_delivery_bindings=pair.observer_delivery_bindings,
+                expires_monotonic=pair.expires_monotonic,
+            )
+
+    def _register_pending_pair(self, *, bridge: Any, pending: _PendingEvent,
+                               gateway_pid: int, gateway_pidfd: int,
+                               gateway_identity: Any) -> str:
+        """Retain the authenticated pair for the duration of synchronous dispatch."""
+        if self.peer_role_artifact_resolver is None:
+            raise AuthorityDenied("native.pair.roles", "protected peer role artifact resolver is unavailable")
+        bindings = self.observer_delivery_bindings.get(bridge.bridge_id)
+        if (not isinstance(bindings, tuple) or not bindings
+                or any(not isinstance(row, RootObserverDeliveryBinding)
+                       or row.delivery_role not in {"producer", "gateway"}
+                       or not row.observer_enrollment_id for row in bindings)
+                or len({row.observer_enrollment_id for row in bindings}) != len(bindings)):
+            raise AuthorityDenied("native.pair.bindings", "explicit observer delivery bindings are unavailable")
+        producer_role = self.peer_role_artifact_resolver(bridge, "producer")
+        gateway_role = self.peer_role_artifact_resolver(bridge, "gateway")
+        for role in (producer_role, gateway_role):
+            if (not isinstance(role, tuple) or len(role) != 2
+                    or any(not isinstance(value, str) or not value for value in role)
+                    or not __import__("re").fullmatch(r"[0-9a-f]{64}", role[1])):
+                raise AuthorityDenied("native.pair.roles", "protected peer role artifact identity is malformed")
+        producer_fd = os.dup(pending.producer_pidfd)
+        gateway_fd = -1
+        try:
+            gateway_fd = os.dup(gateway_pidfd)
+            producer = RootPendingNativePeer(
+                "producer", bridge.producer_principal_id, bridge.producer_profile_id,
+                bridge.producer_generation, pending.producer_pid, producer_fd,
+                bridge.producer_uid, pending.producer_identity, producer_role[0], producer_role[1],
+            )
+            gateway = RootPendingNativePeer(
+                "gateway", bridge.gateway_principal_id, bridge.gateway_profile_id,
+                bridge.gateway_generation, gateway_pid, gateway_fd,
+                bridge.gateway_uid, gateway_identity, gateway_role[0], gateway_role[1],
+            )
+            now = self.monotonic()
+            expiry = min(pending.expires, pending.context.monotonic_expires_at)
+            if (not math.isfinite(expiry) or expiry <= now
+                    or getattr(self.service, "service_generation_digest", None) is None):
+                raise AuthorityDenied("native.pair.expired", "pending native pair lease is unavailable")
+            pair_id = secrets.token_urlsafe(32)
+            pair = RootPendingNativePair(
+                schema=1, pair_id=pair_id, bridge_enrollment_id=bridge.bridge_id,
+                native_request_handle=pending.handle,
+                parent_context_sha256=canonical_digest(pending.context.to_wire()),
+                parent_grant_id=pending.context.grant_id, intent_id=pending.context.intent_id,
+                trace_id=pending.context.trace_id, parent_closure_digest=pending.context.lineage_hash,
+                service_generation_digest=self.service.service_generation_digest,
+                producer=producer, gateway=gateway,
+                observer_delivery_bindings=bindings, expires_monotonic=expiry,
+            )
+            context_key = self._context_key(pending.context)
+            with self._lock:
+                self._prune(now)
+                if context_key in self._context_pair_index:
+                    raise AuthorityDenied("native.pair.ambiguous", "context already has a current pending native pair")
+                self._pending_pairs[pair_id] = _PendingPairRecord(pair, context_key)
+                self._context_pair_index[context_key] = {pair_id}
+            return pair_id
+        except BaseException:
+            for fd in (producer_fd, gateway_fd):
+                if fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+            raise
+
+    def _retire_pending_pair(self, pair_id: str) -> None:
+        with self._lock:
+            record = self._pending_pairs.pop(pair_id, None)
+            if record is None:
+                return
+            ids = self._context_pair_index.get(record.context_key)
+            if ids is not None:
+                ids.discard(pair_id)
+                if not ids:
+                    self._context_pair_index.pop(record.context_key, None)
+        for peer in (record.pair.producer, record.pair.gateway):
+            try:
+                os.close(peer.pidfd)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _context_key(context: HostContext) -> tuple[str, str, str, str, str]:
+        return (context.grant_id, context.intent_id, context.trace_id,
+                canonical_digest(context.to_wire()), context.lineage_hash)
 
     def _resolve_peer(self, pid: int, pidfd: int, profile: str, generation: str,
                       uid: int, executable_sha256: str) -> Any:
@@ -243,8 +487,26 @@ class NativeBridgeBroker:
         return isinstance(value, str) and 1 <= len(value) <= limit and "\x00" not in value
 
     def _prune(self, now: float) -> None:
-        import os
         for handle, pending in tuple(self._pending.items()):
             if pending.expires <= now:
                 self._pending.pop(handle, None)
-                os.close(pending.producer_pidfd)
+                try:
+                    os.close(pending.producer_pidfd)
+                except OSError:
+                    pass
+        for pair_id, record in tuple(self._pending_pairs.items()):
+            if record.pair.expires_monotonic <= now:
+                self._retire_pending_pair(pair_id)
+
+    def close(self) -> None:
+        with self._lock:
+            handles = tuple(self._pending)
+            pairs = tuple(self._pending_pairs)
+            pending = [self._pending.pop(handle) for handle in handles]
+        for item in pending:
+            try:
+                os.close(item.producer_pidfd)
+            except OSError:
+                pass
+        for pair_id in pairs:
+            self._retire_pending_pair(pair_id)
