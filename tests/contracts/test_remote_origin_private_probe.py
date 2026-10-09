@@ -10,6 +10,7 @@ import struct
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -35,6 +36,10 @@ from hermes_installer.authority.remote_origin import (
     verify_origin_receipt,
     verify_selected_remote_origin,
 )
+from hermes_installer.authority.remote_observations import (
+    SelectedGatewayBoundary, SelectedNativeWindow,
+    _GATEWAY_ASSERTIONS, _NATIVE_ASSERTIONS,
+)
 
 
 _ACCOUNT = "699d98642c564d2e855e9661899b7252"
@@ -47,9 +52,11 @@ _OBSERVATIONS = {
 
 
 class _Catalog:
-    def __init__(self, selected, binding):
+    def __init__(self, selected, binding, gateway_boundary=None, native_window=None):
         self.selected = selected
         self.binding = binding
+        self.gateway_boundary = gateway_boundary
+        self.native_window = native_window
 
     def selected_origin(self, enrollment_id):
         return self.selected if enrollment_id == self.selected.enrollment_id else None
@@ -67,6 +74,12 @@ class _Catalog:
             return None
         return PrincipalBinding(os.getuid(), "desktop-principal", profile_id,
                                 "native-service-namespace", frozenset({"hermes-service-connect"}))
+
+    def selected_gateway_boundary(self, enrollment_id):
+        return self.gateway_boundary if enrollment_id == self.selected.enrollment_id else None
+
+    def selected_native_window(self, enrollment_id):
+        return self.native_window if enrollment_id == self.selected.enrollment_id else None
 
 
 class _Custody:
@@ -148,7 +161,7 @@ class _AppSocketFixture:
                     conn.sendall(b"HERMES_NATIVE_WINDOW_FRAME:fixture-1")
                     continue
                 elif first.startswith(b"GET /client/bootstrap.html "):
-                    status, body = b"401 Unauthorized", b""
+                    status, body = b"403 Forbidden", b""
                 else:
                     status, body = b"404 Not Found", b""
                 conn.sendall(b"HTTP/1.1 " + status + b"\r\nContent-Length: "
@@ -183,7 +196,13 @@ class _PrivateControlFixture:
                 headers += b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
             conn.sendall(headers + b"\r\n")
             conn.settimeout(2)
-            return conn.recv(8192)
+            response = bytearray()
+            while len(response) < 8192:
+                chunk = conn.recv(8192 - len(response))
+                if not chunk:
+                    break
+                response.extend(chunk)
+            return bytes(response)
 
     def _serve(self):
         while not self.stop.is_set():
@@ -301,7 +320,21 @@ class RemoteOriginPrivateProbeTests(unittest.TestCase):
                     hashlib.sha256(b"setup-response").hexdigest(), now(), now() + 20)
                 signer = HMACReceiptSigner(b"R" * 32)
                 process_manager = CustodyRemoteOriginProcessManager(custody)
-                def boundary_observer(selection, gateway_digest, gateway_proof, deadline):
+                gateway_identity_digest = process_manager.inspect_selected_origin(selected).gateway_identity_digest
+                catalog.gateway_boundary = SelectedGatewayBoundary(
+                    selected.enrollment_id, selected.gateway_profile_id, selected.gateway_generation,
+                    gateway_identity_digest, selected.expected_hostname, app.address[1],
+                    selected.policy_config_digest, selected.policy_revision)
+                catalog.native_window = SelectedNativeWindow(
+                    selected.enrollment_id, selected.native_profile_id, selected.desktop_generation,
+                    os.getuid(), "cgroup-native", ("f" * 64,), "display", "display-gen",
+                    ":0", base / "Xauthority", 1, 1, os.getuid())
+                def boundary_observer(selection, gateway_digest, gateway_proof, deadline, capability):
+                    self.assertTrue(authority._registry.verify_observer_capability(capability))
+                    self.assertEqual(capability.remote_enrollment_id, selection.enrollment_id)
+                    self.assertEqual(capability.gateway_identity_digest, gateway_digest)
+                    self.assertFalse(authority._registry.verify_observer_capability(
+                        replace(capability, gateway_identity_digest="0" * 64)))
                     def fact(path, *, authorized):
                         raw = control._exchange(path, authorized=authorized)
                         header, body = raw.split(b"\r\n\r\n", 1)
@@ -309,21 +342,41 @@ class RemoteOriginPrivateProbeTests(unittest.TestCase):
                             hashlib.sha256(path + (b"\1" if authorized else b"\0")).hexdigest(),
                             hashlib.sha256(raw).hexdigest())
                     now_value = now()
-                    return GatewayBoundaryObservation(gateway_digest, 1, ("127.0.0.1",), {
-                        "unauthenticated": fact(b"/client/bootstrap.html", authorized=False),
-                        "arbitrary-route": fact(b"/random-route", authorized=True),
-                        "shell-route": fact(b"/shell", authorized=True),
-                        "full-host-desktop": fact(b"/desktop", authorized=True)}, now_value,
-                        min(deadline, now_value + 10))
+                    unsigned = GatewayBoundaryObservation(
+                        gateway_identity_digest=gateway_digest,
+                        policy_config_digest=selection.policy_config_digest,
+                        policy_revision=selection.policy_revision,
+                        network_namespace_inode=1,
+                        listener_addresses=(f"127.0.0.1:{app.address[1]}",),
+                        requests={
+                            "unauthenticated": fact(b"/client/bootstrap.html", authorized=False),
+                            "arbitrary-route": fact(b"/random-route", authorized=True),
+                            "shell-route": fact(b"/shell", authorized=True),
+                            "full-host-desktop": fact(b"/desktop", authorized=True)},
+                        issued_monotonic=now_value, expires_monotonic=min(deadline, now_value + 10),
+                        assertion_ids=_GATEWAY_ASSERTIONS, signature=b"")
+                    return GatewayBoundaryObservation(**{
+                        **{key: getattr(unsigned, key) for key in (
+                            "gateway_identity_digest", "policy_config_digest", "policy_revision",
+                            "network_namespace_inode", "listener_addresses",
+                            "requests", "issued_monotonic", "expires_monotonic", "assertion_ids")},
+                        "signature": signer.sign(unsigned.payload())})
 
                 def window_observer(selection, native_proof, websocket_id, deadline):
                     now_value = now()
                     marker = b"fixture-observed-window:" + websocket_id.encode()
-                    return NativeWindowObservation(selection.native_profile_id,
-                        selection.desktop_generation, native_proof["uid"], native_proof["pid"],
-                        native_proof["pid_starttime_ticks"], websocket_id,
+                    unsigned = NativeWindowObservation(selection.native_profile_id,
+                        selection.desktop_generation, native_proof.uid, native_proof.pid,
+                        native_proof.pid_starttime_ticks, websocket_id,
                         hashlib.sha256(b"fixture-window").hexdigest(),
-                        hashlib.sha256(marker).hexdigest(), now_value, min(deadline, now_value + 10))
+                        hashlib.sha256(marker).hexdigest(), now_value, min(deadline, now_value + 10),
+                        _NATIVE_ASSERTIONS, b"")
+                    return NativeWindowObservation(**{
+                        **{key: getattr(unsigned, key) for key in (
+                            "profile_id", "generation", "uid", "pid", "pid_starttime_ticks",
+                            "websocket_observation_id", "window_identity_sha256", "surface_sha256",
+                            "issued_monotonic", "expires_monotonic", "assertion_ids")},
+                        "signature": signer.sign(unsigned.payload())})
 
                 authority = SelectedRemoteOriginProbeAuthority(
                     catalog=catalog, setup_transactions=_TransactionVerifier(tx), current_peer=_Caller(caller),
