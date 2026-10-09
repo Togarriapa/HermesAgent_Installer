@@ -121,12 +121,11 @@ async def main() -> None:
         return bytes(chunks)
 
     stdout = await read_line_bounded("stdout", 8.0)
-    if b"\n" not in stdout:
-        raise RuntimeError("managed process did not produce a complete bounded output line")
+    stdout_complete = b"\n" in stdout
     stderr = await read_line_bounded("stderr", 1.5)
     await handle.stop("Linux custody integration probe", timeout=8)
     print(json.dumps({"event": "stopped", "stdout": stdout.decode("utf-8", "strict"),
-                      "stderr": stderr.decode("utf-8", "strict"),
+                      "stderr": stderr.decode("utf-8", "strict"), "stdout_complete": stdout_complete,
                       "process_id": handle.identity.process_id,
                       "cgroup": handle.identity.cgroup,
                       "uid": handle.identity.uid,
