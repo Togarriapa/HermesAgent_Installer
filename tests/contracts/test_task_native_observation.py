@@ -240,3 +240,48 @@ def test_current_admission_denies_cancelled_or_replaced_generation():
     assert not registry._admitted_task_current(task, "profile-b")
     authority.task_handle_cancelled = lambda _handle, _node: True
     assert not registry._admitted_task_current(task, "profile-a")
+
+
+def test_terminal_resolution_denies_revoked_source_snapshot():
+    task = SimpleNamespace(
+        admission_id="admission-a", backend_enrollment_id="backend-a",
+        operation_id="operation-a", task_body_recipe_id="recipe-a",
+        task_request_schema_id="schema-a", resource_generation="resource-gen-a",
+        process_generation="profile-generation-a", parent_closure_digest="a" * 64,
+        task_payload_sha256="b" * 64,
+    )
+    handle = SimpleNamespace(handle_id="task-handle", process_id="process-a")
+    terminal = SimpleNamespace(
+        terminal_receipt_handle="terminal-handle", task_handle=handle.handle_id,
+        admission_id=task.admission_id, admission_handle_id="admission-handle",
+        backend_enrollment_id=task.backend_enrollment_id, operation_id=task.operation_id,
+        task_body_recipe_id=task.task_body_recipe_id,
+        task_request_schema_id=task.task_request_schema_id,
+        resource_generation=task.resource_generation, profile_id="profile-a",
+        process_id=handle.process_id, process_generation=task.process_generation,
+        parent_closure_digest=task.parent_closure_digest, state="completed", exit_code=0,
+        timed_out=False, cancelled=False, cleanup_verified=True, cgroup_empty=True,
+        main_pidfd_gone=True, descendants_gone=True, launcher_reaped=True,
+        output_complete=True, native_loader_ready_event_id="loader-event",
+        native_execution_receipt_handle=None,
+    )
+    service = SimpleNamespace(authority_epoch="epoch-a", service_generation_digest="c" * 64)
+    registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    registry.source_observers = SimpleNamespace(service=service)
+    registry.process_custody = SimpleNamespace(
+        resolve_task_terminal=lambda *_args: terminal)
+    registry._admitted_task_current = lambda *_args: True
+    registry._source_snapshot_current = lambda *_args, **_kwargs: False
+    registry.monotonic = lambda: 10.0
+    run = SimpleNamespace(
+        admitted_task=task, admission_handle=object(), source_closure=object(),
+        profile_id="profile-a", task_handle=handle,
+        custody_state=SimpleNamespace(admission_handle_id="admission-handle"),
+        loaded_package_proof=SimpleNamespace(
+            loader_ready_event_id="loader-event", expires_monotonic=30.0),
+        input_event=SimpleNamespace(expires_monotonic=30.0),
+        authority_epoch="epoch-a", service_generation_digest="c" * 64,
+        deadline=30.0,
+    )
+    with pytest.raises(AuthorityDenied):
+        registry._validate_terminal(run, terminal, terminal.terminal_receipt_handle, 10.0)

@@ -807,6 +807,9 @@ class RootTaskNativeObservationRegistry:
                 or self.process_custody.resolve_task_terminal(
                     run.task_handle.handle_id, terminal_handle) is not terminal
                 or not self._admitted_task_current(task, run.profile_id)
+                or not self._source_snapshot_current(
+                    run.admission_handle, task, run.source_closure,
+                    require_controller=False)
                 or current_service.authority_epoch != run.authority_epoch
                 or current_service.service_generation_digest != run.service_generation_digest
                 or now >= run.deadline or now >= run.input_event.expires_monotonic
