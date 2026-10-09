@@ -36,6 +36,7 @@ class FakeAuthority:
         self.verified = []
         self.calls = []
         self.native_calls = []
+        self.omit_native_response_ref = False
 
     def authorize_effect(self, context, *, capability, target, recipient, request_digest, retry_index):
         binding = (capability, target, recipient, request_digest, retry_index)
@@ -72,7 +73,9 @@ class FakeAuthority:
         self.native_calls.append((handle, normalized_payload, retry_index, timeout, cancelled))
         return SimpleNamespace(status=200,
             body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":9,"output_tokens":4}}}\n\n',
-            headers={"Content-Type": "text/event-stream"})
+            headers={"Content-Type": "text/event-stream",
+                     **({} if self.omit_native_response_ref else
+                        {"X-Hermes-Native-Response-Ref": "r" * 40})})
 
 
 def context(sensitivity="private", lease=20, final_payload_digest=None):
@@ -103,6 +106,7 @@ class CodexResponsesTests(unittest.TestCase):
             normalization_policy=_normalization_policy(),
         )
         self.assertEqual((response.status, response.input_tokens, response.output_tokens), (200, 9, 4))
+        self.assertEqual(response.headers.get("X-Hermes-Native-Response-Ref"), "r" * 40)
         self.assertEqual(len(authority.native_calls), 1)
         self.assertEqual(authority.native_calls[0][:3], ("a" * 48, normalized, 2))
         self.assertEqual(authority.calls, [])
@@ -111,6 +115,11 @@ class CodexResponsesTests(unittest.TestCase):
                 transport.dispatch_native_event(invalid, payload,
                                                 normalization_policy=_normalization_policy())
         self.assertEqual(len(authority.native_calls), 1)
+        authority.omit_native_response_ref = True
+        with self.assertRaises(PolicyDenied):
+            transport.dispatch_native_event("b" * 48, payload,
+                                            normalization_policy=_normalization_policy())
+        self.assertEqual(len(authority.native_calls), 2)
 
     def test_fixed_responses_target_binds_canonical_payload_and_tool_capability(self):
         authority = FakeAuthority()

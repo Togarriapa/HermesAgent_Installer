@@ -86,6 +86,22 @@ The five integration fixtures use synthetic source maps carrying the exact sourc
 
 ### Preserved native Plugin resources
 
+The component-side `build_native_plugin_effects_facade` composes the selected
+`SelectedNativePackage`, protected `ResourceIdentity`, source-pinned action
+schemas, and the root `NativeInvocationContextProvider`. At each invocation it
+requires the lexical pinned-Hermes binding to match the exact adapter, action,
+canonical tool arguments, selected package, profile, and generation; it asks
+the root for receipt ancestry and sends only those opaque handles into the
+final-payload-digest-bound AuthorityClient effect path. It never creates
+`HostContext` values or promotes manifest capabilities into grants. The schema
+registry can select only an explicitly source-reviewed argument-schema variant
+named by the root-selected action row. Multi-step workflows remain a single
+selected outer action whose fixed child sequence runs in the root; worker-side
+chained effect calls cannot borrow the outer invocation binding. The helper is
+available to the protected native loader, while native discovery and effect
+activation remain unverified until that loader supplies its authenticated
+lexical binding and enrolled effect handlers.
+
 `components.native_plugins` records the 18 preserved resource Plugin IDs as distinct adapter identities and exposes `create_native_plugin_handler(adapter_id, runtime_context) -> register(ctx)`. `ReviewedPluginAdapterRegistry` resolves actual implementations through `resolve_native_plugin_implementation`; the metadata crosswalk is not executable. The factory checks the trusted selected Plugin identity and resolves only from the installer-owned typed registry; imported manifests cannot supply handler callables, endpoints, or credentials. `resource-overlay-store` registers fixed profile-view read/write/history/soft-delete tools with one-MiB payload limits and compare-and-swap revisions; it exposes no profile path or ID argument. Its implementation is source-backed; contract fixtures exercise the installer-owned CAS store. The `mcp-registry` and `agent37-discovery` adapters provide fixed read-only public search/metadata inspection through the root `registry.read` effect: service IDs, origins, capabilities and HTTP GET routes are compiled in the installer; requests contain only canonical bounded query/page fields; redirects, retries, private-classified contexts and oversized/non-JSON responses fail closed. Requests are capped at 256 canonical query bytes, 30 entries per page and three pages (90 entries maximum), with a two-MiB response cap and nine-second whole-operation deadline. MCP Registry paths follow its [official API reference](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/official-registry-api.md) and [OpenAPI specification](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/openapi.yaml): list search/page uses `/v0.1/servers`, while named version routes have no pagination parameters. Agent37 search/detail paths are fixed to `www.agent37.com/api/skills/search` and `/api/skills/{id}`; search results' instruction content is stripped, detail IDs must be returned 32-hex identifiers, and retained fields are scalar metadata only. All registry results are labeled untrusted public source data. These handlers do not import or install registry entries, create enrollments, or activate accounts. The root authority must separately enroll the exact effects. Encrypted overlay backup remains unavailable pending the lifecycle backup API. All Plugin native module paths remain absent until an installer-owned loader can inject the protected runtime context; handler resolvability is not native discovery or invocation. The other 15 Plugin handlers remain source-specific and pending; each adapter crosswalk entry now states its concrete missing runtime/account capability and next enrollment or implementation step. Plugin IDs: `agent-live-wallet`, `agent-sandbox-wallet`, `agent37-discovery`, `authentik-authorization`, `cloudflare-homelab`, `codex`, `composio`, `ebook-toolchain`, `epic-kanban`, `financial-data-hub`, `financial-execution-gateway`, `github`, `homelab-ops-broker`, `kobo-bridge`, `mcp-registry`, `resource-overlay-store`, `voice-pipeline`, and `web`.
 
 ## Jarvis (`adewaskar/jarvis`, R0067)

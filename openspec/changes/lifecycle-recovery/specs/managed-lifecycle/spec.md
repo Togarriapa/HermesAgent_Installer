@@ -229,3 +229,19 @@ The installer SHALL authenticate initial provision through its installed root-lo
 #### Scenario: Worker fabricates bootstrap actor
 - **WHEN** a worker supplies root labels, another transaction receipt or a writable journal mapping
 - **THEN** root rejects before provision/state effects without requiring or inventing a first active worker context
+
+### Requirement: Installed root first setup acquisition
+
+First setup SHALL verify the installed root actor/plan catalog and acquire selected artifacts through the root-local transaction-bound CAS fetch contract without requiring an active worker.
+
+#### Scenario: Unverified setup actor or source
+- **WHEN** actor closure, plan, catalog or source receipt verification fails
+- **THEN** provisioning remains incomplete without activating a worker profile.
+
+### Requirement: Native health and typed task proof
+
+The implementation SHALL enforce the applicable native health receipt and typed task admission contracts. Use planning/protected-lifecycle-control-contract.json native_health_receipt for actual native health and planning/protected-resource-job-contract.json typed_admission/service_methods/recipe_domain for RB-T08. Original tasks/acceptance remain pending.
+
+#### Scenario: Status without native result
+- **WHEN** only source/status/exit evidence is available
+- **THEN** functional health and task result acceptance remain incomplete.

@@ -453,6 +453,10 @@ class HostAuthorityIPCContracts(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
+        # The production client requires root-owned endpoint parents to be
+        # searchable by enrolled clients; keep the test fixture's parent
+        # private for non-root runs and searchable-but-not-writable as root.
+        os.chmod(root, 0o711 if os.getuid() == 0 else 0o700)
         self.socket_path = root / "authority.sock"
         self.effects = []
         self.binding = PrincipalBinding(os.getuid(), "principal:alice", "profile:one", "namespace:one", frozenset({"memory-capture"}))
