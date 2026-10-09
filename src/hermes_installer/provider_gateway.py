@@ -60,6 +60,25 @@ def _write_owned(root: OwnedRoot, relative: str, data: bytes, mode: int = 0o600)
     return path
 
 
+def _ensure_private_directory(root: OwnedRoot, relative: str) -> bool:
+    """Create private owned path components and return whether final leaf was new."""
+    parts = relative.split("/")
+    created_leaf = False
+    for index in range(1, len(parts) + 1):
+        path = root.path("/".join(parts[:index]))
+        try:
+            path.mkdir(mode=0o700)
+            if index == len(parts):
+                created_leaf = True
+        except FileExistsError:
+            info = path.lstat()
+            if path.is_symlink() or not stat.S_ISDIR(info.st_mode):
+                raise OwnershipError("Provider plugin path contains a non-directory or symlink") from None
+            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+                raise OwnershipError("Provider plugin path component is not privately owned")
+    return created_leaf
+
+
 def materialize_hermes_provider_plugin(root: OwnedRoot, *, profile_relative: str,
                                        port: int, model: str) -> dict[str, str]:
     """Write the supported Hermes provider plugin under the selected HERMES_HOME."""
@@ -98,10 +117,8 @@ register_provider(ProviderProfile(
     plugin_path = root.path(plugin)
     marker_relative = plugin + "/.hermes-installer-owned"
     marker = ("hermes-installer-provider-plugin-v1\n" + plugin + "\n").encode("utf-8")
-    if plugin_path.exists() or plugin_path.is_symlink():
-        info = plugin_path.lstat()
-        if plugin_path.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
-            raise OwnershipError("Existing provider plugin directory is not privately owned")
+    created = _ensure_private_directory(root, plugin)
+    if not created:
         marker_path = root.path(marker_relative)
         try:
             marker_info = marker_path.lstat()
@@ -109,8 +126,10 @@ register_provider(ProviderProfile(
                 raise OwnershipError("Existing provider plugin directory lacks matching installer ownership")
         except FileNotFoundError:
             raise OwnershipError("Existing provider plugin directory lacks installer ownership") from None
+        allowed_entries = {".hermes-installer-owned", "__init__.py", "plugin.yaml"}
+        if any(entry.name not in allowed_entries for entry in plugin_path.iterdir()):
+            raise OwnershipError("Existing provider plugin directory contains unrelated files")
     else:
-        plugin_path.mkdir(mode=0o700)
         _write_owned(root, marker_relative, marker, 0o600)
     init_path = _write_owned(root, plugin + "/__init__.py", init, 0o600)
     manifest_path = _write_owned(root, plugin + "/plugin.yaml", manifest, 0o600)
