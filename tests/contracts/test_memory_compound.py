@@ -185,16 +185,64 @@ class MemoryCompoundTests(unittest.TestCase):
                 route_id="openviking-find", step_id="find", status=200,
                 value={"status": "ok", "result": {"anything": "accepted"}})
 
-    def test_openviking_find_needs_a_protected_uri_resolver(self):
+    def test_openviking_find_uses_authenticated_home_alias_and_memory_only(self):
+        request = build_memory_request(
+            provider="openviking", route_id="openviking-find",
+            recipe=self.recipe,
+            step={"method": "POST", "path_template": "/api/v1/search/find",
+                  "body_recipe_id": "openviking-find-owned-v1"},
+            body={"query": "synthetic fact", "limit": 8},
+            scope_bindings=self.scope,
+        )
+        self.assertEqual(json.loads(request.body), {
+            "context_type": "memory", "limit": 8, "query": "synthetic fact",
+            "read_content": False, "target_uri": "viking://~/memories", "telemetry": False,
+        })
+
+    def test_openviking_find_accepts_only_bounded_authenticated_memory_hits(self):
+        from hermes_installer.memory.compound import validate_step_outcome
+        found = validate_step_outcome(
+            route_id="openviking-find", step_id="find", status=200,
+            value={"status": "ok", "result": {
+                "memories": [{"uri": "viking://user/agent-profile-owned/memories/fact-1",
+                              "context_type": "memory", "level": 0,
+                              "abstract": "synthetic fact", "overview": None,
+                              "category": "", "score": 0.12, "match_reason": ""}],
+                "resources": [], "skills": [], "total": 1,
+            }},
+            scope_bindings=self.scope,
+        )
+        self.assertEqual(found.result, {"records": [{
+            "id": "viking://user/agent-profile-owned/memories/fact-1",
+            "source": "openviking", "text": "synthetic fact",
+        }]})
+        invalid = [
+            {"uri": "viking://user/sibling/memories/fact-1", "context_type": "memory",
+             "level": 0, "abstract": "private", "overview": None, "category": "",
+             "score": 0.5, "match_reason": ""},
+            {"uri": "viking://user/agent-profile-owned/resources/fact-1", "context_type": "resource",
+             "level": 0, "abstract": "resource", "overview": None, "category": "",
+             "score": 0.5, "match_reason": ""},
+            {"uri": "viking://user/agent-profile-owned/memories/fact-1", "context_type": "memory",
+             "level": 0, "abstract": "private", "overview": None, "category": "",
+             "score": 0.5, "match_reason": "", "content": "full content"},
+        ]
+        for hit in invalid:
+            with self.subTest(hit=hit), self.assertRaises(MemoryRecipeUnavailable):
+                validate_step_outcome(
+                    route_id="openviking-find", step_id="find", status=200,
+                    value={"status": "ok", "result": {
+                        "memories": [hit], "resources": [], "skills": [], "total": 1,
+                    }},
+                    scope_bindings=self.scope,
+                )
         with self.assertRaises(MemoryRecipeUnavailable):
-            build_memory_request(
-                provider="openviking", route_id="openviking-find",
-                recipe=self.recipe,
-                step={"method": "POST", "path_template": "/api/v1/search/find",
-                      "body_recipe_id": "openviking-find-owned-v1"},
-                body={"query": "synthetic fact", "limit": 8},
-                scope_bindings=self.scope,
-            )
+            validate_step_outcome(
+                route_id="openviking-find", step_id="find", status=200,
+                value={"status": "ok", "result": {
+                    "memories": [], "resources": [{"uri": "viking://resources/x"}],
+                    "skills": [], "total": 0,
+                }}, scope_bindings=self.scope)
 
     def test_protected_recipe_is_strictly_route_bound(self):
         route = {

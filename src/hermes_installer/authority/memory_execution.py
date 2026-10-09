@@ -141,7 +141,7 @@ class MemoryCompoundLedger:
         if not isinstance(request_body, Mapping):
             raise MemoryExecutionDenied("memory request body must be a typed object")
         body_wire = _canonical_map(request_body, min(maximum_bytes, recipe.maximum_bytes))
-        source_wire = _wire(source_context_wire, 32 * 1024, "source context")
+        source_wire = _wire(source_context_wire, 256 * 1024, "source context")
         consent = None if consent_wire is None else _wire(consent_wire, 16 * 1024, "background consent")
         now = time.monotonic()
         if (isinstance(deadline_monotonic, bool) or not isinstance(deadline_monotonic, (int, float))
@@ -307,6 +307,8 @@ class MemoryCompoundExecutor:
                 source, consent, job = self.ledger.begin_step(
                     job.handle, expected_sequence=sequence,
                     step_id=step.step_id, expected_step_id=step.step_id)
+                if job.state != "active":
+                    raise MemoryExecutionDenied("memory job was revoked before the next step")
                 if cancelled():
                     self.ledger.fail_step(job.handle, step_id=step.step_id,
                                           sequence=sequence, state="revoked")
@@ -316,6 +318,8 @@ class MemoryCompoundExecutor:
                 if step.step_id == "append":
                     step_body = {"content": body.get("content")}
                 elif step.step_id == "find":
+                    step_body = body
+                elif len(recipe.steps) == 1:
                     step_body = body
                 protected_recipe = {
                     "credential_reference_id": recipe.credential_reference_id,
@@ -364,7 +368,8 @@ class MemoryCompoundExecutor:
                     expected_session = captures.get("session_id")
                     outcome = validate_step_outcome(route_id=recipe.approved_route_id,
                         step_id=step.step_id, status=status, value=value,
-                        expected_session_id=expected_session)
+                        expected_session_id=expected_session,
+                        scope_bindings=recipe.scope_bindings)
                     job = self.ledger.commit_step(job.handle, step_id=step.step_id,
                         sequence=sequence, step_index=index, captures=outcome.captures,
                         final=index == len(recipe.steps) - 1)
