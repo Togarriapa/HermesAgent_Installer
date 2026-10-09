@@ -117,7 +117,7 @@ class RootTaskNativeObservationRegistry:
             raise AuthorityDenied("resource.native_observer", "root task native observation dependencies are unavailable")
         input_observer = (getattr(source_observer_registry, "native_input_observer", None)
                           or getattr(source_observer_registry, "input_observer", None))
-        if not callable(getattr(input_observer, "record_admitted_task_input", None)):
+        if not callable(getattr(input_observer, "resolve_task_input_receipt", None)):
             raise AuthorityDenied("resource.native_observer", "root task input observer is unavailable")
         invocations = native_bridge_broker.provider_response_registry
         if not all(isinstance(getattr(invocations, name, None), dict)
@@ -599,16 +599,7 @@ class RootTaskNativeObservationRegistry:
         if not isinstance(events, Mapping):
             return None
         matches = [event for event in events.values()
-                   if getattr(event, "input_origin_kind", None) == "root-admitted-task"
-                   and getattr(event, "source_receipt_handle", None) == receipt.source_receipt_handle
-                   and getattr(event, "payload_sha256", None) == task.stdin_sha256
-                   and getattr(event, "payload_size_bytes", None) == task.stdin_size_bytes
-                   and getattr(event, "producer_profile_id", None) == run.profile_id
-                   and getattr(event, "producer_generation", None) == task.process_generation
-                   and getattr(event, "parent_closure_digest", None) == run.source_closure.lineage_hash
-                   and getattr(event, "native_loader_ready_event_id", None)
-                   == receipt.native_loader_ready_event_id
-                   and getattr(event, "expires_monotonic", 0) >= receipt.expires_monotonic]
+                   if self._matches_initial_input_event(run, receipt, event)]
         if len(matches) != 1:
             return None
         event = matches[0]
@@ -640,6 +631,20 @@ class RootTaskNativeObservationRegistry:
         else:
             return None
         return event, identity, native_identity, package_proof
+
+    @staticmethod
+    def _matches_initial_input_event(run: _TaskRun, receipt: Any, event: Any) -> bool:
+        task = run.admitted_task
+        return (getattr(event, "input_origin_kind", None) == "root-admitted-task"
+                and getattr(event, "source_receipt_handle", None) == receipt.source_receipt_handle
+                and getattr(event, "payload_sha256", None) == task.stdin_sha256
+                and getattr(event, "payload_size_bytes", None) == task.stdin_size_bytes
+                and getattr(event, "producer_profile_id", None) == run.profile_id
+                and getattr(event, "producer_generation", None) == task.process_generation
+                and getattr(event, "parent_closure_digest", None) == task.parent_closure_digest
+                and getattr(event, "native_loader_ready_event_id", None)
+                == receipt.native_loader_ready_event_id
+                and getattr(event, "expires_monotonic", 0) >= receipt.expires_monotonic)
 
     def _source_snapshot_current(self, admission_handle: Any, task: Any, source: Any,
                                  *, require_controller: bool = True) -> bool:
