@@ -2,7 +2,6 @@
 from __future__ import annotations
 import hashlib
 import json
-import logging
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +11,7 @@ except ImportError:  # only permits installer-side contract imports; never a run
     class MemoryProvider:  # type: ignore[no-redef]
         pass
 
-_LOG = logging.getLogger(__name__)
 _PROVIDERS = {"openviking", "claude-mem", "agentmemory"}
-_MAX_EVENT = 65536
 
 
 class HermesMemoryProvider(MemoryProvider):
@@ -42,7 +39,7 @@ class HermesMemoryProvider(MemoryProvider):
         try:
             client = self._client()
             return all(callable(getattr(client, method, None))
-                       for method in ("context", "authorize_effect", "memory_request", "memory_enqueue"))
+                       for method in ("context", "authorize_effect", "memory_request"))
         except Exception:
             return False
 
@@ -117,38 +114,13 @@ class HermesMemoryProvider(MemoryProvider):
                 raise PermissionError("memory broker returned a record outside signed host scope")
         return result
 
-    def _enqueue(self, event: dict[str, Any]) -> str:
-        # Scope comes only from the signed context at the root queue. Caller
-        # payloads never choose profile or namespace.
-        payload = {"schema": 1, **event}
-        body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        if len(body) > _MAX_EVENT:
-            raise ValueError("memory event exceeds bounded queue size")
-        client, context = self._context(
-            "memory-capture", "hermes-memory-sync-turn", "memory.enqueue", body)
-        target = f"memory:{self.name}:enqueue"
-        grant = client.authorize_effect(context, capability="memory-capture", target=target, request_digest=hashlib.sha256(body).hexdigest())
-        result = client.memory_enqueue(grant, target=target,
-            request_digest=hashlib.sha256(body).hexdigest(), payload=body, timeout=0.5)
-        queued = self._decode(result, "enqueue")
-        # The transport receipt proves one broker effect; the response body
-        # receipt is the durable queue identity used by the result operation.
-        receipt = queued.get("receipt_id")
-        if not isinstance(receipt, str) or not receipt:
-            raise RuntimeError("durable memory queue returned no receipt")
-        return receipt
-
     def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "",
                   messages: list[dict[str, Any]] | None = None,
                   turn_author: dict[str, Any] | None = None) -> None:
-        # One bounded AF_UNIX enqueue; a supervised writer later remints authority per operation.
-        try:
-            self._last_hook_status = "queued:" + self._enqueue({
-                "event": "turn", "session_id": session_id[:256],
-                "user_content": user_content, "assistant_content": assistant_content})
-        except Exception:
-            self._last_hook_status = "unavailable"
-            _LOG.warning("Memory event was not durably queued; no direct fallback was attempted.")
+        # These hook parameters are worker-side text, not a root-observed
+        # whole-turn receipt. Keep capture unavailable until native custody
+        # provides a one-use source event handle with verified ancestry.
+        self._last_hook_status = "unavailable:source_event_missing"
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         query = query[:4096]
@@ -178,18 +150,10 @@ class HermesMemoryProvider(MemoryProvider):
 
     def on_memory_write(self, action: str, target: str, content: str,
                         metadata: dict[str, Any] | None = None) -> None:
-        if action not in {"add", "replace"} or target not in {"memory", "user"}:
-            return
-        action = "update" if action == "replace" else action
-        safe_metadata = {key: str(value)[:256] for key, value in (metadata or {}).items()
-                         if key in {"write_origin", "session_id", "tool_name"}}
-        try:
-            self._last_hook_status = "queued:" + self._enqueue({
-                "event": "memory-write", "action": action, "target": target,
-                "content": content[:_MAX_EVENT // 2], "metadata": safe_metadata})
-        except Exception:
-            self._last_hook_status = "unavailable"
-            _LOG.warning("Memory write was not durably queued; no direct fallback was attempted.")
+        # Target/content/metadata are caller-controlled native hook arguments;
+        # they do not carry the root-issued source event receipt needed to
+        # authorize capture or private extraction.
+        self._last_hook_status = "unavailable:source_event_missing"
 
     def backup_paths(self) -> list[str]:
         # Broker-owned data is exported by the installer lifecycle manager.

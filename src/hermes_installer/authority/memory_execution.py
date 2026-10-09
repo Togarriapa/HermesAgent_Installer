@@ -107,8 +107,16 @@ def _validate_parent(enrollment: MemoryServiceEnrollment, recipe: MemoryRouteRec
         context = HostContext.from_wire(json.loads(source_context_wire.decode("utf-8")))
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
         raise MemoryExecutionDenied("signed parent source context is malformed") from None
-    action = "search" if "search" in recipe.approved_route_id else "capture"
-    capability = "memory-retrieval" if action == "search" else "memory-capture"
+    if recipe.approved_route_id in {"openviking-ready", "agentmemory-ready",
+                                    "claude-sqlite-ready", "claude-postgres-ready"}:
+        action = "doctor"
+        capability = "memory-retrieval"
+    elif "search" in recipe.approved_route_id or recipe.approved_route_id == "openviking-find":
+        action = "search"
+        capability = "memory-retrieval"
+    else:
+        action = "capture"
+        capability = "memory-capture"
     target = f"memory:{enrollment.provider}:{action}"
     operation = f"memory.{action}"
     digest = hashlib.sha256(parent_request_payload).hexdigest()
