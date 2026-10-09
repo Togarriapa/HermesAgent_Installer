@@ -496,7 +496,11 @@ class ManagedProcessEffectHandler:
             "--property=ProtectControlGroups=yes", "--property=RestrictSUIDSGID=yes",
             "--property=RestrictNamespaces=user", "--property=RestrictAddressFamilies=AF_UNIX",
             "--property=PrivateNetwork=yes", "--property=IPAddressDeny=any",
-            "--property=InaccessiblePaths=/etc/hermes-installer /var/lib/hermes-installer /etc/ssh /etc/ssl/private",
+            # The product data root is created by the root installer. On a
+            # clean host (and the isolated CI manager namespace) it may not
+            # exist yet; systemd's `-` prefix skips only that absent path.
+            # Once enrolled/installed, the same path is still masked.
+            "--property=InaccessiblePaths=/etc/hermes-installer -/var/lib/hermes-installer /etc/ssh /etc/ssl/private",
             f"--property=BindPaths={root}:{mount}",
         ]
         authority_socket = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
