@@ -77,7 +77,8 @@ def _control_fields(operation: str, fields: Mapping[str, Any] | None) -> dict[st
 
 
 def _decode_response(value: Any, *, operation: str, process_id: str,
-                     generation: str, now: float) -> ProcessControlResponse:
+                     generation: str, now: float,
+                     fields: Mapping[str, Any]) -> ProcessControlResponse:
     # The generic host broker wraps operation bodies in its normal response
     # envelope. process.control's public result is the typed body below; the
     # worker never receives its short-lived grant.
@@ -115,6 +116,28 @@ def _decode_response(value: Any, *, operation: str, process_id: str,
     result_bound = 2 * 1024 * 1024 if operation == "process.read" else 256 * 1024
     if len(encoded) > result_bound:
         raise AuthorityDenied("effect.bounds", "root process control result exceeds its operation bound")
+    if operation == "process.read":
+        data_value = result.get("data_bytes")
+        if not isinstance(data_value, str) or type(result.get("eof")) is not bool:
+            raise AuthorityDenied("effect.invalid", "root process read result is malformed")
+        try:
+            data = base64.b64decode(data_value, validate=True)
+        except (ValueError, TypeError):
+            raise AuthorityDenied("effect.invalid", "root process read bytes are malformed") from None
+        if (base64.b64encode(data).decode("ascii") != data_value
+                or len(data) > fields["maximum_bytes"]):
+            raise AuthorityDenied("effect.bounds", "root process read result exceeds its selected bound")
+    elif operation == "process.write":
+        accepted, sequence = result.get("accepted_bytes"), result.get("sequence")
+        submitted = base64.b64decode(fields["data_bytes"], validate=True)
+        if (type(accepted) is not int or not 0 <= accepted <= len(submitted)
+                or type(sequence) is not int or sequence != fields["sequence"] + 1):
+            raise AuthorityDenied("effect.invalid", "root process write result is malformed")
+    elif operation == "process.stop":
+        if (type(result.get("closed")) is not bool
+                or not isinstance(result.get("reap_state"), str)
+                or not 1 <= len(result["reap_state"]) <= 64):
+            raise AuthorityDenied("effect.invalid", "root process stop result is malformed")
     return ProcessControlResponse(
         schema=1, process_id=process_id, generation=generation, operation=operation,
         state=value["state"], result=MappingProxyType(dict(result)),
@@ -167,4 +190,4 @@ def process_control_operation(
     if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
         raise AuthorityDenied("authority.clock", "process control monotonic clock is unavailable")
     return _decode_response(response, operation=operation, process_id=process_id,
-                            generation=generation, now=float(now))
+                            generation=generation, now=float(now), fields=bounded_fields)

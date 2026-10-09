@@ -16,10 +16,19 @@ class RecordingAuthorityClient:
 
     def _rpc(self, operation, payload, *, timeout=None, cancelled=None):
         self.calls.append((operation, payload, timeout, cancelled))
+        default_result = {}
+        fields = payload["fields"]
+        if payload["operation"] == "process.read":
+            default_result = {"data_bytes": "", "eof": True}
+        elif payload["operation"] == "process.write":
+            default_result = {"accepted_bytes": len(base64.b64decode(fields["data_bytes"])),
+                              "sequence": fields["sequence"] + 1}
+        elif payload["operation"] == "process.stop":
+            default_result = {"closed": True, "reap_state": "complete"}
         body = self.result or {
             "schema": 1, "process_id": payload["process_id"],
             "generation": payload["generation"], "operation": payload["operation"],
-            "state": "running", "result": {}, "expires_monotonic": 120.0,
+            "state": "running", "result": default_result, "expires_monotonic": 120.0,
         }
         return {"status": 200,
                 "body": base64.b64encode(json.dumps(body).encode("ascii")).decode("ascii"),
