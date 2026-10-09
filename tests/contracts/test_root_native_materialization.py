@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from hermes_installer.authority.native_materialization import (
+    PINNED_HERMES_REVISION,
     NativeMaterializationDenied,
     NativeMaterializationReceipt,
     NativeMaterializationSelection,
@@ -120,17 +121,21 @@ def test_discovery_receipt_is_durably_inserted_and_keeps_exact_selection(tmp_pat
         "enrollment", "generation", "service", "b" * 64, 123, 456,
         "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32)
     discovery = NativeInstallReceipt(
-        "hermes-revision", "3.14.7", "profile", True, True,
+        PINNED_HERMES_REVISION, "3.14.7", "profile", True, True,
         ("skill-one",), ("skill-one",), {"profile": "d" * 64})
     operation._record_receipt(
         "e" * 32, selection, "profile", "f" * 64,
-        (NativeMaterializedItem("profile", "profile", "d" * 64, "installed"),),
+        (NativeMaterializedItem("profile", "profile", "d" * 64, "installed"),
+         NativeMaterializedItem("skill", "skill-one", "e" * 64, "installed")),
         70.0, "operation", discovery)
     stored = operation._receipt("e" * 32)
     assert stored["enrollment_id"] == "enrollment"
     assert stored["service_generation"] == "generation"
     assert stored["resource_profile_id"] == "profile"
     assert stored["state"] == "discovered"
+    public = operation._public_receipt(stored, "discovered")
+    assert public.hermes_revision == PINNED_HERMES_REVISION
+    assert public.python_version == "3.14.7"
 
 
 def test_pm_python_resolver_is_bound_to_the_selected_receipt(tmp_path: Path) -> None:

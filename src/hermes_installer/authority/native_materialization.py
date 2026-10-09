@@ -92,6 +92,8 @@ class NativeMaterializationReceipt:
     resources_revision: str
     resources_content_digest: str
     selected_closure_digest: str
+    hermes_revision: str
+    python_version: str
     items: tuple[NativeMaterializedItem, ...]
     state: str
     expires_monotonic: float
@@ -369,7 +371,15 @@ class RootNativeMaterialization:
                         profile_id: str, closure_digest: str,
                         items: tuple[NativeMaterializedItem, ...], expires: float,
                         operation_id: str, discovery: NativeInstallReceipt) -> None:
-        skill_ids = sorted(item.resource_id for item in items if item.kind == "skill")
+        expected_skills = sorted(item.resource_id for item in items if item.kind == "skill")
+        if (discovery.hermes_revision != PINNED_HERMES_REVISION
+                or not discovery.python_version.startswith("3.14.")
+                or discovery.profile_id != profile_id or not discovery.discovered_profile
+                or not discovery.profile_identity_loaded
+                or list(discovery.loaded_skills) != expected_skills
+                or list(discovery.discovered_skills) != expected_skills):
+            raise NativeMaterializationDenied("pinned Hermes discovery result does not match the selected closure")
+        skill_ids = expected_skills
         with self._connect() as db:
             db.execute("""INSERT INTO receipts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (handle, selection.enrollment_id, selection.service_generation,
@@ -415,6 +425,7 @@ class RootNativeMaterialization:
         result = dict(row)
         result["items"] = json.loads(result["items"])
         result["skill_ids"] = json.loads(result["skill_ids"])
+        result["discovery"] = json.loads(result["discovery"])
         return result
 
     def _public_receipt(self, record: Mapping[str, Any], state: str) -> NativeMaterializationReceipt:
@@ -423,6 +434,7 @@ class RootNativeMaterialization:
             record["protected_enrollment_digest"], record["service_profile_id"],
             record["resource_profile_id"], record["resources_revision"],
             record["resources_content_digest"], record["selected_closure_digest"],
+            record["discovery"]["hermes_revision"], record["discovery"]["python_version"],
             tuple(NativeMaterializedItem(**item) for item in record["items"]),
             state, record["expires"],
         )

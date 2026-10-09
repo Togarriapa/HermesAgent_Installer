@@ -36,9 +36,10 @@ use the pinned Hermes source APIs and the factory-selected Hermes Python 3.14
 interpreter to discover this profile and load every skill in its selected
 closure. It does not invoke a model or contact an account. The receipt contains
 only opaque handles, profile/skill IDs, source and closure digests,
-per-resource states, and expiry. It is not a `RootRuntimeArtifactReceipt` and
-does not prove executable identity, functional health, credentials, or effect
-authorization. After the fixed health step, lifecycle may consume this receipt
+per-resource states, Hermes revision, verified Python version, and expiry. It
+is not a `RootRuntimeArtifactReceipt` and does not prove executable identity,
+functional health, credentials, or effect authorization. After the fixed
+health step, lifecycle may consume this receipt
 once with the exact current enrollment, generation, and selected resource
 profile. A new generation or protected digest invalidates the pending receipt.
 
