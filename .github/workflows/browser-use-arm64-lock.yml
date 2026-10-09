@@ -35,9 +35,11 @@ jobs:
           cd "$source_dir"
           uv --version
           upstream_pyproject_sha256="$(git -C "$source_dir" show "$SOURCE_REVISION:pyproject.toml" | sha256sum | cut -d' ' -f1)"
+          export UPSTREAM_PYPROJECT_SHA256="$upstream_pyproject_sha256"
           printf 'UPSTREAM_PYPROJECT_SHA256=%s\n' "$upstream_pyproject_sha256" >> "$GITHUB_ENV"
           python "$GITHUB_WORKSPACE/scripts/apply_browser_use_uv_overlay.py" pyproject.toml
           overlay_pyproject_sha256="$(sha256sum pyproject.toml | cut -d' ' -f1)"
+          export OVERLAY_PYPROJECT_SHA256="$overlay_pyproject_sha256"
           printf 'OVERLAY_PYPROJECT_SHA256=%s\n' "$overlay_pyproject_sha256" >> "$GITHUB_ENV"
           uv lock --python "$TARGET_PYTHON"
           uv lock --locked --python "$TARGET_PYTHON"
