@@ -89,6 +89,21 @@ class NativeMCPRegistrationIndexTests(unittest.TestCase):
         self.assertEqual(index.resolve(self.schema["name"], self.schema).id,
                          "mcp-binding-figma-file")
 
+    def test_selected_candidates_use_only_exact_root_schema_catalog_entries(self):
+        selected = self.index.selected_candidates({
+            self.schema["name"]: self.schema,
+            "unselected-native-tool": {"name": "unselected-native-tool"},
+        })
+        self.assertEqual(len(selected), 1)
+        name, schema, registration = selected[0]
+        self.assertEqual(name, self.schema["name"])
+        self.assertEqual(dict(schema), self.schema)
+        self.assertEqual(registration.id, self.record["id"])
+        with self.assertRaises(NativeMCPBindingError):
+            self.index.selected_candidates({
+                self.schema["name"]: {"name": self.schema["name"]},
+            })
+
     def test_unknown_name_or_schema_drift_fails_before_registration(self):
         with self.assertRaises(NativeMCPBindingError):
             self.index.resolve("mcp_other_get_file", self.schema)

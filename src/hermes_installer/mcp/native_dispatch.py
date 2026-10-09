@@ -245,6 +245,26 @@ class NativeMCPRegistrationIndex:
             raise NativeMCPBindingError("native MCP candidate is unknown or its registered schema changed")
         return replace(binding, native_schema=MappingProxyType(dict(schema)))
 
+    def selected_candidates(self, candidate_schemas: Mapping[str, Mapping[str, Any]]) -> tuple[
+            tuple[str, Mapping[str, Any], NativeMCPToolBinding], ...]:
+        """Resolve selected tool descriptors from a root-owned schema catalog.
+
+        Candidate schemas are supplied by the trusted package/runtime loader,
+        never from worker JSON, Hermes config, or a discovery cache. A missing
+        schema leaves that selected tool unavailable. Any present schema for a
+        selected tool must match the protected digest or the generation fails
+        closed. Non-selected catalog entries are ignored.
+        """
+        if not isinstance(candidate_schemas, Mapping) or len(candidate_schemas) > _MAX_BINDINGS:
+            raise NativeMCPBindingError("root native MCP candidate schema catalog is invalid")
+        selected = []
+        for name, schema in candidate_schemas.items():
+            if name not in self._by_name:
+                continue
+            registration = self.resolve(name, schema)
+            selected.append((name, registration.native_schema, registration))
+        return tuple(selected)
+
     def by_id(self, binding_id: str) -> NativeMCPToolBinding | None:
         return self._by_id.get(binding_id)
 
