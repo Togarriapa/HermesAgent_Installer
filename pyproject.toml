@@ -17,7 +17,7 @@ hermes-installer-authority = "hermes_installer.authority.daemon:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-hermes_installer = ["registry/bundle_data/*.json", "registry/bundle_data/*.tar.gz", "components/runtime_locks/browser-use/*", "authority/artifact-catalog.json"]
+hermes_installer = ["registry/bundle_data/*.json", "registry/bundle_data/*.tar.gz", "authority/artifact-catalog.json", "components/runtime_locks/browser-use/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

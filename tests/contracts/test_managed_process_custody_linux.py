@@ -24,13 +24,13 @@ import unittest
 import uuid
 from pathlib import Path
 
-from hermes_installer.authority.client import canonical_digest
+from hermes_installer.authority.client import canonical_bytes, canonical_digest
 from hermes_installer.authority.daemon import DEFAULT_SOCKET_DIR
 from hermes_installer.authority.service import AuthorityService, EffectRule, PrincipalBinding
 from hermes_installer.authority.types import Sensitivity
 from hermes_installer.managed_process_custodian import (
     ManagedProcessEffectHandler, ManagedProfileCustody,
-    process_control_target, process_start_target,
+    process_control_target, process_inspect_target, process_start_target,
 )
 
 
@@ -38,15 +38,25 @@ class _ControlledCustodyPolicy:
     revision = "ci-controlled-custody-v1"
 
     def classify(self, *, purpose, intent, source_contexts, binding):
-        if purpose != "custody-kernel-ci" or source_contexts:
-            return Sensitivity.UNKNOWN, canonical_digest({"rejected-fixture-context": intent})
-        return Sensitivity.UNKNOWN, canonical_digest({"fixture": intent, "uid": binding.uid})
+        if purpose == "custody-kernel-ci" and not source_contexts:
+            return Sensitivity.UNKNOWN, canonical_digest({"fixture": intent, "uid": binding.uid})
+        if (purpose == "managed-process-control" and len(source_contexts) == 1
+                and source_contexts[0].purpose == "custody-kernel-ci"
+                and source_contexts[0].profile_id == binding.profile_id
+                and source_contexts[0].uid == binding.uid
+                and source_contexts[0].namespace_id == binding.namespace_id):
+            return Sensitivity.UNKNOWN, canonical_digest({
+                "fixture-control": intent,
+                "source_lineage_hash": source_contexts[0].lineage_hash,
+            })
+        return Sensitivity.UNKNOWN, canonical_digest({"rejected-fixture-context": intent})
 
     def allow_effect(self, *, context, rule, request_digest, retry_index):
-        return (context.purpose == "custody-kernel-ci"
+        return (context.purpose in {"custody-kernel-ci", "managed-process-control"}
                 and context.profile_id.startswith("ci-custody-")
                 and rule.capability in {"hermes-profile-invoke", "hermes-process-control"}
-                and rule.operation in {"process.start", "process.status", "process.read", "process.write", "process.stop"}
+                and rule.operation in {"process.start", "process.status", "process.read", "process.write",
+                                       "process.stop", "process.inspect"}
                 and len(request_digest) == 64 and retry_index == 0)
 
 
@@ -78,13 +88,18 @@ def _safe_runtime_dir(path: Path, *, create: bool) -> bool:
 _RUN_PROBE_SOURCE = (
     "import json,os,signal,socket,subprocess,sys,time\n"
     "root_pid=__ROOT_PID__; home_secret=__HOME_SECRET__; credential=__CREDENTIAL__\n"
-    "expected={'HOME':'/hermes','HERMES_HOME':'/hermes','PATH':'/usr/bin','LANG':'C'}\n"
+    "expected={'HOME':'/hermes','HERMES_HOME':'/hermes','PATH':'/usr/bin','LANG':'C','LC_ALL':'C'}\n"
     "def denied(path):\n"
     "    try:\n"
     "        with open(path,'rb') as source: source.read(1)\n"
     "        return False\n"
     "    except OSError: return True\n"
-    "result={'environment_exact':dict(os.environ)==expected,\n"
+    "actual_env=dict(os.environ)\n"
+    "result={'environment_exact':actual_env==expected,\n"
+    "        'environment_keys':sorted(actual_env),\n"
+    "        'environment_unexpected_keys':sorted(set(actual_env)-set(expected)),\n"
+    "        'environment_missing_keys':sorted(set(expected)-set(actual_env)),\n"
+    "        'environment_mismatch_keys':sorted(key for key in set(expected)&set(actual_env) if expected[key]!=actual_env[key]),\n"
     "        'root_home_hidden':denied(home_secret),'credential_directory_hidden':denied(credential),\n"
     "        'root_proc_hidden':denied('/proc/'+str(root_pid)+'/environ')}\n"
     "try: os.kill(root_pid,signal.SIGTERM); result['root_signal_denied']=False\n"
@@ -144,6 +159,8 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         self.server_errors: list[BaseException] = []
         self.server_thread: threading.Thread | None = None
         self.handler: ManagedProcessEffectHandler | None = None
+        self.manager_diagnostics: list[bytes] = []
+        self.clients: list[subprocess.Popen[str]] = []
 
         self._useradd(self.service_user)
         self.user_created = True
@@ -203,11 +220,14 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         for operation in ("process.status", "process.read", "process.write", "process.stop"):
             target = process_control_target(self.profile, operation)
             effect_rules.append(EffectRule("hermes-process-control", operation, target))
+        effect_rules.append(EffectRule("hermes-process-control", "process.inspect",
+                                       process_inspect_target(self.profile)))
         handlers = ManagedProcessEffectHandler({self.profile_id: self.profile},
                                                 systemd_run=self.systemd_run,
                                                 systemctl=self.systemctl,
                                                 artifact_resolver=self._resolve_artifact)
         self.handler = handlers
+        self.handler._diagnostic_sink = self.manager_diagnostics.append
         handler_map = handlers.handlers()
         service = AuthorityService(
             signing_key=os.urandom(32), key_id="ci-kernel-fixture",
@@ -216,7 +236,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
                 profile_id=self.profile_id, namespace_id="fixture-namespace-" + self.token[:12],
                 capabilities=frozenset({"hermes-profile-invoke", "hermes-process-control"}),
             )},
-            rules={(rule.capability, rule.target): rule for rule in effect_rules},
+            rules={(rule.capability, rule.operation, rule.target): rule for rule in effect_rules},
             handlers=handler_map, policy=_ControlledCustodyPolicy(),
             profile_generations={self.profile_id: self.profile.generation},
         )
@@ -315,18 +335,20 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             "artifact_sha256": self.digest, "service_user": self.service_user,
             "trace_id": "ci-trace-" + self.token[:12], "operation_id": "ci-op-" + self.token[:12],
             "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes",
-                            "PATH": "/usr/bin", "LANG": "C"},
+                            "PATH": "/usr/bin", "LANG": "C", "LC_ALL": "C"},
             "mode": mode, "artifact_ref": self.run_store_id if mode == "run" else self.parent_store_id,
             "child_artifact_refs": self.child_refs,
         }
         env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent",
                "PYTHONPATH": str(self.client_source_root), "PYTHONDONTWRITEBYTECODE": "1"}
-        return subprocess.Popen(
+        client = subprocess.Popen(
             [str(self.executable), str(self.client_harness)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, cwd="/", env=env, close_fds=True,
             preexec_fn=_drop_to(self.uid, self.gid),
         )
+        self.clients.append(client)
+        return client
 
     def _start_client(self, *, mode: str, child_code: str = "", child_args: list[str] | None = None,
                       wait_ready: bool = True, argv_override: list[str] | None = None,
@@ -338,7 +360,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             "artifact_sha256": self.digest, "service_user": self.service_user,
             "trace_id": "ci-trace-" + self.token[:12], "operation_id": "ci-op-" + self.token[:12],
             "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes",
-                            "PATH": "/usr/bin", "LANG": "C"},
+                            "PATH": "/usr/bin", "LANG": "C", "LC_ALL": "C"},
             "mode": mode, "artifact_ref": self.run_store_id if mode == "run" else self.parent_store_id,
             "child_artifact_refs": self.child_refs,
             "expect_denial": expect_denial,
@@ -362,7 +384,9 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             event = json.loads(line)
         except json.JSONDecodeError:
             stderr = client.stderr.read() if client.poll() is not None else ""
-            self.fail(f"unprivileged AuthorityClient failed before readiness: {stderr[-1200:]} {line[-400:]}")
+            diagnostics = b"\n".join(self.manager_diagnostics).decode("utf-8", "replace")
+            self.fail(f"unprivileged AuthorityClient failed before readiness: {stderr[-1200:]} {line[-400:]} "
+                      f"root-manager-diagnostic={diagnostics[-2048:]}")
         self.assertEqual(event.get("event"), "denied" if expect_denial else "started", event)
         return client, event
 
@@ -392,7 +416,13 @@ def denied(path):
         return False
     except OSError:
         return True
-result={"environment_exact":dict(os.environ)==expected,
+actual_env=dict(os.environ)
+result={"environment_exact":actual_env==expected,
+        "environment_keys":sorted(actual_env),
+        "environment_unexpected_keys":sorted(set(actual_env)-set(expected)),
+        "environment_missing_keys":sorted(set(expected)-set(actual_env)),
+        "environment_mismatch_keys":sorted(key for key in set(expected)&set(actual_env)
+                                              if expected[key]!=actual_env[key]),
         "root_home_hidden":denied(home_secret),"credential_directory_hidden":denied(credential),
         "root_proc_hidden":denied('/proc/'+str(root_pid)+'/environ')}
 try:
@@ -414,17 +444,34 @@ result['descendant_pid']=descendant.pid
 print(json.dumps(result,sort_keys=True),flush=True)
 time.sleep(30)
 '''
-        env_allowlist = {"HOME": "/hermes", "HERMES_HOME": "/hermes", "PATH": "/usr/bin", "LANG": "C"}
+        env_allowlist = {"HOME": "/hermes", "HERMES_HOME": "/hermes", "PATH": "/usr/bin",
+                         "LANG": "C", "LC_ALL": "C"}
         args = [str(os.getpid()), str(self.home_secret), str(self.credential_path), json.dumps(env_allowlist)]
         client, started = self._start_client(mode="run", child_code=child, child_args=args)
         try:
             assert client.stdout is not None
             ready, _, _ = __import__("select").select([client.stdout], [], [], 20)
             self.assertTrue(ready, "client did not return its cleanup receipt")
-            result = json.loads(client.stdout.readline())
+            receipt_line = client.stdout.readline()
+            if not receipt_line:
+                client.wait(timeout=5)
+                error_output = client.stderr.read(8192) if client.stderr is not None else ""
+                diagnostics = b"\n".join(self.manager_diagnostics).decode("utf-8", "replace")
+                self.fail(f"managed client exited before cleanup receipt (rc={client.returncode}); "
+                          f"stderr={error_output[-4096:]!r}; root-manager-diagnostic={diagnostics[-2048:]}")
+            result = json.loads(receipt_line)
             self.assertEqual(result.get("event"), "stopped", result)
-            child_effects = json.loads(result["stdout"])
-            self.assertEqual(child_effects["environment_exact"], True)
+            self.assertTrue(result.get("stdout_complete") and result.get("stdout", "").strip(),
+                            f"child stdout lacked its bounded JSON line; stdout={result.get('stdout')!r}; "
+                            f"stderr={result.get('stderr')!r}")
+            try:
+                child_effects = json.loads(result["stdout"])
+            except json.JSONDecodeError as exc:
+                self.fail(f"child stdout is not its bounded JSON probe; stdout={result.get('stdout')!r}; "
+                          f"stderr={result.get('stderr')!r}; error={exc.msg} at {exc.pos}")
+            self.assertEqual(child_effects["environment_exact"], True,
+                             {key: child_effects[key] for key in ("environment_keys", "environment_unexpected_keys",
+                                                                  "environment_missing_keys", "environment_mismatch_keys")})
             for key in ("root_home_hidden", "credential_directory_hidden", "root_proc_hidden",
                         "root_signal_denied", "ipv4_denied", "ipv6_denied"):
                 self.assertIs(child_effects[key], True, key)
@@ -544,6 +591,13 @@ time.sleep(30)
             self.server_thread.join(timeout=5)
             if self.server_thread.is_alive():
                 self.fail("root AuthorityService listener did not stop")
+        for client in self.clients:
+            if client.poll() is None:
+                client.kill()
+                client.wait(timeout=5)
+            for stream in (client.stdin, client.stdout, client.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
         if self.socket_path is not None:
             try:
                 self.socket_path.unlink()

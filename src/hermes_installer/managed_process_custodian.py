@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import pwd
@@ -43,6 +44,43 @@ class ManagedProfileCustody:
     child_artifact_refs: Mapping[str, str] | None = None
     argv_recipe: tuple[str, ...] | None = None
     authority_socket: Path | None = None
+    process_role_artifact_hashes: Mapping[str, str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LivePeerIdentity:
+    """Root-observed identity for an authenticated live process peer."""
+
+    profile_id: str
+    generation: str
+    kernel_uid: int
+    start_ticks: int
+    executable_sha256: str
+    cgroup_identity: str
+    namespace_identity: str
+
+
+@dataclass(slots=True)
+class ManagedNamespaceLease:
+    """Short-lived duplicated FDs for one exact live private network namespace."""
+
+    namespace_fd: int
+    pidfd: int
+    uid: int
+    cgroup_identity: str
+    generation: str
+    namespace_identity: str
+    _closed: bool = False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for fd in (self.namespace_fd, self.pidfd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 @dataclass(slots=True)
@@ -63,6 +101,8 @@ class _Handle:
     expires: float
     output_cap: int
     artifact_mount_dir: Path
+    network_namespace_fd: int | None = None
+    child_artifact_identities: tuple[tuple[str, int, int], ...] = ()
     stdin_cursor: int = 0
     stdout_cursor: int = 0
     stderr_cursor: int = 0
@@ -91,6 +131,10 @@ def process_control_target(profile: ManagedProfileCustody, operation: str) -> st
         raise ValueError("process control operation is not fixed")
     verb = operation.removeprefix("process.")
     return f"hermes-profile-control:{profile.profile_id}:{profile.data_root}:{verb}"
+
+
+def process_inspect_target(profile: ManagedProfileCustody) -> str:
+    return f"{profile.profile_id}:inspect"
 
 
 def _code_interpreter(name: str) -> bool:
@@ -251,6 +295,10 @@ class ManagedProcessEffectHandler:
         self._finished: dict[str, tuple[str, float]] = {}
         self._starting: set[str] = set()
         self._lock = threading.RLock()
+        self._member_key = os.urandom(32)
+        # Root-only test harness may capture bounded manager diagnostics. This
+        # is never serialized to a worker or populated from caller text.
+        self._diagnostic_sink: Callable[[bytes], None] | None = None
         for profile in self.profiles.values():
             self._validate_profile(profile)
 
@@ -294,6 +342,15 @@ class ManagedProcessEffectHandler:
                        for arg in recipe)
                 or recipe.count("{child_artifact}") > 1):
             raise ValueError("protected process argv recipe is invalid")
+        role_pins = profile.process_role_artifact_hashes or {}
+        allowed_roles = {"xpra-server", "electron-renderer", "electron-browser", "renderer-relaunch-monitor"}
+        if (len(role_pins) > 64 or any(
+                not re.fullmatch(r"[0-9a-f]{64}", digest) or role not in allowed_roles
+                for digest, role in role_pins.items())):
+            raise ValueError("protected process inspection role pins are invalid")
+        registered_digests = {profile.artifact_sha256, *children.values()}
+        if any(digest not in registered_digests for digest in role_pins):
+            raise ValueError("process inspection roles must reference enrolled executable artifacts")
         if _code_interpreter(exe.name) and recipe != (str(exe), "{child_artifact}"):
             raise ValueError("code interpreters require one immutable child-artifact operand")
         sock = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
@@ -321,6 +378,7 @@ class ManagedProcessEffectHandler:
             for verb in ("process.status", "process.read", "process.write", "process.stop"):
                 target = process_control_target(profile, verb)
                 result[(verb, target)] = self._bound(profile, verb)
+            result[("process.inspect", process_inspect_target(profile))] = self._bound(profile, "process.inspect")
         return result
 
     def _bound(self, profile: ManagedProfileCustody, operation: str):
@@ -339,9 +397,10 @@ class ManagedProcessEffectHandler:
                  timeout: float, peer_pid: int, peer_pidfd: int | None,
                  cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         target = (process_start_target(profile) if operation == "process.start"
+                  else process_inspect_target(profile) if operation == "process.inspect"
                   else process_control_target(profile, operation))
         expected_capability = "hermes-profile-invoke" if operation == "process.start" else "hermes-process-control"
-        if (operation not in {"process.start", "process.status", "process.read", "process.write", "process.stop"}
+        if (operation not in {"process.start", "process.status", "process.read", "process.write", "process.stop", "process.inspect"}
                 or context.profile_id != profile.profile_id or authorization.profile_id != profile.profile_id
                 or authorization.uid != context.uid or authorization.target != target
                 or authorization.capability != expected_capability
@@ -355,6 +414,8 @@ class ManagedProcessEffectHandler:
         if operation == "process.start":
             return self._start(profile, context, authorization, payload, timeout, peer_pid,
                                peer_pidfd, cancelled)
+        if operation == "process.inspect":
+            return self._inspect(profile, context, payload, timeout, cancelled)
         return self._control(profile, context, operation, payload, timeout, cancelled)
 
     @staticmethod
@@ -429,6 +490,12 @@ class ManagedProcessEffectHandler:
             except Exception:
                 raise AuthorityDenied("process.child", "root catalog could not resolve the enrolled artifact") from None
             resolved_children[store_id] = child_path
+        child_artifact_identities = tuple(sorted(
+            (digest, child_path.stat(follow_symlinks=False).st_dev,
+             child_path.stat(follow_symlinks=False).st_ino)
+            for store_id, child_path in resolved_children.items()
+            for digest in (store_id.rsplit(":", 1)[-1],)
+        ))
         argv = list(request["argv"])
         env = request["env_allowlist"]
         if (not isinstance(argv, list) or not argv or len(argv) > 128 or argv[0] != str(profile.executable)
@@ -438,7 +505,10 @@ class ManagedProcessEffectHandler:
         if not _argv_matches_recipe(profile, argv, registered_children):
             raise AuthorityDenied("process.argv", "argv differs from the protected profile recipe")
         artifact_args = [index for index, item in enumerate(argv) if item in registered_children]
-        if artifact_args:
+        if len(artifact_args) > 1:
+            raise AuthorityDenied("process.child", "a launch recipe may select only one child artifact")
+        selected_child_ref = argv[artifact_args[0]] if artifact_args else None
+        if selected_child_ref is not None:
             argv[artifact_args[0]] = "__ROOT_ARTIFACT_MOUNT__"
         secrets = ("--token", "--secret", "--password", "--api-key", "--credential")
         if any(any(flag in item.casefold() for flag in secrets) for item in argv[1:]):
@@ -477,7 +547,10 @@ class ManagedProcessEffectHandler:
         process_id = uuid.uuid4().hex
         artifact_mount_dir: Path | None = None
         artifact_target: Path | None = None
-        artifact_path: Path | None = next(iter(resolved_children.values()), None)
+        artifact_path: Path | None = resolved_children.get(selected_child_ref) if selected_child_ref else None
+        if selected_child_ref is not None and artifact_path is None:
+            os.close(parent_fd)
+            raise AuthorityDenied("process.child", "selected child artifact is not in the root catalog")
         unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
         mount = f"/hermes/profiles/{profile.profile_id}"
         rel = cwd.relative_to(root).as_posix()
@@ -493,7 +566,11 @@ class ManagedProcessEffectHandler:
             "--property=ProtectControlGroups=yes", "--property=RestrictSUIDSGID=yes",
             "--property=RestrictNamespaces=user", "--property=RestrictAddressFamilies=AF_UNIX",
             "--property=PrivateNetwork=yes", "--property=IPAddressDeny=any",
-            "--property=InaccessiblePaths=/etc/hermes-installer /var/lib/hermes-installer /etc/ssh /etc/ssl/private",
+            # The product data root is created by the root installer. On a
+            # clean host (and the isolated CI manager namespace) it may not
+            # exist yet; systemd's `-` prefix skips only that absent path.
+            # Once enrolled/installed, the same path is still masked.
+            "--property=InaccessiblePaths=/etc/hermes-installer -/var/lib/hermes-installer /etc/ssh /etc/ssl/private",
             f"--property=BindPaths={root}:{mount}",
         ]
         authority_socket = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
@@ -539,6 +616,9 @@ class ManagedProcessEffectHandler:
             os.close(parent_fd)
             raise
         if manager_env.returncode != 0 or len(manager_env.stdout) > 65536:
+            if self._diagnostic_sink is not None:
+                self._diagnostic_sink(
+                    f"manager-environment-failed:returncode={manager_env.returncode}:bytes={len(manager_env.stdout)}".encode("ascii"))
             os.close(parent_fd)
             raise AuthorityDenied("process.environment", "system manager environment cannot be safely cleared")
         import re
@@ -547,7 +627,8 @@ class ManagedProcessEffectHandler:
         manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
                              "WATCHDOG_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES",
                              "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME",
-                             "SHELL", "PWD"})
+                             "SHELL", "PWD", "SYSTEMD_EXEC_PID", "MEMORY_PRESSURE_WATCH",
+                             "MEMORY_PRESSURE_WRITE"})
         unset_keys = sorted(manager_keys - set(env))
         if sum(len(key) + 1 for key in unset_keys) > 60000:
             os.close(parent_fd)
@@ -593,10 +674,11 @@ class ManagedProcessEffectHandler:
             os.close(parent_fd)
             if artifact_mount_dir is not None:
                 _remove_artifact_mount(artifact_mount_dir)
-            raise AuthorityDenied("process.start", "root process manager could not start the enrolled service") from None
+            raise AuthorityDenied("process.launcher_start", "root process manager could not start the enrolled service") from None
         started = self.monotonic()
         deadline = min(launch_deadline, started + 10.0)
         child_fd = None
+        network_namespace_fd = None
         try:
             for stream in (launcher.stdin, launcher.stdout, launcher.stderr):
                 if stream is not None:
@@ -606,7 +688,18 @@ class ManagedProcessEffectHandler:
             while self.monotonic() < deadline:
                 if cancelled() or _pidfd_exited(parent_fd):
                     raise AuthorityDenied("process.parent", "process owner ended before admission")
-                cg = self._show(unit, "ControlGroup")
+                try:
+                    cg = self._show(unit, "ControlGroup")
+                except AuthorityDenied as exc:
+                    # systemd-run returns after submitting the unit but before
+                    # systemd necessarily publishes it to `show`. Retry only
+                    # this initial fixed-property lookup while the bounded
+                    # launcher is still alive; all later readback failures
+                    # remain fail-closed.
+                    if exc.code != "process.manager.readback" or launcher.poll() is not None:
+                        raise
+                    time.sleep(.025)
+                    continue
                 if cg.startswith("/") and Path("/sys/fs/cgroup", *cg.strip("/").split()).exists():
                     members = (Path("/sys/fs/cgroup") / cg.lstrip("/") / "cgroup.procs").read_text().split()
                     for raw_pid in members:
@@ -625,21 +718,65 @@ class ManagedProcessEffectHandler:
                 if identity:
                     break
                 if launcher.poll() is not None:
-                    raise AuthorityDenied("process.start", "service exited before admission")
+                    sink = self._diagnostic_sink
+                    if sink is not None:
+                        parts = [f"launcher-exit={launcher.returncode}".encode("ascii")]
+                        for name, stream in ((b"stdout", launcher.stdout), (b"stderr", launcher.stderr)):
+                            if stream is None:
+                                continue
+                            try:
+                                output = stream.read(1024)
+                            except (OSError, ValueError):
+                                output = b""
+                            parts.append(name + b"=" + output[:1024])
+                        # `systemd-run --quiet --wait --collect` intentionally
+                        # keeps manager details off the worker channel. On a
+                        # rejected unit the transient unit may already be
+                        # collected, so capture only fixed, non-command
+                        # properties and the bounded journal reason for the
+                        # root-owned CI diagnostic sink. Never return this to
+                        # the caller or include ExecStart/Environment fields.
+                        for label, command_args in (
+                            (b"unit-properties", [str(self.systemctl), "--system", "show", unit,
+                                "-p", "Result", "-p", "ExecMainCode", "-p", "ExecMainStatus",
+                                "-p", "StatusText", "-p", "ControlGroup", "-p", "PrivateNetwork",
+                                "-p", "RestrictAddressFamilies"]),
+                            (b"unit-journal", ["/usr/bin/journalctl", "--system", "--no-pager",
+                                "-n", "8", "-o", "cat", "--unit", unit]),
+                        ):
+                            try:
+                                diagnostic = subprocess.run(command_args, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+                                    close_fds=True, timeout=1.0, check=False)
+                                parts.append(label + b"=" + diagnostic.stdout[:1024])
+                            except (OSError, subprocess.TimeoutExpired):
+                                parts.append(label + b"=<unavailable>")
+                        sink(b"\n".join(parts)[:2048])
+                    raise AuthorityDenied("process.launcher_early_exit", "service exited before admission")
                 time.sleep(.025)
             if identity is None:
-                raise AuthorityDenied("process.start", "service did not become ready before its deadline")
+                raise AuthorityDenied("process.admission_deadline", "service did not become ready before its deadline")
             pid, ticks, dev, ino = identity
             if Path(cgroup).name != unit or ".." in Path(cgroup).parts:
                 raise AuthorityDenied("process.cgroup", "service did not receive its exact cgroup")
             expected_props = {
                 "KillMode": "control-group", "ProtectSystem": "strict", "PrivateTmp": "yes",
-                "PrivateDevices": "yes", "NoNewPrivileges": "yes", "IPAddressDeny": "any",
+                "PrivateDevices": "yes", "NoNewPrivileges": "yes",
+                # systemd expands `any` to both address-family CIDR ranges in
+                # the observed unit property; compare the kernel rule form.
+                "IPAddressDeny": "0.0.0.0/0 ::/0",
                 "PrivateNetwork": "yes", "RestrictAddressFamilies": "AF_UNIX", "ProtectHome": "tmpfs",
                 "ProtectProc": "invisible", "ProcSubset": "pid", "User": profile.service_user,
             }
             for key, value in expected_props.items():
-                if self._show(unit, key) != value:
+                actual_value = self._show(unit, key)
+                matches = (set(actual_value.split()) == {"0.0.0.0/0", "::/0"}
+                           if key == "IPAddressDeny" else actual_value == value)
+                if not matches:
+                    if self._diagnostic_sink is not None:
+                        self._diagnostic_sink(
+                            f"readback-mismatch:{key}:actual={actual_value[:160]!r}:expected={value!r}".encode("ascii", "backslashreplace"))
                     raise AuthorityDenied("process.sandbox", "manager isolation readback failed")
             if self._show(unit, "Description") != f"HermesInstaller {profile.profile_id} {profile.generation}":
                 raise AuthorityDenied("process.unit", "manager unit is not bound to the profile generation")
@@ -647,6 +784,15 @@ class ManagedProcessEffectHandler:
                 raise AuthorityDenied("process.groups", "worker has unexpected supplemental groups")
             actual_environment = self._read_environment(pid)
             if actual_environment != env:
+                if self._diagnostic_sink is not None:
+                    # Keep values out of the diagnostic path: only the
+                    # variable names needed to identify manager injection are
+                    # included in this root-only test sink.
+                    actual_keys = sorted(actual_environment)
+                    expected_keys = sorted(env)
+                    self._diagnostic_sink(
+                        ("child-environment-mismatch:actual_keys=" + ",".join(actual_keys)
+                         + ":expected_keys=" + ",".join(expected_keys)).encode("ascii", "backslashreplace")[:1024])
                 raise AuthorityDenied("process.environment", "actual child environment differs from the allowlist")
             child_fd = os.pidfd_open(pid, 0)
             actual_ticks, actual_cgroup, actual_dev, actual_ino = _pid_identity(pid)
@@ -660,6 +806,11 @@ class ManagedProcessEffectHandler:
             mnt, net = (os.stat(f"/proc/{pid}/ns/{name}").st_ino for name in ("mnt", "net"))
             if mnt == os.stat("/proc/self/ns/mnt").st_ino or net == os.stat("/proc/self/ns/net").st_ino:
                 raise AuthorityDenied("process.namespace", "private mount or network namespace is missing")
+            network_namespace_fd = os.open(f"/proc/{pid}/ns/net", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            if os.fstat(network_namespace_fd).st_ino != net:
+                raise AuthorityDenied("process.namespace", "network namespace changed while pinning its descriptor")
+            if (_pid_identity(pid) != (ticks, cgroup, dev, ino) or _pidfd_exited(child_fd)):
+                raise AuthorityDenied("process.identity", "worker changed while pinning its namespace descriptor")
             limits = self._limits(cgroup)
             if profile.memory_max_bytes is not None and limits["memory.max"] != str(profile.memory_max_bytes):
                 raise AuthorityDenied("process.limits", "kernel memory.max does not match enrolled bound")
@@ -679,8 +830,11 @@ class ManagedProcessEffectHandler:
             handle = _Handle(process_id, profile, unit, cgroup, launcher, parent_fd, child_fd, pid,
                 ticks, f"mnt:{mnt};net:{net}", context.principal_id, context.namespace_id,
                 started, started + float(lifetime), output_cap, artifact_mount_dir,
+                network_namespace_fd=network_namespace_fd,
+                child_artifact_identities=child_artifact_identities,
                 lock=threading.RLock())
             child_fd = None
+            network_namespace_fd = None
             with self._lock:
                 self._handles[process_id] = handle
             threading.Thread(target=self._watch_parent, args=(handle,), daemon=True,
@@ -701,13 +855,290 @@ class ManagedProcessEffectHandler:
                     if artifact_mount_dir is not None:
                         _remove_artifact_mount(artifact_mount_dir)
                 finally:
-                    for fd in (parent_fd, child_fd):
+                    for fd in (parent_fd, child_fd, network_namespace_fd):
                         if fd is not None:
                             try:
                                 os.close(fd)
                             except OSError:
                                 pass
             raise
+
+    def _opaque_member_id(self, *, process_id: str, pid: int, ticks: int,
+                          device: int, inode: int, cgroup: str) -> str:
+        material = f"{process_id}:{pid}:{ticks}:{device}:{inode}:{cgroup}".encode("ascii")
+        return hmac.new(self._member_key, material, hashlib.sha256).hexdigest()[:32]
+
+    @staticmethod
+    def _pidfd_target(pidfd: int) -> int | None:
+        try:
+            lines = Path(f"/proc/self/fdinfo/{pidfd}").read_text().splitlines()
+            field = next(line for line in lines if line.startswith("Pid:"))
+            value = int(field.split(":", 1)[1].strip())
+            return value if value > 0 else None
+        except (OSError, ValueError, StopIteration):
+            return None
+
+    def _inspect(self, profile: ManagedProfileCustody, context: HostContext,
+                 payload: bytes, timeout: float,
+                 cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        item = self._json(payload)
+        if (set(item) != {"schema", "process_id", "generation"} or item.get("schema") != 1
+                or not isinstance(item.get("process_id"), str)
+                or item.get("generation") != profile.generation):
+            raise AuthorityDenied("process.inspect", "inspection request is malformed or stale")
+        with self._lock:
+            handle = self._handles.get(item["process_id"])
+        if (handle is None or handle.profile is not profile or handle.stopped
+                or context.principal_id != handle.principal_id
+                or context.namespace_id != handle.authority_namespace_id
+                or cancelled() or self.monotonic() >= handle.expires
+                or _pidfd_exited(handle.child_pidfd) or _pidfd_exited(handle.parent_pidfd)):
+            raise AuthorityDenied("process.handle", "inspection handle is stale or outside its live generation")
+        observed = self.monotonic()
+        before = self._pids(handle.cgroup)
+        if not before or len(before) > 128 or handle.pid not in before:
+            raise AuthorityDenied("process.inspect", "registered cgroup has no bounded live main process")
+        snapshots: dict[int, dict[str, Any]] = {}
+        stable = True
+        pinned_child_identities = set(handle.child_artifact_identities)
+        executable_info = profile.executable.stat(follow_symlinks=False)
+        pinned_child_identities.add((profile.artifact_sha256, executable_info.st_dev, executable_info.st_ino))
+        role_pins = dict(profile.process_role_artifact_hashes or {})
+        for pid in before:
+            pidfd = None
+            try:
+                pidfd = os.pidfd_open(pid, 0)
+                if self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd):
+                    stable = False
+                    continue
+                ticks, cgroup, device, inode = _pid_identity(pid)
+                if cgroup != handle.cgroup:
+                    stable = False
+                    continue
+                status = Path(f"/proc/{pid}/status").read_text().splitlines()
+                values = {line.split(":", 1)[0]: line.split(":", 1)[1].strip()
+                          for line in status if ":" in line}
+                uids = [int(value) for value in values.get("Uid", "").split()]
+                if len(uids) != 4 or any(uid != profile.owner_uid for uid in uids):
+                    stable = False
+                    continue
+                stat_fields = Path(f"/proc/{pid}/stat").read_text()
+                tail = stat_fields[stat_fields.rfind(")") + 2:].split()
+                parent_pid = int(tail[1])
+                exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+                try:
+                    exe_stat = os.fstat(exe_fd)
+                    if not stat.S_ISREG(exe_stat.st_mode) or exe_stat.st_size > 1024 * 1024 * 1024:
+                        stable = False
+                        continue
+                    digest = hashlib.sha256()
+                    while True:
+                        chunk = os.read(exe_fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                    exe_sha = digest.hexdigest()
+                finally:
+                    os.close(exe_fd)
+                mnt_inode, net_inode = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                        for name in ("mnt", "net"))
+                namespace_identity = f"mnt:{mnt_inode};net:{net_inode}"
+                artifact_verified = (exe_sha, device, inode) in pinned_child_identities
+                role = role_pins.get(exe_sha, "main" if pid == handle.pid else "descendant")
+                if role not in {"main", "descendant", "xpra-server", "electron-renderer",
+                                "electron-browser", "renderer-relaunch-monitor"}:
+                    stable = False
+                    continue
+                command = Path(f"/proc/{pid}/cmdline").read_bytes()
+                if len(command) > 65536:
+                    stable = False
+                    continue
+                arguments = [part.decode("utf-8", "replace") for part in command.rstrip(b"\x00").split(b"\x00")]
+                forbidden = any(argument in {"--no-sandbox", "--disable-setuid-sandbox"}
+                                for argument in arguments)
+                seccomp_raw = values.get("Seccomp", "")
+                no_new_privs_raw = values.get("NoNewPrivs", "")
+                try:
+                    seccomp_mode = int(seccomp_raw)
+                    no_new_privs = int(no_new_privs_raw) == 1
+                except ValueError:
+                    stable = False
+                    continue
+                after_identity = _pid_identity(pid)
+                if after_identity != (ticks, cgroup, device, inode) or _pidfd_exited(pidfd):
+                    stable = False
+                    continue
+                member = self._opaque_member_id(process_id=handle.process_id, pid=pid,
+                    ticks=ticks, device=device, inode=inode, cgroup=cgroup)
+                snapshots[pid] = {
+                    "member": member, "parent_pid": parent_pid, "kernel_uid": profile.owner_uid,
+                    "starttime": ticks, "exe_device": device, "exe_inode": inode,
+                    "exe_sha256": exe_sha, "cgroup_identity": cgroup,
+                    "namespace_identity": namespace_identity, "role": role,
+                    "artifact_verified": artifact_verified, "seccomp_mode": seccomp_mode,
+                    "no_new_privs": no_new_privs, "forbidden_flags_present": forbidden,
+                    "namespace_verified": namespace_identity == handle.kernel_namespace_id,
+                }
+            except (OSError, ValueError, KeyError):
+                stable = False
+            finally:
+                if pidfd is not None:
+                    os.close(pidfd)
+        after = self._pids(handle.cgroup)
+        stable = stable and before == after and set(snapshots) == set(before)
+        member_by_pid = {pid: item["member"] for pid, item in snapshots.items()}
+
+        def chain_reaches_main(pid: int) -> bool:
+            seen: set[int] = set()
+            current = pid
+            for _ in range(32):
+                if current == handle.pid:
+                    return True
+                if current in seen or current not in snapshots:
+                    return False
+                seen.add(current)
+                current = snapshots[current]["parent_pid"]
+            return False
+
+        processes = []
+        for pid, snapshot in sorted(snapshots.items(), key=lambda pair: pair[1]["member"]):
+            parent_pid = snapshot["parent_pid"]
+            parent_verified = pid == handle.pid or chain_reaches_main(pid)
+            all_kernel_proofs = (snapshot["kernel_uid"] == profile.owner_uid
+                and snapshot["cgroup_identity"] == handle.cgroup
+                and snapshot["namespace_verified"] and snapshot["artifact_verified"]
+                and snapshot["seccomp_mode"] == 2 and snapshot["no_new_privs"]
+                and not snapshot["forbidden_flags_present"] and parent_verified)
+            role_hash = role_pins.get(snapshot["exe_sha256"])
+            sandbox_attestation = {
+                "verified": bool(role_hash and all_kernel_proofs),
+                "role": snapshot["role"],
+                "artifact_verified": snapshot["artifact_verified"],
+                "parent_chain_verified": parent_verified,
+                "kernel_uid": snapshot["kernel_uid"],
+                "cgroup_identity": snapshot["cgroup_identity"],
+                "namespace_identity": snapshot["namespace_identity"],
+                "seccomp_mode": snapshot["seccomp_mode"],
+                "no_new_privs": snapshot["no_new_privs"],
+                "forbidden_flags_present": snapshot["forbidden_flags_present"],
+                "relaunch_monitor_verified": False,
+                "window_denial_verified": False,
+                "policy_manifest_sha256": None,
+                "native_generation": None,
+                "observation_monotonic": observed,
+                "expires_monotonic": min(handle.expires, observed + min(max(timeout, 0.1), 30.0)),
+                "evidence_refs": ["pidfd", "procfs-status", "procfs-cgroup", "procfs-exe"],
+            }
+            processes.append({
+                "opaque_member_id": snapshot["member"],
+                "parent_member_id": member_by_pid.get(parent_pid),
+                "kernel_uid": snapshot["kernel_uid"],
+                "pidfd_identity": "pidfd:" + snapshot["member"],
+                "starttime": snapshot["starttime"],
+                "exe_device": snapshot["exe_device"],
+                "exe_inode": snapshot["exe_inode"],
+                "exe_sha256": snapshot["exe_sha256"],
+                "cgroup_identity": snapshot["cgroup_identity"],
+                "role": snapshot["role"],
+                "sandbox_attestation": sandbox_attestation,
+            })
+        if cancelled() or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd):
+            raise AuthorityDenied("process.expired", "process expired during inspection")
+        return _response(200, {
+            "schema": 1, "process_id": handle.process_id, "generation": profile.generation,
+            "profile_id": profile.profile_id, "cgroup_identity": handle.cgroup,
+            "observation_monotonic": observed,
+            "expires_monotonic": min(handle.expires, observed + min(max(timeout, 0.1), 30.0)),
+            "complete": stable, "processes": processes,
+        })
+
+    def resolve_namespace_lease(self, binding: Any) -> ManagedNamespaceLease | None:
+        """Resolve a route only to the one active namespace enrolled for its profile generation."""
+        profile_id = getattr(binding, "profile_id", None)
+        generation = getattr(binding, "generation", None)
+        namespace_identity = getattr(binding, "namespace_identity", None)
+        if not isinstance(profile_id, str) or not isinstance(generation, str) or not isinstance(namespace_identity, str):
+            return None
+        with self._lock:
+            matches = [handle for handle in self._handles.values()
+                       if handle.profile.profile_id == profile_id
+                       and handle.profile.generation == generation
+                       and handle.kernel_namespace_id == namespace_identity]
+        if len(matches) != 1:
+            return None
+        handle = matches[0]
+        with handle.lock:
+            if (handle.stopped or handle.network_namespace_fd is None
+                    or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
+                    or handle.pid not in self._pids(handle.cgroup)):
+                return None
+            expected_net = int(namespace_identity.rsplit("net:", 1)[1])
+            if os.fstat(handle.network_namespace_fd).st_ino != expected_net:
+                return None
+            namespace_fd = os.dup(handle.network_namespace_fd)
+            try:
+                pidfd = os.dup(handle.child_pidfd)
+            except OSError:
+                os.close(namespace_fd)
+                return None
+            return ManagedNamespaceLease(namespace_fd, pidfd, handle.profile.owner_uid,
+                handle.cgroup, handle.profile.generation, handle.kernel_namespace_id)
+
+    def resolve_live_peer(self, peer_pid: int, peer_pidfd: int, *,
+                          profile_id: str, generation: str) -> LivePeerIdentity | None:
+        """Return root-observed identity only for a live member of an enrolled process cgroup."""
+        if (type(peer_pid) is not int or peer_pid <= 0 or type(peer_pidfd) is not int
+                or peer_pidfd < 0 or not isinstance(profile_id, str) or not isinstance(generation, str)):
+            return None
+        if self._pidfd_target(peer_pidfd) != peer_pid or _pidfd_exited(peer_pidfd):
+            return None
+        with self._lock:
+            matches = [handle for handle in self._handles.values()
+                       if handle.profile.profile_id == profile_id
+                       and handle.profile.generation == generation]
+        if len(matches) != 1:
+            return None
+        handle = matches[0]
+        if (handle.stopped or self.monotonic() >= handle.expires
+                or peer_pid not in self._pids(handle.cgroup)):
+            return None
+        try:
+            ticks, cgroup, device, inode = _pid_identity(peer_pid)
+            if cgroup != handle.cgroup:
+                return None
+            status = Path(f"/proc/{peer_pid}/status").read_text().splitlines()
+            uid_fields = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            if len(uid_fields) != 4 or any(int(uid) != handle.profile.owner_uid for uid in uid_fields):
+                return None
+            exe_fd = os.open(f"/proc/{peer_pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            try:
+                exe_stat = os.fstat(exe_fd)
+                if not stat.S_ISREG(exe_stat.st_mode) or exe_stat.st_size > 1024 * 1024 * 1024:
+                    return None
+                digest = hashlib.sha256()
+                while True:
+                    chunk = os.read(exe_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                exe_sha256 = digest.hexdigest()
+            finally:
+                os.close(exe_fd)
+            main = handle.profile.executable.stat(follow_symlinks=False)
+            pinned = {(handle.profile.artifact_sha256, main.st_dev, main.st_ino),
+                      *handle.child_artifact_identities}
+            if (exe_sha256, device, inode) not in pinned:
+                return None
+            mnt, net = (os.stat(f"/proc/{peer_pid}/ns/{name}").st_ino for name in ("mnt", "net"))
+            if f"mnt:{mnt};net:{net}" != handle.kernel_namespace_id:
+                return None
+            if (_pid_identity(peer_pid) != (ticks, cgroup, device, inode)
+                    or self._pidfd_target(peer_pidfd) != peer_pid or _pidfd_exited(peer_pidfd)):
+                return None
+            return LivePeerIdentity(profile_id, generation, handle.profile.owner_uid,
+                ticks, exe_sha256, cgroup, handle.kernel_namespace_id)
+        except (OSError, ValueError, StopIteration):
+            return None
 
     @staticmethod
     def _read_environment(pid: int) -> dict[str, str]:
@@ -822,7 +1253,7 @@ class ManagedProcessEffectHandler:
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True, timeout=1.5, check=False)
         if result.returncode or len(result.stdout) > 4096:
-            raise AuthorityDenied("process.manager", "manager readback failed")
+            raise AuthorityDenied("process.manager.readback", "manager readback failed")
         return result.stdout.decode("utf-8", "strict").strip()
 
     def _ctl(self, args: list[str], timeout: float) -> None:
@@ -838,11 +1269,19 @@ class ManagedProcessEffectHandler:
     def _pids(cgroup: str) -> tuple[int, ...]:
         if not cgroup.startswith("/") or ".." in Path(cgroup).parts:
             raise AuthorityDenied("process.cgroup", "invalid cgroup identity")
+        root = Path("/sys/fs/cgroup") / cgroup.lstrip("/")
         try:
-            return tuple(int(value) for value in (Path("/sys/fs/cgroup") / cgroup.lstrip("/") / "cgroup.procs").read_text().split())
-        except FileNotFoundError:
+            return tuple(int(value) for value in (root / "cgroup.procs").read_text().split())
+        except (FileNotFoundError, NotADirectoryError):
             return ()
         except (OSError, ValueError):
+            # A systemd transient unit can be collected between the cgroup
+            # read and error handling. Treat only a vanished exact leaf as
+            # empty; an extant but unreadable cgroup remains a hard denial.
+            try:
+                root.lstat()
+            except (FileNotFoundError, NotADirectoryError):
+                return ()
             raise AuthorityDenied("process.cgroup", "cgroup membership is unavailable") from None
 
     @staticmethod
@@ -867,11 +1306,26 @@ class ManagedProcessEffectHandler:
                 except AuthorityDenied:
                     owned = False
                 if owned:
-                    self._ctl(["kill", "--kill-whom=all", "--signal=SIGTERM", handle.unit], 1)
-                    time.sleep(min(.25, max(0, deadline - time.monotonic())))
                     if self._pids(handle.cgroup):
-                        self._ctl(["kill", "--kill-whom=all", "--signal=SIGKILL", handle.unit], 1)
-                    self._ctl(["stop", handle.unit], min(1, max(.1, deadline - time.monotonic())))
+                        try:
+                            self._ctl(["kill", "--kill-whom=all", "--signal=SIGTERM", handle.unit], 1)
+                        except AuthorityDenied:
+                            if self._pids(handle.cgroup):
+                                raise AuthorityDenied("process.cleanup", "owned unit rejected termination") from None
+                    if self._pids(handle.cgroup):
+                        time.sleep(min(.25, max(0, deadline - time.monotonic())))
+                    if self._pids(handle.cgroup):
+                        try:
+                            self._ctl(["kill", "--kill-whom=all", "--signal=SIGKILL", handle.unit], 1)
+                        except AuthorityDenied:
+                            if self._pids(handle.cgroup):
+                                raise AuthorityDenied("process.cleanup", "owned unit rejected forced termination") from None
+                    if self._pids(handle.cgroup):
+                        try:
+                            self._ctl(["stop", handle.unit], min(1, max(.1, deadline - time.monotonic())))
+                        except AuthorityDenied:
+                            if self._pids(handle.cgroup):
+                                raise AuthorityDenied("process.cleanup", "owned unit could not be stopped") from None
                 while self._pids(handle.cgroup) and time.monotonic() < deadline:
                     time.sleep(.02)
                 if self._pids(handle.cgroup):
@@ -884,9 +1338,10 @@ class ManagedProcessEffectHandler:
                         self._finished[handle.process_id] = (handle.profile.generation, self.monotonic() + 600)
                         now = self.monotonic()
                         self._finished = {key: item for key, item in self._finished.items() if item[1] > now}
-                    for fd in (handle.parent_pidfd, handle.child_pidfd):
+                    for fd in (handle.parent_pidfd, handle.child_pidfd, handle.network_namespace_fd):
                         try:
-                            os.close(fd)
+                            if fd is not None:
+                                os.close(fd)
                         except OSError:
                             pass
                     for stream in (handle.launcher.stdin, handle.launcher.stdout, handle.launcher.stderr):
@@ -903,16 +1358,32 @@ class ManagedProcessEffectHandler:
 
     def _stop_partial(self, unit: str, launcher: subprocess.Popen[bytes]) -> None:
         if unit.startswith("hermes-installer-"):
-            self._ctl(["kill", "--kill-whom=all", "--signal=SIGKILL", unit], 1)
-            self._ctl(["stop", unit], 1)
+            cgroup = f"/system.slice/{unit}"
+            for command in (["kill", "--kill-whom=all", "--signal=SIGKILL", unit],
+                            ["stop", unit]):
+                try:
+                    self._ctl(command, 1)
+                except AuthorityDenied:
+                    # systemd returns failure when --collect already removed
+                    # a transient unit. Treat that as clean only when the
+                    # exact registered system.slice cgroup is absent/empty.
+                    if self._pids(cgroup):
+                        raise AuthorityDenied("process.cleanup", "partial unit cgroup could not be stopped") from None
         if launcher.poll() is None:
             launcher.kill()
         try:
             launcher.wait(timeout=1.0)
         except subprocess.TimeoutExpired:
             raise AuthorityDenied("process.cleanup", "partial root service launcher did not reap") from None
+        if unit.startswith("hermes-installer-") and self._pids(f"/system.slice/{unit}"):
+            raise AuthorityDenied("process.cleanup", "partial unit cgroup remains populated")
 
 
 def build_managed_process_handlers(profiles: Mapping[str, ManagedProfileCustody], **kwargs: Any):
     """Build the fixed root process handler map for AuthorityService."""
-    return ManagedProcessEffectHandler(profiles, **kwargs).handlers()
+    return create_managed_process_handler(profiles, **kwargs).handlers()
+
+
+def create_managed_process_handler(profiles: Mapping[str, ManagedProfileCustody], **kwargs: Any) -> ManagedProcessEffectHandler:
+    """Create the root registry object shared by process, inspect and connector handlers."""
+    return ManagedProcessEffectHandler(profiles, **kwargs)

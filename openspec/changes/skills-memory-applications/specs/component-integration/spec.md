@@ -549,3 +549,19 @@ The installer SHALL satisfy this obligation: Match capabilities to tasks: a text
 #### Scenario: R0140 unavailable or failed prerequisite
 - **WHEN** a required helper/native library/provider capability is absent, a path escapes managed scope or an optional worker exceeds its configured limit
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Fixed protected memory service connectors (SK01)
+
+Selected memory services SHALL use profile/generation-bound protected connectors with source-verified finite backend-specific routes and owned stores. Root SHALL enforce exact provider variant, private extraction/embedding, one automatic owner and fresh effect/source policy; caller destinations/scopes or incompatible routes SHALL deny. Missing required native operations SHALL remain incomplete rather than be optionalized.
+
+#### Scenario: Mismatched backend or profile route
+
+- **WHEN** memory request uses another profile/project or assumes a route absent from selected packaged backend
+- **THEN** root denies before bytes or reports exact incomplete integration, preserving private store/owner and original mandatory memory scope
+
+### Requirement: SK01 Exact memory route identity
+The installer SHALL bind distinct outer memory effect and profile connector targets through protected same-generation enrollment and select only the exact backend approved_route_id in planning/memory-service-connector-contract.json.
+
+#### Scenario: Wrong backend route or sibling target
+- **WHEN** a caller substitutes another profile, backend variant or unsupported delete/health route
+- **THEN** reject before service bytes and preserve the exact incomplete requirement.

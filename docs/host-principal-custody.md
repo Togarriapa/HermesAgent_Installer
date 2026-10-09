@@ -14,6 +14,18 @@ The daemon constructor and handler factory exist in source, but the root-owned d
 
 The host authority fixtures are synthetic contract fixtures. They do not prove production Authentik, actual authority key custody, or target policy enrollment. Linux integration coverage is in `tests/contracts/test_managed_process_custody_linux.py`; its controlled policy and test-only catalog are explicitly not production authority evidence, and the workflow has not yet run. Native ARM64 and Pi start/stop/parent-death, sibling filesystem/process/network/credential denials remain pending. No task is marked as native acceptance.
 
+## Protected enrollment and distinct roots (HI09)
+
+`hermes_installer.protected_enrollment` defines the root-owned catalog boundary. Its signed canonical manifest maps only `(enrollment_id, generation)` to an immutable profile, owner UID/GID/name, executable and digest, runtime artifact IDs, policy IDs, and distinct home/work/data roots. The resolver rejects unknown or stale generations, non-distinct roots, incorrect service ownership/mode, writable or symlinked ancestors, and caller-provided physical identifiers. `resolve_connector_route` maps a logical target/route to the enrolled profile and namespace identity; its result is metadata, not a descriptor or independent namespace authority. The root custodian must still retain and revalidate the process/namespace handles for each connector lease.
+
+The new resolver and fixture contract are not yet wired into the production enrollment loader or process-start envelope. Until that integration supplies these roots to the root process custodian and removes caller cwd/home/data/socket overrides, HI09 remains incomplete and profile execution must stay unavailable. Fixture checks do not establish service UID or Linux namespace enforcement on the Pi.
+
 ## Verification distinction
 
 Static syntax and whitespace checks have passed for the current supervisor changes. The meaningful Linux negative-effect suite, CI result, root custodian integration, protected profile enrollment, and Pi evidence must be recorded separately before enabling any affected capability. A failed probe leaves that capability disabled with its exact retry/resume action.
+
+## Fixed local service connector (HI07)
+
+`hermes_installer.service_connector` adds a protected connector for the exact enrolled `xpra-native` and `colibri-main` service targets. Its worker-facing API returns an opaque typed stream handle (`connector_id`, generation, expiry, frame limit and byte budget) and exposes only sequenced `read`, `write` and `close` operations. Root resolves a protected live service handle and namespace; caller data cannot select a PID, URL, host, port, route outside the fixed catalog or namespace. Each verb requires a fresh one-use grant bound to the same target, route, session, peer PIDFD, source lineage and bounded lease. The root watchdog retains bidirectional close authority and reaps expired or cancelled streams. See [fixed-service-connector.md](fixed-service-connector.md) for the API and current fixture boundary.
+
+The route catalog currently contains Xpra HTTP/WebSocket at namespace-local loopback port 14500 and Colibri's OpenAI-compatible inference API at namespace-local loopback port 8000. The connector has a loopback fixture effect/denial suite wired into the root Ubuntu Linux workflow. Local source and macOS skipped tests do not establish Linux namespace effects; the authority operation rules/daemon registration, protocol-specific allowlist enforcement, successful Linux CI result, native desktop and Pi service evidence remain pending. Memory/MCP routes are not enrolled by this connector.
