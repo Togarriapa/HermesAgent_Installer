@@ -104,6 +104,27 @@ class LifecycleRecoveryTests(unittest.TestCase):
             with self.assertRaises(OwnershipError):
                 LifecycleRecovery(self.data, self.state, self.journal).restore(Path(outside))
 
+    def test_restore_checks_each_file_against_manifest_before_installing_any_file(self) -> None:
+        first = self.data.path("profiles/default/SOUL.md")
+        second = self.data.path("overlays/private.md")
+        first.parent.mkdir(parents=True)
+        second.parent.mkdir(parents=True)
+        first.write_bytes(b"profile snapshot")
+        second.write_bytes(b"overlay snapshot")
+        recovery = LifecycleRecovery(self.data, self.state, self.journal)
+        backup = recovery.backup()
+        manifest_path = backup / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["entries"][0]["sha256"] = "0" * 64
+        manifest_path.write_text(json.dumps(manifest))
+
+        first.unlink()
+        second.unlink()
+        with self.assertRaisesRegex(LifecycleError, "manifest digest"):
+            recovery.restore(backup)
+        self.assertFalse(first.exists())
+        self.assertFalse(second.exists())
+
 
 def tarfile_open(path: Path):
     import tarfile

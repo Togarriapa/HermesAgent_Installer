@@ -394,6 +394,7 @@ class LifecycleRecovery:
             raise LifecycleError("Backup schema version is incompatible with this installer")
         if self._hash(archive_path) != manifest.get("archive_sha256"):
             raise LifecycleError("Backup archive failed integrity verification")
+        entries = self._validated_backup_entries(manifest)
         identity = candidate.name
         operation = "lifecycle:restore:" + identity
         self.journal.checkpoint(operation, "running", {"backup": identity, "schema_version": expected_schema_version})
@@ -402,17 +403,17 @@ class LifecycleRecovery:
         restored_database: str | None = None
         stage = Path(tempfile.mkdtemp(prefix="hermes-restore-", dir=self.data_root.root))
         try:
+            seen_entries: set[str] = set()
             with tarfile.open(archive_path, "r") as archive:
-                for member in archive.getmembers():
+                for member in archive:
                     posix = PurePosixPath(member.name)
-                    if member.issym() or member.islnk() or member.isdev() or posix.is_absolute() or ".." in posix.parts:
-                        raise LifecycleError("Backup contains an unsafe filesystem entry")
-            with tarfile.open(archive_path, "r") as archive:
-                for member in archive.getmembers():
-                    if member.isdir():
-                        continue
-                    if not member.isfile():
+                    if (member.issym() or member.islnk() or member.isdev() or not member.isfile()
+                            or posix.is_absolute() or any(part in {"", ".", ".."} for part in posix.parts)
+                            or "\\" in member.name):
                         raise LifecycleError("Backup contains an unsupported filesystem entry")
+                    expected = entries.get(member.name)
+                    if expected is None or member.name in seen_entries or member.size != expected[1]:
+                        raise LifecycleError("Backup archive entries do not match its manifest")
                     source = archive.extractfile(member)
                     if source is None:
                         raise LifecycleError("Backup entry could not be read")
@@ -421,35 +422,67 @@ class LifecycleRecovery:
                     if not destination.resolve(strict=False).is_relative_to(stage.resolve()):
                         raise LifecycleError("Backup entry escapes the restore staging root")
                     fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                    digest = hashlib.sha256()
+                    size = 0
                     with os.fdopen(fd, "wb") as output, source:
-                        shutil.copyfileobj(source, output)
+                        while block := source.read(1024 * 1024):
+                            digest.update(block)
+                            size += len(block)
+                            output.write(block)
                         output.flush()
                         os.fsync(output.fileno())
+                    if size != expected[1] or digest.hexdigest() != expected[0]:
+                        destination.unlink(missing_ok=True)
+                        raise LifecycleError("Backup file failed manifest digest verification")
+                    seen_entries.add(member.name)
+            if seen_entries != set(entries):
+                raise LifecycleError("Backup archive is missing files listed in its manifest")
             for source in stage.rglob("*"):
                 if source.is_dir():
                     continue
                 if source.is_symlink() or not source.is_file():
                     raise LifecycleError("Restored backup contains an unsafe file")
                 relative = source.relative_to(stage)
+                relative_text = relative.as_posix()
+                self.journal.checkpoint(operation, "restoring_entry", {
+                    "backup": identity, "entry": relative_text,
+                    "restored_count": len(restored), "conflict_count": len(conflicts)})
                 if relative.parts[:1] != ("data",):
                     if relative.parts[:1] == ("state",):
                         if relative.parts == ("state", "journal.sqlite3") and database_destination is not None:
                             restored_database = str(self._restore_database(source, database_destination))
+                            self.journal.event(operation, relative_text, "database_restored", {
+                                "database": Path(restored_database).name})
                         continue
                     raise LifecycleError("Backup contains an unsupported destination")
                 target = self.data_root.path(str(Path(*relative.parts[1:])))
                 if target.exists() and not overwrite:
                     if self._hash(target) == self._hash(source):
                         restored.append(str(relative))
+                        self.journal.event(operation, relative_text, "already_restored", {
+                            "sha256": self._hash(source)})
                         continue
                     conflicts.append(str(relative))
+                    self.journal.event(operation, relative_text, "conflict_preserved", {
+                        "reason": "existing user data retained"})
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 temp = target.with_name("." + target.name + ".restore-" + uuid.uuid4().hex)
-                shutil.copyfile(source, temp, follow_symlinks=False)
-                os.chmod(temp, 0o600)
-                os.replace(temp, target)
+                try:
+                    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                        | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+                    with os.fdopen(fd, "wb") as output, source.open("rb") as input_stream:
+                        shutil.copyfileobj(input_stream, output)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    os.replace(temp, target)
+                except BaseException:
+                    temp.unlink(missing_ok=True)
+                    raise
+                GenerationStore._fsync_directory(target.parent)
                 restored.append(str(relative))
+                self.journal.event(operation, relative_text, "restored", {
+                    "sha256": self._hash(target)})
             result = {"backup": identity, "restored": restored, "conflicts_preserved": conflicts,
                 "database_snapshot_present": any(str(row.get("path", "")).startswith("state/") for row in manifest.get("entries", [])),
                 "database_restored_to": restored_database}
@@ -497,7 +530,7 @@ class LifecycleRecovery:
             for suffix in ("-wal", "-shm"):
                 Path(str(target) + suffix).unlink(missing_ok=True)
             GenerationStore._fsync_directory(target.parent)
-        self.journal = Journal(target)
+        Journal(target)
         self.journal.event("lifecycle:database-restore", target.name, "committed", {
             "database": target.name, "previous_snapshot": previous.name if previous else None})
         return target
@@ -606,3 +639,24 @@ class LifecycleRecovery:
             while block := stream.read(1024 * 1024):
                 digest.update(block)
         return digest.hexdigest()
+
+    @staticmethod
+    def _validated_backup_entries(manifest: object) -> dict[str, tuple[str, int]]:
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("entries"), list):
+            raise LifecycleError("Backup manifest entry table is invalid")
+        entries: dict[str, tuple[str, int]] = {}
+        for row in manifest["entries"]:
+            if not isinstance(row, dict):
+                raise LifecycleError("Backup manifest entry is invalid")
+            name, digest, size = row.get("path"), row.get("sha256"), row.get("size")
+            if (not isinstance(name, str) or not name or "\\" in name
+                    or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or type(size) is not int or size < 0):
+                raise LifecycleError("Backup manifest entry is invalid")
+            path = PurePosixPath(name)
+            if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+                raise LifecycleError("Backup manifest entry path is unsafe")
+            if name in entries:
+                raise LifecycleError("Backup manifest contains duplicate paths")
+            entries[name] = (digest, size)
+        return entries
