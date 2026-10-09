@@ -115,7 +115,6 @@ def create_app(runtime: GatewayRuntime):
     from aiohttp import web, WSMsgType
 
     app = web.Application(client_max_size=2048)
-    app["runtime"] = runtime
 
     @web.middleware
     async def auth_errors(request, handler):
@@ -258,6 +257,8 @@ def create_app(runtime: GatewayRuntime):
             raise GatewayDenied("Xpra assets do not accept query parameters")
         token = _token(request)
         root_client = runtime.require_root()
+        connector = None
+        asset_success = False
         try:
             admission = await asyncio.wait_for(asyncio.to_thread(
                 root_client.admit, access_jwt=token, action="asset-read", route_id="xpra-http"), timeout=9)
@@ -290,17 +291,23 @@ def create_app(runtime: GatewayRuntime):
                 data = text.encode("utf-8")
             if path == "/client/css/client.css" and request.method != "HEAD":
                 data += b"\n#float_menu{display:none!important}\n"
+            asset_success = True
             return web.Response(status=response.status, body=data, headers={
                 **response.headers, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
         except (RootSessionDenied, HTTPFrameError, PermissionError, asyncio.TimeoutError):
             raise GatewayDenied("root-authorized Xpra asset request failed") from None
         finally:
-            if "connector" in locals():
+            # On a timed-out/failed in-flight read, close the root session first
+            # so root cancellation releases its relay before client cleanup waits
+            # on the connector's serialized operation lock.
+            if "admission" in locals() and not asset_success:
+                await close_root(admission.handle, admission.session_id)
+            if connector is not None:
                 try:
                     await asyncio.wait_for(asyncio.to_thread(connector.close), timeout=3)
                 except Exception:
                     pass
-            if "admission" in locals():
+            if "admission" in locals() and asset_success:
                 await close_root(admission.handle, admission.session_id)
 
     async def stream(request):
@@ -383,15 +390,17 @@ def create_app(runtime: GatewayRuntime):
                 pass
             raise GatewayDenied("root-authorized WebSocket connector failed") from None
         finally:
+            runtime.sessions.pop(key, None)
+            session.connector = None
+            session.socket = None
+            # Root close revokes/cancels its retained relay before local stream
+            # cleanup waits behind any in-flight synchronous connector read.
+            await close_root(session.admission.handle, session.admission.session_id)
             if connector is not None:
                 try:
                     await asyncio.wait_for(asyncio.to_thread(connector.close), timeout=3)
                 except Exception:
                     pass
-            runtime.sessions.pop(key, None)
-            session.connector = None
-            session.socket = None
-            await close_root(session.admission.handle, session.admission.session_id)
 
     app.router.add_get("/", root)
     app.router.add_post("/session", create)
