@@ -350,6 +350,7 @@ class _ManagedTaskState:
     selection_payload: bytes
     admission_handle_id: str
     initial_input_receipt_handle: str | None = None
+    initial_input_expires_monotonic: float | None = None
     service_generation_digest: str | None = None
     root_handle: ManagedTaskHandle | None = None
     stdin_write_receipt: Any | None = None
@@ -1788,6 +1789,7 @@ class ManagedProcessEffectHandler:
                     or not self._task_admission_is_current(task_handle, selection_payload)):
                 raise AuthorityDenied("resource.task_input", "initial input receipt does not bind this live task")
             state.initial_input_receipt_handle = receipt.receipt_handle
+            state.initial_input_expires_monotonic = receipt.expires_monotonic
             state.service_generation_digest = receipt.service_generation_digest
             consumed_receipt = coordinator.consume_initial_input_receipt(
                 receipt.receipt_handle, task_handle=root_handle,
@@ -1856,6 +1858,7 @@ class ManagedProcessEffectHandler:
         with state.lock:
             if (state.input_closed or handle.launcher.stdin is None or handle.stopped
                     or state.initial_input_receipt_handle is None
+                    or state.initial_input_expires_monotonic is None
                     or state.service_generation_digest is None
                     or state.root_handle is not task_handle):
                 raise AuthorityDenied("resource.task_stdin", "task stdin is already closed or unavailable")
@@ -1863,6 +1866,7 @@ class ManagedProcessEffectHandler:
             offset = 0
             while offset < len(exact_bytes):
                 if (state.cancelled() or self.monotonic() >= state.stdin_deadline
+                        or self.monotonic() >= state.initial_input_expires_monotonic
                         or _pidfd_exited(handle.parent_pidfd)
                         or _pidfd_exited(handle.child_pidfd)
                         or not self._task_admission_is_current(state.admission, state.selection_payload)):
@@ -1909,7 +1913,8 @@ class ManagedProcessEffectHandler:
                 stdin_closed=handle.launcher.stdin.closed,
                 service_generation_digest=state.service_generation_digest,
                 issued_monotonic=issued,
-                expires_monotonic=min(state.deadline, handle.expires, issued + 30.0),
+                expires_monotonic=min(state.deadline, handle.expires,
+                                      state.initial_input_expires_monotonic, issued + 30.0),
             )
             if (not receipt.write_complete or not receipt.stdin_closed
                     or len(exact_bytes) != receipt.stdin_size_bytes):
