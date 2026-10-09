@@ -270,12 +270,14 @@ class RootManagedCPython39Probe:
             ("startup_gate_verified", probe.startup_gate_verified is True),
             ("cgroup_id", isinstance(probe.cgroup_id, str) and bool(probe.cgroup_id)
              and probe.cgroup_id != build_result.cgroup_id),
+            # A completed build's namespace no longer exists; Linux can reuse
+            # its inode number. The manager already checks the *live probe*
+            # namespace against the host during PIDFD-bound capture, so compare
+            # only type/positivity here, not to historical build inode values.
             ("mount_namespace_inode", type(probe.mount_namespace_inode) is int
-             and probe.mount_namespace_inode > 0
-             and probe.mount_namespace_inode != build_result.mount_namespace_inode),
+             and probe.mount_namespace_inode > 0),
             ("network_namespace_inode", type(probe.network_namespace_inode) is int
-             and probe.network_namespace_inode > 0
-             and probe.network_namespace_inode != build_result.network_namespace_inode),
+             and probe.network_namespace_inode > 0),
             ("output_root_id", probe.output_root_id == build_inputs.output_root_id),
             ("output_root_identity", type(probe.output_root_device) is int
              and type(probe.output_root_inode) is int
