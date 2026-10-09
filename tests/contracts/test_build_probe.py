@@ -130,6 +130,20 @@ def test_probe_rejects_unbound_or_invalid_terminal_receipt(tmp_path, changes):
         )
 
 
+def test_probe_diagnostic_names_only_failed_proof_field(tmp_path):
+    root, executable = _selected_output(tmp_path)
+    probe = RootManagedCPython39Probe(
+        ProbeLauncher(root, executable, changes={"startup_gate_verified": False}))
+    with pytest.raises(AuthorityDenied) as denied:
+        probe.inspect_cpython39(
+            SimpleNamespace(target_id="coral-cpython-build:start", generation="build-generation-1"),
+            executable, build_result=_build_result(), build_inputs=_inputs(root), cancelled=lambda: False,
+        )
+    assert "startup_gate_verified" in str(denied.value)
+    assert "probe-terminal-1" not in str(denied.value)
+    assert str(executable) not in str(denied.value)
+
+
 def test_probe_rejects_caller_selected_path_before_launch(tmp_path):
     root, executable = _selected_output(tmp_path)
     launcher = ProbeLauncher(root, executable)
