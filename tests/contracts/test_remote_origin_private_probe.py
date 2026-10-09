@@ -17,6 +17,7 @@ from hermes_installer.authority.remote_origin import (
     CustodyRemoteOriginProcessManager,
     HMACReceiptSigner,
     KernelOriginEvidence,
+    OriginProbeActionControlRequest,
     RemoteOriginCallerIdentity,
     RemoteOriginControlSocketResolver,
     RemoteOriginDenied,
@@ -51,6 +52,17 @@ class _Catalog:
 
     def selected_origin_control_socket(self, socket_id):
         return self.binding if socket_id == "control-socket" else None
+
+    def resolve_selected_native_principal(self, profile_id, generation,
+                                          service_generation_digest):
+        from hermes_installer.authority.service import PrincipalBinding
+        selected = self.selected
+        if (profile_id, generation, service_generation_digest) != (
+                selected.native_profile_id, selected.desktop_generation,
+                selected.service_generation_digest):
+            return None
+        return PrincipalBinding(os.getuid(), "desktop-principal", profile_id,
+                                "native-service-namespace", frozenset({"hermes-service-connect"}))
 
 
 class _Custody:
@@ -220,6 +232,19 @@ class _PrivateControlFixture:
 
 
 class RemoteOriginPrivateProbeTests(unittest.TestCase):
+    def test_private_gateway_action_wire_has_no_caller_route_or_origin_fields(self):
+        asset_id = hashlib.sha256(
+            b"hermes-client-asset-v1\0/client/index.html").hexdigest()
+        request = OriginProbeActionControlRequest.create("P" * 43, "asset-get", asset_id)
+        self.assertEqual(request.to_wire(), {
+            "schema": 1, "probe_handle": "P" * 43,
+            "action": "asset-get", "asset_id": asset_id,
+        })
+        with self.assertRaises(RemoteOriginDenied):
+            OriginProbeActionControlRequest.create("P" * 43, "asset-get", "/client/index.html")
+        with self.assertRaises(RemoteOriginDenied):
+            OriginProbeActionControlRequest.create("P" * 43, "websocket-attach", asset_id)
+
     def test_root_readiness_requires_real_private_http_websocket_and_window_exchange(self):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp).resolve()
@@ -309,20 +334,26 @@ class RemoteOriginPrivateProbeTests(unittest.TestCase):
             b"hermes-client-asset-v1\0/client/index.html").hexdigest()
         child = registry.authorize_action(parent_handle, "asset-get", asset_id)
         action = registry.resolve_action(child)
-        self.assertEqual((action.action, action.asset_id, action.next_sequence),
-                         ("asset-get", asset_id, 0))
-        self.assertTrue(registry.advance_connector_effect(child, "connector.open", 0, "C" * 43))
-        self.assertEqual(registry.resolve_action(child).next_sequence, 0)
-        self.assertTrue(registry.advance_connector_effect(child, "connector.read", 0, "C" * 43))
-        self.assertEqual(registry.resolve_action(child).next_sequence, 1)
-        self.assertTrue(registry.advance_connector_effect(child, "connector.close", 1, "C" * 43))
+        self.assertEqual((action.action, action.asset_id, action.effect_sequence,
+                          action.frame_sequence),
+                         ("asset-get", asset_id, 0, 0))
+        self.assertTrue(registry.advance_connector_effect(
+            child, "connector.open", 0, 0, "C" * 43))
+        current = registry.resolve_action(child)
+        self.assertEqual((current.effect_sequence, current.frame_sequence), (1, 0))
+        self.assertTrue(registry.advance_connector_effect(
+            child, "connector.read", 1, 0, "C" * 43))
+        current = registry.resolve_action(child)
+        self.assertEqual((current.effect_sequence, current.frame_sequence), (2, 1))
+        self.assertTrue(registry.advance_connector_effect(
+            child, "connector.close", 2, 1, "C" * 43))
         with self.assertRaises(RemoteOriginDenied):
             registry.resolve_action(child)
 
         stale_child = registry.authorize_action(parent_handle, "asset-get", asset_id)
-        registry.advance_connector_effect(stale_child, "connector.open", 0, "D" * 43)
+        registry.advance_connector_effect(stale_child, "connector.open", 0, 0, "D" * 43)
         with self.assertRaises(RemoteOriginDenied):
-            registry.advance_connector_effect(stale_child, "connector.close", 1, "E" * 43)
+            registry.advance_connector_effect(stale_child, "connector.close", 1, 0, "E" * 43)
         with self.assertRaises(RemoteOriginDenied):
             registry.resolve_action(stale_child)
 

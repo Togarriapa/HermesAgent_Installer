@@ -132,7 +132,6 @@ class SelectedRemoteOrigin:
     native_enrollment_id: str = ""
     setup_writer_binding: RemoteSetupWriterBinding | None = None
     probe_binding: RemoteOriginProbeBinding | None = None
-    native_principal_id: str = ""
 
 
 class RemoteOriginCatalog(Protocol):
@@ -140,6 +139,8 @@ class RemoteOriginCatalog(Protocol):
     def selected_tunnel(self, enrollment_id: str) -> SelectedTunnel: ...
     def selected_origin(self, enrollment_id: str) -> SelectedRemoteOrigin: ...
     def selected_origin_probe(self, enrollment_id: str) -> RemoteOriginProbeBinding: ...
+    def resolve_selected_native_principal(self, native_profile_id: str,
+            native_generation: str, service_generation_digest: str) -> Any: ...
 
 
 class TunnelTokenWriter(Protocol):
@@ -338,6 +339,29 @@ ORIGIN_PROBE_OBSERVATIONS = frozenset({
 _MAX_PROBE_FRAME = 64 * 1024
 _PROBE_OPAQUE = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 _PROBE_ACTIONS = {"asset-get", "asset-head", "websocket-attach"}
+
+
+@dataclass(frozen=True, slots=True)
+class OriginProbeActionControlRequest:
+    """Exact private per-action wire; all selection stays in the child handle."""
+    schema: int
+    probe_handle: str
+    action: str
+    asset_id: str | None
+
+    @classmethod
+    def create(cls, probe_handle: str, action: str,
+               asset_id: str | None) -> "OriginProbeActionControlRequest":
+        _opaque_handle(probe_handle, "root per-action probe handle")
+        if (action not in _PROBE_ACTIONS
+                or (action == "websocket-attach") != (asset_id is None)
+                or (asset_id is not None and asset_id not in _remote_probe_asset_paths())):
+            raise RemoteOriginDenied("private origin probe action differs from the fixed selection")
+        return cls(1, probe_handle, action, asset_id)
+
+    def to_wire(self) -> dict[str, Any]:
+        return {"schema": self.schema, "probe_handle": self.probe_handle,
+                "action": self.action, "asset_id": self.asset_id}
 
 
 def _remote_probe_asset_paths() -> dict[str, str]:
@@ -650,7 +674,8 @@ class _ProbeActionHandleRecord:
     issued: float
     expires: float
     state: str = "issued"
-    next_sequence: int = 0
+    effect_sequence: int = 0
+    frame_sequence: int = 0
     connector_handle: str | None = field(default=None, repr=False)
 
 
@@ -717,6 +742,14 @@ class RootOriginProbeRegistry:
                 raise RemoteOriginDenied("root setup-probe action handle is absent, stale, or spent")
             return action
 
+    def resolve_parent(self, handle: str) -> _ProbeHandleRecord:
+        with self._lock:
+            parent = self._handles.get(handle)
+            now = float(self._now())
+            if (parent is None or parent.state != "running" or now >= parent.expires):
+                raise RemoteOriginDenied("root setup probe is absent, expired, or inactive")
+            return parent
+
     def action_cancelled(self, handle: str) -> bool:
         with self._lock:
             action = self._action_handles.get(handle)
@@ -725,9 +758,10 @@ class RootOriginProbeRegistry:
                         or now >= action.expires or action.parent.state != "running"
                         or now >= action.parent.expires)
 
-    def advance_connector_effect(self, handle: str, operation: str, sequence: int,
+    def advance_connector_effect(self, handle: str, operation: str, effect_sequence: int,
+                                 frame_sequence: int,
                                  connector_handle: str | None) -> bool:
-        """CAS the post-syscall stream sequence; a failed effect must cancel."""
+        """CAS both post-effect and HI07 frame counters after a full syscall."""
         with self._lock:
             action = self._action_handles.get(handle)
             if (action is None or action.state in {"cancelled", "consumed"}
@@ -735,23 +769,29 @@ class RootOriginProbeRegistry:
                     or action.parent.state != "running"):
                 raise RemoteOriginDenied("setup probe connector effect lost its live handle")
             if operation == "connector.open":
-                if (action.state != "issued" or sequence != 0
+                if (action.state != "issued" or effect_sequence != 0 or frame_sequence != 0
                         or not isinstance(connector_handle, str)
                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", connector_handle)):
                     action.state = "cancelled"
                     raise RemoteOriginDenied("setup probe connector open state is invalid")
                 action.connector_handle = connector_handle
                 action.state = "running"
+                action.effect_sequence += 1
                 return True
             if (action.state != "running" or action.connector_handle != connector_handle
-                    or type(sequence) is not int or sequence != action.next_sequence
+                    or type(effect_sequence) is not int
+                    or effect_sequence != action.effect_sequence
+                    or type(frame_sequence) is not int
+                    or frame_sequence != action.frame_sequence
                     or operation not in {"connector.read", "connector.write", "connector.close"}):
                 action.state = "cancelled"
                 raise RemoteOriginDenied("setup probe connector sequence changed")
             if operation == "connector.close":
+                action.effect_sequence += 1
                 action.state = "consumed"
                 return True
-            action.next_sequence += 1
+            action.effect_sequence += 1
+            action.frame_sequence += 1
             return True
 
     def cancel_action(self, handle: str) -> None:
@@ -854,7 +894,6 @@ def _selection_digest(selected: SelectedRemoteOrigin) -> str:
             "enrollment_id": selected.probe_binding.enrollment_id,
             "control_socket_id": selected.probe_binding.control_socket_id}
             if isinstance(selected.probe_binding, RemoteOriginProbeBinding) else None),
-        "native_principal_id": selected.native_principal_id,
     })).hexdigest()
 
 
@@ -1142,8 +1181,35 @@ class SelectedRemoteOriginProbeAuthority:
 
     def authorize_probe_action(self, root_probe_handle: str, action: str,
                                asset_id: str | None) -> str:
-        """Create an immutable per-action child capability under a live root probe."""
+        """Create a child only after rejoining the active root transaction and peers."""
         _opaque_handle(root_probe_handle, "root origin probe handle")
+        parent = self._registry.resolve_parent(root_probe_handle)
+        selected = parent.selected
+        caller = self._current_peer.current()
+        if (not isinstance(caller, RemoteOriginCallerIdentity)
+                or not hmac.compare_digest(caller.digest(), parent.setup_peer_digest)):
+            raise RemoteOriginDenied("setup probe action caller differs from current root transaction")
+        current = self._catalog.selected_origin(selected.enrollment_id)
+        if (not isinstance(current, SelectedRemoteOrigin)
+                or _selection_digest(current) != _selection_digest(selected)):
+            raise RemoteOriginDenied("selected remote origin changed before child action mint")
+        transaction = self._verify_current_probe_transaction(parent)
+        if _setup_transaction_digest(transaction) != _setup_transaction_digest(parent.setup_transaction):
+            raise RemoteOriginDenied("root setup transaction changed before child action mint")
+        kernel = self._process_manager.inspect_selected_origin(current)
+        if (not isinstance(kernel, KernelOriginEvidence)
+                or kernel.gateway_identity_digest != parent.kernel_evidence.gateway_identity_digest
+                or kernel.expires_monotonic <= float(self._now())):
+            raise RemoteOriginDenied("selected gateway/native custody changed before child action mint")
+        probe_identity, probe_expiry = _selected_probe_process_identity(
+            self._custody, current, now=self._now)
+        gateway = self._process_manager.inspect_gateway_peer(current)
+        if (probe_identity != parent.probe_process_identity_digest
+                or probe_expiry <= float(self._now())
+                or gateway.enrollment_id != current.gateway_enrollment_id
+                or gateway.profile_id != current.gateway_profile_id
+                or gateway.generation != current.gateway_generation):
+            raise RemoteOriginDenied("root probe or gateway role changed before child action mint")
         return self._registry.authorize_action(root_probe_handle, action, asset_id)
 
     def resolve_probe_connector_binding(self, handle: str, uid: int, pid: int,
@@ -1161,9 +1227,8 @@ class SelectedRemoteOriginProbeAuthority:
         selected = parent.selected
         current = self._catalog.selected_origin(selected.enrollment_id)
         if (not isinstance(current, SelectedRemoteOrigin)
-                or _selection_digest(current) != _selection_digest(selected)
-                or not current.native_principal_id):
-            raise RemoteOriginDenied("active setup probe or native principal binding changed")
+                or _selection_digest(current) != _selection_digest(selected)):
+            raise RemoteOriginDenied("active selected setup probe or origin changed")
         transaction = self._verify_current_probe_transaction(parent)
         if _setup_transaction_digest(transaction) != _setup_transaction_digest(parent.setup_transaction):
             raise RemoteOriginDenied("root setup transaction changed during native probe")
@@ -1198,6 +1263,19 @@ class SelectedRemoteOriginProbeAuthority:
         native_proof, native_expiry = _selected_enrolled_process_proof(
             self._custody, current.native_profile_id, current.desktop_generation,
             current.native_enrollment_id, now=self._now)
+        principal_resolver = getattr(self._catalog, "resolve_selected_native_principal", None)
+        try:
+            from .service import PrincipalBinding
+            principal = (principal_resolver(current.native_profile_id,
+                current.desktop_generation, current.service_generation_digest)
+                if callable(principal_resolver) else None)
+        except Exception:
+            principal = None
+        if (not isinstance(principal, PrincipalBinding)
+                or principal.profile_id != current.native_profile_id
+                or principal.uid != native_proof["uid"]
+                or not principal.namespace_id or not principal.principal_id):
+            raise RemoteOriginDenied("current protected native PrincipalBinding is unavailable")
         gateway_proof, gateway_expiry = _selected_enrolled_process_proof(
             self._custody, current.gateway_profile_id, current.gateway_generation,
             current.gateway_enrollment_id, expected_sha=current.gateway_role_sha256,
@@ -1252,25 +1330,27 @@ class SelectedRemoteOriginProbeAuthority:
             approved_route_ids=("xpra-http", "xpra-websocket"),
             asset_ids=asset_ids, selected_action=action.action,
             selected_asset_id=action.asset_id, session_id=parent.session_id,
-            next_sequence=action.next_sequence,
+            next_sequence=action.frame_sequence,
+            effect_sequence=action.effect_sequence,
             policy_revision=current.policy_revision,
             policy_config_digest=current.policy_config_digest,
             service_generation_digest=current.service_generation_digest,
-            principal_id=current.native_principal_id,
+            principal_id=principal.principal_id,
             connector_handle=action.connector_handle,
             issued_monotonic=action.issued, expires_monotonic=expiry,
             frame_deadline_monotonic=frame_deadline,
             cancelled=lambda: self._registry.action_cancelled(handle))
 
-    def advance_probe_connector_sequence(self, handle: str, expected_sequence: int,
-            operation: str, connector_handle: str, *, peer_uid: int, peer_pid: int,
-            peer_pidfd: int) -> bool:
+    def advance_probe_connector_sequence(self, handle: str, expected_effect_sequence: int,
+            expected_frame_sequence: int, operation: str, connector_handle: str, *,
+            peer_uid: int, peer_pid: int, peer_pidfd: int) -> bool:
         binding = self.resolve_probe_connector_binding(handle, peer_uid, peer_pid, peer_pidfd)
-        if (expected_sequence != binding.next_sequence or operation not in {
+        if (expected_effect_sequence != binding.effect_sequence
+                or expected_frame_sequence != binding.next_sequence or operation not in {
                 "connector.open", "connector.read", "connector.write", "connector.close"}):
-            raise RemoteOriginDenied("setup probe connector sequence does not match its live binding")
-        return self._registry.advance_connector_effect(handle, operation, expected_sequence,
-                                                       connector_handle)
+            raise RemoteOriginDenied("setup probe effect or frame sequence changed")
+        return self._registry.advance_connector_effect(handle, operation,
+            expected_effect_sequence, expected_frame_sequence, connector_handle)
 
     def cancel_probe_action(self, handle: str, *, peer_uid: int, peer_pid: int,
                             peer_pidfd: int) -> None:
