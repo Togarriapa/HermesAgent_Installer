@@ -213,3 +213,30 @@ The installer SHALL satisfy this obligation: Build this support even if the targ
 #### Scenario: R0123 unavailable or failed prerequisite
 - **WHEN** engine or model identity mismatches, required storage/device access is unavailable or measured target behavior misses configured thresholds
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Protected fixed Coral package set (HW01)
+
+Coral dependencies SHALL install only from a protected fixed package-set manifest binding the isolated attested CPython runtime and exact pinned NumPy/TFLite wheels. Caller-selected paths, URLs, resolver inputs or extra packages SHALL deny. Offline bounded installation SHALL preserve source bytes/licenses and prior component generation without changing host or Hermes runtimes.
+
+#### Scenario: Exact offline package set
+
+- **WHEN** Coral installation selects the protected package set for its attested isolated runtime
+- **THEN** root installs only both exact fixed wheels offline or rejects incompatible/stale/tampered inputs before effects while preserving host, Hermes and prior component generation
+
+### Requirement: Exact selected Coral device custody (HW02)
+
+Coral inference SHALL bind a root-selected attested USB or PCIe device identity and current generation, expose only its exact device node under kernel isolation and bind delegate evidence to that same selection. Caller device selectors, wildcard permissions, ambiguous replacement and stale hotplug identity SHALL deny.
+
+#### Scenario: Changed or caller-selected protected input
+
+- **WHEN** caller supplies a device/build path or protected generation/source identity changes
+- **THEN** root denies before execution or device access and preserves prior owned generation; no native or hardware acceptance is inferred
+
+### Requirement: Fixed bounded source build profiles (HW03)
+
+Required native source builds SHALL use protected fixed build profiles over exact source/toolchain artifacts and reviewed immutable recipes, with isolated unprivileged bounded execution and attested outputs. Caller shell, flags, scripts, paths or URLs SHALL not select build authority; unavailable prerequisites SHALL remain incomplete.
+
+#### Scenario: Changed or caller-selected protected input
+
+- **WHEN** caller supplies a device/build path or protected generation/source identity changes
+- **THEN** root denies before execution or device access and preserves prior owned generation; no native or hardware acceptance is inferred

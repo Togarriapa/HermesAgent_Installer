@@ -33,3 +33,13 @@ Dependencies: installer-bootstrap-desktop. Full IDs and task edges: planning/dep
 - Review code against every requirement/scenario and actual evidence; do not archive incomplete hardware/account tasks.
 - Run strict pinned OpenSpec validation and coverage; archive only verified completed changes using the installed documented workflow, preserving dated history and canonical specs.
 - Sol must approve refinement via append-only amendment; keep plans/2026-10-09-v1 immutable.
+
+## 3. Supported ChatGPT-plan protocol refinement
+
+- [ ] 3.1 `PR-T01` Implement PR01 supported SIWC auth permission and HTTP/SSE normalization/completion; prerequisites PR-F01, HI-T08, HI-T09, HI-T11. Evidence EV-PR01: recording bounded response.completed/failed/incomplete/partial EOF/usage errors, unsupported fields/tools and source/grant/retry/cancel negatives. Keep actual enrolled-account/native inference acceptance separate and original PR-F02/03 plus PR-R0124/25/26 open.
+
+## 4. Isolated OmniRoute runtime compatibility
+
+- [ ] 4.1 `PR-T02` Implement PR02 protected component Node/source/dependency/build/service binding; prerequisites PR-F01, HI-T01, HI-T09. Evidence EV-PR02: reject Node20/out-of-range/writable runtime/unpinned module/ABI/path and prove separate isolated nativeARM64 build/health/provider operation. Keep artifact declarations/range checks distinct from native/target acceptance.
+
+Protected native composition clarification: plans/amendments/2026-10-09-native-package-binding-v1.md, planning/native-package-binding-contract.json and native-cross-process-bridge-contract.json define root-selected immutable package/resolver, observed source channels and shared route normalization. Existing HI-T08/09/11, RB-T09 and PR-F03/PR-T01 remain open; no caller provenance or late payload mutation.

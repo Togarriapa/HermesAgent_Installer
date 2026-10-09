@@ -229,3 +229,28 @@ The installer SHALL satisfy this obligation: Apply model allowlists, capability 
 #### Scenario: R0130 unavailable or failed prerequisite
 - **WHEN** the selected account is ineligible, the requested route exceeds budget/privacy scope or a bounded network/authentication attempt fails
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Supported ChatGPT-plan inference protocol (PR01)
+
+The supported ChatGPT-plan inference adapter SHALL follow the current documented authorization and HTTP/SSE request contract, bind normalized final payload to fresh host source/effect authority and consume through successful terminal completion. Unsupported fields/tools, missing permission, incomplete streams and usage failures SHALL not establish usable inference or trigger paid fallback.
+
+#### Scenario: Terminal stream and actual permission
+
+- **WHEN** selected ChatGPT-plan inference returns partial events or lacks granted plan permission
+- **THEN** route reports incomplete/unavailable and does not claim successful inference, entitlement or use a paid fallback
+
+### Requirement: Pinned isolated OmniRoute runtime (PR02)
+
+OmniRoute SHALL run with an isolated protected Node runtime satisfying its pinned source engine contract and verified artifact/ABI/dependency lock. Caller/global Node paths or semver-only checks SHALL not establish native readiness. Build and service enrollment SHALL preserve original source/privacy/budget dispatch policy and keep unsupported runtime/dependencies incomplete.
+
+#### Scenario: Ineligible host Node
+
+- **WHEN** host Node version or writable module path is incompatible with the pinned source contract
+- **THEN** root uses only verified selected isolated runtime or reports incomplete; host/Hermes runtime and original privacy/budget policy remain preserved
+
+### Requirement: Protected native composition
+The installer SHALL bind actual native producer package/adapter closure through immutable root-selected profile generation and observed issuer channels, and SHALL apply the same protected route normalization policy before final request digest and gateway effect. Caller registration/labels SHALL not establish provenance.
+
+#### Scenario: Mutable package or divergent normalization
+- **WHEN** native closure, peer generation, issuer provenance or route-normalized final payload differs from protected enrollment
+- **THEN** deny before effect bytes and retain exact incomplete implementation/native evidence state.
