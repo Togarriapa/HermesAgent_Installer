@@ -218,7 +218,7 @@ def build_pi_contract_test_request(
         platform=lease.platform, authorization_reference=lease.authorization_reference,
         target_manifest_sha256=lease.manifest_sha256,
         argv=(
-            python_executable, "-m", "unittest",
+            python_executable, "-X", "tracemalloc=5", "-m", "unittest",
             "tests.contracts.test_registry_resources_runtime",
             "tests.contracts.test_registry_native",
             "tests.native.test_native_boundary_adapter", "-v",

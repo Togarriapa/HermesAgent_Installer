@@ -104,8 +104,7 @@ class PiLeaseTests(unittest.TestCase):
         self.assertEqual(("PATH", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE"), request.environment_allowlist)
         self.assertEqual(120, request.timeout_seconds)
         self.assertEqual(self.observation.staging_root, request.cwd)
-        self.assertEqual("-m", request.argv[1])
-        self.assertEqual("unittest", request.argv[2])
+        self.assertEqual(("-X", "tracemalloc=5", "-m", "unittest"), request.argv[1:5])
         self.assertNotIn(request.argv[0].rsplit("/", 1)[-1], {"sh", "bash", "dash", "zsh"})
         self.assertEqual(12, len(request.expected_assertions))
 
