@@ -125,3 +125,10 @@ The installer SHALL resolve protected resource backend/body recipe/action/source
 #### Scenario: Legacy backend metadata or unobserved gateway role
 - **WHEN** only declared backend/role metadata exists without current root selected effect/actual launch proof
 - **THEN** deny backend/admission before bytes and retain exact incomplete implementation/native evidence.
+
+### Requirement: Exact protected execution joins
+The installer SHALL resolve each effect from its exact selected active node, scope, observer and setup role joins, with fresh bounded authority and immutable result ancestry.
+
+#### Scenario: Mismatched backend or setup identity
+- **WHEN** a node selects a different backend, an event/result lacks root-observed closure, or runtime tunnel identity requests setup writer/probe authority
+- **THEN** root rejects before effects and preserves pending original acceptance; no caller booleans or consumed grants substitute for proof

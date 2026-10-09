@@ -99,7 +99,8 @@
       "memory-result",
       "effect-result",
       "delegated-child",
-      "schedule-event"
+      "schedule-event",
+      "webhook-event"
     ],
     "enrollment_fields": [
       "issuer_channel_id",
@@ -151,7 +152,8 @@
         "memory-result": "Actual selected memory broker step/backend result/current owner epoch/scope/private route/source closure",
         "effect-result": "Actual root selected backend handler successful or failed result bound invocation/current effect; result content untrusted data, never authority",
         "delegated-child": "Actual admitted parent/delegation/child peer PIDFD/generation/operation plus bounded root-observed result and full closure; worker parentID insufficient",
-        "schedule-event": "Root selected enabled timer occurrence/schedule gen/freshbackgroundconsent/private closure, not caller timestamp"
+        "schedule-event": "Root selected enabled timer occurrence/schedule gen/freshbackgroundconsent/private closure, not caller timestamp",
+        "webhook-event": "Actual root selected route ingress bounded exact body, protocol HMAC validation, timestamp/nonce freshness and atomic durable replay claim before source admission; current resource/profile/account/consent and capture schema join. source_action_id authenticated-webhook-event. Caller labels are not provenance."
       },
       "response": "Opaque SourceReceiptHandle only delivered through root-created peer-bound receipt channel to actual enrolled target role process. Worker facade receives no signed receipt wire/sensitivity/credentials. Root bridges references to another enrolled role only via HI11 selected peer mapping, never bearer transfer.",
       "receipt_binding": "Root retained record binds actual observer artifact/enrollment/channel/action/event/invocation, exact bytes SHA, full parent closure, target peer UID/PIDFD/starttime/exe/profile/generation, current policy/recipient ceiling, finite monotonic lease and random handle nonce. Root private signature/HMAC ifserialized, key root-only; handle possession alone notproof. Source facts authenticated from observer record; UNKNOWN remains private.",
@@ -287,7 +289,7 @@
     ],
     "native_packages": "list exact package_record_fields above; adapter_records is list exact adapter_record_fields; unknown/duplicate keys or IDs denied. All package/adapter generations opaque strings. Resolve artifact IDs/root mount IDs only against existing protected enrollment catalogs.",
     "source_issuers": "list records exactly issuer_channel_id,producer_profile_id,producer_role_artifact_id,producer_role_sha256,capture_schema_id,allowed_parent_channels,generation,observer_enrollment_id,source_action_ids",
-    "source_action_ids": "finite root-selected actions per channel; native-input=authenticated-input; tool-result=registered-tool-result; memory-result=registered-memory-result; effect-result=registered-effect-result; delegated-child=registered-child-result; schedule-event=root-timer-event. These are observer contract IDs, not caller selectable source kinds.",
+    "source_action_ids": "finite root-selected actions per channel; native-input=authenticated-input; tool-result=registered-tool-result; memory-result=registered-memory-result; effect-result=registered-effect-result; delegated-child=registered-child-result; schedule-event=root-timer-event. These are observer contract IDs, not caller selectable source kinds. webhook-event=authenticated-webhook-event; root ingress only after protocol verification and durable replay claim.",
     "joins": "source observer_enrollment_id joins actual root registered ingress/backend result/job observer; channel/actions must match captured actual event/action. Package profile/generation joins root process_profiles/principals; adapter effect_enrollment_id joins selected_plugin_effects finite operation/schema/recipient. Missing actual observer/mount/closure identity remains unavailable; file presence not execution proof."
   }
 }
