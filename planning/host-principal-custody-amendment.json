@@ -70,6 +70,33 @@
       "then": "implementation evidence remains distinct; target tasks stay open with exact next step and no full-compliance label",
       "task_id": "HI-T06",
       "evidence_id": "EV-HI06"
+    },
+    {
+      "id": "HI07",
+      "name": "Protected fixed local service transport",
+      "text": "The host SHALL connect native local TCP services only through authenticated typed, principal/generation-bound fixed-target connectors into dedicated private namespaces. General workers SHALL retain network denial; caller-selected destinations and external or sibling access SHALL deny before bytes. Connector grants, streams and lifecycle SHALL remain bounded and revocable.",
+      "when": "a worker supplies another target/namespace, arbitrary address/path, stale grant or expired stream lease",
+      "then": "no unauthorized bytes or connection occur; isolated local-service transport is cancelled at its original deadline and unrelated services remain untouched",
+      "task_id": "HI-T07",
+      "evidence_id": "EV-HI07"
+    },
+    {
+      "id": "HI08",
+      "name": "Trusted native request and source lineage",
+      "text": "Every native request and derived event SHALL use host-issued context receipts bound to authenticated source bytes, enrolled process/profile/generation and complete parent lineage. Sensitivity SHALL inherit all contributors; unknown or caller-labeled provenance SHALL not authorize public dispatch. Native primary, auxiliary, tool, memory, background and delegated paths SHALL be wired to this boundary.",
+      "when": "a native auxiliary/title/retry request drops a private parent or presents a process-start context as request authority",
+      "then": "no ineligible provider/tool effect occurs; the broker validates final payload and complete fresh source closure or reports exact incomplete wiring",
+      "task_id": "HI-T08",
+      "evidence_id": "EV-HI08"
+    },
+    {
+      "id": "HI09",
+      "name": "Protected enrollment and distinct owned roots",
+      "text": "Host enrollment SHALL resolve opaque profile/generation IDs into immutable executable/runtime/socket policies and distinct restricted service home/work/data roots. Caller operation/journal roots SHALL remain separate. Workers SHALL not choose physical roots, scripts, sockets, PIDs or namespace destinations; contexts and service connectors SHALL bind attested enrolled identity.",
+      "when": "a caller confuses its journal root with a service home or supplies a physical cwd/socket/PID override",
+      "then": "host rejects before effects; valid enrollment uses distinct owner-scoped roots, correct process identity and preserved unrelated files",
+      "task_id": "HI-T09",
+      "evidence_id": "EV-HI09"
     }
   ],
   "tasks": [
@@ -124,7 +151,10 @@
       "depends_on": [
         "HI-T02",
         "HI-T03",
-        "PR-F03"
+        "PR-F03",
+        "HI-T07",
+        "HI-T08",
+        "HI-T09"
       ],
       "implementation_complete": false,
       "target_acceptance_complete": false,
@@ -139,7 +169,10 @@
       "depends_on": [
         "HI-T01",
         "HI-T02",
-        "LC-F04"
+        "LC-F04",
+        "HI-T07",
+        "HI-T08",
+        "HI-T09"
       ],
       "implementation_complete": false,
       "target_acceptance_complete": false,
@@ -155,11 +188,59 @@
         "HI-T02",
         "HI-T03",
         "HI-T04",
-        "HI-T05"
+        "HI-T05",
+        "HI-T07",
+        "HI-T08",
+        "HI-T09"
       ],
       "implementation_complete": false,
       "target_acceptance_complete": false,
       "verification": "implementation evidence remains distinct; target tasks stay open with exact next step and no full-compliance label",
+      "docs": "docs/host-principal-custody.md"
+    },
+    {
+      "id": "HI-T07",
+      "requirement_ids": [
+        "HI07"
+      ],
+      "depends_on": [
+        "HI-T01",
+        "HI-T02",
+        "HI-T03",
+        "HI-T09"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false,
+      "verification": "no unauthorized bytes or connection occur; isolated local-service transport is cancelled at its original deadline and unrelated services remain untouched",
+      "docs": "docs/host-principal-custody.md"
+    },
+    {
+      "id": "HI-T08",
+      "requirement_ids": [
+        "HI08"
+      ],
+      "depends_on": [
+        "HI-T01",
+        "HI-T03",
+        "HI-T09"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false,
+      "verification": "no ineligible provider/tool effect occurs; the broker validates final payload and complete fresh source closure or reports exact incomplete wiring",
+      "docs": "docs/host-principal-custody.md"
+    },
+    {
+      "id": "HI-T09",
+      "requirement_ids": [
+        "HI09"
+      ],
+      "depends_on": [
+        "HI-T01",
+        "HI-T02"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false,
+      "verification": "host rejects before effects; valid enrollment uses distinct owner-scoped roots, correct process identity and preserved unrelated files",
       "docs": "docs/host-principal-custody.md"
     }
   ],
@@ -179,7 +260,10 @@
       "HI03",
       "HI04",
       "HI05",
-      "HI06"
+      "HI06",
+      "HI07",
+      "HI08",
+      "HI09"
     ]
   },
   "change_dependencies": [

@@ -28,6 +28,7 @@ from hermes_installer.managed_process import (
 )
 from hermes_installer.state import Journal, OwnedRoot
 from hermes_installer.authority.client import AuthorityClient
+from hermes_installer.authority.client import canonical_profile_target, profile_launch_envelope
 from hermes_installer.authority.types import (
     EffectAuthorization, HostContext, Sensitivity, VerifiedEffectAuthorization,
     canonical_digest,
@@ -53,8 +54,14 @@ class _FixtureAuthorityVerifier(AuthorityClient):
 def _authorized_spec(spec: ManagedProcessSpec) -> ManagedProcessSpec:
     from dataclasses import replace
     import hashlib
-    target = (f"hermes-profile-invoke:{spec.profile_id}:{spec.executable.resolve()}:"
-              f"{spec.artifact_sha256}:{spec.data_root.resolve()}")
+    target = canonical_profile_target(spec.profile_id, spec.executable.resolve(), spec.data_root.resolve())
+    envelope = profile_launch_envelope(
+        target=target, profile_id=spec.profile_id, executable=spec.executable,
+        artifact_sha256=spec.artifact_sha256, artifact_root=spec.artifact_root,
+        cwd=spec.cwd, data_root=spec.data_root, argv=spec.argv,
+        env_allowlist=spec.env_allowlist, child_artifact_hashes=spec.child_artifact_hashes,
+        max_lifetime_seconds=int(spec.max_lifetime_seconds),
+        max_output_bytes=spec.max_output_bytes, stdin_mode=spec.stdin_mode)
     now = time.monotonic()
     context = HostContext(
         principal_id="fixture-principal", profile_id=spec.profile_id,
@@ -69,7 +76,8 @@ def _authorized_spec(spec: ManagedProcessSpec) -> ManagedProcessSpec:
         namespace_id=context.namespace_id, uid=context.uid, trace_id=context.trace_id,
         policy_revision=context.policy_revision, lineage_hash=context.lineage_hash,
         capability="hermes-profile-invoke", intent_id=context.intent_id, target=target,
-        recipient=None, request_digest=canonical_digest(list(spec.argv)), retry_index=0,
+        purpose=context.purpose, sensitivity=context.sensitivity,
+        recipient=None, request_digest=canonical_digest(envelope), retry_index=0,
         issued_at_monotonic=now, monotonic_expires_at=now + 20, grant_id="fixture-effect-grant",
         nonce="fixture-effect-nonce", context_digest="b" * 64, signature="fixture-signature",
     )

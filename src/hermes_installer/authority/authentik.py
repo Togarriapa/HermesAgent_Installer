@@ -95,9 +95,11 @@ class TLSAuthentikTransport:
 class PrincipalIdentity:
     username: str
     email: str
+    subject_id: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.username or not self.email or "@" not in self.email:
+        if (not self.username or not self.email or "@" not in self.email
+                or self.subject_id is not None and (not isinstance(self.subject_id, str) or not self.subject_id)):
             raise ValueError("expected Authentik principal identity is incomplete")
 
 
@@ -153,8 +155,9 @@ class AuthentikSystemPolicy(AuthorityPolicy):
             sensitivity = max((item.sensitivity for item in source_contexts), key=ordered.index)
             lineage_hash = canonical_digest(sorted(_ctx_digest(item) for item in source_contexts))
             return sensitivity, lineage_hash
-        if (binding.profile_id, purpose) in self.enrollment.public_profile_purposes:
-            return Sensitivity.PUBLIC, canonical_digest({"profile": binding.profile_id, "purpose": purpose, "policy": self.revision})
+        # Purpose names are request metadata, not proof that a payload was
+        # cleared for a public recipient. Empty lineage remains unknown; a
+        # separate host-reviewed source/consent issuer must mint public data.
         return Sensitivity.UNKNOWN, canonical_digest({"unknown": True, "purpose": purpose, "policy": self.revision})
 
     def allow_effect(self, *, context: HostContext, rule: EffectRule,
@@ -162,18 +165,35 @@ class AuthentikSystemPolicy(AuthorityPolicy):
         key = (rule.capability, rule.target)
         if key not in self.enrollment.allowed_effects:
             return False
-        if context.sensitivity is Sensitivity.UNKNOWN:
-            return False
         maximum = self.enrollment.max_sensitivity_by_capability.get(rule.capability, Sensitivity.PRIVATE)
         ordering = (Sensitivity.PUBLIC, Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN)
-        if ordering.index(context.sensitivity) > ordering.index(maximum):
+        # The local root broker may safely handle unknown input: a pinned
+        # artifact fetch has no user payload, and process I/O is contained by
+        # the enrolled profile. Unknown/private input is still forbidden from
+        # leaving the host or reaching an enrolled recipient.
+        local_operations = frozenset({
+            "process.start", "process.status", "process.read", "process.write",
+            "process.stop", "artifact.fetch", "package.install",
+            "memory.request", "memory.doctor", "memory.capture", "memory.search",
+            "memory.export", "memory.delete", "memory.extract", "memory.embed",
+            "memory.backup", "memory.restore", "memory.enqueue", "memory.result",
+        })
+        if (context.sensitivity is Sensitivity.UNKNOWN and rule.operation not in local_operations
+                or ordering.index(context.sensitivity) > ordering.index(maximum)
+                and not (context.sensitivity is Sensitivity.UNKNOWN and rule.operation in local_operations)):
             return False
         self._deadline.value = self._clock() + self.timeout
         try:
-            groups = self._authorize_actor(context)
+            # Authentik System is an authorization source for protected
+            # homelab changes and alarms, not a prerequisite for local
+            # bootstrap/runtime operations whose authority comes from the
+            # root-enrolled SO_PEERCRED UID/profile binding and fixed rule.
+            groups = None
+            if rule.operation in {"host.write", "alert.deliver"}:
+                groups = self._authorize_actor(context)
             if rule.operation == "host.write":
                 required = self.enrollment.write_group_by_target.get(rule.target)
-                if not required or required not in groups:
+                if not required or groups is None or required not in groups:
                     raise AuthorityDenied("authentik.write-membership", "principal is not authorized for this enrolled host target")
             if rule.operation == "alert.deliver":
                 self._authorize_recipient(rule.recipient)
@@ -188,7 +208,8 @@ class AuthentikSystemPolicy(AuthorityPolicy):
             raise AuthorityDenied("authentik.principal", "fresh enrolled actor identity is unavailable")
         actor = self._current_user(token)
         if (actor["username"].casefold() != expected.username.casefold()
-                or actor["email"].casefold() != expected.email.casefold()):
+                or actor["email"].casefold() != expected.email.casefold()
+                or expected.subject_id is not None and actor["subject"] != expected.subject_id):
             raise AuthorityDenied("authentik.mismatch", "fresh Authentik subject does not match the enrolled principal")
         groups = self._complete_groups(token, actor["groups"])
         if self.enrollment.system_group_id not in groups:

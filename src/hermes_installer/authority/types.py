@@ -71,6 +71,8 @@ class HostContext:
     nonce: str
     grant_id: str
     signature: str
+    source_receipts: tuple["SourceReceipt", ...] = ()
+    final_payload_digest: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("principal_id", "profile_id", "namespace_id", "purpose", "intent_id", "trace_id", "policy_revision", "nonce", "grant_id", "signature"):
@@ -82,9 +84,15 @@ class HostContext:
         _digest(self.lineage_hash, "lineage_hash")
         if not isinstance(self.capabilities, frozenset) or any(not isinstance(x, str) or not _ID.fullmatch(x) for x in self.capabilities):
             raise AuthorityDenied("claims.invalid", "capabilities are invalid")
+        if (not isinstance(self.source_receipts, tuple)
+                or any(not isinstance(item, SourceReceipt) for item in self.source_receipts)
+                or len(self.source_receipts) > 64):
+            raise AuthorityDenied("claims.invalid", "source receipt lineage is invalid")
+        if self.final_payload_digest is not None:
+            _digest(self.final_payload_digest, "final_payload_digest")
         issued = _time(self.issued_at_monotonic, "issued_at_monotonic")
         expires = _time(self.monotonic_expires_at, "monotonic_expires_at")
-        if expires <= issued or expires - issued > 300:
+        if expires <= issued or expires - issued > 600:
             raise AuthorityDenied("claims.invalid", "context lease exceeds its bound")
 
     @property
@@ -92,7 +100,7 @@ class HostContext:
         return self.sensitivity
 
     def claims(self) -> dict[str, Any]:
-        return {
+        claims = {
             "principal_id": self.principal_id, "profile_id": self.profile_id,
             "namespace_id": self.namespace_id, "uid": self.uid,
             "purpose": self.purpose, "intent_id": self.intent_id,
@@ -103,6 +111,11 @@ class HostContext:
             "monotonic_expires_at": self.monotonic_expires_at,
             "nonce": self.nonce, "grant_id": self.grant_id,
         }
+        if self.source_receipts:
+            claims["source_receipts"] = [item.to_wire() for item in self.source_receipts]
+        if self.final_payload_digest is not None:
+            claims["final_payload_digest"] = self.final_payload_digest
+        return claims
 
     def to_wire(self) -> dict[str, Any]:
         return {**self.claims(), "signature": self.signature}
@@ -112,12 +125,95 @@ class HostContext:
         if not isinstance(value, dict):
             raise AuthorityDenied("claims.invalid", "host context is malformed")
         required = {"principal_id", "profile_id", "namespace_id", "uid", "purpose", "intent_id", "trace_id", "sensitivity", "lineage_hash", "policy_revision", "capabilities", "issued_at_monotonic", "monotonic_expires_at", "nonce", "grant_id", "signature"}
-        if set(value) != required or not isinstance(value["capabilities"], list):
+        allowed = {frozenset(required), frozenset(required | {"source_receipts"}),
+                   frozenset(required | {"final_payload_digest"}),
+                   frozenset(required | {"source_receipts", "final_payload_digest"})}
+        if frozenset(value) not in allowed or not isinstance(value["capabilities"], list):
             raise AuthorityDenied("claims.invalid", "host context fields are invalid")
         try:
-            return cls(**{**value, "sensitivity": Sensitivity(value["sensitivity"]), "capabilities": frozenset(value["capabilities"])})
+            fields = dict(value)
+            receipts = fields.pop("source_receipts", [])
+            final_digest = fields.pop("final_payload_digest", None)
+            if not isinstance(receipts, list):
+                raise ValueError("receipts")
+            return cls(**{**fields, "sensitivity": Sensitivity(value["sensitivity"]),
+                          "capabilities": frozenset(value["capabilities"]),
+                          "source_receipts": tuple(SourceReceipt.from_wire(item) for item in receipts),
+                          "final_payload_digest": final_digest})
         except (ValueError, TypeError, KeyError):
             raise AuthorityDenied("claims.invalid", "host context fields are invalid") from None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceReceipt:
+    """Signed digest/provenance from a trusted in-process source adapter."""
+
+    receipt_id: str
+    issuer_id: str
+    source_kind: str
+    principal_id: str
+    profile_id: str
+    namespace_id: str
+    uid: int
+    origin_id: str
+    process_generation: str
+    payload_digest: str
+    sensitivity: Sensitivity
+    parent_lineage_hash: str
+    policy_revision: str
+    recipient_ceiling: frozenset[str]
+    issued_at_monotonic: float
+    monotonic_expires_at: float
+    signature: str
+
+    def __post_init__(self) -> None:
+        for name in ("receipt_id", "issuer_id", "source_kind", "principal_id", "profile_id",
+                     "namespace_id", "origin_id", "process_generation", "policy_revision", "signature"):
+            _identifier(getattr(self, name), name)
+        if type(self.uid) is not int or self.uid <= 0 or not isinstance(self.sensitivity, Sensitivity):
+            raise AuthorityDenied("source.invalid", "source receipt identity or sensitivity is invalid")
+        _digest(self.payload_digest, "payload_digest")
+        _digest(self.parent_lineage_hash, "parent_lineage_hash")
+        if (not isinstance(self.recipient_ceiling, frozenset)
+                or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in self.recipient_ceiling)
+                or len(self.recipient_ceiling) > 64):
+            raise AuthorityDenied("source.invalid", "source receipt recipient ceiling is invalid")
+        issued = _time(self.issued_at_monotonic, "issued_at_monotonic")
+        expires = _time(self.monotonic_expires_at, "monotonic_expires_at")
+        if expires <= issued or expires - issued > 600:
+            raise AuthorityDenied("source.invalid", "source receipt lease exceeds its bound")
+
+    def claims(self) -> dict[str, Any]:
+        return {
+            "receipt_id": self.receipt_id, "issuer_id": self.issuer_id,
+            "source_kind": self.source_kind, "principal_id": self.principal_id,
+            "profile_id": self.profile_id, "namespace_id": self.namespace_id,
+            "uid": self.uid, "origin_id": self.origin_id,
+            "process_generation": self.process_generation,
+            "payload_digest": self.payload_digest, "sensitivity": self.sensitivity.value,
+            "parent_lineage_hash": self.parent_lineage_hash,
+            "policy_revision": self.policy_revision,
+            "recipient_ceiling": sorted(self.recipient_ceiling),
+            "issued_at_monotonic": self.issued_at_monotonic,
+            "monotonic_expires_at": self.monotonic_expires_at,
+        }
+
+    def to_wire(self) -> dict[str, Any]:
+        return {**self.claims(), "signature": self.signature}
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "SourceReceipt":
+        required = {"receipt_id", "issuer_id", "source_kind", "principal_id", "profile_id",
+                    "namespace_id", "uid", "origin_id", "process_generation", "payload_digest",
+                    "sensitivity", "parent_lineage_hash", "policy_revision", "recipient_ceiling",
+                    "issued_at_monotonic", "monotonic_expires_at", "signature"}
+        if not isinstance(value, dict) or set(value) != required or not isinstance(value["recipient_ceiling"], list):
+            raise AuthorityDenied("source.invalid", "source receipt fields are invalid")
+        try:
+            return cls(**{**value, "sensitivity": Sensitivity(value["sensitivity"]),
+                          "recipient_ceiling": frozenset(value["recipient_ceiling"])})
+        except (ValueError, TypeError, KeyError):
+            raise AuthorityDenied("source.invalid", "source receipt fields are invalid") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +241,8 @@ class EffectAuthorization:
     nonce: str
     context_digest: str
     signature: str
+    source_receipts: tuple[SourceReceipt, ...] = ()
+    final_payload_digest: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("principal_id", "profile_id", "namespace_id", "purpose", "trace_id", "policy_revision", "capability", "intent_id", "target", "grant_id", "nonce", "signature"):
@@ -158,13 +256,19 @@ class EffectAuthorization:
         _digest(self.lineage_hash, "lineage_hash")
         _digest(self.request_digest, "request_digest")
         _digest(self.context_digest, "context_digest")
+        if (not isinstance(self.source_receipts, tuple)
+                or any(not isinstance(item, SourceReceipt) for item in self.source_receipts)
+                or len(self.source_receipts) > 64):
+            raise AuthorityDenied("grant.invalid", "effect grant source receipt lineage is invalid")
+        if self.final_payload_digest is not None:
+            _digest(self.final_payload_digest, "final_payload_digest")
         issued = _time(self.issued_at_monotonic, "issued_at_monotonic")
         expires = _time(self.monotonic_expires_at, "monotonic_expires_at")
-        if expires <= issued or expires - issued > 30:
+        if expires <= issued or expires - issued > 600:
             raise AuthorityDenied("grant.invalid", "effect grant lease exceeds its bound")
 
     def claims(self) -> dict[str, Any]:
-        return {
+        claims = {
             "principal_id": self.principal_id, "profile_id": self.profile_id,
             "namespace_id": self.namespace_id, "uid": self.uid,
             "purpose": self.purpose, "sensitivity": self.sensitivity.value,
@@ -178,6 +282,11 @@ class EffectAuthorization:
             "grant_id": self.grant_id, "nonce": self.nonce,
             "context_digest": self.context_digest,
         }
+        if self.source_receipts:
+            claims["source_receipts"] = [item.to_wire() for item in self.source_receipts]
+        if self.final_payload_digest is not None:
+            claims["final_payload_digest"] = self.final_payload_digest
+        return claims
 
     def to_wire(self) -> dict[str, Any]:
         return {**self.claims(), "signature": self.signature}
@@ -187,21 +296,31 @@ class EffectAuthorization:
         if not isinstance(value, dict):
             raise AuthorityDenied("grant.invalid", "effect grant is malformed")
         required = {"principal_id", "profile_id", "namespace_id", "uid", "purpose", "sensitivity", "trace_id", "policy_revision", "lineage_hash", "capability", "intent_id", "target", "recipient", "request_digest", "retry_index", "issued_at_monotonic", "monotonic_expires_at", "grant_id", "nonce", "context_digest", "signature"}
-        if set(value) != required:
+        allowed = {frozenset(required), frozenset(required | {"source_receipts"}),
+                   frozenset(required | {"final_payload_digest"}),
+                   frozenset(required | {"source_receipts", "final_payload_digest"})}
+        if frozenset(value) not in allowed:
             raise AuthorityDenied("grant.invalid", "effect grant fields are invalid")
         try:
-            return cls(**{**value, "sensitivity": Sensitivity(value["sensitivity"])})
+            fields = dict(value)
+            receipts = fields.pop("source_receipts", [])
+            final_digest = fields.pop("final_payload_digest", None)
+            if not isinstance(receipts, list):
+                raise ValueError("receipts")
+            return cls(**{**fields, "sensitivity": Sensitivity(value["sensitivity"]),
+                          "source_receipts": tuple(SourceReceipt.from_wire(item) for item in receipts),
+                          "final_payload_digest": final_digest})
         except (ValueError, TypeError, KeyError):
             raise AuthorityDenied("grant.invalid", "effect grant fields are invalid") from None
 
 
 @dataclass(frozen=True, slots=True)
 class VerifiedEffectAuthorization:
-    """Local receipt that the root authority consumed a grant for a fixed verb."""
+    """Local receipt that the root authority verified a grant binding."""
 
     authorization: EffectAuthorization
     operation: str
-    consumed_at_monotonic: float
+    verified_at_monotonic: float
     verification_receipt: str
 
 
