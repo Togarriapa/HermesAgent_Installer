@@ -37,7 +37,7 @@ class ConnectorStream(Protocol):
 
 
 class ServiceConnectorClient(Protocol):
-    def open(self, enrollment_id: str, generation: int, target_id: str,
+    def open(self, enrollment_id: str, generation: str, target_id: str,
              approved_route_id: str, session_id: str, deadline: float) -> ConnectorStream: ...
 
 
@@ -166,7 +166,7 @@ class MemoryServiceIPC:
         self.monotonic = monotonic
 
     def request(self, *, context: Any, authorization: Any, service_id: str,
-                service_generation: int, provider: str, route_id: str,
+                service_generation: str, provider: str, route_id: str,
                 session_id: str, deadline_monotonic: float, payload: bytes,
                 timeout: float, peer_pid: int, peer_pidfd: int | None,
                 cancelled: Callable[[], bool]) -> MemoryHTTPResponse:

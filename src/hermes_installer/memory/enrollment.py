@@ -103,7 +103,7 @@ class MemoryServiceEnrollment:
     principal_id: str
     service_enrollment_id: str
     source_revision: str
-    service_generation: int
+    service_generation: str
     namespace_identity: str
     literal_loopback_port: int
     fixed_route_map: Mapping[str, RouteStep]
@@ -133,8 +133,9 @@ class MemoryServiceEnrollment:
         for field in ("principal_id", "service_enrollment_id", "namespace_identity",
                       "data_root_id", "auth_reference_id", "background_consent_revision"):
             _id(record[field], field)
-        if type(record["service_generation"]) is not int or record["service_generation"] < 1:
-            raise MemoryEnrollmentError("positive supervised service generation is required")
+        generation = record["service_generation"]
+        if not isinstance(generation, str) or not _ID.fullmatch(generation):
+            raise MemoryEnrollmentError("opaque root-issued service generation is required")
         if type(record["memory_owner_generation"]) is not int or record["memory_owner_generation"] < 1:
             raise MemoryEnrollmentError("positive memory owner generation is required")
         port = record["literal_loopback_port"]
@@ -192,7 +193,7 @@ class MemoryServiceEnrollment:
             principal_id=record["principal_id"],
             service_enrollment_id=record["service_enrollment_id"],
             source_revision=record["source_revision"],
-            service_generation=record["service_generation"],
+            service_generation=generation,
             namespace_identity=record["namespace_identity"],
             literal_loopback_port=port, fixed_route_map=routes,
             data_root_id=record["data_root_id"], auth_reference_id=record["auth_reference_id"],
