@@ -152,6 +152,19 @@ def test_capture_pairs_root_retained_native_request_with_completed_result():
     assert run.requests == {request_id: result_event}
     assert run.responses == {result_event: result_event}
 
+    run.requests.clear()
+    run.responses.clear()
+    response.producer_identity = object()
+    registry._capture(run)
+    assert run.requests == {}
+    assert run.responses == {}
+
+    response.producer_identity = identity
+    registry.source_observers.service.authority_epoch = "rotated-epoch"
+    registry._capture(run)
+    assert run.requests == {}
+    assert run.responses == {}
+
 
 def test_tool_result_must_descend_from_matching_native_call_and_task():
     source = _receipt("source")
