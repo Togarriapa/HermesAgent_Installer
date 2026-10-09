@@ -11,9 +11,9 @@ from hermes_installer.authority.enrollment import (
     AUTHORITY_CONFIG_PATH, CREDENTIAL_DIRECTORY, RootCredentialVault,
     _reject_secret_material, _unique_pairs, _verify_active_process_rules, write_authority_config,
     write_protected_file, _validate_service_generations, _parse_observer_delivery_bindings,
-    _parse_source_issuers, _validate_root_key_selection,
     _parse_source_issuers, _parse_native_schema_artifact_records,
     _parse_composio_channel_enrollment_records, _parse_channel_delivery_binding_records,
+    _validate_root_key_selection,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
@@ -96,7 +96,6 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _parse_native_schema_artifact_records([row, dict(row)])
         with self.assertRaises(AuthorityDenied):
             _parse_native_schema_artifact_records([{**row, "schema_kind": "discovery"}])
-
     def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
         issuer = _parse_source_issuers([{
             "issuer_channel_id": "tool-result", "producer_profile_id": "producer-profile",
