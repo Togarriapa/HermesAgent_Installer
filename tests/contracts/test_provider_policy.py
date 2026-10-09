@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -14,12 +15,22 @@ from hermes_installer.policy import (
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 
+def fixture_context(profile_id, purpose, sensitivity, **kwargs):
+    return DispatchContext(profile_id, purpose, sensitivity,
+        principal_id="fixture-principal", namespace="fixture-namespace",
+        provenance="sha256:" + "f" * 64,
+        capabilities=frozenset({"inference", "tool-call"}),
+        policy_revision="fixture-revision", grant_id="fixture-context-grant",
+        lease_expires_at=time.monotonic() + 3600, **kwargs)
+
+
 def synthetic_authorizer(context, capability, intent_id, now, timeout, cancelled):
     import uuid
-    return DispatchAuthorization("fixture-principal", context.profile_id, context.profile_id,
-        context.trace_id, frozenset({"inference", "tool-call"}),
-        context.effective_sensitivity, "fixture-revision", context.purpose,
-        capability, intent_id, "f" * 64, str(uuid.uuid4()), now + min(60, timeout))
+    return DispatchAuthorization(context.principal_id, context.profile_id, context.namespace,
+        context.trace_id, context.capabilities, context.effective_sensitivity,
+        context.policy_revision, context.purpose, capability, intent_id,
+        context.provenance[7:], str(uuid.uuid4()),
+        min(now + min(60, timeout), context.lease_expires_at))
 
 
 class RecordingProvider:
@@ -125,8 +136,7 @@ class ProviderPolicyTests(unittest.TestCase):
             def private_host_policy(context, capability, intent_id, now, timeout, cancelled):
                 from dataclasses import replace
                 grant = synthetic_authorizer(context, capability, intent_id, now, timeout, cancelled)
-                return replace(grant, principal_id="real-principal", namespace="private-home",
-                    effective_sensitivity=Sensitivity.PRIVATE, policy_revision="host-policy-7")
+                return replace(grant, effective_sensitivity=Sensitivity.PRIVATE)
             dispatcher = Dispatcher(DispatchPolicy({"public": default_public_route()}, "public"),
                 BudgetLedger(self.ledger_root(Path(td))), provider,
                 context_authorizer=private_host_policy)
