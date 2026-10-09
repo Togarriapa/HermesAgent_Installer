@@ -708,7 +708,9 @@
         "custody_signature": "start_selected_task(...,task_admission:RootAdmittedTask,admission_handle:RootResourceJobAdmissionHandle,node_id:str,admitted_source:RootAdmittedTaskSource,exact_stdin:bytes,expected_stdin_sha256,...)->ManagedTaskHandle retains existing root effect inputs; coordinator is concrete root construction dependency, never caller-provided callback.",
         "registry_bind": "bind_task_input(*,task_handle:ManagedTaskHandle,admission:RootResourceJobAdmissionHandle,source:RootAdmittedTaskSource,selected_execution:RootSelectedNativeExecution,initial_input:RootTaskInitialInputReceipt)->None; verifies issuer/current active generations/actual process/loader proof/receipt registry/exact admitted byteSHA+size/fullparent closure/lease, records once prestdin. Does not re-resolve one-use source or mint ancestry from DTO.",
         "actual_write_join": "Root custody actual stdin write/EOF receipt binds initial_input.receipt_handle + exact bytes SHA/size/task/process generation and is a required later terminal/native companion event join. Initial input receipt proves capture/delivery, not actual stdin write or successful backend result.",
-        "failure": "Expiry/cancellation/wrongsource/readiness/delivery mismatch aborts before stdin and closes/reaps whole owned cgroup; retained root bookkeeping no further effects/new worker grant. Partial write failed/ambiguous, no replay. Root observation registry later native request/result/tool events remain independently required for result capsule; no blanket postturn tool source issuance."
+        "failure": "Expiry/cancellation/wrongsource/readiness/delivery mismatch aborts before stdin and closes/reaps whole owned cgroup; retained root bookkeeping no further effects/new worker grant. Partial write failed/ambiguous, no replay. Root observation registry later native request/result/tool events remain independently required for result capsule; no blanket postturn tool source issuance.",
+        "delivery_lookup": "source_receipt_handle and producer_context_delivery_handle may hold the SAME existing SourceReceiptHandle token. Root SourceObserverRegistry verifies its exact _receipt_delivery_bindings retained current receipt/actualselectedproducer PIDFD/profile/gen/expiry and delivered state; queued alone is not delivered and no synthetic separate receipt required. Delivered means actual authenticated producer take_source_receipt consumption, not root claimed callback.",
+        "lookup_api": "resolve_initial_input_receipt(receipt_handle,*,task_handle,stdin_sha256,stdin_size_bytes)->same immutable RootTaskInitialInputReceipt is nonconsuming currentness lookup for completion/source registry. consume_initial_input_receipt(same exact args)->same DTO atomically consumes root custody prestdin phase nonce ONCE after all currentness/actualdelivery/source/loader checks. Custody invokes consume immediately before one write/EOF; failed/partial write stays consumed/failed, no replay. Later retained receipts can be audit-revalidated without reusing effect authority."
       }
     },
     "recipe_domain": "task_body_recipe_id/task_request_schema_id select inner Hermes prompt recipe/schema; node/body_recipe_id and backend/body_recipe_id select outer resource request recipe/schema. Distinct domains, no automatic equality requirement. Both protected/current/source-pinned/forced-scope joins are mandatory; caller cannot choose either."
@@ -800,5 +802,31 @@
     "source_path": "src/hermes_installer/registry/resource_backends.py",
     "sha256": "d06e5b13444a690ce19f36698e5b3c244ba1e09950cdf3c03815c70577d541cd",
     "evidence": "Sol independently hashed actual module at source owner checkout; includes fixed handler plus RootArtifactValidator. Actual deployed protected row must match bytes/current catalog; source pin not functional acceptance."
+  },
+  "actual_stdin_write_receipt": {
+    "owner_module": "hermes_installer.authority.managed_process_custodian",
+    "dto_module": "hermes_installer.registry.resource_jobs",
+    "dto": "RootTaskStdinWriteReceipt",
+    "fields": {
+      "schema": "literal1",
+      "receipt_handle": "opaque str",
+      "task_handle": "opaque str",
+      "process_id": "opaque str",
+      "process_generation": "opaque str",
+      "initial_input_receipt_handle": "opaque str",
+      "stdin_sha256": "lowercase SHA256",
+      "stdin_size_bytes": "int1..262144",
+      "sequence": "literal0",
+      "write_complete": "literal true",
+      "drained": "literal true",
+      "stdin_closed": "literal true",
+      "service_generation_digest": "lowercase SHA256",
+      "issued_monotonic": "finite float",
+      "expires_monotonic": "finite float"
+    },
+    "issue": "Custody mints only after actual exact admitted prompt UTF8 bytes have been completely written with bounded partial-write handling, bounded output drain and actual owned stdin FD close/EOF. No newline/BOM/normalization. Partial write, EPIPE, cancellation or expired deadline never issues a successful receipt. Internal completion of the same admitted start effect; no new worker verb or reused grant.",
+    "resolve": "ManagedProcessEffectHandler.resolve_task_stdin_write(task_handle,receipt_handle)->RootTaskStdinWriteReceipt; stable non-consuming retained root registry lookup validates exact process/task/input receipt/generation/hash/size and lease. Caller DTO or boolean is not proof.",
+    "joins": "ManagedTaskHandle and subsequent immutable RootTaskTerminalReceipt carry stdin_write_receipt_handle issued before terminal. RootTaskNativeObservationRegistry resolves actual custody receipt and requires same task, process, initial-input receipt, exact stdin SHA/size, active service generation and EOF before companion success. Companion links existing terminal; never rewrite terminal. Registry audit lookup does not reconsume initial input or authorize another write.",
+    "frozen_handle_phases": "ManagedTaskHandle remains the same frozen identity passed to pre-stdin coordinator and returned after EOF. stdin_write_receipt_handle is a read-only manager-backed property/lookup, null before actual successful write/EOF and nonnull afterward; no mutable caller holder, replacement handle or fabricated pre-stdin receipt. Custody root retained task record is authoritative. Terminal issued after EOF stores actual receipt handle; completion independently resolves retained custody receipt. Stable handle identity and once-resolved source semantics remain unchanged."
   }
 }
