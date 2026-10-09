@@ -1,0 +1,3 @@
+# Pinned source document link v1
+
+Sol additive original R0092/SK-R0092/EV-R0092 fullsource import refinement. Independent GitAPI recursive tree/blob verification confirms ONLY CLAUDE.md mode120000 blob47dc3e... literalAGENTS.md targetregularblob672da2..., sourceGitTreee51f235... at originald026pin. planning/pinned-source-document-link-contract.json allows exactrootstabletarget regularcopy only in compiledgeneration, originalmode/blob/tree/sourcebytes preserved separately, compiledhash distinct. No otherlink/absolute/escape/chain/cycle/hardlink/executable/unknown target allowed. Upstream AGENTS/CLAUDE docs untrustedsource, notinstallergovernance. Meaningfulcopy/negative/fullclosure and actualvisionfunctionalproof separate. Scope/baseline/tag unchanged, existingtasksopen.

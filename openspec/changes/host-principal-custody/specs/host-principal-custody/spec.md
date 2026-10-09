@@ -243,3 +243,31 @@ The installer SHALL resolve fixed parameter-free Hermes stage/health recipes and
 #### Scenario: Caller supplies bootstrap paths or source-only health
 - **WHEN** caller overrides recipe/roots/argv or only inventory/status exists without actual selected native workflow
 - **THEN** reject overrides or keep functional readiness incomplete, preserve prior generation and exact resume reason.
+
+### Requirement: Root remote controller and native principal binding
+The installer SHALL bind verified remote native principal and actual gateway kernel controller separately through a dedicated root-internal one-use connector issuer, active protected policy/OTP enrollment and actual origin/token/closure receipts. Normal worker contexts SHALL not be relabelled and gateway SHALL receive no policy/setup credential resolver.
+
+#### Scenario: Gateway context relabel or metadata-only origin activation
+- **WHEN** caller claims native principal from gateway context or activation lacks actual current root readiness/token/mount proof
+- **THEN** deny before bytes/activation, preserve configured checkpoint and exact native/account resume requirements.
+
+### Requirement: Distinct native manifest digest domains
+The installer SHALL verify native manifest.json against explicit entrypoint_sha256 and original resource manifest against its separate source identity, with fixed closure paths and no assumed digest equality.
+
+#### Scenario: Source manifest digest substitutes native entrypoint pin
+- **WHEN** loader receives wrong digestdomain or callerselected module path
+- **THEN** deny loader activation before imports and retain exact incomplete closure evidence.
+
+### Requirement: Protected lifecycle provision and control
+The installer SHALL derive enrollment provision and finite process control effects from actual trusted root transaction/peer/owned livehandle state, preserve first-snapshot trust provenance and atomic recoverable generation changes, and SHALL not accept worker bearer targets or ready assertions.
+
+#### Scenario: Forged bootstrap intent or stale process control
+- **WHEN** caller supplies unregistered bootstrap intent, claimed roots/identity or stale/sibling control handle
+- **THEN** reject before effects, preserve prior generation/private state and require actual root target/ownership evidence.
+
+### Requirement: Selected backend and actual gateway role bindings
+The installer SHALL resolve protected resource backend/body recipe/action/source/consent scope before each child effect and SHALL verify actual launched gateway role against explicit HI13 protected profile-role association.
+
+#### Scenario: Legacy backend metadata or unobserved gateway role
+- **WHEN** only declared backend/role metadata exists without current root selected effect/actual launch proof
+- **THEN** deny backend/admission before bytes and retain exact incomplete implementation/native evidence.

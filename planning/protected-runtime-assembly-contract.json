@@ -41,6 +41,9 @@
       "operation_parameter_schemas",
       "source_issuers",
       "resource_jobs",
+      "remote_session_enrollments",
+      "resource_backend_enrollments",
+      "resource_body_recipes",
       "generation_digest"
     ],
     "types": "single selected generation record; each catalog is bounded list<=1024 strict existing inner source-backed records, duplicates/unknown fields rejected. generation_id opaque rootissued string. Empty lists valid only affected actions explicitly unavailable.",
@@ -48,7 +51,9 @@
     "joins": "Root loader verifiesgenerationdigest then supplies exactrecords to ProtectedEnrollmentCatalog.from_verified_records, ProtectedDeviceCatalog, ProtectedBuildCatalog. nativepackages join exactserviceprofile/generation; memory joins profile/stringservicegen/intownerepoch; operation_parameters exactschemaIDs. Deviceepoch separately expected_device_generation. Buildprecondition generation matches selectedrecipe; postbuild receipt only rootregistry produced. Active source_issuers exact9-field rows join actualroot observerregistry and currentproducerrole/event, all coveredgenerationdigest. Every rootbinding/currentpolicy invalidates old handles on cataloggeneration/digestchange.",
     "previous_fixed_files": "Previously defined native-packages.json and operation-parameters.json formats are root-owned staging/import sources only. Activeauthority service_generations includesnative_packages/source_issuers/operation_parameter_schemas. No active mutable sidecarfallback. Supplied mirrors require exactnestedcatalogcontent/hash equality.",
     "source_issuers": "Active service_generations.source_issuers is bounded strict list<=1024 of EXACT11-field sourceobserver rows already defined: issuer_channel_id,producer_profile_id,producer_role_artifact_id,producer_role_sha256,capture_schema_id,allowed_parent_channels,generation,observer_enrollment_id,source_action_ids. NOTE existing listed row has9 fields, not11: these9 are canonical exactly; observer_enrollment_id joins separate root private observer registry records whose exact fields are in root_private_api. No added callerrole/destination. Full list participates generation_digest; generation matches activeproducer/profile and observerartifact/actualpendingevent. No mutable sidecarfallback.",
-    "resource_jobs": "Active bounded strict list<=692 selected ResourceJobEnrollment rows defined by protected-resource-job-contract.json; entire rows/DAG/source/target/backend references included generation_digest. No runtime sidecar or caller action graph fallback."
+    "resource_jobs": "Active bounded strict list<=692 selected ResourceJobEnrollment rows defined by protected-resource-job-contract.json; entire rows/DAG/source/target/backend references included generation_digest. No runtime sidecar or caller action graph fallback.",
+    "remote_session_enrollments": "Active exact HI13 rows and protected selected OTP/JWT/policy/principal/gateway joins from remote-root-session-bridge-contract.json, fully included generation_digest. Prior top-level declaration is staging/import only; no mutable sidecar/alternate active parser fallback.",
+    "resource_backend_enrollments": "Strict activeRB07backend/action/recipe schema in protected-resource-job-contract.json, fullrows includedcanonicalgenerationdigest; no mutable sidecarfallback."
   },
   "device_kernel_enforcement": {
     "profile_fields": [
@@ -211,7 +216,8 @@
     ],
     "paths": "Relative normalizedPOSIX paths, no absolute/empty/dotdot/symlink/hardlink/specialfile, duplicate/casecollision reject. module_name dottedPythonidentifier, relative_module_path pinned .py/modulepackage path underclosure. entrypoint_symbol fixedregister or explicitreviewedcallable inmanifest, notcaller. allowedimports exactfinite internalmodules/dependencycatalogmodules; no discovery/user/PYTHONPATH/callerimport. Actualclosure includes fullsourcehelper/assets andlicense/content requirements, no minimalshim claim.",
     "digest": "entrypoint_artifact_id resolves canonical JSON manifest bytes sortedkeyscompactUTF8ensure_asciifalse/no newline; entrypoint_sha256 actualbytesSHA. closure_files sortedrelativepath complete immutable tree, closure digest SHA256canonicalclosure_files list, compiled_closure_sha256 mustbindexacttree manifest; packaged archiveSHA separately catalog artifact bytes, no conflation. Eachadapter artifact_sha256 matches listedmodulefile; dependencies actualrootcatalog artifacts.",
-    "fixed_mount": "Rootderives in-service mount target /run/hermes-installer/native/<SHA256UTF8 package_id+NUL+profile_id+NUL+generation+NUL+compiled_closure_sha256)>; servicemountID maps onlythatfixedpath, root-private read-only bind+noexec exceptexplicitreviewedentrypoint executable role, nosuid/nodev/private propagation. Rootchecks allfiles/tree beforemount, observedmountreceipt binds actual namespace/inode/flags/treegen; caller gets onlybinder/resolver, never arbitrarypath choice."
+    "fixed_mount": "Rootderives in-service mount target /run/hermes-installer/native/<SHA256UTF8 package_id+NUL+profile_id+NUL+generation+NUL+compiled_closure_sha256)>; servicemountID maps onlythatfixedpath, root-private read-only bind+noexec exceptexplicitreviewedentrypoint executable role, nosuid/nodev/private propagation. Rootchecks allfiles/tree beforemount, observedmountreceipt binds actual namespace/inode/flags/treegen; caller gets onlybinder/resolver, never arbitrarypath choice.",
+    "layout": "Rootselected mounted package root contains manifest.json (exact entrypoint artifactcanonicalbytes) and closure/ (complete immutable compiled tree). Adapter relative_module_path and closure_files relativepaths resolve under closure/ only; manifestfile outside closure tree, own entrypointSHA. Root loader derives fixedmount+literalmanifest.json/closure paths internally, worker maynotchoosepaths. All helpers/assets/licensefiles in closure preserved; resolver ResourceIdentity manifest_sha256 remains separate sourcemanifest digest."
   },
   "hi13_digest_and_peer": {
     "effect_digest": "HI13 root callback must SHA256 EXACT same canonical full finalHI07effect payload bytes used by connector._auth, no smaller sessionbinding object. connector.open preimage fields schema,enrollment_id,generation,target_id,action,approved_route_id,session_id,deadline; read/write/close exactfullrespectivepayloadfields inclhandle/gen/sequence/bytehash-or-readlimit/deadline. Root derives everyfield fromverifiedsession+enrollment, admissionbinding additional metadata neverreplacementdigest. CanonicalsortedcompactUTF8ensureasciifalse/noline, duplicatekeysreject.",
@@ -248,5 +254,33 @@
     ],
     "parameters": "{} for three selected model/build recipes; root derives build_profile_id from selectedrecipe/enrollment, neverparallelcallerselector",
     "precedence": "Supersedes older coral-device-build-contract build_profiles.caller_payload spelling; buildprofile remains protected record identity not callerauthority."
+  },
+  "loaded_package_closure_proof": {
+    "fields": [
+      "schema=1",
+      "proof_id",
+      "package_id",
+      "profile_id",
+      "generation",
+      "compiled_closure_sha256",
+      "entrypoint_sha256",
+      "resolver_sha256",
+      "mount_namespace_inode",
+      "mount_id",
+      "mount_target_digest",
+      "mount_flags",
+      "source_root_device",
+      "source_root_inode",
+      "target_peer_identity",
+      "loader_role_artifact_id",
+      "loader_role_sha256",
+      "loader_ready_event_id",
+      "observed_entrypoint_action_ids",
+      "issued_monotonic",
+      "expires_monotonic",
+      "service_generation_digest"
+    ],
+    "issuer": "Root custody/selected loader observer registry only after actual immutable closure/digests/readonly mount and actual pinned loader/entrypoint readiness event; metadataNativePackageBinding or callerloadedbool neverproof. target_peer_identity exact root kernel fields already hi13_digest_and_peer, actualSO_PEERCRED/PIDFD/exe/cgroup/ns/gen. Rootprivateinstance registrynonce+lease binds proof to mountedclosure/loader/peer; sourceissuer lookup exactpendinginvocation and exactparentclosure, no globalconstructabletoken/subsetparents.",
+    "join": "source_issuers flatactivecatalog byproducerprofile/gen/role ->actualregistered observer/loadedclosureproof ->pendingevent/invocation/targetpeer. No package nested sourcecatalog duplicate. Changedmount/module/peer/gen invalidatesproof/sourcechannel, rootobserved actualnativeinvocationstill separate qualification."
   }
 }
