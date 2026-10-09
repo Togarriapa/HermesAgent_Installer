@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import secrets
 import select
@@ -26,11 +27,20 @@ from .types import (
 MAX_REQUEST = 6 * 1024 * 1024 + 16_384
 MAX_RESPONSE = 4 * 1024 * 1024 + 32_768
 MAX_TIMEOUT = 120.0
-DEFAULT_SOCKET_PATH = Path("/run/hermes-installer/authority.sock")
+DEFAULT_SOCKET_DIR = Path("/run/hermes-installer/authority")
+
+
+def default_socket_path(uid: int | None = None) -> Path:
+    """Return the installed per-UID socket path without consulting environment."""
+    peer_uid = os.getuid() if uid is None else uid
+    if type(peer_uid) is not int or peer_uid <= 0:
+        raise AuthorityDenied("authority.endpoint", "current user has no enrolled authority endpoint")
+    return DEFAULT_SOCKET_DIR / f"{peer_uid}.sock"
 _OPERATIONS = frozenset({
     "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor", "memory.capture",
     "memory.search", "memory.export", "memory.delete", "memory.extract",
-    "memory.embed", "memory.enqueue", "memory.result", "host.write", "alert.deliver",
+    "memory.embed", "memory.backup", "memory.restore", "memory.enqueue", "memory.result",
+    "host.write", "alert.deliver",
     "process.start", "process.status", "process.read", "process.write", "process.stop",
     "artifact.fetch", "package.install",
 })
@@ -46,10 +56,20 @@ def canonical_profile_target(profile_id: str, executable: Path, data_root: Path)
     return f"hermes-profile-invoke:{profile_id}:{executable}:{digest}:{data_root}"
 
 
+def _file_digest(path: Path) -> str:
+    import hashlib
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def profile_launch_envelope(*, target: str, profile_id: str, executable: Path,
                             artifact_sha256: str, artifact_root: Path, cwd: Path,
                             data_root: Path, argv: Sequence[str],
                             env_allowlist: Mapping[str, str],
+                            child_artifact_hashes: Mapping[str, str] | None = None,
                             max_lifetime_seconds: int = 600,
                             max_output_bytes: int = 1_048_576,
                             stdin_mode: str = "closed") -> dict[str, Any]:
@@ -64,6 +84,16 @@ def profile_launch_envelope(*, target: str, profile_id: str, executable: Path,
         raise AuthorityDenied("effect.bounds", "process lifetime or output limit is invalid")
     if stdin_mode not in {"closed", "pipe"}:
         raise AuthorityDenied("effect.launch", "stdin mode is invalid")
+    child_hashes: dict[str, str] = {}
+    for child_path, child_digest in (child_artifact_hashes or {}).items():
+        resolved = Path(child_path).resolve(strict=True)
+        try:
+            resolved.relative_to(Path(artifact_root).resolve(strict=True))
+        except ValueError:
+            raise AuthorityDenied("effect.launch", "child artifact escapes the pinned artifact root") from None
+        if not resolved.is_file() or not re.fullmatch(r"[0-9a-f]{64}", child_digest) or _file_digest(resolved) != child_digest:
+            raise AuthorityDenied("effect.launch", "child artifact hash does not match its pinned file")
+        child_hashes[str(resolved)] = child_digest
     return {
         "schema": 1, "target": target, "profile_id": profile_id,
         "executable": str(executable.resolve(strict=True)),
@@ -72,6 +102,7 @@ def profile_launch_envelope(*, target: str, profile_id: str, executable: Path,
         "cwd": str(cwd.resolve(strict=True)),
         "data_root": str(data_root.resolve(strict=True)),
         "argv": list(argv), "env_allowlist": dict(env_allowlist),
+        "child_artifact_hashes": child_hashes,
         "max_lifetime_seconds": max_lifetime_seconds,
         "max_output_bytes": max_output_bytes, "stdin_mode": stdin_mode,
     }
@@ -81,6 +112,7 @@ class AuthorityClient:
     """Client for a fixed root-owned AF_UNIX endpoint and bounded fixed verbs."""
 
     def __init__(self, socket_path: Path, *, server_uid: int = 0,
+                 server_gid: int | None = None,
                  timeout: float = 5.0, monotonic: Callable[[], float] = time.monotonic):
         if not socket_path.is_absolute() or type(server_uid) is not int or server_uid < 0:
             raise ValueError("absolute authority socket path and server UID are required")
@@ -88,18 +120,22 @@ class AuthorityClient:
             raise ValueError("authority timeout must be bounded")
         self.socket_path = socket_path
         self.server_uid = server_uid
+        if server_gid is not None and (type(server_gid) is not int or server_gid < 0):
+            raise ValueError("socket group ID must be nonnegative")
+        self.server_gid = server_gid
         self.timeout = float(timeout)
         self.monotonic = monotonic
 
     @classmethod
     def for_current_process(cls, *, timeout: float = 5.0) -> "AuthorityClient":
         """Connect only to the installed fixed endpoint; never consult env vars."""
-        return cls(DEFAULT_SOCKET_PATH, server_uid=0, timeout=timeout)
+        return cls(default_socket_path(), server_uid=0, server_gid=os.getgid(), timeout=timeout)
 
     def context(self, *, purpose: str, intent: str,
                 source_contexts: Sequence[HostContext] = (),
                 trace_id: str | None = None,
-                lease_seconds: float = 30.0) -> HostContext:
+                lease_seconds: float = 30.0,
+                cancelled: Callable[[], bool] | None = None) -> HostContext:
         """Ask the host to classify intent and lineage from its own policy."""
         if not isinstance(purpose, str) or not 1 <= len(purpose) <= 128:
             raise AuthorityDenied("context.invalid", "purpose is invalid")
@@ -115,7 +151,7 @@ class AuthorityClient:
             "purpose": purpose, "intent": intent, "trace_id": trace_id,
             "lease_seconds": float(lease_seconds),
             "source_contexts": [ctx.to_wire() for ctx in source_contexts],
-        })
+        }, timeout=min(self.timeout, float(lease_seconds)), cancelled=cancelled)
         return HostContext.from_wire(result)
 
     def authorize_effect(self, context: HostContext, *, capability: str,
@@ -202,9 +238,13 @@ class AuthorityClient:
         headers = result["headers"]
         if (type(result["status"]) is not int or not 0 <= result["status"] <= 599
                 or len(body) > 4 * 1024 * 1024 or not isinstance(headers, dict)
-                or any(not isinstance(k, str) or not isinstance(v, str) for k, v in headers.items())):
+                or len(headers) > 32
+                or any(not isinstance(k, str) or not isinstance(v, str)
+                       or not k or len(k) > 128 or len(v) > 2048
+                       or any(char in k + v for char in "\r\n\x00") for k, v in headers.items())
+                or not isinstance(result["receipt_id"], str) or not 1 <= len(result["receipt_id"]) <= 256):
             raise AuthorityDenied("effect.invalid", "broker effect response exceeds its bound")
-        return BrokeredEffectResponse(result["status"], body, dict(headers), str(result["receipt_id"]))
+        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"])
 
     def dispatch_provider(self, authorization: EffectAuthorization, *, target: str,
                           recipient: str, request_digest: str, payload: bytes,
@@ -215,6 +255,20 @@ class AuthorityClient:
         return self.perform_effect(authorization, operation="provider.dispatch", payload=payload,
                                    timeout=timeout, cancelled=cancelled)
 
+    def dispatch_codex(self, authorization: EffectAuthorization, *,
+                       target: str = "codex://responses",
+                       recipient: str = "openai:codex",
+                       request_digest: str, payload: bytes, timeout: float,
+                       cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
+        """Use the host-enrolled Codex Responses credential and exact endpoint."""
+        if target != "codex://responses" or recipient != "openai:codex":
+            raise AuthorityDenied("effect.target", "Codex target and account identity are fixed")
+        if canonical_digest(payload) != request_digest:
+            raise AuthorityDenied("effect.binding", "Codex payload digest does not match request")
+        self._check_binding(authorization, target, recipient, request_digest)
+        return self.perform_effect(authorization, operation="provider.dispatch", payload=payload,
+                                   timeout=timeout, cancelled=cancelled)
+
     def memory_request(self, authorization: EffectAuthorization, *, target: str,
                        request_digest: str, payload: bytes, timeout: float,
                        cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
@@ -222,7 +276,7 @@ class AuthorityClient:
         if not target.startswith("memory:") or canonical_digest(payload) != request_digest:
             raise AuthorityDenied("effect.binding", "memory request target or digest is invalid")
         action = target.rsplit(":", 1)[-1]
-        if action not in {"doctor", "extract", "embed", "capture", "search", "export", "delete"}:
+        if action not in {"doctor", "extract", "embed", "capture", "search", "export", "delete", "backup", "restore"}:
             raise AuthorityDenied("effect.operation", "memory action is not enrolled")
         operation = "memory.doctor" if action == "doctor" else f"memory.{action}"
         return self.perform_effect(authorization, operation=operation, payload=payload,
@@ -263,14 +317,19 @@ class AuthorityClient:
                       cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
         if authorization.target != target or not target.startswith("hermes-profile-invoke:"):
             raise AuthorityDenied("effect.binding", "profile start target does not match its host grant")
-        required = {"schema", "target", "profile_id", "executable", "artifact_sha256", "artifact_root", "cwd", "data_root", "argv", "env_allowlist", "max_lifetime_seconds", "max_output_bytes", "stdin_mode"}
+        required = {"schema", "target", "profile_id", "executable", "artifact_sha256", "artifact_root", "cwd", "data_root", "argv", "env_allowlist", "child_artifact_hashes", "max_lifetime_seconds", "max_output_bytes", "stdin_mode"}
         if not isinstance(launch, Mapping) or set(launch) != required or launch.get("schema") != 1 or launch.get("target") != target:
             raise AuthorityDenied("effect.launch", "profile launch envelope is malformed")
         argv = launch.get("argv")
         environment = launch.get("env_allowlist")
+        child_hashes = launch.get("child_artifact_hashes")
         if (not isinstance(argv, list) or not argv or len(argv) > 128
                 or any(not isinstance(arg, str) or "\x00" in arg or len(arg) > 4096 for arg in argv)
                 or not isinstance(environment, Mapping)
+                or not isinstance(child_hashes, Mapping) or len(child_hashes) > 64
+                or any(not isinstance(k, str) or not Path(k).is_absolute()
+                       or not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{64}", v)
+                       for k, v in child_hashes.items())
                 or any(not isinstance(k, str) or not isinstance(v, str) or "\x00" in v for k, v in environment.items())):
             raise AuthorityDenied("effect.bounds", "profile launch arguments or environment are invalid")
         if (type(launch.get("max_lifetime_seconds")) is not int
@@ -413,8 +472,12 @@ class AuthorityClient:
             info = self.socket_path.lstat()
         except OSError:
             raise AuthorityDenied("authority.unavailable", "protected authority endpoint is unavailable") from None
-        if not stat.S_ISSOCK(info.st_mode) or info.st_uid != self.server_uid or info.st_mode & 0o022:
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != self.server_uid
+                or info.st_mode & 0o007
+                or self.server_gid is not None and (info.st_gid != self.server_gid or not info.st_mode & 0o020)):
             raise AuthorityDenied("authority.endpoint", "authority endpoint ownership or mode is invalid")
         parent = self.socket_path.parent.lstat()
-        if stat.S_ISLNK(parent.st_mode) or not stat.S_ISDIR(parent.st_mode) or parent.st_uid != self.server_uid or parent.st_mode & 0o022:
+        if (stat.S_ISLNK(parent.st_mode) or not stat.S_ISDIR(parent.st_mode)
+                or parent.st_uid != self.server_uid or parent.st_mode & 0o022
+                or self.server_uid == 0 and not parent.st_mode & 0o001):
             raise AuthorityDenied("authority.endpoint", "authority endpoint directory ownership or mode is invalid")

@@ -9,13 +9,52 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from hermes_installer.authority.client import AuthorityClient
+from hermes_installer.authority.client import (
+    AuthorityClient, canonical_profile_target, profile_launch_envelope,
+)
 from hermes_installer.authority.service import (
     AuthorityService, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
     AuthorityDenied, Sensitivity, canonical_digest,
 )
+
+
+class ProfileLaunchEnvelopeContracts(unittest.TestCase):
+    def test_child_script_digest_is_bound_inside_pinned_artifact_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact_root = root / "artifact"
+            artifact_root.mkdir()
+            executable = artifact_root / "hermes"
+            executable.write_bytes(b"pinned executable")
+            child = artifact_root / "install.sh"
+            child.write_bytes(b"pinned script")
+            data_root = root / "profile-data"
+            data_root.mkdir()
+            target = canonical_profile_target("profile:one", executable, data_root)
+            launch = profile_launch_envelope(
+                target=target, profile_id="profile:one", executable=executable,
+                artifact_sha256="a" * 64, artifact_root=artifact_root,
+                cwd=artifact_root, data_root=data_root,
+                argv=[str(executable.resolve()), str(child.resolve())],
+                env_allowlist={}, child_artifact_hashes={
+                    str(child.resolve()): canonical_digest(child.read_bytes()),
+                },
+            )
+            self.assertEqual(launch["child_artifact_hashes"][str(child.resolve())], canonical_digest(child.read_bytes()))
+            outside = root / "outside.sh"
+            outside.write_bytes(b"outside")
+            with self.assertRaises(AuthorityDenied):
+                profile_launch_envelope(
+                    target=target, profile_id="profile:one", executable=executable,
+                    artifact_sha256="a" * 64, artifact_root=artifact_root,
+                    cwd=artifact_root, data_root=data_root,
+                    argv=[str(executable.resolve()), str(outside.resolve())],
+                    env_allowlist={}, child_artifact_hashes={
+                        str(outside.resolve()): canonical_digest(outside.read_bytes()),
+                    },
+                )
 
 
 class FixturePolicy:
