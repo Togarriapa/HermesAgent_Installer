@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 import unittest
 
 from hermes_installer.openai_auth import (
@@ -21,7 +22,13 @@ class FakeTransport:
 
     def post_form(self, endpoint, values, *, timeout):
         self.calls.append((endpoint, dict(values), timeout))
+        if values.get("token_type_hint") == "refresh_token":
+            return {}
         return dict(self.response)
+
+    def get_json(self, endpoint, *, timeout):
+        self.calls.append((endpoint, {}, timeout))
+        return {"revocation_endpoint": "https://auth.openai.com/api/accounts/oauth/revoke"}
 
 
 class FakeVault:
@@ -34,8 +41,9 @@ class FakeVault:
     def load(self, reference):
         return self.accounts[reference]
 
-    def delete(self, reference):
-        self.accounts.pop(reference, None)
+    def clear_tokens(self, reference):
+        self.accounts[reference] = replace(self.accounts[reference],
+            access_token="", refresh_token="", id_token="")
 
 
 class OpenAIAuthTests(unittest.TestCase):
@@ -90,6 +98,21 @@ class OpenAIAuthTests(unittest.TestCase):
         with self.assertRaisesRegex(OAuthAttemptError, "permission"):
             auth.complete(attempt, callback, credential_ref="host-vault://account")
         self.assertEqual(vault.accounts, {})
+
+    def test_revoke_uses_issuer_discovery_then_clears_tokens_and_keeps_registration(self):
+        auth, transport, vault = self.make_auth()
+        attempt = auth.begin(callback_uri="http://127.0.0.1:1455/auth/callback")
+        callback = (attempt.callback_uri + "?code=one-use-code&state=" + attempt.state
+                    + "&client_id=oaiapp_issued")
+        auth.complete(attempt, callback, credential_ref="host-vault://account")
+        self.assertTrue(auth.revoke(credential_ref="host-vault://account"))
+        account = vault.accounts["host-vault://account"]
+        self.assertEqual(account.client_id, "oaiapp_issued")
+        self.assertEqual(account.subject, "verified-subject")
+        self.assertEqual((account.access_token, account.refresh_token, account.id_token), ("", "", ""))
+        self.assertEqual(transport.calls[-2][0],
+                         "https://auth.openai.com/.well-known/openid-configuration")
+        self.assertEqual(transport.calls[-1][1]["token_type_hint"], "refresh_token")
 
     def test_returning_account_reuses_registration_and_refresh_is_host_vault_backed(self):
         auth, transport, vault = self.make_auth()
