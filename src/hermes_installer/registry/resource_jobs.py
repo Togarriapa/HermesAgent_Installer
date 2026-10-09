@@ -641,13 +641,6 @@ class ResourceJobLedger:
         """
         _ident(child_admission_id, "child admission id")
         node_id = _ident(node_id, "node id")
-        initial_id = admission.child_admission_ids.get(node_id)
-        if initial_id == child_admission_id:
-            return self.admit_child(
-                admission, enrollment, node_id=node_id,
-                parent_result_receipt_ids=parent_result_receipt_ids,
-                current_generation=current_generation,
-            )
         node = enrollment.node_map.get(node_id)
         if node is None:
             raise ResourceJobDenied("child identity is outside the admitted DAG")
@@ -670,6 +663,12 @@ class ResourceJobLedger:
             db.close()
         if row is None:
             raise ResourceJobDenied("child admission identifier is outside this job")
+        if row[1] == "pending" and admission.child_admission_ids.get(node_id) == child_admission_id:
+            return self.admit_child(
+                admission, enrollment, node_id=node_id,
+                parent_result_receipt_ids=parents,
+                current_generation=current_generation,
+            )
         if row[1] == "denied":
             if latest is None or latest[0] != child_admission_id or latest[2] != "denied":
                 raise ResourceJobDenied("only the latest pre-effect denied child attempt may be retried")
