@@ -128,7 +128,7 @@ class BootstrapCustody:
             final_payload_digest=hashlib.sha256(body).hexdigest())
         if context.profile_id != profile_id:
             raise BootstrapCustodyError("Host authority profile does not match the requested process")
-        grant = client.authorize_effect(context, capability="hermes-bootstrap", target=target,
+        grant = client.authorize_effect(context, capability="hermes-process-control", target=target,
             recipient=None, request_digest=hashlib.sha256(body).hexdigest())
         response = client.process_control(grant, operation=operation, target=target,
                                           payload=body, timeout=timeout)
@@ -186,7 +186,7 @@ class BootstrapCustody:
             source_contexts=(discovery,))
         if context.profile_id != profile_id:
             raise BootstrapCustodyError("Host authority profile changed while binding the launch")
-        grant = client.authorize_effect(context, capability="hermes-bootstrap",
+        grant = client.authorize_effect(context, capability="hermes-profile-invoke",
             target=launch_target, recipient=None, request_digest=launch_digest)
         start_response = client.process_start(grant, target=launch_target,
             launch=launch, timeout=min(5.0, timeout))

@@ -138,7 +138,8 @@ class BootstrapCustodyContractTests(unittest.TestCase):
                 self.assertEqual([call[0] for call in client.control_calls],
                                  ["process.status", "process.read"])
                 self.assertTrue(all(call[1] == f"hermes-profile-control:profile-a:{data_root.resolve()}:" + call[0].removeprefix("process.") for call in client.control_calls))
-                self.assertTrue(all(grant["capability"] == "hermes-bootstrap" for grant in client.grants))
+                self.assertEqual(client.grants[0]["capability"], "hermes-profile-invoke")
+                self.assertTrue(all(grant["capability"] == "hermes-process-control" for grant in client.grants[1:]))
                 status_payload = client.control_calls[0][2]
                 self.assertEqual(client.grants[1]["request_digest"], canonical_digest(status_payload))
                 effect_contexts = [item for item in client.context_calls
