@@ -480,9 +480,12 @@ class RootTaskNativeObservationRegistry:
             closure = self._receipt_closure(selected, receipts)
         except (KeyError, AuthorityDenied):
             return False
-        expected = {self._receipt_for(handle).receipt_id
-                    for handle in run.source_closure.verified_source_receipt_handles
-                    if self._receipt_for(handle) is not None}
+        source_receipts = tuple(self._receipt_for(handle)
+                                for handle in run.source_closure.verified_source_receipt_handles)
+        if (not source_receipts or any(receipt is None for receipt in source_receipts)
+                or len({receipt.receipt_id for receipt in source_receipts}) != len(source_receipts)):
+            return False
+        expected = {receipt.receipt_id for receipt in source_receipts}
         input_receipt = self._receipt_for(run.input_event.source_receipt_handle)
         if input_receipt is None:
             return False

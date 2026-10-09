@@ -103,6 +103,9 @@ def test_model_receipt_requires_complete_task_source_ancestry():
     registry.source_observers.service._source_receipt_handles["orphan-handle"] = orphan
     assert not registry._has_full_task_lineage(run, ("orphan-handle",))
 
+    registry.source_observers.service._source_receipt_handles.pop("source-handle")
+    assert not registry._has_full_task_lineage(run, ("input-handle", "result-handle"))
+
     unrelated = _receipt("wrong-process", parents=("task-input",), native="native-b")
     registry.source_observers.service._source_receipt_handles["wrong-handle"] = unrelated
     assert not registry._has_full_task_lineage(run, ("input-handle", "wrong-handle"))
