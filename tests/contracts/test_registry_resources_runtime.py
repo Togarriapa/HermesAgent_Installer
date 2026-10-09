@@ -83,6 +83,24 @@ class ResourcesRuntimeTests(unittest.TestCase):
         )
         return context, authority
 
+    def test_native_plugin_voice_enrollment_is_only_an_opaque_bounded_reference(self):
+        context, _ = self._context()
+        self.assertIsNone(context.voice_session_enrollment_id)
+        selected = NativePluginRuntimeContext(
+            identity=context.identity, declared_capabilities=(), authority=context.authority,
+            invocation_contexts=context.invocation_contexts,
+            selected_adapters=context.selected_adapters,
+            voice_session_enrollment_id="voice-device-gen-4",
+        )
+        self.assertEqual(selected.voice_session_enrollment_id, "voice-device-gen-4")
+        with self.assertRaises(ValueError):
+            NativePluginRuntimeContext(
+                identity=context.identity, declared_capabilities=(), authority=context.authority,
+                invocation_contexts=context.invocation_contexts,
+                selected_adapters=context.selected_adapters,
+                voice_session_enrollment_id="../../raw/device/path",
+            )
+
     def test_fixed_effect_gets_fresh_source_lineage_and_one_bound_grant(self):
         context, authority = self._context()
         effect = FixedResourceEffect("test.capability", "resource:plugins/fixture@1.0.0", None, "provider.dispatch")
@@ -386,7 +404,7 @@ class ResourcesRuntimeTests(unittest.TestCase):
             authority = _FakeAuthority()
             runtime = NativePluginRuntimeContext(
                 identity=ResourceIdentity(
-                    "resource-overlay-store", "plugins", "1.0.0", "plugins/resource-overlay-store.yaml",
+                    "resource-overlay-store", "plugins", "1.0.1", "plugins/resource-overlay-store.yaml",
                     "a" * 40, "b" * 64,
                 ),
                 declared_capabilities=("overlay.read", "overlay.write"),
@@ -439,7 +457,7 @@ class ResourcesRuntimeTests(unittest.TestCase):
             owned.ensure()
             store = ResourceOverlayStore(owned, Journal(owned.path("state.sqlite3")))
             identity = ResourceIdentity(
-                "resource-overlay-store", "plugins", "1.0.0", "plugins/resource-overlay-store.yaml",
+                "resource-overlay-store", "plugins", "1.0.1", "plugins/resource-overlay-store.yaml",
                 "a" * 40, "b" * 64,
             )
             context = NativePluginRuntimeContext(

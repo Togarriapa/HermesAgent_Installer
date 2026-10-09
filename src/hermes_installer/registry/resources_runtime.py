@@ -139,6 +139,17 @@ class NativePluginRuntimeContext:
     local_overlay_store: "ProfileOverlayView | None" = None
     profile_targets: SelectedHermesProfileResolver | None = None
     plugin_effects: PluginEffectsFacade | None = None
+    # Opaque per-profile local voice device/session enrollment, selected by
+    # the trusted host. It is never read from the Plugin manifest or tool args.
+    voice_session_enrollment_id: str | None = None
+
+    def __post_init__(self) -> None:
+        value = self.voice_session_enrollment_id
+        if value is not None and (
+            not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value)
+        ):
+            raise ValueError("root-selected voice session enrollment reference is malformed")
 
 
 class HostContext(Protocol):
