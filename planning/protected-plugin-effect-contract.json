@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "change": "resources-bundle-native-enrichment",
+  "requirement_id": "RB08",
+  "task_id": "RB-T09",
+  "evidence_id": "EV-RB08",
+  "state": "specification only; native effects and account qualification pending",
+  "source_revision": "113f42d33be9e0c8f0f47f5ca998e687323dec83",
+  "enrollment": {
+    "catalog": "root-owned selected_plugin_effects; strict finite per-action records",
+    "fields": [
+      "adapter_id",
+      "manifest_sha256",
+      "handler_artifact_id",
+      "handler_sha256",
+      "action_id",
+      "argument_schema_id",
+      "operation",
+      "capability",
+      "target_id",
+      "generation",
+      "principal_id",
+      "profile_id",
+      "recipient",
+      "credential_reference_id",
+      "scope_reference_id",
+      "confirmation_policy_id",
+      "idempotency_policy_id",
+      "request_bytes_limit",
+      "response_bytes_limit",
+      "deadline_seconds"
+    ],
+    "target": "plugin:<adapter-id>:<root-enrolled-target-id>:<generation>",
+    "rule": "HI12 exact capability, operation, target; action and normalized final argument digest bound to one-use grant",
+    "resolution": "Physical paths, endpoints, account IDs, workspace, toolkit/version/tool, executable/argv, network and secrets resolved only by protected enrollment. Caller may supply opaque enrollment ID and typed action arguments, never arbitrary transport, shell, role or identity."
+  },
+  "operations": {
+    "github": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/github.yaml",
+      "manifest_sha256": "f08aa0f34d79eb20cf1ad1c65cc0275b6079c374204435730ef14fdab3fa8f6c",
+      "operations": [
+        "plugin.github.read",
+        "plugin.github.write",
+        "plugin.github.admin"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "composio": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/composio.yaml",
+      "manifest_sha256": "93fe2f7b966a05d43732b66a2340606e44aba5a4dd813a7cc7f71ab40743e885",
+      "operations": [
+        "plugin.composio.invoke"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "codex": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/codex.yaml",
+      "manifest_sha256": "7b169020508e4d51367e22bf29a1363ad8a51f24ce1b2b9731ac5fe462942b62",
+      "operations": [
+        "plugin.codex.run"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "financial-data-hub": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/financial-data-hub.yaml",
+      "manifest_sha256": "37bbf84f32168b19df69d97296fbae09ca11d495d31d15daea159872c79b8b47",
+      "operations": [
+        "plugin.financial-data-hub.read"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "financial-execution-gateway": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/financial-execution-gateway.yaml",
+      "manifest_sha256": "887192082ab9f8249cd860f00257d844fa417a74e59c30a90c94cdf88a16b133",
+      "operations": [
+        "plugin.financial-execution-gateway.execute"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "agent-live-wallet": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/agent-live-wallet.yaml",
+      "manifest_sha256": "726ab3b7e8b6f3137310a125c8e7d18589105f20b3be859362390e2557f7e39d",
+      "operations": [
+        "plugin.agent-live-wallet.read",
+        "plugin.agent-live-wallet.execute"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "agent-sandbox-wallet": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/agent-sandbox-wallet.yaml",
+      "manifest_sha256": "c512f2c29d211ee8e407841a624d03a699114c59ea3204d94f303746510e30a1",
+      "operations": [
+        "plugin.agent-sandbox-wallet.read",
+        "plugin.agent-sandbox-wallet.execute"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "homelab-ops-broker": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/homelab-ops-broker.yaml",
+      "manifest_sha256": "bb4de61e7136f57e6fed77b3d907f2f669b2c7f070eb124ed9b0a783109d35d2",
+      "operations": [
+        "plugin.homelab-ops-broker.read",
+        "plugin.homelab-ops-broker.write"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "authentik-authorization": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/authentik-authorization.yaml",
+      "manifest_sha256": "88075741bee9d27e1b7c8536cda4e641c335c952cde7e1083c8d3131be25ce2e",
+      "operations": [
+        "plugin.authentik-authorization.read"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "cloudflare-homelab": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/cloudflare-homelab.yaml",
+      "manifest_sha256": "5623e42ba85a5056c7cae8e3e1ae5b0d48613071220772e82027864f6cfdd7c5",
+      "operations": [
+        "plugin.cloudflare-homelab.read",
+        "plugin.cloudflare-homelab.write"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "ebook-toolchain": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/ebook-toolchain.yaml",
+      "manifest_sha256": "5fedf94c58d32b076af69429c04bd1d71fe83fbfd57e00c175fdd623b955ecff",
+      "operations": [
+        "plugin.ebook-toolchain.run"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "kobo-bridge": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/kobo-bridge.yaml",
+      "manifest_sha256": "d7577722c50c6ab5cb2f057084717b9b41d77b315b3f14ca55438160f3d21f30",
+      "operations": [
+        "plugin.kobo-bridge.read",
+        "plugin.kobo-bridge.deliver"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "epic-kanban": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/epic-kanban.yaml",
+      "manifest_sha256": "06b8b9e802a97403b7d86a1fa21a1c12e231f5a267112944d0d2f1181956948d",
+      "operations": [
+        "plugin.epic-kanban.read",
+        "plugin.epic-kanban.write",
+        "plugin.epic-kanban.delete"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "resource-overlay-store": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/resource-overlay-store.yaml",
+      "manifest_sha256": "518a4e4001d9f42ac80169eddbed8caa4aa7fd1802dc4d30b992a692ce553403",
+      "operations": [
+        "plugin.resource-overlay-store.read",
+        "plugin.resource-overlay-store.write",
+        "plugin.resource-overlay-store.backup"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "voice-pipeline": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/voice-pipeline.yaml",
+      "manifest_sha256": "6b74903bda136fcbce570f339c6ae2c06ed03fad348c564ff15672f72f3e2cd2",
+      "operations": [
+        "plugin.voice-pipeline.session",
+        "plugin.voice-pipeline.stt",
+        "plugin.voice-pipeline.tts"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    },
+    "web": {
+      "source_path": "resources/vendor/hermes-agent-resources-2.3.1/plugins/web.yaml",
+      "manifest_sha256": "30aafed0be80db4d6b9417bc3c2ef20bcfd1bdcd417efef8f84ac605cdb88c43",
+      "operations": [
+        "plugin.web.read"
+      ],
+      "action_selection": "Finite manifest-declared capabilities mapped to source-reviewed backend APIs and canonical argument schemas by owner; unsupported or unverified action remains unavailable. All manifest deny/confirmation/privacy constraints are mandatory, not replaced by this catalog."
+    }
+  },
+  "authorization": "Connection, installation, discovery, model output and deployment authorization confer no runtime write authority. Each effect/retry requires trusted source closure, current principal/profile/generation, recipient clearance, exact action and normalized digest, finite task scope and fresh one-use grant. UNKNOWN remains private; no public/private or budget fallback. Root fresh authoritative System direct/indirect membership required for homelab writes; financial execution uses separate explicit user-order authority.",
+  "confirmation": "Trusted human review attestation bound to exact final action payload, principal/account/recipient/operation/target/generation/digest/policy/nonce/expiry. Financial TTL at most300s, single consume before effect; no standing/wildcard consent or caller confirm boolean. Destructive/admin/overwrite operations additionally require manifest-specified explicit confirmation and provider scope. Changes require new attestation.",
+  "idempotency": "Durable root ledger keyed principal, adapter, account/target, generation, action, canonical digest and idempotency key. Atomically reserve before effect; record pending/committed/ambiguous and returned operation ID. Unknown outcome forbids blind retry, reconciles via fixed read then obtains fresh authority. Provider lacking idempotency is not made idempotent by a fixture.",
+  "bounds": "Root schema selects finite request/response/time/concurrency limits per action before enrollment; missing schema or limit leaves action unavailable. No wildcard action, arbitrary URL/path/argv/proxy, secret output, unapproved redirect or automatic external write.",
+  "evidence": "EV-RB08 requires actual native plugin dispatch through protected enrolled handler and backend plus wrong peer/profile/account/action/digest/generation/credential scope, forged confirmation, replay/parallel duplicate/ambiguous outcome, private recipient and cancellation negatives. Inventory/schema and mocked effects prove only their corresponding dimensions; target/account acceptance remains open. No live trades/spend/faucet/outbound test messaging.",
+  "special_constraints": {
+    "finance": "Read hub cannot execute/pay/sign. Live wallet locally generated encrypted root custody, exact selected network/transaction/fee/calldata and simulation plus user order; no key/seed export or user wallet import. Sandbox only ethereum-sepolia/solana-devnet, no real-value route or mainnet bridge. Fresh one-shot final-payload confirmation and actual hardware confirmation for Ledger.",
+    "accounts": "GitHub least privilege task-scoped writes plus verifyAfterWrite; Composio per-user/profile pinned toolkit/version/action allowlist, no workbench/bash/proxy; Codex assigned workspace/runtime only, root-managed shared auth and no credential copy/export or implicit infrastructure authority.",
+    "homelab": "Finite selected service/host/account/zone/DNS/tunnel actions only, no raw SSH/shell/occ/docker/systemd/caller path. Authentik read-only current authority, no group/user mutation; preserve unrelated resources. Manifest hostnames are runtime allowlist candidates, never installer hostname prefill or account enrollment.",
+    "documents": "Managed fixed tool/recipe and owned output root, no arbitrary shell/DRM/source overwrite. EPUB validation before delivery. Kobo actual device/backend capability selected, explicit user delivery and overwrite confirmation, no purchase/DRM/credential scraping/notebook writes.",
+    "local_voice_web": "Epic ephemeral board is internal correlation, never authority, accepted lifecycle before delete. Overlay owner-only/private atomic versions/encrypted backup, no cross-user/network export/git sync/capability expansion. Voice session-authorized microphone, fixed local endpoints/no raw persistence/cloud fallback; wakeword not authorization. Web read-only public URLs selected by trusted task and root validation; HTTPS/TLS/public-address/redirect/size/timeout validation, no credentials/authenticated actions/executable download. User query/URL is data, not authority; no generic proxy."
+  },
+  "wire": {
+    "request_fields": [
+      "schema=1",
+      "adapter_id",
+      "action_id",
+      "enrollment_id",
+      "generation",
+      "arguments (exact enrolled argument_schema_id; extra fields forbidden)",
+      "idempotency_key (writes)",
+      "opaque_confirmation_attestation_id (when required)"
+    ],
+    "authorization": "Separate opaque verified host context and single-use effect authorization; never caller sensitivity/role/credential claims",
+    "response_fields": [
+      "schema=1",
+      "operation_id",
+      "state=committed|read-complete|pending|ambiguous|unavailable",
+      "result (enrolled typed response schema)",
+      "verification_status",
+      "resume_action_id"
+    ],
+    "capability": "plugin:<adapter-id> (exact root rule, no wildcard)",
+    "recipient": "Exact protected recipient field; caller cannot choose, widen or override",
+    "default_bounds": {
+      "request_bytes": 262144,
+      "response_bytes": 2097152,
+      "deadline_seconds": 30,
+      "concurrency_per_profile_target": 1
+    },
+    "larger_binary_output": "Owned immutable artifact handle with separately authorized bounded reads; no unbounded inline binary or caller output path"
+  }
+}
