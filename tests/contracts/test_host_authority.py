@@ -133,6 +133,52 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
         self.assertEqual(effects, [("profile:a", payload)])
         self.assertEqual(result["status"], 200)
 
+    def test_completed_effect_observer_sees_exact_validated_result_and_is_peer_delivered(self):
+        binding = PrincipalBinding(os.getuid(), "principal:result", "profile:result",
+                                   "namespace:result", frozenset({"provider-result"}))
+        rule = EffectRule("provider-result", "provider.dispatch", "provider:fixture", "recipient:fixture")
+        calls = []
+
+        class Observer:
+            effect_observer_ids = {(rule.capability, rule.operation, rule.target): "observer:fixture"}
+
+            def observe_effect_result(self, **kwargs):
+                calls.append(kwargs)
+                return "R" * 40
+
+        service = AuthorityService(
+            signing_key=b"o" * 32, key_id="result-observer-fixture",
+            bindings_by_uid={binding.uid: binding},
+            rules={(rule.capability, rule.operation, rule.target): rule},
+            handlers={(rule.operation, rule.target): lambda **_kwargs: {
+                "status": 200, "body": b"validated-result", "headers": {}, "receipt_id": "receipt"}},
+            policy=FixturePolicy(), native_runtime_observer=Observer(),
+        )
+        payload = b"request"
+        context = HostContext.from_wire(service._issue_context(binding.uid, {
+            "purpose": "provider-request", "intent": "fixture", "trace_id": "trace-result",
+            "lease_seconds": 10, "source_contexts": [],
+            "final_payload_digest": canonical_digest(payload), "operation": rule.operation,
+        }))
+        grant = service._authorize_effect(binding.uid, {
+            "context": context.to_wire(), "capability": rule.capability,
+            "target": rule.target, "recipient": rule.recipient,
+            "request_digest": canonical_digest(payload), "retry_index": 0,
+        })
+        import base64
+        result = service._perform_effect(binding.uid, os.getpid(), {
+            "authorization": grant, "operation": rule.operation,
+            "payload": base64.b64encode(payload).decode("ascii"), "timeout": 1,
+        }, cancelled=lambda: False, enforce_peer_identity=False, peer_pidfd=77)
+        self.assertEqual(result["body"], base64.b64encode(b"validated-result").decode("ascii"))
+        self.assertEqual(result["source_receipt_handle"], "R" * 40)
+        self.assertEqual(calls[0]["result_payload"], b"validated-result")
+        self.assertEqual(calls[0]["context"].profile_id, context.profile_id)
+        self.assertEqual(calls[0]["context"].principal_id, context.principal_id)
+        self.assertEqual(calls[0]["context"].generation, context.generation)
+        self.assertEqual(calls[0]["authorization"].grant_id, grant["grant_id"])
+        self.assertEqual(calls[0]["peer_pidfd"], 77)
+
     def test_root_observed_source_is_unavailable_without_composed_registry(self):
         binding = PrincipalBinding(
             1234, "principal:source", "profile:source", "namespace:source",

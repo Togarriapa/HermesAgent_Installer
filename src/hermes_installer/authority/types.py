@@ -400,6 +400,7 @@ class BrokeredEffectResponse:
     body: bytes
     headers: Mapping[str, str]
     receipt_id: str
+    source_receipt_handle: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

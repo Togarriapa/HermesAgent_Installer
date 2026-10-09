@@ -38,6 +38,7 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
                             remote_session_authority: Any | None = None,
                             source_receipt_delivery: Any | None = None,
                             source_observer_registry: Any | None = None,
+                            native_runtime_observer: Any | None = None,
                             service_generation_digest: str | None = None) -> AuthorityService:
     """Build the root service from already validated protected enrollments.
 
@@ -66,6 +67,7 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
         remote_session_authority=remote_session_authority,
         source_receipt_delivery=source_receipt_delivery,
         source_observer_registry=source_observer_registry,
+        native_runtime_observer=native_runtime_observer,
         service_generation_digest=service_generation_digest,
     )
 

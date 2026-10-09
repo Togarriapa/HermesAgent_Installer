@@ -190,6 +190,7 @@ class AuthorityService:
                  remote_session_authority: Any | None = None,
                  source_receipt_delivery: Any | None = None,
                  source_observer_registry: Any | None = None,
+                 native_runtime_observer: Any | None = None,
                  service_generation_digest: str | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
@@ -224,6 +225,7 @@ class AuthorityService:
         self.remote_session_authority = remote_session_authority
         self.source_receipt_delivery = source_receipt_delivery
         self.source_observer_registry = source_observer_registry
+        self.native_runtime_observer = native_runtime_observer
         if (service_generation_digest is not None
                 and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
             raise ValueError("active service generation digest is invalid")
@@ -257,6 +259,18 @@ class AuthorityService:
         self.source_observer_registry = registry
         if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
             self.source_receipt_delivery = registry
+
+    def attach_native_runtime_observer(self, observer: Any) -> None:
+        """Attach the root-only post-effect observer exactly once after loading.
+
+        The observer itself must be built from selected effect and source
+        enrollments; no worker RPC can install or select observer IDs.
+        """
+        if (self.native_runtime_observer is not None
+                or not callable(getattr(observer, "observe_effect_result", None))
+                or not isinstance(getattr(observer, "effect_observer_ids", None), Mapping)):
+            raise AuthorityDenied("source.observer", "root native result observer binding is invalid")
+        self.native_runtime_observer = observer
 
     def perform_delegated_effect(self, parent_authorization: EffectAuthorization, *,
                                  delegation_id: str, payload: bytes, peer_pid: int,
@@ -1448,8 +1462,32 @@ class AuthorityService:
                        for key, value in headers.items())
                 or not isinstance(receipt_id, str) or not 1 <= len(receipt_id) <= 256):
             raise AuthorityDenied("effect.response", "fixed effect response headers or receipt are invalid")
-        return {"status": response["status"], "body": base64.b64encode(body_bytes).decode("ascii"),
-                "headers": dict(headers), "receipt_id": receipt_id}
+        result: dict[str, Any] = {
+            "status": response["status"], "body": base64.b64encode(body_bytes).decode("ascii"),
+            "headers": dict(headers), "receipt_id": receipt_id,
+        }
+        observer = self.native_runtime_observer
+        observer_key = (rule.capability, rule.operation, rule.target)
+        observer_ids = getattr(observer, "effect_observer_ids", {}) if observer is not None else {}
+        if (observer is not None and observer_key in observer_ids
+                and 200 <= response["status"] < 300):
+            observe = getattr(observer, "observe_effect_result", None)
+            if not callable(observe):
+                raise AuthorityDenied("source.observer", "root native result observer is unavailable")
+            handle = observe(
+                service=self, context=context, authorization=grant,
+                operation=rule.operation, target=rule.target,
+                response_status=response["status"], result_payload=body_bytes,
+                peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                cancelled=current_or_cancelled,
+            )
+            if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+                raise AuthorityDenied("source.observer", "root result observer returned an invalid receipt handle")
+            # This opaque reference is delivered only on this authenticated
+            # same-peer response. It is not signed source evidence; the next
+            # context request must still resolve it against root state.
+            result["source_receipt_handle"] = handle
+        return result
 
     def _parse_effect_request(self, uid: int, payload: Any, *, peer_pid: int | None = None
                               ) -> tuple[EffectAuthorization, HostContext, EffectRule]:

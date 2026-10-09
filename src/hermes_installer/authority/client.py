@@ -288,7 +288,9 @@ class AuthorityClient:
             "normalized_payload": base64.b64encode(normalized_payload).decode("ascii"),
             "retry_index": retry_index,
         }, timeout=min(float(timeout), self.timeout), cancelled=cancelled)
-        if not isinstance(result, dict) or set(result) != {"status", "body", "headers", "receipt_id"}:
+        if (not isinstance(result, dict)
+                or set(result) not in ({"status", "body", "headers", "receipt_id"},
+                                      {"status", "body", "headers", "receipt_id", "source_receipt_handle"})):
             raise AuthorityDenied("native.dispatch", "authority returned a malformed dispatch result")
         try:
             body = base64.b64decode(result["body"], validate=True)
@@ -301,7 +303,11 @@ class AuthorityClient:
                        or any(char in k + v for char in "\r\n\x00") for k, v in headers.items())
                 or not isinstance(result["receipt_id"], str) or not result["receipt_id"]):
             raise AuthorityDenied("native.dispatch", "authority dispatch response exceeds its bound")
-        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"])
+        source_handle = result.get("source_receipt_handle")
+        if source_handle is not None and (not isinstance(source_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle)):
+            raise AuthorityDenied("native.dispatch", "authority returned a malformed source result handle")
+        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"], source_handle)
 
     def authorize_effect(self, context: HostContext, *, capability: str,
                          target: str, recipient: str | None = None,
@@ -380,7 +386,9 @@ class AuthorityClient:
             raise AuthorityDenied("effect.cancelled", "effect was cancelled before response delivery")
         if self.monotonic() - started > timeout:
             raise AuthorityDenied("effect.deadline", "brokered effect exceeded its deadline")
-        if not isinstance(result, dict) or set(result) != {"status", "body", "headers", "receipt_id"}:
+        if (not isinstance(result, dict)
+                or set(result) not in ({"status", "body", "headers", "receipt_id"},
+                                      {"status", "body", "headers", "receipt_id", "source_receipt_handle"})):
             raise AuthorityDenied("effect.invalid", "broker effect response is malformed")
         import base64
         try:
@@ -396,7 +404,11 @@ class AuthorityClient:
                        or any(char in k + v for char in "\r\n\x00") for k, v in headers.items())
                 or not isinstance(result["receipt_id"], str) or not 1 <= len(result["receipt_id"]) <= 256):
             raise AuthorityDenied("effect.invalid", "broker effect response exceeds its bound")
-        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"])
+        source_handle = result.get("source_receipt_handle")
+        if source_handle is not None and (not isinstance(source_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle)):
+            raise AuthorityDenied("effect.invalid", "broker source result handle is malformed")
+        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"], source_handle)
 
     def dispatch_provider(self, authorization: EffectAuthorization, *, target: str,
                           recipient: str, request_digest: str, payload: bytes,
