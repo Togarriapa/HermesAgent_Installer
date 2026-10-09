@@ -48,6 +48,9 @@ import hermes_cli.config
 assert Path(hermes_cli.config.__file__).resolve().is_relative_to(upstream.resolve()), hermes_cli.config.__file__
 
 class Facade:
+    def __init__(self):
+        self.calls = []
+
     def invoke(self, adapter_id, action_id, arguments, **_kwargs):
         from hermes_installer.native_invocations import current_native_invocation_binding
         binding = current_native_invocation_binding()
@@ -55,7 +58,8 @@ class Facade:
             raise PermissionError("no matching root-observed native invocation")
         if (adapter_id, action_id, arguments) != ("native-fixture", "lookup", {"key": "private"}):
             raise PermissionError("selected action mismatch")
-        return "root-brokered:private"
+        self.calls.append((adapter_id, action_id, dict(arguments)))
+        return {"status": "ok", "data": "private"}
 
 class Adapter:
     action_ids = ("lookup",)
@@ -68,19 +72,37 @@ class Adapter:
                 "native-fixture", "lookup", args),
         )
 
-class Package:
-    package_id = "package-fixture"
-    profile_id = "profile-fixture"
-    generation = "generation-fixture"
+class ProgressWriter:
+    def __init__(self):
+        self.frames = [{"sequence": 0, "phase": "entrypoint-imported", "registered_action_ids": ()}]
+        self.closed = False
+    def emit(self, **frame):
+        self.frames.append(frame)
+        if frame["phase"] == "ready": self.closed = True
+    def close(self): self.closed = True
+
+class Selection:
+    package_id, profile_id, generation = "package-fixture", "profile-fixture", "generation-fixture"
     compiled_closure_sha256 = "b" * 64
-    mount_target = Path("/fixture/root-selected-mount")
-    adapter_ids = ("native-fixture",)
-    def resolve_adapter(self, adapter_id):
-        return Adapter() if adapter_id == "native-fixture" else None
-    def manifest_digest_for_adapter(self, adapter_id):
-        return "a" * 64 if adapter_id == "native-fixture" else None
+    _binding = type("RootBinding", (), {
+        "entrypoint_sha256": "e" * 64, "resolver_digest": "d" * 64,
+    })()
+    adapter_rows = (type("Row", (), {"adapter_id": "native-fixture", "manifest_sha256": "a" * 64})(),)
+    def _require_live(self): pass
     def resolve(self, adapter_id, action_id):
         return object() if (adapter_id, action_id) == ("native-fixture", "lookup") else None
+
+selection = Selection()
+adapter = Adapter()
+selected_adapter = loader.SelectedNativeAdapter(
+    "native-fixture", __import__("types").ModuleType("native_fixture"), "register",
+    ("lookup",), "a" * 64, adapter.register,
+)
+progress = ProgressWriter()
+package = loader.SelectedNativePackage(
+    selection, Path("/fixture/root-selected-mount"), "e" * 64,
+    __import__("types").MappingProxyType({"native-fixture": selected_adapter}), progress,
+)
 
 class Authority:
     def begin_native_invocation(self, producer, observed, canonical):
@@ -105,7 +127,7 @@ context = NativePluginRuntimeContext(
     plugin_effects=Facade(),
 )
 AuthorityClient.for_current_process = classmethod(lambda cls, **_kwargs: authority)
-loader.bind_current_native_plugin_package = lambda _authority: Package()
+loader.bind_current_native_plugin_package = lambda _authority: package
 loader._selected_runtime_context_factory = lambda _authority, _package: lambda _adapter: context
 
 manager = PluginManager(scope_key=str(home))
@@ -118,6 +140,12 @@ assert manager._hermes_installer_native_plugin_keys == frozenset({"native-fixtur
 loaded = manager._plugins.get("native-fixture")
 assert loaded is not None and loaded.enabled and loaded.error is None, repr(loaded)
 assert loaded.tools_registered == ["installer_native_fixture"], repr(loaded)
+assert [frame["phase"] for frame in progress.frames] == [
+    "entrypoint-imported", "actions-registered", "ready",
+], progress.frames
+assert progress.frames[1]["registered_action_ids"] == ("lookup",)
+assert progress.frames[2]["registered_action_ids"] == ("lookup",)
+assert progress.closed
 from tools.registry import registry
 from hermes_installer.native_invocations import (
     NativeInvocationUnavailable, dispatch_observed_tool_call, install_observed_tool_calls,
@@ -141,7 +169,12 @@ try:
     )
 except Exception as exc:
     raise AssertionError(f"actual PluginManager dispatch failed: {type(exc).__name__}: {exc!r}") from exc
-assert result == "root-brokered:private", result
+assert result == '{"data":"private","status":"ok"}', result
+denied = registry.dispatch(
+    "installer_native_fixture", {"key": "private"}, scope=manager.scope_key,
+)
+assert isinstance(denied, str) and "no matching root-observed native invocation" in denied, denied
+assert context.plugin_effects.calls == [("native-fixture", "lookup", {"key": "private"})]
 assert Path(sys.modules["agent"].__file__).resolve() == (overlay / "agent/__init__.py").resolve(), sys.modules["agent"].__file__
 '''
             env = dict(os.environ)

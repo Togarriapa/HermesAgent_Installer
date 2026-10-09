@@ -14,7 +14,7 @@ from typing import Any
 from hermes_installer.components.plugin_effects import PluginActionSchema
 
 
-PLUGIN_FINANCE_ADAPTER_SHA256 = "ad8e77192f30e67858f4853fd21b69b9234141999f5bf9e8d8ba5fbff628fda5"
+PLUGIN_FINANCE_ADAPTER_SHA256 = "54ca0bedad3a3d3ee03176c20f3ae7a71987b0992640e0647b0b702c51907c73"
 _ROOT = Path(__file__).resolve().parents[3]
 _PLUGIN_DIR = _ROOT / "resources/vendor/hermes-agent-resources-2.3.1/plugins"
 FINANCIAL_PLUGIN_MANIFEST_SHA256 = MappingProxyType({
