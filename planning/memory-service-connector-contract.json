@@ -287,5 +287,15 @@
       "compound_seconds": 60
     },
     "validator_policy": "IDs are required closed serializer/validator contract names, not claims installed artifacts. Root enrolls actual immutable validator artifact/digest before use. Validate bounded JSON object, operation success status and root ownership; OpenViking status=ok/result session_id rootcaptured; AgentMemory actual selected success result shape verified against pinned mem implementation before activation, no invented semantic success/IDs from arbitrary JSON. Returnunavailable if selected result validator absent. Extra callerfields reject."
+  },
+  "root_authority_state": {
+    "active_record": "service_generations.memory_enrollments[*].authority_state_root_id",
+    "root_resolution": "Opaque authority_state_root_id resolves only via protected root journal root catalog. Canonical child authority/memory/<SHA256 UTF-8 profile_id> below root-owned root_journal_root; no caller path and no service data_root_id alias.",
+    "ownership": "Root journal and all authority state ancestors UID0,0700; SQLite database/WAL/SHM UID0,0600. No symlink/ACL/service-user write permission. Separate selected service-user HOME/data roots remain writable only by that service UID.",
+    "creation": "Root-only nofollow component walk; validate ownership/modes/inodes; exclusive fresh creation and fsync before publication. Existing state revalidated before use; wrong owner, writable ancestor, alias, symlink or unknown root denies. Do not broaden caller OwnedRoot path permissions or hardcode /var/lib.",
+    "step_binding": "Durable reservation binds profile/namespace/principal, service enrollment and opaque service generation, memory owner integer generation, route/recipe, job/step/sequence, original monotonic deadline, source closure and consent digests, consumed parent grant ID/context/request digests, canonical compound envelope digest and exact root serialized service request digest.",
+    "parent_grant_semantics": "Persisted parent grant ID/context/request digests are audit and original-admission bindings only, never reusable authorization. Root-private memory child issuer resolves active reservation and current parent lineage/consent/generations and emits one fresh HI12 exact operation/target/payload/step grant; consumed parent cannot be replayed.",
+    "issuer": "Root-private issue_memory_step_effect(reservation_handle, canonical_connector_payload_bytes, serialized_service_request_sha256); no worker RPC accepts binding claims or HTTP. Issuer independently resolves protected reservation, recipe/serializer and actual current state; capability/target/recipient inherit root selected outer action and reduced child policy.",
+    "restart": "In-flight restart becomes ambiguous and cannot replay effect; wipe payload/provenance, preserve bounded audit receipt; new authorized operation required. Concurrent/revoked/expired/stale generation denied before every byte."
   }
 }

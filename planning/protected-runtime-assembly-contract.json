@@ -282,5 +282,40 @@
     ],
     "issuer": "Root custody/selected loader observer registry only after actual immutable closure/digests/readonly mount and actual pinned loader/entrypoint readiness event; metadataNativePackageBinding or callerloadedbool neverproof. target_peer_identity exact root kernel fields already hi13_digest_and_peer, actualSO_PEERCRED/PIDFD/exe/cgroup/ns/gen. Rootprivateinstance registrynonce+lease binds proof to mountedclosure/loader/peer; sourceissuer lookup exactpendinginvocation and exactparentclosure, no globalconstructabletoken/subsetparents.",
     "join": "source_issuers flatactivecatalog byproducerprofile/gen/role ->actualregistered observer/loadedclosureproof ->pendingevent/invocation/targetpeer. No package nested sourcecatalog duplicate. Changedmount/module/peer/gen invalidatesproof/sourcechannel, rootobserved actualnativeinvocationstill separate qualification."
+  },
+  "build_mount_contract": {
+    "requirements": [
+      "HI09",
+      "HW03"
+    ],
+    "tasks": [
+      "HI-T09",
+      "HW-T03"
+    ],
+    "caller_payload": "Existing process.start selection-only schema,enrollment_id,generation,operation_id,parameters={}; no build paths or mount tokens in worker request.",
+    "mounts": {
+      "builder": "/run/hermes-installer/build/builder",
+      "source": "/run/hermes-installer/build/source",
+      "toolchain": "/run/hermes-installer/build/toolchain",
+      "work": "/run/hermes-installer/build/work",
+      "output": "/run/hermes-installer/build/output"
+    },
+    "protected_argv_node_grammar": {
+      "literal": "one fixed string, never shell-expanded",
+      "build_path": {
+        "mount_id": "builder|source|toolchain|work|output",
+        "relative_path": "empty or validated relative POSIX path; no absolute, dot/dotdot, NUL, symlink, escape or caller substitution"
+      }
+    },
+    "resolution": "Only protected build record argv_recipe may use build_path nodes. Root verifies selected source/toolchain/builder artifact pins then resolves each node beneath the corresponding fixed in-unit mount. argv[0] must resolve the exact enrolled builder executable; no shell interpreter fallback. This adds a protected recipe token; worker parameter grammar stays unchanged.",
+    "ownership": "builder/source/toolchain mounts root-owned read-only,nosuid,nodev; output/work are separate fresh private roots owned by selected dedicated build service UID,0700, unique per root job generation. No profile/user data root is mounted. Root seals and verifies outputs after terminal exit before issuing dynamic receipt.",
+    "environment": {
+      "PATH": "/run/hermes-installer/build/toolchain/bin",
+      "TMPDIR": "/run/hermes-installer/build/work/tmp",
+      "HOME": "/run/hermes-installer/build/work/home"
+    },
+    "cwd": "/run/hermes-installer/build/work; reviewed recipe may select a validated fixed subdirectory here only",
+    "source_processing": "Original source remains read-only. Builder copies verified source into work before modifications; outputs are collected only below output. Colibri output relative c/colibri and CPython runtime/bin/python3.9 plus runtime/lib/python3.9 constraints remain unchanged.",
+    "proof": "Root records actual mount namespace, source identities/digests, resolved fixed argv digest, service UID, work/output identities, terminal status and post-exit output constraints. No predicted compiled SHA; no launch/source-only acceptance."
   }
 }
