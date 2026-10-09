@@ -1,7 +1,9 @@
 {
   "schema_version": 1,
   "id": "hi08-native-boundary-v1",
-  "requirement_ids": ["HI08"],
+  "requirement_ids": [
+    "HI08"
+  ],
   "upstream": {
     "repository": "https://github.com/NousResearch/hermes-agent",
     "commit": "7085fbf7753266fc4943c55ac04926186bc90005",
@@ -10,46 +12,99 @@
   "overlay": {
     "builder": "hermes_installer.native_boundary_patch.apply_native_boundary_overlay",
     "source_tree_mutation": false,
-    "output": "Separate file overlay; patched files inherit only source read/execute bits and are verified non-writable.",
+    "output": "Separate read-only file overlay. Hash-pinned package initializer shims extend the selected Hermes source package paths so these reviewed leaf modules actually override regular packages; unpatched modules continue from the exact source checkout.",
     "files": [
+      {
+        "path": "hermes_cli/__init__.py",
+        "source_sha256": "6a4ab05b8621ec1cd66a5abbe30fa32ed5bddddea95903036da01f0af1af94ce",
+        "overlay_sha256": "84d0d7f5b6d8340897c4c53947890f88f93de146fcc228d4f4fdd096f2a8d81b",
+        "hooks": [
+          "preserves original package initializer behavior",
+          "extends only selected Hermes package path for reviewed overlay leaves"
+        ]
+      },
+      {
+        "path": "hermes_cli/plugins.py",
+        "source_sha256": "a618a69581355e5fe56cb3d2250fc02647315359aae7fa0e6bd4dccc4ed3d3ad",
+        "overlay_sha256": "8e623533c5031d1dc4cc2cfe39d383f5a9780cfaeb0ff5422a8fc4a744007326",
+        "hooks": [
+          "actual PluginManager discovery installs the no-argument root-selected package before resolving manifest winners",
+          "selected adapter IDs are predeclared in the official loader and shadowing manifests are removed",
+          "runtime context remains unavailable without root invocation and effect APIs"
+        ]
+      },
+      {
+        "path": "agent/__init__.py",
+        "source_sha256": "21cdce89e9ffdb847634bf498b087410cd191a1e375db43928735846fb7ddc86",
+        "overlay_sha256": "067ee01cbc088b572cbdabbbe4116d9bec0939acc0bd30ac67b287cb5d6743e6",
+        "hooks": [
+          "extends selected Hermes package path before the original relative preload import"
+        ]
+      },
       {
         "path": "agent/chat_completion_helpers.py",
         "source_sha256": "fbd79987a8257f79de6ed291d398f455456385f828631dd8d9d0e6cea3ba46f2",
-        "overlay_sha256": "ef55b2bed0e91328345e66fd07733cda90df2e0800cf96f9f954023e2b122818",
-        "hooks": ["codex-response terminal call", "OpenAI-compatible non-stream call", "OpenAI-compatible stream call", "direct Anthropic and Bedrock primary paths denied", "MoA primary direct fan-out denied"]
+        "overlay_sha256": "0f234b4f9bf3e2fd29c6e2da517b1302de4c1bc3e6780d443080526fb69d9ef9",
+        "hooks": [
+          "captures complete non-stream raw HTTP entity and takes root response metadata before parsing",
+          "captures complete dechunked SSE entity through terminal completion and performs the same root metadata take",
+          "direct Anthropic and Bedrock primary paths denied",
+          "MoA primary direct fan-out denied"
+        ]
       },
       {
         "path": "agent/auxiliary_client.py",
         "source_sha256": "cdaf4384374eaa906a51e3060b41aa656f88fff336f44160bd053726ed1dec73",
         "overlay_sha256": "876a97cc1c81fb1e4bc97d92872e03ceb0b1d8f43680d551d974b4376e8950c6",
-        "hooks": ["each observed auxiliary chat-completions attempt", "retry/fallback/stream negotiation attempts that use those call sites", "SDK automatic retries disabled for auxiliary OpenAI clients"]
+        "hooks": [
+          "each observed auxiliary chat-completions attempt",
+          "retry/fallback/stream negotiation attempts that use those call sites",
+          "SDK automatic retries disabled for auxiliary OpenAI clients"
+        ]
       },
       {
         "path": "agent/tool_executor.py",
         "source_sha256": "8b145fbc70936f028f18e59cb7f9c8723fc992a067fe068f06e7f9f876e9c679",
-        "overlay_sha256": "fd671a435cbeda36cfbec3a2b278ff34f66f8cbe37a8a87b0a372a5170e777aa",
-        "hooks": ["attempts a tool-result capture before transcript append; current generic worker capture is retired so this seam fails closed until root-observed role issuer exists"]
+        "overlay_sha256": "289df099d066e296e4dd3a08b8a0bfb0b2cb9b8bc329ac8ffd70fe60f3c86eb0",
+        "hooks": [
+          "wraps final post-middleware tool arguments in root native invocation begin scope immediately before dispatch",
+          "attempts tool-result capture before transcript append; generic worker result capture is retired, so conversation remains blocked until root result issuer is installed"
+        ]
       }
     ]
   },
   "source_capture": {
-    "authority_method": "AuthorityClient.prepare_native_event(payload: bytes, parent_receipt_handles=(), purpose, intent_id, trace_id, retry_index=0)",
+    "authority_method": "AuthorityClient.prepare_native_event(full_request_body, parent_receipt_handles=(), purpose, intent_id, trace_id, retry_index=0); current daemon registration remains fail-closed until the enrolled producer/gateway and root observer are composed.",
     "worker_claimable_fields": [],
-    "host_assigned_fields": ["event_id", "native process identity", "profile", "generation", "sensitivity", "receipt handle"],
+    "host_assigned_fields": [
+      "event_id",
+      "native process identity",
+      "profile",
+      "generation",
+      "sensitivity",
+      "receipt handle"
+    ],
     "classification": "private/unknown only; no human-origin or public clearance",
     "provider_context_header": "X-Hermes-Installer-Context",
     "provider_retry_index_header": "X-Hermes-Installer-Retry-Index",
     "retry_index_header_semantics": "Root-derived bounded decimal transport claim; gateway passes it to the root, which must compare it with the one-use event's stored retry index.",
-    "tool_result_source": "unavailable; generic worker capture_source is retired and the root-observed role-specific result issuer is not installed",
+    "tool_result_source": "unavailable; generic worker capture_source is retired and root-observed effect-result source issuance is not composed.",
     "native_package_binding": "root-selected no-argument bind_selected_native_package plus read_native_resolver; resolver rows are presentation only, never effect grants",
-    "attempt_semantics": "Fresh complete SDK request-envelope capture and opaque bridge handle per attempted request; exact-envelope repeat increments retry_index with unchanged intent/trace and retained parents. Changed envelopes start a distinct intent at retry_index=0 until host retry admission is wired.",
+    "attempt_semantics": "Fresh complete SDK request-envelope capture and opaque bridge handle per attempt. The gateway returns only a root-created X-Hermes-Native-Response-Ref; worker hashes raw response bytes and calls the same-peer root metadata getter before exposing any root-observed tool call binding to lexical Hermes dispatch.",
     "limits": [
-      "The current worktree does not yet contain the HI11 AuthorityClient bridge API or enrolled producer-to-gateway pair.",
+      "Native provider and response-delivery service composition, producer/gateway enrollment, and current root invocation-context getter remain unavailable in this checkout.",
+      "Response metadata is accepted only after authenticated root lookup binds opaque response ref, exact raw bytes digest and original native request handle.",
       "Changed-envelope upstream fallback chains do not yet carry explicit root retry admission.",
-      "The current AuthorityClient API does not supply authenticated UI-origin, effect-result, memory-result, or public-clearance issuers.",
-      "Root broker must resolve full lineage and bind normalized final request digest, operation, purpose, generation, retry, cancellation and one-effect grant before egress.",
-      "Do not enable native provider egress from this overlay until the gateway-to-authority handle bridge is implemented and enrolled."
-    ]
+      "The root has not recorded a root-observed native loader-ready/action event; the package mount proof alone does not establish plugin import or use.",
+      "Do not enable native provider egress or native plugin effects until root role enrollment, observer, invocation, and result-source paths are composed and tested."
+    ],
+    "response_delivery": {
+      "lookup_header": "X-Hermes-Native-Response-Ref carries only an opaque root-created one-use lookup reference; it is never itself source authority.",
+      "root_rpc": "AuthorityClient.take_native_response_metadata(response_delivery_handle,response_body_sha256,native_request_handle)",
+      "digest_domain": "SHA-256 of exact dechunked, identity-encoded HTTP response entity bytes; require one Content-Length and exact byte-count equality. Streaming hashes the full captured SSE entity before accepting metadata.",
+      "worker_behavior": "The pinned SDK hook reads the raw response header/body, correlates the request handle consumed from the immediately preceding provider prepare seam, and installs call bindings only after the authenticated root lookup returns matching digest and request handle.",
+      "model_content": "No response metadata is read from model fields, parsed tool arguments, response body extras or ordinary headers."
+    }
   },
   "coverage_state": "partial; HI-T08 remains open",
   "transport_controls": {
@@ -58,12 +113,12 @@
     "retry_admission": "only exact-envelope repeats retain intent and increment retry_index; changed-envelope retries require an explicit host retry-admission integration"
   },
   "explicitly_uncovered": [
-    "Hermes PluginContext.register(ctx) runtime-context injection and protected component/plugin loader",
+    "Production root-observed loaded-package/action proof and provider-response issuer composition",
     "Auxiliary Anthropic/Bedrock/MoA internals and direct non-chat-completions paths",
     "memory retrieval/extraction/embedding issuers",
     "background schedules/webhooks/child delegation role issuers",
     "authenticated user-interface origin and public clearance",
     "host effect broker bypass denial and actual target-native acceptance"
   ],
-  "acceptance": "Patch-unit tests establish only exact-pin transformations, fail-closed source capture adapter behavior, digest/mode invariants and Python syntax. They do not establish installed native acceptance."
+  "acceptance": "Exact pinned upstream subprocess fixture proves official PluginManager discovers and registers one synthetic root-selected adapter through its actual PluginContext and Hermes tool registry. Separate lineage tests prove forged, unknown, duplicate, or argument-changed metadata is denied. This is development fixture evidence only; no production root observer, target, or Pi acceptance is established."
 }
