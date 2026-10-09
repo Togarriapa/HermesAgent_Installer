@@ -238,6 +238,21 @@ def compose_root_authority_runtime(
         for item in enrollment.memory_enrollments.values():
             if not isinstance(item, MemoryServiceEnrollment):
                 raise AuthorityDenied("authority.composition", "active memory enrollment is not a typed protected record")
+            principal_resolver = getattr(bindings, "resolve_selected_native_principal", None)
+            catalog_digest = getattr(bindings.enrollment_catalog, "digest", None)
+            if not callable(principal_resolver) or not isinstance(catalog_digest, str):
+                raise AuthorityDenied("authority.composition", "active memory principal binding resolver is unavailable")
+            try:
+                principal = principal_resolver(
+                    item.profile_id, item.service_generation, catalog_digest,
+                )
+            except Exception:
+                raise AuthorityDenied("authority.composition", "active memory principal is stale or absent") from None
+            if (getattr(principal, "principal_id", None) != item.principal_id
+                    or getattr(principal, "profile_id", None) != item.profile_id
+                    or getattr(principal, "namespace_id", None) != item.namespace_identity
+                    or service.profile_generations.get(item.profile_id) != item.service_generation):
+                raise AuthorityDenied("authority.composition", "memory enrollment differs from its selected authority principal")
             target_key = (item.profile_id, item.namespace_identity, item.provider)
             prior_target = memory_targets.get(target_key)
             if prior_target is not None and prior_target != item:
