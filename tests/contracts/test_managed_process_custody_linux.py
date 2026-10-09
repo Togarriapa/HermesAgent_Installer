@@ -548,6 +548,16 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         client, started = self._start_client(mode="run")
         try:
             process_handle = self.handler._handles[started["process_id"]]
+            origin_identity = self.handler.inspect_enrolled_process(
+                self.profile_id, self.profile.generation)
+            self.assertIsNotNone(origin_identity,
+                "root-selected enrolled process identity did not resolve from custody")
+            self.assertEqual(origin_identity.process_id, started["process_id"])
+            self.assertEqual(origin_identity.enrollment_id, self.enrollment_id)
+            self.assertEqual(origin_identity.pid, started["pid"])
+            self.assertEqual(origin_identity.pid_starttime_ticks, process_handle.start_ticks)
+            self.assertEqual(origin_identity.executable_sha256, self.digest)
+            self.assertEqual(origin_identity.cgroup_id, started["cgroup"])
             live_peer = self.handler.resolve_live_peer(
                 started["pid"], process_handle.child_pidfd,
                 profile_id=self.profile_id, generation=self.profile.generation,
