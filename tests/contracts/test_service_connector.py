@@ -124,11 +124,13 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         self.assertTrue(self.accepted.wait(2))
         request = b"GET /client/index.html HTTP/1.1\r\nHost: attacker.invalid\r\nAccept: text/html\r\n\r\n"
         write = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http", "connector_id": opened["connector_id"],
-                 "session_id": "session:fixture", "sequence": 0,
+                 "session_id": "session:fixture", "generation": "generation:1",
+                 "deadline": time.monotonic() + 2, "sequence": 0,
                  "data_b64": __import__("base64").b64encode(request).decode("ascii")}
         _call(self.connector, "connector.write", json.dumps(write, sort_keys=True, separators=(",", ":")).encode(), pidfd=self.pidfd)
         read = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http", "connector_id": opened["connector_id"],
-                "session_id": "session:fixture", "sequence": 1, "max_bytes": 1024}
+                "session_id": "session:fixture", "generation": "generation:1",
+                "deadline": time.monotonic() + 2, "sequence": 1, "max_bytes": 1024}
         response = _call(self.connector, "connector.read", json.dumps(read, sort_keys=True, separators=(",", ":")).encode(), pidfd=self.pidfd)
         normalized = b"GET /client/index.html HTTP/1.1\r\nHost: 127.0.0.1:" + str(self.port).encode() + b"\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n"
         self.assertEqual(__import__("base64").b64decode(json.loads(response["body"])["data_b64"]), normalized)
@@ -156,6 +158,7 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         opened = self._open()
         payload = json.dumps({"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
                               "connector_id": opened["connector_id"], "session_id": "session:fixture",
+                              "generation": "generation:1", "deadline": time.monotonic() + 2,
                               "sequence": 0, "max_bytes": 16}, sort_keys=True,
                              separators=(",", ":")).encode()
         with self.assertRaises(AuthorityDenied):
@@ -165,6 +168,7 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         opened = self._open()
         payload = json.dumps({"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
                               "connector_id": opened["connector_id"], "session_id": "session:fixture",
+                              "generation": "generation:1", "deadline": time.monotonic() + 2,
                               "sequence": 0, "max_bytes": 16}, sort_keys=True,
                              separators=(",", ":")).encode()
         with self.assertRaises(AuthorityDenied):
@@ -173,6 +177,25 @@ class FixedServiceConnectorContracts(unittest.TestCase):
 
 
 class FixedConnectorProtocolContracts(unittest.TestCase):
+    def test_remote_backend_requires_root_current_session_binding_before_effect(self):
+        from types import SimpleNamespace
+        from hermes_installer.service_connector import RemoteServiceConnectorBackend
+
+        identity = SimpleNamespace(uid=1234, pid=os.getpid(), profile_id="gateway-profile",
+                                   generation="gateway-generation")
+        binding = SimpleNamespace(
+            gateway_identity=identity, gateway_profile_id="gateway-profile",
+            gateway_generation="gateway-generation", session_id="session:root",
+            target_id="xpra-native", route_id="xpra-http", action="asset",
+            enrollment_id="enrollment:root", native_generation="native-generation",
+            lease_expires_monotonic=time.monotonic() + 30,
+            frame_deadline_monotonic=time.monotonic() + 5,
+        )
+        backend = RemoteServiceConnectorBackend(
+            connector=None, validate_binding=lambda *_args: False)
+        with self.assertRaises(AuthorityDenied):
+            backend.open(binding, authorization=object(), peer_uid=1234, peer_pid=os.getpid(), peer_pidfd=1)
+
     def test_xpra_requests_are_limited_to_pinned_get_head_assets(self):
         route = ROUTES[("xpra-native", "xpra-http")]
         accepted = _parse_http_frame(
@@ -189,32 +212,40 @@ class FixedConnectorProtocolContracts(unittest.TestCase):
 
     def test_hi13_remote_stream_uses_only_root_opaque_session_api(self):
         expiry = time.monotonic() + 30
+        renewed_expiry = [expiry]
+        def wire(value):
+            from types import SimpleNamespace
+            return SimpleNamespace(to_wire=lambda: value)
         class RootAuthority:
             calls = []
             def open_remote_connector(self, handle):
                 self.calls.append(("open", handle))
-                return {"schema": 1, "session_id": "session:root", "connector_handle": "c" * 24,
+                return wire({"schema": 1, "session_id": "session:root", "connector_handle": "c" * 24,
                         "generation": "generation:root", "route_id": "xpra-websocket",
-                        "expires_monotonic": expiry}
+                        "expires_monotonic": expiry})
             def write_remote_connector(self, handle, connector, sequence, data):
                 self.calls.append(("write", handle, connector, sequence, data))
-                return {"schema": 1, "session_id": "session:root", "sequence": sequence,
-                        "accepted_bytes": len(data), "expires_monotonic": expiry}
+                return wire({"schema": 1, "session_id": "session:root", "sequence": sequence,
+                             "accepted_bytes": len(data), "expires_monotonic": renewed_expiry[0]})
             def read_remote_connector(self, handle, connector, sequence, maximum):
                 self.calls.append(("read", handle, connector, sequence, maximum))
-                return {"schema": 1, "session_id": "session:root", "sequence": sequence,
-                        "data_bytes": b"binary", "eof": False, "expires_monotonic": expiry}
+                return wire({"schema": 1, "session_id": "session:root", "sequence": sequence,
+                        "data_bytes": __import__("base64").b64encode(b"binary").decode("ascii"),
+                        "eof": False, "expires_monotonic": renewed_expiry[0]})
             def close_remote_connector(self, handle, connector):
                 self.calls.append(("close", handle, connector))
-                return {"schema": 1, "session_id": "session:root", "state": "closed"}
+                return wire({"schema": 1, "session_id": "session:root", "state": "closed"})
         authority = RootAuthority()
         client = ServiceConnectorClient(authority, "r" * 32)
         stream = client.open()
         self.assertEqual(stream.route_id, "xpra-websocket")
         self.assertEqual(stream.write(b"frame"), 5)
         self.assertEqual(stream.read(64), b"binary")
+        renewed_expiry[0] = expiry + 10
+        self.assertEqual(stream.read(64), b"binary")
+        self.assertEqual(stream.expires_monotonic, expiry + 10)
         stream.close()
-        self.assertEqual([item[0] for item in authority.calls], ["open", "write", "read", "close"])
+        self.assertEqual([item[0] for item in authority.calls], ["open", "write", "read", "read", "close"])
         self.assertEqual(authority.calls[1][1:4], ("r" * 32, "c" * 24, 0))
 
     def test_colibri_allows_only_uncredentialed_chat_completion(self):
