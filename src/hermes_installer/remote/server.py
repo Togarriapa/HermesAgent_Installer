@@ -7,51 +7,24 @@ uses only the returned opaque session handle with the fixed connector client.
 from __future__ import annotations
 
 import asyncio
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs
 
 from .gateway import GatewayDenied, RemotePolicy
-from .http_framing import HTTPFrameError, build_asset_request, parse_asset_response, read_asset_response
+from .http_framing import HTTPFrameError, build_asset_request, read_asset_response
 from .root_sessions import AdmittedRemoteSession, RootRemoteSessionClient, RootSessionDenied
-
-
-_CLIENT_ASSETS = frozenset({
-    "/client/index.html", "/client/bootstrap.html", "/client/favicon.png", "/client/favicon.ico",
-    "/client/css/client.css", "/client/css/connect.css", "/client/css/icon.css",
-    "/client/css/menu-skin.css", "/client/css/menu.css", "/client/css/simple-keyboard.css",
-    "/client/css/slick.css", "/client/css/spinner.css",
-    "/client/icons/authentication.png", "/client/icons/close.png", "/client/icons/default_cursor.png",
-    "/client/icons/empty.png", "/client/icons/eye-slash.png", "/client/icons/eye.png",
-    "/client/icons/fullscreen.png", "/client/icons/maximize.png", "/client/icons/minimize.png",
-    "/client/icons/noicon.png", "/client/icons/unfullscreen.png", "/client/icons/xpra-logo.png",
-    "/client/icons/materialicons-regular.ttf", "/client/icons/materialicons-regular.woff",
-    "/client/icons/materialicons-regular.woff2",
-    *{"/client/js/" + name for name in (
-        "Client.js", "Constants.js", "DecodeWorker.js", "ImageDecoder.js", "Keycodes.js",
-        "MediaSourceUtil.js", "Menu.js", "MenuCustom.js", "Notifications.js",
-        "OffscreenDecodeWorker.js", "OffscreenDecodeWorkerHelper.js", "Protocol.js",
-        "RgbHelpers.js", "Utilities.js", "VideoDecoder.js", "WebTransport.js", "Window.js",
-        "lib/FileSaver.js", "lib/StreamSaver.js", "lib/aurora/aac.js", "lib/aurora/aurora-xpra.js",
-        "lib/aurora/aurora.js", "lib/aurora/flac.js", "lib/aurora/mp3.js",
-        "lib/brotli_decode.js", "lib/detect-zoom.js", "lib/hmac.js",
-        "lib/jquery-transform-draggable.js", "lib/jquery-ui.js", "lib/jquery.ba-throttle-debounce.js",
-        "lib/jquery.js", "lib/lz4.js", "lib/rencode.js", "lib/simple-keyboard.js", "lib/slick.js",
-        "lib/web-streams-ponyfill.es6.js",
-    )}
-})
+from .client_assets import CLIENT_ASSETS as _CLIENT_ASSETS, canonical_asset as _canonical_asset
 
 
 def canonical_asset(raw: str) -> str:
-    path = raw.split("?", 1)[0]
-    if (not path.startswith("/") or "\\" in path or unquote(path) != path or
-            unquote(unquote(path)) != path or any(s in {".", ".."} for s in path.split("/"))):
-        raise GatewayDenied("non-canonical asset path")
-    if path not in _CLIENT_ASSETS:
-        raise GatewayDenied("asset is outside the pinned Xpra client manifest")
-    return path
+    try:
+        return _canonical_asset(raw)
+    except ValueError as exc:
+        raise GatewayDenied(str(exc)) from None
 
 
 @dataclass(slots=True)
@@ -122,17 +95,20 @@ def _token(request) -> str:
     return token
 
 
-def _index_path_binding(request, session: _GatewaySession | None = None) -> None:
+def _index_path_binding(request) -> None:
     if set(request.query) != {"path"}:
         raise GatewayDenied("Xpra index route parameters are invalid")
     nested = request.query.get("path", "")
-    query = parse_qs(nested.partition("?")[2], keep_blank_values=True, strict_parsing=True)
+    try:
+        query = parse_qs(nested.partition("?")[2], keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        raise GatewayDenied("Xpra index route parameters are malformed") from None
     if (nested.partition("?")[0] != "/client/" or set(query) != {"lease", "profile", "nonce"} or
             len(query["lease"]) != 1 or len(query["profile"]) != 1 or len(query["nonce"]) != 1 or
-            query["profile"][0] != "hermes-desktop"):
+            query["profile"][0] != "hermes-desktop" or
+            not re.fullmatch(r"[A-Za-z0-9_-]{24,64}", query["lease"][0]) or
+            not re.fullmatch(r"[A-Za-z0-9_-]{24,64}", query["nonce"][0])):
         raise GatewayDenied("Xpra index route binding is invalid")
-    if session is not None and (query["lease"][0] == "" or query["nonce"][0] == ""):
-        raise GatewayDenied("Xpra index route binding is incomplete")
 
 
 def create_app(runtime: GatewayRuntime):
@@ -295,6 +271,10 @@ def create_app(runtime: GatewayRuntime):
                     "X-Content-Type-Options": "nosniff",
                 })
             connector = await asyncio.wait_for(asyncio.to_thread(runtime.connector, admission.handle), timeout=5)
+            if (getattr(connector, "session_id", None) != admission.session_id or
+                    getattr(connector, "route_id", None) != "xpra-http" or
+                    getattr(connector, "expires_monotonic", admission.lease_expires_monotonic) > admission.lease_expires_monotonic):
+                raise GatewayDenied("root connector is not bound to the admitted asset route")
             frame = build_asset_request(request.method, path, canonicalize=canonical_asset)
             def exchange():
                 connector.write(frame)
@@ -347,13 +327,6 @@ def create_app(runtime: GatewayRuntime):
             await downstream.prepare(request)
             session.socket = downstream
             session.connector = connector
-
-            async def watchdog():
-                while not downstream.closed:
-                    await asyncio.sleep(runtime.watchdog_seconds)
-                    if runtime.monotonic() >= session.expires:
-                        await asyncio.wait_for(downstream.close(code=1008, message=b"root session lease expired"), timeout=2)
-                        return
 
             async def browser_to_xpra():
                 while not downstream.closed:

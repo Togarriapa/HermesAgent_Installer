@@ -32,6 +32,7 @@ from .policy import (
     canonical_provider_target,
     normalize_chat_request,
     request_requires_tools,
+    PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING,
 )
 
 OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -173,10 +174,20 @@ def _validate_binding(context: object, authorization: object, *,
         raise ProviderHandlerDenied("provider.budget", "Additional metered provider use is disabled")
 
 
+def _unique_json_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
+
+
 def _canonical_request(enrollment: ProviderEnrollment, payload: bytes) -> tuple[bytes, str, str]:
     if enrollment.provider == "openrouter":
         try:
-            decoded = json.loads(payload)
+            decoded = json.loads(payload, object_pairs_hook=_unique_json_pairs,
+                                 parse_constant=lambda _item: (_ for _ in ()).throw(ValueError("constant")))
         except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
             raise ProviderHandlerDenied("provider.request_format", "Provider request is invalid JSON") from None
         if not isinstance(decoded, dict):
@@ -184,9 +195,15 @@ def _canonical_request(enrollment: ProviderEnrollment, payload: bytes) -> tuple[
         model = decoded.get("model", OPENROUTER_MODEL)
         if model != OPENROUTER_MODEL:
             raise ProviderHandlerDenied("provider.model", "Provider model is not the enrolled free model")
-        max_tokens = decoded.get("max_tokens", decoded.get("max_completion_tokens", 4096))
-        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= 65_536:
-            raise ProviderHandlerDenied("provider.request_bounds", "Output token limit is invalid")
+        output_aliases = [decoded[name] for name in
+                          ("max_tokens", "max_completion_tokens", "max_output_tokens")
+                          if name in decoded]
+        if len(output_aliases) > 1:
+            raise ProviderHandlerDenied("provider.request_bounds", "Output token aliases cannot be combined")
+        max_tokens = output_aliases[0] if output_aliases else PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING
+        if (isinstance(max_tokens, bool) or not isinstance(max_tokens, int)
+                or not 1 <= max_tokens <= PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING):
+            raise ProviderHandlerDenied("provider.request_bounds", "Output token limit exceeds the public route ceiling")
         capability = "provider-tool-call" if request_requires_tools(payload) else "provider-inference"
         body = normalize_chat_request(payload, OPENROUTER_MODEL, max_tokens)
         # Independent route enforcement: no provider fallbacks, optional plugins,
@@ -204,6 +221,47 @@ def _canonical_request(enrollment: ProviderEnrollment, payload: bytes) -> tuple[
     except PolicyDenied as exc:
         raise ProviderHandlerDenied(exc.code, str(exc)) from None
     return body, model, "provider-tool-call" if uses_tools else "provider-inference"
+
+
+def canonical_provider_request(
+    root_selected_enrollments: Mapping[tuple[str, str], ProviderEnrollment], payload: bytes,
+) -> tuple[bytes, str, str, str, str]:
+    """Purely normalize a request using one root-selected exact account route.
+
+    The mapping is selected from protected root enrollment, never a provider
+    catalog or caller configuration. This helper is not account eligibility,
+    price, privacy or budget proof: the fixed effect handler rechecks each of
+    those immediately before egress. It accepts no URL, credential, callback or
+    route label and performs no network or vault operation. The explicit request
+    model must resolve to one exact `(target, recipient)` entry; ambiguous or
+    absent enrollment is denied.
+    """
+    if not isinstance(payload, bytes) or not 1 <= len(payload) <= MAX_REQUEST_BYTES:
+        raise ProviderHandlerDenied("provider.request_bounds", "Provider request exceeds its byte limit")
+    if not isinstance(root_selected_enrollments, Mapping) or not root_selected_enrollments:
+        raise ProviderHandlerDenied("provider.not_enrolled", "No protected provider enrollment is available")
+    try:
+        decoded = json.loads(payload, object_pairs_hook=_unique_json_pairs,
+                             parse_constant=lambda _item: (_ for _ in ()).throw(ValueError("constant")))
+    except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+        raise ProviderHandlerDenied("provider.request_format", "Provider request is invalid JSON") from None
+    if not isinstance(decoded, dict) or not isinstance(decoded.get("model"), str):
+        raise ProviderHandlerDenied("provider.model", "Provider request must name an enrolled model")
+    model = decoded["model"]
+    matches: list[ProviderEnrollment] = []
+    for key, enrollment in root_selected_enrollments.items():
+        if (not isinstance(enrollment, ProviderEnrollment)
+                or not isinstance(key, tuple) or key != (enrollment.target, enrollment.recipient)):
+            raise ProviderHandlerDenied("provider.enrollment", "Protected provider enrollment map is malformed")
+        if model in enrollment.models:
+            matches.append(enrollment)
+    if len(matches) != 1:
+        raise ProviderHandlerDenied("provider.not_enrolled", "Provider model is absent or ambiguous in protected enrollment")
+    enrollment = matches[0]
+    body, normalized_model, capability = _canonical_request(enrollment, payload)
+    if normalized_model != model:
+        raise ProviderHandlerDenied("provider.model", "Canonical request changed the selected model")
+    return body, enrollment.target, enrollment.recipient, capability, normalized_model
 
 
 def _safe_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -318,7 +376,7 @@ class OpenRouterLiveAdmission:
         remaining = key.get("limit_remaining")
         if remaining is not None:
             try:
-                if not math.isfinite(float(remaining)) or float(remaining) < 0:
+                if not math.isfinite(float(remaining)) or float(remaining) <= 0:
                     raise ValueError("invalid quota")
             except (TypeError, ValueError, OverflowError):
                 raise ProviderHandlerDenied("provider.account_ineligible", "OpenRouter free-key quota is invalid or exhausted") from None
@@ -356,7 +414,7 @@ class OpenRouterLiveAdmission:
                 or type(model_data.get("context_length")) is not int
                 or not len(payload) <= context_length):
             raise ProviderHandlerDenied("provider.model_ineligible", "Current OpenRouter model metadata does not meet the zero-cost text route")
-        if request["max_tokens"] > max_completion or cancelled():
+        if request["max_tokens"] > min(max_completion, PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING) or cancelled():
             raise ProviderHandlerDenied("provider.model_ineligible", "OpenRouter request exceeds live model limits")
 
 

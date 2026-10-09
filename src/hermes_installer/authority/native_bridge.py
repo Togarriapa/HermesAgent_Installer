@@ -35,6 +35,7 @@ class _PendingEvent:
     producer_pidfd: int
     producer_identity: Any
     capability: str
+    event_receipt_id: str
 
 
 class NativeBridgeBroker:
@@ -90,10 +91,18 @@ class NativeBridgeBroker:
         retry = request["retry_index"]
         if type(retry) is not int or not 0 <= retry <= 100:
             raise AuthorityDenied("native.retry", "native retry index is invalid")
-        purpose, intent, trace = request["purpose"], request["intent_id"], request["trace_id"]
-        if (not self._text(purpose, 128) or not self._text(intent, 512)
-                or not self._text(trace, 128)):
-            raise AuthorityDenied("native.request", "native event metadata is malformed")
+        # Purpose and intent are fixed by the protected native provider bridge;
+        # worker labels must never choose policy/classification inputs. Trace
+        # metadata is also root-generated so it cannot be mistaken for issuer
+        # identity or event provenance.
+        if (not self._text(request["purpose"], 128)
+                or request["purpose"] != "native-hermes-chat"
+                or not self._text(request["intent_id"], 512)
+                or not self._text(request["trace_id"], 128)):
+            raise AuthorityDenied("native.request", "native event purpose or correlation metadata is invalid")
+        purpose = "native-hermes-chat"
+        intent = canonical_digest({"native_payload": canonical_digest(raw), "retry_index": retry})
+        trace = secrets.token_urlsafe(24)
 
         # Resolve and consume parent handles once. Parent receipt claims remain
         # immutable ancestry; they do not grant repeat effects.
@@ -107,7 +116,8 @@ class NativeBridgeBroker:
         }, inherited_process_identity=self.service._native_process_identity(peer_pid, uid))
         parent_context = HostContext.from_wire(parent_context)
         event_receipt = self.service.issue_source_receipt(
-            parent_context, source_kind="native-input", origin_id="native-sdk-request",
+            parent_context, source_kind="native-input",
+            origin_id=f"native-sdk-request:{secrets.token_urlsafe(18)}",
             payload=raw, ttl_seconds=int(HANDLE_TTL))
         closure = {receipt.receipt_id: receipt for receipt in (*parent_receipts, event_receipt)}
         if any(not set(receipt.parent_receipt_ids).issubset(closure) for receipt in closure.values()):
@@ -132,7 +142,8 @@ class NativeBridgeBroker:
         expires = min(context.monotonic_expires_at, self.service.monotonic() + HANDLE_TTL)
         pinned_fd = __import__("os").dup(peer_pidfd)
         pending = _PendingEvent(bridge.bridge_id, handle, context, normalized,
-                                retry, expires, peer_pid, pinned_fd, observed, capability)
+                                retry, expires, peer_pid, pinned_fd, observed, capability,
+                                event_receipt.receipt_id)
         with self._lock:
             now = self.service.monotonic()
             self._prune(now)
@@ -189,7 +200,8 @@ class NativeBridgeBroker:
                     "payload": base64.b64encode(normalized).decode("ascii"),
                     "timeout": max(0.001, pending.expires - self.service.monotonic()),
                 }, cancelled=cancelled, peer_pidfd=peer_pidfd,
-                enforce_peer_identity=False, reuse_source_receipts=True)
+                enforce_peer_identity=False,
+                source_receipt_ids_to_consume=frozenset({pending.event_receipt_id}))
             return result
         finally:
             __import__("os").close(pending.producer_pidfd)

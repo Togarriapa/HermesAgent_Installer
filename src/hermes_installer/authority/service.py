@@ -203,6 +203,11 @@ class AuthorityService:
         self.monotonic = monotonic
         self.wall_clock = wall_clock
         self.profile_generations = dict(profile_generations or {})
+        # Bind every context/receipt/grant to this daemon epoch. The signing
+        # key intentionally survives service restarts, but replay tables do
+        # not; changing this host-derived enrollment digest makes old signed
+        # effects stale before they can reach a handler after restart.
+        self.authority_epoch = secrets.token_urlsafe(24)
         self.delegations = dict(delegations or {})
         self.process_effect_handler = process_effect_handler
         self.native_bridge_broker = native_bridge_broker
@@ -296,13 +301,18 @@ class AuthorityService:
             policy_revision=self._policy_revision(), capabilities=child_binding.capabilities,
             issued_at_monotonic=now, monotonic_expires_at=expiry,
             nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24), signature="pending",
-            source_receipts=parent_authorization.source_receipts,
+            # The parent effect already consumed its source receipts. Preserve
+            # their authenticated ancestry and sensitivity through the signed
+            # derived lineage hash above, but do not replay the consumed receipt
+            # IDs under the child UID.
+            source_receipts=(),
             final_payload_digest=payload_digest,
             enrollment_id=canonical_digest({"uid": child_binding.uid,
                                             "principal_id": child_binding.principal_id,
                                             "profile_id": child_binding.profile_id,
                                             "namespace_id": child_binding.namespace_id,
-                                            "generation": self.profile_generations.get(child_binding.profile_id, "unversioned")}),
+                                            "generation": self.profile_generations.get(child_binding.profile_id, "unversioned"),
+                                            "authority_epoch": self.authority_epoch}),
             generation=self.profile_generations.get(child_binding.profile_id, "unversioned"),
             operation=rule.child_operation,
             native_process_identity=parent_authorization.native_process_identity)
@@ -321,7 +331,13 @@ class AuthorityService:
             "authorization": grant.to_wire(), "operation": rule.child_operation,
             "payload": __import__("base64").b64encode(payload).decode("ascii"),
             "timeout": effective_timeout,
-        }, cancelled=lambda: cancelled() or self.monotonic() >= expiry)
+        }, cancelled=lambda: cancelled() or self.monotonic() >= expiry,
+            # This call is internal to the root service after the parent grant,
+            # selected child profile, and delegated operation have all been
+            # verified. The actual kernel peer is the parent process; treating
+            # it as the child's SO_PEERCRED identity would reject every
+            # intentional cross-UID delegation.
+            enforce_peer_identity=False)
         import base64
         return BrokeredEffectResponse(response["status"], base64.b64decode(response["body"], validate=True),
                                       response["headers"], response["receipt_id"])
@@ -367,6 +383,7 @@ class AuthorityService:
                 "uid": binding.uid, "principal_id": binding.principal_id,
                 "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
                 "generation": self.profile_generations.get(binding.profile_id, "unversioned"),
+                "authority_epoch": self.authority_epoch,
             }),
             native_process_identity=parent_context.native_process_identity,
             parent_receipt_ids=tuple(sorted(item.receipt_id for item in parent_context.source_receipts)),
@@ -663,7 +680,8 @@ class AuthorityService:
         enrollment_id = canonical_digest({"uid": uid, "principal_id": binding.principal_id,
                                            "profile_id": binding.profile_id,
                                            "namespace_id": binding.namespace_id,
-                                           "generation": generation})
+                                           "generation": generation,
+                                           "authority_epoch": self.authority_epoch})
         native_process_identity = inherited_process_identity
         if peer_pid is not None:
             native_process_identity = self._native_process_identity(peer_pid, uid)
@@ -915,7 +933,7 @@ class AuthorityService:
                         *, cancelled: Callable[[], bool],
                         peer_pidfd: int | None = None,
                         enforce_peer_identity: bool = True,
-                        reuse_source_receipts: bool = False) -> dict[str, Any]:
+                        source_receipt_ids_to_consume: frozenset[str] | None = None) -> dict[str, Any]:
         if not isinstance(payload, dict) or set(payload) != {"authorization", "operation", "payload", "timeout"}:
             raise AuthorityDenied("effect.request", "broker request fields are invalid")
         import base64
@@ -947,7 +965,7 @@ class AuthorityService:
         handler = self.handlers.get((rule.operation, rule.target))
         if handler is None:
             raise AuthorityDenied("effect.unavailable", "fixed effect handler is not installed")
-        self._consume(grant, consume_source_receipts=not reuse_source_receipts)
+        self._consume(grant, source_receipt_ids_to_consume=source_receipt_ids_to_consume)
         started = self.monotonic()
         remaining = min(timeout, grant.monotonic_expires_at - started)
         if remaining <= 0:
@@ -1024,7 +1042,7 @@ class AuthorityService:
         expected_enrollment = canonical_digest({
             "uid": binding.uid, "principal_id": binding.principal_id,
             "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
-            "generation": expected_generation,
+            "generation": expected_generation, "authority_epoch": self.authority_epoch,
         })
         if (context.uid != uid or context.principal_id != binding.principal_id
                 or context.profile_id != binding.profile_id or context.namespace_id != binding.namespace_id
@@ -1044,7 +1062,7 @@ class AuthorityService:
         expected_enrollment = canonical_digest({
             "uid": binding.uid, "principal_id": binding.principal_id,
             "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
-            "generation": expected_generation,
+            "generation": expected_generation, "authority_epoch": self.authority_epoch,
         })
         if (grant.uid != uid or grant.principal_id != binding.principal_id
                 or grant.profile_id != binding.profile_id or grant.namespace_id != binding.namespace_id
@@ -1073,7 +1091,8 @@ class AuthorityService:
             operation=grant.operation, native_process_identity=grant.native_process_identity,
         )
 
-    def _consume(self, grant: EffectAuthorization, *, consume_source_receipts: bool = True) -> None:
+    def _consume(self, grant: EffectAuthorization, *,
+                 source_receipt_ids_to_consume: frozenset[str] | None = None) -> None:
         with self._lock:
             now = self.monotonic()
             self._nonces = {nonce: expiry for nonce, expiry in self._nonces.items() if expiry > now}
@@ -1083,15 +1102,18 @@ class AuthorityService:
             }
             if grant.nonce in self._nonces:
                 raise AuthorityDenied("grant.replay", "effect grant was already consumed")
-            receipt_ids = {receipt.receipt_id for receipt in grant.source_receipts}
-            if consume_source_receipts and receipt_ids & self._source_receipts_consumed.keys():
+            grant_receipt_ids = {receipt.receipt_id for receipt in grant.source_receipts}
+            receipt_ids = (grant_receipt_ids if source_receipt_ids_to_consume is None
+                           else set(source_receipt_ids_to_consume))
+            if not receipt_ids.issubset(grant_receipt_ids):
+                raise AuthorityDenied("source.binding", "effect cannot consume unrelated source evidence")
+            if receipt_ids & self._source_receipts_consumed.keys():
                 raise AuthorityDenied("source.replay", "source receipt was already used by another effect")
-            if len(self._nonces) >= 100_000 or (consume_source_receipts
-                    and len(self._source_receipts_consumed) + len(receipt_ids) > 100_000):
+            if len(self._nonces) >= 100_000 or len(self._source_receipts_consumed) + len(receipt_ids) > 100_000:
                 raise AuthorityDenied("grant.capacity", "effect replay protection is at capacity")
             self._nonces[grant.nonce] = grant.monotonic_expires_at
-            if consume_source_receipts:
-                for receipt in grant.source_receipts:
+            for receipt in grant.source_receipts:
+                if receipt.receipt_id in receipt_ids:
                     self._source_receipts_consumed[receipt.receipt_id] = receipt.monotonic_expires_at
 
     def _verify_context_signature(self, context: HostContext) -> None:
@@ -1104,6 +1126,7 @@ class AuthorityService:
             "uid": binding.uid, "principal_id": binding.principal_id,
             "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
             "generation": self.profile_generations.get(binding.profile_id, "unversioned"),
+            "authority_epoch": self.authority_epoch,
         })
         if (receipt.issuer_id != "host-authority"
                 or receipt.uid != binding.uid

@@ -473,6 +473,35 @@ class AuthorityClient:
         return self.perform_effect(authorization, operation="process.start", payload=payload,
                                    timeout=timeout, cancelled=cancelled)
 
+    def process_start_operation(
+        self, authorization: EffectAuthorization, *, enrollment_id: str,
+        generation: str, operation_id: str, parameters: Mapping[str, Any],
+        timeout: float = 5.0, cancelled: Callable[[], bool] | None = None,
+    ) -> BrokeredEffectResponse:
+        """Request one protected launch recipe using selection-only parameters.
+
+        Executable, roots, cwd, argv recipe, environment, and resource bounds
+        are resolved by the enrolled root handler. This request intentionally
+        carries no caller paths, command line, or environment.
+        """
+        if (not isinstance(authorization, EffectAuthorization)
+                or authorization.operation != "process.start"
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", enrollment_id)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", generation)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", operation_id)
+                or not isinstance(parameters, Mapping) or len(parameters) > 64):
+            raise AuthorityDenied("effect.launch", "protected process operation selection is malformed")
+        payload = canonical_bytes({"schema": 1, "enrollment_id": enrollment_id,
+                                   "generation": generation, "operation_id": operation_id,
+                                   "parameters": dict(parameters)})
+        if (canonical_digest(payload) != authorization.request_digest
+                or not authorization.target or "\x00" in authorization.target
+                or any(not isinstance(value, (str, int, bool)) or isinstance(value, float)
+                       for value in parameters.values())):
+            raise AuthorityDenied("effect.binding", "process selection does not match its host grant")
+        return self.perform_effect(authorization, operation="process.start", payload=payload,
+                                   timeout=min(timeout, 30.0), cancelled=cancelled)
+
     def process_control(self, authorization: EffectAuthorization, *, operation: str,
                         target: str, payload: bytes, timeout: float = 5.0,
                         cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
@@ -543,6 +572,34 @@ class AuthorityClient:
             raise AuthorityDenied("package.binding", "package request does not match its host grant")
         return self.perform_effect(authorization, operation="package.install", payload=payload,
                                    timeout=min(timeout, MAX_TIMEOUT), cancelled=cancelled)
+
+    def install_package_set(
+        self, authorization: EffectAuthorization, *, package_set_id: str,
+        manifest_sha256: str, enrollment_id: str, generation: str,
+        timeout: float = 600.0, cancelled: Callable[[], bool] | None = None,
+    ) -> BrokeredEffectResponse:
+        """Install one signed root-enrolled offline package set.
+
+        The manifest controls the runtime, exact wheel IDs/hashes and venv.
+        The client sends only the opaque selection IDs; it cannot provide paths,
+        package names, URLs, pip flags, or requirements.
+        """
+        if (not isinstance(authorization, EffectAuthorization)
+                or authorization.operation != "package.install"
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", package_set_id)
+                or not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", enrollment_id)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", generation)
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not 0 < timeout <= MAX_TIMEOUT):
+            raise AuthorityDenied("package.binding", "protected package-set selection is malformed")
+        target = f"package-set:{package_set_id}:{manifest_sha256}"
+        payload = canonical_bytes({"schema": 1, "package_set_id": package_set_id,
+                                   "enrollment_id": enrollment_id, "generation": generation})
+        if (authorization.target != target or canonical_digest(payload) != authorization.request_digest):
+            raise AuthorityDenied("package.binding", "package-set request does not match its host grant")
+        return self.perform_effect(authorization, operation="package.install", payload=payload,
+                                   timeout=min(float(timeout), MAX_TIMEOUT), cancelled=cancelled)
 
     @staticmethod
     def _check_binding(grant: EffectAuthorization, target: str, recipient: str | None, digest: str) -> None:

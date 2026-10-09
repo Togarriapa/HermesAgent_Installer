@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import shutil
 import uuid
@@ -27,7 +28,9 @@ from hermes_installer.managed_process import (
     ManagedProcessSupervisor,
     provision_service_identity,
 )
-from hermes_installer.managed_process_custodian import _argv_matches_recipe
+from hermes_installer.managed_process_custodian import (
+    ManagedProcessEffectHandler, ManagedProfileCustody, _argv_matches_recipe,
+)
 from hermes_installer.state import Journal, OwnedRoot
 from hermes_installer.authority.client import AuthorityClient
 from hermes_installer.authority.client import canonical_profile_target, profile_launch_envelope
@@ -40,7 +43,10 @@ from hermes_installer.authority.types import (
 class _FixtureAuthorityVerifier(AuthorityClient):
     """Test-only stand-in; never evidence of the installed host authority service."""
     def __init__(self):
-        pass
+        # Keep the production client's bounded-call contract so tests exercise
+        # the same timeout clamping without creating an authority connection.
+        self.timeout = 5.0
+        self.monotonic = time.monotonic
 
     def verify_effect(self, grant, context, *, capability, target, recipient=None,
                       request_digest=None, retry_index=None):
@@ -115,12 +121,83 @@ class ManagedProcessArgvRecipeTests(unittest.TestCase):
             self.assertFalse(_argv_matches_recipe(profile, attempted, {}), attempted)
 
 
+class ManagedProcessOperationRecipeTests(unittest.TestCase):
+    def test_selection_resolves_only_root_recipe_and_typed_parameters(self) -> None:
+        executable = Path("/protected/runtime/python")
+        digest = "a" * 64
+        child_ref = "artifact:installer-script:" + "b" * 64
+        profile = ManagedProfileCustody(
+            profile_id="installer", owner_uid=1001, owner_gid=1001,
+            service_user="hermes-installer-test", executable=executable,
+            artifact_sha256=digest, artifact_root=Path("/protected/artifacts"),
+            data_root=Path("/var/tmp"), generation="generation:1",
+            enrollment_id="enrollment:1", home_id="home:1", work_id="work:1", data_id="data:1",
+            home_root=Path("/tmp"), work_root=Path.cwd(),
+            operation_targets={"process.start": "installer:start"},
+            operation_recipes={"install-stage": {
+                "executable_artifact_id": "python-runtime", "executable_sha256": digest,
+                "argv_recipe": (
+                    {"literal": "installer-script"}, {"literal": "--stage"},
+                    {"parameter": "stage"},
+                ),
+                "cwd_root_id": "work:1", "cwd_subpath": ".",
+                "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes"},
+                "child_artifact_refs": {"installer-script": "b" * 64},
+                "max_lifetime_seconds": 60, "max_output_bytes": 4096,
+                "stdin_mode": "closed", "parameter_schema_id": "stage-schema",
+            }},
+            parameter_schemas={"stage-schema": {"id": "stage-schema", "fields": [{
+                "name": "stage", "type": "string", "required": True,
+                "enum": ["manifest", "runtime"], "max_length": 16,
+                "minimum": None, "maximum": None,
+            }]}},
+        )
+        manager = object.__new__(ManagedProcessEffectHandler)
+        manager.monotonic = time.monotonic
+        manager.artifact_resolver = None
+        manager._resolve_enrolled_artifact = lambda _ref, _digest, executable=False: Path(
+            "/protected/runtime/python" if executable else "/protected/artifacts/installer-script"
+        )
+        captured: dict[str, object] = {}
+        manager._start_reserved = lambda derived, _context, _authorization, payload, _timeout, _pid, _pidfd, _cancelled, **kwargs: (  # type: ignore[method-assign]
+            captured.update(profile=derived, launch=json.loads(payload), canonical=kwargs["registered_profile"]) or {"ok": True}
+        )
+        now = time.monotonic()
+        authorization = SimpleNamespace(monotonic_expires_at=now + 30)
+        payload = json.dumps({
+            "schema": 1, "enrollment_id": "enrollment:1", "generation": "generation:1",
+            "operation_id": "install-stage", "parameters": {"stage": "runtime"},
+        }, sort_keys=True, separators=(",", ":")).encode("ascii")
+        result = manager.start_selected_operation(
+            profile, SimpleNamespace(), authorization, payload, timeout=10,
+            peer_pid=10, peer_pidfd=11, cancelled=lambda: False,
+        )
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(captured["canonical"], profile)
+        launch = captured["launch"]
+        self.assertEqual(launch["target"], "installer:start")
+        self.assertEqual(launch["cwd"], str(Path.cwd()))
+        self.assertEqual(launch["argv"], [str(executable), child_ref, "--stage", "runtime"])
+        self.assertEqual(launch["env_allowlist"], {"HOME": "/hermes", "HERMES_HOME": "/hermes"})
+
+    def test_selection_rejects_path_parameters_and_unenrolled_operations(self) -> None:
+        schema = {"id": "s", "fields": [{
+            "name": "name", "type": "string", "required": True, "enum": None,
+            "max_length": 64, "minimum": None, "maximum": None,
+        }]}
+        with self.assertRaisesRegex(Exception, "bounded scalar"):
+            ManagedProcessEffectHandler._validate_operation_parameters({"name": "../secret"}, schema)
+
+
 class ManagedProcessAdmissionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="hermes-managed-process-")
-        self.root = Path(self.temp.name)
-        self.owned = OwnedRoot(self.root)
+        self.owned = OwnedRoot(Path(self.temp.name))
         self.owned.ensure()
+        # OwnedRoot canonicalizes the approved macOS /var alias to /private/var.
+        # Build every fixture path from that same canonical root so tests exercise
+        # the validator rather than failing on a lexical alias mismatch.
+        self.root = self.owned.root
         self.artifact = self.root / "artifacts" / "test"
         self.data = self.root / "profiles" / "test"
         self.artifact.mkdir(parents=True)
