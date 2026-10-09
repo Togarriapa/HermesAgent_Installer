@@ -249,6 +249,13 @@ plugins:
                         "tool_names": [item.get("function", {}).get("name")
                                        for item in payload_summary.get("tools", [])
                                        if isinstance(item, dict)],
+                        "tool_schemas": [
+                            {"name": item.get("function", {}).get("name"),
+                             "parameters": item.get("function", {}).get("parameters")}
+                            for item in payload_summary.get("tools", [])
+                            if isinstance(item, dict) and isinstance(item.get("function"), dict)
+                            and item["function"].get("name") in {"tool_search", "tool_describe", "tool_call"}
+                        ],
                         "assistant_tool_calls": [
                             {"name": call.get("function", {}).get("name"),
                              "arguments": call.get("function", {}).get("arguments")}
