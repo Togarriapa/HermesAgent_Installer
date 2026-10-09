@@ -83,6 +83,7 @@ class RootSessionAdapterTests(unittest.TestCase):
     def test_admission_passes_raw_token_and_only_contract_request_fields(self):
         admitted = self.client.admit(access_jwt="synthetic.jwt.value", action="asset-read", route_id="xpra-http")
         self.assertEqual(admitted.handle.value, "A" * 43)
+        self.assertNotIn("A" * 43, repr(admitted))
         self.assertEqual(admitted.admission_kind, "one-shot-asset")
         action, token, request = self.authority.calls[0]
         self.assertEqual((action, token), ("admit", b"synthetic.jwt.value"))
@@ -102,6 +103,7 @@ class RootSessionAdapterTests(unittest.TestCase):
     def test_root_challenge_fresh_renewal_and_cleanup_are_bound_to_opaque_handle(self):
         admitted = self.client.admit(access_jwt="first.jwt", action="websocket-attach", route_id="xpra-websocket")
         challenge = self.client.challenge(admitted.handle)
+        self.assertNotIn("N" * 43, repr(challenge))
         expiry = self.client.renew(handle=admitted.handle, session_id=admitted.session_id, access_jwt="renewed.jwt",
                                    renewal_nonce=challenge.renewal_nonce)
         self.assertEqual(expiry, 35.0)

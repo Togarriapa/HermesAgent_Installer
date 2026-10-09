@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 
@@ -37,7 +37,7 @@ def _opaque(value: Any, name: str) -> str:
 class AdmittedRemoteSession:
     """Validated root result. Keep ``handle`` server-side only."""
 
-    handle: Any
+    handle: Any = field(repr=False)
     session_id: str
     admission_kind: str
     principal_binding_id: str
@@ -56,7 +56,7 @@ class AdmittedRemoteSession:
 @dataclass(frozen=True, slots=True)
 class RemoteRenewalChallenge:
     session_id: str
-    renewal_nonce: str
+    renewal_nonce: str = field(repr=False)
     expires_monotonic: float
 
 
