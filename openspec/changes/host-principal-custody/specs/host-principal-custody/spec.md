@@ -278,3 +278,10 @@ The installer SHALL separate UID0 authority journal state from service-writable 
 #### Scenario: Wrong state owner or caller build path
 - **WHEN** authority state aliases writable service data or a build request supplies an unselected path or mount token
 - **THEN** the root rejects the operation before effects; no fixture or source status proves native completion
+
+### Requirement: Exact protected execution joins
+The installer SHALL resolve each effect from its exact selected active node, scope, observer and setup role joins, with fresh bounded authority and immutable result ancestry.
+
+#### Scenario: Mismatched backend or setup identity
+- **WHEN** a node selects a different backend, an event/result lacks root-observed closure, or runtime tunnel identity requests setup writer/probe authority
+- **THEN** root rejects before effects and preserves pending original acceptance; no caller booleans or consumed grants substitute for proof

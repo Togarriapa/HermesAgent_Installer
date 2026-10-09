@@ -44,6 +44,8 @@
       "remote_session_enrollments",
       "resource_backend_enrollments",
       "resource_body_recipes",
+      "resource_scope_bindings",
+      "resource_validators",
       "generation_digest"
     ],
     "types": "single selected generation record; each catalog is bounded list<=1024 strict existing inner source-backed records, duplicates/unknown fields rejected. generation_id opaque rootissued string. Empty lists valid only affected actions explicitly unavailable.",
@@ -53,7 +55,9 @@
     "source_issuers": "Active service_generations.source_issuers is bounded strict list<=1024 of EXACT11-field sourceobserver rows already defined: issuer_channel_id,producer_profile_id,producer_role_artifact_id,producer_role_sha256,capture_schema_id,allowed_parent_channels,generation,observer_enrollment_id,source_action_ids. NOTE existing listed row has9 fields, not11: these9 are canonical exactly; observer_enrollment_id joins separate root private observer registry records whose exact fields are in root_private_api. No added callerrole/destination. Full list participates generation_digest; generation matches activeproducer/profile and observerartifact/actualpendingevent. No mutable sidecarfallback.",
     "resource_jobs": "Active bounded strict list<=692 selected ResourceJobEnrollment rows defined by protected-resource-job-contract.json; entire rows/DAG/source/target/backend references included generation_digest. No runtime sidecar or caller action graph fallback.",
     "remote_session_enrollments": "Active exact HI13 rows and protected selected OTP/JWT/policy/principal/gateway joins from remote-root-session-bridge-contract.json, fully included generation_digest. Prior top-level declaration is staging/import only; no mutable sidecar/alternate active parser fallback.",
-    "resource_backend_enrollments": "Strict activeRB07backend/action/recipe schema in protected-resource-job-contract.json, fullrows includedcanonicalgenerationdigest; no mutable sidecarfallback."
+    "resource_backend_enrollments": "Strict activeRB07backend/action/recipe schema in protected-resource-job-contract.json, fullrows includedcanonicalgenerationdigest; no mutable sidecarfallback.",
+    "resource_scope_bindings": "Strict active rows defined in protected-resource-job-contract.json closed_resolvers; fully included generation_digest, no mutable sidecar/worker resolver fallback.",
+    "resource_validators": "Strict active rows defined in protected-resource-job-contract.json closed_resolvers; fully included generation_digest, no mutable sidecar/worker resolver fallback."
   },
   "device_kernel_enforcement": {
     "profile_fields": [
@@ -316,6 +320,26 @@
     },
     "cwd": "/run/hermes-installer/build/work; reviewed recipe may select a validated fixed subdirectory here only",
     "source_processing": "Original source remains read-only. Builder copies verified source into work before modifications; outputs are collected only below output. Colibri output relative c/colibri and CPython runtime/bin/python3.9 plus runtime/lib/python3.9 constraints remain unchanged.",
-    "proof": "Root records actual mount namespace, source identities/digests, resolved fixed argv digest, service UID, work/output identities, terminal status and post-exit output constraints. No predicted compiled SHA; no launch/source-only acceptance."
+    "proof": "Root records actual mount namespace, source identities/digests, resolved fixed argv digest, service UID, work/output identities, terminal status and post-exit output constraints. No predicted compiled SHA; no launch/source-only acceptance.",
+    "argv_recipe_record": "protected_build_records[*].argv_recipe is a nonempty list of strict tagged objects: {literal:string} OR {build_path:{mount_id:string,relative_path:string}}. No bare strings in canonical active format; staging old fixed literals migrate to literal nodes. Exactly one tag, no extra keys. Builder/source/toolchain/work/output are the only mount_id values. Root validates grammar before generation publication; worker payload contains none of these nodes."
+  },
+  "build_internal_bookkeeping": {
+    "mode": "Root custody internal bookkeeping for already admitted build child; NOT worker effect RPC or re-use of consumed process.start authorization.",
+    "signature": "await_owned_build_terminal(root_build_job_handle, *, deadline_monotonic, cancelled) -> RootBuildTerminalRecord",
+    "checks": "Root private registry resolves admitted build job, parent grant ID as audit only, current selected process PIDFD/starttime/cgroup/profile generation/build recipe/source/toolchain/current catalog, original deadline and next observation sequence. Only wait/read bounded own stdout/stderr/status and cancel/stop exact owned cgroup. Cannot launch another process, issue worker grant, change argv or extend lease. Root watcher cleanup may stop owned child on original lease/cancellation/revocation without renewing parent.",
+    "response_fields": [
+      "schema=1",
+      "job_handle",
+      "process_id",
+      "profile_generation",
+      "observation_sequence",
+      "terminal_state",
+      "exit_status",
+      "stdout_sha256",
+      "stderr_sha256",
+      "bounded_output_receipt_ids",
+      "issued_monotonic"
+    ],
+    "evidence": "Root actual terminal wait, bounded logs and cgroup teardown; consumed parent authorization remains consumed. If a worker asks control through public API, existing fresh process.control exact verb authorization is still required."
   }
 }
