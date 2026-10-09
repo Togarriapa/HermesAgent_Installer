@@ -7,13 +7,13 @@ import time
 import unittest
 
 from hermes_installer.authority.types import (
-    BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity,
-    canonical_bytes, canonical_digest,
+    BrokeredEffectResponse, EffectAuthorization, HostContext,
+    Sensitivity as AuthoritySensitivity, canonical_bytes, canonical_digest,
 )
 from hermes_installer.mcp.broker import mcp_intent
 from hermes_installer.mcp.client import MCPClient
 from hermes_installer.mcp.transports import StdioTransport, StreamableHTTPTransport, TransportError
-from hermes_installer.policy import DispatchAuthorization, DispatchContext, Sensitivity
+from hermes_installer.policy import DispatchAuthorization, DispatchContext, Sensitivity as PolicySensitivity
 
 
 class FixtureAuthority:
@@ -38,7 +38,7 @@ def fixture_context(*, loopback=False, stdio=False):
         caps.add("mcp:test:stdio")
     return DispatchContext(
         profile_id="fixture-profile", purpose="mcp-transport-fixture",
-        sensitivity=Sensitivity.PUBLIC, principal_id="fixture-principal",
+        sensitivity=PolicySensitivity.PUBLIC, principal_id="fixture-principal",
         namespace="fixture-namespace", provenance="sha256:" + "b" * 64,
         capabilities=frozenset(caps), policy_revision="fixture-policy-v1",
         grant_id="fixture-grant", lease_expires_at=time.monotonic() + 30,
@@ -169,7 +169,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                     principal_id="fixture-principal", profile_id="fixture-profile",
                     namespace_id="fixture-namespace", uid=1000, purpose=purpose,
                     intent_id=canonical_digest({"purpose": purpose, "intent": intent}),
-                    trace_id="fixture-trace", sensitivity=Sensitivity.UNKNOWN,
+                    trace_id="fixture-trace", sensitivity=AuthoritySensitivity.UNKNOWN,
                     lineage_hash="a" * 64, policy_revision="fixture-policy",
                     capabilities=frozenset({"mcp:fixture:connect", "mcp:fixture:read",
                                              "mcp:test:loopback"}),
