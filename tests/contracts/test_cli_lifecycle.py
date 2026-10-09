@@ -199,4 +199,24 @@ class CliLifecycleTests(unittest.TestCase):
             self.assertEqual(result.state,OutcomeState.FAILED)
             self.assertFalse((root/"state").exists())
 
+    def test_select_memory_routes_through_locked_configuration_adapter(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
+            saved=root/"selected.json"
+            adapter=SimpleNamespace(OPTIONS={"openviking": object()})
+            def configure_noninteractive(current, **kwargs):
+                from hermes_installer.setup_wizard import AdapterResult
+                return AdapterResult("pending", "Memory runtime awaits protected enrollment.", {})
+            adapter.configure_noninteractive=configure_noninteractive
+            with patch("hermes_installer.cli.discover_host",return_value=self.host), \
+                 patch("hermes_installer.configuration_cli.build_setup_adapters",return_value={"memory":adapter}):
+                result=run(SimpleNamespace(command="select-memory",choice="openviking",config=config,
+                    save_config=saved))
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertEqual(result.findings[0].details["selected_memory_provider"],"openviking")
+            operation=Journal(root/"state"/"journal.sqlite3").operation("installer:setup")
+            self.assertEqual(operation["payload"]["setup_state"]["memory"]["selections"]["provider_id"],"openviking")
+            self.assertEqual(stat.S_IMODE(saved.stat().st_mode),0o600)
+            self.assertFalse(json.loads(saved.read_text())["components"]["memory"])
+
 if __name__=="__main__": unittest.main()

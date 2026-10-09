@@ -59,11 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
     configure = command("configure", "Configure an external provider or MCP")
     configure.add_argument("target", choices=("provider", "mcp", "remote-desktop"))
     configure.add_argument("name", nargs="?", help="Adapter or connection name")
+    configure.add_argument("--save-config", type=Path, help="Write the secret-reference-only result to a new private config file")
     connection = command("test-connection", "Test a configured provider or MCP")
     connection.add_argument("target", choices=("provider", "mcp", "remote-desktop"))
     connection.add_argument("name", nargs="?", help="Adapter or connection name")
+    connection.add_argument("--save-config", type=Path, help="Write the secret-reference-only result to a new private config file")
     memory = command("select-memory", "Select the single long-term memory backend")
     memory.add_argument("choice", choices=("openviking", "claude-mem", "agent-memory"))
+    memory.add_argument("--save-config", type=Path, help="Write the secret-reference-only result to a new private config file")
     source = command("resolve-source", "Resolve a source URL to an immutable revision")
     source.add_argument("url")
     component = sub.add_parser("component", help="Manage an installed component")
@@ -230,6 +233,81 @@ def _run_setup(args: argparse.Namespace) -> CommandResult:
                 result.resume_command or resume, exit_code)
     except (OSError, OwnershipError, RuntimeError, ValueError, ConfigError) as exc:
         return CommandResult("setup", OutcomeState.FAILED, str(exc), exit_code=2)
+
+
+def _run_configuration_command(args: argparse.Namespace, config: InstallerConfig) -> CommandResult:
+    from .configuration_cli import run_configuration_command
+    from .setup_wizard import PrivateFileCredentialStore
+
+    action = args.command
+    if action == "configure" and not sys.stdin.isatty():
+        return CommandResult(action, OutcomeState.FAILED,
+            "Interactive configuration requires a terminal; no credential was collected.", exit_code=2)
+    state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
+    resume = f"hermes-installer {action}"
+    target = getattr(args, "target", None)
+    if action == "select-memory":
+        target = "memory"
+    name = getattr(args, "name", None)
+    if target:
+        resume += " " + shlex.quote(target)
+    if name:
+        resume += " " + shlex.quote(name)
+    if getattr(args, "choice", None):
+        resume += " " + shlex.quote(args.choice)
+    if getattr(args, "url", None):
+        resume += " " + shlex.quote(args.url)
+    if args.config:
+        resume += " --config " + shlex.quote(str(args.config))
+    save_config = getattr(args, "save_config", None)
+    if save_config:
+        resume += " --save-config " + shlex.quote(str(save_config))
+    journal = None
+    try:
+        state_root = OwnedRoot(state_path)
+        state_root.ensure()
+        with process_lock(state_root.path("installer.lock")):
+            journal = Journal(state_root.path("journal.sqlite3"))
+            journal.checkpoint("installer:configuration:" + action, "running", {
+                "target": target, "name": name, "config_path": str(args.config) if args.config else None,
+                "resume": resume})
+            result = run_configuration_command(
+                action, config_data={"schema_version": config.schema_version,
+                    "timezone": config.timezone, "paths": config.paths,
+                    "components": config.components, "privacy": config.privacy,
+                    "remote_desktop": config.remote_desktop},
+                journal=journal, credential_store=PrivateFileCredentialStore(state_root.root),
+                interactive=action == "configure", resume_command=resume,
+                target=target, name=name, choice=getattr(args, "choice", None),
+                url=getattr(args, "url", None))
+            saved_path = None
+            if result.state != OutcomeState.FAILED and save_config:
+                config_value = next((finding.details.get("config") for finding in result.findings
+                                     if isinstance(finding.details.get("config"), dict)), None)
+                if config_value is None:
+                    raise ValueError("Configuration adapter did not return a validated config")
+                saved_path = _write_private_config(save_config, config_value)
+                findings = tuple(Finding(item.code, item.message, item.state,
+                    {**item.details, "saved_config": str(saved_path)}) for item in result.findings)
+                result = CommandResult(result.command, result.state, result.message, findings,
+                    result.resume_command, result.exit_code)
+            journal.checkpoint("installer:configuration:" + action, result.state.value, {
+                "exit_code": result.exit_code, "resume": result.resume_command or resume})
+            journal.event("installer:configuration:" + action, "command", result.state.value, {
+                "exit_code": result.exit_code, "target": target, "name": name})
+            return result
+    except (OSError, OwnershipError, RuntimeError, ValueError, ConfigError, sqlite3.Error) as exc:
+        if journal is not None:
+            try:
+                journal.checkpoint("installer:configuration:" + action, "failed", {
+                    "error_type": type(exc).__name__, "resume": resume})
+                journal.event("installer:configuration:" + action, "command", "failed", {
+                    "error_type": type(exc).__name__})
+            except (OSError, RuntimeError, sqlite3.Error):
+                pass
+        return CommandResult(action, OutcomeState.FAILED,
+            f"Configuration state could not be safely accessed: {type(exc).__name__}.",
+            resume_command=resume, exit_code=1)
 
 
 def _write_private_config(path: Path, config: dict[str, object]) -> Path:
@@ -703,11 +781,18 @@ def run(args: argparse.Namespace) -> CommandResult:
             (Finding("lifecycle.update", message, OutcomeState.PENDING,
                 {"candidate_generation": None, "health_probe": "protected-managed-process-not-enrolled"}),),
             resume_command=f"hermes-installer update {action}" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
-    if args.command in {"configure", "test-connection", "select-memory", "resolve-source", "component"}:
+    if args.command in {"configure", "test-connection", "select-memory", "resolve-source"}:
         facts = discover_host()
         if not facts.supported_arm64_linux:
             return CommandResult(args.command, OutcomeState.FAILED, "This operation is restricted to supported Linux ARM64 targets; this host was not changed.", findings=_host_findings(config), exit_code=3)
-        return CommandResult(args.command, OutcomeState.PENDING, "The selected component adapter is not available yet; no external account or service was changed.", resume_command=f"hermes-installer {args.command}" + (f" --config {args.config}" if args.config else ""))
+        return _run_configuration_command(args, config)
+    if args.command == "component":
+        facts = discover_host()
+        if not facts.supported_arm64_linux:
+            return CommandResult("component", OutcomeState.FAILED, "Component lifecycle operations are restricted to supported Linux ARM64 targets; this host was not changed.", findings=_host_findings(config), exit_code=3)
+        return CommandResult("component", OutcomeState.PENDING,
+            "Component lifecycle remains unavailable until its protected service selector and verified runtime binding are enrolled.",
+            resume_command=f"hermes-installer component {shlex.quote(args.action)} {shlex.quote(args.name)}" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
     raise AssertionError(f"Unhandled CLI command: {args.command}")
 
 
