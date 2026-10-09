@@ -746,9 +746,9 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
             result[binding]=dispatch
     return result
 
-def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTarget],
+def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTarget | MemoryServiceEnrollment],
         authority_service: Any, *, root_data_dir: Path = Path("/var/lib/hermes-installer/memory"),
-        vault: Any = None) -> dict[str, Any]:
+        vault: Any = None, connector_factory: RootConnectorFactory | None = None) -> dict[str, Any]:
     """Assemble the static root runtime from protected enrollment only.
 
     The authority daemon passes its root-signed consent issuer. Service IPC and
@@ -759,11 +759,13 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
     installed here. The vault argument is reserved for the future root-only
     connector and is intentionally never read by worker-facing code.
     """
-    targets = dict(protected_targets)
-    for key, target in targets.items():
+    targets: dict[tuple[str, str, str], MemoryTarget] = {}
+    for key, item in protected_targets.items():
+        target = MemoryTarget.from_enrollment(item) if isinstance(item, MemoryServiceEnrollment) else item
         if not isinstance(target, MemoryTarget) or key != (
                 target.profile_id, target.namespace_id, target.provider):
-            raise ValueError("memory runtime accepts only exact protected MemoryTarget entries")
+            raise ValueError("memory runtime accepts only exact protected enrollment entries")
+        targets[key] = target
     ledger = SQLiteOwnerLedger(root_data_dir / "owner-ledger")
     owner_state = ledger.get_owner_state
     consent_issuer = getattr(authority_service, "create_background_consent", None)
@@ -782,15 +784,20 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
     data_roots = [target.data_root_id for target in targets.values()]
     if len(service_ids) != len(set(service_ids)) or len(data_roots) != len(set(data_roots)):
         raise ValueError("memory services and data roots must be separately isolated per profile")
+    enrollments = {(target.profile_id, target.namespace_id, target.provider): target.enrollment
+                   for target in targets.values() if target.enrollment is not None}
+    ipc = (MemoryServiceIPC(enrollments, connector_factory)
+           if connector_factory is not None and len(enrollments) == len(targets)
+           else None)
     return {
         "targets": targets,
         "owner_ledger": ledger,
         "owner_state": owner_state,
         "queue": queue,
-        "ipc": None,
+        "ipc": ipc,
         "engines": {},
         "eligibility": eligibility,
-        "maximum_timeout": 20.0,
+        "maximum_timeout": 15.0,
         "consent_active": consent_active,
         "consent_ready": consent_ready,
         "background_effect": effect_runner if callable(effect_runner) else None,
