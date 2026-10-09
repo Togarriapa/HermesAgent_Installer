@@ -100,6 +100,19 @@ class MemoryBrokerTests(unittest.TestCase):
         self.assertEqual(denied_scope["status"], 403)
         self.assertEqual(ipc.calls, [])
 
+    def test_missing_signed_session_id_denied_before_connector_bytes(self):
+        t = target("p1", "n1", "service-one")
+        ipc = IPC()
+        handlers = build_memory_handlers(
+            targets={("p1","n1","agentmemory"):t},
+            owner_state=lambda _: (None,0), queue=None, ipc=ipc)
+        context = Context()
+        context.trace_id = None
+        result = call(handlers[("memory.doctor","memory:agentmemory:doctor")],
+                      context, "doctor", {"schema":1})
+        self.assertEqual(result["status"], 403)
+        self.assertEqual(ipc.calls, [])
+
     def test_unenrolled_opaque_route_denied_before_connector_bytes(self):
         t = MemoryTarget("agentmemory", "p1", "n1", "service-one",
             "df3d4a83b966d8d415cb9180d5a4724b07f729dc", 1, "root-data-p1",

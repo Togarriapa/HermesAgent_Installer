@@ -619,9 +619,14 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 if not isinstance(export_data,dict):
                     raise ValueError("restore archive must contain a provider export object")
                 request={"exportData":export_data,"strategy":"replace"}
+            session_id = context.trace_id
+            if not isinstance(session_id, str) or not session_id or len(session_id) > 256:
+                raise BrokerDenied("signed host context has no valid session ID")
+            if cancelled():
+                return _reply({"error":"cancelled"}, 499)
             raw_result=ipc.request(context=context, authorization=authorization,
                 service_id=target.service_id, service_generation=target.service_generation,
-                provider=target.provider, route_id=route_id, session_id=context.trace_id,
+                provider=target.provider, route_id=route_id, session_id=session_id,
                 deadline_monotonic=time.monotonic()+timeout, payload=canonical(request),
                 timeout=timeout, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                 cancelled=cancelled)
