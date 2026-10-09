@@ -1136,7 +1136,8 @@
       "PR-F01"
     ],
     "PR-R0130": [
-      "PR-F01"
+      "PR-F01",
+      "PR-T02"
     ],
     "SK-R0131": [
       "SK-F01"
@@ -2312,6 +2313,11 @@
       "HI-T02",
       "HI-T09",
       "BD-F01"
+    ],
+    "PR-T02": [
+      "PR-F01",
+      "HI-T01",
+      "HI-T09"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."
