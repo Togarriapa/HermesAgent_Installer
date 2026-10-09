@@ -95,7 +95,8 @@ class StreamableHTTPTransport:
     requires_dispatch_grant = True
 
     def __init__(self, endpoint: str, *, service_id: str, credential_handle=None,
-                 timeout: float = 9.0, max_response_bytes: int = MAX_MESSAGE_BYTES,\n                 monotonic=time.monotonic) -> None:
+                 timeout: float = 9.0, max_response_bytes: int = MAX_MESSAGE_BYTES,
+                 monotonic=time.monotonic) -> None:
         _validate_endpoint(endpoint)
         parsed = urlsplit(endpoint)
         if parsed.query:
@@ -106,7 +107,8 @@ class StreamableHTTPTransport:
             raise ValueError("MCP transport bounds are invalid")
         self.endpoint, self.service_id = endpoint, service_id
         self.credential_handle = credential_handle
-        self.timeout, self.max_response_bytes = timeout, max_response_bytes\n        self.monotonic = monotonic
+        self.timeout, self.max_response_bytes = timeout, max_response_bytes
+        self.monotonic = monotonic
         self._session_id: str | None = None
         self._closed = False
         self._request_lock = asyncio.Lock()
