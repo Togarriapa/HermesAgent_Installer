@@ -4,9 +4,12 @@ from __future__ import annotations
 import asyncio
 import time
 import unittest
+from types import SimpleNamespace
 
 from hermes_installer.mcp.client import MCPClient, MCPError
 from hermes_installer.mcp.privacy import MCPPrivacyError, scrub_mcp_result
+from hermes_installer.mcp.transports import StreamableHTTPTransport
+from hermes_installer.authority import BrokeredEffectResponse, canonical_bytes, canonical_digest
 from hermes_installer.policy import DispatchAuthorization, DispatchContext, Sensitivity
 
 
@@ -45,6 +48,53 @@ def fixture_context():
         policy_revision="fixture-policy-v1", grant_id="fixture-grant",
         lease_expires_at=time.monotonic() + 30,
     )
+
+
+class BrokerAuthorityFixture:
+    def __init__(self):
+        self.contexts = []
+        self.grants = []
+        self.effects = []
+
+    def context(self, *, purpose, intent, source_contexts=(), trace_id=None, lease_seconds=30):
+        context = SimpleNamespace(intent_id=intent, monotonic_expires_at=time.monotonic() + lease_seconds)
+        self.contexts.append((purpose, intent, context))
+        return context
+
+    def authorize_effect(self, context, *, capability, target, recipient, request_digest,
+                         retry_index=0, cancelled=None):
+        grant = SimpleNamespace(
+            target=target, capability=capability, request_digest=request_digest,
+            intent_id=context.intent_id, context_digest="fixture-context-digest",
+            monotonic_expires_at=min(context.monotonic_expires_at, time.monotonic() + 5),
+        )
+        self.grants.append(grant)
+        return grant
+
+    def mcp_request(self, grant, *, target, payload, timeout, cancelled=None):
+        self.effects.append((grant, target, payload, timeout, cancelled))
+        if target != grant.target or canonical_digest(payload) != grant.request_digest:
+            raise AssertionError("broker binding mismatch")
+        request = __import__("json").loads(payload)
+        method, rid = request["method"], request.get("id")
+        if method == "notifications/initialized":
+            return BrokeredEffectResponse(202, b"", {}, "fixture-receipt")
+        if method == "initialize":
+            result = {"protocolVersion": "2025-03-26", "capabilities": {"tools": {}},
+                      "serverInfo": {"name": "fixture", "version": "1"}}
+        elif method == "tools/list":
+            result = {"tools": [{"name": "get_state", "inputSchema": {
+                "type": "object", "properties": {"entity_id": {"type": "string"}},
+                "required": ["entity_id"], "additionalProperties": False,
+            }, "annotations": {"readOnlyHint": True, "destructiveHint": False}}]}
+        elif method == "tools/call":
+            result = {"content": [{"type": "text", "text": "brokered fixture state"}], "isError": False}
+        elif method == "ping":
+            result = {}
+        else:
+            raise AssertionError(f"unexpected MCP method {method}")
+        body = canonical_bytes({"jsonrpc": "2.0", "id": rid, "result": result})
+        return BrokeredEffectResponse(200, body, {"content-type": "application/json"}, "fixture-receipt")
 
 
 class FixtureTransport:
@@ -106,6 +156,28 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
             context_authorizer=authority or FixtureAuthority(),
             timeout=timeout, result_scrubber=scrubber,
         )
+
+    async def test_host_authority_brokers_each_rpc_with_fresh_exact_grant(self):
+        authority = BrokerAuthorityFixture()
+        transport = StreamableHTTPTransport("https://example.invalid/mcp", service_id="fixture")
+        client = MCPClient(
+            transport, {"get_state"}, service_id="fixture", selection="sensor.office",
+            timeout=1.0, authority_client=authority,
+            result_scrubber=lambda result: result,
+        )
+        await client.initialize()
+        await client.discover()
+        value = await client.call_read("get_state", {"entity_id": "sensor.office"})
+        self.assertEqual(value["content"][0]["text"], "brokered fixture state")
+        self.assertEqual(len(authority.contexts), 4)  # initialize, initialized, list, selected read
+        self.assertEqual(len(authority.grants), 4)
+        self.assertEqual(len(authority.effects), 4)
+        self.assertTrue(all(target == "mcp:fixture:http" for _, target, *_ in authority.effects))
+        self.assertTrue(all(grant.request_digest == canonical_digest(payload)
+                            for grant, _, payload, *_ in authority.effects))
+        self.assertNotIn(b"example.invalid", b"".join(payload for _, _, payload, *_ in authority.effects))
+        self.assertIsNone(transport._session_id)  # no direct HTTP exchange occurred
+        await client.close()
 
     async def test_handshake_pagination_schema_scoped_read_and_health(self):
         seen = []
