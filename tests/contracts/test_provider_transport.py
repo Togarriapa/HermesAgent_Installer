@@ -58,7 +58,7 @@ class ProviderTransportTests(unittest.TestCase):
             credential="fixture-secret-r", policy_snapshot_sha256="a" * 64)
         gate = AccountEligibilityGate(model=MODEL, credential_ref="file:///secure/provider-token",
             evidence=evidence, clock=lambda: 1001, allow_test_evidence=True)
-        transport=OpenRouterTransport("file:///secure/provider-token",secret_reader=lambda ref:"fixture-secret-r",network_factory=factory,eligibility=gate)
+        transport=OpenRouterTransport("file:///secure/provider-token",secret_reader=lambda ref:"fixture-secret-r",network_factory=factory,eligibility=gate,allow_direct_fixture_transport=True)
         return transport,networks
 
     def test_absent_or_expired_account_policy_denies_before_secret_or_network(self):
@@ -148,7 +148,7 @@ class ProviderTransportTests(unittest.TestCase):
         gate = AccountEligibilityGate(model=MODEL, credential_ref=ref,
             evidence=evidence, clock=lambda: 1001, allow_test_evidence=True)
         transport = OpenRouterTransport(ref, secret_reader=secret_reader,
-            network_factory=factory, eligibility=gate)
+            network_factory=factory, eligibility=gate, allow_direct_fixture_transport=True)
         payload = b'{"messages":[{"role":"user","content":"hi"}]}'
         transport(default_public_route(), MODEL, payload, output_token_limit=8,
             timeout=2, trace_id="rotation-first")
