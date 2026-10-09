@@ -13,6 +13,7 @@ import json
 import os
 import re
 import stat
+import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, Protocol
@@ -35,6 +36,18 @@ _MAX_SOURCE_BYTES = 512 * 1024 * 1024
 
 class OmniRouteError(RuntimeError):
     """Safe unavailable or invalid pinned OmniRoute operation."""
+
+
+@dataclass(frozen=True, slots=True)
+class OmniRouteBuildResult:
+    """Structured supervisor outcome; a build result is not runtime proof."""
+
+    source_revision: str
+    source_content_sha256: str
+    package_lock_sha256: str
+    workspace: str
+    completed_stages: tuple[str, ...]
+    evidence_state: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +243,49 @@ def build_omniroute_install_invocations(
         (), ("component.omniroute.build",), "PRIVATE", "deny", 2400, 6144,
     )
     return install, build
+
+
+async def prepare_omniroute_build(
+    *, source: VerifiedComponentSource, root: OwnedRoot,
+    runtime: OmniRouteNodeRuntime, supervisor: object, workspace_id: str,
+) -> OmniRouteBuildResult:
+    """Stage and build the reviewed source through the managed supervisor.
+
+    This path never executes npm directly and does not turn a successful
+    dependency/build exit into service readiness. The caller supplies the
+    installer-owned supervisor already bound to the component runtime policy.
+    Each stage must produce structured exit evidence; the backend build is
+    skipped if offline dependency resolution fails.
+    """
+    if (not isinstance(workspace_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", workspace_id)):
+        raise OmniRouteError("OmniRoute build generation identifier is invalid")
+    invoke = getattr(supervisor, "invoke", None)
+    if not callable(invoke):
+        raise OmniRouteError("OmniRoute requires the installer-owned managed component supervisor")
+    runtime.validate()
+    reviewed = validate_omniroute_source(source)
+    workspace = stage_omniroute_build_workspace(
+        source, root, "work/omniroute-build/" + workspace_id,
+    )
+    invocations = build_omniroute_install_invocations(
+        source=reviewed, runtime=runtime, source_workspace=workspace,
+    )
+    completed: list[str] = []
+    for stage, invocation in zip(("offline-dependencies", "backend-build"), invocations, strict=True):
+        try:
+            result = await invoke(invocation)
+        except Exception:
+            raise OmniRouteError(f"OmniRoute {stage} stage failed in the managed supervisor") from None
+        if (not isinstance(result, Mapping) or type(result.get("exit_code")) is not int
+                or result["exit_code"] != 0):
+            raise OmniRouteError(f"OmniRoute {stage} stage did not return successful structured evidence")
+        completed.append(stage)
+    return OmniRouteBuildResult(
+        reviewed.revision, reviewed.source_content_sha256,
+        reviewed.package_lock_sha256, workspace, tuple(completed),
+        "managed-build-stages-complete; ARM64-dependency-and-functional-probe-pending",
+    )
 
 
 @dataclass(frozen=True, slots=True)

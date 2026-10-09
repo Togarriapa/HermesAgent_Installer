@@ -11,7 +11,7 @@ from hermes_installer.components.omniroute import (
     OMNIROUTE_SOURCE_REVISION, OMNIROUTE_VERSION, OmniRouteError,
     OmniRouteGatewayAdapter, OmniRouteNodeRuntime, OmniRoutePolicy,
     build_omniroute_install_invocations, build_omniroute_service_invocation,
-    deduplicate_omniroute_aliases, stage_omniroute_build_workspace,
+    deduplicate_omniroute_aliases, prepare_omniroute_build, stage_omniroute_build_workspace,
     validate_omniroute_source,
 )
 from hermes_installer.components.source_bundle import VerifiedComponentSource
@@ -107,6 +107,39 @@ class OmniRouteRuntimeTests(unittest.TestCase):
                 with self.assertRaises(OmniRouteError):
                     build_omniroute_install_invocations(
                         source=evidence, runtime=invalid, source_workspace="/opt/hermes/work/omniroute")
+
+
+class OmniRouteManagedBuildTests(unittest.IsolatedAsyncioTestCase):
+    async def test_build_runs_only_through_managed_supervisor_and_stops_on_failure(self):
+        class Supervisor:
+            def __init__(self, exit_codes):
+                self.exit_codes = iter(exit_codes)
+                self.invocations = []
+
+            async def invoke(self, invocation):
+                self.invocations.append(invocation)
+                return {"exit_code": next(self.exit_codes)}
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = OwnedRoot(Path(temp) / "owned")
+            supervisor = Supervisor((0, 0))
+            result = await prepare_omniroute_build(
+                source=_source(), root=root, runtime=_node(), supervisor=supervisor,
+                workspace_id="fixture-generation-1",
+            )
+            self.assertEqual([item.argv[1] for item in supervisor.invocations], ["ci", "run"])
+            self.assertEqual(result.completed_stages, ("offline-dependencies", "backend-build"))
+            self.assertIn("functional-probe-pending", result.evidence_state)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = OwnedRoot(Path(temp) / "owned")
+            supervisor = Supervisor((1, 0))
+            with self.assertRaisesRegex(OmniRouteError, "offline-dependencies"):
+                await prepare_omniroute_build(
+                    source=_source(), root=root, runtime=_node(), supervisor=supervisor,
+                    workspace_id="fixture-generation-2",
+                )
+            self.assertEqual(len(supervisor.invocations), 1)
 
     def test_route_policy_aliases_and_service_start_fail_closed(self):
         self.assertEqual(deduplicate_omniroute_aliases(("OmniRoute", "omniroute")), ("omniroute",))
