@@ -201,3 +201,10 @@ The installer SHALL use finite source-bound request/recipe/validator IDs with ro
 #### Scenario: Caller supplies scope or model launch parameters
 - **WHEN** caller attempts to replace root scope, URI, device or fixed build/inference parameters
 - **THEN** reject before backend/launch bytes and preserve exact incomplete native evidence.
+
+### Requirement: Independent device profile epoch join
+The installer SHALL compare selected device identity generation to protected expected_device_generation independently from process profile generation.
+
+#### Scenario: Device epoch changes under live profile
+- **WHEN** hotplug or replacement changes selected device identity epoch
+- **THEN** invalidate inference enrollment/active grant and require root reattestation without sibling/all-device fallback.
