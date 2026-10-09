@@ -401,6 +401,8 @@ class BrokeredEffectResponse:
     headers: Mapping[str, str]
     receipt_id: str
     source_receipt_handle: str | None = None
+    producer_context_handle: str | None = None
+    tool_call_bindings: tuple["NativeToolCallBinding", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,6 +526,38 @@ class NativeInvocationContexts:
         return result
 
 
+@dataclass(frozen=True, slots=True)
+class NativeToolCallBinding:
+    """Root-parsed provider tool call bound to one observed response body."""
+
+    observed_call_handle: str
+    provider_tool_call_id: str
+    tool_name: str
+    arguments_sha256: str
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.observed_call_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.observed_call_handle)):
+            raise AuthorityDenied("native.tool-call", "observed native tool call handle is malformed")
+        for name in ("provider_tool_call_id", "tool_name"):
+            value = getattr(self, name)
+            if (not isinstance(value, str) or not 1 <= len(value) <= 256
+                    or any(ord(char) < 0x21 or ord(char) > 0x7e for char in value)):
+                raise AuthorityDenied("native.tool-call", f"native tool call {name} is malformed")
+        if not isinstance(self.arguments_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", self.arguments_sha256):
+            raise AuthorityDenied("native.tool-call", "native tool call argument digest is malformed")
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "NativeToolCallBinding":
+        fields = {"observed_call_handle", "provider_tool_call_id", "tool_name", "arguments_sha256"}
+        if not isinstance(value, dict) or set(value) != fields:
+            raise AuthorityDenied("native.tool-call", "native tool call response fields are invalid")
+        try:
+            return cls(**value)
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.tool-call", "native tool call response is malformed") from None
+
+
 def canonical_bytes(value: bytes | Mapping[str, Any] | list[Any]) -> bytes:
     if isinstance(value, bytes):
         return value
@@ -532,3 +566,15 @@ def canonical_bytes(value: bytes | Mapping[str, Any] | list[Any]) -> bytes:
 
 def canonical_digest(value: bytes | Mapping[str, Any] | list[Any]) -> str:
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def strict_json_loads(data: str) -> Any:
+    """Decode JSON while rejecting duplicate keys at every object depth."""
+    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+    return json.loads(data, object_pairs_hook=unique_pairs)
