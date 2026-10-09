@@ -15,7 +15,11 @@ class Context:
     def __init__(self, profile="p1", namespace="n1"):
         self.profile_id = profile
         self.namespace_id = namespace
+        self.principal_id, self.uid = "principal", 1001
+        self.purpose, self.intent_id = "memory-capture", "intent"
+        self.sensitivity, self.policy_revision = "private", "policy1"
         self.lineage_hash = "a" * 64
+        self.source_receipts, self.final_payload_digest = (), None
         self.trace_id = "trace-one"
 
     def to_wire(self):
@@ -44,6 +48,7 @@ class Grant:
         self.purpose, self.intent_id = "memory-capture", "intent"
         self.trace_id, self.policy_revision = "trace-one", "policy1"
         self.lineage_hash = "a" * 64
+        self.sensitivity, self.source_receipts, self.final_payload_digest = "private", (), None
 
 
 class IPC:

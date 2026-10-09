@@ -492,7 +492,10 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     or authorization.intent_id != context.intent_id
                     or authorization.trace_id != context.trace_id
                     or authorization.policy_revision != context.policy_revision
+                    or authorization.sensitivity != context.sensitivity
                     or authorization.lineage_hash != context.lineage_hash
+                    or authorization.source_receipts != context.source_receipts
+                    or authorization.final_payload_digest != context.final_payload_digest
                     or authorization.request_digest != hashlib.sha256(payload).hexdigest()):
                 raise BrokerDenied("effect grant is not bound to this exact host context, capability, target and payload")
             if not 0 < timeout <= maximum_timeout:
