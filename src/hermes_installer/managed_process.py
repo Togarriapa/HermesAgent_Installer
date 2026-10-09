@@ -230,7 +230,7 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
         raise ManagedProcessError("working directory and journal must remain inside the owned profile root")
     info = root.lstat()
     marker = root / ".hermes-installer-owned"
-    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or marker.read_bytes() != b"schema=1\\n":
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or marker.read_bytes() != b"schema=1\n":
         raise ManagedProcessError("owned root is not private or its marker is invalid")
     if not os.access(exe, os.X_OK) or not re.fullmatch(r"[0-9a-f]{64}", spec.artifact_sha256):
         raise ManagedProcessError("executable pin is invalid")
@@ -254,7 +254,7 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
             raise ManagedProcessError("environment key or value is outside the reviewed allowlist")
         if re.search(r"(TOKEN|SECRET|PASSWORD|API_KEY|CREDENTIAL)", key, re.I):
             raise ManagedProcessError("secret-bearing environment values are not accepted")
-        if any(ch in value for ch in "\\n\\r"):
+        if any(ch in value for ch in "\n\r"):
             raise ManagedProcessError("environment values cannot contain newlines")
         if key in {"HOME", "HERMES_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "TMPDIR"} and not value.startswith("/hermes"):
             raise ManagedProcessError("writable profile paths must stay inside the isolated mount")
@@ -318,7 +318,7 @@ class ManagedProcessHandle:
     def _verify_target_environment(self) -> None:
         raw = Path(f"/proc/{self.identity.pid}/environ").read_bytes()
         observed = {}
-        for item in raw.split(b"\\x00"):
+        for item in raw.split(b"\x00"):
             if not item:
                 continue
             key, separator, value = item.partition(b"=")
@@ -497,7 +497,7 @@ class ManagedProcessHandle:
 class ManagedProcessSupervisor:
     """Starts private transient services with manager-enforced descendant custody."""
     async def start(self, spec: ManagedProcessSpec) -> ManagedProcessHandle:
-        owned, exe, cwd, data = _validate_spec(spec)
+        owned, exe, artifact, cwd, data = _validate_spec(spec)
         if not hasattr(os, "pidfd_open"):
             raise ManagedProcessError("kernel pidfd support is required")
         systemd_run = shutil.which("systemd-run", path="/usr/bin:/bin")
