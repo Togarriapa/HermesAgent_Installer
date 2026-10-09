@@ -124,7 +124,13 @@ def _publish_retained_build(*, receipt: Any, release_root: Path, receipt_path: P
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         parent_info = os.stat(receipt_path.parent, follow_symlinks=False)
-        _verify_predecessor(receipt_path, predecessor, expected_uid, parent_info)
+        try:
+            _verify_predecessor(receipt_path, predecessor, expected_uid, parent_info)
+        except BootstrapEnrollmentPending:
+            if _already_published(receipt, receipt_path, release_root, manifest_bytes,
+                                  expected_uid):
+                return
+            raise
         _ensure_release(receipt, release_root, manifest_path, manifest_bytes, rows, expected_uid)
         receipt.verify_current()
         release_info = os.stat(release_root, follow_symlinks=False)
@@ -398,6 +404,26 @@ def _verify_predecessor(path: Path, predecessor: Any, uid: int,
             or (info.st_dev, info.st_ino) != (predecessor.device, predecessor.inode)
             or not isinstance(record, dict) or record.get("candidate_git_sha") != predecessor.candidate_git_sha):
         raise BootstrapEnrollmentPending("deployment receipt changed after build authorization")
+
+
+def _already_published(receipt: Any, receipt_path: Path, release_root: Path,
+                       manifest_bytes: bytes, uid: int) -> bool:
+    """Recover the crash window after pointer replace and before handle consumption."""
+    if receipt_path != DEPLOYMENT_RECEIPT_PATH or release_root != RELEASE_STORE_ROOT / receipt.candidate_git_sha or uid != 0:
+        return False
+    try:
+        record = InstalledRootReleaseVerifier._load_deployment_receipt(receipt_path,
+                                                                       expected_uid=uid)
+        installed = InstalledRootReleaseVerifier._mint_release(record, expected_uid=uid)
+    except (BootstrapEnrollmentError, BootstrapEnrollmentPending, OSError):
+        return False
+    try:
+        return (installed.release_commit == receipt.candidate_git_sha
+                and installed.closure_manifest_relative_path == receipt.closure_manifest_relative_path
+                and installed.closure_manifest_sha256 == _sha(manifest_bytes)
+                and installed.baseline_tree_sha256 == receipt.baseline_tree_sha256)
+    finally:
+        installed.close()
 
 
 def _read_record(path: Path, uid: int) -> tuple[bytes, os.stat_result]:
