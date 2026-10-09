@@ -320,6 +320,8 @@ class LocalProviderGateway:
             raise GatewayError("Configured output token limit is outside the supported range")
         if not 0.1 <= read_timeout_seconds <= 60 or not 1 <= max_connections <= 64:
             raise GatewayError("Gateway connection bounds are outside the supported range")
+        if not callable(context_factory):
+            raise GatewayError("A host-issued context factory is required for provider dispatch")
         self.dispatcher = dispatcher
         self._token = token
         self.profile_id = profile_id
@@ -475,18 +477,13 @@ class LocalProviderGateway:
                         return
                     try:
                         trace_id = str(uuid.uuid4())
-                        context = (gateway.context_factory(
+                        context = gateway.context_factory(
                             purpose="native-hermes-chat",
                             intent=trace_id,
                             source_contexts=(),
                             trace_id=trace_id,
                             lease_seconds=30,
-                        ) if gateway.context_factory is not None else DispatchContext(
-                            profile_id=gateway.profile_id,
-                            purpose="native-hermes-chat",
-                            sensitivity=gateway.sensitivity,
-                            cancelled=lambda: cancellation.is_set() or gateway._closing.is_set(),
-                        ))
+                        )
                         result = gateway.dispatcher.dispatch(
                             context, gateway.model, raw, input_tokens=input_tokens,
                             output_token_limit=output_cap, tool_request=tool_request,
