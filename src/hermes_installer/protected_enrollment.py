@@ -417,6 +417,21 @@ class ProtectedEnrollmentCatalog:
             raise EnrollmentDenied("native package belongs to a stale service generation")
         return row
 
+    def resolve_profile_native_package(self, profile_id: str, generation: str) -> "NativePackageBinding":
+        """Resolve the single protected package selected for one current process role."""
+        selected_profile = _id(profile_id, "native package profile ID")
+        selected_generation = _id(generation, "native package process generation")
+        matches = [row for row in self._native_packages.values()
+                   if row.profile_id == selected_profile and row.generation == selected_generation]
+        if len(matches) != 1:
+            raise EnrollmentDenied("native peer has no unique current protected package role")
+        services = [record for record in self._records.values()
+                    if record.profile_id == selected_profile and record.generation == selected_generation]
+        if len(services) != 1:
+            raise EnrollmentDenied("native peer package has no unique current service generation")
+        self.resolve(services[0].enrollment_id, selected_generation)
+        return matches[0]
+
     @property
     def parameter_schemas(self) -> Mapping[str, OperationParameterSchema]:
         return self._parameter_schemas

@@ -5,7 +5,7 @@ import sys
 import time
 import unittest
 from dataclasses import dataclass
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
@@ -19,6 +19,7 @@ from hermes_installer.native_invocations import (
     install_provider_response_tool_calls,
     attach_provider_stream_capture,
     finish_provider_stream_response,
+    dispatch_native_mcp_tool_call,
 )
 
 
@@ -92,6 +93,115 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
             agent, Authority(), tool_call_id="unknown", tool_name="native_fixture", arguments={},
         ) as binding:
             self.assertIsNone(binding)
+
+    def test_native_mcp_dispatch_uses_only_lexical_binding_and_exact_schema(self):
+        import json
+        from hermes_installer.native_invocations import _CURRENT_BINDING
+
+        arguments = {"resource": "selected", "limit": 1}
+        argument_bytes = canonical_tool_arguments(arguments)
+        schema = {"name": "mcp__selected__read_selected", "description": "selected fixture tool",
+                  "parameters": {
+                      "type": "object", "properties": {
+                          "resource": {"type": "string"}, "limit": {"type": "integer", "maximum": 5},
+                      }, "required": ["resource", "limit"], "additionalProperties": False,
+                  }}
+        schema_digest = hashlib.sha256(json.dumps(
+            schema, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+        registration = SimpleNamespace(
+            id="mcp.read.selected", native_tool_name="mcp__selected__read_selected",
+            native_schema_sha256=schema_digest, native_schema=MappingProxyType({
+                "name": "mcp__selected__read_selected", "description": "selected fixture tool",
+                "parameters": MappingProxyType({
+                    "type": "object", "properties": MappingProxyType({
+                        "resource": MappingProxyType({"type": "string"}),
+                        "limit": MappingProxyType({"type": "integer", "maximum": 5}),
+                    }), "required": ("resource", "limit"), "additionalProperties": False,
+                }),
+            }),
+            native_package_id="package-a", native_package_generation="generation-a",
+            profile_id="profile-a",
+        )
+        binding = SimpleNamespace(
+            invocation_handle="i" * 40, package_id="package-a", profile_id="profile-a",
+            generation="generation-a", adapter_id="hermes-installer.native-mcp-dispatch.v1",
+            action_id="mcp.read.selected", arguments_sha256=hashlib.sha256(argument_bytes).hexdigest(),
+        )
+
+        class Authority:
+            def __init__(self): self.calls = []
+            def dispatch_native_mcp(self, *args):
+                self.calls.append(args)
+                return SimpleNamespace(status=200, body=b'{"content":[{"type":"text","text":"ok"}]}')
+
+        authority = Authority()
+        token = _CURRENT_BINDING.set(binding)
+        try:
+            result = dispatch_native_mcp_tool_call(authority, registration, arguments)
+        finally:
+            _CURRENT_BINDING.reset(token)
+        self.assertEqual(result, '{"content":[{"type":"text","text":"ok"}]}')
+        self.assertEqual(authority.calls, [("i" * 40, argument_bytes)])
+
+    def test_native_mcp_dispatch_denies_forged_scope_args_and_bad_result_before_exposure(self):
+        import json
+        from hermes_installer.native_invocations import _CURRENT_BINDING
+
+        arguments = {"resource": "selected"}
+        encoded_schema = (b'{"description":"selected fixture tool","name":"mcp__selected__read_selected",'
+                         b'"parameters":{"additionalProperties":false,"properties":{"resource":{"type":"string"}},'
+                         b'"required":["resource"],"type":"object"}}')
+        schema = json.loads(encoded_schema)
+        schema_digest = hashlib.sha256(encoded_schema).hexdigest()
+        registration = SimpleNamespace(
+            id="mcp.read.selected", native_tool_name="mcp__selected__read_selected",
+            native_schema_sha256=schema_digest, native_schema=schema,
+            native_package_id="package-a", native_package_generation="generation-a",
+            profile_id="profile-a",
+        )
+
+        class Authority:
+            def __init__(self, response): self.response, self.calls = response, []
+            def dispatch_native_mcp(self, *args): self.calls.append(args); return self.response
+
+        wrong_profile = SimpleNamespace(
+            invocation_handle="i" * 40, package_id="package-a", profile_id="profile-b",
+            generation="generation-a", adapter_id="hermes-installer.native-mcp-dispatch.v1",
+            action_id="mcp.read.selected", arguments_sha256=hashlib.sha256(
+                canonical_tool_arguments(arguments)).hexdigest(),
+        )
+        authority = Authority(SimpleNamespace(status=200, body=b"private"))
+        token = _CURRENT_BINDING.set(wrong_profile)
+        try:
+            with self.assertRaises(NativeInvocationUnavailable):
+                dispatch_native_mcp_tool_call(authority, registration, arguments)
+        finally:
+            _CURRENT_BINDING.reset(token)
+        self.assertEqual(authority.calls, [])
+
+        binding = SimpleNamespace(
+            invocation_handle="i" * 40, package_id="package-a", profile_id="profile-a",
+            generation="generation-a", adapter_id="hermes-installer.native-mcp-dispatch.v1",
+            action_id="mcp.read.selected", arguments_sha256="0" * 64,
+        )
+        token = _CURRENT_BINDING.set(binding)
+        try:
+            with self.assertRaises(NativeInvocationUnavailable):
+                dispatch_native_mcp_tool_call(authority, registration, arguments)
+        finally:
+            _CURRENT_BINDING.reset(token)
+        self.assertEqual(authority.calls, [])
+
+        binding.arguments_sha256 = hashlib.sha256(canonical_tool_arguments(arguments)).hexdigest()
+        authority = Authority(SimpleNamespace(status=403, body=b"secret backend detail"))
+        token = _CURRENT_BINDING.set(binding)
+        try:
+            with self.assertRaises(NativeInvocationUnavailable) as denied:
+                dispatch_native_mcp_tool_call(authority, registration, arguments)
+        finally:
+            _CURRENT_BINDING.reset(token)
+        self.assertNotIn("secret", str(denied.exception))
 
     def test_root_response_call_binding_is_single_use_and_action_binding_is_checked(self):
         arguments = {"record": "one"}

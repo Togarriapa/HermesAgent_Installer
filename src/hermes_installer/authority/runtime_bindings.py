@@ -6,6 +6,7 @@ not parse caller data, choose a path, or accept worker supplied factories.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -18,6 +19,49 @@ from hermes_installer.protected_enrollment import (
     ProtectedEnrollmentCatalog,
     ProtectedRootJournalCatalog,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedGatewayBoundary:
+    remote_enrollment_id: str
+    gateway_profile_id: str
+    gateway_generation: str
+    gateway_identity_digest: str
+    hostname: str
+    listener_port: int
+    policy_config_digest: str
+    policy_revision: str
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedNativeWindow:
+    remote_enrollment_id: str
+    native_profile_id: str
+    native_generation: str
+    native_uid: int
+    native_cgroup_id: str
+    allowed_executable_sha256s: tuple[str, ...]
+    display_server_profile_id: str
+    display_server_generation: str
+    display_name: str
+    xauthority_path: str
+    xauthority_device: int
+    xauthority_inode: int
+    xauthority_uid: int
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceCredentialBinding:
+    """Root-only mapping from a pinned adapter placeholder to a vault reference."""
+    backend_enrollment_id: str
+    resource_id: str
+    profile_id: str
+    profile_generation: str
+    resource_generation: str
+    observer_enrollment_id: str
+    source_placeholder: str
+    credential_reference_id: str
+    usage: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +96,281 @@ class RootRuntimeBindings:
     protected_principal_bindings: tuple[Any, ...] = ()
     root_journal_catalog: ProtectedRootJournalCatalog | None = None
     source_observer_enrollments: Mapping[str, Any] = MappingProxyType({})
+    native_mcp_tool_binding_records: tuple[Mapping[str, Any], ...] = ()
+    native_schema_artifact_records: tuple[Mapping[str, Any], ...] = ()
+    composio_channel_enrollment_records: tuple[Mapping[str, Any], ...] = ()
+    channel_delivery_binding_records: tuple[Mapping[str, Any], ...] = ()
+    resource_job_records: tuple[Mapping[str, Any], ...] = ()
+    protected_rules: Mapping[tuple[str, str, str], Any] = MappingProxyType({})
+    mcp_services: Mapping[str, Any] = MappingProxyType({})
+    remote_observation_records: tuple[Mapping[str, Any], ...] = ()
+    remote_session_records: tuple[Mapping[str, Any], ...] = ()
+    resource_credential_bindings: Mapping[tuple[str, str], ResourceCredentialBinding] = MappingProxyType({})
+    resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
+    resource_backend_records: tuple[Mapping[str, Any], ...] = ()
+
+    def resolve_composio_channel_enrollment(self, enrollment_id: str,
+                                            resource_generation: str) -> Mapping[str, Any]:
+        """Return one channel row only after active resource, issuer and controller joins."""
+        rows = [row for row in self.composio_channel_enrollment_records
+                if row.get("id") == enrollment_id and row.get("resource_generation") == resource_generation]
+        if len(rows) != 1:
+            raise EnrollmentDenied("Composio channel enrollment is absent or ambiguous")
+        row = rows[0]
+        resource = [candidate for candidate in self.resource_job_records
+                    if candidate.get("resource_id") == row.get("channel_resource_id")
+                    and candidate.get("generation") == resource_generation
+                    and candidate.get("profile_id") == row.get("profile_id")]
+        issuer = self.source_observer_enrollments.get(row.get("source_issuer_id"))
+        role = [candidate for candidate in self.resource_controller_role_records
+                if candidate.get("id") == row.get("controller_role_id")
+                and candidate.get("controller_kind") == "root-channel"
+                and row.get("source_issuer_id") in candidate.get("source_observer_enrollment_ids", ())]
+        if (len(resource) != 1 or issuer is None or len(role) != 1
+                or getattr(issuer, "profile_id", None) != row.get("profile_id")
+                or getattr(issuer, "generation", None) != getattr(self.process_profiles.get(row.get("profile_id")), "generation", None)):
+            raise EnrollmentDenied("Composio channel row does not join current protected resource/controller/observer")
+        # Account/setup receipt handles still require their own root verifier;
+        # this metadata accessor does not make discovery or labels proof.
+        return row
+
+    def resolve_channel_delivery_binding(
+        self, binding_id: str, profile_id: str, process_generation: str,
+        native_package_id: str, native_package_generation: str,
+    ) -> Mapping[str, Any]:
+        rows = [row for row in self.channel_delivery_binding_records
+                if row.get("id") == binding_id and row.get("profile_id") == profile_id
+                and row.get("process_generation") == process_generation
+                and row.get("native_package_id") == native_package_id
+                and row.get("native_package_generation") == native_package_generation]
+        if len(rows) != 1:
+            raise EnrollmentDenied("channel delivery binding is absent or ambiguous")
+        package = self.resolve_native_package(native_package_id, native_package_generation)
+        if package.profile_id != profile_id or package.generation != process_generation:
+            raise EnrollmentDenied("channel delivery package does not join the selected process generation")
+        row = rows[0]
+        for observer_id in row["source_observer_enrollment_ids"]:
+            observer = self.source_observer_enrollments.get(observer_id)
+            if (observer is None or observer.profile_id != profile_id
+                    or observer.generation != process_generation
+                    or observer.package_id != native_package_id):
+                raise EnrollmentDenied("channel delivery observer does not join the selected native package")
+        return row
+
+    def resolve_native_schema_record(
+        self, schema_id: str, native_package_id: str, native_package_generation: str,
+        adapter_id: str, action_id: str, schema_kind: str,
+    ) -> Mapping[str, Any]:
+        """Select one digest-bound schema artifact row joined to current actions.
+
+        This does not treat the opaque source receipt handle as proof and does
+        not parse bytes. The native schema catalog must verify receipt
+        membership and resolve the actual root-owned artifact before exposing
+        a schema body.
+        """
+        if schema_kind not in {"arguments", "result"}:
+            raise EnrollmentDenied("native schema kind is invalid")
+        try:
+            package = self.enrollment_catalog.resolve_native_package(
+                native_package_id, native_package_generation,
+            )
+        except Exception:
+            raise EnrollmentDenied("native schema package generation is unavailable") from None
+        adapter = package.adapter_records.get(adapter_id)
+        if adapter is None or adapter.action_id != action_id:
+            raise EnrollmentDenied("native schema does not join an active package adapter action")
+        expected_schema_id = (adapter.argument_schema_id if schema_kind == "arguments"
+                              else adapter.result_schema_id)
+        eligible = schema_id == expected_schema_id
+        if not eligible:
+            # Native MCP request/result schemas are separately selected by the
+            # protected MCP dispatch rows but still use the exact package,
+            # action and fixed dispatch adapter.
+            eligible = any(
+                row.get("id") == action_id
+                and row.get("native_package_id") == native_package_id
+                and row.get("native_package_generation") == native_package_generation
+                and adapter_id == "hermes-installer.native-mcp-dispatch.v1"
+                and row.get("handler_artifact_id") == adapter.adapter_artifact_id
+                and row.get("handler_artifact_sha256") == adapter.adapter_sha256
+                and row.get("request_schema_id" if schema_kind == "arguments" else "result_schema_id") == schema_id
+                for row in self.native_mcp_tool_binding_records
+            )
+        if not eligible:
+            raise EnrollmentDenied("native schema ID is not selected by the exact package/action")
+        matches = [row for row in self.native_schema_artifact_records
+                   if row.get("id") == schema_id
+                   and row.get("native_package_id") == native_package_id
+                   and row.get("native_package_generation") == native_package_generation
+                   and row.get("adapter_id") == adapter_id
+                   and row.get("action_id") == action_id
+                   and row.get("schema_kind") == schema_kind]
+        if len(matches) != 1:
+            raise EnrollmentDenied("native schema artifact is absent or ambiguous in the active generation")
+        return matches[0]
+
+    def _remote_observation_join(self, remote_enrollment_id: str) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+        if not isinstance(remote_enrollment_id, str) or not remote_enrollment_id:
+            raise EnrollmentDenied("remote observation enrollment ID is invalid")
+        observations = [row for row in self.remote_observation_records
+                        if row.get("remote_enrollment_id") == remote_enrollment_id]
+        sessions = [row for row in self.remote_session_records if row.get("id") == remote_enrollment_id]
+        if len(observations) != 1 or len(sessions) != 1:
+            raise EnrollmentDenied("remote observation selection is absent or ambiguous")
+        return observations[0], sessions[0]
+
+    def selected_gateway_boundary(self, remote_enrollment_id: str) -> SelectedGatewayBoundary:
+        """Select the active gateway boundary and bind it to current custody proof."""
+        observation, remote = self._remote_observation_join(remote_enrollment_id)
+        profile_id = remote["gateway_profile_id"]
+        process_profile = self.process_profiles.get(profile_id)
+        generation = getattr(process_profile, "generation", None)
+        if not isinstance(generation, str) or not generation:
+            raise EnrollmentDenied("remote gateway generation is not currently enrolled")
+        proof_resolver = getattr(self.process_manager, "inspect_enrolled_process", None)
+        proof = proof_resolver(profile_id, generation) if callable(proof_resolver) else None
+        if (process_profile is None or process_profile.generation != generation or proof is None
+                or proof.profile_id != profile_id or proof.profile_generation != generation
+                or proof.enrollment_id != process_profile.enrollment_id
+                or proof.uid != process_profile.owner_uid
+                or proof.executable_sha256 != remote["gateway_role_sha256"]):
+            raise EnrollmentDenied("selected gateway has no current matching custody role proof")
+        identity = {
+            "profile_id": proof.profile_id, "enrollment_id": proof.enrollment_id,
+            "generation": proof.profile_generation, "uid": proof.uid, "gid": proof.gid,
+            "pid": proof.pid, "starttime": proof.pid_starttime_ticks,
+            "executable_device": proof.executable_device,
+            "executable_inode": proof.executable_inode,
+            "executable_sha256": proof.executable_sha256,
+            "cgroup_id": proof.cgroup_id,
+            "mount_namespace_inode": proof.mount_namespace_inode,
+            "network_namespace_inode": proof.network_namespace_inode,
+        }
+        identity_digest = hashlib.sha256(json.dumps(
+            identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        return SelectedGatewayBoundary(
+            remote_enrollment_id=remote_enrollment_id,
+            gateway_profile_id=profile_id, gateway_generation=generation,
+            gateway_identity_digest=identity_digest,
+            hostname=remote["expected_hostname"],
+            listener_port=observation["gateway_listener_port"],
+            policy_config_digest=remote["policy_config_digest"],
+            policy_revision=remote["policy_revision"],
+        )
+
+    def selected_native_window(self, remote_enrollment_id: str) -> SelectedNativeWindow:
+        """Resolve a native window only when an actual Xauthority startup receipt exists.
+
+        The active catalog stores only the opaque receipt handle. This host build
+        does not yet contain the root-private receipt registry that can turn that
+        handle into a no-follow path/inode proof, so the window stays unavailable.
+        """
+        self._remote_observation_join(remote_enrollment_id)
+        raise EnrollmentDenied("selected native window has no installed Xauthority startup receipt resolver")
+
+    def resolve_resource_credential_binding(
+        self, backend_enrollment_id: str, source_placeholder: str, usage: str, *,
+        profile_id: str, profile_generation: str, resource_id: str,
+        resource_generation: str, observer_enrollment_id: str,
+        service_generation_digest: str,
+    ) -> ResourceCredentialBinding:
+        """Resolve one exact backend placeholder after all active runtime joins."""
+        if service_generation_digest != self.enrollment_catalog.digest:
+            raise EnrollmentDenied("resource credential binding belongs to a stale service generation")
+        binding = self.resource_credential_bindings.get((backend_enrollment_id, source_placeholder))
+        if (binding is None or binding.usage != usage or binding.profile_id != profile_id
+                or binding.profile_generation != profile_generation
+                or binding.resource_id != resource_id or binding.resource_generation != resource_generation
+                or binding.observer_enrollment_id != observer_enrollment_id):
+            raise EnrollmentDenied("resource credential placeholder does not match its current protected backend")
+        service = self.enrollment_catalog.resolve_profile_generation(profile_id, profile_generation)
+        if (service.profile_id != profile_id or service.generation != profile_generation
+                or not any(join.issuer.observer_enrollment_id == observer_enrollment_id
+                           and join.package.profile_id == profile_id
+                           and join.package.generation == profile_generation
+                           for join in self.enrollment_catalog.source_observer_joins.values())):
+            raise EnrollmentDenied("resource credential binding lacks current native source/package proof join")
+        return binding
+
+    def resolve_resource_controller_role(
+        self, controller_id: str, service_generation_digest: str,
+    ) -> Mapping[str, Any]:
+        """Resolve protected controller metadata after active observer/backend joins.
+
+        This is selection metadata only; a live root process proof remains
+        necessary before any controller effects can be registered.
+        """
+        if service_generation_digest != self.enrollment_catalog.digest:
+            raise EnrollmentDenied("resource controller role belongs to a stale service generation")
+        matches = [row for row in self.resource_controller_role_records
+                   if row.get("id") == controller_id]
+        if len(matches) != 1:
+            raise EnrollmentDenied("resource controller role is absent or ambiguous")
+        row = matches[0]
+        issuers = {issuer.observer_enrollment_id: issuer
+                   for issuer in self.enrollment_catalog.source_issuers}
+        backend_ids = {backend.get("id") for backend in self.resource_backend_records}
+        if (not row["source_observer_enrollment_ids"]
+                or any(observer_id not in issuers
+                       for observer_id in row["source_observer_enrollment_ids"])
+                or any(backend_id not in backend_ids
+                       for backend_id in row["allowed_backend_enrollment_ids"])):
+            raise EnrollmentDenied("resource controller role lacks its active observer/backend joins")
+        for artifact_id, expected_sha in (
+                (row["daemon_executable_artifact_id"], row["daemon_executable_sha256"]),
+                (row["role_module_artifact_id"], row["role_module_sha256"])):
+            artifact = self.artifact_catalog.artifacts.get(artifact_id)
+            if artifact is None or artifact.sha256 != expected_sha:
+                raise EnrollmentDenied("resource controller artifact does not match its protected catalog pin")
+        return MappingProxyType(dict(row))
+
+    def resolve_native_mcp_tool_bindings(
+        self, profile_id: str, process_generation: str, service_generation_digest: str,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Return only exact active MCP dispatch rows joined to current service/package authority."""
+        if (service_generation_digest != self.enrollment_catalog.digest
+                or not isinstance(profile_id, str) or not isinstance(process_generation, str)):
+            raise EnrollmentDenied("native MCP binding belongs to a stale service catalog")
+        try:
+            service_profile = self.enrollment_catalog.resolve_profile_generation(profile_id, process_generation)
+        except (AttributeError, EnrollmentDenied, TypeError, ValueError):
+            raise EnrollmentDenied("native MCP process generation is not currently enrolled") from None
+        if (self.process_profiles.get(profile_id) is None
+                or self.process_profiles[profile_id].generation != process_generation
+                or self.process_profiles[profile_id].enrollment_id != service_profile.enrollment_id):
+            raise EnrollmentDenied("native MCP process custody does not match active enrollment")
+        selected = tuple(row for row in self.native_mcp_tool_binding_records
+                         if row.get("profile_id") == profile_id
+                         and row.get("process_generation") == process_generation)
+        for row in selected:
+            package = self.enrollment_catalog.resolve_native_package(
+                row["native_package_id"], row["native_package_generation"],
+            )
+            if (package.profile_id != profile_id or package.generation != process_generation):
+                raise EnrollmentDenied("native MCP binding package is stale or belongs to another profile")
+            adapter = package.adapter_records.get("hermes-installer.native-mcp-dispatch.v1")
+            if (adapter is None or adapter.action_id != row["id"]
+                    or adapter.generation != row["native_package_generation"]
+                    or adapter.adapter_artifact_id != row["handler_artifact_id"]
+                    or adapter.adapter_sha256 != row["handler_artifact_sha256"]):
+                raise EnrollmentDenied("native MCP handler does not join the selected immutable package adapter")
+            mcp_service = self.mcp_services.get(row["mcp_enrollment_id"])
+            if (mcp_service is None or mcp_service.get("id") != row["mcp_enrollment_id"]
+                    or row["mcp_tool_name"] not in mcp_service.get("allowed_tools", ())
+                    or set(scope["argument_field"] for scope in row["scope_bindings"])
+                    != set(mcp_service.get("selection_arguments", {}).get(row["mcp_tool_name"], ()))):
+                raise EnrollmentDenied("native MCP selected service/tool/scope is not enrolled")
+            channel = mcp_service.get("channel")
+            expected_operation = "mcp.request" if channel == "http" else "mcp.stdio" if channel == "stdio" else None
+            expected_target = f"mcp:{row['mcp_enrollment_id']}:{channel}"
+            expected_capability = f"mcp:{row['mcp_enrollment_id']}:read"
+            rule = self.protected_rules.get((row["capability"], row["effect_operation"], row["effect_target"]))
+            if (expected_operation is None or row["effect_operation"] != expected_operation
+                    or row["effect_target"] != expected_target or row["capability"] != expected_capability
+                    or row["recipient"] is not None or rule is None):
+                raise EnrollmentDenied("native MCP effect target lacks exact selected authority rule")
+        return selected
 
     def resolve_root_journal(self, root_id: str, *,
                               expected_active_generation_digest: str) -> Any:
@@ -156,6 +475,34 @@ class RootRuntimeBindings:
             if spec is None or spec.sha256 != digest:
                 raise EnrollmentDenied("native package artifact pin is absent from protected catalog")
         return package
+
+    def resolve_native_bridge_role_artifact(self, bridge_id: str, role: str) -> tuple[str, str]:
+        """Resolve a bridge peer's role artifact from its unique protected native closure."""
+        bridge = self.native_bridges.get(bridge_id)
+        if bridge is None or role not in {"producer", "gateway"}:
+            raise EnrollmentDenied("native bridge role is absent or invalid")
+        profile_id = bridge.producer_profile_id if role == "producer" else bridge.gateway_profile_id
+        generation = bridge.producer_generation if role == "producer" else bridge.gateway_generation
+        package = self.enrollment_catalog.resolve_profile_native_package(profile_id, generation)
+        peer_profiles = {
+            bridge.producer_profile_id: bridge.producer_generation,
+            bridge.gateway_profile_id: bridge.gateway_generation,
+        }
+        for binding in bridge.observer_delivery_bindings:
+            join = self.enrollment_catalog.source_observer_joins.get(binding.observer_enrollment_id)
+            if (join is None or join.package.profile_id not in peer_profiles
+                    or join.package.generation != peer_profiles[join.package.profile_id]
+                    or join.issuer.producer_profile_id != join.package.profile_id
+                    or join.issuer.generation != join.package.generation):
+                raise EnrollmentDenied("native bridge observer role does not join a protected package")
+        # The selected peer role is the protected package entrypoint. Observer
+        # rows pin action-adapter roles separately and must not be substituted
+        # for the process role reported by the pending native pair.
+        artifact_id, artifact_sha = package.entrypoint_artifact_id, package.entrypoint_sha256
+        spec = self.artifact_catalog.artifacts.get(artifact_id)
+        if spec is None or spec.sha256 != artifact_sha:
+            raise EnrollmentDenied("native bridge role artifact is not present in the protected artifact catalog")
+        return artifact_id, artifact_sha
 
     def resolve_device(self, enrollment_id: str, generation: str) -> Any:
         return self.enrollment_catalog.resolve_device(
@@ -280,6 +627,45 @@ def _load_optional_package_sets(*, catalog: Any, signing_key: bytes,
     )
 
 
+def _derive_resource_credential_bindings(enrollment: Any) -> Mapping[tuple[str, str], ResourceCredentialBinding]:
+    """Compile exact credential placeholder references from digest-verified rows."""
+    rows = getattr(enrollment, "resource_backend_enrollment_records", None)
+    if not isinstance(rows, (list, tuple)):
+        raise EnrollmentDenied("active resource backend credential records are unavailable")
+    allowed_usage = {"webhook-hmac-verify", "channel-account", "backend-account"}
+    result: dict[tuple[str, str], ResourceCredentialBinding] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise EnrollmentDenied("active resource backend credential row is malformed")
+        refs = row.get("credential_reference_ids")
+        pairs = row.get("credential_bindings")
+        if not isinstance(refs, (list, tuple)) or not isinstance(pairs, (list, tuple)):
+            raise EnrollmentDenied("active resource backend credential row is incomplete")
+        for pair in pairs:
+            if not isinstance(pair, Mapping) or set(pair) != {
+                    "source_placeholder", "credential_reference_id", "usage"}:
+                raise EnrollmentDenied("active resource credential mapping has invalid fields")
+            placeholder = pair["source_placeholder"]
+            reference = pair["credential_reference_id"]
+            usage = pair["usage"]
+            if (not isinstance(placeholder, str) or not placeholder or len(placeholder) > 256
+                    or any(ord(char) < 0x20 for char in placeholder)
+                    or not isinstance(reference, str) or reference not in refs
+                    or usage not in allowed_usage):
+                raise EnrollmentDenied("active resource credential mapping is not allowlisted")
+            key = (row["id"], placeholder)
+            if key in result:
+                raise EnrollmentDenied("active resource credential placeholder is duplicated")
+            result[key] = ResourceCredentialBinding(
+                backend_enrollment_id=row["id"], resource_id=row["resource_id"],
+                profile_id=row["profile_id"], profile_generation=row["profile_generation"],
+                resource_generation=row["generation"],
+                observer_enrollment_id=row["observer_enrollment_id"],
+                source_placeholder=placeholder, credential_reference_id=reference, usage=usage,
+            )
+    return MappingProxyType(result)
+
+
 def build_root_runtime_bindings(
     enrollment: Any,
     *,
@@ -303,7 +689,11 @@ def build_root_runtime_bindings(
     required_attributes = (
         "service_records", "protected_devices",
         "protected_build_records", "protected_enrollment_digest",
-        "root_journal_root_records",
+        "root_journal_root_records", "native_mcp_tool_binding_records",
+        "resource_controller_role_records", "remote_observation_records",
+        "native_schema_artifact_records",
+        "composio_channel_enrollment_records", "channel_delivery_binding_records",
+        "resource_backend_enrollment_records",
     )
     if any(not hasattr(enrollment, name) for name in required_attributes):
         raise EnrollmentDenied("verified generation, device, and build records are unavailable")
@@ -508,6 +898,18 @@ def build_root_runtime_bindings(
             catalog=service_catalog, process_profiles=process_profiles,
             artifact_catalog=artifact_catalog,
         ),
+        native_mcp_tool_binding_records=tuple(enrollment.native_mcp_tool_binding_records),
+        native_schema_artifact_records=tuple(enrollment.native_schema_artifact_records),
+        composio_channel_enrollment_records=tuple(getattr(enrollment, "composio_channel_enrollment_records", ())),
+        channel_delivery_binding_records=tuple(getattr(enrollment, "channel_delivery_binding_records", ())),
+        resource_job_records=tuple(enrollment.resource_job_records),
+        protected_rules=MappingProxyType(dict(enrollment.rules)),
+        mcp_services=MappingProxyType(dict(enrollment.mcp_services)),
+        remote_observation_records=tuple(enrollment.remote_observation_records),
+        remote_session_records=tuple(enrollment.remote_session_records),
+        resource_credential_bindings=_derive_resource_credential_bindings(enrollment),
+        resource_controller_role_records=tuple(enrollment.resource_controller_role_records),
+        resource_backend_records=tuple(enrollment.resource_backend_enrollment_records),
     )
 
 

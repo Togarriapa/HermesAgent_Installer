@@ -628,3 +628,10 @@ The installer SHALL require actual custody write/EOF receipts for task completio
 #### Scenario: Forged or mismatched receipt
 - **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
 - **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+### Requirement: Source-backed memory lifecycle and whole turn
+The installer SHALL start only source-bound selected memory service recipes and derive whole-turn capture from actual completed root-observed native event closure with current consent and private routing.
+
+#### Scenario: Liveness or tool-only capture substituted
+- **WHEN** only a liveness response or one tool invocation exists
+- **THEN** semantic memory readiness or complete whole-turn capture is not asserted

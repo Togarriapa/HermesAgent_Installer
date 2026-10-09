@@ -29,10 +29,33 @@ BASELINE_TAG_OBJECT = "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8"
 BASELINE_COMMIT = "653ac5fbc7a02613c9951859a7d794599603459b"
 TEMPLATE = (
     "installer-bootstrap-compiler-template-v1",
-    "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json",
+    "templates/bootstrap-compiler-template-v1.json",
     "27854f8f8c67ce42832f020dbfd96512607e39576b27e484598ff397cb9432e5",
     4281,
 )
+PLAN_TEMPLATE = (
+    "installer-root-setup-plan-template-v1",
+    "templates/root-setup-plan-template-v1.json",
+    "9f96befca8dba54a8251df80ccbed236809e9affbf1116efed42e06a7b92ac31",
+    767,
+)
+AUTHENTIK_TEMPLATE = (
+    "installer-authentik-policy-template-v1",
+    "templates/authentik-policy-template-v1.json",
+    "617f78fc4a692de6a22dd69456fd92b874c9bc82e0869f3817910c953bd2ceb8",
+    261,
+)
+PREPARED_BASE_TEMPLATE = (
+    "installer-prepared-authority-base-template-v1",
+    "templates/prepared-authority-base-template-v1.json",
+    "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953",
+    369,
+)
+FIXED_TEMPLATES = (TEMPLATE, PLAN_TEMPLATE, AUTHENTIK_TEMPLATE, PREPARED_BASE_TEMPLATE)
+LAUNCHER_PATH = "bin/hermes-installer-root-setup"
+INTERPRETER_PATH = "runtime/bin/python"
+PLAN_PATH = "plans/root-setup-plan-v1.json"
+ARTIFACT_CATALOG_PATH = "catalog/artifacts.json"
 MAX_RECEIPT_BYTES = 64 * 1024
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_FILES = 50_000
@@ -386,8 +409,9 @@ def _verify_file_rows(root_fd: int, manifest: Mapping[str, Any], expected_uid: i
         if (not isinstance(digest, str) or not _SHA.fullmatch(digest)
                 or type(size) is not int or size < 0 or size > MAX_FILE_BYTES
                 or type(mode) is not int or mode < 0 or mode > 0o7777
-                or not isinstance(roles, list) or len(set(roles)) != len(roles)
-                or any(role not in ROLES for role in roles)):
+                or not isinstance(roles, list) or not roles
+                or any(not isinstance(role, str) or role not in ROLES for role in roles)
+                or len(set(roles)) != len(roles) or roles != sorted(roles)):
             raise InstallerReleaseError("installed release closure file metadata is malformed")
         info = _hash_release_file(root_fd, path, digest, expected_uid=expected_uid, expected_size=size)
         if stat.S_IMODE(info.st_mode) != mode:
@@ -398,6 +422,7 @@ def _verify_file_rows(root_fd: int, manifest: Mapping[str, Any], expected_uid: i
             raise InstallerReleaseError("append-only amendment lacks amendment role")
         if "amendment" in roles and not path.startswith("plans/amendments/"):
             raise InstallerReleaseError("amendment role is outside append-only amendments")
+        _validate_fixed_layout_role(path, digest, size, roles)
         artifact_id = _artifact_id_for(path, roles)
         result.append(VerifiedReleaseFile(artifact_id, tuple(roles), path, digest, size,
                                           info.st_dev, info.st_ino, mode))
@@ -414,15 +439,31 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
             raise InstallerReleaseError(f"installed release is missing required {role} closure")
     if len(by_role["launcher"]) != 1 or len(by_role["interpreter"]) != 1:
         raise InstallerReleaseError("installed release launcher/interpreter role is ambiguous")
-    if not any((r.artifact_id, r.relative_path, r.sha256, r.size_bytes) == TEMPLATE for r in by_role["template"]):
-        raise InstallerReleaseError("installed bootstrap template differs from reviewed v30 artifact")
+    expected_fixed = {
+        "launcher": ("installer-root-setup-launcher-v1", LAUNCHER_PATH),
+        "interpreter": ("installer-root-setup-interpreter-v1", INTERPRETER_PATH),
+        "plan": ("installer-root-setup-plan-v1", PLAN_PATH),
+        "artifact-catalog": ("installer-protected-artifact-catalog-v1", ARTIFACT_CATALOG_PATH),
+    }
+    for role, (artifact_id, relative_path) in expected_fixed.items():
+        role_rows = by_role[role]
+        if len(role_rows) != 1 or (role_rows[0].artifact_id, role_rows[0].relative_path) != (artifact_id, relative_path):
+            raise InstallerReleaseError(f"installed {role} role differs from the fixed v63 layout")
+    expected_templates = {artifact_id: (relative_path, digest, size)
+                          for artifact_id, relative_path, digest, size in FIXED_TEMPLATES}
+    actual_templates = {row.artifact_id: (row.relative_path, row.sha256, row.size_bytes)
+                        for row in by_role["template"]}
+    if actual_templates != expected_templates or len(by_role["template"]) != len(FIXED_TEMPLATES):
+        raise InstallerReleaseError("installed templates differ from the fixed v63 artifact layout")
+    if any("bootstrap-policy" in row.roles for row in rows):
+        raise InstallerReleaseError("generated bootstrap policy cannot be a base release role")
+    modules = [row for row in by_role["module"]]
+    if not modules or any(row.artifact_id != "installer-module:" + _module_name(row.relative_path)
+                          for row in modules):
+        raise InstallerReleaseError("installed module IDs differ from exact lib/python imports")
     plan = by_role["plan"]
     if len(plan) != 1:
         raise InstallerReleaseError("installed root setup plan is absent or ambiguous")
-    catalog = [r for r in by_role["artifact-catalog"] if r.artifact_id == "installer-protected-artifact-catalog-v1"
-               and r.relative_path == "catalog/artifacts.json"]
-    if len(catalog) != 1:
-        raise InstallerReleaseError("installed protected artifact catalog is absent")
     if any(row.relative_path == manifest_rel for row in rows):
         raise InstallerReleaseError("closure manifest cannot include itself")
     for row in by_role["launcher"] + by_role["interpreter"]:
@@ -520,17 +561,61 @@ def _artifact_id_for(path: str, roles: list[str]) -> str:
         return "installer-root-setup-launcher-v1"
     if "interpreter" in roles:
         return "installer-root-setup-interpreter-v1"
-    if "template" in roles and path == TEMPLATE[1]:
-        return TEMPLATE[0]
+    if "template" in roles:
+        for artifact_id, relative_path, _digest, _size in FIXED_TEMPLATES:
+            if path == relative_path:
+                return artifact_id
     if "plan" in roles:
         return "installer-root-setup-plan-v1"
-    if "artifact-catalog" in roles and path == "catalog/artifacts.json":
+    if "artifact-catalog" in roles and path == ARTIFACT_CATALOG_PATH:
         return "installer-protected-artifact-catalog-v1"
-    if "bootstrap-policy" in roles:
-        return "installer-bootstrap-policy-v1"
     if "module" in roles:
-        return "installer-module:" + path.removeprefix("src/").removesuffix(".py").replace("/", ".").replace(".__init__", "")
+        return "installer-module:" + _module_name(path)
     return "release-file:" + hashlib.sha256(path.encode("utf-8")).hexdigest()[:32]
+
+
+def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[str]) -> None:
+    fixed_paths = {
+        LAUNCHER_PATH: ("launcher", "installer-root-setup-launcher-v1"),
+        INTERPRETER_PATH: ("interpreter", "installer-root-setup-interpreter-v1"),
+        PLAN_PATH: ("plan", "installer-root-setup-plan-v1"),
+        ARTIFACT_CATALOG_PATH: ("artifact-catalog", "installer-protected-artifact-catalog-v1"),
+    }
+    fixed_templates = {relative_path: (artifact_id, expected_digest, expected_size)
+                       for artifact_id, relative_path, expected_digest, expected_size in FIXED_TEMPLATES}
+    expected_fixed_role = fixed_paths.get(path)
+    if expected_fixed_role is not None and roles != [expected_fixed_role[0]]:
+        raise InstallerReleaseError("fixed release artifact must carry only its exact role")
+    role_paths = {role: relative_path for relative_path, (role, _artifact_id) in fixed_paths.items()}
+    for role, expected_path in role_paths.items():
+        if role in roles and path != expected_path:
+            raise InstallerReleaseError(f"installed {role} role path differs from the fixed release layout")
+    if path in fixed_templates and roles != ["template"]:
+        raise InstallerReleaseError("fixed release template must carry only its template role")
+    if "template" in roles and roles != ["template"]:
+        raise InstallerReleaseError("template closure files must carry only the template role")
+    if path.startswith("templates/") and path not in fixed_templates:
+        raise InstallerReleaseError("release contains an unrecognized installed template path")
+    if path.startswith("lib/python/") and roles != ["module"]:
+        raise InstallerReleaseError("lib/python release files must have the exact module role")
+    if "module" in roles and not path.startswith("lib/python/"):
+        raise InstallerReleaseError("module role is outside the installed lib/python tree")
+    if path.startswith("plans/2026-10-09-v1/") and roles != ["baseline"]:
+        raise InstallerReleaseError("frozen baseline files must carry only their baseline role")
+    if "baseline" in roles and not path.startswith("plans/2026-10-09-v1/"):
+        raise InstallerReleaseError("baseline role is outside the frozen baseline tree")
+    if path.startswith("plans/amendments/") and roles != ["amendment"]:
+        raise InstallerReleaseError("append-only amendment source files must carry only their amendment role")
+    if expected_fixed_role is not None and _artifact_id_for(path, roles) != expected_fixed_role[1]:
+        raise InstallerReleaseError("fixed release artifact ID differs from its exact path role")
+    if roles == ["template"]:
+        if not any(path == item[1] and digest == item[2] and size == item[3]
+                   for item in FIXED_TEMPLATES):
+            raise InstallerReleaseError("installed template bytes differ from their exact v63 role pin")
+    if "module" in roles:
+        _module_name(path)
+    if "bootstrap-policy" in roles:
+        raise InstallerReleaseError("generated bootstrap policy is not part of the deployed base release")
 
 
 def _read_fixed_file(path: Path, maximum: int, expected_uid: int, *, required_mode: int | None = None) -> tuple[bytes, os.stat_result]:
@@ -659,12 +744,17 @@ def _verify_actor_path(path: Path, digest: str, device: int, inode: int) -> None
 
 
 def _module_name(relative: str) -> str:
-    if not relative.startswith("src/") or not relative.endswith(".py"):
-        raise InstallerReleaseError("installer module closure path is outside src Python package")
-    result = relative[4:-3].replace("/", ".")
-    if result.endswith(".__init__"):
-        result = result[:-9]
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", result):
+    prefix = "lib/python/"
+    if not relative.startswith(prefix) or not relative.endswith(".py"):
+        raise InstallerReleaseError("installer module closure path is outside the fixed lib/python tree")
+    subpath = relative[len(prefix):-3]
+    if subpath == "__init__":
+        raise InstallerReleaseError("installer module closure has a root package initializer")
+    if subpath.endswith("/__init__"):
+        subpath = subpath[:-9]
+    result = subpath.replace("/", ".")
+    if not result or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part)
+                         for part in result.split(".")):
         raise InstallerReleaseError("installer module closure name is malformed")
     return result
 
