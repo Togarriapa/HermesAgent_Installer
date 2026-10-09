@@ -9,6 +9,8 @@ serves and close them together at shutdown.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import math
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -18,6 +20,7 @@ from hermes_installer.authority.service import AuthorityService
 from hermes_installer.authority.enrollment import ProtectedEnrollment, RootCredentialVault
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.authority.types import strict_json_loads
 from hermes_installer.protected_enrollment import RootJournalSelection
 
 _AUTHORITY_JOURNAL_ROOT_ID = "installer-authority-journal-v1"
@@ -44,6 +47,133 @@ def _root_resource_job_ledger_path(bindings: RootRuntimeBindings,
             or not selection.generation or selection.device < 0 or selection.inode <= 0):
         raise AuthorityDenied("journal.unavailable", "protected authority journal selection is malformed")
     return path / _RESOURCE_JOB_LEDGER_FILENAME
+
+
+def _native_json_schema_matches(value: Any, schema: Mapping[str, Any]) -> bool:
+    """Validate one bounded JSON value against the finite pinned schema subset."""
+    if ("enum" in schema and not any(type(value) is type(item) and value == item
+                                     for item in schema["enum"])):
+        return False
+    kind = schema.get("type")
+    if kind == "object":
+        if not isinstance(value, dict):
+            return False
+        properties = schema.get("properties", {})
+        required = schema.get("required", ())
+        if (not isinstance(properties, Mapping)
+                or any(name not in value for name in required)
+                or schema.get("additionalProperties", False) is False
+                and set(value) - set(properties)):
+            return False
+        return all(name not in properties or _native_json_schema_matches(child, properties[name])
+                   for name, child in value.items())
+    if kind == "array":
+        if not isinstance(value, list):
+            return False
+        if len(value) < schema.get("minItems", 0) or len(value) > schema.get("maxItems", 2**31):
+            return False
+        item_schema = schema.get("items")
+        return isinstance(item_schema, Mapping) and all(
+            _native_json_schema_matches(child, item_schema) for child in value)
+    if kind == "string":
+        return (isinstance(value, str)
+                and len(value) >= schema.get("minLength", 0)
+                and len(value) <= schema.get("maxLength", 2**31))
+    if kind == "integer":
+        if type(value) is not int:
+            return False
+    elif kind == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        if isinstance(value, float) and not math.isfinite(value):
+            return False
+    elif kind == "boolean":
+        if type(value) is not bool:
+            return False
+    elif kind == "null":
+        if value is not None:
+            return False
+    elif kind != "string":
+        return False
+    if kind in {"integer", "number"}:
+        if "minimum" in schema and value < schema["minimum"]:
+            return False
+        if "maximum" in schema and value > schema["maximum"]:
+            return False
+    return True
+
+
+class _ProtectedNativeActionResolver:
+    """Resolve provider tool names through active native workflows and schemas."""
+
+    def __init__(self, bindings: RootRuntimeBindings, schema_catalog: Any, *,
+                 service_generation_digest: str):
+        from hermes_installer.mcp.native_schema_catalog import NativeMCPProtectedSchemaCatalog
+
+        if (not isinstance(bindings, RootRuntimeBindings)
+                or not isinstance(schema_catalog, NativeMCPProtectedSchemaCatalog)
+                or service_generation_digest != bindings.enrollment_catalog.digest):
+            raise AuthorityDenied("native.action", "active package and source-verified schema catalog are required")
+        self.bindings = bindings
+        self.schema_catalog = schema_catalog
+        self.service_generation_digest = service_generation_digest
+
+    def __call__(self, bridge: Any, live_identity: Any, tool_name: str) -> Any:
+        from .native_runtime_observer import NativeActionSelection
+
+        if (not isinstance(tool_name, str) or not tool_name
+                or getattr(bridge, "bridge_id", None) not in self.bindings.native_bridges
+                or self.bindings.native_bridges.get(bridge.bridge_id) != bridge
+                or getattr(bridge, "producer_profile_id", None) != getattr(live_identity, "profile_id", None)
+                or getattr(bridge, "producer_generation", None) != getattr(live_identity, "generation", None)
+                or self.service_generation_digest != self.bindings.enrollment_catalog.digest):
+            raise AuthorityDenied("native.action", "provider tool call is outside its active protected bridge")
+        try:
+            package = self.bindings.enrollment_catalog.resolve_profile_native_package(
+                bridge.producer_profile_id, bridge.producer_generation,
+            )
+            package = self.bindings.resolve_native_package(package.package_id, package.generation)
+        except Exception:
+            raise AuthorityDenied("native.action", "producer native package is no longer selected") from None
+        candidates: list[tuple[Any, Mapping[str, Any]]] = []
+        for adapter in package.adapter_records.values():
+            for workflow in adapter.workflow_bindings:
+                if workflow.get("external_tool_name") != tool_name:
+                    continue
+                try:
+                    schema = self.schema_catalog.resolve(
+                        workflow["external_argument_schema_id"],
+                        native_package_id=package.package_id,
+                        native_package_generation=package.generation,
+                        adapter_id=adapter.adapter_id,
+                        action_id=adapter.action_id,
+                        schema_kind="arguments",
+                    )
+                except Exception:
+                    raise AuthorityDenied(
+                        "native.action", "selected workflow argument schema is not source-verified",
+                    ) from None
+                candidates.append((adapter, schema))
+        if len(candidates) != 1:
+            raise AuthorityDenied("native.action", "provider tool name is absent or ambiguous in selected workflows")
+        adapter, schema = candidates[0]
+
+        def validate_arguments(raw: bytes) -> bool:
+            if not isinstance(raw, bytes) or not 1 <= len(raw) <= 65_536:
+                return False
+            try:
+                value = strict_json_loads(raw.decode("utf-8", errors="strict"))
+                canonical = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                       ensure_ascii=False, allow_nan=False).encode("utf-8")
+            except (TypeError, ValueError, UnicodeError, RecursionError):
+                return False
+            return canonical == raw and _native_json_schema_matches(value, schema)
+
+        return NativeActionSelection(
+            package_id=package.package_id, profile_id=package.profile_id,
+            generation=package.generation, adapter_id=adapter.adapter_id,
+            action_id=adapter.action_id, validate_arguments=validate_arguments,
+        )
 
 
 @dataclass(frozen=True, slots=True)

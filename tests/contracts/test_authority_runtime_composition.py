@@ -9,6 +9,7 @@ from hermes_installer.authority.enrollment import ProtectedEnrollment, RootCrede
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.runtime_composition import compose_root_authority_runtime
 from hermes_installer.authority.runtime_composition import _root_resource_job_ledger_path
+from hermes_installer.authority.runtime_composition import _native_json_schema_matches
 from hermes_installer.authority.service import AuthorityService, PrincipalBinding
 from hermes_installer.authority.source_observers import SourceObserverEnrollment
 from hermes_installer.authority.types import AuthorityDenied
@@ -141,6 +142,34 @@ def test_resource_job_ledger_path_comes_only_from_active_journal_selection():
     })()
     with pytest.raises(AuthorityDenied, match="selection is malformed"):
         _root_resource_job_ledger_path(stale_bindings, enrollment)
+
+
+def test_native_action_schema_validator_enforces_pinned_finite_schema_subset():
+    schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "minLength": 1, "maxLength": 12},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 4},
+            "mode": {"type": "string", "enum": ["read", "search"]},
+        },
+        "required": ["query", "limit", "mode"],
+        "additionalProperties": False,
+    }
+    assert _native_json_schema_matches(
+        {"query": "status", "limit": 2, "mode": "read"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "", "limit": 2, "mode": "read"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "status", "limit": True, "mode": "read"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "status", "limit": 2, "mode": "write"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "status", "limit": 2, "mode": "read", "extra": "value"}, schema,
+    )
 
 
 def test_runtime_closes_attached_observation_stores():
