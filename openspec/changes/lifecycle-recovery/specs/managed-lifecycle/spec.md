@@ -369,3 +369,10 @@ The installer SHALL begin native health observation from a root-retained live se
 #### Scenario: Terminal-only health presentation
 - **WHEN** only stdout or exit status exists without the required live native event closure
 - **THEN** health remains incomplete and functional acceptance is not asserted
+
+### Requirement: Non-circular first source bootstrap
+The installer SHALL verify actual selected source, isolated interpreter and current root module actor before first release publication without requiring an existing deployment pointer.
+
+#### Scenario: Raw root identity or source receipt only
+- **WHEN** a bootstrap caller supplies only UID0 or source inventory without actual interpreter/module closure proof
+- **THEN** privileged release publication remains denied
