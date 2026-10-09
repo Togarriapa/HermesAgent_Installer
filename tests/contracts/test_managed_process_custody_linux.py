@@ -411,7 +411,13 @@ def denied(path):
         return False
     except OSError:
         return True
-result={"environment_exact":dict(os.environ)==expected,
+actual_env=dict(os.environ)
+result={"environment_exact":actual_env==expected,
+        "environment_keys":sorted(actual_env),
+        "environment_unexpected_keys":sorted(set(actual_env)-set(expected)),
+        "environment_missing_keys":sorted(set(expected)-set(actual_env)),
+        "environment_mismatch_keys":sorted(key for key in set(expected)&set(actual_env)
+                                              if expected[key]!=actual_env[key]),
         "root_home_hidden":denied(home_secret),"credential_directory_hidden":denied(credential),
         "root_proc_hidden":denied('/proc/'+str(root_pid)+'/environ')}
 try:
@@ -457,7 +463,9 @@ time.sleep(30)
             except json.JSONDecodeError as exc:
                 self.fail(f"child stdout is not its bounded JSON probe; stdout={result.get('stdout')!r}; "
                           f"stderr={result.get('stderr')!r}; error={exc.msg} at {exc.pos}")
-            self.assertEqual(child_effects["environment_exact"], True)
+            self.assertEqual(child_effects["environment_exact"], True,
+                             {key: child_effects[key] for key in ("environment_keys", "environment_unexpected_keys",
+                                                                  "environment_missing_keys", "environment_mismatch_keys")})
             for key in ("root_home_hidden", "credential_directory_hidden", "root_proc_hidden",
                         "root_signal_denied", "ipv4_denied", "ipv6_denied"):
                 self.assertIs(child_effects[key], True, key)
