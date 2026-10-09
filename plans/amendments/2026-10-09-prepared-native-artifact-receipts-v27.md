@@ -1,0 +1,3 @@
+# Prepared native artifact receipts and exact Hermes home v27
+
+BD-F03/LC-F03/HI-T09/RB-T09 original native assembly requires output before active profile. Materialize under actual prepared setup receipt, resolve one-use session-bound fixed output roles/CAS receipts, then activate runnable custody. HERMES_HOME is exact selected service_parent_root/home/service_home_root_id, correcting v26 data-root convention after native/factory review. Resources bundle has independent actual pinned archive/source identity, never Hermes source provenance. Receipt binding rules explicitly reject role swaps. Original scope/acceptance pending and baseline unchanged.
