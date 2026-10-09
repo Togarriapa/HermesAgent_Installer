@@ -1,11 +1,11 @@
 """Pinned official Hermes installer stages, isolated in an installer-owned generation."""
 from __future__ import annotations
-import hashlib, json, os, signal, stat, subprocess, time, uuid, re
+import hashlib, json, os, stat, time, uuid, re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 import threading
-from .network import BoundedNetwork, NetworkError
+from .network import NetworkError
 from .state import Journal, OwnedRoot, OwnershipError
 
 HERMES_REPOSITORY = "https://github.com/NousResearch/hermes-agent.git"
@@ -73,72 +73,13 @@ def _write_private(path: Path, data: bytes, mode: int = 0o700) -> None:
         except FileNotFoundError:
             pass
 
-def _child_state(proc: subprocess.Popen) -> str:
-    """Inspect a direct child without reaping it, preserving its session ID as a safe group handle."""
-    if proc.returncode is not None:
-        return "reaped"
-    if not all(hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")):
-        return "unknown"
-    try:
-        result = os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-    except ChildProcessError:
-        return "lost"
-    except OSError:
-        return "unknown"
-    return "exited" if result is not None and result.si_pid == proc.pid else "running"
-
-
-def _owned_process_group(proc: subprocess.Popen) -> bool:
-    """Only signal the new session created for a still-unreaped Popen child."""
-    try:
-        return os.getpgid(proc.pid) == proc.pid and os.getsid(proc.pid) == proc.pid
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
-
-
-def _stop_group(proc: subprocess.Popen) -> bool:
-    """Terminate only a process group whose unreaped leader proves our custody."""
-    lock = getattr(proc, "_hermes_cleanup_lock", None)
-    if lock is None:
-        lock = threading.Lock()
-        setattr(proc, "_hermes_cleanup_lock", lock)
-    with lock:
-        state = _child_state(proc)
-        if state in {"lost", "unknown", "reaped"} or not _owned_process_group(proc):
-            return False
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return False
-        deadline = time.monotonic() + 1.0
-        while time.monotonic() < deadline:
-            state = _child_state(proc)
-            if state in {"lost", "unknown", "reaped"}:
-                return False
-            if state == "exited":
-                break
-            time.sleep(0.025)
-        # WNOWAIT leaves the session leader unreaped here. Its PID/PGID cannot
-        # be recycled while SIGKILL reaches any remaining descendants.
-        if _child_state(proc) == "lost" or not _owned_process_group(proc):
-            return False
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            return False
-        return True
-
 class HermesBootstrap:
     """Runs exact upstream script content and stage names; callers cannot inject commands."""
-    def __init__(self, data_root: OwnedRoot, state: Journal, *, network: BoundedNetwork | None = None,
+    def __init__(self, data_root: OwnedRoot, state: Journal, *, network: object | None = None,
                  runner: Callable | None = None, desktop_builder: Callable | None = None, agent_probe: Callable | None = None, expected_script_blob: str = INSTALL_SCRIPT_BLOB):
         self.data_root = data_root
         self.state = state
-        self.network = network or BoundedNetwork(deadline_seconds=20, socket_timeout=8, max_response_bytes=128 * 1024)
+        self.network = network
         self.runner = runner or self._run_process
         self.desktop_builder = desktop_builder or self._run_desktop_source_build
         self.agent_probe = agent_probe or self._verify_agent_runtime
@@ -152,6 +93,11 @@ class HermesBootstrap:
         self._upstream_log_offset: int | None = None
 
     def _script_bytes(self) -> bytes:
+        if self.network is None:
+            raise BootstrapError(
+                "Pinned host download broker is not enrolled; the installer script was not downloaded. "
+                "Resume after the broker is available."
+            )
         try:
             response = self.network.request(INSTALL_SCRIPT_URL, method="GET", headers={"Accept": "text/plain"})
         except NetworkError:
@@ -192,116 +138,10 @@ class HermesBootstrap:
         return ["--commit", HERMES_COMMIT, "--dir", str(self.install_dir), "--hermes-home", str(self.hermes_home)]
 
     def _run_process(self, args: list[str], *, timeout: float, capture: bool = False, diagnostic_path: str | None = None) -> tuple[int, bytes]:
-        bash = Path("/bin/bash").resolve(strict=True)
-        if bash != Path("/usr/bin/bash").resolve(strict=False) and not bash.is_file():
-            raise BootstrapError("Reviewed system Bash was not found")
-        cmd = [str(bash), str(self.script_path), *args]
-        upstream_log = self.hermes_home / "logs" / "install.log"
-        self._upstream_log_offset = 0
-        try:
-            if upstream_log.is_symlink() or not upstream_log.is_file():
-                raise OSError
-            self._upstream_log_offset = upstream_log.stat().st_size
-        except OSError:
-            pass
-        # Installer stages emit progress and their useful failure details on both
-        # streams. Always drain both so verbose builders cannot block on a full
-        # pipe; retain only a bounded, scrubbed tail in the owned data root.
-        proc = subprocess.Popen(cmd, cwd=self.data_root.root, env=self._environment(), stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
-                                close_fds=True, start_new_session=True, bufsize=0)
-        proc._hermes_cleanup_lock = threading.Lock()
-        assert proc.stdout is not None and proc.stderr is not None
-        output = bytearray()
-        diagnostic = bytearray()
-        diagnostic_limit = 96 * 1024
-        diagnostic_truncated = threading.Event()
-        capture_lock = threading.Lock()
-        eof = {"stdout": threading.Event(), "stderr": threading.Event()}
-
-        def scrub(text: str) -> str:
-            return redact_diagnostic(text)
-
-        def consume(stream_name: str, stream) -> None:
-            pending = bytearray()
-            try:
-                while True:
-                    block = stream.read(4096)
-                    if not block:
-                        break
-                    pending.extend(block)
-                    # Keep only one bounded line in memory. A pathological
-                    # unterminated line is replaced with a marker, never saved.
-                    if len(pending) > 16 * 1024 and b"\n" not in pending:
-                        pending.clear()
-                        line = "[oversized output line omitted]\n"
-                        self._append_captured(line, diagnostic, diagnostic_limit, capture_lock, diagnostic_truncated)
-                    while b"\n" in pending:
-                        raw, _, rest = pending.partition(b"\n")
-                        pending = bytearray(rest)
-                        line = scrub(raw.decode("utf-8", errors="replace")[:8192]) + "\n"
-                        rendered = ("[stdout] " if stream_name == "stdout" else "[stderr] ") + line
-                        self._append_captured(rendered, diagnostic, diagnostic_limit, capture_lock, diagnostic_truncated)
-                        if capture and stream_name == "stdout":
-                            with capture_lock:
-                                output.extend(line.encode("utf-8", errors="replace")[:max(0, 64 * 1024 - len(output))])
-                if pending:
-                    line = scrub(pending.decode("utf-8", errors="replace")[:8192])
-                    rendered = ("[stdout] " if stream_name == "stdout" else "[stderr] ") + line + "\n"
-                    self._append_captured(rendered, diagnostic, diagnostic_limit, capture_lock, diagnostic_truncated)
-                    if capture and stream_name == "stdout":
-                        with capture_lock:
-                            output.extend(line.encode("utf-8", errors="replace")[:max(0, 64 * 1024 - len(output))])
-            finally:
-                eof[stream_name].set()
-
-        readers = [threading.Thread(target=consume, args=("stdout", proc.stdout), daemon=True),
-                   threading.Thread(target=consume, args=("stderr", proc.stderr), daemon=True)]
-        for reader in readers:
-            reader.start()
-        deadline = time.monotonic() + timeout
-        try:
-            while True:
-                state = _child_state(proc)
-                if state == "lost":
-                    raise BootstrapError("Installer child custody was lost; refusing to signal a process group")
-                if state == "unknown":
-                    raise BootstrapError("Installer child state could not be verified safely")
-                if state == "reaped":
-                    raise BootstrapError("Installer child was reaped outside the bounded runner")
-                if state == "exited":
-                    for reader in readers:
-                        reader.join(timeout=1)
-                    if any(reader.is_alive() for reader in readers) or not all(e.is_set() for e in eof.values()):
-                        if not _stop_group(proc):
-                            raise BootstrapError("Installer child left an output descendant without verified custody") from None
-                        raise BootstrapError("Installer child left an output descendant")
-                    code = proc.wait()
-                    self._append_upstream_install_log(diagnostic, diagnostic_limit, capture_lock, diagnostic_truncated)
-                    self._persist_diagnostic(diagnostic_path or self._active_diagnostic, diagnostic, diagnostic_truncated.is_set())
-                    return code, bytes(output) if capture else b""
-                if time.monotonic() >= deadline:
-                    if not _stop_group(proc):
-                        raise BootstrapError("Installer timeout could not safely confirm process-group ownership") from None
-                    for reader in readers:
-                        reader.join(timeout=1)
-                    self._append_upstream_install_log(diagnostic, diagnostic_limit, capture_lock, diagnostic_truncated)
-                    self._persist_diagnostic(diagnostic_path or self._active_diagnostic, diagnostic, diagnostic_truncated.is_set())
-                    return 124, b""
-                time.sleep(0.025)
-        except BaseException:
-            if proc.returncode is None:
-                _stop_group(proc)
-            for reader in readers:
-                reader.join(timeout=0.1)
-            raise
-        finally:
-            # A raw unbuffered pipe read may outlive lost child custody if an
-            # unrelated writer inherited stdout. Never block interpreter shutdown
-            # waiting for a BufferedReader lock held by that daemon reader.
-            for reader, stream in zip(readers, (proc.stdout, proc.stderr)):
-                if not reader.is_alive():
-                    stream.close()
+        raise BootstrapError(
+            "Managed host process authority and the pinned download broker are not enrolled; "
+            "no installer child was started. Resume after those capabilities are available."
+        )
 
     def _append_captured(self, line: str, diagnostic: bytearray, limit: int,
                          lock: threading.Lock, truncated: threading.Event) -> None:
@@ -457,86 +297,27 @@ class HermesBootstrap:
 
 
     def _run_desktop_source_build(self, *, timeout: float) -> tuple[int, bytes]:
-        hermes = self.install_dir / ".hermes" / "bin" / "hermes"
-        if not hermes.is_file() or hermes.is_symlink():
-            raise BootstrapError("Pinned Hermes CLI entrypoint is unavailable for the source Desktop build")
-        desktop_env = self._environment()
-        desktop_env["HERMES_DESKTOP_HERMES_ROOT"] = str(self.install_dir)
-        desktop_env["HERMES_DESKTOP_USER_DATA_DIR"] = str(self.data_root.path("runtime/desktop-user-data"))
-        desktop_env["HERMES_DESKTOP_APP_NAME"] = "Hermes Installer Candidate"
-        Path(desktop_env["HERMES_DESKTOP_USER_DATA_DIR"]).mkdir(parents=True,exist_ok=True,mode=0o700)
-        proc = subprocess.Popen([str(hermes), "desktop", "--build-only", "--source"], cwd=self.install_dir,
-            env=desktop_env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, shell=False, close_fds=True, start_new_session=True)
-        try:
-            return proc.wait(timeout=timeout), b""
-        except subprocess.TimeoutExpired:
-            _stop_group(proc)
-            return 124, b""
+        raise BootstrapError("Managed host process authority is not enrolled; Desktop build was not started")
 
     def _verify_agent_runtime(self) -> bool:
-        hermes = self.install_dir / ".hermes" / "bin" / "hermes"
-        if hermes.is_symlink() or not hermes.is_file() or not os.access(hermes, os.X_OK):
-            return False
-        if self._source_head() != HERMES_COMMIT:
-            return False
-        proc = subprocess.Popen([str(hermes), "--version"], cwd=self.install_dir, env=self._environment(),
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, shell=False,
-            close_fds=True, start_new_session=True)
-        proc._hermes_cleanup_lock = threading.Lock()
-        chunks: list[bytes] = []
-        seen = 0
-        overflow = threading.Event()
-        eof = threading.Event()
-
-        def drain() -> None:
-            nonlocal seen
-            assert proc.stdout is not None
-            while True:
-                block = proc.stdout.read(1024)
-                if not block:
-                    eof.set()
-                    return
-                seen += len(block)
-                if seen <= 8192 and not overflow.is_set():
-                    chunks.append(block)
-                else:
-                    overflow.set()
-
-        reader = threading.Thread(target=drain, name="hermes-version-reader", daemon=True)
-        reader.start()
-        deadline = time.monotonic() + 20
-        try:
-            while True:
-                if overflow.is_set():
-                    _stop_group(proc)
-                    reader.join(timeout=1)
-                    return False
-                state = _child_state(proc)
-                if state in {"lost", "unknown", "reaped"}:
-                    return False
-                if state == "exited":
-                    reader.join(timeout=1)
-                    if reader.is_alive() or not eof.is_set():
-                        _stop_group(proc)
-                        reader.join(timeout=1)
-                        return False
-                    code = proc.wait()
-                    output = b"".join(chunks).strip()
-                    return code == 0 and not overflow.is_set() and bool(output)
-                if time.monotonic() >= deadline:
-                    _stop_group(proc)
-                    reader.join(timeout=1)
-                    return False
-                time.sleep(0.025)
-        finally:
-            if proc.stdout is not None:
-                proc.stdout.close()
+        # Product readiness requires the same host supervisor used for starts.
+        # A local exec probe would bypass its lease, identity and effect custody.
+        return False
 
     def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 900) -> BootstrapReport:
         if not 30 <= timeout_per_stage <= 3_600:
             raise ValueError("Stage timeout must be between 30 seconds and one hour")
-        self.prepare()
+        try:
+            self.prepare()
+        except BaseException as exc:
+            self.state.checkpoint(self.operation, "failed:download-broker", {
+                "commit": HERMES_COMMIT, "stage": "download-broker",
+                "error_type": type(exc).__name__, "resume": "hermes-installer resume",
+            })
+            self.state.event(self.operation, "download-broker", "failed", {
+                "error_type": type(exc).__name__, "resume": "hermes-installer resume",
+            })
+            raise
         self._manifest()
         previous = self.state.operation(self.operation)
         if not self._existing_source_is_resumable(previous):
@@ -620,7 +401,22 @@ class HermesBootstrap:
                 "commit": HERMES_COMMIT, "stage": "desktop-product-build", "generation": str(self.install_dir),
             })
             self.state.event(self.operation, "desktop-product-build", "started", {"diagnostic": desktop_diag})
-            code, _ = self.desktop_builder(timeout=timeout_per_stage)
+            try:
+                code, _ = self.desktop_builder(timeout=timeout_per_stage)
+            except BaseException as exc:
+                self.state.checkpoint(self.operation, "failed:desktop-product-build", {
+                    "commit": HERMES_COMMIT, "stage": "desktop-product-build",
+                    "generation": str(self.install_dir), "diagnostic": desktop_diag,
+                    "error_type": type(exc).__name__, "resume": "hermes-installer resume",
+                })
+                self.state.event(self.operation, "desktop-product-build", "runner_error", {
+                    "error_type": type(exc).__name__, "diagnostic": desktop_diag,
+                    "effects_after": self._effect_snapshot(), "resume": "hermes-installer resume",
+                })
+                raise BootstrapError(
+                    f"Hermes Desktop build could not start safely; diagnostics: {desktop_diag}; "
+                    "use hermes-installer resume"
+                ) from None
             if _:
                 self._persist_diagnostic(desktop_diag, bytearray(_), False)
             desktop_built = code == 0 and self._desktop_package_present(desktop_dir)

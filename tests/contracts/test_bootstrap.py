@@ -1,8 +1,8 @@
 from __future__ import annotations
-import hashlib, json, os, subprocess, sys, tempfile, threading, time, unittest
+import hashlib, json, os, tempfile, unittest
 from pathlib import Path
 from hermes_installer.bootstrap import (BootstrapError, EXPECTED_STAGES, HERMES_COMMIT,
-    HermesBootstrap, git_blob_sha1, _stop_group)
+    HermesBootstrap, git_blob_sha1)
 from hermes_installer.state import Journal, OwnedRoot
 
 SCRIPT=b"#!/usr/bin/env bash\necho fixture\n"
@@ -64,8 +64,7 @@ def fake_desktop(data):
     return build
 
 class BootstrapTests(unittest.TestCase):
-    @unittest.skipUnless(hasattr(os, "waitid"), "process custody probe requires Linux child inspection")
-    def test_actual_agent_version_probe_requires_pinned_head_and_successful_entrypoint(self):
+    def test_agent_runtime_is_unavailable_without_host_managed_supervisor(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=FakeRunner(),expected_script_blob=git_blob_sha1(SCRIPT))
@@ -73,8 +72,6 @@ class BootstrapTests(unittest.TestCase):
             (boot.install_dir/".git").mkdir(); (boot.install_dir/".git"/"HEAD").write_text(HERMES_COMMIT)
             bin_dir=boot.install_dir/".hermes"/"bin";bin_dir.mkdir(parents=True)
             hermes=bin_dir/"hermes";hermes.write_text("#!/bin/sh\necho Hermes 1.0\n");hermes.chmod(0o700)
-            self.assertTrue(boot._verify_agent_runtime())
-            hermes.write_text("#!/bin/sh\nexit 1\n");hermes.chmod(0o700)
             self.assertFalse(boot._verify_agent_runtime())
     def test_git_blob_identity_is_content_sensitive(self):
         self.assertEqual(git_blob_sha1(SCRIPT),hashlib.sha1(b"blob "+str(len(SCRIPT)).encode()+b"\0"+SCRIPT).hexdigest())
@@ -242,107 +239,26 @@ class BootstrapTests(unittest.TestCase):
             data=OwnedRoot(Path(td)/"data");data.ensure()
             state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=FakeRunner())
-            with self.assertRaisesRegex(BootstrapError,"object identity"): boot.prepare()
+            with self.assertRaisesRegex(BootstrapError,"download broker"): boot.prepare()
             self.assertFalse(boot.script_path.exists())
 
-    @unittest.skipUnless(hasattr(os, "waitid"), "process custody probe requires Linux child inspection")
-    def test_manifest_capture_stops_at_the_output_bound(self):
+    def test_default_bootstrap_runner_fails_closed_without_host_custody(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data"); data.ensure()
             state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
-            boot.script_path.parent.mkdir(parents=True,exist_ok=True)
-            boot.script_path.write_text("#!/usr/bin/env bash\npython3 -c 'import sys;sys.stdout.write(\"x\"*200000)'\n")
-            started=time.monotonic()
-            with self.assertRaisesRegex(BootstrapError,"output bound"):
+            with self.assertRaisesRegex(BootstrapError,"managed host process authority"):
                 boot._run_process(["--manifest"],timeout=5,capture=True)
-            self.assertLess(time.monotonic()-started,3)
 
-    @unittest.skipUnless(hasattr(os, "waitid"), "process custody probe requires Linux child inspection")
-    def test_manifest_capture_checks_overflow_after_fast_child_exit(self):
+    def test_install_records_download_broker_block_without_network_effect(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data"); data.ensure()
             state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
-            boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
-            boot.script_path.parent.mkdir(parents=True,exist_ok=True)
-            boot.script_path.write_text("#!/usr/bin/env bash\nprintf '%200000s' x\n")
-            started=time.monotonic()
-            with self.assertRaisesRegex(BootstrapError,"output bound"):
-                boot._run_process(["--manifest"],timeout=5,capture=True)
-            self.assertLess(time.monotonic()-started,3)
-
-    def test_capture_does_not_block_closing_when_reader_lacks_eof(self):
-        from unittest.mock import patch
-        entered=threading.Event()
-        release=threading.Event()
-        class BlockingStream:
-            closed=False
-            def read(self, size):
-                entered.set()
-                release.wait(3)
-                return b""
-            def close(self):
-                self.closed=True
-        class FakeProc:
-            pid=999999
-            returncode=None
-            def __init__(self):
-                self.stdout=BlockingStream()
-                self.stderr=BlockingStream()
-        proc=FakeProc()
-        with tempfile.TemporaryDirectory() as td:
-            data=OwnedRoot(Path(td)/"data"); data.ensure()
-            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
-            boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
-            boot.script_path.parent.mkdir(parents=True,exist_ok=True)
-            boot.script_path.write_text("#!/usr/bin/env bash\n")
-            started=time.monotonic()
-            with patch("hermes_installer.bootstrap.subprocess.Popen",return_value=proc), \
-                 patch("hermes_installer.bootstrap._child_state",return_value="lost"), \
-                 patch("hermes_installer.bootstrap._stop_group",return_value=False):
-                with self.assertRaisesRegex(BootstrapError,"custody was lost"):
-                    boot._run_process(["--manifest"],timeout=5,capture=True)
-            self.assertTrue(entered.is_set())
-            self.assertLess(time.monotonic()-started,1)
-            self.assertFalse(proc.stdout.closed)
-            release.set()
-
-    @unittest.skipUnless(hasattr(os, "waitid"), "process custody probe requires Linux child inspection")
-    def test_stop_group_cleans_only_its_owned_descendants(self):
-        with tempfile.TemporaryDirectory() as td:
-            pid_file=Path(td)/"child.pid"
-            child_code="import subprocess,sys,time,pathlib; p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); pathlib.Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)"
-            proc=subprocess.Popen([sys.executable,"-c",child_code,str(pid_file)],stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
-            proc._hermes_cleanup_lock=threading.Lock()
-            deadline=time.monotonic()+3
-            while not pid_file.exists() and time.monotonic()<deadline: time.sleep(0.02)
-            self.assertTrue(pid_file.exists())
-            child_pid=int(pid_file.read_text())
-            self.assertEqual(os.getpgid(child_pid),proc.pid)
-            self.assertTrue(_stop_group(proc))
-            self.assertIsNotNone(proc.returncode)
-            end=time.monotonic()+2
-            running=True
-            while running and time.monotonic()<end:
-                stat_path=Path("/proc")/str(child_pid)/"stat"
-                try:
-                    raw=stat_path.read_text()
-                    state=raw[raw.rfind(")")+2:].split()[0]
-                    running=state!="Z"
-                except OSError:
-                    running=False
-                if running: time.sleep(0.02)
-            self.assertFalse(running,"owned descendant remained executable after group cleanup")
-
-    @unittest.skipUnless(hasattr(os, "waitid"), "process custody probe requires Linux child inspection")
-    def test_lost_child_custody_never_authorizes_group_signal(self):
-        from types import SimpleNamespace
-        from unittest.mock import patch
-        proc=SimpleNamespace(pid=987654,returncode=None,_hermes_cleanup_lock=threading.Lock())
-        with patch("hermes_installer.bootstrap.os.waitid",side_effect=ChildProcessError), \
-             patch("hermes_installer.bootstrap.os.killpg") as signal_group:
-            self.assertFalse(_stop_group(proc))
-            signal_group.assert_not_called()
+            journal=Journal(state_root.path("journal.sqlite3"))
+            boot=HermesBootstrap(data,journal,expected_script_blob=git_blob_sha1(SCRIPT))
+            with self.assertRaisesRegex(BootstrapError,"download broker"):
+                boot.install(include_desktop=False)
+            self.assertEqual(journal.operation(boot.operation)["status"],"failed:download-broker")
+            self.assertFalse(boot.script_path.exists())
 
 if __name__ == "__main__": unittest.main()
