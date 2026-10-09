@@ -68,10 +68,13 @@ class ProtectedMCPService:
         if not isinstance(self.selection_arguments, Mapping):
             raise ValueError("protected MCP selection policy is invalid")
         for tool, keys in self.selection_arguments.items():
-            if (not isinstance(tool, str) or not _ID.fullmatch(tool)
+            if (not isinstance(tool, str) or tool not in self.allowed_tools
                     or not isinstance(keys, tuple) or not keys
+                    or len(set(keys)) != len(keys)
                     or any(not isinstance(key, str) or not _ID.fullmatch(key) for key in keys)):
                 raise ValueError("protected MCP selection policy is invalid")
+        if self.allowed_tools - set(self.selection_arguments):
+            raise ValueError("every protected read tool requires an exact selection schema")
 
 
 class BrokerMCPTransport(Protocol):
@@ -137,6 +140,27 @@ def _parse_envelope(payload: bytes) -> dict[str, Any]:
         raise MCPBrokerError("mcp.protocol", "MCP request is missing its request ID")
     _bounded_selection(value["selection"])
     return value
+
+
+def _protected_selection_bound(keys: tuple[str, ...], arguments: Mapping[str, Any], selection: Any) -> bool:
+    """Match exactly one resource parameter declared by the root service record."""
+    expected = selection if isinstance(selection, Mapping) else None
+    matched = 0
+    for key in keys:
+        if key not in arguments:
+            continue
+        wanted = expected.get(key) if expected is not None else selection
+        actual = arguments[key]
+        if wanted is None:
+            continue
+        if isinstance(wanted, (tuple, list, set, frozenset)):
+            valid = (isinstance(actual, (tuple, list, set, frozenset))
+                     and all(isinstance(item, str) for item in actual)
+                     and set(actual) == set(wanted))
+        else:
+            valid = actual == wanted
+        matched += int(valid)
+    return matched == 1
 
 
 class _Handler:
@@ -270,7 +294,7 @@ class _Handler:
         if (tool["annotations"].get("readOnlyHint") is not True
                 or tool["annotations"].get("destructiveHint") is True):
             raise MCPBrokerError("mcp.effect", "MCP tool is not explicitly read-only")
-        if not _selection_bound(self.service.service_id, name, arguments, selection):
+        if not _protected_selection_bound(self.service.selection_arguments[name], arguments, selection):
             raise MCPBrokerError("mcp.selection", "MCP request does not bind to its selected resource")
         _validate_value(arguments, tool["inputSchema"])
 
