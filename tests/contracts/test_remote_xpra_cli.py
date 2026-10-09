@@ -1,0 +1,89 @@
+"""Parse the generated server command with the exact upstream Xpra parser pin."""
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+from hermes_installer.remote.launcher import build_xpra_command
+from hermes_installer.remote.session import SessionSpec, XPRA_CLI_SOURCE_COMMIT
+
+
+_PARSER_PROBE = r"""
+import json, sys
+if sys.platform == "darwin":
+    # This probe exercises Linux server option parsing only; it does not start Xpra.
+    sys.platform = "linux"
+from xpra.scripts.config import InitException
+from xpra.scripts.parsing import MODE_ALIAS, parse_cmdline
+argv = ["xpra", *json.loads(sys.argv[1])]
+try:
+    options, args = parse_cmdline(argv)
+except Exception as exc:
+    raise SystemExit(f"pinned Xpra parser rejected launcher argv: {type(exc).__name__}: {exc}")
+if len(args) != 2 or MODE_ALIAS.get(args[0], args[0]) != "seamless":
+    raise SystemExit(f"unexpected Xpra server mode arguments: {args!r}")
+checks = {
+    "commands": False, "shell": False, "control": False,
+    "start_new_commands": False, "start_via_proxy": False,
+    "proxy_start_sessions": False, "dbus": "no", "dbus_control": False,
+    "file_transfer": "no", "open_files": "no", "open_url": "no",
+    "printing": "no", "clipboard": "no", "webcam": "no", "audio": False,
+    "speaker": "off", "microphone": "off", "remote_logging": "off",
+    "http_scripts": "no", "ssh_upgrade": False, "rfb_upgrade": 0,
+    "rdp_upgrade": False, "daemon": False, "systemd_run": "no",
+    "exit_with_children": True, "attach": False,
+    "html": "on", "start_child": [sys.argv[3]],
+    "bind_tcp": ["127.0.0.1:14500"],
+    "socket_dirs": [sys.argv[2]], "socket_permissions": "600",
+}
+for name, expected in checks.items():
+    actual = getattr(options, name)
+    if actual != expected:
+        raise SystemExit(f"unexpected parsed {name}: {actual!r} (wanted {expected!r})")
+"""
+
+
+@unittest.skipUnless(os.environ.get("XPRA_SOURCE_ROOT"), "pinned Xpra source is supplied by CI")
+class PinnedXpraCliTests(unittest.TestCase):
+    def test_generated_command_is_accepted_with_real_pinned_parser(self):
+        source = Path(os.environ["XPRA_SOURCE_ROOT"]).resolve(strict=True)
+        revision = subprocess.check_output(
+            ["git", "-C", str(source), "rev-parse", "HEAD"], text=True, timeout=5
+        ).strip()
+        self.assertEqual(revision, XPRA_CLI_SOURCE_COMMIT)
+
+        runtime = Path("/tmp/hermes-remote-xpra-parser")
+        spec = SessionSpec(
+            "hermes-remote", ":81", "/var/lib/hermes-remote",
+            "/opt/hermes/bin/hermes-desktop", "a" * 40,
+            frozenset({"HermesDesktop"}), uid=1000,
+            hermes_arguments=("--user-data-dir=/var/lib/hermes-remote/profile",),
+            hermes_environment={"HERMES_HOME": "/opt/hermes"},
+        )
+        command = build_xpra_command(spec, "/usr/bin/xpra", runtime)
+        # Xpra's ``start-*`` spellings are mode aliases, not Boolean options.
+        # The pinned parser must receive the canonical seamless mode and only
+        # actual option switches; a bare --control is also an invalid bool
+        # spelling (the supported value form is --control=no).
+        self.assertEqual(command[1:3], ["seamless", ":81"])
+        for unsupported in (
+            "--start-new-session", "--start-desktop", "--start-shadow",
+            "--start-proxy", "--control",
+        ):
+            self.assertNotIn(unsupported, command)
+        self.assertIn("--control=no", command)
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            value for value in (str(source), env.get("PYTHONPATH", "")) if value
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", _PARSER_PROBE, json.dumps(command[1:]), str(runtime),
+             shlex.join([spec.hermes_executable, *spec.hermes_arguments])],
+            capture_output=True, text=True, env=env, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)

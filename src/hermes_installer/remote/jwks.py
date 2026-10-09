@@ -16,7 +16,7 @@ class JWKSCache:
  clock:Callable[[],float]=time.monotonic
  _keys:dict[str,dict[str,object]]=field(default_factory=dict,repr=False)
  _expires_at:float=0
- _last_unknown_refresh:float=field(default=0,repr=False)
+ _last_unknown_refresh:float|None=field(default=None,repr=False)
  _lock:threading.RLock=field(default_factory=threading.RLock,repr=False)
  def __post_init__(self):
   u=urlsplit(self.issuer)
@@ -28,7 +28,7 @@ class JWKSCache:
    now=self.clock()
    if not force and self._keys and now<self._expires_at:return self._keys
    remaining=self.timeout_seconds
-   if deadline_monotonic is not None:remaining=min(remaining,deadline_monotonic-time.monotonic())
+   if deadline_monotonic is not None:remaining=min(remaining,deadline_monotonic-self.clock())
    if remaining<=0.1 or (cancel_event is not None and cancel_event.is_set()):raise GatewayDenied("Access signing-key read was cancelled or expired")
    network=BoundedNetwork(deadline_seconds=remaining,socket_timeout=min(remaining,4.0),max_response_bytes=MAX_JWKS_BYTES)
    try:
@@ -60,7 +60,7 @@ class JWKSCache:
     now=self.clock()
     # At most one cache-bypassing rotation check per cooldown, even under
     # attacker-controlled unknown-kid traffic.
-    if now-self._last_unknown_refresh < min(30,self.ttl_seconds):
+    if self._last_unknown_refresh is not None and now-self._last_unknown_refresh < min(30,self.ttl_seconds):
      raise GatewayDenied("Access signing key unavailable")
     self._last_unknown_refresh=now
     self.load(force=True,cancel_event=cancel_event,deadline_monotonic=deadline_monotonic);row=self._keys.get(kid)

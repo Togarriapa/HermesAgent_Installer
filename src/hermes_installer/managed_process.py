@@ -522,7 +522,7 @@ class ManagedProcessHandle:
         self._closed = False
         self._stdout_cursor = 0
         self._stderr_cursor = 0
-        self._stdin_cursor = 0
+        self._stdin_sequence = 0
         self._exit_code: int | None = None
         self._eof = {"stdout": False, "stderr": False}
         self._watchdog = asyncio.create_task(self._enforce_lifetime())
@@ -540,34 +540,15 @@ class ManagedProcessHandle:
             await self.stop("bounded lifetime expired", timeout=5.0)
 
     def _control_sync(self, operation: str, fields: Mapping[str, object], timeout: float) -> dict[str, object]:
-        payload = json.dumps({"schema": 1, "process_id": self.identity.process_id,
-                              "generation": self.generation, **fields},
-                             sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
-        context = self.authority.context(
-            purpose="managed-process-control", intent=f"{operation}:{self.identity.pid}:{self.generation}",
-            source_contexts=(self.spec.authority_context,) if self.spec.authority_context else (),
-            trace_id=self.spec.authority_context.trace_id if self.spec.authority_context else None,
-            lease_seconds=min(5.0, max(.1, timeout)),
-            final_payload_digest=canonical_digest(payload), operation=operation)
-        verb = operation.removeprefix("process.")
-        if verb not in {"status", "read", "write", "stop"}:
-            raise ManagedProcessError("process control verb is not fixed")
-        target = (f"hermes-profile-control:{self.spec.profile_id}:"
-                  f"{Path(self.spec.data_root).resolve(strict=True)}:{verb}")
-        grant = self.authority.authorize_effect(
-            context, capability="hermes-process-control", target=target,
-            request_digest=canonical_digest(payload), retry_index=0)
-        response = self.authority.process_control(
-            grant, operation=operation, target=target, payload=payload,
-            timeout=min(5.0, max(.1, timeout)))
-        if response.status != 200:
-            raise ManagedProcessError("root process control denied the operation")
-        try:
-            result = json.loads(response.body.decode("ascii"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ManagedProcessError("root process control returned a malformed receipt") from None
-        if not isinstance(result, dict) or result.get("schema") != 1:
-            raise ManagedProcessError("root process control returned an invalid receipt")
+        from .authority.process_controls import process_control_operation
+
+        response = process_control_operation(
+            self.authority, operation, self.identity.process_id,
+            self.generation, fields,
+            timeout=min(30.0, max(.1, timeout)),
+        )
+        result = dict(response.result)
+        result.setdefault("state", response.state)
         return result
 
     async def _control(self, operation: str, fields: Mapping[str, object], timeout: float = 5.0) -> dict[str, object]:
@@ -585,20 +566,20 @@ class ManagedProcessHandle:
         raise ManagedProcessError("root custodian exposes cgroup cleanup proof, not PID snapshots")
 
     async def read(self, maximum_bytes: int, timeout: float, *, stream: str = "stdout") -> bytes:
-        if not 1 <= maximum_bytes <= 65536 or not 0 <= timeout <= 30 or stream not in {"stdout", "stderr"}:
+        if not 1 <= maximum_bytes <= 1_048_576 or not 0 <= timeout <= 30 or stream not in {"stdout", "stderr"}:
             raise ValueError("read bounds or stream are invalid")
         if self._closed or time.monotonic() >= self._expires:
             raise ManagedProcessError("managed process is closed or expired")
         cursor = self._stdout_cursor if stream == "stdout" else self._stderr_cursor
-        result = await self._control("process.read", {"stream": stream, "after_cursor": cursor,
-                                                       "max_bytes": maximum_bytes}, timeout=max(1.0, timeout))
+        result = await self._control("process.read", {"stream": stream,
+                                                       "maximum_bytes": maximum_bytes}, timeout=max(1.0, timeout))
         try:
-            data = base64.b64decode(result["data"], validate=True)
-            new_cursor = int(result["cursor"])
+            raw = result["data_bytes"]
+            data = (base64.b64decode(raw, validate=True) if isinstance(raw, str)
+                    else bytes(raw))
         except Exception:
             raise ManagedProcessError("root process stream receipt is malformed") from None
-        if new_cursor != cursor + len(data):
-            raise ManagedProcessError("root process stream cursor is inconsistent")
+        new_cursor = cursor + len(data)
         if stream == "stdout":
             self._stdout_cursor = new_cursor
         else:
@@ -614,14 +595,14 @@ class ManagedProcessHandle:
         while written < len(data) and time.monotonic() < deadline:
             chunk = data[written:written + 65536]
             result = await self._control("process.write", {
-                "stdin_cursor": self._stdin_cursor,
-                "data": base64.b64encode(chunk).decode("ascii"),
+                "sequence": self._stdin_sequence,
+                "data_bytes": chunk,
             }, timeout=max(.1, min(5.0, deadline - time.monotonic())))
-            count = result.get("bytes_written")
-            cursor = result.get("stdin_cursor")
-            if type(count) is not int or not 0 <= count <= len(chunk) or cursor != self._stdin_cursor + count:
+            count = result.get("accepted_bytes")
+            sequence = result.get("sequence")
+            if type(count) is not int or not 0 <= count <= len(chunk) or sequence != self._stdin_sequence + 1:
                 raise ManagedProcessError("root stdin receipt is inconsistent")
-            self._stdin_cursor = int(cursor)
+            self._stdin_sequence = int(sequence)
             written += count
             if count == 0:
                 await asyncio.sleep(.01)
@@ -648,8 +629,15 @@ class ManagedProcessHandle:
         if asyncio.current_task() is not self._watchdog:
             self._watchdog.cancel()
         try:
-            result = await asyncio.shield(self._control("process.stop", {}, timeout=timeout))
-            if result.get("stopped") is not True or result.get("cleanup_verified") is not True:
+            lowered_reason = reason.lower()
+            stop_reason = ("rollback" if "rollback" in lowered_reason or "failed" in lowered_reason
+                           else "cancel" if "cancel" in lowered_reason or "expired" in lowered_reason
+                           else "shutdown")
+            result = await asyncio.shield(self._control("process.stop", {
+                "reason": stop_reason, "grace_seconds": max(0, min(10, int(timeout))),
+            }, timeout=timeout))
+            if (result.get("closed") is not True
+                    or result.get("reap_state") not in {"complete", "already-exited"}):
                 raise ManagedProcessError("root custodian did not prove process cleanup")
             await asyncio.to_thread(self.spec.journal.checkpoint, self.spec.journal_operation,
                                     "stopped", {"unit": self.unit, "cgroup": self.cgroup,

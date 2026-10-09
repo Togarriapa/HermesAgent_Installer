@@ -62,6 +62,19 @@ class SkillReferenceAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsafe path"):
             audit_skill_file_map({"../outside.md": b"bad"})
 
+    def test_ignores_markdown_link_examples_inside_code_but_checks_prose(self):
+        files = {
+            "skills/demo/SKILL.md": (
+                b"See `[missing](inline-example.md)` in this code sample.\n"
+                b"\n```python\nprint('[missing](fenced-example.md)')\n```\n"
+                b"\n    [missing](indented-example.md)\n"
+                b"\n[real missing](actual-missing.md)\n"
+            ),
+        }
+        audit = audit_skill_file_map(files)
+        self.assertEqual(1, len(audit.problems))
+        self.assertEqual("actual-missing.md", audit.problems[0].target)
+
     def test_reports_symlinked_helper_target(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

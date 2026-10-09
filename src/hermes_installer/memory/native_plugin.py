@@ -78,9 +78,12 @@ class HermesMemoryProvider(MemoryProvider):
                                     "limit": {"type": "integer", "minimum": 1, "maximum": 20}},
                      "required": ["query"], "additionalProperties": False}}]
 
-    def _context(self, purpose: str, intent: str) -> tuple[Any, Any]:
+    def _context(self, purpose: str, intent: str, operation: str,
+                 body: bytes) -> tuple[Any, Any]:
         client = self._client()
-        context = client.context(purpose=purpose, intent=intent, lease_seconds=30)
+        context = client.context(
+            purpose=purpose, intent=intent, operation=operation,
+            final_payload_digest=hashlib.sha256(body).hexdigest(), lease_seconds=30)
         return client, context
 
     @staticmethod
@@ -96,9 +99,10 @@ class HermesMemoryProvider(MemoryProvider):
                 purpose: str, timeout: float = 1.0) -> dict[str, Any]:
         if action not in {"doctor", "extract", "embed", "capture", "search", "export", "delete"}:
             raise ValueError("unsupported fixed memory action")
-        client, context = self._context(purpose, f"hermes-memory-{action}")
         target = f"memory:{self.name}:{action}"
         body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        client, context = self._context(
+            purpose, f"hermes-memory-{action}", f"memory.{action}", body)
         grant = client.authorize_effect(context, capability=capability, target=target, request_digest=hashlib.sha256(body).hexdigest())
         response = client.memory_request(grant, target=target,
             request_digest=hashlib.sha256(body).hexdigest(), payload=body, timeout=timeout)
@@ -108,19 +112,20 @@ class HermesMemoryProvider(MemoryProvider):
             rows = result.get("records")
             if not isinstance(rows, list):
                 raise RuntimeError("memory broker returned invalid records")
-            result["records"] = [item for item in rows if isinstance(item, dict)
-                and item.get("profile") == profile and item.get("namespace") == namespace]
+            if any(not isinstance(item, dict) or item.get("profile") != profile
+                   or item.get("namespace") != namespace for item in rows):
+                raise PermissionError("memory broker returned a record outside signed host scope")
         return result
 
     def _enqueue(self, event: dict[str, Any]) -> str:
-        client, context = self._context("memory-capture", "hermes-memory-sync-turn")
-        profile, namespace = getattr(context, "profile_id", None), getattr(context, "namespace_id", None)
-        if not isinstance(profile, str) or not profile or not isinstance(namespace, str) or not namespace:
-            raise PermissionError("host broker did not issue profile and namespace claims")
-        payload = {"schema": 1, "profile": profile, "namespace": namespace, **event}
+        # Scope comes only from the signed context at the root queue. Caller
+        # payloads never choose profile or namespace.
+        payload = {"schema": 1, **event}
         body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         if len(body) > _MAX_EVENT:
             raise ValueError("memory event exceeds bounded queue size")
+        client, context = self._context(
+            "memory-capture", "hermes-memory-sync-turn", "memory.enqueue", body)
         target = f"memory:{self.name}:enqueue"
         grant = client.authorize_effect(context, capability="memory-capture", target=target, request_digest=hashlib.sha256(body).hexdigest())
         result = client.memory_enqueue(grant, target=target,

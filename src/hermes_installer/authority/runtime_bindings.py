@@ -5,6 +5,8 @@ not parse caller data, choose a path, or accept worker supplied factories.
 """
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
@@ -14,6 +16,7 @@ from hermes_installer.protected_enrollment import (
     ProtectedBuildCatalog,
     ProtectedDeviceCatalog,
     ProtectedEnrollmentCatalog,
+    ProtectedRootJournalCatalog,
 )
 
 
@@ -43,6 +46,33 @@ class RootRuntimeBindings:
     artifact_catalog: Any
     build_store: Any
     service_connector: Any
+    native_package_resolver: Callable[[str, str], Any | None] | None = None
+    remote_session_enrollments: Mapping[str, Any] = MappingProxyType({})
+    process_profiles: Mapping[str, Any] = MappingProxyType({})
+    root_journal_catalog: ProtectedRootJournalCatalog | None = None
+    source_observer_enrollments: Mapping[str, Any] = MappingProxyType({})
+
+    def resolve_root_journal(self, root_id: str, *,
+                              expected_active_generation_digest: str) -> Any:
+        catalog = self.root_journal_catalog
+        if catalog is None:
+            raise EnrollmentDenied("protected root journal catalog is unavailable")
+        return catalog.resolve(
+            root_id, expected_active_generation_digest=expected_active_generation_digest,
+        )
+
+    def resolve_build_process_profile(self, target_id: str, generation: str) -> Any:
+        """Return the selected dedicated build ManagedProfileCustody, never a path."""
+        build, service = self.build_catalog.resolve_service(
+            target_id, generation, self.enrollment_catalog)
+        selected = self.process_profiles.get(service.profile_id)
+        if (selected is None or selected.enrollment_id != service.enrollment_id
+                or selected.generation != service.generation
+                or selected.owner_uid != build.output_owner_uid
+                or selected.owner_gid != service.service_gid
+                or selected.operation_targets.get("process.start") != target_id):
+            raise EnrollmentDenied("dedicated build process custody is unavailable or stale")
+        return selected
 
     def resolve_selected_operation(self, enrollment_id: str, generation: str,
                                    operation: str, operation_id: str) -> Any:
@@ -70,11 +100,19 @@ class RootRuntimeBindings:
 
     def resolve_native_package(self, package_id: str, generation: str) -> Any:
         package = self.enrollment_catalog.resolve_native_package(package_id, generation)
-        pins = [(package.compiled_closure_artifact_id, package.compiled_closure_sha256),
-                (package.entrypoint_artifact_id, package.entrypoint_sha256),
+        # The closure digest is over the complete native manifest file list;
+        # the protected artifact catalog separately pins the archive bytes.
+        # Do not compare those distinct digest domains.
+        closure_spec = self.artifact_catalog.artifacts.get(package.compiled_closure_artifact_id)
+        if closure_spec is None or not closure_spec.tree_files:
+            raise EnrollmentDenied("native package closure is absent from the protected artifact catalog")
+        pins = [(package.entrypoint_artifact_id, package.entrypoint_sha256),
                 (package.resolver_artifact_id, package.resolver_sha256)]
         pins.extend((adapter.adapter_artifact_id, adapter.adapter_sha256)
                     for adapter in package.adapter_records.values())
+        pins.extend((workflow["workflow_artifact_id"], workflow["workflow_sha256"])
+                    for adapter in package.adapter_records.values()
+                    for workflow in adapter.workflow_bindings)
         for artifact_id, digest in pins:
             spec = self.artifact_catalog.artifacts.get(artifact_id)
             if spec is None or spec.sha256 != digest:
@@ -86,6 +124,96 @@ class RootRuntimeBindings:
             enrollment_id, generation, self.device_catalog,
         )
 
+
+def _unique_native_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate native manifest key")
+        result[key] = value
+    return result
+
+
+def _build_native_package_resolver(*, enrollment: Any, catalog: Any,
+                                   artifact_catalog: Any, staging_root: Any,
+                                   expected_uid: int) -> Callable[[str, str], Any | None]:
+    """Resolve the unique root-selected package and materialize its pinned closure."""
+    from hermes_installer.managed_process_custodian import ManagedNativePackageMount
+
+    raw_records = getattr(enrollment, "native_package_records", ())
+    source_profiles = {
+        (row.producer_profile_id, row.generation)
+        for row in getattr(enrollment, "source_issuers", ())
+    }
+
+    def resolve(profile_id: str, generation: str) -> Any | None:
+        matches = [row for row in raw_records
+                   if row.get("profile_id") == profile_id and row.get("generation") == generation]
+        if not matches:
+            if (profile_id, generation) in source_profiles:
+                raise EnrollmentDenied("source issuer has no selected native package closure")
+            return None
+        if len(matches) != 1:
+            raise EnrollmentDenied("selected profile generation has ambiguous native packages")
+        raw = matches[0]
+        package = catalog.resolve_native_package(raw["package_id"], generation)
+        closure_spec = artifact_catalog.artifacts.get(package.compiled_closure_artifact_id)
+        if closure_spec is None or not closure_spec.tree_files:
+            raise EnrollmentDenied("native package closure artifact is not a protected tree")
+        closure = artifact_catalog.materialize_tree(
+            package.compiled_closure_artifact_id, closure_spec.sha256,
+            staging_root, expected_uid=expected_uid,
+        )
+        entrypoint = artifact_catalog.resolve(
+            package.entrypoint_artifact_id, package.entrypoint_sha256,
+            staging_root, expected_uid=expected_uid,
+        )
+        resolver_artifact = artifact_catalog.resolve(
+            package.resolver_artifact_id, package.resolver_sha256,
+            staging_root, expected_uid=expected_uid,
+        )
+        adapter_paths = {}
+        for adapter_id, adapter in package.adapter_records.items():
+            adapter_paths[adapter_id] = artifact_catalog.resolve(
+                adapter.adapter_artifact_id, adapter.adapter_sha256,
+                staging_root, expected_uid=expected_uid,
+            )
+        try:
+            manifest_bytes = entrypoint.path.read_bytes()
+            manifest = json.loads(manifest_bytes.decode("utf-8"),
+                                  object_pairs_hook=_unique_native_json_pairs)
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+            raise EnrollmentDenied("selected native package manifest is unavailable or malformed") from None
+        expected = {"schema", "package_id", "profile_id", "generation",
+                    "closure_files", "adapters", "dependencies"}
+        if (not isinstance(manifest, dict) or set(manifest) != expected
+                or type(manifest["schema"]) is not int or manifest["schema"] != 1
+                or manifest["package_id"] != package.package_id
+                or manifest["profile_id"] != profile_id
+                or manifest["generation"] != generation
+                or not isinstance(manifest["dependencies"], list)
+                or len(manifest["dependencies"]) > 256):
+            raise EnrollmentDenied("selected native package manifest does not match protected enrollment")
+        dependency_paths = {}
+        for dependency in manifest["dependencies"]:
+            if (not isinstance(dependency, dict)
+                    or set(dependency) != {"artifact_id", "sha256", "module_names"}
+                    or not isinstance(dependency["artifact_id"], str)
+                    or dependency["artifact_id"] in dependency_paths
+                    or not isinstance(dependency["sha256"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", dependency["sha256"])):
+                raise EnrollmentDenied("selected native dependency manifest is malformed")
+            dependency_paths[dependency["artifact_id"]] = artifact_catalog.resolve(
+                dependency["artifact_id"], dependency["sha256"],
+                staging_root, expected_uid=expected_uid,
+            )
+        return ManagedNativePackageMount(
+            package, profile_id, generation, closure, entrypoint,
+            resolver_artifact, MappingProxyType(adapter_paths),
+            MappingProxyType(dependency_paths),
+        )
+
+    return resolve
 
 def _load_optional_package_sets(*, catalog: Any, signing_key: bytes,
                                 key_id: str, expected_uid: int) -> Mapping[str, Any]:
@@ -137,6 +265,7 @@ def build_root_runtime_bindings(
     required_attributes = (
         "service_records", "protected_devices",
         "protected_build_records", "protected_enrollment_digest",
+        "root_journal_root_records",
     )
     if any(not hasattr(enrollment, name) for name in required_attributes):
         raise EnrollmentDenied("verified generation, device, and build records are unavailable")
@@ -152,12 +281,22 @@ def build_root_runtime_bindings(
     service_catalog = ProtectedEnrollmentCatalog.from_verified_records(
         records, protected_digest=digest, expected_uid=expected_uid,
         native_packages=getattr(enrollment, "native_package_records", None),
+        source_issuers=getattr(enrollment, "source_issuers", None),
         memory_enrollments=getattr(enrollment, "memory_enrollments", None),
         parameter_schemas=getattr(enrollment, "operation_parameter_schemas", None),
     )
     build_catalog = ProtectedBuildCatalog.from_protected_records(
         builds, service_generation_digest=digest,
     )
+    root_journal_catalog = ProtectedRootJournalCatalog.from_protected_records(
+        enrollment.root_journal_root_records, generation_digest=digest,
+    )
+    for raw in builds:
+        try:
+            build_catalog.resolve_service(raw["target_id"], raw["generation"], service_catalog)
+        except (KeyError, TypeError, ValueError, PermissionError):
+            raise EnrollmentDenied(
+                "protected build target has no exact dedicated service enrollment join") from None
     device_catalog = ProtectedDeviceCatalog.from_protected_records(devices)
 
     process_profiles = {}
@@ -212,12 +351,49 @@ def build_root_runtime_bindings(
 
     from hermes_installer.managed_process_custodian import create_managed_process_handler
     manager_options = dict(process_handler_options or {})
-    if "artifact_resolver" in manager_options:
-        raise EnrollmentDenied("artifact resolver is fixed by the verified root catalog")
+    if "artifact_resolver" in manager_options or "native_package_resolver" in manager_options:
+        raise EnrollmentDenied("artifact and native package resolvers are fixed by the verified root catalog")
     manager_options["artifact_resolver"] = lambda store_id, sha256: artifact_catalog.resolve_store_id(
         store_id, enrollment.artifact_staging_directory, expected_uid=expected_uid,
     )
+    native_package_resolver = _build_native_package_resolver(
+        enrollment=enrollment, catalog=service_catalog,
+        artifact_catalog=artifact_catalog,
+        staging_root=enrollment.artifact_staging_directory,
+        expected_uid=expected_uid,
+    )
+    manager_options["native_package_resolver"] = native_package_resolver
     process_manager = create_managed_process_handler(process_profiles, **manager_options)
+
+    remote_session_enrollments: Mapping[str, Any] = MappingProxyType({})
+    remote_records = getattr(enrollment, "remote_session_records", ())
+    if remote_records:
+        principal_bindings: dict[str, Mapping[str, str]] = {}
+        identities = enrollment.policy.enrollment.principal_identities
+        for binding in enrollment.bindings_by_uid.values():
+            identity = identities.get(binding.principal_id)
+            subject = getattr(identity, "subject_id", None)
+            if identity is None or not isinstance(subject, str) or not subject:
+                continue
+            if subject in principal_bindings:
+                raise EnrollmentDenied("remote Access subjects are duplicated in protected principals")
+            principal_bindings[subject] = MappingProxyType({
+                "principal_id": binding.principal_id,
+                "profile_id": binding.profile_id,
+                "email": identity.email.casefold(),
+            })
+        role_artifacts = {
+            artifact_id: spec.sha256
+            for artifact_id, spec in artifact_catalog.artifacts.items()
+        }
+        try:
+            from .remote_enrollment import parse_remote_session_enrollments
+            remote_session_enrollments = parse_remote_session_enrollments(
+                remote_records, principal_bindings=principal_bindings,
+                process_profiles=process_profiles, role_artifacts=role_artifacts,
+            )
+        except (ImportError, AttributeError, KeyError, TypeError, ValueError, PermissionError):
+            raise EnrollmentDenied("active remote-session records do not join the protected root catalogs") from None
 
     from hermes_installer.artifacts import build_artifact_handlers
     artifact_handlers = dict(build_artifact_handlers(
@@ -284,4 +460,75 @@ def build_root_runtime_bindings(
         artifact_catalog=artifact_catalog,
         build_store=build_store,
         service_connector=service_connector,
+        native_package_resolver=native_package_resolver,
+        remote_session_enrollments=remote_session_enrollments,
+        process_profiles=MappingProxyType(dict(process_profiles)),
+        root_journal_catalog=root_journal_catalog,
+        source_observer_enrollments=_derive_source_observer_enrollments(
+            catalog=service_catalog, process_profiles=process_profiles,
+            artifact_catalog=artifact_catalog,
+        ),
     )
+
+
+def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mapping[str, Any],
+                                        artifact_catalog: Any) -> Mapping[str, Any]:
+    """Derive immutable observer metadata from explicit issuer/package joins.
+
+    Returned rows are registration candidates only. The source registry still
+    requires live PIDFD, loaded-closure, current invocation and target-peer
+    proofs before it can issue a receipt.
+    """
+    from .source_observers import SourceObserverEnrollment
+
+    channel_kinds = {
+        "native-input": "native-input", "tool-result": "tool-result",
+        "memory-result": "memory-record", "delegated-child": "tool-result",
+        "schedule-event": "schedule-event", "webhook-event": "webhook-event",
+    }
+    def selected_kind(channel: str, adapter: Any) -> str | None:
+        if channel == "effect-result":
+            return "provider-result" if adapter.operation == "provider.dispatch" else "tool-result"
+        return channel_kinds.get(channel)
+
+    parent_kind_candidates: dict[str, set[str]] = {}
+    for selected_join in catalog.source_observer_joins.values():
+        selected_issuer = selected_join.issuer
+        selected_kind_value = selected_kind(selected_issuer.issuer_channel_id, selected_join.adapter)
+        if selected_kind_value is not None:
+            parent_kind_candidates.setdefault(selected_issuer.issuer_channel_id, set()).add(selected_kind_value)
+    result: dict[str, Any] = {}
+    for observer_id, join in catalog.source_observer_joins.items():
+        issuer, package, adapter = join.issuer, join.package, join.adapter
+        service = catalog.resolve_profile_generation(package.profile_id, package.generation)
+        artifact = artifact_catalog.artifacts.get(adapter.adapter_artifact_id)
+        if artifact is None or artifact.sha256 != adapter.adapter_sha256:
+            raise EnrollmentDenied("native source observer role is absent from protected artifact catalog")
+        source_kind = selected_kind(issuer.issuer_channel_id, adapter)
+        if source_kind is None:
+            raise EnrollmentDenied("source observer channel has no fixed source kind mapping")
+        parent_kinds = set()
+        for parent in issuer.allowed_parent_channels:
+            candidates = parent_kind_candidates.get(parent, set())
+            if len(candidates) != 1:
+                raise EnrollmentDenied("source observer parent channel has no fixed source kind mapping")
+            parent_kinds.update(candidates)
+        for action_id in issuer.source_action_ids:
+            record = {
+                "observer_enrollment_id": observer_id, "source_kind": source_kind,
+                "origin_id": observer_id, "profile_id": service.profile_id,
+                "principal_id": service.principal_id, "namespace_id": service.namespace_identity,
+                "enrollment_id": service.enrollment_id, "generation": package.generation,
+                "producer_uid": service.service_uid,
+                "producer_executable_sha256": service.executable_sha256,
+                "package_id": package.package_id, "package_sha256": package.compiled_closure_sha256,
+                "role_id": adapter.adapter_id, "role_artifact_id": adapter.adapter_artifact_id,
+                "role_sha256": adapter.adapter_sha256, "channel_id": issuer.issuer_channel_id,
+                "capture_schema_id": issuer.capture_schema_id, "source_action_id": action_id,
+                "target_id": adapter.target_id, "recipient": adapter.recipient,
+                "allowed_parent_source_kinds": sorted(parent_kinds),
+            }
+            if observer_id in result:
+                raise EnrollmentDenied("source observer enrollment expands ambiguously")
+            result[observer_id] = SourceObserverEnrollment.from_protected_record(record)
+    return MappingProxyType(result)

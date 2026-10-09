@@ -72,12 +72,13 @@ def call(handler, context, action, value, *, digest_override=None, provider="age
     grant = Grant(context.profile_id, context.namespace_id,
                   "memory:" + provider + ":" + action,
                   digest_override or hashlib.sha256(raw).hexdigest())
+    grant.trace_id = context.trace_id
     return handler(context=context, authorization=grant, payload=raw, timeout=1.0,
                    peer_pid=123, cancelled=lambda: False)
 
 
 class MemoryBrokerTests(unittest.TestCase):
-    def test_fixed_handler_resolves_distinct_service_from_host_context(self):
+    def test_legacy_raw_service_connector_is_never_called(self):
         t1, t2 = target("p1", "n1", "service-one"), target("p2", "n2", "service-two")
         ipc = IPC()
         owner = lambda profile: (None, 0)
@@ -87,17 +88,9 @@ class MemoryBrokerTests(unittest.TestCase):
         handler = handlers[("memory.doctor", "memory:agentmemory:doctor")]
         first = call(handler, Context(), "doctor", {"schema": 1})
         second = call(handler, Context("p2", "n2"), "doctor", {"schema": 1})
-        self.assertEqual(first["status"], 200)
-        self.assertEqual(second["status"], 200)
-        self.assertEqual([item["service_id"] for item in ipc.calls], ["service-one", "service-two"])
-        self.assertEqual([item["service_generation"] for item in ipc.calls], [1, 1])
-        self.assertEqual([item["route_id"] for item in ipc.calls],
-                         ["memory.agentmemory.livez.v1"] * 2)
-        self.assertEqual(ipc.calls[0]["context"].profile_id, "p1")
-        self.assertEqual(ipc.calls[0]["authorization"].target, "memory:agentmemory:doctor")
-        self.assertEqual(ipc.calls[0]["session_id"], "trace-one")
-        self.assertGreater(ipc.calls[0]["deadline_monotonic"], 0)
-        self.assertNotIn("fixed_route", ipc.calls[0])
+        self.assertEqual(first["status"], 503)
+        self.assertEqual(second["status"], 503)
+        self.assertEqual(ipc.calls, [])
 
     def test_payload_mutation_and_sibling_scope_fail_before_service_effect(self):
         t = target("p1", "n1", "service-one")
@@ -114,7 +107,7 @@ class MemoryBrokerTests(unittest.TestCase):
         self.assertEqual(denied_scope["status"], 403)
         self.assertEqual(ipc.calls, [])
 
-    def test_missing_signed_session_id_denied_before_connector_bytes(self):
+    def test_legacy_transport_unavailable_even_when_context_lacks_trace_id(self):
         t = target("p1", "n1", "service-one")
         ipc = IPC()
         handlers = build_memory_handlers(
@@ -124,7 +117,7 @@ class MemoryBrokerTests(unittest.TestCase):
         context.trace_id = None
         result = call(handlers[("memory.doctor","memory:agentmemory:doctor")],
                       context, "doctor", {"schema":1})
-        self.assertEqual(result["status"], 403)
+        self.assertEqual(result["status"], 503)
         self.assertEqual(ipc.calls, [])
 
     def test_unenrolled_opaque_route_denied_before_connector_bytes(self):
@@ -236,7 +229,21 @@ class MemoryBrokerTests(unittest.TestCase):
             self.assertFalse(runtime["consent_active"]("runtime-consent"))
             self.assertEqual(runtime["queue"].result(context,receipt)["status"],"failed")
 
-    def test_pinned_provider_routes_and_payloads_match_upstream_contracts(self):
+    def test_root_runtime_rejects_legacy_raw_connector_factory(self):
+        t = target("p1", "n1", "service-one")
+        class Authority:
+            def create_background_consent(self, **_):
+                return {"consent_id": "consent", "signature": "signed"}
+            def perform_memory_effect(self, **_):
+                raise AssertionError("runtime must not start a worker")
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "raw memory HTTP connector factories"):
+                build_memory_runtime(
+                    {("p1", "n1", "agentmemory"): t}, Authority(),
+                    root_data_dir=Path(directory) / "runtime",
+                    connector_factory=lambda **_: IPC())
+
+    def test_pinned_route_catalog_is_distinct_from_unavailable_raw_transport(self):
         # Fixed routes were checked against each provider's exact enrolled source.
         self.assertEqual(ROUTE_IDS["agentmemory"]["doctor"], "memory.agentmemory.livez.v1")
         self.assertEqual(ROUTE_IDS["agentmemory"]["delete"], "memory.agentmemory.forget.v1")
@@ -254,14 +261,8 @@ class MemoryBrokerTests(unittest.TestCase):
             Context(), "capture", {"schema": 1, "record_id": "synthetic-id",
                 "source": "hermes-session:synthetic", "facts": ["synthetic fact"],
                 "embeddings": [[0.1, 0.2]], "provenance": ["a" * 64]}, provider="claude-mem")
-        self.assertEqual(response["status"], 200)
-        self.assertEqual(ipc.calls[0]["route_id"], "memory.claude-mem.create.v1")
-        self.assertNotIn("fixed_route", ipc.calls[0])
-        body = json.loads(ipc.calls[0]["payload"])
-        self.assertEqual(body["projectId"], "n1")
-        self.assertEqual(body["kind"], "manual")
-        self.assertEqual(body["facts"], ["synthetic fact"])
-        self.assertEqual(body["metadata"]["hermes_lineage"], "a" * 64)
+        self.assertEqual(response["status"], 503)
+        self.assertEqual(ipc.calls, [])
 
     def test_owner_change_revokes_enqueue_before_journaling(self):
         t = target("p1", "n1", "service-one")

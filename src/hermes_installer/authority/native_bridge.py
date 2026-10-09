@@ -69,100 +69,11 @@ class NativeBridgeBroker:
 
     def prepare(self, *, uid: int, peer_pid: int, peer_pidfd: int,
                 payload: Any, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
-        request = self._decode_request(payload, "prepare")
-        binding = self.service._binding(uid)
-        matches = [bridge for bridge in self.bridges.values()
-                   if bridge.producer_profile_id == binding.profile_id
-                   and bridge.producer_uid == uid
-                   and bridge.producer_generation == self.service.profile_generations.get(binding.profile_id)]
-        if len(matches) != 1:
-            raise AuthorityDenied("native.issuer", "native producer has no unique protected bridge enrollment")
-        bridge = matches[0]
-        observed = self._resolve_peer(peer_pid, peer_pidfd, bridge.producer_profile_id,
-                                      bridge.producer_generation, bridge.producer_uid,
-                                      bridge.producer_executable_sha256)
-        if cancelled():
-            raise AuthorityDenied("native.cancelled", "native producer disconnected before capture")
-        raw = self._decode_b64(request["payload"], MAX_EVENT_BYTES)
-        parents = request["parent_receipt_handles"]
-        if (not isinstance(parents, list) or len(parents) > 64
-                or any(not isinstance(item, str) or not item for item in parents)):
-            raise AuthorityDenied("native.lineage", "native parent receipt handles are malformed")
-        retry = request["retry_index"]
-        if type(retry) is not int or not 0 <= retry <= 100:
-            raise AuthorityDenied("native.retry", "native retry index is invalid")
-        # Purpose and intent are fixed by the protected native provider bridge;
-        # worker labels must never choose policy/classification inputs. Trace
-        # metadata is also root-generated so it cannot be mistaken for issuer
-        # identity or event provenance.
-        if (not self._text(request["purpose"], 128)
-                or request["purpose"] != "native-hermes-chat"
-                or not self._text(request["intent_id"], 512)
-                or not self._text(request["trace_id"], 128)):
-            raise AuthorityDenied("native.request", "native event purpose or correlation metadata is invalid")
-        purpose = "native-hermes-chat"
-        intent = canonical_digest({"native_payload": canonical_digest(raw), "retry_index": retry})
-        trace = secrets.token_urlsafe(24)
-
-        # Resolve and consume parent handles once. Parent receipt claims remain
-        # immutable ancestry; they do not grant repeat effects.
-        parent_receipts = self._take_parent_closure(parents, uid, peer_pid)
-        parent_context = self.service._issue_context(uid, {
-            "purpose": purpose, "intent": intent, "trace_id": trace,
-            "lease_seconds": HANDLE_TTL, "source_contexts": [],
-            "source_receipts": [receipt.to_wire() for receipt in parent_receipts],
-            "final_payload_digest": canonical_digest(raw),
-            "operation": "native.event.prepare",
-        }, inherited_process_identity=self.service._native_process_identity(peer_pid, uid))
-        parent_context = HostContext.from_wire(parent_context)
-        event_receipt = self.service.issue_source_receipt(
-            parent_context, source_kind="native-input",
-            origin_id=f"native-sdk-request:{secrets.token_urlsafe(18)}",
-            payload=raw, ttl_seconds=int(HANDLE_TTL))
-        closure = {receipt.receipt_id: receipt for receipt in (*parent_receipts, event_receipt)}
-        if any(not set(receipt.parent_receipt_ids).issubset(closure) for receipt in closure.values()):
-            raise AuthorityDenied("native.lineage", "native source receipt closure is incomplete")
-
-        normalization_policy = {
-            "id": bridge.normalization_policy_id,
-            "revision": bridge.normalization_policy_revision,
-            "route_schema_id": bridge.route_schema_id,
-            "output_limit_mode": bridge.output_limit_mode,
-            "output_limit_ceiling": bridge.output_limit_ceiling,
-            "canonicalizer_artifact_id": bridge.canonicalizer_artifact_id,
-            "canonicalizer_sha256": bridge.canonicalizer_sha256,
-            "normalization_policy_sha256": bridge.normalization_policy_sha256,
-        }
-        normalized, target, recipient, capability, _model = self.canonicalizer(
-            self.root_selected_enrollments[bridge.bridge_id], raw,
-            normalization_policy=normalization_policy)
-        if (not isinstance(normalized, bytes) or not 1 <= len(normalized) <= MAX_NORMALIZED_BYTES
-                or target != bridge.target or recipient != bridge.recipient
-                or capability not in {"provider-inference", "provider-tool-call"}
-                or bridge.approved_operation != "provider.dispatch"):
-            raise AuthorityDenied("native.canonicalizer", "canonical provider request differs from protected enrollment")
-        context_wire = self.service._issue_context(uid, {
-            "purpose": purpose, "intent": intent, "trace_id": trace,
-            "lease_seconds": HANDLE_TTL, "source_contexts": [],
-            "source_receipts": [item.to_wire() for item in closure.values()],
-            "final_payload_digest": canonical_digest(normalized),
-            "operation": "provider.dispatch",
-        }, inherited_process_identity=self.service._native_process_identity(peer_pid, uid))
-        context = HostContext.from_wire(context_wire)
-        handle = secrets.token_urlsafe(32)
-        expires = min(context.monotonic_expires_at, self.service.monotonic() + HANDLE_TTL)
-        pinned_fd = __import__("os").dup(peer_pidfd)
-        pending = _PendingEvent(bridge.bridge_id, handle, context, normalized,
-                                retry, expires, peer_pid, pinned_fd, observed, capability,
-                                event_receipt.receipt_id)
-        with self._lock:
-            now = self.service.monotonic()
-            self._prune(now)
-            if len(self._pending) >= 4096:
-                __import__("os").close(pinned_fd)
-                raise AuthorityDenied("native.capacity", "native bridge admission is at capacity")
-            self._pending[handle] = pending
-        return {"native_event_handle": handle, "expires_monotonic": expires}
+        """Reject worker capture until an actual root-observed event exists."""
+        raise AuthorityDenied(
+            "native.observer_unavailable",
+            "native request capture requires an active root source observer",
+        )
 
     def dispatch(self, *, uid: int, peer_pid: int, peer_pidfd: int,
                  payload: Any, cancelled: Callable[[], bool]) -> Mapping[str, Any]:

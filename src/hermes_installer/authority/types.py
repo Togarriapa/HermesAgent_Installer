@@ -51,6 +51,7 @@ _AUTHORITY_OPERATIONS = frozenset({
     "process.inspect", "connector.open", "connector.read", "connector.write",
     "connector.close", "native.event.prepare", "native.request.dispatch",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.webhook.run", "resource.channel.run", "resource.bundle.node.run",
     "resource.job.admit", "resource.job.child.admit",
     "resource.orchestrator.recruit",
 })
@@ -399,6 +400,9 @@ class BrokeredEffectResponse:
     body: bytes
     headers: Mapping[str, str]
     receipt_id: str
+    source_receipt_handle: str | None = None
+    producer_context_handle: str | None = None
+    tool_call_bindings: tuple["NativeToolCallBinding", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,6 +421,185 @@ class NativeEventHandle:
             raise AuthorityDenied("native.handle", "native event expiry is invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class NativeInvocationBinding:
+    """Root-registered, one-use binding for an observed native tool call."""
+
+    invocation_handle: str
+    package_id: str
+    profile_id: str
+    generation: str
+    adapter_id: str
+    action_id: str
+    arguments_sha256: str
+    parent_closure_digest: str
+    expires_monotonic: float
+    binding_sha256: str
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.invocation_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.invocation_handle)):
+            raise AuthorityDenied("native.invocation", "native invocation handle is malformed")
+        for name in ("package_id", "profile_id", "generation", "adapter_id", "action_id"):
+            value = getattr(self, name)
+            if (not isinstance(value, str) or not 1 <= len(value) <= 192
+                    or any(ord(char) < 0x21 or ord(char) > 0x7e for char in value)):
+                raise AuthorityDenied("native.invocation", f"native invocation {name} is malformed")
+        for name in ("arguments_sha256", "parent_closure_digest", "binding_sha256"):
+            if not isinstance(getattr(self, name), str) or not re.fullmatch(r"[0-9a-f]{64}", getattr(self, name)):
+                raise AuthorityDenied("native.invocation", f"native invocation {name} is malformed")
+        if _time(self.expires_monotonic, "native invocation expiry") <= 0:
+            raise AuthorityDenied("native.invocation", "native invocation expiry is invalid")
+
+    def to_wire(self) -> dict[str, Any]:
+        return {"schema": 1, "invocation_handle": self.invocation_handle,
+                "package_id": self.package_id, "profile_id": self.profile_id,
+                "generation": self.generation, "adapter_id": self.adapter_id,
+                "action_id": self.action_id, "arguments_sha256": self.arguments_sha256,
+                "parent_closure_digest": self.parent_closure_digest,
+                "expires_monotonic": self.expires_monotonic,
+                "binding_sha256": self.binding_sha256}
+
+    @classmethod
+    def from_wire(cls, value: Any, *, monotonic: Any) -> "NativeInvocationBinding":
+        fields = {"schema", "invocation_handle", "package_id", "profile_id", "generation",
+                  "adapter_id", "action_id", "arguments_sha256", "parent_closure_digest",
+                  "expires_monotonic", "binding_sha256"}
+        if not isinstance(value, dict) or set(value) != fields or type(value["schema"]) is not int or value["schema"] != 1:
+            raise AuthorityDenied("native.invocation", "native invocation response fields are invalid")
+        try:
+            result = cls(**{key: item for key, item in value.items() if key != "schema"})
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.invocation", "native invocation response is malformed") from None
+        if result.expires_monotonic <= monotonic():
+            raise AuthorityDenied("native.invocation", "native invocation binding is expired")
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class NativeInvocationContexts:
+    """Bounded same-peer receipt ancestry for a root-registered invocation."""
+
+    invocation_handle: str
+    source_receipt_handles: tuple[str, ...]
+    parent_closure_digest: str
+    arguments_sha256: str
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.invocation_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.invocation_handle)
+                or not isinstance(self.source_receipt_handles, tuple)
+                or len(self.source_receipt_handles) > 128
+                or any(not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", item)
+                       for item in self.source_receipt_handles)
+                or len(set(self.source_receipt_handles)) != len(self.source_receipt_handles)):
+            raise AuthorityDenied("native.invocation", "native invocation contexts are malformed")
+        for name in ("parent_closure_digest", "arguments_sha256"):
+            if not isinstance(getattr(self, name), str) or not re.fullmatch(r"[0-9a-f]{64}", getattr(self, name)):
+                raise AuthorityDenied("native.invocation", f"native invocation {name} is malformed")
+        if _time(self.expires_monotonic, "native invocation context expiry") <= 0:
+            raise AuthorityDenied("native.invocation", "native invocation context expiry is invalid")
+
+    def to_wire(self) -> dict[str, Any]:
+        return {"schema": 1, "invocation_handle": self.invocation_handle,
+                "source_receipt_handles": list(self.source_receipt_handles),
+                "parent_closure_digest": self.parent_closure_digest,
+                "arguments_sha256": self.arguments_sha256,
+                "expires_monotonic": self.expires_monotonic}
+
+    @classmethod
+    def from_wire(cls, value: Any, *, monotonic: Any) -> "NativeInvocationContexts":
+        fields = {"schema", "invocation_handle", "source_receipt_handles",
+                  "parent_closure_digest", "arguments_sha256", "expires_monotonic"}
+        if (not isinstance(value, dict) or set(value) != fields
+                or type(value["schema"]) is not int or value["schema"] != 1
+                or not isinstance(value["source_receipt_handles"], list)):
+            raise AuthorityDenied("native.invocation", "native invocation context response fields are invalid")
+        try:
+            result = cls(**{**{key: item for key, item in value.items() if key != "schema"},
+                           "source_receipt_handles": tuple(value["source_receipt_handles"])})
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.invocation", "native invocation context response is malformed") from None
+        if result.expires_monotonic <= monotonic():
+            raise AuthorityDenied("native.invocation", "native invocation context has expired")
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class NativeToolCallBinding:
+    """Root-parsed provider tool call bound to one observed response body."""
+
+    observed_call_handle: str
+    provider_tool_call_id: str
+    tool_name: str
+    arguments_sha256: str
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.observed_call_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.observed_call_handle)):
+            raise AuthorityDenied("native.tool-call", "observed native tool call handle is malformed")
+        for name in ("provider_tool_call_id", "tool_name"):
+            value = getattr(self, name)
+            if (not isinstance(value, str) or not 1 <= len(value) <= 256
+                    or any(ord(char) < 0x21 or ord(char) > 0x7e for char in value)):
+                raise AuthorityDenied("native.tool-call", f"native tool call {name} is malformed")
+        if not isinstance(self.arguments_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", self.arguments_sha256):
+            raise AuthorityDenied("native.tool-call", "native tool call argument digest is malformed")
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "NativeToolCallBinding":
+        fields = {"observed_call_handle", "provider_tool_call_id", "tool_name", "arguments_sha256"}
+        if not isinstance(value, dict) or set(value) != fields:
+            raise AuthorityDenied("native.tool-call", "native tool call response fields are invalid")
+        try:
+            return cls(**value)
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.tool-call", "native tool call response is malformed") from None
+
+
+@dataclass(frozen=True, slots=True)
+class NativeResponseMetadata:
+    """Root response metadata released by a one-use peer-bound lookup."""
+
+    producer_context_handle: str
+    tool_call_bindings: tuple[NativeToolCallBinding, ...]
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.producer_context_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.producer_context_handle)
+                or not isinstance(self.tool_call_bindings, tuple)
+                or len(self.tool_call_bindings) > 128
+                or any(not isinstance(item, NativeToolCallBinding) for item in self.tool_call_bindings)
+                or len({item.observed_call_handle for item in self.tool_call_bindings})
+                    != len(self.tool_call_bindings)):
+            raise AuthorityDenied("native.response.take", "provider response metadata is malformed")
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "producer_context_handle": self.producer_context_handle,
+            "tool_call_bindings": [
+                {"observed_call_handle": item.observed_call_handle,
+                 "provider_tool_call_id": item.provider_tool_call_id,
+                 "tool_name": item.tool_name,
+                 "arguments_sha256": item.arguments_sha256}
+                for item in self.tool_call_bindings
+            ],
+        }
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "NativeResponseMetadata":
+        fields = {"producer_context_handle", "tool_call_bindings"}
+        if (not isinstance(value, dict) or set(value) != fields
+                or not isinstance(value["tool_call_bindings"], list)
+                or len(value["tool_call_bindings"]) > 128):
+            raise AuthorityDenied("native.response.take", "provider response metadata fields are invalid")
+        return cls(
+            value["producer_context_handle"],
+            tuple(NativeToolCallBinding.from_wire(item) for item in value["tool_call_bindings"]),
+        )
+
+
 def canonical_bytes(value: bytes | Mapping[str, Any] | list[Any]) -> bytes:
     if isinstance(value, bytes):
         return value
@@ -425,3 +608,15 @@ def canonical_bytes(value: bytes | Mapping[str, Any] | list[Any]) -> bytes:
 
 def canonical_digest(value: bytes | Mapping[str, Any] | list[Any]) -> str:
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def strict_json_loads(data: str) -> Any:
+    """Decode JSON while rejecting duplicate keys at every object depth."""
+    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+    return json.loads(data, object_pairs_hook=unique_pairs)

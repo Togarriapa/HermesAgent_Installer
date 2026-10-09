@@ -148,22 +148,22 @@ def _parse_envelope(payload: bytes) -> dict[str, Any]:
 def _protected_selection_bound(keys: tuple[str, ...], arguments: Mapping[str, Any], selection: Any) -> bool:
     """Match exactly one resource parameter declared by the root service record."""
     expected = selection if isinstance(selection, Mapping) else None
-    matched = 0
-    for key in keys:
-        if key not in arguments:
-            continue
+    present = [key for key in keys if key in arguments]
+    if not present:
+        return False
+    for key in present:
         wanted = expected.get(key) if expected is not None else selection
         actual = arguments[key]
         if wanted is None:
-            continue
-        if isinstance(wanted, (tuple, list, set, frozenset)):
-            valid = (isinstance(actual, (tuple, list, set, frozenset))
-                     and all(isinstance(item, str) for item in actual)
-                     and set(actual) == set(wanted))
-        else:
-            valid = actual == wanted
-        matched += int(valid)
-    return matched == 1
+            return False
+        if isinstance(wanted, (tuple, list)):
+            if (not isinstance(actual, list)
+                    or any(not isinstance(item, str) for item in actual)
+                    or actual != list(wanted)):
+                return False
+        elif actual != wanted or type(actual) is not type(wanted):
+            return False
+    return True
 
 
 class _Handler:
@@ -176,8 +176,12 @@ class _Handler:
         self._tools: dict[tuple[int, str, str], dict[str, Mapping[str, Any]]] = {}
 
     def __call__(self, *, context: HostContext, authorization: EffectAuthorization,
-                 payload: bytes, timeout: float, peer_pid: int,
+                 payload: bytes, timeout: float, peer_pid: int | None = None,
+                 peer_pidfd: int | None = None,
                  cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        # The authority owns this borrowed pidfd and closes it after dispatch.
+        # MCP itself never uses a numeric PID as process ownership evidence.
+        del peer_pid, peer_pidfd
         envelope = _parse_envelope(payload)
         service = self.service
         target = f"mcp:{service.service_id}:{service.channel}"

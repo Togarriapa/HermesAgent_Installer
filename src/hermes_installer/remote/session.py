@@ -4,7 +4,11 @@ import re
 from dataclasses import dataclass,field
 from typing import Mapping
 class SessionUnavailable(RuntimeError):pass
-XPRA_DISABLED_FEATURES=("start-new-commands","start-new-session","start-desktop","start-shadow","start-proxy","shell","control","dbus","file-transfer","open-files","clipboard","printing","webcam","audio","speaker","microphone","devices","remote-logging","http-diagnostics","abstract-sockets")
+# These are actual server options supported by the pinned Xpra parser. Desktop,
+# shadow, and proxy are modes, not boolean options; the launcher always selects
+# the seamless mode instead.
+XPRA_CLI_SOURCE_COMMIT="521b0d2e762c770b2641d258b93d23575fa9cbea"
+XPRA_DISABLED_FEATURES=("commands","shell","control","start-new-commands","start-via-proxy","proxy-start-sessions","dbus","dbus-control","file-transfer","open-files","open-url","clipboard","printing","webcam","audio","speaker","microphone","remote-logging","http-scripts","ssh-upgrade","rfb-upgrade","rdp-upgrade")
 _ALLOWED_ENV=frozenset({"HERMES_HOME","PATH"})
 @dataclass(frozen=True)
 class SessionSpec:
@@ -31,6 +35,6 @@ class SessionSpec:
    if any(not p.startswith("/") or ".." in p.split("/") for p in parts):raise SessionUnavailable("Desktop environment path must stay absolute and confined")
   if self.uid is not None and self.uid<=0:raise SessionUnavailable("dedicated unprivileged uid required")
 def server_policy(spec:SessionSpec)->Mapping[str,object]:
- return {"mode":"seamless","start_child":(spec.hermes_executable,*spec.hermes_arguments),"start_new_commands":False,"start_new_sessions":False,"start_desktop":False,"start_shadow":False,"start_proxy":False,"clipboard":False,"printing":False,"file_transfer":False,"open_files":False,"audio":False,"webcam":False,"devices":False,"dbus":False,"shell":False,"abstract_sockets":False,"bind_tcp":"127.0.0.1:14500","html5":"on","control":False,"bind_unix":"private-runtime-dir-only","window_policy":"patched_default_deny_allowlist","allowed_window_classes":tuple(sorted(spec.allowed_window_classes)),"electron_sandbox":"verify_each_launch_before_ready","foreign_window_injection":"reject","denied_features":XPRA_DISABLED_FEATURES}
+ return {"mode":"seamless","forbidden_modes":("desktop","shadow","proxy"),"start_child":(spec.hermes_executable,*spec.hermes_arguments),"clipboard":False,"printing":False,"file_transfer":False,"open_files":False,"audio":False,"webcam":False,"dbus":False,"shell":False,"commands":False,"start_new_commands":False,"control":False,"http_scripts":False,"bind_tcp":"127.0.0.1:14500","html5":"on","bind_unix":"private-runtime-dir-only","window_policy":"patched_default_deny_allowlist","allowed_window_classes":tuple(sorted(spec.allowed_window_classes)),"electron_sandbox":"verify_each_launch_before_ready","foreign_window_injection":"reject","denied_features":XPRA_DISABLED_FEATURES}
 def require_sandbox_evidence(*,renderer_sandboxed:bool,no_sandbox_marker:bool):
  if not renderer_sandboxed or no_sandbox_marker:raise SessionUnavailable("Desktop renderer sandbox unavailable; remote session remains disabled")
