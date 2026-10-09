@@ -1271,22 +1271,37 @@ def materialize_runtime_resource(
         registration = _registration(identity, adapter_id, catalog_version, effective_spec, enabled=False)
     elif kind == "plugins":
         try:
-            from hermes_installer.components.native_plugins import native_plugin_handler_available
+            from hermes_installer.components.native_plugins import (
+                native_plugin_handler_available,
+                resolve_native_plugin_adapter,
+            )
 
+            contract = resolve_native_plugin_adapter(resource_id)
             available = native_plugin_handler_available(resource_id)
-        except ImportError:
+            adapter_blocker = contract.blocker
+        except (ImportError, KeyError):
             available = False
+            adapter_blocker = "No reviewed native plugin adapter contract is installed."
         # Handler resolvability is a separate fact from Hermes discovery. The
         # installer-owned PluginContext loader is not packaged yet, so the
         # resource must not be emitted at a path that Hermes could import.
-        adapter_id = resource_id if available else None
+        # Keep the canonical adapter identity in the crosswalk even when its
+        # implementation is missing; readiness/blockers carry that separate
+        # fact and never imply Hermes discovery or activation.
+        adapter_id = resource_id
         native_path = None
         discoverability = ("reviewed register(ctx) implementation exists; trusted Hermes loader is not packaged"
                            if available else "no reviewed native PluginContext handler is installed")
         invocation = ("pending installer-owned PluginContext loader and runtime-context injection"
                       if available else "unavailable until a source-backed register(ctx) handler is installed")
-        blockers = (("Package the installer-owned trusted PluginContext loader and verify Hermes discovery/runtime context.",)
-                    if available else (f"{_PLUGIN_NEXT_STEP}: {resource_id}.",))
+        pending = []
+        if adapter_blocker:
+            pending.append(f"{resource_id}: {adapter_blocker}.")
+        if available:
+            pending.append("Package the installer-owned trusted PluginContext loader and verify Hermes discovery/runtime context.")
+        elif not adapter_blocker:
+            pending.append(f"{_PLUGIN_NEXT_STEP}: {resource_id}.")
+        blockers = tuple(pending)
         registration = None
     else:  # guarded by _safe_identity
         raise ResourceRuntimeError(f"unsupported runtime resource kind: {kind}")
