@@ -53,6 +53,28 @@ class RemoteCloudflareProvisioner:
         if apps:
             prior=self.journal.resources.get("access_app")
             if len(apps)!=1 or not prior or prior.resource_id!=apps[0].get("id"): raise RemoteConflict("Hostname belongs to an unowned Access application")
+            # Inspect the complete policy set before the first POST/PUT. A retry
+            # must not create an OTP provider or modify this app before noticing
+            # a pre-existing bypass, service-token, or broadened allow rule.
+            app=apps[0]
+            policy_path=f"/accounts/{self.account}/access/apps/{prior.resource_id}/policies"
+            policies=self.client.pages(policy_path)
+            own_name=self.marker+":allowed-emails"
+            exact_include=[{"email":{"email":email.casefold()}} for email in sorted(set(self.setup.allowed_emails))]
+            journaled_policy=self.journal.resources.get("access_policy")
+            for policy in policies:
+                decision=policy.get("decision")
+                if decision in {"bypass","non_identity","service_auth"}:
+                    raise RemoteConflict("Bypass or service-token policy conflicts with the protected app")
+                if decision=="allow" and policy.get("name")!=own_name:
+                    raise RemoteConflict("Unowned Access allow policy conflicts with exact allowlist")
+                if policy.get("name")==own_name:
+                    if not journaled_policy or journaled_policy.resource_id!=policy.get("id"):
+                        raise RemoteConflict("Same-named Access policy is not journal-owned")
+                    if (decision!="allow" or policy.get("include")!=exact_include
+                            or policy.get("exclude") not in (None,[])
+                            or policy.get("require") not in (None,[])):
+                        raise RemoteConflict("Installer policy differs from exact email allowlist")
         tunnels=self._rows(f"/accounts/{self.account}/cfd_tunnel",lambda r:r.get("name")==self.tunnel_name)
         if tunnels:
             prior=self.journal.resources.get("tunnel")
