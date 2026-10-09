@@ -38,3 +38,7 @@ Live target/account values and pending source selections are tracked in planning
 ### v24 native MCP handler binding
 
 MC-F01/MC-F02 and HI-T04/08/09 use native-package-binding-contract.json native_mcp_dispatch exact source-backed in-process hook/catalog/RPC/result joins. All original native/account acceptance remains pending.
+
+### v25 MCP lexical/config mapping
+
+Use native_mcp_dispatch row_types/invocation_mapping/native_config exact records, same one-use lexical binding and root-backed native candidate registration. MC/HI acceptance remains pending.
