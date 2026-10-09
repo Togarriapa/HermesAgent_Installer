@@ -48,8 +48,6 @@ def _owned_output_root(path: Path) -> Path:
         os.chown(path, owner_uid, -1)
     path.chmod(0o700)
     return path
-
-
 def constraints():
     return {
         "bin/colibri": BuildOutputSpec(
