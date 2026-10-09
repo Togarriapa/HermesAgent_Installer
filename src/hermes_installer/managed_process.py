@@ -24,6 +24,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from hermes_installer.authority.client import AuthorityClient
+from hermes_installer.authority.types import (
+    AuthorityDenied, EffectAuthorization, HostContext, VerifiedEffectAuthorization,
+    canonical_digest,
+)
+
 
 class ManagedProcessError(RuntimeError):
     """A managed process could not be admitted or its custody was lost."""
@@ -43,6 +49,13 @@ class ManagedProcessResult:
     start_ticks: int
     executable_device: int
     executable_inode: int
+    mount_namespace_inode: int
+    network_namespace_inode: int
+    uid: int
+    gid: int
+    memory_max_bytes: int | None
+    cpu_quota_percent: int | None
+    io_weight: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +75,12 @@ class ManagedProcessSpec:
     startup_deadline_monotonic: float
     max_lifetime_seconds: float
     child_artifact_hashes: Mapping[str, str] | None = None
+    profile_id: str = ""
+    authority_context: HostContext | None = None
+    effect_authorization: EffectAuthorization | None = None
+    memory_max_bytes: int | None = None
+    cpu_quota_percent: int | None = None
+    io_weight: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +93,10 @@ class ProcessIdentity:
     pidfd: int
     executable_device: int = 0
     executable_inode: int = 0
+    mount_namespace_inode: int = 0
+    network_namespace_inode: int = 0
+    uid: int = 0
+    gid: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,7 +257,7 @@ def _protected_home_is_empty(pid: int) -> bool:
     )
     return not result.strip()
 
-def _observe_process(pid: int, expected_cgroup: str) -> tuple[int, int, str, int, int, int]:
+def _observe_process_identity(pid: int, expected_cgroup: str) -> tuple[int, int, str, int, int, int]:
     pidfd = os.pidfd_open(pid, 0)
     try:
         parent, ticks = _proc_stat(pid)
@@ -248,6 +271,12 @@ def _observe_process(pid: int, expected_cgroup: str) -> tuple[int, int, str, int
     except BaseException:
         os.close(pidfd)
         raise
+
+
+def _observe_process(pid: int, expected_cgroup: str) -> tuple[int, int, str, int]:
+    """Compatibility view for callers that do not need the pinned inode tuple."""
+    parent, ticks, digest, _device, _inode, pidfd = _observe_process_identity(pid, expected_cgroup)
+    return parent, ticks, digest, pidfd
 
 
 def _proc_stat(pid: int) -> tuple[int, int]:
@@ -309,7 +338,7 @@ async def _systemctl_async(*args: str, timeout: float = 2.0) -> str:
 
 
 async def _show_async(unit: str, prop: str, timeout: float = 1.0) -> str:
-    if prop not in {"ControlGroup", "MainPID", "ActiveState", "SubState", "Description", "RuntimeMaxUSec", "KillMode", "ProtectSystem", "ProtectHome", "PrivateTmp", "PrivateDevices", "NoNewPrivileges", "IPAddressDeny", "PrivateNetwork", "RestrictAddressFamilies", "ProtectHome", "ProtectProc", "ProcSubset", "User"}:
+    if prop not in {"ControlGroup", "MainPID", "ActiveState", "SubState", "Description", "RuntimeMaxUSec", "KillMode", "ProtectSystem", "ProtectHome", "PrivateTmp", "PrivateDevices", "NoNewPrivileges", "IPAddressDeny", "PrivateNetwork", "RestrictAddressFamilies", "ProtectProc", "ProcSubset", "User", "MemoryMax", "CPUQuotaPerSecUSec", "IOWeight"}:
         raise ValueError("unsupported systemd property")
     return await _systemctl_async("show", "--property=" + prop, "--value", unit, timeout=timeout)
 
@@ -347,11 +376,29 @@ def _parse_systemd_timespan_us(value: str) -> int:
     return int(total)
 
 
-def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Path, Path, int, int]:
+def _verify_cgroup_limits(cgroup: str, spec: ManagedProcessSpec) -> None:
+    root = Path("/sys/fs/cgroup") / cgroup.lstrip("/")
+    try:
+        if spec.memory_max_bytes is not None:
+            observed = (root / "memory.max").read_text().strip()
+            if observed != str(spec.memory_max_bytes):
+                raise ManagedProcessError("kernel memory.max does not match the requested bound")
+        if spec.cpu_quota_percent is not None:
+            quota, period = (root / "cpu.max").read_text().split()
+            if quota == "max" or int(quota) * 100 != spec.cpu_quota_percent * int(period):
+                raise ManagedProcessError("kernel cpu.max does not match the requested quota")
+        if spec.io_weight is not None:
+            fields = (root / "io.weight").read_text().split()
+            if not fields or int(fields[-1]) != spec.io_weight:
+                raise ManagedProcessError("kernel io.weight does not match the requested bound")
+    except (OSError, ValueError, IndexError):
+        raise ManagedProcessError("requested kernel resource-control files are unavailable") from None
+
+
+def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Path, Path]:
     if not isinstance(spec.owned_root, OwnedRoot) or not isinstance(spec.journal, Journal):
         raise ManagedProcessError("managed processes require an OwnedRoot and durable Journal")
     try:
-        spec.owned_root.ensure()
         root = spec.owned_root.root.resolve(strict=True)
         exe = spec.owned_root.path(Path(spec.executable).relative_to(root).as_posix()).resolve(strict=True)
         artifact = spec.owned_root.path(Path(spec.artifact_root).relative_to(root).as_posix()).resolve(strict=True)
@@ -366,7 +413,15 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
         raise ManagedProcessError("working directory and journal must remain inside the owned profile root")
     info = root.lstat()
     marker = root / ".hermes-installer-owned"
-    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or marker.read_bytes() != b"schema=1\n":
+    try:
+        marker_info = marker.lstat()
+        marker_content = marker.read_bytes()
+    except OSError:
+        raise ManagedProcessError("owned root marker is missing or unreadable") from None
+    if (info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077
+            or not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != os.getuid()
+            or stat.S_IMODE(marker_info.st_mode) & 0o077
+            or marker_content != b"schema=1\n"):
         raise ManagedProcessError("owned root is not private or its marker is invalid")
     if not os.access(exe, os.X_OK) or not re.fullmatch(r"[0-9a-f]{64}", spec.artifact_sha256):
         raise ManagedProcessError("executable pin is invalid")
@@ -377,18 +432,34 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
         raise ManagedProcessError("pinned executable must be a single-link regular file")
     if not spec.argv or spec.argv[0] != str(exe) or any(not isinstance(x, str) or "\x00" in x for x in spec.argv):
         raise ManagedProcessError("argv must start with the pinned executable and contain NUL-free strings")
+    if any(re.search(r"(?i)(?:--?(?:token|secret|password|api[-_]?key|credential)(?:=|$)|authorization:\s*bearer\s+)", value)
+           for value in spec.argv[1:]):
+        raise ManagedProcessError("secret-bearing command arguments are not accepted")
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", spec.profile_id):
+        raise ManagedProcessError("profile identity is invalid")
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", spec.journal_operation):
         raise ManagedProcessError("journal operation id is invalid")
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,96}", spec.service_identity):
         raise ManagedProcessError("service identity is invalid")
     if not re.fullmatch(r"hermes-[a-z0-9-]{1,40}", spec.service_user):
         raise ManagedProcessError("service user must be a dedicated installer identity")
+    expected_user = "hermes-" + hashlib.sha256(spec.profile_id.encode("utf-8")).hexdigest()[:16]
+    if spec.service_user != expected_user:
+        raise ManagedProcessError("service UID does not match the authorized profile identity")
     now = time.monotonic()
     if not now < spec.startup_deadline_monotonic <= now + 600:
         raise ManagedProcessError("startup deadline must be an absolute bounded monotonic time")
     if (isinstance(spec.max_lifetime_seconds, bool) or not isinstance(spec.max_lifetime_seconds, (int, float))
             or not math.isfinite(spec.max_lifetime_seconds) or not 0 < spec.max_lifetime_seconds <= 600):
         raise ManagedProcessError("manager-enforced process lifetime must be finite and at most ten minutes")
+    if spec.memory_max_bytes is not None and (type(spec.memory_max_bytes) is not int
+                                               or not 16 * 1024 * 1024 <= spec.memory_max_bytes <= 64 * 1024**3):
+        raise ManagedProcessError("memory cgroup limit is outside supported bounds")
+    if spec.cpu_quota_percent is not None and (type(spec.cpu_quota_percent) is not int
+                                                or not 1 <= spec.cpu_quota_percent <= 10_000):
+        raise ManagedProcessError("CPU cgroup quota is outside supported bounds")
+    if spec.io_weight is not None and (type(spec.io_weight) is not int or not 1 <= spec.io_weight <= 10_000):
+        raise ManagedProcessError("I/O cgroup weight is outside supported bounds")
     allowed = {"HOME", "PATH", "LANG", "LC_ALL", "DISPLAY", "WAYLAND_DISPLAY",
                "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "HERMES_HOME", "TMPDIR"}
     for key, value in spec.env_allowlist.items():
@@ -408,7 +479,7 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
             raise ManagedProcessError("display value is invalid")
     if spec.env_allowlist.get("HOME") != "/hermes":
         raise ManagedProcessError("profile HOME must be the isolated /hermes mount")
-    return spec.owned_root, exe, artifact, cwd, data, exe_info.st_dev, exe_info.st_ino
+    return spec.owned_root, exe, artifact, cwd, data
 
 class ManagedProcessHandle:
     def __init__(self, spec: ManagedProcessSpec, unit: str, cgroup: str,
@@ -478,7 +549,7 @@ class ManagedProcessHandle:
         try:
             for pid in pids:
                 try:
-                    parent, ticks, digest, device, inode, fd = _observe_process(pid, self.cgroup)
+                    parent, ticks, digest, device, inode, fd = _observe_process_identity(pid, self.cgroup)
                     by_pid[pid] = (parent, ticks, digest, device, inode, fd)
                 except (OSError, ValueError, ManagedProcessError):
                     continue
@@ -607,7 +678,13 @@ class ManagedProcessHandle:
                                                          "executable_sha256": self.identity.executable_sha256,
                                                          "executable_device": self.identity.executable_device,
                                                          "executable_inode": self.identity.executable_inode,
-                                                         "service_identity": self.spec.service_identity,
+                                                         "mount_namespace_inode": self.identity.mount_namespace_inode,
+                                                         "network_namespace_inode": self.identity.network_namespace_inode,
+                                                        "uid": self.identity.uid, "gid": self.identity.gid,
+                                                "memory_max_bytes": self.spec.memory_max_bytes,
+                                                "cpu_quota_percent": self.spec.cpu_quota_percent,
+                                                "io_weight": self.spec.io_weight,
+                                                "service_identity": self.spec.service_identity,
                                                          "reason": reason[:160], "manager_collected": True})
                     self._closed = True
                     with contextlib.suppress(OSError):
@@ -637,7 +714,13 @@ class ManagedProcessHandle:
                                                 "executable_sha256": self.identity.executable_sha256,
                                                 "executable_device": self.identity.executable_device,
                                                 "executable_inode": self.identity.executable_inode,
-                                                "service_identity": self.spec.service_identity,
+                                                "mount_namespace_inode": self.identity.mount_namespace_inode,
+                                                "network_namespace_inode": self.identity.network_namespace_inode,
+                                                         "uid": self.identity.uid, "gid": self.identity.gid,
+                                                         "memory_max_bytes": self.spec.memory_max_bytes,
+                                                         "cpu_quota_percent": self.spec.cpu_quota_percent,
+                                                         "io_weight": self.spec.io_weight,
+                                                         "service_identity": self.spec.service_identity,
                                                 "reason": reason[:160]})
             self._closed = True
             os.close(self.identity.pidfd)
@@ -665,8 +748,43 @@ class ManagedProcessHandle:
 
 class ManagedProcessSupervisor:
     """Starts private transient services with manager-enforced descendant custody."""
+    def __init__(self, authority_verifier: AuthorityClient | None = None):
+        self.authority_verifier = authority_verifier
+
     async def start(self, spec: ManagedProcessSpec) -> ManagedProcessHandle:
-        owned, exe, artifact, cwd, data, executable_device, executable_inode = _validate_spec(spec)
+        if (not spec.profile_id or not isinstance(spec.profile_id, str)
+                or spec.authority_context is None or spec.effect_authorization is None
+                or self.authority_verifier is None
+                or not isinstance(self.authority_verifier, AuthorityClient)
+                or not isinstance(spec.authority_context, HostContext)
+                or not isinstance(spec.effect_authorization, EffectAuthorization)):
+            raise ManagedProcessError("trusted host context, effect grant and authority verifier are required")
+        if (spec.authority_context.uid != os.geteuid()
+                or spec.authority_context.profile_id != spec.profile_id):
+            raise ManagedProcessError("host context does not identify this caller and exact profile")
+        owned, exe, artifact, cwd, data = _validate_spec(spec)
+        executable_info = exe.stat(follow_symlinks=False)
+        executable_device, executable_inode = executable_info.st_dev, executable_info.st_ino
+        try:
+            request_digest = canonical_digest(list(spec.argv))
+            target = (f"hermes-profile-invoke:{spec.profile_id}:{exe}:"
+                      f"{spec.artifact_sha256}:{data}")
+            verified = await asyncio.to_thread(
+                self.authority_verifier.verify_effect, spec.effect_authorization,
+                spec.authority_context, capability="hermes-profile-invoke", target=target,
+                recipient=None, request_digest=request_digest, retry_index=0,
+            )
+            if (not isinstance(verified, VerifiedEffectAuthorization)
+                    or verified.authorization != spec.effect_authorization):
+                raise ManagedProcessError("authority verifier returned no typed verified grant")
+        except ManagedProcessError:
+            raise
+        except asyncio.CancelledError:
+            raise
+        except AuthorityDenied:
+            raise ManagedProcessError("host effect authorization was denied before process start") from None
+        except BaseException:
+            raise ManagedProcessError("host effect authorization was denied before process start") from None
         if not hasattr(os, "pidfd_open"):
             raise ManagedProcessError("kernel pidfd support is required")
         systemd_run = shutil.which("systemd-run", path="/usr/bin:/bin")
@@ -717,6 +835,12 @@ class ManagedProcessSupervisor:
             "--property=BindReadOnlyPaths=" + str(artifact) + ":" + str(artifact),
             "--property=UnsetEnvironment=" + " ".join(unset_names),
         ]
+        if spec.memory_max_bytes is not None:
+            properties.append("--property=MemoryMax=" + str(spec.memory_max_bytes))
+        if spec.cpu_quota_percent is not None:
+            properties.append("--property=CPUQuota=" + str(spec.cpu_quota_percent) + "%")
+        if spec.io_weight is not None:
+            properties.append("--property=IOWeight=" + str(spec.io_weight))
         if len(spec.env_allowlist) > 32:
             raise ManagedProcessError("environment allowlist exceeds its bound")
         env_args = ["--setenv=" + key + "=" + value
@@ -745,20 +869,30 @@ class ManagedProcessSupervisor:
         for stream in (launcher.stdin, launcher.stdout, launcher.stderr):
             if stream is not None:
                 os.set_blocking(stream.fileno(), False)
+        admission_pidfd: int | None = None
+
+        def close_admission_pidfd() -> None:
+            nonlocal admission_pidfd
+            if admission_pidfd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(admission_pidfd)
+                admission_pidfd = None
+
         try:
             while time.monotonic() < spec.startup_deadline_monotonic:
                 if launcher.poll() is not None:
                     raise ManagedProcessError("systemd service exited before admission")
                 try:
                     cgroup = await _show_async(unit, "ControlGroup", timeout=.5)
-                    if not cgroup.startswith("/"):
+                    if (not cgroup.startswith("/") or ".." in Path(cgroup).parts
+                            or Path(cgroup).name != unit):
                         raise ManagedProcessError("manager did not provide a cgroup")
                     members = (Path("/sys/fs/cgroup") / cgroup.lstrip("/") / "cgroup.procs").read_text().split()
                     matching = []
                     for candidate in members:
                         pid = int(candidate)
                         try:
-                            observed = _observe_process(pid, cgroup)
+                            observed = _observe_process_identity(pid, cgroup)
                         except (OSError, ValueError, ManagedProcessError):
                             continue
                         parent, ticks, digest, device, inode, pidfd = observed
@@ -776,11 +910,11 @@ class ManagedProcessSupervisor:
                 raise ManagedProcessError("managed process startup deadline expired")
 
             group = _proc_cgroup(pid)
-            parent, ticks, digest, device, inode, pidfd = _observe_process(pid, cgroup)
+            parent, ticks, digest, device, inode, pidfd = _observe_process_identity(pid, cgroup)
+            admission_pidfd = pidfd
             if (group != cgroup or digest != spec.artifact_sha256
                     or device != executable_device or inode != executable_inode
                     or parent != matching[0][1] or ticks != matching[0][2]):
-                os.close(pidfd)
                 raise ManagedProcessError("systemd process identity changed during admission")
             for prop, expected in (("KillMode", "control-group"),
                                    ("ProtectSystem", "strict"),
@@ -792,24 +926,21 @@ class ManagedProcessSupervisor:
                                    ("ProtectHome", "tmpfs"), ("ProtectProc", "invisible"),
                                    ("ProcSubset", "pid"), ("User", spec.service_user)):
                 if await _show_async(unit, prop) != expected:
-                    os.close(pidfd)
                     raise ManagedProcessError("required systemd isolation property was not applied")
             if await _show_async(unit, "Description") != description:
-                os.close(pidfd)
                 raise ManagedProcessError("manager operation identity does not match the journal binding")
             maximum = await _show_async(unit, "RuntimeMaxUSec")
             if _parse_systemd_timespan_us(maximum) < int(spec.max_lifetime_seconds * 1_000_000):
-                os.close(pidfd)
                 raise ManagedProcessError("manager-enforced process lifetime is missing or too short")
+            _verify_cgroup_limits(cgroup, spec)
             actual_env = self._read_process_environment(pid)
             if actual_env != dict(spec.env_allowlist):
-                os.close(pidfd)
                 raise ManagedProcessError("actual process environment differs from the sanitized allowlist")
-            if _proc_inode(pid, "net") == os.stat("/proc/self/ns/net").st_ino:
-                os.close(pidfd)
+            network_namespace_inode = _proc_inode(pid, "net")
+            if network_namespace_inode == os.stat("/proc/self/ns/net").st_ino:
                 raise ManagedProcessError("private network namespace was not applied")
-            if _proc_inode(pid, "mnt") == os.stat("/proc/self/ns/mnt").st_ino:
-                os.close(pidfd)
+            mount_namespace_inode = _proc_inode(pid, "mnt")
+            if mount_namespace_inode == os.stat("/proc/self/ns/mnt").st_ino:
                 raise ManagedProcessError("private mount namespace was not applied")
             status = Path(f"/proc/{pid}/status").read_text()
             uid_line = next((line for line in status.splitlines() if line.startswith("Uid:")), "")
@@ -817,26 +948,34 @@ class ManagedProcessSupervisor:
             observed_uids = tuple(int(x) for x in uid_line.split()[1:])
             observed_groups = tuple(int(x) for x in groups_line.split()[1:])
             if len(observed_uids) != 4 or any(uid != service_account.pw_uid for uid in observed_uids):
-                os.close(pidfd)
                 raise ManagedProcessError("service UID isolation was not applied")
             if observed_groups != (service_account.pw_gid,):
-                os.close(pidfd)
                 raise ManagedProcessError("supplementary service groups were not cleared")
             if not _protected_home_is_empty(pid):
-                os.close(pidfd)
                 raise ManagedProcessError("host home directories remain visible inside service")
             identity = ProcessIdentity(unit, cgroup, pid, ticks, digest, pidfd,
-                                       device, inode)
+                                       device, inode, mount_namespace_inode,
+                                       network_namespace_inode, service_account.pw_uid,
+                                       service_account.pw_gid)
             await _systemctl_async("show", "--property=Description", "--value", unit, timeout=1.0)
             spec.journal.record_owned("managed-systemd-service", unit, "active")
             spec.journal.checkpoint(spec.journal_operation, "running", {
                 "unit": unit, "cgroup": cgroup, "pid": pid, "start_ticks": ticks,
                 "executable_sha256": digest, "executable_device": device,
-                "executable_inode": inode, "service_identity": spec.service_identity,
+                "executable_inode": inode, "mount_namespace_inode": mount_namespace_inode,
+                "network_namespace_inode": network_namespace_inode,
+                "uid": service_account.pw_uid, "gid": service_account.pw_gid,
+                "memory_max_bytes": spec.memory_max_bytes,
+                "cpu_quota_percent": spec.cpu_quota_percent,
+                "io_weight": spec.io_weight,
+                "service_identity": spec.service_identity,
             })
-            return ManagedProcessHandle(spec, unit, cgroup, launcher, identity, started,
-                                        spec.env_allowlist)
+            handle = ManagedProcessHandle(spec, unit, cgroup, launcher, identity, started,
+                                          spec.env_allowlist)
+            admission_pidfd = None
+            return handle
         except BaseException:
+            close_admission_pidfd()
             try:
                 cgroup = await _show_async(unit, "ControlGroup", timeout=.5)
                 if cgroup.startswith("/"):
@@ -884,7 +1023,8 @@ class ManagedProcessSupervisor:
 
 async def run_managed_process(spec: ManagedProcessSpec, *, timeout: float,
                               stdout_limit: int = 65536, stderr_limit: int = 65536,
-                              input_bytes: bytes = b"") -> ManagedProcessResult:
+                              input_bytes: bytes = b"",
+                              authority_verifier: AuthorityClient | None = None) -> ManagedProcessResult:
     """Run a pinned executable with bounded, separate stdout/stderr capture.
 
     The manager starts it under ``spec.service_user`` and its verified private
@@ -895,7 +1035,7 @@ async def run_managed_process(spec: ManagedProcessSpec, *, timeout: float,
             or not 0 <= stdout_limit <= 1_048_576 or not 0 <= stderr_limit <= 1_048_576
             or not isinstance(input_bytes, bytes) or len(input_bytes) > 1_048_576):
         raise ValueError("managed command bounds are invalid")
-    handle = await ManagedProcessSupervisor().start(spec)
+    handle = await ManagedProcessSupervisor(authority_verifier=authority_verifier).start(spec)
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     caps = {"stdout": stdout_limit, "stderr": stderr_limit}
     streams = {"stdout": handle._launcher.stdout, "stderr": handle._launcher.stderr}
@@ -980,4 +1120,7 @@ def _managed_result(handle: ManagedProcessHandle, exit_code: int | None,
     return ManagedProcessResult(exit_code, bytes(buffers["stdout"]), bytes(buffers["stderr"]),
                                 timed_out, False, handle._closed, handle.unit, handle.cgroup,
                                 identity.pid, identity.start_ticks, identity.executable_device,
-                                identity.executable_inode)
+                                identity.executable_inode, identity.mount_namespace_inode,
+                                identity.network_namespace_inode, identity.uid, identity.gid,
+                                handle.spec.memory_max_bytes, handle.spec.cpu_quota_percent,
+                                handle.spec.io_weight)

@@ -27,6 +27,53 @@ from hermes_installer.managed_process import (
     provision_service_identity,
 )
 from hermes_installer.state import Journal, OwnedRoot
+from hermes_installer.authority.client import AuthorityClient
+from hermes_installer.authority.types import (
+    EffectAuthorization, HostContext, Sensitivity, VerifiedEffectAuthorization,
+    canonical_digest,
+)
+
+
+class _FixtureAuthorityVerifier(AuthorityClient):
+    """Test-only stand-in; never evidence of the installed host authority service."""
+    def __init__(self):
+        pass
+
+    def verify_effect(self, grant, context, *, capability, target, recipient=None,
+                      request_digest=None, retry_index=None):
+        if not isinstance(grant, EffectAuthorization) or not isinstance(context, HostContext):
+            raise PermissionError("fixture grant denied")
+        if (capability != grant.capability or capability != "hermes-profile-invoke"
+                or target != grant.target or recipient is not None or grant.recipient is not None
+                or request_digest != grant.request_digest or retry_index != grant.retry_index):
+            raise PermissionError("fixture effect binding mismatch")
+        return VerifiedEffectAuthorization(grant, "fixture", time.monotonic(), "fixture-receipt")
+
+
+def _authorized_spec(spec: ManagedProcessSpec) -> ManagedProcessSpec:
+    from dataclasses import replace
+    import hashlib
+    target = (f"hermes-profile-invoke:{spec.profile_id}:{spec.executable.resolve()}:"
+              f"{spec.artifact_sha256}:{spec.data_root.resolve()}")
+    now = time.monotonic()
+    context = HostContext(
+        principal_id="fixture-principal", profile_id=spec.profile_id,
+        namespace_id="fixture-namespace", uid=os.getuid(), purpose="fixture",
+        intent_id="fixture-intent", trace_id="fixture-trace", sensitivity=Sensitivity.PUBLIC,
+        lineage_hash="a" * 64, policy_revision="fixture-policy", capabilities=frozenset({"hermes-profile-invoke"}),
+        issued_at_monotonic=now, monotonic_expires_at=now + 30,
+        nonce="fixture-context-nonce", grant_id="fixture-context-grant", signature="fixture-signature",
+    )
+    grant = EffectAuthorization(
+        principal_id=context.principal_id, profile_id=context.profile_id,
+        namespace_id=context.namespace_id, uid=context.uid, trace_id=context.trace_id,
+        policy_revision=context.policy_revision, lineage_hash=context.lineage_hash,
+        capability="hermes-profile-invoke", intent_id=context.intent_id, target=target,
+        recipient=None, request_digest=canonical_digest(list(spec.argv)), retry_index=0,
+        issued_at_monotonic=now, monotonic_expires_at=now + 20, grant_id="fixture-effect-grant",
+        nonce="fixture-effect-nonce", context_digest="b" * 64, signature="fixture-signature",
+    )
+    return replace(spec, authority_context=context, effect_authorization=grant)
 
 
 class ManagedProcessAdmissionTests(unittest.TestCase):
@@ -63,9 +110,10 @@ class ManagedProcessAdmissionTests(unittest.TestCase):
             journal_operation="test-operation",
             journal=self.journal,
             service_identity="contract-test",
-            service_user="hermes-test",
+            service_user="hermes-" + hashlib.sha256(b"fixture-profile").hexdigest()[:16],
             startup_deadline_monotonic=time.monotonic() + 5,
             max_lifetime_seconds=lifetime,
+            profile_id="fixture-profile",
         )
 
     def test_admission_uses_private_owned_root_journal_and_pinned_artifact(self) -> None:
@@ -100,6 +148,13 @@ class ManagedProcessAdmissionTests(unittest.TestCase):
         self.assertIn("API_TOKEN", keys)
         self.assertIn("LANG", keys)
         self.assertNotIn("do-not-echo", repr(keys))
+
+    def test_start_denies_without_trusted_authority_before_journaling(self) -> None:
+        async def exercise() -> None:
+            with self.assertRaisesRegex(ManagedProcessError, "trusted host context"):
+                await ManagedProcessSupervisor().start(self.spec())
+            self.assertIsNone(self.journal.operation("test-operation"))
+        asyncio.run(exercise())
 
 
 @unittest.skipUnless(sys.platform.startswith("linux") and hasattr(os, "pidfd_open"),
@@ -242,6 +297,11 @@ class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
 
     def test_manager_applies_private_namespaces_and_kills_stubborn_descendant(self) -> None:
         with tempfile.NamedTemporaryFile(prefix="hermes-host-private-", dir=Path.home()) as host_secret:
+            victim = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, close_fds=True,
+            )
             sentinel = str(Path(host_secret.name))
             code = (
                 "import json,os,signal,socket,subprocess,sys,time; "
@@ -249,6 +309,11 @@ class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
                 "try_read=False; "
                 "exec('try:\n open(sentinel, \'rb\').read(1); try_read=True\nexcept OSError: pass'); "
                 "result['home_hidden']=not try_read; "
+                "victim=int(sys.argv[2]); "
+                "try: open('/proc/'+str(victim)+'/environ','rb').read(1); result['sibling_hidden']=False\n"
+                "except OSError: result['sibling_hidden']=True; "
+                "try: os.kill(victim,signal.SIGTERM); result['signal_denied']=False\n"
+                "except PermissionError: result['signal_denied']=True; "
                 "try:\n socket.socket(socket.AF_INET,socket.SOCK_STREAM); result['inet_denied']=False\n"
                 "except OSError: result['inet_denied']=True; "
                 "child=subprocess.Popen([sys.executable,'-c',"
@@ -256,21 +321,29 @@ class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
                 "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True); "
                 "print(json.dumps(result),flush=True); time.sleep(25)"
             )
-            spec = ManagedProcessSpec(
-                executable=self.executable, argv=(str(self.executable), "-c", code, sentinel),
+            spec = _authorized_spec(ManagedProcessSpec(
+                executable=self.executable, argv=(str(self.executable), "-c", code, sentinel, str(victim.pid)),
                 artifact_sha256=hashlib.sha256(self.executable.read_bytes()).hexdigest(),
                 artifact_root=self.artifact, owned_root=self.owned, cwd=self.work, data_root=self.data,
                 env_allowlist={"HOME": "/hermes", "PATH": "/usr/bin:/bin", "LANG": "C"},
                 journal_operation=self.operation, journal=self.journal, service_identity="ci-isolation",
                 service_user=self.service_user, startup_deadline_monotonic=time.monotonic()+10,
                 max_lifetime_seconds=30,
-            )
+                profile_id=self.profile_id,
+            ))
             async def exercise() -> None:
-                handle = await ManagedProcessSupervisor().start(spec)
+                handle = await ManagedProcessSupervisor(_FixtureAuthorityVerifier()).start(spec)
                 try:
+                    self.assertEqual(handle.identity.uid, self.service_uid)
+                    self.assertEqual(handle.identity.gid, self.service_gid)
+                    self.assertNotEqual(handle.identity.network_namespace_inode,
+                                        os.stat("/proc/self/ns/net").st_ino)
+                    self.assertNotEqual(handle.identity.mount_namespace_inode,
+                                        os.stat("/proc/self/ns/mnt").st_ino)
                     output = await handle.read(4096, timeout=5)
                     result = json.loads(output.decode())
-                    self.assertEqual(result, {"home_hidden": True, "inet_denied": True})
+                    self.assertEqual(result, {"home_hidden": True, "sibling_hidden": True,
+                                              "signal_denied": True, "inet_denied": True})
                     deadline = time.monotonic() + 3
                     while len(handle._cgroup_pids()) < 2 and time.monotonic() < deadline:
                         await asyncio.sleep(.05)
@@ -280,13 +353,22 @@ class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
                 finally:
                     if not handle._closed:
                         await handle.stop("integration cleanup", timeout=5)
-            asyncio.run(exercise())
+            try:
+                asyncio.run(exercise())
+            finally:
+                if victim.poll() is None:
+                    victim.terminate()
+                    victim.wait(timeout=2)
 
     def test_managed_command_captures_separate_streams_and_proves_inode(self) -> None:
         from hermes_installer.managed_process import run_managed_process
 
+        controllers = set(Path("/sys/fs/cgroup/cgroup.controllers").read_text().split())
+        if not {"cpu", "memory", "io"}.issubset(controllers):
+            self.skipTest("Linux cgroup v2 CPU, memory and I/O controllers are required")
+
         code = "import sys; print('out'); print('err', file=sys.stderr)"
-        spec = ManagedProcessSpec(
+        spec = _authorized_spec(ManagedProcessSpec(
             executable=self.executable, argv=(str(self.executable), "-c", code),
             artifact_sha256=hashlib.sha256(self.executable.read_bytes()).hexdigest(),
             artifact_root=self.artifact, owned_root=self.owned, cwd=self.work, data_root=self.data,
@@ -294,9 +376,12 @@ class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
             journal_operation=self.operation, journal=self.journal, service_identity="ci-capture",
             service_user=self.service_user, startup_deadline_monotonic=time.monotonic()+10,
             max_lifetime_seconds=20,
-        )
+            profile_id=self.profile_id,
+            memory_max_bytes=256 * 1024 * 1024, cpu_quota_percent=100, io_weight=100,
+        ))
         async def exercise() -> None:
-            result = await run_managed_process(spec, timeout=10, stdout_limit=128, stderr_limit=128)
+            result = await run_managed_process(spec, timeout=10, stdout_limit=128, stderr_limit=128,
+                                               authority_verifier=_FixtureAuthorityVerifier())
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(result.stdout, b"out\n")
             self.assertEqual(result.stderr, b"err\n")
@@ -306,6 +391,12 @@ class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
             self.assertEqual(result.executable_device, self.executable.stat().st_dev)
             self.assertEqual(result.executable_inode, self.executable.stat().st_ino)
             self.assertGreater(result.start_ticks, 0)
+            self.assertEqual(result.uid, self.service_uid)
+            self.assertNotEqual(result.network_namespace_inode, os.stat("/proc/self/ns/net").st_ino)
+            self.assertNotEqual(result.mount_namespace_inode, os.stat("/proc/self/ns/mnt").st_ino)
+            self.assertEqual(result.memory_max_bytes, 256 * 1024 * 1024)
+            self.assertEqual(result.cpu_quota_percent, 100)
+            self.assertEqual(result.io_weight, 100)
             checkpoint = self.journal.operation(self.operation)
             self.assertEqual(checkpoint["status"], "stopped")
         asyncio.run(exercise())
@@ -320,7 +411,7 @@ class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
             "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True); "
             "print('ready',flush=True); time.sleep(30)"
         )
-        spec = ManagedProcessSpec(
+        spec = _authorized_spec(ManagedProcessSpec(
             executable=self.executable, argv=(str(self.executable), "-c", code),
             artifact_sha256=hashlib.sha256(self.executable.read_bytes()).hexdigest(),
             artifact_root=self.artifact, owned_root=self.owned, cwd=self.work, data_root=self.data,
@@ -328,9 +419,11 @@ class ManagedProcessSystemdIntegrationTests(unittest.TestCase):
             journal_operation=self.operation, journal=self.journal, service_identity="ci-deadline",
             service_user=self.service_user, startup_deadline_monotonic=time.monotonic()+10,
             max_lifetime_seconds=20,
-        )
+            profile_id=self.profile_id,
+        ))
         async def exercise() -> None:
-            result = await run_managed_process(spec, timeout=3, stdout_limit=128, stderr_limit=128)
+            result = await run_managed_process(spec, timeout=3, stdout_limit=128, stderr_limit=128,
+                                               authority_verifier=_FixtureAuthorityVerifier())
             self.assertTrue(result.timed_out)
             self.assertTrue(result.cleanup_verified)
             self.assertEqual(result.stdout, b"ready\n")
