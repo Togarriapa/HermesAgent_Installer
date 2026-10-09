@@ -7,6 +7,7 @@ kind, payload classification, PID, role, package, or parent lineage.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import secrets
@@ -56,6 +57,7 @@ class RootNativeInputEvent:
     parent_closure_digest: str
     observed_monotonic: float
     expires_monotonic: float
+    native_loader_ready_event_id: str | None = None
 
 
 class RootNativeInputObserver:
@@ -67,6 +69,7 @@ class RootNativeInputObserver:
                  desktop_input_resolver: Callable[[str, Any, Any], RootNativeInputSelection],
                  process_resolver: Callable[..., Any],
                  loaded_package_proof_resolver: Callable[..., Any],
+                 selected_execution_registry: Any | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if (not all(callable(value) for value in (
                 task_input_resolver, health_input_resolver, desktop_input_resolver,
@@ -80,9 +83,180 @@ class RootNativeInputObserver:
         self.desktop_input_resolver = desktop_input_resolver
         self.process_resolver = process_resolver
         self.loaded_package_proof_resolver = loaded_package_proof_resolver
+        self.selected_execution_registry = selected_execution_registry
         self.monotonic = monotonic
         self._events: dict[str, RootNativeInputEvent] = {}
+        self._task_receipts: dict[str, Any] = {}
         self._lock = threading.RLock()
+
+    def record_selected_task_input(self, *, selected_execution: Any, source: Any,
+                                   exact_stdin: bytes, target: Any) -> RootNativeInputEvent:
+        """Capture exact admitted stdin for one selected live native execution."""
+        from .source_observers import RootSelectedNativeExecution
+        from .types import SourceReceipt
+
+        registry = self.selected_execution_registry
+        if (type(selected_execution) is not RootSelectedNativeExecution
+                or registry is None
+                or not callable(getattr(registry, "resolve_current_execution", None))
+                or not callable(getattr(registry, "consume_selected_native_input_target", None))
+                or not callable(getattr(self.source_observers, "capture_selected_native_ingress", None))
+                or selected_execution.kind != "resource-task"
+                or not isinstance(exact_stdin, bytes)
+                or not 1 <= len(exact_stdin) <= _MAX_INPUT_BYTES
+                or target is None):
+            self._close_target(target)
+            raise AuthorityDenied("native.input.selection", "root selected task input binding is unavailable")
+        if registry.resolve_current_execution(selected_execution) is not selected_execution:
+            self._close_target(target)
+            raise AuthorityDenied("native.input.selection", "selected task execution is no longer current")
+        observer = self.source_observers.observers.get(selected_execution.observer_enrollment_id)
+        target_identity = getattr(target, "live_peer_identity", None)
+        target_proof = getattr(target, "loaded_package_proof", None)
+        target_pidfd = getattr(target, "peer_pidfd", None)
+        if (observer is None or observer.source_kind != "native-input"
+                or observer.package_id != selected_execution.native_package_id
+                or observer.profile_id != selected_execution.profile_id
+                or observer.generation != selected_execution.generation
+                or observer.source_action_id != selected_execution.source_action_id
+                or getattr(target, "process_id", None) != selected_execution.process_handle.process_id
+                or getattr(target, "profile_id", None) != selected_execution.profile_id
+                or getattr(target, "generation", None) != selected_execution.generation
+                or getattr(target, "service_generation_digest", None)
+                != selected_execution.service_generation_digest
+                or getattr(target_identity, "kernel_uid", None) != observer.producer_uid
+                or getattr(target_proof, "package_id", None) != selected_execution.native_package_id
+                or getattr(target_proof, "compiled_closure_sha256", None) is None
+                or getattr(target_proof, "target_peer_identity", None) != target_identity
+                or type(target_pidfd) is not int or target_pidfd < 0
+                or not isinstance(getattr(source, "signed_receipt_wires", None), tuple)
+                or not isinstance(getattr(source, "verified_source_receipt_handles", None), tuple)
+                or len(source.signed_receipt_wires) != len(source.verified_source_receipt_handles)
+                or not isinstance(getattr(source, "parent_closure_digest", None), str)):
+            self._close_target(target)
+            raise AuthorityDenied("native.input.binding", "selected task source, target, and observer do not join")
+        service = self.source_observers.service
+        uid = target_identity.kernel_uid
+        try:
+            parent_receipts = [SourceReceipt.from_wire(json.loads(wire))
+                               for wire in source.signed_receipt_wires]
+        except Exception:
+            self._close_target(target)
+            raise AuthorityDenied("native.input.lineage", "admitted source receipt wires are invalid") from None
+        now = self.monotonic()
+        lease = min(
+            float(selected_execution.expires_monotonic), float(target.expires_monotonic),
+            float(source.expires_monotonic), now + 30.0,
+        )
+        if not now < lease:
+            self._close_target(target)
+            raise AuthorityDenied("native.input.expired", "selected task input target expired")
+        try:
+            context_wire = service._issue_context(uid, {
+                "purpose": "hermes-native-initial-input",
+                "intent": f"resource-task:{selected_execution.execution_handle.admission_id}:{selected_execution.execution_handle.node_id}",
+                "trace_id": secrets.token_urlsafe(24),
+                "lease_seconds": lease - now,
+                "source_contexts": [],
+                "source_receipts": [receipt.to_wire() for receipt in parent_receipts],
+                "final_payload_digest": canonical_digest(exact_stdin),
+                "operation": "native.request.dispatch",
+            }, peer_pid=target.peer_pid)
+            parent_context = HostContext.from_wire(context_wire)
+        except Exception:
+            self._close_target(target)
+            raise AuthorityDenied("native.input.context", "root could not issue selected initial-input context") from None
+        try:
+            # Keep an independent live peer duplicate for the post-capture
+            # delivery check; capture transfers ownership of target.peer_pidfd.
+            delivery_pidfd = os.dup(target.peer_pidfd)
+        except OSError:
+            self._close_target(target)
+            raise AuthorityDenied("native.input.peer", "selected task PIDFD could not be duplicated") from None
+        try:
+            event_id = None
+            try:
+                captured_target, target = target, None
+                source_handle = self.source_observers.capture_selected_native_ingress(
+                    observer.observer_enrollment_id,
+                    payload_bytes=exact_stdin, parent_context=parent_context,
+                    selected_execution=selected_execution, target=captured_target,
+                    selection_registry=registry,
+                    parent_receipt_handles=source.verified_source_receipt_handles,
+                )
+                delivered = self.source_observers.take_source_receipt(
+                    str(source_handle), peer_uid=uid, peer_pid=captured_target.peer_pid,
+                    peer_pidfd=delivery_pidfd,
+                )
+                if str(delivered) != str(source_handle):
+                    raise AuthorityDenied("native.input.delivery", "source receipt was not delivered to the selected producer")
+                with service._lock:
+                    receipt = service._source_receipt_handles.get(str(source_handle))
+                if (receipt is None or receipt.sensitivity not in {
+                        Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN}
+                        or receipt.profile_id != selected_execution.profile_id
+                        or receipt.process_generation != selected_execution.generation
+                        or receipt.uid != uid
+                        or receipt.payload_digest != canonical_digest(exact_stdin)
+                        or receipt.parent_lineage_hash != parent_context.lineage_hash
+                        or receipt.monotonic_expires_at > lease):
+                    raise AuthorityDenied("native.input.receipt", "issued source receipt differs from selected prompt")
+                event_id = secrets.token_urlsafe(32)
+                event = RootNativeInputEvent(
+                    schema=1, input_event_id=event_id,
+                    input_origin_kind="root-admitted-task",
+                    source_receipt_handle=str(source_handle),
+                    payload_sha256=hashlib.sha256(exact_stdin).hexdigest(),
+                    payload_size_bytes=len(exact_stdin),
+                    producer_profile_id=selected_execution.profile_id,
+                    producer_generation=selected_execution.generation,
+                    parent_closure_digest=source.parent_closure_digest,
+                    observed_monotonic=now,
+                    expires_monotonic=min(lease, receipt.monotonic_expires_at),
+                    native_loader_ready_event_id=target_proof.loader_ready_event_id,
+                )
+                with self._lock:
+                    if event_id in self._events:
+                        raise AuthorityDenied("native.input.replay", "root input event handle collided")
+                    self._events[event_id] = event
+                return event
+            except BaseException:
+                cancel = getattr(self.source_observers, "cancel_invocation_payload_capsules", None)
+                if callable(cancel):
+                    cancel(parent_context.grant_id)
+                raise
+        finally:
+            os.close(delivery_pidfd)
+            self._close_target(target)
+
+    def retain_task_input_receipt(self, receipt: Any) -> None:
+        """Retain an exact receipt object only after its input event is captured."""
+        with self._lock:
+            events = [event for event in self._events.values()
+                      if event.source_receipt_handle == getattr(receipt, "source_receipt_handle", None)
+                      and event.payload_sha256 == getattr(receipt, "stdin_sha256", None)
+                      and event.payload_size_bytes == getattr(receipt, "stdin_size_bytes", None)
+                      and event.producer_generation == getattr(receipt, "process_generation", None)
+                      and event.parent_closure_digest == getattr(receipt, "parent_closure_digest", None)]
+            if len(events) != 1 or not isinstance(getattr(receipt, "receipt_handle", None), str):
+                raise AuthorityDenied("native.input.receipt", "receipt does not match one retained input event")
+            if receipt.receipt_handle in self._task_receipts:
+                raise AuthorityDenied("native.input.replay", "initial input receipt handle already exists")
+            self._task_receipts[receipt.receipt_handle] = receipt
+
+    def resolve_task_input_receipt(self, receipt_handle: str) -> Any:
+        with self._lock:
+            receipt = self._task_receipts.get(receipt_handle)
+            matches = [event for event in self._events.values()
+                       if event.source_receipt_handle == getattr(receipt, "source_receipt_handle", None)
+                       and event.payload_sha256 == getattr(receipt, "stdin_sha256", None)
+                       and event.payload_size_bytes == getattr(receipt, "stdin_size_bytes", None)
+                       and event.expires_monotonic > self.monotonic()]
+        if receipt is None or len(matches) != 1:
+            raise AuthorityDenied("native.input.receipt", "root input receipt is unknown, stale, or consumed")
+        if receipt.source_receipt_handle != receipt.producer_context_delivery_handle:
+            raise AuthorityDenied("native.input.delivery", "source and delivery handles differ")
+        return receipt
 
     def record_admitted_task_input(self, root_admission_handle: str, node_id: str,
                                    owned_process_handle: Any,
@@ -228,6 +402,7 @@ class RootNativeInputObserver:
                 parent_closure_digest=context.lineage_hash,
                 observed_monotonic=now,
                 expires_monotonic=min(selected.expires_monotonic, receipt.monotonic_expires_at),
+                native_loader_ready_event_id=getattr(proof, "loader_ready_event_id", None),
             )
             with self._lock:
                 if any(item.input_event_id == event.input_event_id for item in self._events.values()):
