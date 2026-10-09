@@ -121,3 +121,73 @@ def audit_skill_references(source_root: Path) -> SkillReferenceAudit:
         resolved_targets=tuple(sorted(resolved)),
         problems=tuple(problems),
     )
+
+
+def audit_skill_file_map(files: dict[str, bytes]) -> SkillReferenceAudit:
+    """Audit a validated source archive in memory before it is staged."""
+    paths = set(files)
+    for name, body in files.items():
+        relative = PurePosixPath(name)
+        if (not isinstance(name, str) or not isinstance(body, bytes)
+            or relative.is_absolute() or not relative.parts or ".." in relative.parts
+            or relative.as_posix() != name or "\\" in name):
+            raise ValueError("source archive contains an unsafe path or non-byte file")
+    skills = tuple(sorted(name for name in paths if PurePosixPath(name).name == "SKILL.md"))
+    pending = list(skills)
+    checked: set[str] = set()
+    resolved: set[str] = set()
+    problems: list[SkillReferenceProblem] = []
+
+    while pending:
+        source = pending.pop()
+        if source in checked:
+            continue
+        checked.add(source)
+        try:
+            text = files[source].decode("utf-8")
+        except UnicodeDecodeError:
+            problems.append(SkillReferenceProblem(source, 1, "", "markdown file cannot be read as UTF-8"))
+            continue
+        source_parent = PurePosixPath(source).parent.as_posix()
+        for match in _LINK.finditer(text):
+            raw = match.group(1)
+            target = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
+            parsed = urlsplit(target)
+            if parsed.scheme or target.startswith("#"):
+                continue
+            relative = unquote(parsed.path)
+            if not relative:
+                continue
+            if relative.startswith("/") or re.match(r"^[A-Za-z]:[/\\\\]", relative):
+                problems.append(SkillReferenceProblem(
+                    source, text.count("\\n", 0, match.start()) + 1, target,
+                    "absolute path is outside the bundled source tree",
+                ))
+                continue
+            normalized = posixpath.normpath(posixpath.join(source_parent, relative))
+            if normalized in {"", "."}:
+                normalized = source_parent
+            if normalized == ".." or normalized.startswith("../"):
+                problems.append(SkillReferenceProblem(
+                    source, text.count("\\n", 0, match.start()) + 1, target,
+                    "relative path escapes the bundled source tree",
+                ))
+                continue
+            is_file = normalized in paths
+            is_directory = any(name.startswith(normalized.rstrip("/") + "/") for name in paths)
+            if not is_file and not is_directory:
+                problems.append(SkillReferenceProblem(
+                    source, text.count("\\n", 0, match.start()) + 1, target,
+                    "referenced file or directory is missing",
+                ))
+                continue
+            resolved.add(normalized)
+            if is_file and PurePosixPath(normalized).suffix.casefold() == ".md":
+                pending.append(normalized)
+
+    return SkillReferenceAudit(
+        skill_files=skills,
+        checked_markdown=tuple(sorted(checked)),
+        resolved_targets=tuple(sorted(resolved)),
+        problems=tuple(problems),
+    )

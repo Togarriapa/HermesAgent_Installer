@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from hermes_installer.components.skill_refs import audit_skill_references
+from hermes_installer.components.skill_refs import audit_skill_file_map, audit_skill_references
 
 
 class SkillReferenceAuditTests(unittest.TestCase):
@@ -48,6 +48,19 @@ class SkillReferenceAuditTests(unittest.TestCase):
             self.assertEqual("referenced file or directory is missing", audit.problems[0].reason)
             self.assertEqual("relative path escapes the bundled source tree", audit.problems[1].reason)
             self.assertEqual((), audit.resolved_targets)
+
+    def test_audits_pinned_archive_mapping_before_filesystem_staging(self):
+        files = {
+            "skills/demo/SKILL.md": b"[helper](scripts/check.py)\\n",
+            "skills/demo/scripts/check.py": b"print('ok')\\n",
+            "shared/README.md": b"shared data\\n",
+        }
+        audit = audit_skill_file_map(files)
+        self.assertTrue(audit.complete, audit.problems)
+        self.assertIn("skills/demo/scripts/check.py", audit.resolved_targets)
+
+        with self.assertRaisesRegex(ValueError, "unsafe path"):
+            audit_skill_file_map({"../outside.md": b"bad"})
 
     def test_reports_symlinked_helper_target(self):
         with tempfile.TemporaryDirectory() as temporary:
