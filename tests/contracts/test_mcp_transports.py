@@ -55,7 +55,7 @@ class FakeManagedHandle:
             else:
                 result = {}
             await self.responses.put(json.dumps({"jsonrpc": "2.0", "id": message["id"],
-                                                 "result": result}).encode() + b"\\n")
+                                                 "result": result}).encode() + b"\n")
 
     async def read(self, *, maximum_bytes, timeout):
         return await asyncio.wait_for(self.responses.get(), timeout)
@@ -93,7 +93,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                 headers = {}
                 while True:
                     line = await reader.readline()
-                    if line == b"\\r\\n":
+                    if line == b"\r\n":
                         break
                     key, value = line.decode().split(":", 1)
                     headers[key.lower()] = value.strip()
@@ -123,11 +123,11 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                     }).encode()
                     content_type = "application/json"
                 writer.write(
-                    f"HTTP/1.1 {status} fixture\\r\\n"
-                    f"Content-Type: {content_type}\\r\\n"
-                    f"Content-Length: {len(body)}\\r\\n"
-                    "Mcp-Session-Id: fixture-session\\r\\n"
-                    "Connection: close\\r\\n\\r\\n".encode() + body
+                    f"HTTP/1.1 {status} fixture\r\n"
+                    f"Content-Type: {content_type}\r\n"
+                    f"Content-Length: {len(body)}\r\n"
+                    "Mcp-Session-Id: fixture-session\r\n"
+                    "Connection: close\r\n\r\n".encode() + body
                 )
                 await writer.drain()
             finally:

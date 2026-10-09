@@ -249,14 +249,14 @@ class StreamableHTTPTransport:
                 reader, writer = await asyncio.open_connection(sock=raw_socket, limit=65_536)
             path = parsed.path or "/"
             request_head = (
-                f"POST {path} HTTP/1.1\\r\\n"
-                + "".join(f"{key}: {value}\\r\\n" for key, value in headers.items())
-                + f"Content-Length: {len(body)}\\r\\n\\r\\n"
+                f"POST {path} HTTP/1.1\r\n"
+                + "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+                + f"Content-Length: {len(body)}\r\n\r\n"
             ).encode("ascii")
             writer.write(request_head + body)
             await asyncio.wait_for(writer.drain(), self.timeout)
             status_line = await asyncio.wait_for(reader.readline(), self.timeout)
-            if len(status_line) > 8192 or not status_line.endswith(b"\\r\\n"):
+            if len(status_line) > 8192 or not status_line.endswith(b"\r\n"):
                 raise TransportError("MCP HTTP status line is invalid")
             try:
                 version, status, _reason = status_line.decode("ascii").rstrip().split(" ", 2)
@@ -270,9 +270,9 @@ class StreamableHTTPTransport:
             while True:
                 line = await asyncio.wait_for(reader.readline(), self.timeout)
                 total_header_bytes += len(line)
-                if total_header_bytes > 65_536 or not line.endswith(b"\\r\\n"):
+                if total_header_bytes > 65_536 or not line.endswith(b"\r\n"):
                     raise TransportError("MCP HTTP headers exceeded their limit")
-                if line == b"\\r\\n":
+                if line == b"\r\n":
                     break
                 if b":" not in line:
                     raise TransportError("MCP HTTP header is malformed")
@@ -327,7 +327,7 @@ class StreamableHTTPTransport:
             chunks = bytearray()
             for _ in range(4096):
                 line = await reader.readline()
-                if len(line) > 128 or not line.endswith(b"\\r\\n"):
+                if len(line) > 128 or not line.endswith(b"\r\n"):
                     raise TransportError("MCP HTTP chunk header is invalid")
                 try:
                     size = int(line.split(b";", 1)[0].strip(), 16)
@@ -341,12 +341,12 @@ class StreamableHTTPTransport:
                         trailer_bytes += len(trailer)
                         if trailer_bytes > 8192 or not trailer:
                             raise TransportError("MCP HTTP trailers exceeded their limit")
-                        if trailer == b"\\r\\n":
+                        if trailer == b"\r\n":
                             return bytes(chunks)
                 if len(chunks) + size > maximum:
                     raise TransportError("MCP response exceeded the configured size limit")
                 chunks.extend(await reader.readexactly(size))
-                if await reader.readexactly(2) != b"\\r\\n":
+                if await reader.readexactly(2) != b"\r\n":
                     raise TransportError("MCP HTTP chunk terminator is invalid")
             raise TransportError("MCP HTTP response exceeded its chunk limit")
         try:
@@ -364,15 +364,15 @@ class StreamableHTTPTransport:
         except UnicodeDecodeError:
             raise TransportError("MCP event stream is not UTF-8") from None
         events, result = 0, None
-        for event in text.replace("\\r\\n", "\\n").split("\\n\\n"):
-            data = [line[5:].lstrip() for line in event.split("\\n") if line.startswith("data:")]
+        for event in text.replace("\r\n", "\n").split("\n\n"):
+            data = [line[5:].lstrip() for line in event.split("\n") if line.startswith("data:")]
             if not data:
                 continue
             events += 1
             if events > 256:
                 raise TransportError("MCP event stream exceeded its event limit")
             try:
-                value = _decode("\\n".join(data).encode("utf-8"))
+                value = _decode("\n".join(data).encode("utf-8"))
             except TransportError:
                 continue
             if value.get("id") == request_id:
@@ -428,7 +428,7 @@ class StdioTransport:
         if self._closed:
             raise TransportError("MCP stdio transport is closed")
         _check_dispatch_grant(self.service_id, dispatch_context, dispatch_authorization)
-        line = _encode(payload) + b"\\n"
+        line = _encode(payload) + b"\n"
         async with self._request_lock:
             try:
                 await asyncio.wait_for(self._handle.write(line, timeout=self.timeout), self.timeout)
@@ -443,9 +443,9 @@ class StdioTransport:
                         raise TransportError("MCP stdio response exceeded the message limit")
                     if not result:
                         raise TransportError("MCP stdio process exited before responding")
-                    if not result.endswith(b"\\n"):
+                    if not result.endswith(b"\n"):
                         raise TransportError("MCP stdio response must be one complete JSON line")
-                    response = _decode(result.rstrip(b"\\r\\n"))
+                    response = _decode(result.rstrip(b"\r\n"))
                     if response.get("id") == payload.get("id"):
                         return response
             except asyncio.TimeoutError:
@@ -466,7 +466,7 @@ class StdioTransport:
         payload = {"jsonrpc": "2.0", "method": "notifications/cancelled",
                    "params": {"requestId": request_id, "reason": "caller cancelled"}}
         try:
-            await asyncio.wait_for(self._handle.write(_encode(payload) + b"\\n", timeout=2.0), 2.0)
+            await asyncio.wait_for(self._handle.write(_encode(payload) + b"\n", timeout=2.0), 2.0)
         except Exception:
             return
 
