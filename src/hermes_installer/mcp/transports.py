@@ -88,7 +88,8 @@ def _check_dispatch_grant(service_id, context, grant) -> None:
             or grant.lineage_sha256 != context.provenance[7:]
             or grant.expires_at_monotonic <= time.monotonic()):
         raise TransportError("MCP host authorization is stale or mismatched")
-\nclass StreamableHTTPTransport:
+
+class StreamableHTTPTransport:
     """Origin-bound Streamable HTTP transport with DNS pinning and host grants."""
 
     requires_dispatch_grant = True
