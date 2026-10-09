@@ -24,3 +24,5 @@ None; earlier installer capabilities remain active proposals. Their integration 
 ## Impact
 
 src/hermes_installer/remote/, secure credential/config/lifecycle adapters, dedicated application session/services, Cloudflare API/Access/tunnel configuration, browser tests and docs. No live Pi/account/DNS mutation is performed by this planning change.
+
+Root-observed remote session bridge HI13: plans/amendments/2026-10-09-remote-root-session-bridge-v1.md and planning/remote-root-session-bridge-contract.json specify actual JWT/current policy/root principal binding, no gateway selfsigned claim substitute, fixed allbytes connector lease and active revocation. Management/read/tunnel credential separation preserved; native/account evidence open.
