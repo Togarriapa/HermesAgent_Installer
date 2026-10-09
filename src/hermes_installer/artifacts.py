@@ -684,6 +684,7 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
     work = Path(tempfile.mkdtemp(prefix=".package-set-", dir=destination_parent))
     os.chown(work, owner, runtime.service_gid)
     os.chmod(work, 0o700)
+    stage = "wheelhouse"
     try:
         wheelhouse = work / "wheelhouse"
         wheelhouse.mkdir(mode=0o700)
@@ -708,6 +709,7 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
         safe_env = {"PATH": "/usr/bin:/bin", "HOME": str(work), "PIP_CONFIG_FILE": os.devnull,
                     "PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1",
                     "PYTHONNOUSERSITE": "1", "PYTHONUTF8": "1"}
+        stage = "venv-create"
         _run_fixed([str(python), "-m", "venv", "--copies", str(temporary_env)],
                    cwd=work, timeout=timeout, cancelled=cancelled, expected_uid=expected_uid,
                    env=safe_env, before_exec=before_process,
@@ -715,6 +717,7 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
                    network_isolated=True)
         env_python = temporary_env / "bin" / "python"
         _secure_executable(env_python, owner)
+        stage = "offline-wheel-install"
         _run_fixed([str(env_python.resolve(strict=True)), "-I", "-m", "pip", "install",
                     "--no-index", "--find-links", str(wheelhouse), "--require-hashes",
                     "--no-deps", "--only-binary=:all:", "--no-input", "--no-cache-dir",
@@ -728,11 +731,13 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
             "assert m.version('numpy') == '1.26.4'; "
             "assert m.version('tflite-runtime') == '2.14.0'"
         )
+        stage = "import-validation"
         _run_fixed([str(env_python.resolve(strict=True)), "-I", "-c", validation],
                    cwd=work, timeout=min(timeout, 30), cancelled=cancelled, expected_uid=expected_uid,
                    env=safe_env, before_exec=before_process,
                    run_as_uid=owner, run_as_gid=runtime.service_gid, deadline=effect_deadline,
                    network_isolated=True)
+        stage = "freeze"
         tree_digest = _package_tree_digest(temporary_env)
         marker = temporary_env / ".hermes-package-set.json"
         marker.write_text(json.dumps({
@@ -748,6 +753,7 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
         if cancelled():
             raise AuthorityDenied("package.cancelled", "package-set install cancelled before activation")
         before_activation()
+        stage = "activate"
         os.rename(temporary_env, destination)
         _fsync_dir(destination_parent)
         installed_digest = _verify_installed_package_set(destination, spec, runtime)
@@ -759,7 +765,9 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
         # it in the denial so the root-owned service journal can distinguish
         # storage/custody failures without exposing protected filesystem paths.
         code = exc.errno if type(exc.errno) is int else 0
-        raise AuthorityDenied("package.storage", f"isolated package-set staging failed safely (errno {code})") from None
+        safe_stage = stage if stage in {"wheelhouse", "venv-create", "offline-wheel-install",
+                                        "import-validation", "freeze", "activate"} else "unknown"
+        raise AuthorityDenied("package.storage", f"isolated package-set staging failed safely at {safe_stage} (errno {code})") from None
     finally:
         _remove_private_tree(work)
 
