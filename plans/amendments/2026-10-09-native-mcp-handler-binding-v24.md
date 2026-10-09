@@ -1,0 +1,3 @@
+# Source-backed native MCP handler binding v24
+
+MC-F01/MC-F02/HI-T04/HI-T08/HI-T09 original native MCP scope requires actual native registered calls to reach protected MCPClient. Pinned upstream registration/discovery/transport source was read and hashed. The live package contract fixes an in-process selected handler hook, exact active tool/schema/backend/resource mapping, one-use observed invocation RPC, fresh existing MCP effects and result lineage. No cross-process stdio context workaround, arbitrary caller proxy or credential export. Actual handler module/native/account evidence remains required; no new task IDs or baseline changes.

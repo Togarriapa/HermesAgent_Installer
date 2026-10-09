@@ -48,6 +48,7 @@
       "resource_validators",
       "root_journal_roots",
       "resource_controller_roles",
+      "native_mcp_tool_bindings",
       "generation_digest"
     ],
     "types": "single selected generation record; each catalog is bounded list<=1024 strict existing inner source-backed records, duplicates/unknown fields rejected. generation_id opaque rootissued string. Empty lists valid only affected actions explicitly unavailable.",
@@ -84,7 +85,8 @@
       "calls": "resolve_root_journal(root_id,expected_active_generation_digest)->RootJournalSelection(root_id,path) after actual path owner/mode/dev/inode/generation checks. Memory authority_state_root_id exact row root_id; bootstrap receipt/session stores use child bootstrap-receipts/setup-sessions; neither hardcoded separate root nor mutable mapping fallback.",
       "state": "First root-local setup may use verified initial selection before authority file exists, then includes observed row in prepared snapshot. Initial constructor root trust is not an active worker rule. Later daemon uses active digest-bound row only."
     },
-    "resource_controller_roles": "Exact root_controller_role_catalog rows from protected-resource-job-contract.json; entire active list generation_digest bound, current actual daemon kernel/module/source-observer/backend joins mandatory."
+    "resource_controller_roles": "Exact root_controller_role_catalog rows from protected-resource-job-contract.json; entire active list generation_digest bound, current actual daemon kernel/module/source-observer/backend joins mandatory.",
+    "native_mcp_tool_bindings": "Exact native_mcp_dispatch rows in native-package-binding-contract.json; full active generation digest and current native/schema/backend/resource/handler joins mandatory."
   },
   "device_kernel_enforcement": {
     "profile_fields": [
@@ -465,5 +467,46 @@
       "predicate": "resolve_source_target_peer(observer,parent_context) resolves unique actual pending pair by full context index; finds exactly one observer_delivery_bindings row matching observer.observer_enrollment_id, selects that exact role peer, verifies observer current protected enrollment/event relation and selected peer current PIDFD/cgroup/exe/profile/gen. observer.role_id identifies source observer role, not destination. Neither target_id nor recipient is treated as destination role authority.",
       "ownership": "Broker retains originals; each resolve duplicates both PIDFDs. Selector transfers selected peer duplicate to SourceObserverRegistry and closes unselected duplicate immediately. Registry closes selected duplicate on pending event/delivery completion/cancel/expiry. Exception closes all duplicates. Repeated proof lookup never consumes original pair/PIDFD."
     }
+  },
+  "installer_target_result_verifier": {
+    "tasks": "VD-F02/VD-F04 and original AC01..18 exact evidence mappings; no external account/foreign registry or new approval gate.",
+    "constructor": "InstallerTrustedTargetAuthorizer.from_root_runtime(root_runtime_composition,verified_setup_or_active_enrollment_receipt,installed_candidate_receipt_registry)->TrustedTargetAuthorizer. Uses actual installed Linux target identity/machine ID/ARM64/kernel facts, selected current root enrollment/profile/catalog digest and actual candidate commit/module/artifact receipt. Constructor only actual root runtime/session, not fixture callback/env/candidate label or unspecified external target registry.",
+    "authorize": "authorize_workflow(candidate_git_sha,acceptance_id)->RootTargetWorkflowAdmission; fixed enrolled target/current candidate and original mapped acceptance action. Root resolves actual authoritative principal/target/service/resource/account scope, actual consent/runtime prerequisites and zero additional budget. Existing user-authorized install/verify intent permits routine read-only/owned diagnostics; does not infer external writes/spend. Missing account/prerequisite is honest incomplete, not demand another routine permission.",
+    "admission_fields": [
+      "schema=1",
+      "workflow_handle",
+      "acceptance_id",
+      "target_id",
+      "target_machine_identity_sha256",
+      "candidate_git_sha",
+      "candidate_artifact_closure_sha256",
+      "enrollment_generation_id",
+      "service_generation_digest",
+      "principal_id",
+      "intent_id",
+      "run_nonce",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "runner": "InstallerOwnedTargetWorkflowRunner.from_root_runtime(authorizer,root_workflow_adapter_registry,root_observation_receipt_registry)->existing TargetWorkflowRunner. Exact AC/EV profile selects static reviewed adapter, current candidate artifacts and actual native/backend effect. No generic arbitrary command/user shell/HTTP/callback test boolean. Root registration only concrete implementation; absent adapter is incomplete with exact original task/resume, not placeholder success.",
+    "verifier": "InstallerTrustedResultVerifier.from_root_receipts(root_observation_receipt_registry,installed_candidate_receipt_registry,current_active_catalog)->TrustedResultVerifier. verify_result(workflow_handle,structured_result_receipt_handle)->verified workflow result; root-private lookup/signed durable rootjournal receipts and actual observed origins, full candidate/target/nonce/action/digest/generation binding. Actual structured observations and per-AC assertion dimensions must match the installer-owned exact profile; mere stdout/count/caller success flag or signature over caller data cannot satisfy them.",
+    "receipt_fields": [
+      "schema=1",
+      "result_receipt_handle",
+      "workflow_handle",
+      "acceptance_id",
+      "evidence_ids",
+      "target_id",
+      "candidate_git_sha",
+      "candidate_artifact_closure_sha256",
+      "service_generation_digest",
+      "run_nonce",
+      "assertion_receipt_handles",
+      "observed_result_sha256",
+      "observed_monotonic",
+      "terminal_state"
+    ],
+    "truth": "Assertions resolve actual source/ownership/kernel/native/provider/JWT/session/account receipts as applicable, independently of fixture tests. Runtime/task receipts must carry actual observed origin registered by concrete root collector; fixture provenance never promoted. Candidate/target/generation drift/expiredadmission/replay/ambiguous terminal/partial assertions denies accepted. Success requires every original profile assertion; all18 AC remain pending until actual proof. CI/bodyfixture coverage separate.",
+    "root_only": "Local firstsetup uses same root runtime actual deployed candidate receipt and selected prepared/active context; no privileged Mac verifier/installer execution or claim of Pi enrollment from baseline. Physical Pi verifier commands remain assigned authorized browser owner only."
   }
 }
