@@ -197,7 +197,9 @@ def _websocket_client_frame(opcode: int, payload: bytes) -> bytes:
     return prefix + mask + masked
 
 
-def _websocket_handshake(sock: socket.socket, route: Route, timeout: float) -> None:
+def _websocket_handshake(sock: socket.socket, route: Route, timeout: float, *,
+                         after_send: Callable[[int], None] | None = None,
+                         after_receive: Callable[[int], None] | None = None) -> None:
     """Negotiate the one fixed Xpra binary WebSocket origin/path/subprotocol."""
     key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
     request = (
@@ -253,7 +255,8 @@ def _websocket_handshake(sock: socket.socket, route: Route, timeout: float) -> N
 
 def _websocket_read(stream: _Stream, amount: int, timeout: float,
                     cancelled: Callable[[], bool],
-                    before_receive: Callable[[], None] | None = None) -> bytes:
+                    before_receive: Callable[[], None] | None = None,
+                    after_receive: Callable[[int], None] | None = None) -> bytes:
     """Return only payload bytes from complete, unmasked server binary frames."""
     if stream.ws_buffer is None:
         stream.ws_buffer = bytearray()
@@ -277,6 +280,8 @@ def _websocket_read(stream: _Stream, amount: int, timeout: float,
                             before_receive()
                             consumed = True
                         chunk = stream.sock.recv(max(4096, count - len(buffer)))
+                        if chunk and after_receive is not None:
+                            after_receive(len(chunk))
                     except (OSError, TimeoutError):
                         raise AuthorityDenied("connector.read", "WebSocket frame read failed") from None
                     if not chunk:
@@ -512,7 +517,8 @@ class FixedServiceConnector:
 
     def _recv_bounded(self, stream: _Stream, amount: int, timeout: float,
                       cancelled: Callable[[], bool],
-                      before_receive: Callable[[], None] | None = None) -> bytes:
+                      before_receive: Callable[[], None] | None = None,
+                      after_receive: Callable[[int], None] | None = None) -> bytes:
         consumed = False
         deadline = min(stream.expires, self.monotonic() + timeout)
         while True:
@@ -531,14 +537,18 @@ class FixedServiceConnector:
                     if not consumed and before_receive is not None:
                         before_receive()
                         consumed = True
-                    return stream.sock.recv(amount)
+                    data = stream.sock.recv(amount)
+                    if data and after_receive is not None:
+                        after_receive(len(data))
+                    return data
             except (OSError, TimeoutError) as exc:
                 self._dispose(stream)
                 raise AuthorityDenied("connector.read", "fixed service read failed") from exc
 
     def _send_bounded(self, stream: _Stream, data: bytes, timeout: float,
                       cancelled: Callable[[], bool],
-                      before_send: Callable[[], None] | None = None) -> None:
+                      before_send: Callable[[], None] | None = None,
+                      after_send: Callable[[int], None] | None = None) -> None:
         deadline = min(stream.expires, self.monotonic() + timeout)
         cursor = 0
         consumed = False
@@ -560,6 +570,8 @@ class FixedServiceConnector:
                     if sent == 0:
                         raise OSError("fixed stream closed while writing")
                     cursor += sent
+                    if after_send is not None:
+                        after_send(sent)
             except (OSError, TimeoutError) as exc:
                 self._dispose(stream)
                 raise AuthorityDenied("connector.write", "fixed service write failed") from exc
@@ -685,7 +697,9 @@ class FixedServiceConnector:
                      peer_uid: int, peer_pid: int, peer_pidfd: int,
                      cancelled: Callable[[], bool], before_connect: Callable[[], None],
                      seal: object,
-                     resolve_lease: Callable[[Any, Route], NamespaceLease] | None = None
+                     resolve_lease: Callable[[Any, Route], NamespaceLease] | None = None,
+                     after_open_send: Callable[[int], None] | None = None,
+                     after_open_receive: Callable[[int], None] | None = None
                      ) -> Mapping[str, Any]:
         """Root-only open path; the HI13/HI12 consumer runs before connect."""
         if seal is not _REMOTE_SESSION_SEAL:
@@ -729,7 +743,8 @@ class FixedServiceConnector:
                                            min(timeout, self.limits.max_open_timeout),
                                            before_connect=before_connect)
             if route.protocol == "websocket":
-                _websocket_handshake(sock, route, min(timeout, self.limits.max_open_timeout))
+                _websocket_handshake(sock, route, min(timeout, self.limits.max_open_timeout),
+                                     after_send=after_open_send, after_receive=after_open_receive)
             if cancelled() or not _pidfd_alive(peer_pidfd) or not _pidfd_alive(lease.pidfd):
                 raise AuthorityDenied("connector.cancelled", "root connector open ended after cancellation")
         except BaseException:
@@ -787,7 +802,8 @@ class FixedServiceConnector:
     def _remote_write(self, binding: Any, connector_id: str, sequence: int,
                       data: bytes, payload: bytes, *, timeout: float, peer_uid: int,
                       peer_pid: int, peer_pidfd: int, cancelled: Callable[[], bool],
-                      before_send: Callable[[], None], seal: object) -> int:
+                      before_send: Callable[[], None], seal: object,
+                      after_send: Callable[[int], None] | None = None) -> int:
         if seal is not _REMOTE_SESSION_SEAL or not isinstance(data, bytes) or not data:
             raise AuthorityDenied("connector.remote-session", "root connector write input is invalid")
         body = {"schema": 1, "target_id": binding.target_id, "route_id": binding.route_id,
@@ -818,7 +834,8 @@ class FixedServiceConnector:
             if len(framed) > stream.remaining:
                 self._dispose(stream)
                 raise AuthorityDenied("connector.frame", "framed request exceeds connector byte budget")
-            self._send_bounded(stream, framed, timeout, cancelled, before_send=before_send)
+            self._send_bounded(stream, framed, timeout, cancelled, before_send=before_send,
+                               after_send=after_send)
             stream.remaining -= requested
             stream.sequence += 1
         return requested
@@ -827,7 +844,8 @@ class FixedServiceConnector:
                      maximum_bytes: int, payload: bytes, *, timeout: float,
                      peer_uid: int, peer_pid: int, peer_pidfd: int,
                      cancelled: Callable[[], bool], before_receive: Callable[[], None],
-                     seal: object) -> tuple[bytes, bool]:
+                     seal: object, after_receive: Callable[[int], None] | None = None
+                     ) -> tuple[bytes, bool]:
         if seal is not _REMOTE_SESSION_SEAL or type(maximum_bytes) is not int:
             raise AuthorityDenied("connector.remote-session", "root connector read input is invalid")
         body = {"schema": 1, "target_id": binding.target_id, "route_id": binding.route_id,
@@ -849,10 +867,10 @@ class FixedServiceConnector:
             try:
                 if stream.route.protocol == "websocket":
                     data = _websocket_read(stream, amount, timeout, cancelled,
-                                           before_receive=before_receive)
+                                           before_receive=before_receive, after_receive=after_receive)
                 else:
                     data = self._recv_bounded(stream, amount, timeout, cancelled,
-                                              before_receive=before_receive)
+                                              before_receive=before_receive, after_receive=after_receive)
             except AuthorityDenied:
                 self._dispose(stream)
                 raise
@@ -1186,6 +1204,16 @@ class SetupProbeAssetResponse:
     body: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class RemoteProbeByteSnapshot:
+    """Immutable byte/effect counters for one authenticated root probe window."""
+
+    read_bytes: int
+    write_bytes: int
+    open_effects: int
+    frame_effects: int
+
+
 class SetupProbeConnectorBackend:
     """Setup-only Xpra broker driven by root probe handles and one-use HI12 grants.
 
@@ -1200,6 +1228,7 @@ class SetupProbeConnectorBackend:
                  resolve_probe_connector_binding: Callable[[str, int, int, int], Any],
                  resolve_probe_asset_path: Callable[[Any, str], str],
                  advance_sequence: Callable[..., bool] | None = None,
+                 verify_observer_capability: Callable[[Any], bool] | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         from hermes_installer.authority.remote_probe_connector_authority import SetupProbeConnectorAuthority
         if (not isinstance(probe_authority, SetupProbeConnectorAuthority)
@@ -1217,7 +1246,46 @@ class SetupProbeConnectorBackend:
         self.resolve_binding = resolve_probe_connector_binding
         self.resolve_asset_path = resolve_probe_asset_path
         self.advance_sequence = advance_sequence
+        self.verify_observer_capability = verify_observer_capability
         self.monotonic = monotonic
+        self._probe_ledger_lock = threading.RLock()
+        self._probe_ledger: dict[tuple[str, str, str], list[int]] = {}
+
+    def snapshot_remote_probe_bytes(self, capability: Any) -> RemoteProbeByteSnapshot:
+        """Return root-owned counters only for a live, root-verified observer capability."""
+        if (not callable(self.verify_observer_capability)
+                or self.verify_observer_capability(capability) is not True
+                or not self.monotonic() < capability.expires_monotonic
+                or capability.issued_monotonic > self.monotonic()
+                or capability.expires_monotonic - capability.issued_monotonic > 25.0
+                or type(capability.gateway_identity_digest) is not str
+                or not re.fullmatch(r"[0-9a-f]{64}", capability.gateway_identity_digest)
+                or type(capability.native_enrollment_id) is not str
+                or not capability.native_enrollment_id
+                or type(capability.session_id) is not str
+                or not capability.session_id):
+            raise AuthorityDenied("connector.ledger", "root observer capability is unavailable or expired")
+        key = (capability.gateway_identity_digest, capability.native_enrollment_id,
+               capability.session_id)
+        with self._probe_ledger_lock:
+            counts = tuple(self._probe_ledger.get(key, (0, 0, 0, 0)))
+        return RemoteProbeByteSnapshot(*counts)
+
+    def _record_probe_effect(self, binding: Any, operation: str) -> None:
+        key = (binding.gateway_identity_digest, binding.native_enrollment_id, binding.session_id)
+        index = 2 if operation == "connector.open" else 3
+        with self._probe_ledger_lock:
+            counts = self._probe_ledger.setdefault(key, [0, 0, 0, 0])
+            counts[index] += 1
+
+    def _record_probe_bytes(self, binding: Any, direction: str, count: int) -> None:
+        if type(count) is not int or count <= 0:
+            return
+        key = (binding.gateway_identity_digest, binding.native_enrollment_id, binding.session_id)
+        index = 0 if direction == "read" else 1
+        with self._probe_ledger_lock:
+            counts = self._probe_ledger.setdefault(key, [0, 0, 0, 0])
+            counts[index] += count
 
     def _current(self, handle: str, uid: int, pid: int, pidfd: int,
                  action: str, asset_id: str | None,
@@ -1328,6 +1396,7 @@ class SetupProbeConnectorBackend:
                 auth, handle, operation, payload, sequence,
                 peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd) is not True:
             raise AuthorityDenied("connector.authorization", "HI12 setup connector effect was denied")
+        self._record_probe_effect(binding, operation)
 
     def _open(self, handle: str, binding: Any, uid: int, pid: int, pidfd: int) -> tuple[str, Mapping[str, Any]]:
         view = self._view(binding)
@@ -1341,7 +1410,9 @@ class SetupProbeConnectorBackend:
             peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd,
             cancelled=lambda: binding.cancelled() or self.monotonic() >= binding.expires_monotonic,
             before_connect=before_connect, seal=_REMOTE_SESSION_SEAL,
-            resolve_lease=self._resolve_lease)
+            resolve_lease=self._resolve_lease,
+            after_open_send=lambda count: self._record_probe_bytes(binding, "write", count),
+            after_open_receive=lambda count: self._record_probe_bytes(binding, "read", count))
         body = json.loads(result["body"])
         connector_id = body.get("connector_id")
         if (not isinstance(connector_id, str) or not _ID.fullmatch(connector_id)
@@ -1425,7 +1496,8 @@ class SetupProbeConnectorBackend:
                 peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                 cancelled=current.cancelled,
                 before_send=lambda: self._effect(root_probe_handle, current, "connector.write",
-                    write_payload, seq, peer_uid, peer_pid, peer_pidfd), seal=_REMOTE_SESSION_SEAL)
+                    write_payload, seq, peer_uid, peer_pid, peer_pidfd), seal=_REMOTE_SESSION_SEAL,
+                after_send=lambda sent: self._record_probe_bytes(current, "write", sent))
             if count != len(request):
                 raise AuthorityDenied("connector.write", "asset request was not fully sent")
             self._advance(root_probe_handle, current, "connector.write", connector_id,
@@ -1446,7 +1518,8 @@ class SetupProbeConnectorBackend:
                     peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                     cancelled=frame.cancelled,
                     before_receive=lambda: self._effect(root_probe_handle, frame, "connector.read",
-                        read_payload, seq_read, peer_uid, peer_pid, peer_pidfd), seal=_REMOTE_SESSION_SEAL)
+                        read_payload, seq_read, peer_uid, peer_pid, peer_pidfd), seal=_REMOTE_SESSION_SEAL,
+                    after_receive=lambda count: self._record_probe_bytes(frame, "read", count))
                 self._advance(root_probe_handle, frame, "connector.read", connector_id,
                               peer_uid, peer_pid, peer_pidfd)
                 return data
@@ -1503,7 +1576,8 @@ class SetupProbeConnectorStream:
             cancelled=binding.cancelled,
             before_send=lambda: self.backend._effect(self.root_probe_handle, binding,
                 "connector.write", payload, seq, self.peer_uid, self.peer_pid, self.peer_pidfd),
-            seal=_REMOTE_SESSION_SEAL)
+            seal=_REMOTE_SESSION_SEAL,
+            after_send=lambda count: self.backend._record_probe_bytes(binding, "write", count))
         self.backend._advance(self.root_probe_handle, binding, "connector.write", self.connector_id,
                               self.peer_uid, self.peer_pid, self.peer_pidfd)
         return count
@@ -1526,7 +1600,8 @@ class SetupProbeConnectorStream:
             cancelled=binding.cancelled,
             before_receive=lambda: self.backend._effect(self.root_probe_handle, binding,
                 "connector.read", payload, seq, self.peer_uid, self.peer_pid, self.peer_pidfd),
-            seal=_REMOTE_SESSION_SEAL)
+            seal=_REMOTE_SESSION_SEAL,
+            after_receive=lambda count: self.backend._record_probe_bytes(binding, "read", count))
         self.backend._advance(self.root_probe_handle, binding, "connector.read", self.connector_id,
                               self.peer_uid, self.peer_pid, self.peer_pidfd)
         if eof:
