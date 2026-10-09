@@ -34,6 +34,28 @@ class ApplicationHandlerTests(unittest.TestCase):
         self.assertTrue(any("lock" in blocker for blocker in result.blockers))
         self.assertTrue(any("ARM64" in blocker for blocker in result.blockers))
 
+    def test_browser_use_requires_exact_aarch64_python314_resolution(self):
+        manifest = b'[project]\nname = "browser-use"\nversion = "0.13.11"\nrequires-python = ">=3.11,<4.0"\n'
+        lock = b'''version = 1
+requires-python = ">=3.11, <4.0"
+resolution-markers = ["sys_platform == 'linux' and platform_machine == 'aarch64' and python_version == '3.14'"]
+
+[[package]]
+name = "browser-use"
+version = "0.13.11"
+
+[[package]]
+name = "browser-use-core"
+version = "0.13.3"
+'''
+        result = review_isolated_runtime("browser-use", {
+            "pyproject.toml": manifest,
+            "uv.lock": lock,
+        })
+        self.assertEqual("lockfile-integrity-reviewed; functional-probe-pending", result.evidence_state)
+        self.assertFalse(result.blockers)
+        self.assertEqual(1, len(result.lock_digests))
+
     def test_hyperframes_and_omniroute_validate_native_runtime_floors(self):
         hyper = review_isolated_runtime("hyperframes", {
             "package.json": b"{}",

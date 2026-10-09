@@ -36,7 +36,7 @@ ISOLATED_RUNTIME_PROFILES: Mapping[str, IsolatedRuntimeProfile] = {
         True, ("uv",),
     ),
     "browser-use": IsolatedRuntimeProfile(
-        "browser-use", ("pyproject.toml",), (), "python", ">=3.11,<4",
+        "browser-use", ("pyproject.toml",), ("uv.lock",), "python", ">=3.11,<4",
         True, ("ARM64-compatible Chromium",),
     ),
     "hyperframes": IsolatedRuntimeProfile(
@@ -133,7 +133,21 @@ def review_isolated_runtime(component_id: str, files: Mapping[str, bytes]) -> Ru
         project = toml("pyproject.toml").get("project", {})
         if project.get("requires-python") != ">=3.11,<4.0":
             blockers.append("Browser Use Python constraint differs from the reviewed pinned manifest")
-        blockers.append("generate and verify an isolated ARM64 dependency lock before installation")
+        if "uv.lock" in files:
+            lock = toml("uv.lock")
+            markers = " ".join(lock.get("resolution-markers", []))
+            if "linux" not in markers or "aarch64" not in markers:
+                blockers.append("Browser Use uv.lock lacks a Linux aarch64 resolution")
+            package_versions = {
+                row.get("name"): row.get("version")
+                for row in lock.get("package", []) if isinstance(row, dict)
+            }
+            if package_versions.get("browser-use") != "0.13.11":
+                blockers.append("Browser Use uv.lock does not bind the selected source release")
+            if package_versions.get("browser-use-core") != "0.13.3":
+                blockers.append("Browser Use uv.lock does not bind the ARM64 browser core")
+        else:
+            blockers.append("generate and verify an isolated ARM64 dependency lock before installation")
     if component_id == "scrapegraph-ai" and {"pyproject.toml", "uv.lock"}.issubset(files):
         project = toml("pyproject.toml").get("project", {})
         lock = toml("uv.lock")

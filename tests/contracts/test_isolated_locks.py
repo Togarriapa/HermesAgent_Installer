@@ -1,10 +1,37 @@
 """Source-specific structural checks for isolated application lockfiles."""
 import unittest
+import tempfile
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from hermes_installer.components.isolated_locks import lockfile_errors
+from apply_browser_use_uv_overlay import PLATFORM, apply_overlay
 
 
 class IsolatedLockTests(unittest.TestCase):
+    def test_browser_use_platform_overlay_extends_existing_uv_table_without_rewriting_it(self):
+        source = '[project]\nname = "browser-use"\n\n[tool.uv]\n# keep upstream policy\ndev-dependencies = []\n'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pyproject.toml"
+            path.write_text(source, encoding="utf-8")
+            apply_overlay(path)
+            output = path.read_text(encoding="utf-8")
+        self.assertEqual(1, output.count("[tool.uv]"))
+        self.assertIn("# keep upstream policy", output)
+        self.assertIn(f'environments = ["{PLATFORM}"]', output)
+        self.assertIn("dev-dependencies = []", output)
+
+    def test_browser_use_overlay_rejects_conflicting_existing_environment(self):
+        source = '[tool.uv]\nenvironments = ["sys_platform == \'linux\'"]\n'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pyproject.toml"
+            path.write_text(source, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "requires explicit review"):
+                apply_overlay(path)
+            self.assertEqual(source, path.read_text(encoding="utf-8"))
+
     def test_uv_lock_requires_resolved_package_identity(self):
         valid = b'version = 1\nrequires-python = ">=3.10"\n\n[[package]]\nname = "graphifyy"\nversion = "0.9.82"\n'
         self.assertEqual((), lockfile_errors("uv.lock", valid))
