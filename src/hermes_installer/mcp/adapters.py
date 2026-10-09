@@ -54,7 +54,7 @@ SERVICES: Mapping[str, MCPService] = {
         "Google Workspace Developer Preview OAuth", "one selected event or calendar", True,
         "https://developers.google.com/workspace/calendar/api/v3/reference/mcp"),
     "google-contacts": MCPService("google-contacts", "https://people.googleapis.com/mcp/v1",
-        frozenset({"search_contacts", "get_user_profile"}),
+        frozenset({"search_contacts"}),
         "Google Workspace Developer Preview OAuth", "one explicitly selected directory person", True,
         "https://developers.google.com/people/api/mcp"),
     "home-assistant": MCPService("home-assistant", None,
