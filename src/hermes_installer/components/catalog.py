@@ -1,4 +1,4 @@
-"""Complete private skill source import under installer ownership."""
+"""Source-copy helpers remain unavailable until native adapter proofs are wired."""
 from __future__ import annotations
 import hashlib
 import json
@@ -103,7 +103,7 @@ class ComponentCatalog:
                 prior = json.loads((target / "import-manifest.json").read_text(encoding="utf-8"))
                 if prior.get("sha256") != digest or tuple(prior.get("files", ())) != files:
                     raise PermissionError("pinned source generation conflicts with existing owned data")
-                return ImportedSkill(spec.id, target, files, digest, True, False, "pending_hook_review", spec.license)
+                return ImportedSkill(spec.id, target, files, digest, False, False, "pending_source_revision_and_hook_verification", spec.license)
             stage = Path(tempfile.mkdtemp(prefix=".import-", dir=root))
             os.chmod(stage, 0o700)
             try:
@@ -144,10 +144,12 @@ class ComponentCatalog:
                 shutil.rmtree(stage, ignore_errors=True)
                 raise
         # Copying content alone is not native discovery or hook verification.
-        return ImportedSkill(spec.id, target, files, digest, True, False, "pending_hook_review", spec.license)
+        return ImportedSkill(spec.id, target, files, digest, False, False, "pending_source_revision_and_hook_verification", spec.license)
 
     @staticmethod
     def mark_discovered(imported: ImportedSkill, native_discovery: Callable[[Path], bool]) -> ImportedSkill:
+        if not imported.source_resolved or imported.hook_status != "verified":
+            raise RuntimeError("native discovery is unavailable until source revision and hooks are verified")
         if not native_discovery(imported.destination):
             raise RuntimeError("Hermes did not discover the imported skill")
         from dataclasses import replace
@@ -165,4 +167,4 @@ class ComponentCatalog:
         missing = [label for label, ok in (("dependencies", dependencies_verified), ("ARM64 runtime", arm64_verified), ("process isolation", isolation_verified)) if not ok]
         if missing:
             return False, "verification pending: " + ", ".join(missing)
-        return True, "ready for isolated on-demand launch"
+        return False, "pending native ARM64 dependency, process isolation, and runtime discovery adapters"

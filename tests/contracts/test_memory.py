@@ -1,20 +1,20 @@
-from hermes_installer.memory import MemoryManager,MemoryRecord
+"""Memory defaults stay unavailable until durable and trusted adapters exist."""
+import unittest
+from hermes_installer.memory import MemoryManager,MemoryRecord,MemoryUnavailable
+
 class Store:
     name="store"
-    def __init__(self):self.records=[]
-    def capture(self,r):self.records.append(r)
-    def search(self,ns,q,n):return self.records[:n]
-    def export(self,ns):return [r for r in self.records if r.namespace==ns]
-    def remove(self,ns,rid):
-        old=len(self.records); self.records=[r for r in self.records if not (r.namespace==ns and r.id==rid)]; return len(self.records)<old
-def test_memory_single_owner_scope_policy_and_no_recursion():
-    provider=Store(); manager=MemoryManager([provider],lambda _,kind:(kind!="memory_extraction","private route denied"))
-    manager.select_owner("profile-a","store")
-    rec=MemoryRecord("one","user-a/profile-a","profile-a","conversation","fact")
-    manager.ingest(rec); assert manager.search("store",rec.namespace,"fact")==[rec]
-    with pytest.raises(PermissionError):manager.ingest(MemoryRecord("x","n","profile-a","memory:one","recursive"))
-    assert manager.search("store","other","fact")==[]
-    blocked=MemoryManager([provider],lambda *_:(False,"ineligible"))
-    blocked.select_owner("profile-a","store")
-    with pytest.raises(PermissionError):blocked.ingest(rec)
-import pytest
+    def capture(self,record): raise AssertionError("must not write")
+    def search(self,namespace,query,limit): raise AssertionError("must not search")
+    def export(self,namespace): raise AssertionError("must not export")
+    def remove(self,namespace,record_id): raise AssertionError("must not delete")
+
+class MemoryTests(unittest.TestCase):
+    def test_legacy_source_string_and_volatile_owner_never_authorize_memory(self):
+        manager=MemoryManager([Store()],lambda *_:(True,""))
+        with self.assertRaises(MemoryUnavailable): manager.select_owner("profile","store")
+        with self.assertRaises(MemoryUnavailable): manager.ingest(MemoryRecord("id","ns","profile","trusted-looking","private"))
+        with self.assertRaises(MemoryUnavailable): manager.search("store","ns","query")
+        with self.assertRaises(MemoryUnavailable): manager.export("store","ns")
+        with self.assertRaises(MemoryUnavailable): manager.remove("store","ns","id")
+if __name__=="__main__": unittest.main()
