@@ -47,8 +47,16 @@ receipt and bind its event body before making the call. Likewise,
 `finish_child` must receive only IDs issued by the root after it validates the
 broker response. These methods are not safe to expose as worker RPCs.
 
-Current state: the SQLite admission/DAG backend and local fixture contracts
-are implemented. Integration with the root source-event issuers,
-AuthorityService job/child RPC handlers, native scheduler/channel/webhook
-producers, and isolated target acceptance remains pending. This code alone
-does not establish that a selected resource can execute an effect.
+Current state: the SQLite admission/DAG backend and a root handler-factory
+draft are implemented. The authority module now parses typed backend/body
+recipe records, omits jobs without source issuer/observer/backend/recipe joins,
+and provides a one-node `invoke_resource_backend` call point that derives a
+fresh context and grant for each admitted attempt. Registration requires the
+fixed handler to identify its exact backend enrollment, artifact ID, and
+digest. This is still unavailable: the active root catalog has no scope
+binding/result-schema resolver, multi-action DAGs have only one backend ID in
+the current record shape, observed event/result payload capsules are not
+available in this checkout, and no selected resource backend callable is
+currently assembled with the required artifact binding. Dynamic recipes fail
+closed until those root-only resolvers exist. No cron, webhook, channel, or
+bundle effect is established by the ledger fixtures or this draft.
