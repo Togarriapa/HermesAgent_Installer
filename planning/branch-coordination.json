@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-10-09T16:41:57.813921+00:00",
+  "repository": "Togarriapa/HermesAgent_Installer",
+  "governance_bindings": [
+    "R0185",
+    "VD-R0185",
+    "R0194",
+    "VD-R0194"
+  ],
+  "planning_only": true,
+  "new_requirements": false,
+  "integration_tip": "be93dedec49b16ea82a42c5f44db87c7c7bb5994",
+  "published_main_tip": "f17caafd824659b3560a029c615b1574e2176678",
+  "published_main_scope": "full source snapshot only; not full runtime/native MVP acceptance",
+  "active": [
+    {
+      "branch": "codex/luna-component-adapters",
+      "owners": [
+        "luna_components_resume"
+      ],
+      "observed_remote_tip": "556a7b318f23127216bd9400aefb84ea9142c103",
+      "task_bindings": [
+        "SK-F01",
+        "SK-F03",
+        "RB-T03"
+      ],
+      "tip_in_observed_integration_ancestry": null,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    },
+    {
+      "branch": "codex/luna-host-custody-fresh",
+      "owners": [
+        "luna_host_custody",
+        "luna_host_authority"
+      ],
+      "observed_remote_tip": "bf83ef9acb73302674d19a2eba194f6d910d7ec2",
+      "task_bindings": [
+        "RG-F02",
+        "HI-T01",
+        "HI-T02",
+        "HI-T03",
+        "HI-T04",
+        "HI-T05"
+      ],
+      "tip_in_observed_integration_ancestry": null,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    },
+    {
+      "branch": "codex/luna-lifecycle",
+      "owners": [
+        "luna_lifecycle",
+        "luna_acceptance"
+      ],
+      "observed_remote_tip": "2ecc476c49cb77f8f1f00cd4e4810af8b92a82d8",
+      "task_bindings": [
+        "LC-F01",
+        "LC-F02",
+        "LC-F03",
+        "LC-F04",
+        "VD-F01",
+        "VD-F02",
+        "VD-F03"
+      ],
+      "tip_in_observed_integration_ancestry": null,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    },
+    {
+      "branch": "codex/luna-mcp-connections",
+      "owners": [
+        "luna_mcp_resume"
+      ],
+      "observed_remote_tip": "0cb8bfb23c721ec27f29c1b5f8e1cfbf9fd1edb7",
+      "task_bindings": [
+        "MC-F01",
+        "MC-F02",
+        "MC-F03"
+      ],
+      "tip_in_observed_integration_ancestry": null,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    },
+    {
+      "branch": "codex/luna-memory-engines",
+      "owners": [
+        "luna_memory_engines"
+      ],
+      "observed_remote_tip": "be93dedec49b16ea82a42c5f44db87c7c7bb5994",
+      "task_bindings": [
+        "SK-F02",
+        "HI-T04"
+      ],
+      "tip_in_observed_integration_ancestry": true,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    },
+    {
+      "branch": "codex/luna-models-coral",
+      "owners": [
+        "luna_models_coral"
+      ],
+      "observed_remote_tip": "570246bfc8cfaf7935ab3cf9feb1c5280bc9ab62",
+      "task_bindings": [
+        "HW-F01",
+        "HW-F02",
+        "HW-F03"
+      ],
+      "tip_in_observed_integration_ancestry": true,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    },
+    {
+      "branch": "codex/luna-native-resources",
+      "owners": [
+        "luna_pi_integration"
+      ],
+      "observed_remote_tip": "8b806b49b554fa5c1c665c8fef9329d45d414ae7",
+      "task_bindings": [
+        "RG-F03",
+        "RG-F04",
+        "RB-T02",
+        "RB-T04",
+        "RB-T05",
+        "RB-T06"
+      ],
+      "tip_in_observed_integration_ancestry": null,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    },
+    {
+      "branch": "codex/luna-provider-routing",
+      "owners": [
+        "luna_providers"
+      ],
+      "observed_remote_tip": "253f0dc7e767fc57002e23ef3b645e5d780b3a6c",
+      "task_bindings": [
+        "PR-F01",
+        "PR-F02",
+        "PR-F03",
+        "HI-T04"
+      ],
+      "tip_in_observed_integration_ancestry": null,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    },
+    {
+      "branch": "codex/luna-remote-desktop",
+      "owners": [
+        "luna_remote_resume"
+      ],
+      "observed_remote_tip": "e28298f4d15d922cc657eecd79de77aed4eec2b3",
+      "task_bindings": [
+        "RT-F01",
+        "RT-F02",
+        "RT-F03",
+        "RP-T01",
+        "RP-T02",
+        "RP-T03",
+        "RP-T04",
+        "RP-T05",
+        "RP-T06"
+      ],
+      "tip_in_observed_integration_ancestry": null,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    },
+    {
+      "branch": "codex/sol-implementation-ledger",
+      "owners": [
+        "sol_plan_ledger"
+      ],
+      "observed_remote_tip": "a4e3e251e624cba7ca90ab487327c714e2d42e2f",
+      "task_bindings": [
+        "R0185",
+        "VD-R0185",
+        "R0194",
+        "VD-R0194"
+      ],
+      "tip_in_observed_integration_ancestry": true,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    },
+    {
+      "branch": "codex/luna-installer-development",
+      "owners": [
+        "root"
+      ],
+      "observed_remote_tip": "be93dedec49b16ea82a42c5f44db87c7c7bb5994",
+      "task_bindings": [
+        "VD-F01",
+        "VD-F02",
+        "VD-F03"
+      ],
+      "tip_in_observed_integration_ancestry": true,
+      "state": "active owned branch; snapshot ancestry is not completion"
+    }
+  ],
+  "retired": [
+    {
+      "branch": "codex/luna-host-custody",
+      "preserved_tip": "abecf99978b9579c0f0f1f0d86a9a2d074940429",
+      "remote_ref_present": false,
+      "tip_in_integration_ancestry": true,
+      "state": "retired ref; full commit history preserved in integration"
+    },
+    {
+      "branch": "codex/luna-registry-adapters",
+      "preserved_tip": "832f47b079ca8a770989643d125ce7b80d945922",
+      "remote_ref_present": false,
+      "tip_in_integration_ancestry": true,
+      "state": "retired ref; full commit history preserved in integration"
+    },
+    {
+      "branch": "codex/sol-remote-policy-read-amendment",
+      "preserved_tip": "aecfc952512266f3cfd529f5c3415d4e14d208be",
+      "remote_ref_present": false,
+      "tip_in_integration_ancestry": true,
+      "state": "retired ref; full commit history preserved in integration"
+    },
+    {
+      "branch": "codex/sol-resources-bundle-amendment",
+      "preserved_tip": "da2323b1234fa87601f8dc46d329ab6ef482a3dc",
+      "remote_ref_present": false,
+      "tip_in_integration_ancestry": true,
+      "state": "retired ref; full commit history preserved in integration"
+    }
+  ],
+  "preservation_audit": {
+    "branch": "codex/luna-host-isolation",
+    "tip": "30d63fdf33eca7f778519ff64c33225a60c1a933",
+    "owners": [
+      "root",
+      "luna_host_custody"
+    ],
+    "state": "superseded failed unique history; no active worker; retained pending full-history preservation audit"
+  },
+  "rules": [
+    "Reuse listed branch for its owner area; never create a per-fix branch.",
+    "Concurrent owners of a branch coordinate writes using fresh expected-head CAS; do not overwrite one another.",
+    "Integrate full history using fresh head verification and exact tests; latest observed ancestor does not establish all future work merged.",
+    "Retire remote ref only after exact tip ancestry/preservation proof; do not discard unique failed evidence.",
+    "Independent fixtures/docs proceed before integration gates; actual native/account acceptance stays separate and open."
+  ],
+  "baseline_tag_unchanged": "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8",
+  "baseline_commit": "653ac5fbc7a02613c9951859a7d794599603459b",
+  "preserved_vendor_tree": "c0c994b5e0b96b90cfd2fc564ea8632dff124308",
+  "observed_integration_ci": {
+    "planning_and_runtime": "https://github.com/Togarriapa/HermesAgent_Installer/actions/runs/37960681963",
+    "remote_security": "https://github.com/Togarriapa/HermesAgent_Installer/actions/runs/37960681873",
+    "result": "success; fixture CI does not establish native/account acceptance"
+  }
+}
