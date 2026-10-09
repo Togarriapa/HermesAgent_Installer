@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+import threading
 from dataclasses import replace
 import unittest
 
@@ -37,6 +38,7 @@ class FakeTransport:
 class FakeVault:
     def __init__(self):
         self.accounts = {}
+        self._locks = {}
 
     def save(self, reference, account):
         self.accounts[reference] = account
@@ -47,6 +49,9 @@ class FakeVault:
     def clear_tokens(self, reference):
         self.accounts[reference] = replace(self.accounts[reference],
             access_token="", refresh_token="", id_token="")
+
+    def session_lock(self, reference):
+        return self._locks.setdefault(reference, threading.Lock())
 
 
 class OpenAIAuthTests(unittest.TestCase):
