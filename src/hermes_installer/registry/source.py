@@ -71,6 +71,44 @@ class VerifiedSource:
 def _git_blob(content: bytes) -> str:
     return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
 
+def _git_tree(files: Mapping[str, bytes], modes: Mapping[str, int]):
+    """Recompute the source commit tree from path, executable bit and Git blob IDs."""
+    root: dict[str, object] = {}
+    for path, content in files.items():
+        node = root
+        parts = PurePosixPath(path).parts
+        for part in parts[:-1]:
+            child = node.setdefault(part, {})
+            if not isinstance(child, dict):
+                raise RegistrySourceError("file and directory names collide")
+            node = child
+        if parts[-1] in node:
+            raise RegistrySourceError("duplicate path in vendored Git tree")
+        node[parts[-1]] = (content, modes[path])
+    subtrees = {}
+    def digest(node, prefix=""):
+        entries = []
+        for name, value in node.items():
+            if isinstance(value, dict):
+                mode = "40000"
+                object_id = digest(value, prefix + name + "/")
+                subtrees[prefix + name] = object_id
+                directory = True
+            else:
+                content, file_mode = value
+                mode = "100755" if file_mode == 0o755 else "100644" if file_mode == 0o644 else ""
+                if not mode:
+                    raise RegistrySourceError("unexpected tracked source file mode")
+                object_id = _git_blob(content)
+                directory = False
+            order = name.encode() + (b"/" if directory else b"")
+            entries.append((order, mode, name, object_id))
+        payload = b"".join(mode.encode() + b" " + name.encode() + b"\\0" + bytes.fromhex(object_id)
+                           for _, mode, name, object_id in sorted(entries, key=lambda item: item[0]))
+        return hashlib.sha1(b"tree " + str(len(payload)).encode() + b"\\0" + payload).hexdigest()
+    return digest(root), subtrees
+
+
 class BundledRegistrySource:
     """Verifies the committed archive offline; it makes no upstream requests."""
     MAX_ARCHIVE_BYTES = 8 * 1024 * 1024

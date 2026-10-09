@@ -9,8 +9,7 @@ class VendoredRegistryTests(unittest.TestCase):
         root=Path(__file__).resolve().parents[2]
         pin=json.loads((root/"resources/upstream/hermes-agent-resources.pin.json").read_text())
         self.pin=PinnedSource.from_mapping(pin)
-        self.archive=(root/"resources/upstream"/self.pin.__dict__["archive_size"] if False else
-            root/"resources/upstream/hermes-agent-resources-2.3.1.tar.gz").read_bytes()
+        self.archive=(root/"resources/upstream/hermes-agent-resources-2.3.1.tar.gz").read_bytes()
     def test_complete_snapshot_is_verified_without_network(self):
         source=BundledRegistrySource(self.pin).load(self.archive)
         self.assertEqual(source.revision,"113f42d33be9e0c8f0f47f5ca998e687323dec83")
