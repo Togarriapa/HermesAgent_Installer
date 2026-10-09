@@ -38,6 +38,7 @@ class RecordingTransport:
     def __init__(self):
         self.calls = []
         self.stream_calls = 0
+        self.response_actions = []
 
     def __call__(self, route, model, payload, *, output_token_limit, timeout, trace_id, cancelled=lambda: False):
         request = json.loads(payload)
@@ -64,6 +65,7 @@ class RecordingTransport:
                 "name": "fixture_echo",
                 "arguments": {"text": "SYNTHETIC_PRIVATE_CANARY_7f4c"},
             }]})
+        self.response_actions.append(tool_call[0] if tool_call else "final-text")
         response_text = (
             "private fixture tool result received"
             if stream_index is not None and stream_index >= 3 else "native fixture response"
@@ -250,6 +252,8 @@ plugins:
                     payload_summary = json.loads(raw_payload)
                     messages = payload_summary.get("messages", [])
                     request_summaries.append({
+                        "response_action": transport.response_actions[len(request_summaries)]
+                            if len(request_summaries) < len(transport.response_actions) else None,
                         "route": route_name,
                         "tool_names": [item.get("function", {}).get("name")
                                        for item in payload_summary.get("tools", [])
@@ -269,7 +273,7 @@ plugins:
                             for call in message.get("tool_calls", []) if isinstance(call, dict)
                         ],
                         "tool_results": [
-                            {"name": item.get("name"),
+                            {"name": item.get("name"), "tool_call_id": item.get("tool_call_id"),
                              "content": str(item.get("content", ""))[:240]}
                             for item in messages if isinstance(item, dict)
                             and item.get("role") == "tool"
