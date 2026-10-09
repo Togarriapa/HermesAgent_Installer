@@ -84,16 +84,21 @@ def _verify_graphify_fixture(result: object, work_roots: Mapping[str, str]) -> o
     try:
         root_info = work_root.lstat()
         graph_info = graph_path.lstat()
+        output_dir = graph_path.parent.lstat()
         if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.geteuid()
                 or root_info.st_mode & 0o077 or work_root.resolve(strict=True) != work_root
+                or not stat.S_ISDIR(output_dir.st_mode) or output_dir.st_uid != os.geteuid()
+                or output_dir.st_mode & 0o077 or graph_path.parent.resolve(strict=True) != graph_path.parent
                 or not stat.S_ISREG(graph_info.st_mode) or graph_info.st_uid != os.geteuid()
-                or graph_info.st_mode & 0o022 or graph_info.st_size > 16 * 1024 * 1024):
+                or graph_info.st_nlink != 1 or graph_info.st_mode & 0o022
+                or graph_info.st_size > 16 * 1024 * 1024):
             raise RuntimeError("Graphify output is not a bounded private regular file")
         fd = os.open(graph_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         try:
             opened = os.fstat(fd)
             if (opened.st_ino != graph_info.st_ino or opened.st_dev != graph_info.st_dev
-                    or not stat.S_ISREG(opened.st_mode) or opened.st_size > 16 * 1024 * 1024):
+                    or opened.st_nlink != 1 or not stat.S_ISREG(opened.st_mode)
+                    or opened.st_size > 16 * 1024 * 1024):
                 raise RuntimeError("Graphify output changed during verification")
             with os.fdopen(fd, "rb", closefd=False) as stream:
                 document = json.load(stream)

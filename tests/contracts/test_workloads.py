@@ -206,6 +206,32 @@ class WorkloadSchedulerTests(unittest.TestCase):
             scheduler.execute(Workload("hyperframes-render-fixture"))
         self.assertEqual(2, len(calls))
 
+    def test_graphify_zero_exit_without_fixture_edge_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            fixtures, work = (base / "fixtures").resolve(), (base / "work").resolve()
+            fixtures.mkdir(mode=0o700); work.mkdir(mode=0o700)
+            os.chmod(fixtures, 0o700); os.chmod(work, 0o700)
+            def run(invocation):
+                if invocation.argv[0] == "query":
+                    output = work / "graphify-out"
+                    output.mkdir(mode=0o700)
+                    document = {"nodes": [
+                        {"id": "entry", "source_file": "entrypoint.py"},
+                        {"id": "helper", "source_file": "helper.py"},
+                    ], "edges": []}
+                    graph = output / "graph.json"
+                    graph.write_text(json.dumps(document), encoding="utf-8")
+                    os.chmod(graph, 0o600)
+                return {"exit_code": 0}
+            scheduler = WorkloadScheduler(
+                run, self.scheduler.granted, runtime_roots={"graphify": "/owned/graphify"},
+                work_roots={"graphify": str(work), "graphify-fixture": str(fixtures)},
+                memory_budget_mb=2048,
+            )
+            with self.assertRaisesRegex(RuntimeError, "does not connect"):
+                scheduler.execute(Workload("graphify-code-fixture"))
+
 
 if __name__ == "__main__":
     unittest.main()
