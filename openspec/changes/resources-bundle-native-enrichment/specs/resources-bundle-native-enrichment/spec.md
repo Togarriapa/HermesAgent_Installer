@@ -275,3 +275,10 @@ The implementation SHALL verify the selected fixed candidate-index closure membe
 #### Scenario: Ordinary cache has a matching tool name
 - **WHEN** no verified selected candidate index exists
 - **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Native schema artifact provenance
+The implementation SHALL resolve exact selected argument/result schema artifacts through v39 protected package/action joins.
+
+#### Scenario: Tool name exists without selected schema bytes
+- **WHEN** no verified selected schema artifact resolves
+- **THEN** the candidate remains unavailable without inferring schema from the name or ordinary cache
