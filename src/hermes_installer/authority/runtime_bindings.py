@@ -27,9 +27,25 @@ class RootRuntimeBindings:
     process_manager: Any
     effect_handlers: Mapping[tuple[str, str], Any]
     native_bridges: Mapping[str, Any]
+    artifact_catalog: Any
 
     def resolve_native_package(self, package_id: str, generation: str) -> Any:
-        return self.enrollment_catalog.resolve_native_package(package_id, generation)
+        package = self.enrollment_catalog.resolve_native_package(package_id, generation)
+        pins = [(package.compiled_closure_artifact_id, package.compiled_closure_sha256),
+                (package.entrypoint_artifact_id, package.entrypoint_sha256),
+                (package.resolver_artifact_id, package.resolver_sha256)]
+        pins.extend((adapter.adapter_artifact_id, adapter.adapter_sha256)
+                    for adapter in package.adapter_records.values())
+        for artifact_id, digest in pins:
+            spec = self.artifact_catalog.artifacts.get(artifact_id)
+            if spec is None or spec.sha256 != digest:
+                raise EnrollmentDenied("native package artifact pin is absent from protected catalog")
+        return package
+
+    def resolve_device(self, enrollment_id: str, generation: str) -> Any:
+        return self.enrollment_catalog.resolve_device(
+            enrollment_id, generation, self.device_catalog,
+        )
 
 
 def build_root_runtime_bindings(
@@ -70,6 +86,8 @@ def build_root_runtime_bindings(
     service_catalog = ProtectedEnrollmentCatalog.from_verified_records(
         records, protected_digest=digest, expected_uid=expected_uid,
         native_packages=getattr(enrollment, "native_package_records", None),
+        memory_enrollments=getattr(enrollment, "memory_enrollments", None),
+        parameter_schemas=getattr(enrollment, "operation_parameter_schemas", None),
     )
     build_catalog = ProtectedBuildCatalog.from_protected_records(builds)
     device_catalog = ProtectedDeviceCatalog.from_protected_records(devices)
@@ -86,8 +104,20 @@ def build_root_runtime_bindings(
             raise EnrollmentDenied("service generation has no protected authority principal")
         uid, binding = principal
         if (uid != profile.service_uid or binding.principal_id != profile.principal_id
+                or binding.profile_id != profile.profile_id
+                or binding.namespace_id != profile.namespace_identity
                 or profile.profile_id in process_profiles):
             raise EnrollmentDenied("service generation identity does not match its authority principal")
+        for operation, target in profile.operation_targets.items():
+            if not any(
+                rule.operation == operation and rule.target == target
+                and rule.capability in binding.capabilities
+                for rule in enrollment.rules.values()
+            ):
+                raise EnrollmentDenied("service operation target lacks an exact authority rule")
+        for recipe in profile.operation_recipes.values():
+            if recipe.parameter_schema_id not in service_catalog.parameter_schemas:
+                raise EnrollmentDenied("operation recipe parameter schema is absent from protected catalog")
         # Every child executable is selected by immutable artifact identity and
         # digest from the root-loaded artifact catalog; the worker supplies none.
         child_refs: dict[str, str] = {}
@@ -96,9 +126,18 @@ def build_root_runtime_bindings(
             if spec is None:
                 raise EnrollmentDenied("service runtime artifact is absent from the protected artifact catalog")
             child_refs[f"artifact:{artifact_id}:{spec.sha256}"] = spec.sha256
+        for recipe in profile.operation_recipes.values():
+            executable_spec = artifact_catalog.artifacts.get(recipe.executable_artifact_id)
+            if executable_spec is None or executable_spec.sha256 != recipe.executable_sha256:
+                raise EnrollmentDenied("operation executable pin differs from the protected artifact catalog")
+            for artifact_id, digest_value in recipe.child_artifact_refs.items():
+                child_spec = artifact_catalog.artifacts.get(artifact_id)
+                if child_spec is None or child_spec.sha256 != digest_value:
+                    raise EnrollmentDenied("operation child artifact pin differs from the protected catalog")
         process_profiles[profile.profile_id] = profile.as_managed_profile(
             artifact_root=enrollment.artifact_staging_directory,
             child_artifact_refs=child_refs,
+            parameter_schemas=service_catalog.parameter_schemas,
         )
     if set(process_profiles) != set(profile_to_principal):
         raise EnrollmentDenied("authority process profiles and protected service generations differ")
@@ -159,4 +198,5 @@ def build_root_runtime_bindings(
         process_manager=process_manager,
         effect_handlers=MappingProxyType(effect_handlers),
         native_bridges=MappingProxyType(dict(enrollment.native_bridges)),
+        artifact_catalog=artifact_catalog,
     )

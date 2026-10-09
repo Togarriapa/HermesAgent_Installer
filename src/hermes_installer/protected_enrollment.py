@@ -283,6 +283,8 @@ class HostServiceProfile:
     service_uid: int
     service_gid: int
     service_user: str
+    device_enrollment_id: str | None
+    expected_device_generation: str | None
     executable: Path
     executable_sha256: str
     runtime_artifact_ids: tuple[str, ...]
@@ -365,7 +367,8 @@ class ProtectedEnrollmentCatalog:
         self._memory_enrollments = MappingProxyType(dict(memory_enrollments or {}))
         parsed_schemas = {}
         for raw in parameter_schemas or []:
-            schema = OperationParameterSchema.from_protected_record(raw)
+            schema = (raw if isinstance(raw, OperationParameterSchema)
+                      else OperationParameterSchema.from_protected_record(raw))
             if schema.schema_id in parsed_schemas:
                 raise EnrollmentDenied("operation parameter schema ID is duplicated")
             parsed_schemas[schema.schema_id] = schema
@@ -553,19 +556,73 @@ class ProtectedEnrollmentCatalog:
             routes = getattr(memory, "fixed_route_map", None)
             if not isinstance(routes, Mapping) or route not in routes:
                 raise EnrollmentDenied("memory connector route is outside the selected backend variant")
-            route_record = routes[route]
-            if (not isinstance(route_record, Mapping) or set(route_record) != {"method", "path", "body"}
-                    or not isinstance(route_record["method"], str)
-                    or not isinstance(route_record["path"], str)
-                    or not isinstance(route_record["body"], Mapping)):
-                raise EnrollmentDenied("memory connector route schema is malformed")
+            memory_route = routes[route]
+            raw_steps = getattr(memory_route, "steps", None)
+            if not isinstance(raw_steps, (list, tuple)) or not raw_steps or len(raw_steps) > 16:
+                raise EnrollmentDenied("memory connector compound route is malformed")
+            steps = []
+            step_ids = set()
+            for step in raw_steps:
+                step_fields = ("step_id", "method", "path_template", "body_recipe_id",
+                               "response_schema_id", "capture_fields", "next_step_id")
+                if any(not hasattr(step, field) for field in step_fields):
+                    raise EnrollmentDenied("memory connector step fields are invalid")
+                step_id = _id(step.step_id, "memory route step ID")
+                method = step.method
+                path = step.path_template
+                if (step_id in step_ids or method not in {"GET", "POST", "DELETE"}
+                        or not isinstance(path, str) or not path.startswith("/")
+                        or path.startswith("//") or "\\" in path or "?" in path or "#" in path
+                        or any(part in {".", ".."} for part in path.split("/") if part)):
+                    raise EnrollmentDenied("memory connector route method or path is invalid")
+                body_recipe = step.body_recipe_id
+                response_schema = _id(step.response_schema_id, "memory response schema ID")
+                capture_fields = step.capture_fields
+                next_step = step.next_step_id
+                if (body_recipe is not None and not isinstance(body_recipe, str)
+                        or not isinstance(capture_fields, (list, tuple)) or len(capture_fields) > 32
+                        or any(not isinstance(field, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", field)
+                               for field in capture_fields)
+                        or len(capture_fields) != len(set(capture_fields))
+                        or next_step is not None and not isinstance(next_step, str)):
+                    raise EnrollmentDenied("memory connector route dataflow is invalid")
+                step_ids.add(step_id)
+                steps.append(MappingProxyType({
+                    "step_id": step_id, "method": method, "path_template": path,
+                    "body_recipe_id": body_recipe, "response_schema_id": response_schema,
+                    "capture_fields": tuple(capture_fields), "next_step_id": next_step,
+                }))
+            if any(step["next_step_id"] is not None and step["next_step_id"] not in step_ids
+                   for step in steps):
+                raise EnrollmentDenied("memory compound route references an unknown next step")
             variant = getattr(memory, "backend_variant", None)
             if provider == "claude-mem" and variant not in {
                     "server-v1-sqlite", "server-v1-postgres", "worker-observation"}:
                 raise EnrollmentDenied("Claude memory connector backend variant is unsupported")
+            route_variant = getattr(memory_route, "backend_variant", None)
+            request_schema_id = getattr(memory_route, "request_schema_id", None)
+            result_schema_id = getattr(memory_route, "result_schema_id", None)
+            scope_bindings = getattr(memory_route, "scope_bindings", None)
+            credential_reference_id = getattr(memory_route, "credential_reference_id", None)
+            maximum_seconds = getattr(memory_route, "maximum_seconds", None)
+            maximum_bytes = getattr(memory_route, "maximum_bytes", None)
+            if (route_variant != variant or not isinstance(scope_bindings, Mapping)
+                    or not isinstance(maximum_seconds, int) or isinstance(maximum_seconds, bool)
+                    or not 1 <= maximum_seconds <= 60
+                    or not isinstance(maximum_bytes, int) or isinstance(maximum_bytes, bool)
+                    or not 1 <= maximum_bytes <= 2 * 1024 * 1024):
+                raise EnrollmentDenied("memory route-level variant, scope, or limits are invalid")
             return ConnectorRouteBinding(
                 profile_id, profile.generation, profile.namespace_identity, target, route,
-                variant, port, MappingProxyType(dict(route_record)),
+                variant, port, MappingProxyType({
+                    "steps": tuple(steps),
+                    "request_schema_id": _id(request_schema_id, "memory request schema ID"),
+                    "result_schema_id": _id(result_schema_id, "memory result schema ID"),
+                    "scope_bindings": MappingProxyType(dict(scope_bindings)),
+                    "credential_reference_id": _id(credential_reference_id, "memory credential reference ID"),
+                    "maximum_seconds": maximum_seconds,
+                    "maximum_bytes": maximum_bytes,
+                }), memory, memory_route,
             )
         if target not in {"xpra-native", "colibri-main"} or route not in profile.target_route_ids:
             raise EnrollmentDenied("connector target or route is outside protected enrollment")
@@ -628,6 +685,15 @@ class ProtectedEnrollmentCatalog:
             recipe.executable_artifact_id, cwd, schema,
         )
 
+    def resolve_device(self, enrollment_id: str, generation: str,
+                       device_catalog: "ProtectedDeviceCatalog") -> "DeviceIdentity":
+        """Resolve only the exact independently versioned device join."""
+        profile = self.resolve(enrollment_id, generation)
+        if profile.device_enrollment_id is None or profile.expected_device_generation is None:
+            raise EnrollmentDenied("profile has no protected Coral device selection")
+        return device_catalog.resolve(profile.device_enrollment_id,
+                                      profile.expected_device_generation)
+
 
 def _system_glibc_version() -> str:
     try:
@@ -661,6 +727,8 @@ class ConnectorRouteBinding:
     backend_variant: str | None = None
     literal_loopback_port: int | None = None
     route_record: Mapping[str, Any] | None = None
+    memory_enrollment: Any | None = None
+    memory_route: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -776,6 +844,7 @@ class NativePackageBinding:
 
 def _parse_profile(item: Any) -> HostServiceProfile:
     fields = {"enrollment_id", "generation", "profile_id", "principal_id", "service_uid", "service_gid", "service_user",
+              "device_enrollment_id", "expected_device_generation",
               "executable", "executable_sha256", "runtime_artifact_ids", "package_runtime_records", "roots", "authority_endpoint_id",
               "namespace_identity", "socket_policy_id", "target_route_ids", "operation_targets", "operation_recipes", "argv_recipe", "environment",
               "max_lifetime_seconds", "memory_max_bytes", "cpu_quota_percent", "io_weight"}
@@ -789,6 +858,15 @@ def _parse_profile(item: Any) -> HostServiceProfile:
     if any(type(number) is not int or number <= 0 for number in ints):
         raise EnrollmentDenied("protected service limits or identity are invalid")
     executable = _absolute(item["executable"], "executable")
+    device_enrollment_id = item["device_enrollment_id"]
+    expected_device_generation = item["expected_device_generation"]
+    if ((device_enrollment_id is None) != (expected_device_generation is None)
+            or device_enrollment_id is not None and not isinstance(device_enrollment_id, str)
+            or expected_device_generation is not None and not isinstance(expected_device_generation, str)):
+        raise EnrollmentDenied("protected device selection ID and generation must be paired")
+    if device_enrollment_id is not None:
+        device_enrollment_id = _id(device_enrollment_id, "device enrollment ID")
+        expected_device_generation = _id(expected_device_generation, "expected device generation")
     if not re.fullmatch(r"[0-9a-f]{64}", str(item["executable_sha256"])):
         raise EnrollmentDenied("protected executable digest is invalid")
     if not isinstance(item["runtime_artifact_ids"], list) or not item["runtime_artifact_ids"]:
@@ -895,7 +973,8 @@ def _parse_profile(item: Any) -> HostServiceProfile:
     return HostServiceProfile(
         _id(item["enrollment_id"], "enrollment ID"), _id(item["generation"], "generation"),
         _id(item["profile_id"], "profile ID"), _id(item["principal_id"], "principal ID"), uid, gid,
-        _id(item["service_user"], "service username"), executable, item["executable_sha256"],
+        _id(item["service_user"], "service username"), device_enrollment_id,
+        expected_device_generation, executable, item["executable_sha256"],
         tuple(_id(x, "runtime artifact ID") for x in item["runtime_artifact_ids"]), MappingProxyType(packages),
         OwnedRoots(_id(roots["home_id"], "home root ID"), _id(roots["work_id"], "work root ID"),
                    _id(roots["data_id"], "data root ID"), _absolute(roots["home"], "home"),
@@ -1165,6 +1244,8 @@ class ProtectedBuildCatalog:
             raise EnrollmentDenied("protected build catalog is empty")
         if any(target not in self.REQUIRED_TARGETS for target, _ in self._profiles):
             raise EnrollmentDenied("unknown hardware build target is not allowed")
+        if {target for target, _ in self._profiles} != self.REQUIRED_TARGETS:
+            raise EnrollmentDenied("protected build catalog must enroll both fixed build recipes")
 
     @classmethod
     def from_protected_records(cls, records: list[Mapping[str, Any]]) -> "ProtectedBuildCatalog":
