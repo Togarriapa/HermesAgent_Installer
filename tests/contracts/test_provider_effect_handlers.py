@@ -196,6 +196,19 @@ class ProviderEffectHandlerTests(unittest.TestCase):
             canonical_provider_request(
                 {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
                 b'{"model":"nvidia/nemotron-3-ultra-550b-a55b","messages":[]}')
+        with self.assertRaises(ProviderHandlerDenied):
+            canonical_provider_request(
+                {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
+                b'{"model":"nvidia/nemotron-3-ultra-550b-a55b:free",'
+                b'"model":"nvidia/nemotron-3-ultra-550b-a55b:free","messages":[]}')
+        for invalid in (
+            {"model": OPENROUTER_MODEL, "max_tokens": 4097, "messages": []},
+            {"model": OPENROUTER_MODEL, "max_tokens": 100, "max_output_tokens": 50, "messages": []},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ProviderHandlerDenied):
+                canonical_provider_request(
+                    {(self.enrollment.target, self.enrollment.recipient): self.enrollment},
+                    json.dumps(invalid).encode())
 
     def test_no_handlers_without_root_admission_or_vault(self):
         self.assertEqual(build_provider_handlers(
@@ -340,6 +353,7 @@ class OpenRouterLiveAdmissionTests(unittest.TestCase):
         )
         cases = [
             ({"is_free_tier": False}, self._model_data()),
+            ({"is_free_tier": True, "limit_remaining": 0}, self._model_data()),
             ({"is_free_tier": True}, self._model_data(prompt="0.01")),
             ({"is_free_tier": True}, {
                 **self._model_data(), "architecture": {"input_modalities": ["text", "image"]}}),
