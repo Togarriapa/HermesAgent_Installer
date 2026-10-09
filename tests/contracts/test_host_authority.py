@@ -106,7 +106,7 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
             return {"status": 200, "body": b"started", "headers": {}, "receipt_id": "start"}
         service = AuthorityService(
             signing_key=b"l" * 32, key_id="local-fixture",
-            bindings_by_uid={1001: binding}, rules={(rule.capability, rule.target): rule},
+            bindings_by_uid={1001: binding}, rules={(rule.capability, rule.operation, rule.target): rule},
             handlers={(rule.operation, rule.target): handler}, policy=policy,
         )
         payload = b"{}"
@@ -169,9 +169,9 @@ class BackgroundMemoryConsentContracts(unittest.TestCase):
         binding = PrincipalBinding(1001, "principal:a", "profile:a", "namespace:a",
                                    frozenset({"memory-capture", "memory-extraction"}))
         targets = {
-            ("memory-capture", "memory:openviking:enqueue"): EffectRule(
+            ("memory-capture", "memory.enqueue", "memory:openviking:enqueue"): EffectRule(
                 "memory-capture", "memory.enqueue", "memory:openviking:enqueue"),
-            ("memory-extraction", "memory:openviking:extract"): EffectRule(
+            ("memory-extraction", "memory.extract", "memory:openviking:extract"): EffectRule(
                 "memory-extraction", "memory.extract", "memory:openviking:extract"),
         }
         effects = []
@@ -257,8 +257,8 @@ class ChildDelegationContracts(unittest.TestCase):
         service = AuthorityService(
             signing_key=b"d" * 32, key_id="fixture",
             bindings_by_uid={parent.uid: parent, child.uid: child},
-            rules={(parent_rule.capability, parent_rule.target): parent_rule,
-                   (child_rule.capability, child_rule.target): child_rule},
+            rules={(parent_rule.capability, parent_rule.operation, parent_rule.target): parent_rule,
+                   (child_rule.capability, child_rule.operation, child_rule.target): child_rule},
             handlers={(parent_rule.operation, parent_rule.target): parent_handler,
                       (child_rule.operation, child_rule.target): child_handler},
             policy=FixturePolicy(), delegations={delegation.delegation_id: delegation})
@@ -310,7 +310,7 @@ class HostAuthorityIPCContracts(unittest.TestCase):
         self.service = AuthorityService(
             signing_key=b"k" * 32, key_id="fixture-key",
             bindings_by_uid={self.binding.uid: self.binding},
-            rules={(rule.capability, rule.target): rule},
+            rules={(rule.capability, rule.operation, rule.target): rule},
             handlers={(rule.operation, rule.target): handler},
             policy=FixturePolicy(),
         )
