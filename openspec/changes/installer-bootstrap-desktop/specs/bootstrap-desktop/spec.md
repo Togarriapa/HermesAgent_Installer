@@ -401,3 +401,10 @@ The implementation SHALL follow v46 concrete internal coordinator sequence durin
 #### Scenario: Initial source delivery fails
 - **WHEN** actual loader/input custody cannot produce a verified receipt before original deadline
 - **THEN** custody closes the owned unit before stdin and never infers source after EOF
+
+### Requirement: Root secure initial identity intake
+The implementation SHALL bind the exact v47 masked intake and policy selection to the actual root stage0 transaction.
+
+#### Scenario: User journal contains a credential reference
+- **WHEN** it has no verified root vault custody/scope receipt
+- **THEN** it cannot authorize identity observation or policy publication and exact secure intake remains pending
