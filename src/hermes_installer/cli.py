@@ -22,6 +22,8 @@ from .state import Journal, OwnedRoot, OwnershipError, process_lock
 from .config import ConfigError, InstallerConfig, load_config, validate_config, write_example
 from .preflight import discover_host
 from .results import CommandResult, Finding, OutcomeState
+from .registry.native import NativeRegistry
+from .registry.source import load_bundled_source
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     verify = command("verify", "Run executable acceptance probes on an identified target")
     verify.add_argument("--target", type=Path, help="Authorized target manifest")
     verify.add_argument("--output", type=Path, help="Evidence output directory")
+    resources = command("resources", "Inspect the packaged offline resource registry")
+    resources.add_argument("action", choices=("plan", "status"), help="Show the verified source crosswalk and pending native adapters")
     configure = command("configure", "Configure an external provider or MCP")
     configure.add_argument("target", choices=("provider", "mcp", "remote-desktop"))
     configure.add_argument("name", nargs="?", help="Adapter or connection name")
@@ -309,6 +313,31 @@ def run(args: argparse.Namespace) -> CommandResult:
         findings = tuple(recorded) if getattr(args, "component", None) else tuple(host) + tuple(recorded)
         state = OutcomeState.READY if findings and all(f.state == OutcomeState.READY for f in findings) else OutcomeState.PENDING
         return CommandResult("status", state, "Read-only host and durable component status; no state was changed.", findings)
+    if args.command == "resources":
+        try:
+            registry = NativeRegistry.from_verified_source(load_bundled_source())
+            bindings = registry.crosswalk()
+        except (OSError, RuntimeError, ValueError) as exc:
+            return CommandResult("resources", OutcomeState.FAILED, f"Packaged resource verification failed: {exc}", exit_code=1)
+        by_kind: dict[str, dict[str, int]] = {}
+        for item in bindings:
+            counts = by_kind.setdefault(item.kind, {"total": 0, "native": 0, "blocked": 0})
+            counts["total"] += 1
+            counts["native"] += int(item.kind in {"profiles", "skills"})
+            counts["blocked"] += int(bool(item.blockers))
+        blocked = [item for item in bindings if item.blockers]
+        finding = Finding("resources.native-crosswalk", "Verified offline catalog; profile and skill artifacts map to Hermes discovery, remaining adapters and runtime acceptance are pending", OutcomeState.PENDING, {
+            "catalog_version": registry.source.catalog_version,
+            "source_revision": registry.source.revision,
+            "root_counts": dict(registry.root_counts),
+            "kinds": by_kind,
+            "blocked_items": len(blocked),
+            "sample_blockers": [{"kind": item.kind, "id": item.resource_id, "reason": item.blockers[0]} for item in blocked[:8]],
+        })
+        action = args.action
+        return CommandResult("resources", OutcomeState.PENDING,
+            f"Read-only {action}: verified {len(bindings)} declarations from the packaged bundle; native operation and target verification remain pending.",
+            (finding,), resume_command="hermes-installer resources status")
     if args.command == "verify":
         if args.target is None or args.output is None:
             return CommandResult("verify", OutcomeState.FAILED, "An authorized target manifest and evidence directory are required.", resume_command="hermes-installer verify --target <authorized-target.json> --output <evidence-dir>", exit_code=2)
@@ -386,9 +415,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Run this command in a terminal to choose an action, or use `./install.sh plan` for a read-only preflight.")
             parser.print_help()
             return 0
-        choices = {"1": ["plan"], "2": ["install"], "3": ["doctor"], "4": ["verify"], "0": []}
-        print("1) Review a read-only plan\n2) Install or resume setup\n3) Diagnose this machine\n4) Verify an authorized target\n0) Exit")
-        selected = input("Choose an action [0-4]: ").strip()
+        choices = {"1": ["plan"], "2": ["install"], "3": ["doctor"], "4": ["verify"], "5": ["resources", "status"], "0": []}
+        print("1) Review a read-only plan\n2) Install or resume setup\n3) Diagnose this machine\n4) Verify an authorized target\n5) Inspect bundled Resources\n0) Exit")
+        selected = input("Choose an action [0-5]: ").strip()
         if selected not in choices:
             print("Choose one of the listed actions.", file=sys.stderr)
             return 2
