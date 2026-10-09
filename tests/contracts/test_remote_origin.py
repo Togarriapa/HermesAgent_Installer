@@ -120,7 +120,7 @@ class _Manager:
 
 class RemoteOriginTests(unittest.TestCase):
     def test_token_writer_publishes_private_selected_token_and_signed_receipt(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+        with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "tunnels"
             tunnel_dir = root / "tunnel_123"
             tunnel_dir.mkdir(parents=True, mode=0o700)
@@ -145,7 +145,7 @@ class RemoteOriginTests(unittest.TestCase):
             self.assertEqual(again.file_inode, receipt.file_inode)
 
     def test_token_writer_refuses_preexisting_symlink_and_changed_file(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+        with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "tunnels"
             directory = root / "tunnel_123"
             directory.mkdir(parents=True, mode=0o700)
