@@ -30,7 +30,8 @@ DEFAULT_SOCKET_PATH = Path("/run/hermes-installer/authority.sock")
 _OPERATIONS = frozenset({
     "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor", "memory.capture",
     "memory.search", "memory.export", "memory.delete", "memory.extract",
-    "memory.embed", "memory.enqueue", "memory.result", "host.write", "alert.deliver",
+    "memory.embed", "memory.backup", "memory.restore", "memory.enqueue", "memory.result",
+    "host.write", "alert.deliver",
     "process.start", "process.status", "process.read", "process.write", "process.stop",
     "artifact.fetch", "package.install",
 })
@@ -222,7 +223,7 @@ class AuthorityClient:
         if not target.startswith("memory:") or canonical_digest(payload) != request_digest:
             raise AuthorityDenied("effect.binding", "memory request target or digest is invalid")
         action = target.rsplit(":", 1)[-1]
-        if action not in {"doctor", "extract", "embed", "capture", "search", "export", "delete"}:
+        if action not in {"doctor", "extract", "embed", "capture", "search", "export", "delete", "backup", "restore"}:
             raise AuthorityDenied("effect.operation", "memory action is not enrolled")
         operation = "memory.doctor" if action == "doctor" else f"memory.{action}"
         return self.perform_effect(authorization, operation=operation, payload=payload,

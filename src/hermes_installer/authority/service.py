@@ -37,7 +37,8 @@ MAX_EFFECT_LEASE = 5.0
 _OPERATIONS = frozenset({
     "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor",
     "memory.capture", "memory.search", "memory.export", "memory.delete",
-    "memory.extract", "memory.embed", "memory.enqueue", "memory.result",
+    "memory.extract", "memory.embed", "memory.backup", "memory.restore",
+    "memory.enqueue", "memory.result",
     "host.write", "alert.deliver", "process.start", "process.status",
     "process.read", "process.write", "process.stop", "artifact.fetch", "package.install",
 })
