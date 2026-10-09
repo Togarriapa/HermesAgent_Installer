@@ -34,7 +34,8 @@ def receipt(**updates):
     }
     value.update(updates)
     return BrokeredEffectResponse(200, json.dumps(value).encode(),
-                                  {"content-type": "application/json"}, "package-install-1")
+                                  {"content-type": "application/json"},
+                                  f"package-set:coral-cp39-runtime-v1:{MANIFEST}")
 
 
 def grant(*, target=None, digest=None):
@@ -103,6 +104,12 @@ class PackageSetClientTests(unittest.TestCase):
                 enrollment_id="pi-main", generation="generation-1")
         with self.assertRaises(AuthorityDenied):
             parse_package_set_receipt(receipt(wheel_sha256=["5" * 64, WHEELS[1]]),
+                package_set_id="coral-cp39-runtime-v1", manifest_sha256=MANIFEST,
+                enrollment_id="pi-main", generation="generation-1")
+        response = receipt()
+        response = BrokeredEffectResponse(response.status, response.body, response.headers, "/tmp/path")
+        with self.assertRaises(AuthorityDenied):
+            parse_package_set_receipt(response,
                 package_set_id="coral-cp39-runtime-v1", manifest_sha256=MANIFEST,
                 enrollment_id="pi-main", generation="generation-1")
 
