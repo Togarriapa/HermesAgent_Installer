@@ -92,15 +92,42 @@ def _validate_value(value: Any, schema: Mapping[str, Any], depth: int = 0) -> No
             raise MCPError("tool argument is outside its permitted range")
 
 
-def _contains_selection(value: Any, selection: Any) -> bool:
-    if isinstance(selection, (tuple, list, set, frozenset)):
-        return bool(selection) and all(_contains_selection(value, item) for item in selection)
-    if isinstance(value, Mapping):
-        return any(_contains_selection(item, selection) for item in value.values())
-    if isinstance(value, (tuple, list, set, frozenset)):
-        return any(_contains_selection(item, selection) for item in value)
-    return value == selection
+_SELECTION_ARGUMENTS: Mapping[str, Mapping[str, tuple[str, ...]]] = {
+    "figma": {"*": ("file_key",)}, "revenuecat": {"*": ("project_id",)},
+    "google-gmail": {"get_message": ("message_id",), "get_thread": ("thread_id",)},
+    "google-drive": {"*": ("file_id",)}, "google-docs": {"*": ("document_id",)},
+    "google-sheets": {"*": ("spreadsheet_id",)},
+    "google-calendar": {"get_event": ("event_id",), "list_events": ("calendar_id",)},
+    "google-contacts": {"search_contacts": ("query",)},
+    "home-assistant": {"*": ("entity_id", "entity_ids")}, "playwright": {"*": ("url",)},
+    "fixture": {"get_state": ("entity_id",)},
+}
 
+
+def _selection_bound(service_id: str, tool: str, arguments: Mapping[str, Any], selection: Any) -> bool:
+    """Require an exact selected-resource argument; incidental nested values do not count."""
+    accepted = _SELECTION_ARGUMENTS.get(service_id, {})
+    keys = accepted.get(tool, accepted.get("*", ()))
+    if not keys or not isinstance(arguments, Mapping):
+        return False
+    expected = selection if isinstance(selection, Mapping) else None
+    matched = []
+    for key in keys:
+        if key not in arguments:
+            continue
+        actual = arguments[key]
+        wanted = expected.get(key) if expected is not None else selection
+        if wanted is None:
+            continue
+        if isinstance(wanted, (tuple, list, set, frozenset)):
+            valid = (isinstance(actual, (tuple, list, set, frozenset))
+                     and all(isinstance(x, str) for x in actual)
+                     and set(actual) == set(wanted))
+        else:
+            valid = actual == wanted
+        if valid:
+            matched.append(key)
+    return len(matched) == 1
 
 def _intent(service_id: str, operation: str, selection: Any, tool: str | None = None, args: Any = None, binding: str = "") -> str:
     payload = json.dumps(
@@ -146,7 +173,7 @@ class MCPClient:
         self._version: str | None = None
         self._tools: dict[str, Mapping[str, Any]] = {}
         self._closed = False
-        self._scrubber = result_scrubber or (lambda value: value)
+        self._scrubber = result_scrubber if callable(result_scrubber) else None
         self._last_error: str | None = None
 
     @property
@@ -229,13 +256,15 @@ class MCPClient:
                     pending = request(payload, dispatch_context=self.context, dispatch_authorization=grant)
                 else:
                     pending = request(payload)
-                response = await asyncio.wait_for(pending, remaining)
+                cancel_budget = min(0.25, remaining / 4) if getattr(self.transport, "cancel_request", None) else 0.0
+                request_budget = remaining - cancel_budget
+                response = await asyncio.wait_for(pending, request_budget)
             except asyncio.TimeoutError:
                 self._last_error = f"{method}: deadline"
                 await self._cancel(rid, grant, deadline)
                 raise MCPError(f"{method} exceeded its bounded deadline") from None
             except asyncio.CancelledError:
-                await self._cancel(rid, grant)
+                await self._cancel(rid, grant, deadline)
                 raise
             except Exception as exc:
                 self._last_error = f"{method}: transport"
@@ -254,7 +283,7 @@ class MCPClient:
             raise MCPError(f"{method} returned no result")
         return response["result"]
 
-    async def _cancel(self, rid: int, grant: DispatchAuthorization) -> None:
+    async def _cancel(self, rid: int, grant: DispatchAuthorization, deadline: float) -> None:
         cancel = getattr(self.transport, "cancel_request", None)
         if cancel is not None:
             try:
@@ -262,7 +291,10 @@ class MCPClient:
                     pending = cancel(rid, dispatch_context=self.context, dispatch_authorization=grant)
                 else:
                     pending = cancel(rid)
-                await asyncio.wait_for(pending, 2.0)
+                remaining = deadline - self.monotonic()
+                if remaining <= 0:
+                    return
+                await asyncio.wait_for(pending, min(remaining, 0.25))
             except Exception:
                 pass
 
@@ -334,9 +366,11 @@ class MCPClient:
                         deadline: float | None = None) -> Any:
         if not self.ready or name not in self._tools:
             raise MCPError("discover the MCP tool before invocation")
+        if self._scrubber is None:
+            raise MCPError("a reviewed privacy result scrubber is required before MCP reads")
         if name not in self.allowed_tools:
             raise PermissionError("MCP tool is outside the reviewed read allowlist")
-        if not isinstance(arguments, Mapping) or not _contains_selection(arguments, self.selection):
+        if not isinstance(arguments, Mapping) or not _selection_bound(self.service_id, name, arguments, self.selection):
             raise PermissionError("MCP request does not bind arguments to the selected resource")
         metadata = self._tools[name]
         _validate_value(arguments, metadata["inputSchema"])
