@@ -83,17 +83,25 @@ class Orchestrator:
 
         try:
             for name in names: children[name] = asyncio.create_task(invoke(name), name=f"specialist:{rid}:{name}")
-            values = await asyncio.gather(*children.values(), return_exceptions=True)
-            failures = [value for value in values if isinstance(value, BaseException)]
+            tasks = set(children.values())
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            failures = []
+            for child in done:
+                if child.cancelled():
+                    failures.append(asyncio.CancelledError())
+                elif child.exception() is not None:
+                    failures.append(child.exception())
             if failures:
-                for child in children.values():
-                    if not child.done(): child.cancel()
-                await asyncio.gather(*children.values(), return_exceptions=True)
+                for child in pending:
+                    child.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
                 error = failures[0]
-                if isinstance(error, asyncio.CancelledError): raise error
+                if isinstance(error, asyncio.CancelledError):
+                    raise error
                 if isinstance(error, (RecruitmentDenied, BrokerDenied)):
                     raise error
                 raise RuntimeError("specialist failed; siblings cancelled and joined") from error
+            values = await asyncio.gather(*tasks)
             return RecruitmentReport(rid, tuple(values))
         except asyncio.CancelledError:
             for child in children.values():
