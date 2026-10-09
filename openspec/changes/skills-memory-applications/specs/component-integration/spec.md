@@ -637,3 +637,5 @@ The installer SHALL start only source-bound selected memory service recipes and 
 - **THEN** semantic memory readiness or complete whole-turn capture is not asserted
 
 Whole-turn handle delivery v70: `plans/amendments/2026-10-10-whole-turn-authenticated-handle-delivery-v70.md`; existing SK-T01/HI-T08/HI-T11 remain open, authenticated root input/response metadata only, actual whole-turn proof and failure evidence required.
+
+Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.

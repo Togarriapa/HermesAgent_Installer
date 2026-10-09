@@ -51,3 +51,5 @@ Actual EOF/schema derivation v54: `plans/amendments/2026-10-09-stdin-eof-schema-
 Memory lifecycle/whole-turn v64: `plans/amendments/2026-10-10-memory-lifecycle-whole-turn-v64.md`; actual backend/source proof required, existing task gates open.
 
 Whole-turn handle delivery v70: `plans/amendments/2026-10-10-whole-turn-authenticated-handle-delivery-v70.md`; existing SK-T01/HI-T08/HI-T11 remain open, authenticated root input/response metadata only, actual whole-turn proof and failure evidence required.
+
+Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.

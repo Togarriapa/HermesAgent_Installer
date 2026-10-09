@@ -98,7 +98,8 @@
     "memory_owner_generation",
     "private_extraction_embedding_routes",
     "background_consent_revision",
-    "limits"
+    "limits",
+    "lifecycle_binding"
   ],
   "request_fields": [
     "target_id",
@@ -377,5 +378,6 @@
       "tool_hook": "Existing root observed invocation/result observers attach their retained exact call/result records to the turn resolved through the root parent context. No new generic source capture RPC; no worker transcript/parent labels. Finish rejects any unresolved request, stream, tool, delegate or failed/cancelled turn.",
       "finish_consumer": "At actual pinned successful TurnFacadeMixin return, worker passes the lexical delivered turn_handle and matching root final_response_delivery_handle to native.turn.finish. Root rechecks all retained observations; missing handle or mismatch is pending/unavailable, never completion proof."
     }
-  }
+  },
+  "lifecycle_row_placement": "lifecycle_binding is nested in each active service_generations.memory_enrollments row, exact fields from protected_lifecycle_binding; no sibling mutable catalog. A null binding records unavailable startup, not a fabricated recipe; populated binding requires all actual source/runtime/engine/prestart joins. Existing started service cannot claim memory functional proof from readiness/liveness."
 }
