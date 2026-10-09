@@ -334,7 +334,7 @@ class PublicRegistryHandlerTests(unittest.TestCase):
                             adapters["financial-execution-gateway"].blocker)
         self.assertIs(RESOURCE_OVERLAY_STORE_IMPLEMENTATION,
                       resolve_native_plugin_implementation("resource-overlay-store"))
-        self.assertIsNone(resolve_native_plugin_implementation("github"))
+        self.assertIsNotNone(resolve_native_plugin_implementation("github"))
 
     def test_registered_mcp_plugin_tool_uses_fresh_root_effect_and_marks_data_untrusted(self):
         authority = _Authority()

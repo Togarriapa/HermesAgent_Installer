@@ -22,16 +22,16 @@ def test_available_resource_plugins_resolve_concrete_implementations():
         "web",
         "ebook-toolchain",
         "kobo-bridge",
+        "github",
+        "composio",
+        "codex",
     }
     for adapter_id in expected:
         assert native_plugin_handler_available(adapter_id)
         assert resolve_native_plugin_implementation(adapter_id) is not None
 
 
-def test_unenrolled_or_unimplemented_plugins_do_not_resolve_handlers():
-    expected_unavailable = {
-        "codex", "composio", "github",
-    }
-    for adapter_id in expected_unavailable:
-        assert not native_plugin_handler_available(adapter_id)
-        assert resolve_native_plugin_implementation(adapter_id) is None
+def test_account_plugins_resolve_concrete_adapters_but_keep_enrollment_blockers():
+    for adapter_id in ("github", "composio", "codex"):
+        assert native_plugin_handler_available(adapter_id)
+        assert resolve_native_plugin_implementation(adapter_id) is not None

@@ -242,3 +242,21 @@ def test_trusted_factory_fails_closed_when_root_selected_package_binding_is_abse
             action_schemas=StaticPluginActionSchemas({}),
         )
     assert authority.calls == []
+
+
+def test_component_catalog_is_complete_pinned_and_keeps_actions_finite():
+    from hermes_installer.components.plugin_effects import (
+        _EXPECTED_ACTION_KEYS,
+        component_plugin_action_schema_registry,
+    )
+
+    catalog = component_plugin_action_schema_registry()
+    assert len(_EXPECTED_ACTION_KEYS) == 61
+    assert set(catalog._schemas) == _EXPECTED_ACTION_KEYS
+    for adapter_id, action_id in _EXPECTED_ACTION_KEYS:
+        row = catalog.resolve(adapter_id, action_id)
+        assert row.adapter_id == adapter_id
+        assert row.action_id == action_id
+        assert row.argument_schema_id == f"{adapter_id}.{action_id}.arguments.v1"
+        assert row.result_schema_id == f"{adapter_id}.{action_id}.result.v1"
+    assert catalog.resolve("github", "arbitrary-http") is None

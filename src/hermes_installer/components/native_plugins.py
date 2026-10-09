@@ -63,13 +63,13 @@ _PLUGIN_BLOCKERS = {
     "agent37-discovery": "Handler is implemented; public reads still require root `registry-agent37-read` enrollment and the protected installer loader before native discovery/invocation.",
     "authentik-authorization": "Reviewed fixed broker handler exists; activation requires root-enrolled Authentik principal/session and live effective-System-membership resolvers plus recipient listing. No caller-supplied principal, group, endpoint, or token is accepted.",
     "cloudflare-homelab": "Reviewed fixed broker handler exists; activation requires root-enrolled owned account/zone/tunnel targets, scoped token reference, and live Authentik System check. Only the fixed DNS/tunnel verbs are exposed.",
-    "codex": "Unavailable: no host-owned Codex authentication provider, assigned-workspace identity or bounded task runner is injected. Resume when the trusted host runtime supplies these without copying credentials into plugin state.",
-    "composio": "Unavailable: no user-authorized Composio connection, per-profile toolkit allowlist or runtime credential-vault reference is enrolled. Resume after the user selects toolkits and connects the account through its protected OAuth flow.",
+    "codex": "Reviewed task-run handler exists; activation requires host-owned authentication, assigned workspace identity, pinned ARM64 runtime and bounded managed runner without copying credentials into plugin state.",
+    "composio": "Reviewed enrolled-action handlers exist; activation requires a user-authorized profile-scoped OAuth connection, selected toolkit/action schemas and root-vault reference. Unlisted actions stay unavailable.",
     "ebook-toolchain": "The bounded EPUB builder is implemented; native tools remain unavailable until root supplies rights-attested source material and approved per-profile output roots. DRM removal and arbitrary shell stay denied.",
     "epic-kanban": "Reviewed local-board handler exists; activation requires a profile-bound ephemeral board store. GitHub Projects remains separate and requires an enrolled project scope.",
     "financial-data-hub": "Reviewed read-only handler exists; activation requires user-consented per-provider accounts and namespaced host-vault refs. Payment, trading, signing and transfer operations remain excluded.",
     "financial-execution-gateway": "Reviewed fixed execution handler exists; activation requires provider adapters, independently enrolled account scopes, duplicate protection and a fresh one-shot confirmation verifier. No standing or autonomous financial actions.",
-    "github": "Unavailable: no host credential-vault reference, repository scope or reviewed fixed GitHub effect catalog is injected. Resume after selecting an account/repository and enrolling least-privilege scopes; write operations require separate task authorization and post-write verification.",
+    "github": "Reviewed fixed-action handlers exist; activation requires a root-enrolled least-privilege repository scope and protected credential reference. Writes require task-specific confirmation, idempotency and provider readback verification.",
     "homelab-ops-broker": "Reviewed fixed broker handler exists; activation requires root-enrolled target IDs, read/write capabilities, Authentik System verifier and bounded fixed-operation transport. Raw shell/SSH remain denied.",
     "kobo-bridge": "A no-overwrite EPUB export primitive is implemented; native tools remain unavailable until root supplies an enrolled model/device resolver, approved USB-root custody and explicit non-DRM transfer consent. Account scraping and notebook writes remain denied.",
     "mcp-registry": "Handler is implemented; public reads still require root `registry-read` enrollment and the protected installer loader before native discovery/invocation.",
@@ -90,14 +90,14 @@ NATIVE_PLUGIN_ADAPTERS = tuple(
             "agent-live-wallet", "agent-sandbox-wallet", "authentik-authorization",
             "cloudflare-homelab", "epic-kanban", "financial-data-hub",
             "financial-execution-gateway", "homelab-ops-broker", "voice-pipeline", "web",
-            "ebook-toolchain", "kobo-bridge",
+            "ebook-toolchain", "kobo-bridge", "github", "composio", "codex",
         } else None),
         handler_available=(plugin_id in {
             "resource-overlay-store", "mcp-registry", "agent37-discovery",
             "agent-live-wallet", "agent-sandbox-wallet", "authentik-authorization",
             "cloudflare-homelab", "financial-data-hub", "financial-execution-gateway",
             "homelab-ops-broker", "epic-kanban", "voice-pipeline", "web",
-            "ebook-toolchain", "kobo-bridge",
+            "ebook-toolchain", "kobo-bridge", "github", "composio", "codex",
         }),
         status=("reviewed-local-profile-handler" if plugin_id == "resource-overlay-store"
                 else "reviewed-root-brokered-public-read" if plugin_id in {"mcp-registry", "agent37-discovery"}
@@ -110,6 +110,7 @@ NATIVE_PLUGIN_ADAPTERS = tuple(
                 else "reviewed-profile-service-handler" if plugin_id in {
                     "epic-kanban", "voice-pipeline", "web", "ebook-toolchain", "kobo-bridge",
                 }
+                else "reviewed-root-brokered-handler" if plugin_id in {"github", "composio", "codex"}
                 else "typed-adapter-registry-required"),
         blocker=_PLUGIN_BLOCKERS[plugin_id],
     )
@@ -452,4 +453,7 @@ def resolve_native_plugin_implementation(adapter_id: str) -> NativePluginImpleme
     if adapter_id in {"ebook-toolchain", "kobo-bridge"}:
         from hermes_installer.components.plugin_documents import DOCUMENT_PLUGIN_IMPLEMENTATIONS
         return DOCUMENT_PLUGIN_IMPLEMENTATIONS.get(adapter_id)
+    if adapter_id in {"github", "composio", "codex"}:
+        from hermes_installer.components.plugin_accounts_adapters import PLUGIN_IMPLEMENTATIONS
+        return PLUGIN_IMPLEMENTATIONS.get(adapter_id)
     return None

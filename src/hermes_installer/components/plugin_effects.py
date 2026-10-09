@@ -146,6 +146,74 @@ def merge_plugin_action_schema_catalogs(*catalogs: Mapping[tuple[str, str], Plug
     return StaticPluginActionSchemas(merged)
 
 
+def component_plugin_action_schema_registry() -> StaticPluginActionSchemas:
+    """Load the finite schemas owned by each reviewed native adapter cohort.
+
+    This is called by the trusted installer loader, never by a Plugin. Every
+    schema map is checked against its immutable implementation file digest;
+    documents and finance additionally validate their explicit manifest pins.
+    Missing/incomplete owner modules fail closed instead of silently dropping
+    an adapter's schema rows.
+    """
+    from hashlib import sha256
+    from pathlib import Path
+
+    from hermes_installer.components.plugin_accounts_schemas import (
+        PLUGIN_ACTION_SCHEMAS as accounts,
+        PLUGIN_ACCOUNTS_ADAPTER_SHA256,
+    )
+    from hermes_installer.components.plugin_document_schemas import (
+        PLUGIN_ACTION_SCHEMAS as documents,
+        PLUGIN_DOCUMENT_ADAPTER_SHA256,
+        validate_document_action_pins,
+    )
+    from hermes_installer.components.plugin_finance_schemas import (
+        PLUGIN_ACTION_SCHEMAS as finance,
+        PLUGIN_FINANCE_ADAPTER_SHA256,
+        validate_financial_plugin_pins,
+    )
+    from hermes_installer.components.plugin_homelab_schemas import (
+        PLUGIN_ACTION_SCHEMAS as homelab,
+        PLUGIN_HOMELAB_ADAPTER_SHA256,
+        PLUGIN_HOMELAB_MANIFEST_SHA256,
+    )
+    from hermes_installer.components.plugin_local_voice_web_schemas import (
+        PLUGIN_ACTION_SCHEMAS as local_voice_web,
+        PLUGIN_LOCAL_VOICE_WEB_ADAPTER_SHA256,
+    )
+
+    root = Path(__file__).resolve().parents[3]
+    implementation_pins = {
+        "plugin_accounts_adapters.py": (accounts, PLUGIN_ACCOUNTS_ADAPTER_SHA256),
+        "plugin_documents.py": (documents, PLUGIN_DOCUMENT_ADAPTER_SHA256),
+        "plugin_finance.py": (finance, PLUGIN_FINANCE_ADAPTER_SHA256),
+        "plugin_homelab.py": (homelab, PLUGIN_HOMELAB_ADAPTER_SHA256),
+        "plugin_local_voice_web.py": (local_voice_web, PLUGIN_LOCAL_VOICE_WEB_ADAPTER_SHA256),
+    }
+    for filename, (rows, pinned_digest) in implementation_pins.items():
+        path = Path(__file__).with_name(filename)
+        if (not path.is_file() or not _HEX.fullmatch(pinned_digest)
+                or sha256(path.read_bytes()).hexdigest() != pinned_digest
+                or any(row.adapter_sha256 != pinned_digest for row in rows.values())):
+            raise PluginEffectUnavailable(f"source-reviewed action catalog pin failed for {filename}")
+    validate_document_action_pins()
+    validate_financial_plugin_pins()
+    for plugin_id, pinned_digest in PLUGIN_HOMELAB_MANIFEST_SHA256.items():
+        manifest = root / "resources/vendor/hermes-agent-resources-2.3.1/plugins" / f"{plugin_id}.yaml"
+        if not manifest.is_file() or sha256(manifest.read_bytes()).hexdigest() != pinned_digest:
+            raise PluginEffectUnavailable(f"source-reviewed manifest pin failed for {plugin_id}")
+    plugin_dir = root / "resources/vendor/hermes-agent-resources-2.3.1/plugins"
+    for plugin_id, pinned_digest in _PLUGIN_MANIFEST_SHA256.items():
+        manifest = plugin_dir / f"{plugin_id}.yaml"
+        if (not manifest.is_file() or not _HEX.fullmatch(pinned_digest)
+                or sha256(manifest.read_bytes()).hexdigest() != pinned_digest):
+            raise PluginEffectUnavailable(f"source-reviewed manifest pin failed for {plugin_id}")
+    catalog = merge_plugin_action_schema_catalogs(accounts, documents, finance, homelab, local_voice_web)
+    if set(catalog._schemas) != _EXPECTED_ACTION_KEYS:
+        raise PluginEffectUnavailable("source-reviewed Plugin action catalog is incomplete or contains unexpected actions")
+    return catalog
+
+
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _OPAQUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _OPERATIONS = {
@@ -167,6 +235,64 @@ _OPERATIONS = {
     "web": frozenset({"plugin.web.read"}),
 }
 _PUBLIC_REGISTRY_IDS = frozenset({"mcp-registry", "agent37-discovery"})
+_PLUGIN_MANIFEST_SHA256 = MappingProxyType({
+    "agent-live-wallet": "726ab3b7e8b6f3137310a125c8e7d18589105f20b3be859362390e2557f7e39d",
+    "agent-sandbox-wallet": "c512f2c29d211ee8e407841a624d03a699114c59ea3204d94f303746510e30a1",
+    "agent37-discovery": "cc32bfb48527bf6ebbc39ace65656c16a10cd58dc8f8e38b01715c190496c8a6",
+    "authentik-authorization": "88075741bee9d27e1b7c8536cda4e641c335c952cde7e1083c8d3131be25ce2e",
+    "cloudflare-homelab": "5623e42ba85a5056c7cae8e3e1ae5b0d48613071220772e82027864f6cfdd7c5",
+    "codex": "7b169020508e4d51367e22bf29a1363ad8a51f24ce1b2b9731ac5fe462942b62",
+    "composio": "93fe2f7b966a05d43732b66a2340606e44aba5a4dd813a7cc7f71ab40743e885",
+    "ebook-toolchain": "5fedf94c58d32b076af69429c04bd1d71fe83fbfd57e00c175fdd623b955ecff",
+    "epic-kanban": "06b8b9e802a97403b7d86a1fa21a1c12e231f5a267112944d0d2f1181956948d",
+    "financial-data-hub": "37bbf84f32168b19df69d97296fbae09ca11d495d31d15daea159872c79b8b47",
+    "financial-execution-gateway": "887192082ab9f8249cd860f00257d844fa417a74e59c30a90c94cdf88a16b133",
+    "github": "f08aa0f34d79eb20cf1ad1c65cc0275b6079c374204435730ef14fdab3fa8f6c",
+    "homelab-ops-broker": "bb4de61e7136f57e6fed77b3d907f2f669b2c7f070eb124ed9b0a783109d35d2",
+    "kobo-bridge": "d7577722c50c6ab5cb2f057084717b9b41d77b315b3f14ca55438160f3d21f30",
+    "mcp-registry": "342c337f08916cc9a755fd7aa061774c2fd690fbdcf6d03021587d7f64e626ec",
+    "resource-overlay-store": "518a4e4001d9f42ac80169eddbed8caa4aa7fd1802dc4d30b992a692ce553403",
+    "voice-pipeline": "6b74903bda136fcbce570f339c6ae2c06ed03fad348c564ff15672f72f3e2cd2",
+    "web": "30aafed0be80db4d6b9417bc3c2ef20bcfd1bdcd417efef8f84ac605cdb88c43",
+})
+_EXPECTED_ACTION_KEYS = frozenset({
+    ("codex", "run"), ("composio", "invoke.read"), ("composio", "invoke.write"),
+    ("financial-data-hub", "read"), ("financial-execution-gateway", "execute"),
+    ("web", "retrieve"),
+}).union(*(
+    {(adapter, action) for action in actions}
+    for adapter, actions in {
+        "agent-live-wallet": ("read", "execute"),
+        "agent-sandbox-wallet": ("read", "execute"),
+        "authentik-authorization": (
+        "resolve-session-principal-to-user", "read-active-user-identity",
+        "read-user-effective-groups", "verify-effective-System-membership",
+        "list-current-effective-System-members-for-alarm-delivery",
+        ),
+        "cloudflare-homelab": (
+        "read-approved-dns-records", "read-approved-tunnel-state",
+        "read-approved-tunnel-connectors", "read-approved-tunnel-configuration",
+        "update-approved-dns-record", "update-approved-tunnel-configuration",
+        ),
+        "ebook-toolchain": ("run", "inspect", "validate"),
+        "epic-kanban": ("create", "read", "add_item", "move_item", "delete_accepted"),
+        "github": ("repo.get", "issues.list", "content.get", "content.put", "issue.create"),
+        "homelab-ops-broker": (
+        "host-health", "cpu-memory-temperature-and-disk", "approved-service-status",
+        "approved-container-status", "bounded-service-logs", "installed-runtime-and-container-versions",
+        "backup-status-and-integrity-metadata", "nextcloud-status", "nextcloud-background-job-status",
+        "nextcloud-maintenance-state", "restart-approved-service", "restart-approved-container",
+        "update-approved-service-or-container", "rollback-approved-service-or-container",
+        "run-approved-backup", "run-approved-restore", "enter-or-exit-nextcloud-maintenance-mode",
+        "run-approved-nextcloud-repair", "run-approved-nextcloud-background-job-operation",
+        "bounded-approved-cleanup",
+        ),
+        "kobo-bridge": ("read", "deliver"),
+        "voice-pipeline": (
+        "open_session", "capture_audio", "close_session", "voice_transcribe", "voice_speak",
+        ),
+    }.items()
+))
 
 
 def _freeze_schema(value: Any) -> Any:
@@ -401,7 +527,8 @@ class PluginEffectDispatcher:
 def build_plugin_effects_facade(*, authority: PluginAuthority,
                                 invocation_contexts: InvocationContexts,
                                 identity: object,
-                                action_schemas: PluginActionSchemaRegistry) -> PluginEffectDispatcher:
+                                action_schemas: PluginActionSchemaRegistry | None = None
+                                ) -> PluginEffectDispatcher:
     """Bind a facade to the root-selected immutable Plugin package.
 
     This factory is for the protected installer loader only. It deliberately
@@ -417,6 +544,8 @@ def build_plugin_effects_facade(*, authority: PluginAuthority,
         raise PluginEffectUnavailable("root trusted invocation-context provider is unavailable")
     if getattr(identity, "kind", None) != "plugins" or not getattr(identity, "resource_id", None):
         raise PluginEffectUnavailable("trusted selected Plugin identity is unavailable")
+    if action_schemas is None:
+        action_schemas = component_plugin_action_schema_registry()
     try:
         from hermes_installer.native_plugin_bindings import bind_selected_plugin_effects
         selected = bind_selected_plugin_effects(authority)
