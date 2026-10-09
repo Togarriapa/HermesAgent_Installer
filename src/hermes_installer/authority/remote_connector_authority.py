@@ -89,9 +89,11 @@ class AuthorityServiceHI12Adapter:
 
     def __init__(self, service: Any, *, boot_epoch: Callable[[], str],
                  service_generation_digest: Callable[[], str],
+                 resolve_selected_native_principal: Callable[[str, str, str], Any],
                  capability: str = "hermes-service-connect",
                  monotonic: Callable[[], float] = time.monotonic):
         if (not callable(boot_epoch) or not callable(service_generation_digest)
+                or not callable(resolve_selected_native_principal)
                 or not callable(getattr(service, "_issue_context", None))
                 or not callable(getattr(service, "_authorize_effect", None))
                 or not callable(getattr(service, "_consume", None))):
@@ -101,6 +103,7 @@ class AuthorityServiceHI12Adapter:
         self._service = service
         self._boot_epoch = boot_epoch
         self._generation_digest = service_generation_digest
+        self._resolve_native_principal = resolve_selected_native_principal
         self._capability = capability
         self._monotonic = monotonic
 
@@ -189,12 +192,17 @@ class AuthorityServiceHI12Adapter:
 
     def _profile_uid(self, profile_id: str, generation: str) -> int:
         service = self._service
-        matches = [uid for uid, binding in service.bindings_by_uid.items()
-                   if binding.profile_id == profile_id
-                   and service.profile_generations.get(profile_id, "unversioned") == generation]
-        if len(matches) != 1:
-            raise _deny("remote.connector-profile", "selected native service profile is not uniquely enrolled")
-        return matches[0]
+        try:
+            binding = self._resolve_native_principal(
+                profile_id, generation, self._generation_digest())
+            if (type(getattr(binding, "uid", None)) is not int
+                    or binding.uid <= 0 or binding.profile_id != profile_id
+                    or service.profile_generations.get(profile_id, "unversioned") != generation
+                    or service._binding(binding.uid) != binding):
+                raise ValueError("catalog/service PrincipalBinding mismatch")
+        except Exception:
+            raise _deny("remote.connector-profile", "selected native PrincipalBinding is not current") from None
+        return binding.uid
 
     def _rule(self, operation: str, target: str) -> Any:
         service = self._service

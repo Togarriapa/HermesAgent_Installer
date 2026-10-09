@@ -9,6 +9,8 @@ serves and close them together at shutdown.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import math
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -18,6 +20,160 @@ from hermes_installer.authority.service import AuthorityService
 from hermes_installer.authority.enrollment import ProtectedEnrollment, RootCredentialVault
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.authority.types import strict_json_loads
+from hermes_installer.protected_enrollment import RootJournalSelection
+
+_AUTHORITY_JOURNAL_ROOT_ID = "installer-authority-journal-v1"
+_RESOURCE_JOB_LEDGER_FILENAME = "resource-jobs.sqlite3"
+
+
+def _root_resource_job_ledger_path(bindings: RootRuntimeBindings,
+                                   enrollment: ProtectedEnrollment) -> Path:
+    resolver = getattr(bindings, "resolve_root_journal", None)
+    if not callable(resolver):
+        raise AuthorityDenied("journal.unavailable", "root bindings have no protected journal resolver")
+    try:
+        selection = resolver(
+            _AUTHORITY_JOURNAL_ROOT_ID,
+            expected_active_generation_digest=enrollment.protected_enrollment_digest,
+        )
+    except Exception:
+        raise AuthorityDenied("journal.unavailable", "protected authority journal is unavailable") from None
+    path = selection.path if isinstance(selection, RootJournalSelection) else None
+    if (not isinstance(selection, RootJournalSelection)
+            or selection.root_id != _AUTHORITY_JOURNAL_ROOT_ID
+            or selection.service_generation_digest != enrollment.protected_enrollment_digest
+            or not isinstance(path, Path) or not path.is_absolute()
+            or not selection.generation or selection.device < 0 or selection.inode <= 0):
+        raise AuthorityDenied("journal.unavailable", "protected authority journal selection is malformed")
+    return path / _RESOURCE_JOB_LEDGER_FILENAME
+
+
+def _native_json_schema_matches(value: Any, schema: Mapping[str, Any]) -> bool:
+    """Validate one bounded JSON value against the finite pinned schema subset."""
+    if ("enum" in schema and not any(type(value) is type(item) and value == item
+                                     for item in schema["enum"])):
+        return False
+    kind = schema.get("type")
+    if kind == "object":
+        if not isinstance(value, dict):
+            return False
+        properties = schema.get("properties", {})
+        required = schema.get("required", ())
+        if (not isinstance(properties, Mapping)
+                or any(name not in value for name in required)
+                or schema.get("additionalProperties", False) is False
+                and set(value) - set(properties)):
+            return False
+        return all(name not in properties or _native_json_schema_matches(child, properties[name])
+                   for name, child in value.items())
+    if kind == "array":
+        if not isinstance(value, list):
+            return False
+        if len(value) < schema.get("minItems", 0) or len(value) > schema.get("maxItems", 2**31):
+            return False
+        item_schema = schema.get("items")
+        return isinstance(item_schema, Mapping) and all(
+            _native_json_schema_matches(child, item_schema) for child in value)
+    if kind == "string":
+        return (isinstance(value, str)
+                and len(value) >= schema.get("minLength", 0)
+                and len(value) <= schema.get("maxLength", 2**31))
+    if kind == "integer":
+        if type(value) is not int:
+            return False
+    elif kind == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        if isinstance(value, float) and not math.isfinite(value):
+            return False
+    elif kind == "boolean":
+        if type(value) is not bool:
+            return False
+    elif kind == "null":
+        if value is not None:
+            return False
+    elif kind != "string":
+        return False
+    if kind in {"integer", "number"}:
+        if "minimum" in schema and value < schema["minimum"]:
+            return False
+        if "maximum" in schema and value > schema["maximum"]:
+            return False
+    return True
+
+
+class _ProtectedNativeActionResolver:
+    """Resolve provider tool names through active native workflows and schemas."""
+
+    def __init__(self, bindings: RootRuntimeBindings, schema_catalog: Any, *,
+                 service_generation_digest: str):
+        from hermes_installer.mcp.native_schema_catalog import NativeMCPProtectedSchemaCatalog
+
+        if (not isinstance(bindings, RootRuntimeBindings)
+                or not isinstance(schema_catalog, NativeMCPProtectedSchemaCatalog)
+                or service_generation_digest != bindings.enrollment_catalog.digest):
+            raise AuthorityDenied("native.action", "active package and source-verified schema catalog are required")
+        self.bindings = bindings
+        self.schema_catalog = schema_catalog
+        self.service_generation_digest = service_generation_digest
+
+    def __call__(self, bridge: Any, live_identity: Any, tool_name: str) -> Any:
+        from .native_runtime_observer import NativeActionSelection
+
+        if (not isinstance(tool_name, str) or not tool_name
+                or getattr(bridge, "bridge_id", None) not in self.bindings.native_bridges
+                or self.bindings.native_bridges.get(bridge.bridge_id) != bridge
+                or getattr(bridge, "producer_profile_id", None) != getattr(live_identity, "profile_id", None)
+                or getattr(bridge, "producer_generation", None) != getattr(live_identity, "generation", None)
+                or self.service_generation_digest != self.bindings.enrollment_catalog.digest):
+            raise AuthorityDenied("native.action", "provider tool call is outside its active protected bridge")
+        try:
+            package = self.bindings.enrollment_catalog.resolve_profile_native_package(
+                bridge.producer_profile_id, bridge.producer_generation,
+            )
+            package = self.bindings.resolve_native_package(package.package_id, package.generation)
+        except Exception:
+            raise AuthorityDenied("native.action", "producer native package is no longer selected") from None
+        candidates: list[tuple[Any, Mapping[str, Any]]] = []
+        for adapter in package.adapter_records.values():
+            for workflow in adapter.workflow_bindings:
+                if workflow.get("external_tool_name") != tool_name:
+                    continue
+                try:
+                    schema = self.schema_catalog.resolve(
+                        workflow["external_argument_schema_id"],
+                        native_package_id=package.package_id,
+                        native_package_generation=package.generation,
+                        adapter_id=adapter.adapter_id,
+                        action_id=adapter.action_id,
+                        schema_kind="arguments",
+                    )
+                except Exception:
+                    raise AuthorityDenied(
+                        "native.action", "selected workflow argument schema is not source-verified",
+                    ) from None
+                candidates.append((adapter, schema))
+        if len(candidates) != 1:
+            raise AuthorityDenied("native.action", "provider tool name is absent or ambiguous in selected workflows")
+        adapter, schema = candidates[0]
+
+        def validate_arguments(raw: bytes) -> bool:
+            if not isinstance(raw, bytes) or not 1 <= len(raw) <= 65_536:
+                return False
+            try:
+                value = strict_json_loads(raw.decode("utf-8", errors="strict"))
+                canonical = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                       ensure_ascii=False, allow_nan=False).encode("utf-8")
+            except (TypeError, ValueError, UnicodeError, RecursionError):
+                return False
+            return canonical == raw and _native_json_schema_matches(value, schema)
+
+        return NativeActionSelection(
+            package_id=package.package_id, profile_id=package.profile_id,
+            generation=package.generation, adapter_id=adapter.adapter_id,
+            action_id=adapter.action_id, validate_arguments=validate_arguments,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,8 +190,11 @@ class RootAuthorityRuntime:
     body_recipes: Mapping[str, Any]
     scope_bindings: Mapping[str, Any]
     validators: Mapping[str, Any]
+    source_observer_unavailable_reason: str | None
     job_enrollments: Mapping[tuple[str, str], Any]
+    memory_runtime: Any | None
     job_authority: Any | None
+    build_execution_service: Any | None
 
     @property
     def process_manager(self) -> Any:
@@ -77,6 +236,34 @@ class RootAuthorityRuntime:
         return getattr(self.service, "native_runtime_observer", None)
 
     @property
+    def native_loader_observation_store(self) -> Any | None:
+        return getattr(self.service, "native_loader_observation_store", None)
+
+    @property
+    def gateway_boundary_observer(self) -> Any | None:
+        return getattr(self.service, "gateway_boundary_observer", None)
+
+    @property
+    def native_window_observer(self) -> Any | None:
+        return getattr(self.service, "native_window_observer", None)
+
+    @property
+    def native_bridge_broker(self) -> Any | None:
+        return getattr(self.service, "native_bridge_broker", None)
+
+    @property
+    def native_invocation_registry(self) -> Any | None:
+        return getattr(self.service, "native_invocation_registry", None)
+
+    @property
+    def task_native_observations(self) -> Any | None:
+        return getattr(self.service, "task_native_observations", None)
+
+    @property
+    def native_mcp_dispatcher(self) -> Any | None:
+        return getattr(self.service, "native_mcp_dispatcher", None)
+
+    @property
     def remote_session_authority(self) -> Any | None:
         return self.service.remote_session_authority
 
@@ -87,18 +274,68 @@ class RootAuthorityRuntime:
         if callable(prune):
             prune()
 
+    def revoke_native_process(self, process_id: str, generation: str | None = None) -> None:
+        """Revoke loader proofs when the root process manager retires a process."""
+        store = self.native_loader_observation_store
+        revoke = getattr(store, "revoke_process", None)
+        if callable(revoke):
+            revoke(process_id, generation)
+
     def close(self) -> None:
         """Close attached root observers and stop the active remote lease worker."""
-        for component in (self.native_runtime_observer, self.source_observer_registry):
+        errors: list[BaseException] = []
+        # Dependents close before the registries they retain. These attributes
+        # are populated only by the concrete one-time service attachment APIs;
+        # the composer never installs capability flags or callback placeholders.
+        components = (
+            self.task_native_observations,
+            self.native_mcp_dispatcher,
+            self.native_runtime_observer,
+            self.native_invocation_registry,
+            self.native_bridge_broker,
+            self.source_observer_registry,
+            self.native_loader_observation_store,
+            self.gateway_boundary_observer,
+            self.native_window_observer,
+        )
+        closed: set[int] = set()
+        for component in components:
+            if component is None or id(component) in closed:
+                continue
+            closed.add(id(component))
             close = getattr(component, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except BaseException as exc:
+                    errors.append(exc)
+        directories = (self.memory_runtime.get("state_directories", {})
+                       if isinstance(self.memory_runtime, Mapping) else {})
+        for directory in directories.values() if isinstance(directories, Mapping) else ():
+            close = getattr(directory, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except BaseException as exc:
+                    errors.append(exc)
         stop = getattr(self.remote_session_authority, "stop_watchdog", None)
         if callable(stop):
-            stop()
+            try:
+                stop()
+            except BaseException as exc:
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     def resolve_native_package(self, package_id: str, generation: str) -> Any:
         return self.bindings.resolve_native_package(package_id, generation)
+
+    def resolve_selected_native_principal(
+        self, profile_id: str, generation: str, service_generation_digest: str,
+    ) -> Any:
+        return self.bindings.resolve_selected_native_principal(
+            profile_id, generation, service_generation_digest,
+        )
 
     def resolve_device(self, enrollment_id: str, generation: str) -> Any:
         return self.bindings.resolve_device(enrollment_id, generation)
@@ -149,6 +386,15 @@ class RootAuthorityRuntime:
             expected_active_generation_digest=expected_active_generation_digest,
         )
 
+    def resource_job_ledger_path(self) -> Path:
+        """Return the fixed ledger child of the current protected authority journal.
+
+        The active journal catalog revalidates its root path and inode. The
+        database filename is an installer constant; neither setup nor a worker
+        can select a filesystem location for the job ledger.
+        """
+        return _root_resource_job_ledger_path(self.bindings, self.enrollment)
+
 
 def compose_root_authority_runtime(
     *,
@@ -157,15 +403,13 @@ def compose_root_authority_runtime(
     bindings: RootRuntimeBindings,
     artifact_catalog: ArtifactCatalog,
     vault: RootCredentialVault,
-    resource_job_store: Path | None = None,
 ) -> RootAuthorityRuntime:
     """Assemble selected runtime registries from the active verified snapshot.
 
-    The optional job store is a concrete filesystem location supplied by the
-    root daemon's fixed service configuration. If active resource jobs exist,
-    the root-installed SourceObserverRegistry must already be attached to the
-    real service; missing observer, artifact, backend, or effect joins leave
-    individual jobs unregistered.
+    Active job state is placed only below the digest-bound protected authority
+    journal. If active resource jobs exist, the root-installed source and
+    native execution registries must already be attached to the real service;
+    missing observer, artifact, backend, or effect joins leave jobs unroutable.
     """
     if (not isinstance(service, AuthorityService)
             or not isinstance(enrollment, ProtectedEnrollment)
@@ -178,6 +422,155 @@ def compose_root_authority_runtime(
             or not isinstance(service.authority_epoch, str) or not service.authority_epoch
             or service.service_generation_digest != enrollment.protected_enrollment_digest):
         raise AuthorityDenied("authority.composition", "runtime bindings do not match this service epoch and catalog")
+
+    source_observer_unavailable_reason: str | None = None
+    if service.source_observer_registry is None:
+        observer_enrollments = getattr(bindings, "source_observer_enrollments", None)
+        if not isinstance(observer_enrollments, Mapping) or not observer_enrollments:
+            source_observer_unavailable_reason = "no active protected source-observer enrollment is selected"
+        elif getattr(service, "native_loader_observation_store", None) is not None:
+            source_observer_unavailable_reason = (
+                "a loader observation store is already installed without its matching source registry"
+            )
+        else:
+            from .source_observers import SourceObserverEnrollment
+
+            if any(not isinstance(value, SourceObserverEnrollment)
+                   or key != value.observer_enrollment_id
+                   for key, value in observer_enrollments.items()):
+                source_observer_unavailable_reason = (
+                    "source-observer candidates are not complete typed protected joins"
+                )
+            else:
+                manager = bindings.process_manager
+                broker = getattr(service, "native_bridge_broker", None)
+                from .native_bridge import NativeBridgeBroker
+
+                if (not callable(getattr(manager, "set_native_loader_observation_store", None))
+                        or not callable(getattr(manager, "is_owned_active_process_handle", None))
+                        or not callable(getattr(manager, "resolve_live_peer", None))
+                        or not callable(getattr(manager, "resolve_native_package_for_peer", None))):
+                    source_observer_unavailable_reason = (
+                        "root process manager lacks the registered native loader OpenFile custody hooks"
+                    )
+                elif getattr(manager, "native_loader_observation_store", None) is not None:
+                    source_observer_unavailable_reason = (
+                        "root process manager already owns a loader store outside this service composition"
+                    )
+                elif (not isinstance(broker, NativeBridgeBroker)
+                      or getattr(broker, "service", None) is not service
+                      or not callable(getattr(broker, "resolve_pending_pair_for_context", None))
+                      or not callable(getattr(broker, "peer_role_artifact_resolver", None))
+                      or not callable(getattr(bindings, "resolve_native_bridge_role_artifact", None))
+                      or not isinstance(getattr(broker, "bridges", None), Mapping)
+                      or not isinstance(getattr(broker, "observer_delivery_bindings", None), Mapping)):
+                    source_observer_unavailable_reason = (
+                        "active native bridge lacks its protected pending-pair and delivery-role resolver"
+                    )
+                elif (not broker.bridges
+                      or dict(broker.bridges) != dict(bindings.native_bridges)
+                      or set(broker.observer_delivery_bindings) != set(broker.bridges)):
+                    source_observer_unavailable_reason = (
+                        "active native bridges lack complete protected observer delivery bindings"
+                    )
+                elif (not callable(getattr(bindings, "resolve_native_package", None))
+                      or not isinstance(getattr(bindings, "source_observer_enrollments", None), Mapping)
+                      or not callable(getattr(service, "attach_source_observer_registry", None))):
+                    source_observer_unavailable_reason = (
+                        "active native package catalog or root source registry attachment is unavailable"
+                    )
+                else:
+                    from .native_bridge import RootObserverDeliveryBinding
+
+                    delivery_bindings_ready = True
+                    for bridge_id, bridge in broker.bridges.items():
+                        rows = broker.observer_delivery_bindings.get(bridge_id)
+                        protected_rows = getattr(bridge, "observer_delivery_bindings", None)
+                        protected_projection = tuple(
+                            (getattr(item, "observer_enrollment_id", None),
+                             getattr(item, "delivery_role", None))
+                            for item in protected_rows
+                        ) if isinstance(protected_rows, tuple) else None
+                        if (not isinstance(rows, tuple) or not rows
+                                or protected_projection != tuple(
+                                    (item.observer_enrollment_id, item.delivery_role) for item in rows
+                                )
+                                or any(not isinstance(row, RootObserverDeliveryBinding)
+                                       or row.delivery_role not in {"producer", "gateway"}
+                                       or row.observer_enrollment_id not in observer_enrollments
+                                       for row in rows)
+                                or len({row.observer_enrollment_id for row in rows}) != len(rows)):
+                            delivery_bindings_ready = False
+                            break
+                        for row in rows:
+                            observer = observer_enrollments[row.observer_enrollment_id]
+                            peer_role = row.delivery_role
+                            if (observer.profile_id != getattr(bridge, f"{peer_role}_profile_id", None)
+                                    or observer.generation != getattr(bridge, f"{peer_role}_generation", None)
+                                    or observer.principal_id != getattr(bridge, f"{peer_role}_principal_id", None)
+                                    or observer.producer_uid != getattr(bridge, f"{peer_role}_uid", None)):
+                                delivery_bindings_ready = False
+                                break
+                        if not delivery_bindings_ready:
+                            break
+                    if not delivery_bindings_ready:
+                        source_observer_unavailable_reason = (
+                            "native bridge delivery rows do not join exact active source observer peers"
+                        )
+                if source_observer_unavailable_reason is None:
+                    # These are actual root constructors, not callback
+                    # declarations. Store and registry remain uninstalled if
+                    # any protected join or custody constructor rejects.
+                    from .native_custody_proof import (
+                        RootNativeLoaderObservationStore,
+                        active_native_catalog_resolver,
+                        attach_root_source_observers,
+                        native_bridge_source_target_selector,
+                    )
+
+                    try:
+                        store = RootNativeLoaderObservationStore(
+                            manager,
+                            active_native_catalog_resolver(
+                                bindings,
+                                service_generation_digest=service.service_generation_digest,
+                            ),
+                            clock=service.monotonic,
+                            source_target_selector=native_bridge_source_target_selector(
+                                broker, clock=service.monotonic,
+                            ),
+                        )
+                    except (TypeError, ValueError, AuthorityDenied):
+                        source_observer_unavailable_reason = (
+                            "active native loader catalog or pending-pair proof resolver rejected composition"
+                        )
+                    else:
+                        registry = attach_root_source_observers(
+                            service=service,
+                            observer_enrollments=observer_enrollments,
+                            process_resolver=manager.resolve_live_peer,
+                            package_resolver=bindings.resolve_native_package,
+                            loader_observations=store,
+                        )
+                        try:
+                            manager.set_native_loader_observation_store(store)
+                        except BaseException:
+                            try:
+                                registry.close()
+                            except BaseException:
+                                pass
+                            try:
+                                store.close()
+                            except BaseException:
+                                pass
+                            service.source_observer_registry = None
+                            if getattr(service, "source_receipt_delivery", None) is registry:
+                                service.source_receipt_delivery = None
+                            try:
+                                del service.native_loader_observation_store
+                            except AttributeError:
+                                pass
+                            raise
 
     from .resource_jobs import (
         ResourceJobAuthority, index_resource_job_records,
@@ -206,15 +599,197 @@ def compose_root_authority_runtime(
         source_observers=observer_records,
     )
 
+    memory_runtime = None
+    if enrollment.memory_enrollments:
+        if (bindings.enrollment_catalog is None
+                or not callable(getattr(bindings, "resolve_root_journal", None))
+                or bindings.process_manager is not service.process_effect_handler):
+            raise AuthorityDenied(
+                "authority.composition",
+                "active memory enrollments require the protected service catalog, journal resolver, and shared process custody",
+            )
+        from hermes_installer.memory.broker import build_memory_handlers, build_memory_runtime
+        from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+
+        memory_targets: dict[tuple[str, str, str], Any] = {}
+        by_profile_generation: dict[tuple[str, str], Any] = {}
+        for item in enrollment.memory_enrollments.values():
+            if not isinstance(item, MemoryServiceEnrollment):
+                raise AuthorityDenied("authority.composition", "active memory enrollment is not a typed protected record")
+            principal_resolver = getattr(bindings, "resolve_selected_native_principal", None)
+            catalog_digest = getattr(bindings.enrollment_catalog, "digest", None)
+            if not callable(principal_resolver) or not isinstance(catalog_digest, str):
+                raise AuthorityDenied("authority.composition", "active memory principal binding resolver is unavailable")
+            try:
+                principal = principal_resolver(
+                    item.profile_id, item.service_generation, catalog_digest,
+                )
+            except Exception:
+                raise AuthorityDenied("authority.composition", "active memory principal is stale or absent") from None
+            if (getattr(principal, "principal_id", None) != item.principal_id
+                    or getattr(principal, "profile_id", None) != item.profile_id
+                    or getattr(principal, "namespace_id", None) != item.namespace_identity
+                    or service.profile_generations.get(item.profile_id) != item.service_generation):
+                raise AuthorityDenied("authority.composition", "memory enrollment differs from its selected authority principal")
+            target_key = (item.profile_id, item.namespace_identity, item.provider)
+            prior_target = memory_targets.get(target_key)
+            if prior_target is not None and prior_target != item:
+                raise AuthorityDenied("authority.composition", "active memory target enrollment is ambiguous")
+            memory_targets[target_key] = item
+            profile_key = (item.profile_id, item.service_generation)
+            prior_enrollment = by_profile_generation.get(profile_key)
+            if prior_enrollment is not None and prior_enrollment != item:
+                raise AuthorityDenied("authority.composition", "active memory profile generation resolves ambiguously")
+            by_profile_generation[profile_key] = item
+
+        def resolve_memory_enrollment(profile_id: str, generation: str) -> Any:
+            selected = by_profile_generation.get((profile_id, generation))
+            if selected is None:
+                raise AuthorityDenied("memory.unavailable", "memory enrollment is not active in this generation")
+            return selected
+
+        memory_runtime = build_memory_runtime(
+            memory_targets, service,
+            root_journal_resolver=bindings.resolve_root_journal,
+            expected_active_generation_digest=enrollment.protected_enrollment_digest,
+            vault=vault, service_catalog=bindings.enrollment_catalog,
+            process_manager=bindings.process_manager,
+            enrollment_resolver=resolve_memory_enrollment,
+        )
+        if memory_runtime.get("state_root_ready") is True:
+            step_authority = memory_runtime.get("step_authority")
+            # Derive only fixed handlers whose selected route has a complete
+            # protected compound recipe and a corresponding unique HI12 rule.
+            # Capture remains unavailable until a root-observed event joins it.
+            generated = build_memory_handlers(
+                targets=memory_runtime["targets"],
+                owner_state=memory_runtime["owner_state"],
+                queue=memory_runtime["queue"], ipc=memory_runtime["ipc"],
+                engines=memory_runtime["engines"],
+                eligibility=memory_runtime["eligibility"],
+                maximum_timeout=memory_runtime["maximum_timeout"],
+                compound_executor=memory_runtime["compound_executor"],
+            )
+            for key, handler in generated.items():
+                operation, target = key
+                if operation != "memory.search":
+                    continue
+                target_entry = next((value for value in memory_runtime["targets"].values()
+                                     if "memory:" + value.provider + ":search" == target), None)
+                route_id = target_entry.route_for("search") if target_entry is not None else None
+                connector_key = (("connector.open", target_entry.enrollment.target_id)
+                                 if target_entry is not None and target_entry.enrollment is not None
+                                 else None)
+                installed_connector = (service.handlers.get(connector_key)
+                                       if connector_key is not None else None)
+                internal_handler = (getattr(step_authority, "handle_connector_open", None)
+                                    if step_authority is not None else None)
+                same_connector = (
+                    installed_connector is internal_handler
+                    or (getattr(installed_connector, "__self__", None) is step_authority
+                        and getattr(installed_connector, "__func__", None)
+                        is getattr(internal_handler, "__func__", None))
+                )
+                if (route_id is None or route_id not in target_entry.enrollment.fixed_route_map
+                        or service.memory_step_effect_authority is not step_authority
+                        or not same_connector
+                        or not callable(internal_handler)
+                        or not any(rule.operation == operation and rule.target == target
+                                   for rule in service.rules.values())):
+                    continue
+                if key in service.handlers:
+                    raise AuthorityDenied("authority.composition", "active memory route duplicates an installed handler")
+                service.handlers[key] = handler
+
+    build_execution_service = None
+    build_catalog = getattr(bindings, "build_catalog", None)
+    build_store = getattr(bindings, "build_store", None)
+    process_manager = bindings.process_manager
+    if (build_catalog is not None and build_store is not None
+            and bindings.enrollment_catalog is not None
+            and isinstance(enrollment.artifact_staging_directory, Path)
+            and callable(getattr(bindings, "resolve_build_process_profile", None))):
+        # The root store and process manager are the same protected instances
+        # already held by RootRuntimeBindings; no second store, key, or manager
+        # is created here. Without a root CPython probe, handlers() exposes
+        # Colibri only and leaves Coral unavailable.
+        from .build_execution import (
+            LinuxBuildOutputFactInspector, ProtectedBuildArtifactRootResolver,
+            RootBuildExecutionService,
+        )
+        from hermes_installer.managed_process_custodian import ManagedBuildJobRunner
+
+        artifact_roots = ProtectedBuildArtifactRootResolver(
+            artifact_catalog, enrollment.artifact_staging_directory,
+            owner_uid=vault.expected_uid,
+        )
+        inspector = LinuxBuildOutputFactInspector(
+            toolchain_root_resolver=artifact_roots.toolchain_root,
+            source_root_resolver=artifact_roots.source_root,
+            runtime_probe=None,
+            owner_uid=vault.expected_uid,
+        )
+        candidate_build_execution_service = RootBuildExecutionService(
+            build_catalog=build_catalog,
+            service_catalog=bindings.enrollment_catalog,
+            artifact_catalog=artifact_catalog,
+            artifact_staging_root=enrollment.artifact_staging_directory,
+            launcher=ManagedBuildJobRunner(
+                process_manager,
+                process_profile_resolver=bindings.resolve_build_process_profile,
+            ),
+            fact_inspector=inspector,
+            store=build_store,
+            expected_uid=vault.expected_uid,
+            monotonic=service.monotonic,
+        )
+        installed_build_routes = 0
+        for key, handler in candidate_build_execution_service.handlers().items():
+            operation, target = key
+            # A catalog profile alone is not activation. Install only if the
+            # active service snapshot also grants this exact selected route.
+            selected = False
+            if not any(rule.operation == operation and rule.target == target
+                       for rule in service.rules.values()):
+                continue
+            for protected_build_row in enrollment.protected_build_records:
+                if not isinstance(protected_build_row, Mapping):
+                    continue
+                generation = protected_build_row.get("generation")
+                if (protected_build_row.get("target_id") != target
+                        or not isinstance(generation, str) or not generation):
+                    continue
+                try:
+                    profile = build_catalog.resolve(target, generation)
+                    service_profile = bindings.enrollment_catalog.resolve(
+                        profile.build_service_enrollment_id,
+                        profile.build_service_generation,
+                    )
+                except Exception:
+                    continue
+                if (service_profile.profile_id in service.profile_generations
+                        and service.profile_generations[service_profile.profile_id]
+                        == service_profile.generation):
+                    selected = True
+                    break
+            if not selected:
+                continue
+            if key in service.handlers:
+                raise AuthorityDenied("authority.composition", "build route duplicates an installed handler")
+            service.handlers[key] = handler
+            installed_build_routes += 1
+        if installed_build_routes:
+            build_execution_service = candidate_build_execution_service
+
     job_authority = None
     if jobs:
-        if not isinstance(resource_job_store, Path) or not resource_job_store.is_absolute():
-            raise AuthorityDenied("authority.composition", "active resource jobs require a fixed private root store")
         if source_observers is None:
             raise AuthorityDenied("authority.composition", "active resource jobs have no root source observer")
         from hermes_installer.registry.resource_jobs import ResourceJobLedger
 
-        ledger = ResourceJobLedger(resource_job_store, monotonic=service.monotonic)
+        job_store = _root_resource_job_ledger_path(bindings, enrollment)
+
+        ledger = ResourceJobLedger(job_store, monotonic=service.monotonic)
         selected_generations: dict[str, str] = {}
         for row in enrollment.resource_job_records:
             if row.get("selected_enabled") is True:
@@ -251,5 +826,7 @@ def compose_root_authority_runtime(
         body_recipes=MappingProxyType(dict(recipes)),
         scope_bindings=MappingProxyType(dict(scope_bindings)),
         validators=MappingProxyType(dict(validators)),
-        job_enrollments=MappingProxyType(dict(jobs)), job_authority=job_authority,
+        source_observer_unavailable_reason=source_observer_unavailable_reason,
+        job_enrollments=MappingProxyType(dict(jobs)), memory_runtime=memory_runtime,
+        job_authority=job_authority, build_execution_service=build_execution_service,
     )

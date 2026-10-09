@@ -15,9 +15,16 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol
 if TYPE_CHECKING:
     from hermes_installer.authority.types import EffectAuthorization, HostContext
 from hermes_installer.state import OwnedRoot, process_lock
-from hermes_installer.memory.owner_ledger import SQLiteOwnerLedger
+from hermes_installer.memory.owner_ledger import SQLiteOwnerLedger, _secure_sqlite_files
+from hermes_installer.memory.root_state import (
+    MemoryAuthorityStateDirectory, memory_state_lock, resolve_memory_state_directory,
+)
 from hermes_installer.memory.enrollment import MemoryServiceEnrollment
 from hermes_installer.memory.transport import MemoryServiceIPC, RootConnectorFactory
+from hermes_installer.authority.memory_execution import (
+    MemoryCompoundExecutor, MemoryExecutionDenied, MemoryExecutionUnavailable,
+)
+from hermes_installer.memory.compound import MemoryRecipeDenied, MemoryRecipeUnavailable
 
 MAX_REQUEST = 256 * 1024
 MAX_RESPONSE = 1024 * 1024
@@ -274,14 +281,15 @@ def _reply(value: Mapping[str, Any], status: int = 200) -> Mapping[str, Any]:
 class DurableMemoryQueue:
     """Root-owned durable event journal; payloads never enter logs."""
 
-    def __init__(self, root: Path, *, owner_state: OwnerState,
+    def __init__(self, root: Path | MemoryAuthorityStateDirectory, *, owner_state: OwnerState,
                  consent_issuer: BackgroundConsentIssuer,
                  clock: Callable[[], float] = time.time):
-        self.owned = OwnedRoot(root)
+        self.owned = root if isinstance(root, MemoryAuthorityStateDirectory) else OwnedRoot(root)
+        self.profile_scope = self.owned.profile_id if isinstance(self.owned, MemoryAuthorityStateDirectory) else None
         self.owned.ensure()
         self.path = self.owned.path("memory-queue.sqlite3")
         self.owner_state, self.consent_issuer, self.clock = owner_state, consent_issuer, clock
-        with process_lock(self.owned.path("memory-queue.lock")):
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
             db = self._db()
             try:
                 db.executescript("""
@@ -312,14 +320,17 @@ class DurableMemoryQueue:
         db = sqlite3.connect(self.path, timeout=2.0, isolation_level=None)
         os.chmod(self.path, 0o600)
         db.execute("PRAGMA busy_timeout=2000")
-        db.execute("PRAGMA journal_mode=DELETE")
+        db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA synchronous=FULL")
         db.execute("PRAGMA secure_delete=ON")
+        _secure_sqlite_files(self.path)
         return db
 
     def enqueue(self, *, target: MemoryTarget, context: HostContext,
                 body: Mapping[str, Any]) -> str:
         _scope(context, target, body)
+        if self.profile_scope is not None and context.profile_id != self.profile_scope:
+            raise BrokerDenied("durable memory queue belongs to another profile")
         kind = body.get("event")
         if kind == "turn":
             event = {"event": kind, "session_id": _text(body.get("session_id", "unknown"), "session_id", 256),
@@ -339,7 +350,7 @@ class DurableMemoryQueue:
         raw_event = canonical(event, MAX_EVENT)
         receipt = secrets.token_urlsafe(24)
         now = self.clock()
-        with process_lock(self.owned.path("memory-queue.lock")):
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
             db = self._db()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -368,7 +379,9 @@ class DurableMemoryQueue:
 
     def result(self, context: HostContext, receipt: str) -> dict[str, Any]:
         _text(receipt, "receipt", 128)
-        with process_lock(self.owned.path("memory-queue.lock")):
+        if self.profile_scope is not None and context.profile_id != self.profile_scope:
+            raise BrokerDenied("durable memory queue belongs to another profile")
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
             db = self._db()
             try:
                 row = db.execute("SELECT status,result,error_code FROM jobs WHERE id=? AND profile=? AND namespace=?",
@@ -389,7 +402,7 @@ class DurableMemoryQueue:
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 300:
             raise ValueError("invalid queue lease")
         now = self.clock()
-        with process_lock(self.owned.path("memory-queue.lock")):
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
             db = self._db()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -434,7 +447,7 @@ class DurableMemoryQueue:
             raise ValueError("exactly one result or error is required")
         raw = canonical(dict(result), 16 * 1024) if result is not None else None
         status = "complete" if result is not None else "failed"
-        with process_lock(self.owned.path("memory-queue.lock")):
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
             db = self._db()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -457,7 +470,7 @@ class DurableMemoryQueue:
         """Fail closed unless a durable job and matching current owner remain active."""
         if not isinstance(consent_id, str) or not consent_id or len(consent_id) > 256:
             return False
-        with process_lock(self.owned.path("memory-queue.lock")):
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
             db = self._db()
             try:
                 row = db.execute("SELECT profile,provider,owner_generation,active FROM consents WHERE consent_id=?",
@@ -481,7 +494,7 @@ class DurableMemoryQueue:
             raise ValueError("invalid memory owner revocation scope")
         code = reason if reason in {"capture_disabled", "profile_removed", "owner_changed"} else "owner_changed"
         now = self.clock()
-        with process_lock(self.owned.path("memory-queue.lock")):
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
             db = self._db()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -489,6 +502,12 @@ class DurableMemoryQueue:
                     (code, now, profile_id, provider_id, owner_generation)).rowcount
                 db.execute("UPDATE consents SET active=0,updated=? WHERE profile=? AND provider=? AND owner_generation=? AND active=1",
                     (now, profile_id, provider_id, owner_generation))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='compound_jobs'").fetchone():
+                    db.execute("UPDATE compound_jobs SET state='revoked',source_context=X'',consent=NULL,"
+                        "request_body=X'7b7d',captures=X'7b7d',inflight_step=NULL,inflight_sequence=NULL "
+                        ",effect_consumed=0,compound_payload_sha256=NULL,service_request_sha256=NULL "
+                        "WHERE profile=? AND provider=? AND owner_generation=? AND state='active'",
+                        (profile_id, provider_id, owner_generation))
                 db.commit()
                 return int(changed)
             except BaseException:
@@ -502,7 +521,7 @@ class DurableMemoryQueue:
         if not isinstance(profile_id,str) or not profile_id or len(profile_id)>128:
             raise ValueError("invalid profile identifier")
         code = reason if reason in {"capture_disabled","profile_removed","owner_changed"} else "capture_disabled"
-        with process_lock(self.owned.path("memory-queue.lock")):
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
             db = self._db()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -510,6 +529,11 @@ class DurableMemoryQueue:
                 changed = db.execute("UPDATE jobs SET status='failed',error_code=?,source_context=X'',consent=X'',event=X'',lease_until=NULL,updated=? WHERE profile=? AND status IN ('queued','processing')",
                     (code,now,profile_id)).rowcount
                 db.execute("UPDATE consents SET active=0,updated=? WHERE profile=? AND active=1", (now,profile_id))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='compound_jobs'").fetchone():
+                    db.execute("UPDATE compound_jobs SET state='revoked',source_context=X'',consent=NULL,"
+                        "request_body=X'7b7d',captures=X'7b7d',inflight_step=NULL,inflight_sequence=NULL "
+                        ",effect_consumed=0,compound_payload_sha256=NULL,service_request_sha256=NULL "
+                        "WHERE profile=? AND state='active'", (profile_id,))
                 db.commit()
                 return int(changed)
             except BaseException:
@@ -535,7 +559,8 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
              queue: DurableMemoryQueue | None, owner_state: OwnerState,
              engines: Mapping[str, PrivateEngine],
              eligibility: Callable[[MemoryTarget, str, HostContext], bool] | None,
-             maximum_timeout: float):
+             maximum_timeout: float,
+             compound_executor: MemoryCompoundExecutor | None = None):
     def handle(*, context: HostContext, authorization: EffectAuthorization,
                payload: bytes, timeout: float, peer_pid: int,
                cancelled: Callable[[], bool], peer_pidfd: int | None = None) -> Mapping[str, Any]:
@@ -693,6 +718,29 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
             if route_id not in target.approved_route_ids:
                 raise BrokerDenied("memory route is not in the protected enrollment")
+            if compound_executor is not None and action in {"search", "capture"}:
+                enrollment = target.enrollment
+                recipe = enrollment.fixed_route_map.get(route_id) if enrollment is not None else None
+                if recipe is None:
+                    raise BrokerUnavailable("selected memory action has no complete protected compound recipe")
+                if action == "search":
+                    compound_body = {"query": _text(body.get("query"), "query", 16384),
+                                     "limit": limit}
+                elif target.provider == "agentmemory":
+                    compound_body = {"content": _text(request.get("content"), "content", 65536)}
+                else:
+                    raise BrokerUnavailable("selected memory capture lacks a root-captured event recipe")
+                source_context_wire = context.to_wire()
+                executed = compound_executor.execute(
+                    enrollment=enrollment, recipe=recipe, body=compound_body,
+                    source_context_wire=source_context_wire,
+                    parent_authorization=authorization,
+                    parent_request_payload=payload,
+                    cancelled=cancelled)
+                result = dict(executed)
+                result["profile_id"] = context.profile_id
+                result["namespace_id"] = context.namespace_id
+                return _reply(result)
             if ipc is None:
                 raise BrokerUnavailable("root-owned authenticated memory service connector is unavailable")
             if action=="restore":
@@ -774,6 +822,14 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
             return _reply(result)
         except BrokerDenied as exc:
             return _reply({"error":str(exc)},403)
+        except MemoryExecutionDenied as exc:
+            return _reply({"error":str(exc)},403)
+        except MemoryExecutionUnavailable as exc:
+            return _reply({"error":str(exc)},503)
+        except MemoryRecipeDenied as exc:
+            return _reply({"error":str(exc)},403)
+        except MemoryRecipeUnavailable as exc:
+            return _reply({"error":str(exc)},503)
         except (ValueError,TypeError) as exc:
             return _reply({"error":str(exc)},400)
         except BrokerUnavailable as exc:
@@ -787,6 +843,7 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
         owner_state: OwnerState, queue: DurableMemoryQueue|None, ipc: ServiceIPC|None,
         engines: Mapping[str,PrivateEngine]|None=None,
         eligibility: Callable[[MemoryTarget,str,HostContext],bool]|None=None,
+        compound_executor: MemoryCompoundExecutor | None = None,
         maximum_timeout: float=20.0):
     """Return one fixed handler per provider/action; signed context resolves profile.
 
@@ -815,7 +872,8 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
                 if target is None:
                     return _reply({"error":"no enrolled memory target for signed profile"},403)
                 return _handler(target,_action,ipc=ipc,queue=queue,owner_state=owner_state,
-                    engines=engines,eligibility=eligibility,maximum_timeout=maximum_timeout)(
+                    engines=engines,eligibility=eligibility,maximum_timeout=maximum_timeout,
+                    compound_executor=compound_executor)(
                         context=context,authorization=authorization,payload=payload,
                         timeout=timeout,peer_pid=peer_pid,cancelled=cancelled,
                         peer_pidfd=peer_pidfd)
@@ -823,18 +881,16 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
     return result
 
 def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTarget | MemoryServiceEnrollment],
-        authority_service: Any, *, root_data_dir: Path = Path("/var/lib/hermes-installer/memory"),
-        vault: Any = None, connector_factory: RootConnectorFactory | None = None) -> dict[str, Any]:
-    """Assemble the static root runtime from protected enrollment only.
+        authority_service: Any, *, root_journal_resolver: Callable[..., Any] | None = None,
+        expected_active_generation_digest: str | None = None,
+        vault: Any = None, connector_factory: RootConnectorFactory | None = None,
+        service_catalog: Any = None, process_manager: Any = None,
+        enrollment_resolver: Callable[[str, str], MemoryServiceEnrollment] | None = None) -> dict[str, Any]:
+    """Assemble the root memory runtime from protected enrollment only.
 
-    The authority daemon passes its root-signed consent issuer. Service IPC
-    and private model engines are deliberately absent until the process custodian
-    enrolls the typed fixed-memory compound executor and eligible local/private
-    runtimes. Raw HTTP connector factories are rejected.
-    In that state handlers are still real, bounded handlers and data-plane
-    operations truthfully return unavailable; no service is started or lazily
-    installed here. The vault argument is reserved for the future root-only
-    connector and is intentionally never read by worker-facing code.
+    Fixed compound execution is composed only with the current root service
+    catalog, managed process namespace, and credential vault. The builder installs no service process/model and
+    does not enable event capture or private external extraction.
     """
     targets: dict[tuple[str, str, str], MemoryTarget] = {}
     for key, item in protected_targets.items():
@@ -843,15 +899,111 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
                 target.profile_id, target.namespace_id, target.provider):
             raise ValueError("memory runtime accepts only exact protected enrollment entries")
         targets[key] = target
-    ledger = SQLiteOwnerLedger(root_data_dir / "owner-ledger")
-    owner_state = ledger.get_owner_state
+    if connector_factory is not None:
+        raise ValueError("raw memory HTTP connector factories are not supported")
+    if not callable(root_journal_resolver) or not expected_active_generation_digest:
+        # A service enrollment is not authority to choose its own state path.
+        # Until the protected root-journal catalog is supplied, expose no
+        # mutable memory runtime (handlers report an unavailable state root).
+        def owner_state(_profile: str) -> tuple[str | None, int]:
+            raise BrokerUnavailable("protected memory authority state-root catalog is unavailable")
+        return {
+            "targets": targets, "owner_ledger": None, "owner_state": owner_state,
+            "queue": None, "ipc": None, "compound_ledger": None,
+            "compound_executor": None, "engines": {},
+            "eligibility": lambda *_: False, "maximum_timeout": 15.0,
+            "consent_active": lambda _consent_id: False,
+            "consent_ready": False, "background_effect": None,
+            "state_directories": {}, "state_root_ready": False,
+        }
+    from hermes_installer.memory.root_state import resolve_memory_state_directory
+    enrollments: dict[str, MemoryServiceEnrollment] = {}
+    for target in targets.values():
+        if target.enrollment is None:
+            raise ValueError("root memory runtime requires strict protected service enrollments")
+        prior = enrollments.get(target.profile_id)
+        if prior is not None and (prior.authority_state_root_id != target.enrollment.authority_state_root_id
+                                  or prior.data_root_id == target.enrollment.authority_state_root_id):
+            raise ValueError("profile memory enrollments disagree on protected authority state root")
+        enrollments[target.profile_id] = target.enrollment
+    state_directories = {
+        profile: resolve_memory_state_directory(
+            enrollment, root_journal_resolver,
+            expected_active_generation_digest=expected_active_generation_digest,
+            expected_uid=0)
+        for profile, enrollment in enrollments.items()
+    }
+    owner_ledgers = {profile: SQLiteOwnerLedger(directory)
+                     for profile, directory in state_directories.items()}
+
+    def owner_state(profile: str) -> tuple[str | None, int]:
+        ledger = owner_ledgers.get(profile)
+        if ledger is None:
+            raise BrokerUnavailable("signed profile has no root memory authority state")
+        return ledger.get_owner_state(profile)
+
+    class ProfiledOwnerLedger:
+        def get_owner(self, profile: str) -> str | None:
+            ledger = owner_ledgers.get(profile)
+            if ledger is None: raise BrokerUnavailable("profile has no root memory authority state")
+            return ledger.get_owner(profile)
+
+        def get_owner_state(self, profile: str) -> tuple[str | None, int]:
+            return owner_state(profile)
+
+        def set_owner(self, profile: str, provider: str | None) -> None:
+            ledger = owner_ledgers.get(profile)
+            if ledger is None:
+                raise BrokerUnavailable("profile has no root memory authority state")
+            ledger.set_owner(profile, provider)
+
+        def begin_transition(self, profile: str, old: str | None, new: str | None) -> str:
+            ledger = owner_ledgers.get(profile)
+            if ledger is None: raise BrokerUnavailable("profile has no root memory authority state")
+            return ledger.begin_transition(profile, old, new)
+
+        def commit_transition(self, profile: str, transition_id: str, name: str | None) -> None:
+            ledger = owner_ledgers.get(profile)
+            if ledger is None: raise BrokerUnavailable("profile has no root memory authority state")
+            ledger.commit_transition(profile, transition_id, name)
+
+        def abort_transition(self, profile: str, transition_id: str, *, recovered: bool = True) -> None:
+            ledger = owner_ledgers.get(profile)
+            if ledger is None: raise BrokerUnavailable("profile has no root memory authority state")
+            ledger.abort_transition(profile, transition_id, recovered=recovered)
+
+    ledger = ProfiledOwnerLedger()
     consent_issuer = getattr(authority_service, "create_background_consent", None)
     effect_runner = getattr(authority_service, "perform_memory_effect", None)
     consent_ready = callable(consent_issuer) and callable(effect_runner)
     queue = None
     if consent_ready:
-        queue = DurableMemoryQueue(root_data_dir / "queue", owner_state=owner_state,
-                                   consent_issuer=consent_issuer)
+        class ProfiledQueue:
+            def __init__(self):
+                self.queues = {profile: DurableMemoryQueue(
+                    state_directories[profile], owner_state=owner_state,
+                    consent_issuer=consent_issuer)
+                    for profile in state_directories}
+            def enqueue(self, *, target: MemoryTarget, context: HostContext,
+                        body: Mapping[str, Any]) -> str:
+                child = self.queues.get(target.profile_id)
+                if child is None: raise BrokerUnavailable("profile queue is unavailable")
+                return child.enqueue(target=target, context=context, body=body)
+            def result(self, context: HostContext, receipt: str) -> Mapping[str, Any]:
+                child = self.queues.get(context.profile_id)
+                if child is None: raise BrokerUnavailable("profile queue is unavailable")
+                return child.result(context, receipt)
+            def consent_active(self, consent_id: str) -> bool:
+                return any(child.consent_active(consent_id) for child in self.queues.values())
+            def revoke_owner(self, profile: str, provider: str, generation: int,
+                             *, reason: str = "owner_changed") -> int:
+                child = self.queues.get(profile)
+                return 0 if child is None else child.revoke_owner(
+                    profile, provider, generation, reason=reason)
+            def revoke_profile(self, profile: str, *, reason: str = "capture_disabled") -> int:
+                child = self.queues.get(profile)
+                return 0 if child is None else child.revoke_profile(profile, reason=reason)
+        queue = ProfiledQueue()
     consent_active = queue.consent_active if queue is not None else (lambda _consent_id: False)
     def eligibility(target: MemoryTarget, stage: str, context: HostContext) -> bool:
         # Enabling this requires a fresh protected policy decision and an
@@ -865,21 +1017,62 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
     # accepted data plane is fixed-memory-compound-json-v1 with root-owned
     # job/step state and a fresh HI12 grant for each step. Until that typed
     # executor is composed, all service actions remain explicitly unavailable.
-    if connector_factory is not None:
-        raise ValueError("raw memory HTTP connector factories are not supported")
     ipc = None
+    from hermes_installer.authority.memory_execution import MemoryCompoundLedger, MemoryCompoundExecutor
+    step_effect = getattr(authority_service, "perform_memory_connector_step", None)
+    compound_ledgers = {profile: MemoryCompoundLedger(directory)
+                        for profile, directory in state_directories.items()}
+    step_authority = None
+    if (service_catalog is not None and process_manager is not None and vault is not None):
+        from hermes_installer.authority.memory_execution import RootMemoryStepEffectAuthority
+        if enrollment_resolver is None:
+            enrollment_by_key = {
+                (enrollment.profile_id, enrollment.service_generation): enrollment
+                for enrollment in enrollments.values()
+            }
+            enrollment_resolver = lambda profile, generation: enrollment_by_key[(profile, generation)]
+        step_authority = RootMemoryStepEffectAuthority(
+            service=authority_service, enrollment_resolver=enrollment_resolver,
+            ledger_resolver=lambda profile: compound_ledgers[profile],
+            service_catalog=service_catalog,
+            process_manager=process_manager, vault=vault, owner_state=owner_state,
+            consent_active=consent_active, ledger_profiles=tuple(compound_ledgers))
+        registered = step_authority.register()
+        if registered:
+            # This is an in-process root callback, never a worker RPC verb.
+            # It is called only by the already registered memory effect handler.
+            attach = getattr(authority_service, "attach_memory_step_effect_authority", None)
+            if not callable(attach):
+                raise MemoryExecutionUnavailable("root AuthorityService memory effect attachment is unavailable")
+            attach(step_authority)
+    class ProfiledCompoundExecutor:
+        def execute(self, *, enrollment: MemoryServiceEnrollment, **kwargs: Any) -> Mapping[str, Any]:
+            ledger_for_profile = compound_ledgers.get(enrollment.profile_id)
+            if ledger_for_profile is None:
+                raise MemoryExecutionUnavailable("profile memory compound ledger is unavailable")
+            return MemoryCompoundExecutor(
+                ledger_for_profile,
+                getattr(authority_service, "perform_memory_connector_step", None)
+                if step_authority is not None else None
+            ).execute(enrollment=enrollment, **kwargs)
+    compound_ledger = compound_ledgers
+    compound_executor = ProfiledCompoundExecutor()
     return {
         "targets": targets,
         "owner_ledger": ledger,
         "owner_state": owner_state,
         "queue": queue,
         "ipc": ipc,
+        "compound_ledger": compound_ledger,
+        "compound_executor": compound_executor,
         "engines": {},
         "eligibility": eligibility,
         "maximum_timeout": 15.0,
         "consent_active": consent_active,
         "consent_ready": consent_ready,
         "background_effect": effect_runner if callable(effect_runner) else None,
+        "step_authority": step_authority,
+        "state_directories": state_directories, "state_root_ready": True,
     }
 
 
