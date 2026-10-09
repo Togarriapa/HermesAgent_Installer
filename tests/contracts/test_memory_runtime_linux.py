@@ -329,7 +329,7 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
                     "payload": base64.b64encode(source_payload).decode("ascii"), "timeout": 10.0,
                 }, cancelled=lambda: False, enforce_peer_identity=False)
                 result = json.loads(base64.b64decode(effect["body"], validate=True))
-                self.assertEqual(result["status"], "ok")
+                self.assertEqual(result.get("status"), "ok", result)
                 self.assertEqual(result["result"], {"mode": "compact", "results": []})
 
                 def attempt(consent_wire=None):
