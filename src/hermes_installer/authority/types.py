@@ -84,7 +84,7 @@ class HostContext:
             raise AuthorityDenied("claims.invalid", "capabilities are invalid")
         issued = _time(self.issued_at_monotonic, "issued_at_monotonic")
         expires = _time(self.monotonic_expires_at, "monotonic_expires_at")
-        if expires <= issued or expires - issued > 300:
+        if expires <= issued or expires - issued > 600:
             raise AuthorityDenied("claims.invalid", "context lease exceeds its bound")
 
     @property
@@ -160,7 +160,7 @@ class EffectAuthorization:
         _digest(self.context_digest, "context_digest")
         issued = _time(self.issued_at_monotonic, "issued_at_monotonic")
         expires = _time(self.monotonic_expires_at, "monotonic_expires_at")
-        if expires <= issued or expires - issued > 30:
+        if expires <= issued or expires - issued > 600:
             raise AuthorityDenied("grant.invalid", "effect grant lease exceeds its bound")
 
     def claims(self) -> dict[str, Any]:

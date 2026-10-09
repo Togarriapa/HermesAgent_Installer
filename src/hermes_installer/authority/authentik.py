@@ -95,9 +95,11 @@ class TLSAuthentikTransport:
 class PrincipalIdentity:
     username: str
     email: str
+    subject_id: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.username or not self.email or "@" not in self.email:
+        if (not self.username or not self.email or "@" not in self.email
+                or self.subject_id is not None and (not isinstance(self.subject_id, str) or not self.subject_id)):
             raise ValueError("expected Authentik principal identity is incomplete")
 
 
@@ -153,8 +155,9 @@ class AuthentikSystemPolicy(AuthorityPolicy):
             sensitivity = max((item.sensitivity for item in source_contexts), key=ordered.index)
             lineage_hash = canonical_digest(sorted(_ctx_digest(item) for item in source_contexts))
             return sensitivity, lineage_hash
-        if (binding.profile_id, purpose) in self.enrollment.public_profile_purposes:
-            return Sensitivity.PUBLIC, canonical_digest({"profile": binding.profile_id, "purpose": purpose, "policy": self.revision})
+        # Purpose names are request metadata, not proof that a payload was
+        # cleared for a public recipient. Empty lineage remains unknown; a
+        # separate host-reviewed source/consent issuer must mint public data.
         return Sensitivity.UNKNOWN, canonical_digest({"unknown": True, "purpose": purpose, "policy": self.revision})
 
     def allow_effect(self, *, context: HostContext, rule: EffectRule,
@@ -188,7 +191,8 @@ class AuthentikSystemPolicy(AuthorityPolicy):
             raise AuthorityDenied("authentik.principal", "fresh enrolled actor identity is unavailable")
         actor = self._current_user(token)
         if (actor["username"].casefold() != expected.username.casefold()
-                or actor["email"].casefold() != expected.email.casefold()):
+                or actor["email"].casefold() != expected.email.casefold()
+                or expected.subject_id is not None and actor["subject"] != expected.subject_id):
             raise AuthorityDenied("authentik.mismatch", "fresh Authentik subject does not match the enrolled principal")
         groups = self._complete_groups(token, actor["groups"])
         if self.enrollment.system_group_id not in groups:

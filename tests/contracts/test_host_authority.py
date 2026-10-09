@@ -16,7 +16,7 @@ from hermes_installer.authority.service import (
     AuthorityService, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
-    AuthorityDenied, Sensitivity, canonical_digest,
+    AuthorityDenied, HostContext, Sensitivity, canonical_digest,
 )
 
 
@@ -67,6 +67,65 @@ class FixturePolicy:
 
     def allow_effect(self, *, context, rule, request_digest, retry_index):
         return context.sensitivity is Sensitivity.PRIVATE and retry_index <= 3
+
+
+class BackgroundMemoryConsentContracts(unittest.TestCase):
+    def test_expired_source_cannot_be_reissued_without_active_bound_consent(self):
+        now = [100.0]
+        binding = PrincipalBinding(1001, "principal:a", "profile:a", "namespace:a",
+                                   frozenset({"memory-capture", "memory-extraction"}))
+        targets = {
+            ("memory-capture", "memory:openviking:enqueue"): EffectRule(
+                "memory-capture", "memory.enqueue", "memory:openviking:enqueue"),
+            ("memory-extraction", "memory:openviking:extract"): EffectRule(
+                "memory-extraction", "memory.extract", "memory:openviking:extract"),
+        }
+        effects = []
+
+        def handler(*, context, authorization, payload, timeout, peer_pid, cancelled):
+            effects.append((context.sensitivity, authorization.capability, payload))
+            return {"status": 200, "body": b'{"facts":[]}', "headers": {"content-type": "application/json"}, "receipt_id": "memory-receipt"}
+
+        service = AuthorityService(
+            signing_key=b"b" * 32, key_id="fixture",
+            bindings_by_uid={binding.uid: binding}, rules=targets,
+            handlers={(rule.operation, rule.target): handler for rule in targets.values()},
+            policy=FixturePolicy(), monotonic=lambda: now[0], wall_clock=lambda: 1_000.0,
+            profile_generations={"profile:a": "generation-a"},
+            background_consent_active=lambda _consent_id: True,
+        )
+        source = HostContext.from_wire(service._issue_context(binding.uid, {
+            "purpose": "memory-capture", "intent": "source-event", "trace_id": "trace-a",
+            "lease_seconds": 10.0, "source_contexts": [],
+        }))
+        consent = service.create_background_consent(
+            source, provider_id="openviking", owner_generation="generation-a", ttl_seconds=300)
+        now[0] += 11.0
+
+        with self.assertRaises(AuthorityDenied):
+            service._issue_context(binding.uid, {
+                "purpose": "memory-extract", "intent": "unapproved-refresh", "trace_id": "trace-b",
+                "lease_seconds": 10.0, "source_contexts": [source.to_wire()],
+            })
+        self.assertEqual(effects, [])
+
+        result = service.perform_memory_effect(
+            source.to_wire(), consent.to_wire(), provider_id="openviking",
+            owner_generation="generation-a", action="extract", capability="memory-extraction",
+            payload=b'{"schema":1}', timeout=1,
+        )
+        self.assertEqual(result.status, 200)
+        self.assertEqual(result.body, b'{"facts":[]}')
+        self.assertEqual(effects, [(Sensitivity.PRIVATE, "memory-extraction", b'{"schema":1}')])
+
+        service.background_consent_active = lambda _consent_id: False
+        with self.assertRaises(AuthorityDenied):
+            service.perform_memory_effect(
+                source.to_wire(), consent.to_wire(), provider_id="openviking",
+                owner_generation="generation-a", action="extract", capability="memory-extraction",
+                payload=b'{"schema":1}', timeout=1,
+            )
+        self.assertEqual(len(effects), 1)
 
 
 @unittest.skipUnless(hasattr(socket, "SO_PEERCRED"), "requires Linux kernel Unix peer credentials")

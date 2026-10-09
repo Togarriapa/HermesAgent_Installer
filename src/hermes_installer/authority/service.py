@@ -26,14 +26,19 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
 from .types import (
-    AuthorityDenied, EffectAuthorization, HostContext, Sensitivity,
+    AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity,
     canonical_digest,
 )
 
 MAX_REQUEST = 4 * 1024 * 1024 + 16_384
 MAX_RESPONSE = 4 * 1024 * 1024 + 32_768
-MAX_CONTEXT_LEASE = 30.0
-MAX_EFFECT_LEASE = 5.0
+MAX_CONTEXT_LEASE = 600.0
+MAX_EFFECT_LEASE = 30.0
+_EFFECT_LEASE_BY_OPERATION = {
+    "artifact.fetch": 120.0,
+    "package.install": 600.0,
+    "process.start": 30.0,
+}
 _OPERATIONS = frozenset({
     "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor",
     "memory.capture", "memory.search", "memory.export", "memory.delete",
@@ -41,6 +46,8 @@ _OPERATIONS = frozenset({
     "memory.enqueue", "memory.result",
     "host.write", "alert.deliver", "process.start", "process.status",
     "process.read", "process.write", "process.stop", "artifact.fetch", "package.install",
+    "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.orchestrator.recruit",
 })
 
 
@@ -69,6 +76,17 @@ class EffectRule:
     def __post_init__(self) -> None:
         if self.operation not in _OPERATIONS or not self.capability or not self.target:
             raise ValueError("effect rule must name a fixed operation, capability and target")
+
+
+@dataclass(frozen=True, slots=True)
+class BackgroundConsent:
+    """Root-signed durable provenance permission, distinct from an effect grant."""
+
+    claims: Mapping[str, Any]
+    signature: str
+
+    def to_wire(self) -> dict[str, Any]:
+        return {**dict(self.claims), "signature": self.signature}
 
 
 class AuthorityPolicy(Protocol):
@@ -118,7 +136,9 @@ class AuthorityService:
                  handlers: Mapping[tuple[str, str], EffectHandler],
                  policy: AuthorityPolicy | None = None,
                  monotonic: Callable[[], float] = time.monotonic,
-                 wall_clock: Callable[[], float] = time.time):
+                 wall_clock: Callable[[], float] = time.time,
+                 profile_generations: Mapping[str, str] | None = None,
+                 background_consent_active: Callable[[str], bool] | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
@@ -136,6 +156,9 @@ class AuthorityService:
         self.policy = policy or DenyByDefaultPolicy()
         self.monotonic = monotonic
         self.wall_clock = wall_clock
+        self.profile_generations = dict(profile_generations or {})
+        # Queue adapters must supply a durable root-owned revocation lookup.
+        self.background_consent_active = background_consent_active or (lambda _consent_id: False)
         self._nonces: dict[str, float] = {}
         self._lock = threading.RLock()
         self._client_nonces: dict[str, float] = {}
@@ -227,7 +250,7 @@ class AuthorityService:
     def handle_connection(self, connection: socket.socket) -> None:
         """Authenticate kernel peer, issue challenge, and process exactly one RPC."""
         try:
-            connection.settimeout(125.0)
+            connection.settimeout(MAX_CONTEXT_LEASE + 25.0)
             peer_pid, uid = self._peer_credentials(connection)
             hello = self._read_json_line(connection, MAX_REQUEST)
             if hello != {"version": 1, "operation": "hello"}:
@@ -282,7 +305,7 @@ class AuthorityService:
             raise AuthorityDenied("principal.unenrolled", "kernel peer UID has no enrolled profile")
         return binding
 
-    def _issue_context(self, uid: int, payload: Any) -> dict[str, Any]:
+    def _issue_context(self, uid: int, payload: Any, *, allow_expired_sources: bool = False) -> dict[str, Any]:
         if not isinstance(payload, dict) or set(payload) != {"purpose", "intent", "trace_id", "lease_seconds", "source_contexts"}:
             raise AuthorityDenied("context.request", "context request fields are invalid")
         binding = self._binding(uid)
@@ -295,14 +318,14 @@ class AuthorityService:
         if not isinstance(raw_sources, list) or len(raw_sources) > 64:
             raise AuthorityDenied("context.lineage", "source lineage exceeds its bound")
         sources = tuple(HostContext.from_wire(item) for item in raw_sources)
+        now = self.monotonic()
         for source in sources:
             self._verify_context_signature(source)
             if (source.uid != uid or source.profile_id != binding.profile_id
                     or source.principal_id != binding.principal_id
-                    or source.namespace_id != binding.namespace_id):
-                # Expired signed contexts may be retained as provenance for
-                # bounded background work; they confer no capabilities and can
-                # only increase effective sensitivity.
+                    or source.namespace_id != binding.namespace_id
+                    or (not allow_expired_sources and source.monotonic_expires_at <= now)
+                    or source.policy_revision != self._policy_revision()):
                 raise AuthorityDenied("context.lineage", "source context belongs to another principal")
         trace_id = payload["trace_id"] or secrets.token_urlsafe(24)
         if not isinstance(trace_id, str) or not 1 <= len(trace_id) <= 128:
@@ -324,6 +347,139 @@ class AuthorityService:
         signature = self._sign(context.claims())
         return HostContext(**{**context.__dict__, "signature": signature}).to_wire() if hasattr(context, "__dict__") else self._signed_context(context, signature)
 
+    def create_background_consent(self, context: HostContext, *, provider_id: str,
+                                  owner_generation: str, ttl_seconds: int = 3600) -> BackgroundConsent:
+        """Issue source-bound consent for fixed automatic memory stages.
+
+        Intended only for the root-owned memory enqueue handler. The user
+        facing worker cannot call this method over the authority RPC protocol.
+        """
+        if not isinstance(context, HostContext):
+            raise AuthorityDenied("memory.consent", "a host-issued context is required")
+        binding = self._binding(context.uid)
+        self._verify_context_signature(context)
+        self._assert_current_context(context, binding, context.uid)
+        if (not isinstance(provider_id, str) or not provider_id
+                or type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 86_400):
+            raise AuthorityDenied("memory.consent", "memory consent binding or lifetime is invalid")
+        current_generation = self.profile_generations.get(context.profile_id)
+        if (not current_generation or owner_generation != current_generation
+                or self.rules.get(("memory-capture", f"memory:{provider_id}:enqueue")) is None):
+            raise AuthorityDenied("memory.consent", "memory provider generation or enqueue target is not enrolled")
+        enqueue_rule = self.rules[("memory-capture", f"memory:{provider_id}:enqueue")]
+        if (enqueue_rule.operation, enqueue_rule.target) not in self.handlers:
+            raise AuthorityDenied("memory.consent", "root memory enqueue handler is unavailable")
+        consent_digest = canonical_digest({"context": _context_digest(context), "provider": provider_id,
+                                           "owner_generation": owner_generation})
+        if ("memory-capture" not in context.capabilities
+                or not self.policy.allow_effect(context=context, rule=enqueue_rule,
+                                                request_digest=consent_digest, retry_index=0)):
+            raise AuthorityDenied("memory.consent", "fresh memory capture policy denied enqueue")
+        now = self.wall_clock()
+        claims = {
+            "kind": "memory-background-consent-v1", "consent_id": secrets.token_urlsafe(24),
+            "source_context_digest": _context_digest(context),
+            "principal_id": context.principal_id, "profile_id": context.profile_id,
+            "namespace_id": context.namespace_id, "uid": context.uid,
+            "provider_id": provider_id, "owner_generation": owner_generation,
+            "policy_revision": self._policy_revision(),
+            "allowed_actions": ["extract", "embed", "capture"],
+            "issued_at_unix": now, "expires_at_unix": now + ttl_seconds,
+        }
+        return BackgroundConsent(claims, self._sign(claims))
+
+    def context_for_job(self, source_context_wire: bytes | Mapping[str, Any],
+                        consent_wire: bytes | Mapping[str, Any], *, provider_id: str,
+                        owner_generation: str, action: str, trace_id: str | None = None,
+                        lease_seconds: float = 30.0) -> HostContext:
+        """Reissue a fresh short context from valid persisted source consent."""
+        source = self._decode_wire(source_context_wire, "source context")
+        consent = self._decode_wire(consent_wire, "background consent")
+        if not isinstance(source, dict) or not isinstance(consent, dict):
+            raise AuthorityDenied("memory.consent", "source or consent record is malformed")
+        signature = consent.pop("signature", None)
+        expected = {"kind", "consent_id", "source_context_digest", "principal_id", "profile_id",
+                    "namespace_id", "uid", "provider_id", "owner_generation", "policy_revision",
+                    "allowed_actions", "issued_at_unix", "expires_at_unix"}
+        if set(consent) != expected or not isinstance(signature, str):
+            raise AuthorityDenied("memory.consent", "background consent schema is invalid")
+        self._verify_signature(consent, signature)
+        source_context = HostContext.from_wire(source)
+        self._verify_context_signature(source_context)
+        now_wall = self.wall_clock()
+        if (consent["kind"] != "memory-background-consent-v1"
+                or consent["source_context_digest"] != _context_digest(source_context)
+                or consent["principal_id"] != source_context.principal_id
+                or consent["profile_id"] != source_context.profile_id
+                or consent["namespace_id"] != source_context.namespace_id
+                or consent["uid"] != source_context.uid
+                or consent["provider_id"] != provider_id
+                or consent["owner_generation"] != owner_generation
+                or consent["policy_revision"] != self._policy_revision()
+                or action not in consent["allowed_actions"]
+                or type(consent["issued_at_unix"]) not in (int, float)
+                or type(consent["expires_at_unix"]) not in (int, float)
+                or consent["expires_at_unix"] <= now_wall
+                or consent["issued_at_unix"] > now_wall
+                or consent["expires_at_unix"] - consent["issued_at_unix"] > 86_400
+                or not self.background_consent_active(consent["consent_id"])):
+            raise AuthorityDenied("memory.consent", "background consent is expired, revoked or differently bound")
+        binding = self._binding(source_context.uid)
+        if (binding.profile_id != source_context.profile_id
+                or binding.principal_id != source_context.principal_id
+                or binding.namespace_id != source_context.namespace_id
+                or self.profile_generations.get(binding.profile_id) != owner_generation):
+            raise AuthorityDenied("memory.consent", "background owner identity or generation changed")
+        if source_context.policy_revision != self._policy_revision():
+            raise AuthorityDenied("memory.consent", "source policy revision is stale")
+        intent = f"memory:{provider_id}:{action}:{source_context.lineage_hash}"
+        wire = self._issue_context(source_context.uid, {
+            "purpose": f"memory-{action}", "intent": intent, "trace_id": trace_id,
+            "lease_seconds": lease_seconds, "source_contexts": [source_context.to_wire()],
+        }, allow_expired_sources=True)
+        return HostContext.from_wire(wire)
+
+    def perform_memory_effect(self, source_context_wire: bytes | Mapping[str, Any],
+                              consent_wire: bytes | Mapping[str, Any], *, provider_id: str,
+                              owner_generation: str, action: str, capability: str,
+                              payload: bytes,
+                              trace_id: str | None = None, timeout: float = 30.0,
+                              cancelled: Callable[[], bool] = lambda: False) -> Any:
+        """Run one memory stage with a fresh context, authorization and broker dispatch."""
+        capabilities = {"extract": "memory-extraction", "embed": "memory-embedding",
+                        "capture": "memory-capture"}
+        capability = capabilities.get(action)
+        if capability != capabilities.get(action) or not isinstance(payload, bytes):
+            raise AuthorityDenied("memory.effect", "memory stage or canonical payload is invalid")
+        context = self.context_for_job(source_context_wire, consent_wire, provider_id=provider_id,
+                                       owner_generation=owner_generation, action=action,
+                                       trace_id=trace_id)
+        target = f"memory:{provider_id}:{action}"
+        digest = canonical_digest(payload)
+        authorization = self._authorize_effect(context.uid, {
+            "context": context.to_wire(), "capability": capability, "target": target,
+            "recipient": None, "request_digest": digest, "retry_index": 0,
+        })
+        result = self._perform_effect(context.uid, os.getpid(), {
+            "authorization": authorization, "operation": f"memory.{action}",
+            "payload": __import__("base64").b64encode(payload).decode("ascii"),
+            "timeout": timeout,
+        }, cancelled=cancelled)
+        import base64
+        return BrokeredEffectResponse(result["status"], base64.b64decode(result["body"], validate=True),
+                                      result["headers"], result["receipt_id"])
+
+    @staticmethod
+    def _decode_wire(value: bytes | Mapping[str, Any], label: str) -> Any:
+        if isinstance(value, Mapping):
+            return dict(value)
+        if not isinstance(value, bytes) or len(value) > 262_144:
+            raise AuthorityDenied("memory.consent", f"{label} exceeds its wire bound")
+        try:
+            return json.loads(value.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise AuthorityDenied("memory.consent", f"{label} is malformed") from None
+
     def _signed_context(self, context: HostContext, signature: str) -> dict[str, Any]:
         fields = context.claims()
         fields["signature"] = signature
@@ -344,14 +500,16 @@ class AuthorityService:
                 or type(retry_index) is not int or not 0 <= retry_index <= 100):
             raise AuthorityDenied("effect.request", "effect binding is invalid")
         rule = self.rules.get((capability, target))
-        if (rule is None or rule.recipient != recipient
+        if (rule is None or (rule.operation, rule.target) not in self.handlers
+                or rule.recipient != recipient
                 or not self.policy.allow_effect(context=context, rule=rule,
                                                 request_digest=request_digest, retry_index=retry_index)):
             raise AuthorityDenied("effect.denied", "host policy denied this exact effect")
         if capability not in context.capabilities:
             raise AuthorityDenied("effect.denied", "profile has no enrolled capability for this effect")
         now = self.monotonic()
-        expiry = min(context.monotonic_expires_at, now + MAX_EFFECT_LEASE)
+        effect_lease = _EFFECT_LEASE_BY_OPERATION.get(rule.operation, MAX_EFFECT_LEASE)
+        expiry = min(context.monotonic_expires_at, now + effect_lease)
         grant = EffectAuthorization(
             principal_id=context.principal_id, profile_id=context.profile_id,
             namespace_id=context.namespace_id, uid=uid, purpose=context.purpose,
@@ -382,7 +540,7 @@ class AuthorityService:
             body = base64.b64decode(payload["payload"], validate=True)
         except Exception:
             raise AuthorityDenied("effect.request", "broker payload is malformed") from None
-        timeout = self._bounded(payload["timeout"], 120.0)
+        timeout = self._bounded(payload["timeout"], MAX_CONTEXT_LEASE)
         grant = EffectAuthorization.from_wire(payload["authorization"])
         binding = self._binding(uid)
         self._verify_grant_signature(grant)
