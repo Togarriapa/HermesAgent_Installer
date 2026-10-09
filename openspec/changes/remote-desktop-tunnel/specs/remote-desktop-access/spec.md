@@ -258,3 +258,5 @@ The installer SHALL prevent selected Xpra from regenerating or exposing root dis
 #### Scenario: Writable cookie or secret argv fallback
 - **WHEN** selected startup falls back to a generated cookie or passes secret cookie values in argv/logs
 - **THEN** startup fails closed and remote readiness is not asserted
+
+Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.
