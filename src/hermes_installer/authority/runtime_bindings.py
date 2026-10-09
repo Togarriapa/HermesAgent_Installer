@@ -49,6 +49,7 @@ class RootRuntimeBindings:
     native_package_resolver: Callable[[str, str], Any | None] | None = None
     remote_session_enrollments: Mapping[str, Any] = MappingProxyType({})
     process_profiles: Mapping[str, Any] = MappingProxyType({})
+    protected_principal_bindings: tuple[Any, ...] = ()
     root_journal_catalog: ProtectedRootJournalCatalog | None = None
     source_observer_enrollments: Mapping[str, Any] = MappingProxyType({})
 
@@ -60,6 +61,43 @@ class RootRuntimeBindings:
         return catalog.resolve(
             root_id, expected_active_generation_digest=expected_active_generation_digest,
         )
+
+    def resolve_selected_native_principal(
+        self, profile_id: str, generation: str, service_generation_digest: str,
+    ) -> Any:
+        """Return the one existing authority principal bound to a current native profile.
+
+        The profile selector is only a lookup key. Identity comes from the
+        verified PrincipalBinding collection, and its UID/namespace/principal
+        must still match both the active service catalog and managed profile.
+        """
+        catalog = self.enrollment_catalog
+        if (not isinstance(service_generation_digest, str)
+                or service_generation_digest != getattr(catalog, "digest", None)):
+            raise EnrollmentDenied("selected native principal belongs to a stale service catalog")
+        try:
+            service = catalog.resolve_profile_generation(profile_id, generation)
+        except (AttributeError, EnrollmentDenied, TypeError, ValueError, PermissionError):
+            raise EnrollmentDenied("selected native profile generation is absent or stale") from None
+        managed = self.process_profiles.get(profile_id)
+        if (managed is None or service.profile_id != profile_id
+                or service.generation != generation
+                or managed.profile_id != profile_id or managed.generation != generation
+                or managed.owner_uid != service.service_uid
+                or managed.owner_gid != service.service_gid
+                or managed.enrollment_id != service.enrollment_id):
+            raise EnrollmentDenied("selected native service identity no longer matches managed custody")
+        matches = [binding for binding in self.protected_principal_bindings
+                   if getattr(binding, "profile_id", None) == profile_id]
+        if len(matches) != 1:
+            raise EnrollmentDenied("selected native profile principal is absent or ambiguous")
+        binding = matches[0]
+        if (getattr(binding, "uid", None) != service.service_uid
+                or getattr(binding, "uid", None) != managed.owner_uid
+                or getattr(binding, "principal_id", None) != service.principal_id
+                or getattr(binding, "namespace_id", None) != service.namespace_identity):
+            raise EnrollmentDenied("selected native principal does not match the protected service UID and namespace")
+        return binding
 
     def resolve_build_process_profile(self, target_id: str, generation: str) -> Any:
         """Return the selected dedicated build ManagedProfileCustody, never a path."""
@@ -300,10 +338,11 @@ def build_root_runtime_bindings(
     device_catalog = ProtectedDeviceCatalog.from_protected_records(devices)
 
     process_profiles = {}
-    profile_to_principal = {
-        binding.profile_id: (uid, binding)
-        for uid, binding in enrollment.bindings_by_uid.items()
-    }
+    profile_to_principal: dict[str, tuple[int, Any]] = {}
+    for uid, binding in enrollment.bindings_by_uid.items():
+        if binding.profile_id in profile_to_principal:
+            raise EnrollmentDenied("authority principal profile binding is duplicated")
+        profile_to_principal[binding.profile_id] = (uid, binding)
     for raw in records:
         profile = service_catalog.resolve(raw["enrollment_id"], raw["generation"])
         principal = profile_to_principal.get(profile.profile_id)
@@ -463,6 +502,7 @@ def build_root_runtime_bindings(
         native_package_resolver=native_package_resolver,
         remote_session_enrollments=remote_session_enrollments,
         process_profiles=MappingProxyType(dict(process_profiles)),
+        protected_principal_bindings=tuple(enrollment.bindings_by_uid.values()),
         root_journal_catalog=root_journal_catalog,
         source_observer_enrollments=_derive_source_observer_enrollments(
             catalog=service_catalog, process_profiles=process_profiles,
