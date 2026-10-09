@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,7 +22,7 @@ class StateContractTests(unittest.TestCase):
             journal.checkpoint("install", "downloaded", {"revision": "abc123"})
             journal.record_owned("service", "hermes-agent.service")
             self.assertEqual(journal.operation("install")["payload"]["revision"], "abc123")
-            self.assertEqual(journal.owned(), [{"kind": "service", "resource_id": "hermes-agent.service", "created_at": unittest.mock.ANY, "state": "active"}])
+            self.assertEqual(journal.owned(), [{"kind": "service", "resource_id": "hermes-agent.service", "created_at": mock.ANY, "state": "active"}])
 
     def test_owned_root_rejects_traversal_and_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -85,6 +86,21 @@ class StateContractTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     with process_lock(lock):
                         pass
+
+    def test_journal_events_are_append_only_and_redact_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = OwnedRoot(Path(temporary) / "state")
+            root.ensure()
+            journal = Journal(root.path("journal.sqlite3"))
+            journal.checkpoint("install", "failed:products", {"api_token": "sensitive", "credential_ref": "keyring://hermes"})
+            journal.event("install", "products", "failed", {"exit_code": 1, "authorization": "Bearer sensitive", "error": "token=secret-value"})
+            journal.event("install", "products", "retry", {"exit_code": 0})
+            self.assertEqual(journal.operation("install")["payload"]["api_token"], "[REDACTED]")
+            self.assertEqual(journal.operation("install")["payload"]["credential_ref"], "keyring://hermes")
+            events = journal.events("install")
+            self.assertEqual([event["event"] for event in events], ["failed", "retry"])
+            self.assertEqual(events[0]["details"]["authorization"], "[REDACTED]")
+            self.assertNotIn("secret-value", events[0]["details"]["error"])
 
 
 if __name__ == "__main__":

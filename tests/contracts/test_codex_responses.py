@@ -1,0 +1,151 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+import unittest
+from types import SimpleNamespace
+
+from hermes_installer.codex_responses import (
+    CODEX_RECIPIENT, CODEX_TARGET, CodexResponsesTransport,
+    normalize_responses_request,
+)
+from hermes_installer.policy import PolicyDenied
+
+
+class FakeAuthority:
+    def __init__(self, *, verify=True, fail_dispatch=False):
+        self.verify = verify
+        self.fail_dispatch = fail_dispatch
+        self.issued = []
+        self.verified = []
+        self.calls = []
+
+    def authorize_effect(self, context, *, capability, target, recipient, request_digest, retry_index):
+        binding = (capability, target, recipient, request_digest, retry_index)
+        grant = SimpleNamespace(binding=binding, monotonic_expires_at=time.monotonic() + 12)
+        self.issued.append(grant)
+        return grant
+
+    def verify_effect(self, grant, context, *, capability, target, recipient, request_digest, retry_index):
+        binding = (capability, target, recipient, request_digest, retry_index)
+        self.verified.append(binding)
+        return self.verify and grant.binding == binding
+
+    def dispatch_codex(self, grant, *, target, recipient, request_digest, payload, timeout, cancelled=None):
+        if self.fail_dispatch:
+            raise RuntimeError("fake broker failure")
+        self.calls.append((grant, target, recipient, request_digest, payload, timeout, cancelled))
+        return SimpleNamespace(status=200,
+            body=b'{"id":"resp_1","usage":{"input_tokens":9,"output_tokens":4}}',
+            headers={"Content-Type": "application/json", "Retry-After": "2", "Set-Cookie": "secret"})
+
+
+def context(sensitivity="private", lease=20):
+    return SimpleNamespace(principal_id="fixture", profile_id="codex-enabled",
+        namespace_id="ns-fixture", uid=1000, purpose="coding", intent_id="task",
+        trace_id="codex-trace", lineage_hash="verified-source-lineage",
+        policy_revision="host-policy", issued_at_monotonic=time.monotonic(),
+        monotonic_expires_at=time.monotonic() + lease, nonce="ctx-nonce",
+        signature="signed-context", sensitivity=sensitivity,
+        capabilities=frozenset({"provider-inference", "provider-tool-call"}))
+
+
+def request(**extra):
+    body = {"model": "codex-model", "input": [{"role": "user", "content": "inspect the selected code"}]}
+    body.update(extra)
+    return json.dumps(body, separators=(",", ":")).encode()
+
+
+class CodexResponsesTests(unittest.TestCase):
+    def test_fixed_responses_target_binds_canonical_payload_and_tool_capability(self):
+        authority = FakeAuthority()
+        transport = CodexResponsesTransport(authority)
+        payload = request(tools=[{"type": "function", "name": "read_file", "parameters": {"type": "object"}}])
+        response = transport(context(), payload, retry_index=1, timeout=5)
+        self.assertEqual((response.status, response.input_tokens, response.output_tokens), (200, 9, 4))
+        expected, _model, uses_tools = normalize_responses_request(payload)
+        self.assertTrue(uses_tools)
+        self.assertEqual(len(authority.calls), 1)
+        grant, target, recipient, digest, sent, timeout, _cancel = authority.calls[0]
+        self.assertEqual((target, recipient), (CODEX_TARGET, CODEX_RECIPIENT))
+        self.assertEqual((target, recipient), ("codex://responses", "openai:codex"))
+        self.assertEqual(sent, expected)
+        self.assertEqual(digest, hashlib.sha256(expected).hexdigest())
+        self.assertEqual(grant.binding, ("provider-tool-call", target, recipient, digest, 1))
+        self.assertEqual(authority.verified, [grant.binding])
+        self.assertLessEqual(timeout, 5)
+        normalized = json.loads(sent)
+        self.assertFalse(normalized["store"])
+        self.assertFalse(normalized["stream"])
+        self.assertFalse(normalized["parallel_tool_calls"])
+        self.assertEqual(response.headers, {"Content-Type": "application/json", "Retry-After": "2"})
+        self.assertNotIn("secret", repr(transport))
+
+    def test_each_retry_gets_new_grant_and_text_call_uses_inference_capability(self):
+        authority = FakeAuthority()
+        transport = CodexResponsesTransport(authority)
+        transport(context(), request(), retry_index=0)
+        transport(context(), request(), retry_index=1)
+        self.assertEqual([grant.binding[0] for grant in authority.issued],
+                         ["provider-inference", "provider-inference"])
+        self.assertEqual([grant.binding[-1] for grant in authority.issued], [0, 1])
+        self.assertEqual(len({grant.binding[3] for grant in authority.issued}), 1)
+        self.assertIsNot(authority.issued[0], authority.issued[1])
+
+    def test_unknown_or_confidential_context_denied_before_authority(self):
+        for label in ("unknown", "confidential"):
+            with self.subTest(label=label):
+                authority = FakeAuthority()
+                with self.assertRaises(PolicyDenied):
+                    CodexResponsesTransport(authority)(context(label), request())
+                self.assertEqual(authority.issued, [])
+                self.assertEqual(authority.calls, [])
+
+    def test_missing_broker_invalid_grant_cancel_and_short_leases_deny_before_egress(self):
+        with self.assertRaisesRegex(PolicyDenied, "broker is unavailable"):
+            CodexResponsesTransport(None)(context(), request())
+        authority = FakeAuthority(verify=False)
+        with self.assertRaisesRegex(PolicyDenied, "grant"):
+            CodexResponsesTransport(authority)(context(), request())
+        self.assertEqual(authority.calls, [])
+        authority = FakeAuthority()
+        with self.assertRaisesRegex(PolicyDenied, "cancelled"):
+            CodexResponsesTransport(authority)(context(), request(), cancelled=lambda: True)
+        self.assertEqual(authority.calls, [])
+        with self.assertRaisesRegex(PolicyDenied, "lease"):
+            CodexResponsesTransport(authority)(context(lease=0.01), request(), timeout=1)
+        self.assertEqual(authority.calls, [])
+
+    def test_broker_failures_are_safe_and_dont_leak_body_or_secret(self):
+        authority = FakeAuthority(fail_dispatch=True)
+        transport = CodexResponsesTransport(authority)
+        with self.assertRaisesRegex(PolicyDenied, "broker rejected") as caught:
+            transport(context(), request())
+        self.assertNotIn("fake broker failure", str(caught.exception))
+        self.assertNotIn("authorization", repr(transport).lower())
+
+    def test_request_rejects_private_modes_modalities_fallback_and_malformed_json(self):
+        bad = [
+            b'{"model":"x","input":"hi","store":true}',
+            b'{"model":"x","input":"hi","stream":true}',
+            b'{"model":"x","input":"hi","background":true}',
+            b'{"model":"x","input":[{"role":"user","content":[{"type":"input_image","image_url":"x"}]}]}',
+            request(tools=[{"type": "web_search"}]),
+            request(model="https://api.openai.com/v1/responses"),
+            request(model="../arbitrary"),
+            b'{"model":"x","input":"hi","model":"attacker"}',
+            b'{"model":"x","input":"hi","temperature":0.2}',
+        ]
+        for payload in bad:
+            with self.subTest(payload=payload), self.assertRaises(PolicyDenied):
+                normalize_responses_request(payload)
+
+    def test_function_tool_output_requires_tool_capability(self):
+        _, _, uses_tools = normalize_responses_request(request(input=[
+            {"type": "function_call_output", "call_id": "call_1", "output": "fixture"}]))
+        self.assertTrue(uses_tools)
+
+
+if __name__ == "__main__":
+    unittest.main()

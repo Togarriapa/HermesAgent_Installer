@@ -10,6 +10,7 @@ import platform
 import sqlite3
 import time
 import stat
+import uuid
 from pathlib import Path
 from typing import Iterator
 
@@ -172,6 +173,8 @@ class Journal:
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA synchronous=FULL")
+        db.execute("CREATE TABLE IF NOT EXISTS operation_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation_id TEXT NOT NULL, step TEXT NOT NULL, event TEXT NOT NULL, created_at REAL NOT NULL, details TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS managed_files (path TEXT PRIMARY KEY, source_digest TEXT NOT NULL, installed_digest TEXT NOT NULL, state TEXT NOT NULL, updated_at REAL NOT NULL)")
         return db
 
     @contextlib.contextmanager
@@ -187,13 +190,43 @@ class Journal:
         with self._transaction() as db:
             db.execute("CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at REAL NOT NULL, payload TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS owned_resources (kind TEXT NOT NULL, resource_id TEXT NOT NULL, created_at REAL NOT NULL, state TEXT NOT NULL, PRIMARY KEY(kind, resource_id))")
+            db.execute("CREATE TABLE IF NOT EXISTS operation_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation_id TEXT NOT NULL, step TEXT NOT NULL, event TEXT NOT NULL, created_at REAL NOT NULL, details TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS managed_files (path TEXT PRIMARY KEY, source_digest TEXT NOT NULL, installed_digest TEXT NOT NULL, state TEXT NOT NULL, updated_at REAL NOT NULL)")
 
     def checkpoint(self, operation: str, status: str, payload: dict[str, object]) -> None:
         if not operation or not status:
             raise ValueError("operation and status are required")
-        encoded = json.dumps(payload, sort_keys=True)
+        encoded = json.dumps(_redact_metadata(payload), sort_keys=True)
         with self._transaction() as db:
             db.execute("INSERT INTO operations(id,status,updated_at,payload) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at, payload=excluded.payload", (operation, status, time.time(), encoded))
+
+    def event(self, operation: str, step: str, event: str, details: dict[str, object] | None = None) -> None:
+        """Append a redacted progress/effect record; events are never overwritten."""
+        if not operation or not step or not event:
+            raise ValueError("operation, step and event are required")
+        encoded = json.dumps(_redact_metadata(details or {}), sort_keys=True)
+        with self._transaction() as db:
+            db.execute("INSERT INTO operation_events(operation_id,step,event,created_at,details) VALUES(?,?,?,?,?)",
+                       (operation, step, event, time.time(), encoded))
+
+    def events(self, operation: str, *, limit: int = 1000) -> list[dict[str, object]]:
+        if not 1 <= limit <= 10_000:
+            raise ValueError("event limit must be between 1 and 10000")
+        with self._transaction() as db:
+            rows = db.execute("SELECT sequence,step,event,created_at,details FROM operation_events WHERE operation_id=? ORDER BY sequence DESC LIMIT ?",
+                              (operation, limit)).fetchall()
+        return [{"sequence": row["sequence"], "step": row["step"], "event": row["event"],
+                 "created_at": row["created_at"], "details": json.loads(row["details"])} for row in reversed(rows)]
+
+    def managed_file(self, path: str) -> dict[str, object] | None:
+        with self._transaction() as db:
+            row = db.execute("SELECT path,source_digest,installed_digest,state,updated_at FROM managed_files WHERE path=?", (path,)).fetchone()
+        return dict(row) if row is not None else None
+
+    def record_managed_file(self, path: str, source_digest: str, installed_digest: str, state: str = "installed") -> None:
+        with self._transaction() as db:
+            db.execute("INSERT INTO managed_files(path,source_digest,installed_digest,state,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET source_digest=excluded.source_digest,installed_digest=excluded.installed_digest,state=excluded.state,updated_at=excluded.updated_at",
+                       (path, source_digest, installed_digest, state, time.time()))
 
     def operation(self, operation: str) -> dict[str, object] | None:
         with self._transaction() as db:
@@ -210,3 +243,29 @@ class Journal:
         with self._transaction() as db:
             rows = db.execute("SELECT kind,resource_id,created_at,state FROM owned_resources WHERE (? IS NULL OR kind=?) ORDER BY kind,resource_id", (kind, kind)).fetchall()
         return [dict(row) for row in rows]
+
+
+_SECRET_KEY = __import__("re").compile(r"(?:secret|token|password|passwd|api[_-]?key|authorization|cookie|credential)(?:$|[_-])", __import__("re").I)
+_SECRET_TEXT = __import__("re").compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*|(?:sk-[A-Za-z0-9_-]{16,})|((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+")
+
+
+def _redact_text(value: str) -> str:
+    return _SECRET_TEXT.sub(lambda match: (match.group(1) or match.group(2) or "") + "[REDACTED]", value)
+
+
+def _redact_metadata(value: object, *, key: str = "") -> object:
+    """Keep journal diagnostics useful while removing secret-shaped fields and strings."""
+    if _SECRET_KEY.search(key):
+        # References are identifiers, never credential material.
+        if key.lower().endswith(("_ref", "_reference")):
+            return value
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(name): _redact_metadata(item, key=str(name)) for name, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_metadata(item) for item in value]
+    if isinstance(value, str):
+        return _redact_text(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:1024]
