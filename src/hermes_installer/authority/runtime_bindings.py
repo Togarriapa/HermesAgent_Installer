@@ -98,6 +98,9 @@ class RootRuntimeBindings:
     source_observer_enrollments: Mapping[str, Any] = MappingProxyType({})
     native_mcp_tool_binding_records: tuple[Mapping[str, Any], ...] = ()
     native_schema_artifact_records: tuple[Mapping[str, Any], ...] = ()
+    composio_channel_enrollment_records: tuple[Mapping[str, Any], ...] = ()
+    channel_delivery_binding_records: tuple[Mapping[str, Any], ...] = ()
+    resource_job_records: tuple[Mapping[str, Any], ...] = ()
     protected_rules: Mapping[tuple[str, str, str], Any] = MappingProxyType({})
     mcp_services: Mapping[str, Any] = MappingProxyType({})
     remote_observation_records: tuple[Mapping[str, Any], ...] = ()
@@ -105,6 +108,54 @@ class RootRuntimeBindings:
     resource_credential_bindings: Mapping[tuple[str, str], ResourceCredentialBinding] = MappingProxyType({})
     resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
     resource_backend_records: tuple[Mapping[str, Any], ...] = ()
+
+    def resolve_composio_channel_enrollment(self, enrollment_id: str,
+                                            resource_generation: str) -> Mapping[str, Any]:
+        """Return one channel row only after active resource, issuer and controller joins."""
+        rows = [row for row in self.composio_channel_enrollment_records
+                if row.get("id") == enrollment_id and row.get("resource_generation") == resource_generation]
+        if len(rows) != 1:
+            raise EnrollmentDenied("Composio channel enrollment is absent or ambiguous")
+        row = rows[0]
+        resource = [candidate for candidate in self.resource_job_records
+                    if candidate.get("resource_id") == row.get("channel_resource_id")
+                    and candidate.get("generation") == resource_generation
+                    and candidate.get("profile_id") == row.get("profile_id")]
+        issuer = self.source_observer_enrollments.get(row.get("source_issuer_id"))
+        role = [candidate for candidate in self.resource_controller_role_records
+                if candidate.get("id") == row.get("controller_role_id")
+                and candidate.get("controller_kind") == "root-channel"
+                and row.get("source_issuer_id") in candidate.get("source_observer_enrollment_ids", ())]
+        if (len(resource) != 1 or issuer is None or len(role) != 1
+                or getattr(issuer, "profile_id", None) != row.get("profile_id")
+                or getattr(issuer, "generation", None) != getattr(self.process_profiles.get(row.get("profile_id")), "generation", None)):
+            raise EnrollmentDenied("Composio channel row does not join current protected resource/controller/observer")
+        # Account/setup receipt handles still require their own root verifier;
+        # this metadata accessor does not make discovery or labels proof.
+        return row
+
+    def resolve_channel_delivery_binding(
+        self, binding_id: str, profile_id: str, process_generation: str,
+        native_package_id: str, native_package_generation: str,
+    ) -> Mapping[str, Any]:
+        rows = [row for row in self.channel_delivery_binding_records
+                if row.get("id") == binding_id and row.get("profile_id") == profile_id
+                and row.get("process_generation") == process_generation
+                and row.get("native_package_id") == native_package_id
+                and row.get("native_package_generation") == native_package_generation]
+        if len(rows) != 1:
+            raise EnrollmentDenied("channel delivery binding is absent or ambiguous")
+        package = self.resolve_native_package(native_package_id, native_package_generation)
+        if package.profile_id != profile_id or package.generation != process_generation:
+            raise EnrollmentDenied("channel delivery package does not join the selected process generation")
+        row = rows[0]
+        for observer_id in row["source_observer_enrollment_ids"]:
+            observer = self.source_observer_enrollments.get(observer_id)
+            if (observer is None or observer.profile_id != profile_id
+                    or observer.generation != process_generation
+                    or observer.package_id != native_package_id):
+                raise EnrollmentDenied("channel delivery observer does not join the selected native package")
+        return row
 
     def resolve_native_schema_record(
         self, schema_id: str, native_package_id: str, native_package_generation: str,
@@ -641,6 +692,7 @@ def build_root_runtime_bindings(
         "root_journal_root_records", "native_mcp_tool_binding_records",
         "resource_controller_role_records", "remote_observation_records",
         "native_schema_artifact_records",
+        "composio_channel_enrollment_records", "channel_delivery_binding_records",
         "resource_backend_enrollment_records",
     )
     if any(not hasattr(enrollment, name) for name in required_attributes):
@@ -848,6 +900,9 @@ def build_root_runtime_bindings(
         ),
         native_mcp_tool_binding_records=tuple(enrollment.native_mcp_tool_binding_records),
         native_schema_artifact_records=tuple(enrollment.native_schema_artifact_records),
+        composio_channel_enrollment_records=tuple(getattr(enrollment, "composio_channel_enrollment_records", ())),
+        channel_delivery_binding_records=tuple(getattr(enrollment, "channel_delivery_binding_records", ())),
+        resource_job_records=tuple(enrollment.resource_job_records),
         protected_rules=MappingProxyType(dict(enrollment.rules)),
         mcp_services=MappingProxyType(dict(enrollment.mcp_services)),
         remote_observation_records=tuple(enrollment.remote_observation_records),
