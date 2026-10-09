@@ -276,20 +276,23 @@ class ResourcesRuntimeTests(unittest.TestCase):
         self.assertFalse(artifact.readiness.materialized)
         self.assertTrue(any("PluginContext loader" in blocker for blocker in artifact.blockers))
 
-    def test_unavailable_plugin_keeps_canonical_adapter_and_specific_blocker(self):
+    def test_plugin_keeps_canonical_adapter_and_specific_pending_blocker(self):
         from hermes_installer.components.native_plugins import NATIVE_PLUGIN_ADAPTERS
 
-        unavailable = next(row for row in NATIVE_PLUGIN_ADAPTERS
-                           if not row.handler_available and row.blocker)
+        contract = next(row for row in NATIVE_PLUGIN_ADAPTERS if row.blocker)
         artifact = materialize_runtime_resource(
-            "plugins", unavailable.resource_id, "1.0.0",
-            f"plugins/{unavailable.resource_id}.yaml", {"name": unavailable.resource_id},
+            "plugins", contract.resource_id, "1.0.0",
+            f"plugins/{contract.resource_id}.yaml", {"name": contract.resource_id},
             {}, "a" * 40, "2.3.1",
         )
-        self.assertEqual(artifact.adapter_id, unavailable.adapter_id)
+        self.assertEqual(artifact.adapter_id, contract.adapter_id)
         self.assertIsNone(artifact.native_path)
         self.assertFalse(artifact.readiness.materialized)
-        self.assertIn(f"{unavailable.resource_id}: {unavailable.blocker}.", artifact.blockers)
+        self.assertIn(f"{contract.resource_id}: {contract.blocker}.", artifact.blockers)
+        if contract.handler_available:
+            self.assertTrue(any("trusted PluginContext loader" in blocker for blocker in artifact.blockers))
+        else:
+            self.assertIn("no reviewed native PluginContext handler is installed", artifact.discoverability)
 
     def test_selected_cron_handler_delegates_only_the_pinned_profile_launch(self):
         with tempfile.TemporaryDirectory() as temp:
