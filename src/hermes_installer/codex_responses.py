@@ -302,6 +302,7 @@ class CodexResponsesTransport:
 
     def dispatch_native_event(self, native_event_handle: str, payload: bytes, *,
                               retry_index: int = 0, timeout: float = 30.0,
+                              normalization_policy: Mapping[str, object] | None = None,
                               cancelled: Callable[[], bool] = lambda: False) -> ProviderResponse:
         """Dispatch a Hermes request through the atomic HI11 root event bridge.
 
@@ -323,6 +324,12 @@ class CodexResponsesTransport:
             raise PolicyDenied("request.deadline", "Codex request deadline is outside its hard bound")
         if cancelled():
             raise PolicyDenied("dispatch.cancelled", "Codex request was cancelled")
+        from .provider_effect_handlers import NormalizationPolicy, ProviderHandlerDenied
+        try:
+            NormalizationPolicy.from_record(normalization_policy, provider="codex")
+        except ProviderHandlerDenied:
+            raise PolicyDenied("provider.normalization_policy",
+                               "Root-selected SIWC normalization policy is unavailable") from None
         body, _model, _uses_tools = normalize_responses_request(payload)
         try:
             result = bridge.dispatch_native_request(

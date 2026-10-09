@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import inspect
 import socket
 import tempfile
 import threading
@@ -13,10 +15,24 @@ from pathlib import Path
 from hermes_installer.policy import BudgetLedger, DispatchAuthorization, DispatchContext, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
 from hermes_installer.provider_gateway import (GatewayError, LOCAL_KEY_ENV, LOCAL_PROVIDER_NAME, LocalProviderGateway, materialize_hermes_provider_plugin, materialize_hermes_profile_config)
 from hermes_installer.state import OwnedRoot
+from hermes_installer.provider_effect_handlers import canonical_provider_request
 
 
 MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
 TOKEN="local-fixture-token-value-0123456789abcdef"
+
+
+def _native_normalization_policy():
+    module = Path(inspect.getsourcefile(canonical_provider_request))
+    record = {"id": "provider-output-reject-4096-v1", "revision": 1,
+              "route_schema_id": "provider-chat-compatible-v1",
+              "output_limit_mode": "reject-over-ceiling", "output_limit_ceiling": 4096,
+              "canonicalizer_artifact_id": "provider-canonicalizer-v1",
+              "canonicalizer_sha256": hashlib.sha256(module.read_bytes()).hexdigest()}
+    record["normalization_policy_sha256"] = hashlib.sha256(
+        json.dumps({key: value for key, value in record.items() if key != "normalization_policy_sha256"},
+                   sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return record
 
 
 def fixture_context(*, native_context_handle=None, normalized_payload=None, purpose, intent, source_contexts=(), source_receipts=(),
@@ -91,6 +107,7 @@ class ProviderGatewayTests(unittest.TestCase):
         gateway = LocalProviderGateway(
             self.dispatcher, token=TOKEN, profile_id="untrusted-label",
             sensitivity=Sensitivity.PRIVATE, model=MODEL, native_bridge=bridge,
+            normalization_policy=_native_normalization_policy(),
         )
         port = gateway.start()
         self.addCleanup(gateway.close)

@@ -97,3 +97,17 @@ The installer SHALL resolve only protected fixed operation recipes and current r
 #### Scenario: Forged recipe or expired voice session
 - **WHEN** selected operation parameters escape its schema or voice session is stale, sibling-owned or lacks trusted permission
 - **THEN** reject before execution/capture and cancel owned expired resources.
+
+### Requirement: Native protected configuration identities
+The installer SHALL validate strict root-owned package/issuer catalogs and distinct canonical normalization-policy and installed module hashes with actual current enrollment joins.
+
+#### Scenario: Partial hash or unobserved configured issuer
+- **WHEN** policy/module digest is missing or source observer only exists as configuration text
+- **THEN** keep affected native effect unavailable and require actual identity/observer evidence.
+
+### Requirement: Protected voice result receipts
+The installer SHALL expose only strict bounded transcript/source receipt or owned audio artifact receipt fields; raw PCM, paths, URLs and credentials SHALL not appear in tool results.
+
+#### Scenario: Voice service returns raw or extra fields
+- **WHEN** result violates selected strict receipt schema or lacks actual root-observed provenance
+- **THEN** reject result and preserve exact incomplete action state without leaking raw capture.
