@@ -30,7 +30,7 @@ def validate_policy_read_reference(value: object) -> str | None:
     if (not isinstance(value, str) or len(value) > 2048 or
             not value.startswith(("keyring://", "secret://", "file://")) or
             any(ord(ch) < 32 for ch in value)):
-        raise RemoteConfigError("Use a separate reference stored securely via keyring://, secret:// or file:// for policy reads")
+        raise RemoteConfigError("Use a separate reference; it must be a secure protected keyring://, secret:// or file:// policy-read token reference")
     return value
 
 def validate_hostname(value: str) -> str:
