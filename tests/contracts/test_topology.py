@@ -34,7 +34,7 @@ class TopologyTests(unittest.IsolatedAsyncioTestCase):
         async def work(req): effects.append(1); return WorkResult(req.request_id,"worker","ok")
         async def auth(context,call): return self.lease(expires_at=5)
         service=Orchestrator({"worker":work},{"worker":frozenset({"delegate"})},broker=self.broker(auth),context_factory=lambda _:ctx())
-        with self.assertRaises(RuntimeError): await service.recruit("u","t",["worker"])
+        with self.assertRaises(BrokerDenied): await service.recruit("u","t",["worker"])
         self.assertEqual(effects,[])
     async def test_failure_cancels_sibling_and_explicit_cancel_joins_child(self):
         stopped=asyncio.Event()

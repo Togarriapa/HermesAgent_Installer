@@ -66,7 +66,12 @@ class Orchestrator:
             child = str(uuid.uuid4())
             request = WorkRequest(rid, child, user_id, task, parent_id)
             context = self.context_factory(request)
-            call = SpecialistCall(name, rid, child, "delegate", frozenset({"delegate"}))
+            classification = getattr(context, "effective_sensitivity", context.sensitivity)
+            sensitivity = getattr(classification, "name", str(classification)).upper()
+            required = {"delegate"}
+            if sensitivity == "PRIVATE": required.add("private-context")
+            if sensitivity == "CONFIDENTIAL": required.add("confidential-context")
+            call = SpecialistCall(name, rid, child, "delegate", frozenset(required))
             async def execute():
                 async with semaphore:
                     return await self.specialists[name](request)
@@ -86,6 +91,8 @@ class Orchestrator:
                 await asyncio.gather(*children.values(), return_exceptions=True)
                 error = failures[0]
                 if isinstance(error, asyncio.CancelledError): raise error
+                if isinstance(error, (RecruitmentDenied,)):
+                    raise error
                 raise RuntimeError("specialist failed; siblings cancelled and joined") from error
             return RecruitmentReport(rid, tuple(values))
         except asyncio.CancelledError:

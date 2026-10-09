@@ -36,7 +36,8 @@ class DispatchBroker:
         self.authorize, self.now, self.timeout = authorize, now, timeout
 
     async def call(self, context: DispatchContext, call: SpecialistCall, operation: Operation):
-        sensitivity = getattr(context.sensitivity, "name", str(context.sensitivity)).upper()
+        classification = getattr(context, "effective_sensitivity", context.sensitivity)
+        sensitivity = getattr(classification, "name", str(classification)).upper()
         namespace = getattr(context, "namespace", None)
         capabilities = frozenset(getattr(context, "capabilities", ()))
         trace_id = getattr(context, "trace_id", None)
@@ -51,13 +52,19 @@ class DispatchBroker:
             raise BrokerDenied("context does not grant all requested specialist capabilities")
         if sensitivity == "PRIVATE" and "private-context" not in call.capabilities:
             raise BrokerDenied("private context requires an explicit private-context grant")
+        if sensitivity == "CONFIDENTIAL" and "confidential-context" not in call.capabilities:
+            raise BrokerDenied("confidential context requires an explicit confidential-context grant")
+        deadline = getattr(context, "deadline", None)
+        if deadline is not None and deadline <= self.now():
+            raise BrokerDenied("dispatch deadline expired before execution")
         lease = await asyncio.wait_for(self.authorize(context, call), timeout=self.timeout)
         if (lease.profile_id != context.profile_id or lease.namespace != namespace or lease.trace_id != trace_id
             or not lease.policy_revision or not lease.grant_id or lease.expires_at <= self.now()
             or not call.capabilities.issubset(lease.capabilities)):
             raise BrokerDenied("host authorization lease is stale, mismatched, or insufficient")
         task = asyncio.create_task(operation())
-        deadline = min(self.timeout, lease.expires_at - self.now())
+        deadline = min(self.timeout, lease.expires_at - self.now(),
+                       deadline - self.now() if deadline is not None else self.timeout)
         try:
             while not task.done():
                 if getattr(context, "cancelled", lambda: False)():
