@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -40,13 +41,14 @@ def admitted_task(*, prompt: str = "hello") -> RootAdmittedTask:
 def terminal_receipt(**changes) -> RootTaskTerminalReceipt:
     stdout, stderr = b"answer", b""
     row = {
-        "handle_id": "job-admission-handle",
-        "task_handle_id": "opaque-managed-task-handle",
-        "terminal_receipt_id": "terminal-receipt-1",
-        "job_id": "job-1", "node_id": "node-1", "child_admission_id": "child-admission-1",
-        "attempt_index": 0, "backend_enrollment_id": "backend-1",
+        "task_handle": "opaque-managed-task-handle",
+        "terminal_receipt_handle": "terminal-receipt-1",
+        "job_id": "job-1", "node_id": "node-1", "admission_id": "child-admission-1",
+        "admission_handle_id": "job-admission-handle", "backend_enrollment_id": "backend-1",
+        "operation_id": "hermes-resource-profile-task-v1",
+        "task_body_recipe_id": "prompt-recipe-1", "task_request_schema_id": "prompt-schema-1",
         "resource_generation": "resource-generation-1", "profile_id": "profile-1",
-        "profile_generation": "process-generation-1", "process_id": "process-1",
+        "process_generation": "process-generation-1", "process_id": "process-1",
         "exit_code": 0, "timed_out": False, "cancelled": False,
         "started_monotonic": 1.0, "finished_monotonic": 2.0,
         "cgroup_identity": "cgroup-1", "cgroup_empty": True, "main_pidfd_gone": True,
@@ -57,6 +59,7 @@ def terminal_receipt(**changes) -> RootTaskTerminalReceipt:
         "schema": 1, "state": "completed", "observed_monotonic": 2.0,
         "stdout_size_bytes": len(stdout), "stderr_size_bytes": len(stderr),
         "parent_closure_digest": "a" * 64,
+        "native_loader_ready_event_id": "loader-ready-event-1",
     }
     row.update(changes)
     return RootTaskTerminalReceipt(**row)
@@ -94,13 +97,22 @@ def test_admitted_task_rejects_mismatched_stdin_hash_and_size():
     {"output_complete": False},
     {"stdout_sha256": "0" * 64},
     {"parent_closure_digest": "b" * 64},
+    {"admission_id": "replayed-child"},
+    {"admission_handle_id": "different-root-handle"},
+    {"operation_id": "different-process-recipe"},
+    {"task_body_recipe_id": "different-body-recipe"},
+    {"task_request_schema_id": "different-body-schema"},
+    {"process_generation": "stale-process-generation"},
+    {"process_id": "different-owned-process"},
+    {"native_loader_ready_event_id": None},
 ])
 def test_runner_never_accepts_unproven_terminal_as_a_result(changes):
     task = admitted_task()
     receipt = terminal_receipt(**changes)
     with pytest.raises(AuthorityDenied):
         RootResourceTaskRunner._validate_terminal(
-            admission=None, task=task,
-            managed_handle=ManagedTaskHandle("opaque-managed-task-handle", "process-generation-1"),
+            admission=SimpleNamespace(handle_id="job-admission-handle",
+                                      operation_id=task.operation_id, profile_id="profile-1"), task=task,
+            managed_handle=ManagedTaskHandle("opaque-managed-task-handle", "process-generation-1", "process-1"),
             terminal=receipt, deadline_monotonic=10.0,
         )
