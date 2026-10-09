@@ -1819,12 +1819,6 @@ class WebhookVerifier:
         expected_type = (spec.get("validation") or {}).get("contentType", "application/json")
         if not normalized.get("content-type", "").split(";", 1)[0].strip().lower() == expected_type.lower():
             raise ResourceRuntimeError("webhook content type is not allowed")
-        try:
-            decoded = json.loads(body)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ResourceRuntimeError("webhook body is not valid JSON") from None
-        if not isinstance(decoded, (dict, list)):
-            raise ResourceRuntimeError("webhook JSON root must be an object or array")
 
         authentication = spec["authentication"]
         auth_type = authentication["type"]
@@ -1840,6 +1834,29 @@ class WebhookVerifier:
             supplied = normalized.get("authorization", "")
             if not supplied.startswith("Bearer ") or not hmac.compare_digest(supplied[7:].encode(), secret):
                 raise ResourceRuntimeError("webhook bearer credential verification failed")
+
+        # Authenticate the original bytes before parsing. Python's default JSON
+        # decoder silently keeps the last duplicate object member, which can
+        # make the verifier and downstream event schema disagree about a
+        # signed request. Reject duplicates and non-finite numbers throughout
+        # the body before claiming the delivery ID.
+        def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON object member")
+                result[key] = value
+            return result
+
+        def reject_constant(_value: str) -> None:
+            raise ValueError("non-finite JSON number")
+
+        try:
+            decoded = json.loads(body, object_pairs_hook=unique_object, parse_constant=reject_constant)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            raise ResourceRuntimeError("webhook body is invalid JSON or contains duplicate fields") from None
+        if not isinstance(decoded, (dict, list)):
+            raise ResourceRuntimeError("webhook JSON root must be an object or array")
 
         event = spec.get("event")
         event_type = ""

@@ -227,6 +227,38 @@ class ResourcesRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(policy_receipt.event_id, "d-2")
 
+    def test_webhook_authenticates_raw_bytes_before_duplicate_safe_json_parse(self):
+        secret = b"s" * 32
+        store = _ReplayStore()
+        verifier = WebhookVerifier(store, now=lambda: 100.0)
+        spec = {
+            "path": "/hooks/strict", "method": "POST",
+            "authentication": {"type": "hmac-sha256", "signatureHeader": "X-Signature"},
+            "action": {"type": "repository-change-review", "mutate": False},
+            "replayProtection": {"deliveryIdHeader": "X-Delivery"},
+            "policy": {"authorityFromWebhookReceipt": "deny"},
+        }
+        duplicate_body = b'{"repository":{"id":1},"repository":{"id":2}}'
+        headers = {"Content-Type": "application/json", "X-Delivery": "strict-1"}
+        bad_signature = "sha256=" + "0" * 64
+        with self.assertRaisesRegex(ResourceRuntimeError, "signature verification"):
+            verifier.verify("strict-hook", spec, {**headers, "X-Signature": bad_signature},
+                            duplicate_body, secret)
+        self.assertEqual(store.ids, set())
+
+        signature = "sha256=" + hmac.new(secret, duplicate_body, hashlib.sha256).hexdigest()
+        with self.assertRaisesRegex(ResourceRuntimeError, "duplicate fields"):
+            verifier.verify("strict-hook", spec, {**headers, "X-Signature": signature},
+                            duplicate_body, secret)
+        self.assertEqual(store.ids, set())
+
+        valid_body = b'{"repository":{"id":1}}'
+        valid_signature = "sha256=" + hmac.new(secret, valid_body, hashlib.sha256).hexdigest()
+        receipt = verifier.verify("strict-hook", spec,
+                                  {**headers, "X-Signature": valid_signature}, valid_body, secret)
+        self.assertEqual(receipt.event_id, "strict-1")
+        self.assertEqual(store.ids, {("strict-hook", "strict-1")})
+
     def test_durable_webhook_replay_store_survives_restart_and_fails_closed_when_full(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
