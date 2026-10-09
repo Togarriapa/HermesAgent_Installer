@@ -306,3 +306,10 @@ The installer SHALL verify the complete selected Hermes source archive against e
 #### Scenario: Export identity mismatch
 - **WHEN** an archive has an unknown transformed file, missing member, escaped path or mismatched source/archive identity
 - **THEN** root rejects staging and never substitutes partial source or source-only completion evidence
+
+### Requirement: Actual selected service and runtime provenance
+The installer SHALL bind build service identity to a protected current service enrollment and derive bootstrap executable pins only from actual completed runtime receipts.
+
+#### Scenario: Source hash used as runtime identity
+- **WHEN** a prepared profile substitutes a source archive hash or unjoined output UID for executable/service proof
+- **THEN** root rejects execution publication and retains the original incomplete checkpoint
