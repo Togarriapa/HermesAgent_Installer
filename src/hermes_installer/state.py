@@ -9,6 +9,7 @@ import os
 import platform
 import sqlite3
 import time
+import stat
 from pathlib import Path
 from typing import Iterator
 
@@ -37,12 +38,26 @@ class OwnedRoot:
         _reject_symlink_components(self.root)
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         _reject_symlink_components(self.root)
-        if not self.root.is_dir():
-            raise OwnershipError(f"Managed root is not a directory: {self.root}")
+        root_info = self.root.lstat()
+        if not self.root.is_dir() or root_info.st_uid != os.getuid():
+            raise OwnershipError(f"Managed root must be a directory owned by the effective user: {self.root}")
+        if stat.S_IMODE(root_info.st_mode) & 0o077:
+            self.root.chmod(0o700)
         marker = self.root / ".hermes-installer-owned"
-        if marker.exists() and marker.is_symlink():
-            raise OwnershipError("Ownership marker cannot be a symlink")
-        if not marker.exists():
+        if marker.exists() or marker.is_symlink():
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+            try:
+                fd = os.open(marker, flags)
+                try:
+                    info = os.fstat(fd)
+                    value = os.read(fd, 64)
+                finally:
+                    os.close(fd)
+            except OSError:
+                raise OwnershipError("Ownership marker cannot be read safely") from None
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or value != b"schema=1\n":
+                raise OwnershipError("Ownership marker has invalid owner, permissions, type or contents")
+        else:
             _atomic_write(marker, b"schema=1\n", 0o600)
 
     def path(self, relative: str) -> Path:
@@ -92,6 +107,11 @@ def _atomic_write(path: Path, content: bytes, mode: int) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(tmp, path)
+        dir_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     finally:
         with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
@@ -108,7 +128,12 @@ def process_lock(path: Path) -> Iterator[None]:
     path = parent / requested.name
     _reject_symlink_components(path.parent)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(path, flags, 0o600)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+        os.close(fd)
+        raise OwnershipError("Process lock must be a private regular file owned by the effective user")
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
@@ -132,6 +157,10 @@ class Journal:
         self.path = parent / requested.name
         _reject_symlink_components(self.path.parent)
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if self.path.exists() or self.path.is_symlink():
+            info = self.path.lstat()
+            if self.path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+                raise OwnershipError("Journal must be a private regular file owned by the effective user")
         self._initialize()
         self.path.chmod(0o600)
 
