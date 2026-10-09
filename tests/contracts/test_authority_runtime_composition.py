@@ -67,6 +67,8 @@ def test_composition_uses_exact_service_bindings_catalog_vault_and_epoch():
     assert runtime.service_connector is connector
     assert dict(runtime.backend_enrollments) == {}
     assert dict(runtime.body_recipes) == {}
+    assert dict(runtime.scope_bindings) == {}
+    assert dict(runtime.validators) == {}
     assert dict(runtime.job_enrollments) == {}
     runtime.prune()
     runtime.close()

@@ -14,8 +14,9 @@ resolvers, and a root-journal resolver that accepts only the active protected
 generation digest before delegating to the protected catalog. Its `boot_epoch`
 is the service's fresh authority epoch. It parses
 resource backend and body-recipe records from the active protected generation
-and registers a `ResourceJobAuthority` only for records that join the active
-backend, source issuer, observer, recipes, and service effect rules. The job
+plus per-node scope bindings and validators, then registers a `ResourceJobAuthority`
+only for records that join the active backend, source issuer, observer, recipes,
+and service effect rules. The job
 ledger is created only when such a fully joined job exists and requires the
 daemon's fixed private store path.
 

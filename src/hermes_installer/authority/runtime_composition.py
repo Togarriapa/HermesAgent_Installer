@@ -32,6 +32,8 @@ class RootAuthorityRuntime:
     boot_epoch: str
     backend_enrollments: Mapping[str, Any]
     body_recipes: Mapping[str, Any]
+    scope_bindings: Mapping[str, Any]
+    validators: Mapping[str, Any]
     job_enrollments: Mapping[tuple[str, str], Any]
     job_authority: Any | None
 
@@ -169,10 +171,15 @@ def compose_root_authority_runtime(
     from .resource_jobs import (
         ResourceJobAuthority, index_resource_job_records,
         parse_resource_backend_records, parse_resource_body_recipes,
+        parse_resource_scope_binding_records, parse_resource_validator_records,
     )
 
     backends = parse_resource_backend_records(enrollment.resource_backend_enrollment_records)
     recipes = parse_resource_body_recipes(enrollment.resource_body_recipe_records)
+    scope_bindings = parse_resource_scope_binding_records(
+        getattr(enrollment, "resource_scope_binding_records", ()))
+    validators = parse_resource_validator_records(
+        getattr(enrollment, "resource_validator_records", ()))
     source_observers = service.source_observer_registry
     observer_records = getattr(source_observers, "observers", MappingProxyType({}))
     issuer_records = {
@@ -182,6 +189,8 @@ def compose_root_authority_runtime(
         enrollment.resource_job_records,
         backend_enrollments=backends,
         body_recipes=recipes,
+        scope_bindings=scope_bindings,
+        validators=validators,
         source_issuers=issuer_records,
         source_observers=observer_records,
     )
@@ -229,5 +238,7 @@ def compose_root_authority_runtime(
         boot_epoch=service.authority_epoch,
         backend_enrollments=MappingProxyType(dict(backends)),
         body_recipes=MappingProxyType(dict(recipes)),
+        scope_bindings=MappingProxyType(dict(scope_bindings)),
+        validators=MappingProxyType(dict(validators)),
         job_enrollments=MappingProxyType(dict(jobs)), job_authority=job_authority,
     )
