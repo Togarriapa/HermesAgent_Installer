@@ -326,17 +326,21 @@ def run(args: argparse.Namespace) -> CommandResult:
             counts["native"] += int(item.kind in {"profiles", "skills"})
             counts["blocked"] += int(bool(item.blockers))
         blocked = [item for item in bindings if item.blockers]
-        finding = Finding("resources.native-crosswalk", "Verified offline catalog; profile and skill artifacts map to Hermes discovery, remaining adapters and runtime acceptance are pending", OutcomeState.PENDING, {
+        finding = Finding("resources.native-crosswalk", "Verified catalog and native materialization bindings; selected-target discovery, invocation, remaining adapters, and runtime acceptance are pending", OutcomeState.PENDING, {
             "catalog_version": registry.source.catalog_version,
             "source_revision": registry.source.revision,
             "root_counts": dict(registry.root_counts),
+            "native_profile_root": "HERMES_HOME/profiles/<profile_id>/",
+            "native_skill_root": "HERMES_HOME/skills/<skill_id>/SKILL.md",
+            "target_discovery": "not-probed-by-this-read-only-command",
+            "target_verified": False,
             "kinds": by_kind,
             "blocked_items": len(blocked),
             "sample_blockers": [{"kind": item.kind, "id": item.resource_id, "reason": item.blockers[0]} for item in blocked[:8]],
         })
         action = args.action
         return CommandResult("resources", OutcomeState.PENDING,
-            f"Read-only {action}: verified {len(bindings)} declarations from the packaged bundle; native operation and target verification remain pending.",
+            f"Read-only {action}: verified {len(bindings)} declarations from the packaged bundle; materialization is planned, selected-target discovery and native operation remain pending.",
             (finding,), resume_command="hermes-installer resources status")
     if args.command == "verify":
         if args.target is None or args.output is None:

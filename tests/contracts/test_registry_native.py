@@ -49,7 +49,7 @@ class NativeRegistryTests(unittest.TestCase):
   self.assertEqual(native_map["destination_root"],"data_root")
   self.assertTrue(native_map["preserve_existing"])
   self.assertTrue(any(entry["target"]=="profiles/ai-developer/SOUL.md" for entry in native_map["files"]))
-  self.assertTrue(any(entry["target"]=="profiles/default/skills/agent-skill-vetting/SKILL.md" for entry in native_map["files"]))
+  self.assertTrue(any(entry["target"]=="skills/agent-skill-vetting/SKILL.md" for entry in native_map["files"]))
   sample=next(data for path,data in files.items() if path.startswith("skills/"))
   self.assertIn(b"host-authorization-applied",sample)
   self.assertIn(b"secrets-resolved",sample)
@@ -60,9 +60,10 @@ class NativeRegistryTests(unittest.TestCase):
   self.assertIn("homes/profiles/ai-developer/config.yaml",files)
   self.assertIn("homes/profiles/ai-developer/profile.yaml",files)
   self.assertIn(b"Role instructions",files["homes/profiles/ai-developer/SOUL.md"])
-  self.assertIn("homes/default/skills/agent-skill-vetting/SKILL.md",files)
-  self.assertIn("homes/profiles/ai-developer/skills/ai-application-engineering/SKILL.md",files)
-  skill=files["homes/default/skills/agent-skill-vetting/SKILL.md"]
+  self.assertIn("homes/skills/agent-skill-vetting/SKILL.md",files)
+  self.assertIn("homes/skills/ai-application-engineering/SKILL.md",files)
+  self.assertNotIn("homes/profiles/ai-developer/skills/ai-application-engineering/SKILL.md",files)
+  skill=files["homes/skills/agent-skill-vetting/SKILL.md"]
   self.assertTrue(skill.startswith(b"---\nname: agent-skill-vetting\n"))
   self.assertIn(b"Read the complete skill source",skill)
   self.assertIn(b"Complete registry skill declaration",skill)
@@ -70,6 +71,18 @@ class NativeRegistryTests(unittest.TestCase):
   soul=files["homes/profiles/ai-developer/SOUL.md"]
   self.assertIn(b"Complete registry profile declaration",soul)
   self.assertIn(b"instructions:",soul)
+ def test_selected_profile_stages_only_hermes_visible_skill_closure(self):
+  result=self.registry.discover(["profiles/ai-developer"])
+  files=self.registry.materialize(result)
+  skills={path for path in files if path.startswith("homes/skills/") and path.endswith("/SKILL.md")}
+  self.assertEqual(len(skills),4)
+  self.assertIn("homes/skills/ai-application-engineering/SKILL.md",skills)
+  self.assertIn("homes/profiles/ai-developer/SOUL.md",files)
+  ledger=json.loads(files["installer-registry/crosswalk.json"])
+  targets={entry["staged"]:entry["target"] for entry in ledger["native_materialization"]["files"]}
+  self.assertEqual(targets["homes/skills/ai-application-engineering/SKILL.md"],"skills/ai-application-engineering/SKILL.md")
+  self.assertEqual(targets["homes/profiles/ai-developer/SOUL.md"],"profiles/ai-developer/SOUL.md")
+  self.assertFalse(any(path.startswith("homes/profiles/") and "/skills/" in path for path in files))
  def test_crosswalk_has_an_explicit_binding_or_reason_for_every_declaration(self):
   entries=self.registry.crosswalk()
   self.assertEqual(len(entries),692)
@@ -79,10 +92,29 @@ class NativeRegistryTests(unittest.TestCase):
   unresolved=[item for item in entries if item.kind not in {"profiles","skills"}]
   self.assertEqual(len(profiles),208)
   self.assertEqual(len(skills),396)
-  self.assertTrue(all(item.native_path for item in entries))
+  self.assertTrue(all(item.native_path for item in profiles+skills))
   self.assertTrue(all(item.adapter_id for item in profiles+skills))
-  self.assertTrue(all(item.adapter_id is None for item in unresolved))
   self.assertTrue(all(item.blockers for item in unresolved))
+  self.assertTrue(all(item.readiness is not None for item in entries))
+  self.assertTrue(all(not item.readiness["functional"] and not item.readiness["enabled"] for item in entries))
   self.assertEqual({item.discoverability for item in profiles},{"Hermes native HERMES_HOME selected by the internal orchestrator"})
   self.assertEqual({item.discoverability for item in skills},{"Hermes SKILL.md discovery"})
+  self.assertTrue(all(item.native_path.startswith("skills/") for item in skills))
+ def test_runtime_registrations_are_provenance_bound_and_disabled(self):
+  files=self.registry.materialize()
+  runtime_paths=[path for path in files if path.startswith("installer-registry/runtime/")]
+  self.assertGreater(len(runtime_paths),0)
+  registrations=[json.loads(files[path]) for path in runtime_paths]
+  self.assertTrue(all(item["enabled"] is False for item in registrations))
+  self.assertTrue(all(item["identity"]["source_revision"]==self.registry.source.revision for item in registrations))
+  bindings=[item for item in self.registry.crosswalk() if item.kind not in {"profiles","skills"}]
+  self.assertTrue(all(item.blockers for item in bindings))
+  self.assertTrue(all(item.readiness["materialized"] or item.kind=="plugins" for item in bindings))
+  self.assertTrue(all(not item.readiness["authenticated"] and not item.readiness["functional"]
+                      and not item.readiness["enabled"] and not item.readiness["target_verified"]
+                      for item in bindings))
+  ledger=json.loads(files["installer-registry/crosswalk.json"])
+  runtime_items=[item for item in ledger["items"] if item["kind"] not in {"profiles","skills"}]
+  self.assertTrue(all(not item["readiness"]["functional"] and not item["readiness"]["enabled"]
+                      and not item["readiness"]["target_verified"] for item in runtime_items))
 if __name__=="__main__": unittest.main()
