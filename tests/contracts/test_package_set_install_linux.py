@@ -22,7 +22,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from hermes_installer.artifacts import ResolvedArtifact, _install_coral_package_set
+from hermes_installer.artifacts import (
+    ResolvedArtifact, _install_coral_package_set, _mkdir_service_directory,
+)
+from hermes_installer.authority.types import AuthorityDenied
 
 
 def _wheel(*, distribution: str, module_files: dict[str, bytes], version: str) -> bytes:
@@ -72,6 +75,11 @@ class OfflinePackageSetLinuxTests(unittest.TestCase):
         service_gid = 65534
         with tempfile.TemporaryDirectory(prefix="hermes-package-set-fixture-", dir="/run") as temp:
             root = Path(temp)
+            # The dropped service identity must be able to traverse the
+            # installer-owned test fixture parent, as it can traverse real
+            # root-owned /var/lib ancestors. Keep the parent non-writable to
+            # untrusted identities; the venv itself remains service-owned.
+            root.chmod(0o711)
             runtime = root / "python"
             shutil.copy2(sys.executable, runtime)
             runtime.chmod(0o755)
@@ -79,6 +87,19 @@ class OfflinePackageSetLinuxTests(unittest.TestCase):
             venv_root = root / "service-venvs"
             venv_root.mkdir(mode=0o700)
             os.chown(venv_root, service_uid, service_gid)
+            output_root = _mkdir_service_directory(
+                venv_root, "custody-check", service_uid, service_gid,
+            )
+            output_info = output_root.lstat()
+            self.assertEqual((output_info.st_uid, output_info.st_gid,
+                              output_info.st_mode & 0o777),
+                             (service_uid, service_gid, 0o700))
+            unsafe = venv_root / "unsafe-root-owned"
+            unsafe.mkdir(mode=0o700)
+            with self.assertRaises(AuthorityDenied):
+                _mkdir_service_directory(venv_root, unsafe.name, service_uid, service_gid)
+            shutil.rmtree(unsafe)
+            output_root.rmdir()
 
             wheel_rows = (
                 SimpleNamespace(distribution="numpy", version="1.26.4",
@@ -130,7 +151,7 @@ class OfflinePackageSetLinuxTests(unittest.TestCase):
                     time.monotonic() + 120, lambda: False,
                     before_process=lambda: None, before_activation=lambda: None,
                 )
-            self.assertEqual(destination.owner().pw_uid, service_uid)
+            self.assertEqual(destination.stat().st_uid, service_uid)
             self.assertEqual(len(digest), 64)
             python = destination / "bin/python"
             check = subprocess.run(
