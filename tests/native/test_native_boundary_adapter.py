@@ -24,7 +24,7 @@ from hermes_installer.native_boundary_patch import (
 
 UPSTREAM = Path("/tmp/hermes-agent-hi08")
 EXPECTED = {
-    "agent/chat_completion_helpers.py": "81f26a93ff1591dba15246f6552d32df7e331533cf758b653a79a1aa225790f9",
+    "agent/chat_completion_helpers.py": "ef55b2bed0e91328345e66fd07733cda90df2e0800cf96f9f954023e2b122818",
     "agent/auxiliary_client.py": "876a97cc1c81fb1e4bc97d92872e03ceb0b1d8f43680d551d974b4376e8950c6",
     "agent/tool_executor.py": "fd671a435cbeda36cfbec3a2b278ff34f66f8cbe37a8a87b0a372a5170e777aa",
 }

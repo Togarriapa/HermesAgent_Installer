@@ -40,6 +40,11 @@ class NativeBoundaryUnavailable(PermissionError):
     """The enrolled host source-capture path is unavailable or rejected input."""
 
 
+def deny_unsupported_provider_mode(_mode: str) -> None:
+    """Stop upstream-native transports that have no enrolled gateway boundary."""
+    raise NativeBoundaryUnavailable("native provider mode has no enrolled host boundary")
+
+
 def _canonical_bytes(value: Any) -> bytes:
     try:
         raw = json.dumps(value, ensure_ascii=False, sort_keys=True,

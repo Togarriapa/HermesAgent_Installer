@@ -43,6 +43,42 @@ _FILES = {
                 "        return request_client.chat.completions.create(**stream_kwargs)\n",
                 1,
             ),
+            (
+                "    event stream; non-streaming an OpenAI-shaped SimpleNamespace.\"\"\"\n"
+                "    from agent.bedrock_adapter import (",
+                "    event stream; non-streaming an OpenAI-shaped SimpleNamespace.\"\"\"\n"
+                "    from hermes_installer.native_boundary import deny_unsupported_provider_mode\n"
+                "    deny_unsupported_provider_mode(\"bedrock_converse\")\n"
+                "    from agent.bedrock_adapter import (",
+                1,
+            ),
+            (
+                "    if agent.api_mode == \"anthropic_messages\":\n"
+                "        # Request-local client",
+                "    if agent.api_mode == \"anthropic_messages\":\n"
+                "        from hermes_installer.native_boundary import deny_unsupported_provider_mode\n"
+                "        deny_unsupported_provider_mode(\"anthropic_messages\")\n"
+                "        # Request-local client",
+                1,
+            ),
+            (
+                "    if agent.provider == \"moa\":\n"
+                "        # MoA is a virtual provider",
+                "    if agent.provider == \"moa\":\n"
+                "        from hermes_installer.native_boundary import deny_unsupported_provider_mode\n"
+                "        deny_unsupported_provider_mode(\"moa\")\n"
+                "        # MoA is a virtual provider",
+                1,
+            ),
+            (
+                "        def _open_anthropic_stream(next_api_kwargs: dict[str, Any]):\n"
+                "            final_kwargs = dict(next_api_kwargs)",
+                "        def _open_anthropic_stream(next_api_kwargs: dict[str, Any]):\n"
+                "            from hermes_installer.native_boundary import deny_unsupported_provider_mode\n"
+                "            deny_unsupported_provider_mode(\"anthropic_messages\")\n"
+                "            final_kwargs = dict(next_api_kwargs)",
+                1,
+            ),
         ),
     },
     "agent/auxiliary_client.py": {

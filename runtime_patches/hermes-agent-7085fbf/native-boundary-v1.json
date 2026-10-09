@@ -15,8 +15,8 @@
       {
         "path": "agent/chat_completion_helpers.py",
         "source_sha256": "fbd79987a8257f79de6ed291d398f455456385f828631dd8d9d0e6cea3ba46f2",
-        "overlay_sha256": "81f26a93ff1591dba15246f6552d32df7e331533cf758b653a79a1aa225790f9",
-        "hooks": ["codex-response terminal call", "OpenAI-compatible non-stream call", "OpenAI-compatible stream call"]
+        "overlay_sha256": "ef55b2bed0e91328345e66fd07733cda90df2e0800cf96f9f954023e2b122818",
+        "hooks": ["codex-response terminal call", "OpenAI-compatible non-stream call", "OpenAI-compatible stream call", "direct Anthropic and Bedrock primary paths denied", "MoA primary direct fan-out denied"]
       },
       {
         "path": "agent/auxiliary_client.py",
@@ -55,7 +55,7 @@
   },
   "explicitly_uncovered": [
     "Hermes PluginContext.register(ctx) runtime-context injection and protected component/plugin loader",
-    "Anthropic, Bedrock, MoA internals and direct non-chat-completions paths",
+    "Auxiliary Anthropic/Bedrock/MoA internals and direct non-chat-completions paths",
     "memory retrieval/extraction/embedding issuers",
     "background schedules/webhooks/child delegation role issuers",
     "authenticated user-interface origin and public clearance",
