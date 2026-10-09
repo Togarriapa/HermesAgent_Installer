@@ -23,14 +23,24 @@ class FakeAuthority:
 
     def authorize_effect(self, context, *, capability, target, recipient, request_digest, retry_index):
         binding = (capability, target, recipient, request_digest, retry_index)
-        grant = SimpleNamespace(binding=binding, monotonic_expires_at=time.monotonic() + 12)
+        issued_at = time.monotonic()
+        grant = SimpleNamespace(
+            binding=binding, issued_at_monotonic=issued_at,
+            monotonic_expires_at=issued_at + 12, capability=capability,
+            target=target, recipient=recipient, request_digest=request_digest,
+            retry_index=retry_index,
+        )
         self.issued.append(grant)
         return grant
 
     def verify_effect(self, grant, context, *, capability, target, recipient, request_digest, retry_index):
         binding = (capability, target, recipient, request_digest, retry_index)
         self.verified.append(binding)
-        return self.verify and grant.binding == binding
+        return SimpleNamespace(
+            authorization=grant if self.verify and grant.binding == binding else None,
+            operation="provider.dispatch", verified_at_monotonic=time.monotonic(),
+            verification_receipt="fixture-verification-receipt",
+        )
 
     def dispatch_codex(self, grant, *, target, recipient, request_digest, payload, timeout, cancelled=None):
         if self.fail_dispatch:
@@ -41,14 +51,15 @@ class FakeAuthority:
             headers={"Content-Type": "application/json", "Retry-After": "2", "Set-Cookie": "secret"})
 
 
-def context(sensitivity="private", lease=20):
+def context(sensitivity="private", lease=20, final_payload_digest=None):
     return SimpleNamespace(principal_id="fixture", profile_id="codex-enabled",
         namespace_id="ns-fixture", uid=1000, purpose="coding", intent_id="task",
         trace_id="codex-trace", lineage_hash="verified-source-lineage",
         policy_revision="host-policy", issued_at_monotonic=time.monotonic(),
         monotonic_expires_at=time.monotonic() + lease, nonce="ctx-nonce",
         signature="signed-context", sensitivity=sensitivity,
-        capabilities=frozenset({"provider-inference", "provider-tool-call"}))
+        capabilities=frozenset({"provider-inference", "provider-tool-call"}),
+        final_payload_digest=final_payload_digest)
 
 
 def request(**extra):
@@ -62,7 +73,9 @@ class CodexResponsesTests(unittest.TestCase):
         authority = FakeAuthority()
         transport = CodexResponsesTransport(authority)
         payload = request(tools=[{"type": "function", "name": "read_file", "parameters": {"type": "object"}}])
-        response = transport(context(), payload, retry_index=1, timeout=5)
+        normalized, _model, _uses_tools = normalize_responses_request(payload)
+        digest = hashlib.sha256(normalized).hexdigest()
+        response = transport(context(final_payload_digest=digest), payload, retry_index=1, timeout=5)
         self.assertEqual((response.status, response.input_tokens, response.output_tokens), (200, 9, 4))
         expected, _model, uses_tools = normalize_responses_request(payload)
         self.assertTrue(uses_tools)
@@ -85,8 +98,10 @@ class CodexResponsesTests(unittest.TestCase):
     def test_each_retry_gets_new_grant_and_text_call_uses_inference_capability(self):
         authority = FakeAuthority()
         transport = CodexResponsesTransport(authority)
-        transport(context(), request(), retry_index=0)
-        transport(context(), request(), retry_index=1)
+        body, _model, _tools = normalize_responses_request(request())
+        digest = hashlib.sha256(body).hexdigest()
+        transport(context(final_payload_digest=digest), request(), retry_index=0)
+        transport(context(final_payload_digest=digest), request(), retry_index=1)
         self.assertEqual([grant.binding[0] for grant in authority.issued],
                          ["provider-inference", "provider-inference"])
         self.assertEqual([grant.binding[-1] for grant in authority.issued], [0, 1])
@@ -106,8 +121,10 @@ class CodexResponsesTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyDenied, "broker is unavailable"):
             CodexResponsesTransport(None)(context(), request())
         authority = FakeAuthority(verify=False)
+        body, _model, _tools = normalize_responses_request(request())
+        digest = hashlib.sha256(body).hexdigest()
         with self.assertRaisesRegex(PolicyDenied, "grant"):
-            CodexResponsesTransport(authority)(context(), request())
+            CodexResponsesTransport(authority)(context(final_payload_digest=digest), request())
         self.assertEqual(authority.calls, [])
         authority = FakeAuthority()
         with self.assertRaisesRegex(PolicyDenied, "cancelled"):
@@ -120,8 +137,10 @@ class CodexResponsesTests(unittest.TestCase):
     def test_broker_failures_are_safe_and_dont_leak_body_or_secret(self):
         authority = FakeAuthority(fail_dispatch=True)
         transport = CodexResponsesTransport(authority)
+        body, _model, _tools = normalize_responses_request(request())
+        digest = hashlib.sha256(body).hexdigest()
         with self.assertRaisesRegex(PolicyDenied, "broker rejected") as caught:
-            transport(context(), request())
+            transport(context(final_payload_digest=digest), request())
         self.assertNotIn("fake broker failure", str(caught.exception))
         self.assertNotIn("authorization", repr(transport).lower())
 

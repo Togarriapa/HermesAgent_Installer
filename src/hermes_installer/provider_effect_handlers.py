@@ -231,7 +231,8 @@ class _FixedProviderHandler:
 
     def __call__(self, *, context: object, authorization: object, payload: bytes,
                  timeout: float, peer_pid: int,
-                 cancelled: Callable[[], bool]) -> Mapping[str, object]:
+                 cancelled: Callable[[], bool],
+                 peer_pidfd: int | None = None) -> Mapping[str, object]:
         enrollment = self._enrollment
         if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
                 or not math.isfinite(timeout) or not 0.1 <= timeout <= MAX_TIMEOUT_SECONDS

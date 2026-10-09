@@ -187,15 +187,34 @@ class CodexResponsesTransport:
             raise PolicyDenied("context.lease", "Host Codex context has insufficient monotonic lease")
         body, _model, uses_tools = normalize_responses_request(payload)
         digest = hashlib.sha256(body).hexdigest()
+        if getattr(host_context, "final_payload_digest", None) != digest:
+            raise PolicyDenied("authorization.payload_mismatch", "Codex host context is not bound to the normalized request")
         capability = "provider-tool-call" if uses_tools else "provider-inference"
+        capabilities = getattr(host_context, "capabilities", frozenset())
+        if not isinstance(capabilities, frozenset) or capability not in capabilities:
+            raise PolicyDenied("authorization.capability", "Codex host context lacks request-derived capability")
         target, recipient = CODEX_TARGET, CODEX_RECIPIENT
         try:
             grant = self._authority.authorize_effect(
                 host_context, capability=capability, target=target, recipient=recipient,
                 request_digest=digest, retry_index=retry_index)
-            if grant is None or not self._authority.verify_effect(
+            verified = self._authority.verify_effect(
                 grant, host_context, capability=capability, target=target,
-                recipient=recipient, request_digest=digest, retry_index=retry_index):
+                recipient=recipient, request_digest=digest, retry_index=retry_index)
+            verified_at = getattr(verified, "verified_at_monotonic", None)
+            if (getattr(verified, "authorization", None) != grant
+                    or getattr(verified, "operation", None) != "provider.dispatch"
+                    or not isinstance(getattr(verified, "verification_receipt", None), str)
+                    or not getattr(verified, "verification_receipt", "")
+                    or isinstance(verified_at, bool)
+                    or not isinstance(verified_at, (int, float))
+                    or not math.isfinite(verified_at)
+                    or verified_at > time.monotonic()
+                    or getattr(grant, "capability", None) != capability
+                    or getattr(grant, "target", None) != target
+                    or getattr(grant, "recipient", None) != recipient
+                    or getattr(grant, "request_digest", None) != digest
+                    or getattr(grant, "retry_index", None) != retry_index):
                 raise PolicyDenied("authorization.denied", "Host denied the Codex effect grant")
             grant_expires = getattr(grant, "monotonic_expires_at", None)
             if (isinstance(grant_expires, bool) or not isinstance(grant_expires, (int, float))
