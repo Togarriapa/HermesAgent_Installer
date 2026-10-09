@@ -266,7 +266,8 @@ class RootResourceTaskRunner:
                                     deadline_monotonic=task_deadline)
             result_validator = self.results.resolve_selected_result(
                 admission.backend_enrollment_id, backend.result_schema_id,
-                task.resource_generation,
+                expected_service_generation_digest=self.service.service_generation_digest,
+                expected_resource_generation=task.resource_generation,
             )
             fields = result_validator.validate_stdout(terminal.stdout)
             body = _canonical_json(dict(fields))
