@@ -38,6 +38,8 @@
     "host_assigned_fields": ["event_id", "native process identity", "profile", "generation", "sensitivity", "receipt handle"],
     "classification": "private/unknown only; no human-origin or public clearance",
     "provider_context_header": "X-Hermes-Installer-Context",
+    "provider_retry_index_header": "X-Hermes-Installer-Retry-Index",
+    "retry_index_header_semantics": "Root-derived bounded decimal transport claim; gateway passes it to the root, which must compare it with the one-use event's stored retry index.",
     "attempt_semantics": "Fresh complete SDK request-envelope capture and opaque bridge handle per attempted request; exact-envelope repeat increments retry_index with unchanged intent/trace and retained parents. Changed envelopes start a distinct intent at retry_index=0 until host retry admission is wired.",
     "limits": [
       "The current worktree does not yet contain the HI11 AuthorityClient bridge API or enrolled producer-to-gateway pair.",

@@ -47,7 +47,8 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
             b'{"messages":[{"content":"local fixture","role":"user"}],"model":"fixture"}',
             (), "native-primary", 0)])
         self.assertEqual(result["extra_headers"], {
-            "X-Hermes-Installer-Context": "evt.fixture.handle.00000001"})
+            "X-Hermes-Installer-Context": "evt.fixture.handle.00000001",
+            "X-Hermes-Installer-Retry-Index": "0"})
         self.assertEqual(result["max_retries"], 0)
         self.assertGreater(result["timeout"], 0)
         self.assertNotIn("extra_headers", kwargs)
@@ -74,6 +75,8 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
             retry = boundary.prepare_provider_request({"messages": messages}, purpose="native-primary")
 
         self.assertNotEqual(first["extra_headers"], retry["extra_headers"])
+        self.assertEqual(first["extra_headers"][boundary.RETRY_INDEX_HEADER], "0")
+        self.assertEqual(retry["extra_headers"][boundary.RETRY_INDEX_HEADER], "1")
         self.assertEqual(captured[0][0], "source")
         self.assertEqual(captured[1][:4], ("event", ("evt.fixture.handle.00000001",),
                                            "native-primary", 0))

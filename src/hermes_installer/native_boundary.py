@@ -23,6 +23,7 @@ from typing import Any, Mapping, Sequence
 
 
 CONTEXT_HEADER = "X-Hermes-Installer-Context"
+RETRY_INDEX_HEADER = "X-Hermes-Installer-Retry-Index"
 _HANDLE = re.compile(r"[A-Za-z0-9_.:@~-]{16,512}\Z", re.ASCII)
 _MAX_SOURCE_BYTES = 1_048_576
 _MAX_PARENT_HANDLES = 64
@@ -292,6 +293,10 @@ def prepare_provider_request(kwargs: Mapping[str, Any], *, purpose: str) -> dict
     result["timeout"] = remaining
     result["max_retries"] = 0
     headers[CONTEXT_HEADER] = handle
+    # The gateway cannot inspect the root's opaque one-use handle. Carry the
+    # retry index as bounded transport metadata; it grants no authority and
+    # the authority service must compare it with the index bound to the handle.
+    headers[RETRY_INDEX_HEADER] = str(retry_index)
     result["extra_headers"] = headers
     return result
 
