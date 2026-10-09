@@ -131,3 +131,10 @@ Desktop renderer and native bridge enrollment SHALL use actual protected install
 
 - **WHEN** protected enrollment lacks actual renderer/monitor/patch/canonicalizer digest or identity join is ambiguous
 - **THEN** root denies affected native exposure/dispatch with exact incomplete evidence and never substitutes caller-provided claims
+
+### Requirement: Protected native composition
+The installer SHALL bind actual native producer package/adapter closure through immutable root-selected profile generation and observed issuer channels, and SHALL apply the same protected route normalization policy before final request digest and gateway effect. Caller registration/labels SHALL not establish provenance.
+
+#### Scenario: Mutable package or divergent normalization
+- **WHEN** native closure, peer generation, issuer provenance or route-normalized final payload differs from protected enrollment
+- **THEN** deny before effect bytes and retain exact incomplete implementation/native evidence state.

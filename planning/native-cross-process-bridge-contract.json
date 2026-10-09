@@ -108,5 +108,23 @@
     "constraints": "unique exact bridge per selected producer profile/operation; distinct enrolled role processes; strict finite schema and no wildcard/caller destination; missing/ambiguous joins failclosed",
     "dynamic_identity": "root process registry resolves currently live PIDFD/starttime/cgroup/exe digest/generation for BOTH peers per prepare/dispatch; config never stores caller-selected PID as authority",
     "digest_note": "canonicalizer digest is actual protected installed artifact, not invented in planning; absent pin leaves bridge unavailable"
+  },
+  "api_body_definition": "Complete SDK envelope means all supported API BODY fields (model/messages/input/tools/stream/response format and route-supported controls), not transport-only headers, timeout or SDK retry objects. Reject caller extra_headers, bind only root opaque bridge header, enforce root deadline and disable implicit SDK retries. Every retry has new root admission/capture. SIWC rejects its documented unsupported body fields.",
+  "normalization_policy": {
+    "enrollment_fields": [
+      "normalization_policy_id",
+      "normalization_policy_sha256",
+      "normalization_policy_revision",
+      "route_schema_id",
+      "output_limit_mode",
+      "output_limit_ceiling"
+    ],
+    "modes": [
+      "reject-over-ceiling",
+      "clamp-to-ceiling",
+      "unsupported-field-reject"
+    ],
+    "semantics": "Root selected canonicalizer applies exact same protected policy before prepare digest and gateway effect. No independent late gateway mutation. Any policy revision invalidates old prepared handles. Ceiling is selected per compatible route, not inferred globally;4096 is permitted only as explicitly enrolled compatible-route bound. SIWC unsupported max_output_tokens stays rejected; never inject it. Caller values cannot widen protected limit.",
+    "evidence": "At/below/above ceiling producer and gateway byte equality, absent/altered policy or route schema denies, changed policy invalidates pending bridge; unsupported SIWC fields reject before bytes."
   }
 }
