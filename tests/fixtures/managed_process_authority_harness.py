@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Unprivileged selection-only client for the disposable root custody CI.
+
+The profile executable, argv, script refs, cwd, environment and limits are all
+root-enrolled in the AuthorityService fixture. This process sends only the
+opaque enrollment/generation/operation selection and bounded typed params.
+"""
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+
+from hermes_installer.authority.client import AuthorityClient, canonical_bytes, canonical_digest
+
+
+async def main() -> None:
+    request = json.load(sys.stdin)
+    client = AuthorityClient.for_current_process(timeout=10)
+    enrollment_id = request["enrollment_id"]
+    generation = request["generation"]
+    operation_id = request["operation_id"]
+    parameters = request["parameters"]
+    start_payload = canonical_bytes({"schema": 1, "enrollment_id": enrollment_id,
+                                     "generation": generation, "operation_id": operation_id,
+                                     "parameters": parameters})
+    start_digest = canonical_digest(start_payload)
+    start_context = client.context(
+        purpose="custody-kernel-ci", intent="launch-enrolled-kernel-probe",
+        operation="process.start", final_payload_digest=start_digest,
+        trace_id="ci-trace-" + generation[-12:],
+        lease_seconds=float(request.get("startup_timeout", 12)),
+    )
+    start_target = "hermes-profile-invoke:" + start_context.profile_id + ":operation"
+    start_grant = client.authorize_effect(
+        start_context, capability="hermes-profile-invoke", target=start_target,
+        request_digest=start_digest, retry_index=0,
+    )
+    try:
+        response = client.process_start_operation(
+            start_grant, enrollment_id=enrollment_id, generation=generation,
+            operation_id=operation_id, parameters=parameters,
+            timeout=max(5.0, float(request.get("startup_timeout", 12))),
+        )
+        if response.status != 200:
+            raise RuntimeError("root process.start denied")
+        started = json.loads(response.body.decode("utf-8", "strict"))
+    except Exception as exc:
+        if request.get("expect_denial") is True:
+            print(json.dumps({"event": "denied", "error_type": type(exc).__name__}), flush=True)
+            return
+        raise
+
+    process_id = started["process_id"]
+    if operation_id == "parent-death":
+        print(json.dumps({"event": "started", **started}, sort_keys=True), flush=True)
+        await asyncio.Event().wait()
+
+    async def control(operation: str, value: dict) -> dict:
+        body = canonical_bytes(value)
+        digest = canonical_digest(body)
+        context = client.context(
+            purpose="managed-process-control", intent=f"{operation}:{process_id}",
+            operation=operation, source_contexts=(start_context,),
+            final_payload_digest=digest, trace_id=start_context.trace_id,
+            lease_seconds=20,
+        )
+        suffix = operation.rsplit(".", 1)[1]
+        target = (f"hermes-profile-control:{context.profile_id}:operation:{suffix}"
+                  if operation != "process.inspect" else context.profile_id + ":inspect")
+        grant = client.authorize_effect(
+            context, capability="hermes-process-control", target=target,
+            request_digest=digest, retry_index=0,
+        )
+        result = client.process_control(grant, operation=operation, target=target,
+                                        payload=body, timeout=5.0)
+        if result.status != 200:
+            raise RuntimeError(f"root {operation} denied")
+        return json.loads(result.body.decode("utf-8", "strict"))
+
+    identity = {"schema": 1, "process_id": process_id, "generation": generation}
+    inspection = await control("process.inspect", identity)
+    if (inspection.get("process_id") != process_id
+            or inspection.get("generation") != generation
+            or not inspection.get("complete")
+            or not any(member.get("role") == "main" for member in inspection.get("processes", []))
+            or any("pid" in member or "argv" in member or "path" in member
+                   for member in inspection.get("processes", []))):
+        raise RuntimeError("root process inspection returned incomplete or over-disclosed evidence")
+    print(json.dumps({"event": "started", **started, "inspection": inspection}, sort_keys=True), flush=True)
+
+    async def read_line(stream: str, deadline_seconds: float) -> bytes:
+        deadline = time.monotonic() + deadline_seconds
+        cursor = int(started["stdout_cursor"] if stream == "stdout" else started["stderr_cursor"])
+        chunks = bytearray()
+        while time.monotonic() < deadline and len(chunks) < 65536:
+            value = {**identity, "stream": stream, "after_cursor": cursor,
+                     "max_bytes": min(65536 - len(chunks), 65536)}
+            read = await control("process.read", value)
+            data = base64.b64decode(read["data"], validate=True)
+            if read["cursor"] < cursor or len(data) > 65536 - len(chunks):
+                raise RuntimeError("root stream cursor or byte bound regressed")
+            cursor = read["cursor"]
+            chunks.extend(data)
+            if b"\n" in chunks or read["eof"]:
+                break
+            await asyncio.sleep(.05)
+        return bytes(chunks)
+
+    stdout = await read_line("stdout", 8.0)
+    stderr = await read_line("stderr", 1.5)
+    stopped = await control("process.stop", identity)
+    print(json.dumps({"event": "stopped", "stdout": stdout.decode("utf-8", "strict"),
+                      "stderr": stderr.decode("utf-8", "strict"),
+                      "stdout_complete": b"\n" in stdout,
+                      "process_id": process_id, "generation": generation,
+                      "pid": started["pid"], "cgroup": started["cgroup"],
+                      "uid": started["uid"],
+                      "executable_device": started["executable_device"],
+                      "executable_inode": started["executable_inode"],
+                      "mount_namespace_inode": started["mount_namespace_inode"],
+                      "network_namespace_inode": started["network_namespace_inode"],
+                      "kernel_limits": started.get("kernel_limits", {}),
+                      "cleanup_verified": stopped.get("stopped") is True}, sort_keys=True), flush=True)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

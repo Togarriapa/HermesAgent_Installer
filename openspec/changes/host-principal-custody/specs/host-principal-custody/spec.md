@@ -99,3 +99,56 @@ Native process inspection SHALL resolve only opaque registered process/generatio
 
 - **WHEN** native renderer relaunch changes process identity or caller supplies a sibling PID
 - **THEN** host denies or reports incomplete before remote exposure; only current registered descendants are attested
+
+### Requirement: One-use native producer gateway bridge (HI11)
+
+Cross-process native source handoff SHALL use root-issued one-use bridge state bound to both attested producer and selected gateway identities/generations, complete source closure, exact final normalized payload, operation/retry and bounded lease. Gateway dispatch SHALL authenticate its peer and atomically consume admission before effects; opaque references or caller headers SHALL not grant portable authority.
+
+#### Scenario: Cross-process stale or replayed reference
+
+- **WHEN** separate gateway resolves a native source reference with different PID/generation/payload or replays an attempt
+- **THEN** root denies before bytes; valid paired identities use exact final digest/full source closure and consume each attempt once
+
+#### Scenario: Incomplete request envelope or retry reuse
+
+- **WHEN** producer captures messages without full SDK fields or reuses a prior bridge on retry
+- **THEN** root rejects final effect mismatch/replay before bytes; a new complete request capture and fresh one-use bridge preserves full bounded parent ancestry
+
+### Requirement: Operation-bound fixed effect rules (HI12)
+
+Protected effect rules SHALL key exact capability, operation and enrolled target together; grants SHALL bind the same tuple and canonical payload. Shared targets SHALL not imply cross-operation permission. Connector frame operations SHALL each use fresh one-use bounded grants without extending original stream lease; trusted expiry/revocation cleanup SHALL remain independent.
+
+#### Scenario: Same target different operation
+
+- **WHEN** same service target has open/read/write/close rules or caller changes operation under a prior target grant
+- **THEN** root evaluates only exact enrolled operation tuple and consumes bounded frame grant; wrong operation/replay denies and expiry cleanup still closes the stream
+
+### Requirement: Protected native enrollment proof (HI10/HI11 refinement)
+
+Desktop renderer and native bridge enrollment SHALL use actual protected installed artifact digests and unambiguous root-owned identity/policy mappings. Inspector attestation SHALL derive fresh role-specific process/sandbox/relaunch/window evidence; missing pins, caller booleans or main-process-only proof SHALL leave native exposure incomplete.
+
+#### Scenario: Missing renderer or bridge canonicalizer pin
+
+- **WHEN** protected enrollment lacks actual renderer/monitor/patch/canonicalizer digest or identity join is ambiguous
+- **THEN** root denies affected native exposure/dispatch with exact incomplete evidence and never substitutes caller-provided claims
+
+### Requirement: Protected native composition
+The installer SHALL bind actual native producer package/adapter closure through immutable root-selected profile generation and observed issuer channels, and SHALL apply the same protected route normalization policy before final request digest and gateway effect. Caller registration/labels SHALL not establish provenance.
+
+#### Scenario: Mutable package or divergent normalization
+- **WHEN** native closure, peer generation, issuer provenance or route-normalized final payload differs from protected enrollment
+- **THEN** deny before effect bytes and retain exact incomplete implementation/native evidence state.
+
+### Requirement: Protected resolver reader
+The installer SHALL expose only peer-bound selected immutable resolver records via path-free native.resolver.read and SHALL re-resolve current protected effect enrollment on every dispatch.
+
+#### Scenario: Caller reuses stale resolver as permission
+- **WHEN** profile generation, handler, scope or policy changed after reading resolver
+- **THEN** deny affected effect before bytes; presentation records confer no authority.
+
+### Requirement: Fixed operation and voice session selection
+The installer SHALL resolve only protected fixed operation recipes and current root-authorized device/session handles; caller inputs SHALL not select physical executable, path, environment or device. Raw captured voice SHALL be bounded ephemeral memory only.
+
+#### Scenario: Forged recipe or expired voice session
+- **WHEN** selected operation parameters escape its schema or voice session is stale, sibling-owned or lacks trusted permission
+- **THEN** reject before execution/capture and cancel owned expired resources.

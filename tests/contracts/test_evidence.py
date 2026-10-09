@@ -49,6 +49,13 @@ def criterion_catalog():
 
 
 class EvidenceContractTests(unittest.TestCase):
+    def test_null_assertion_is_pending_only_and_never_coerced_to_pass(self):
+        pending = record(state="pending", assertions={"native_discovery": True, "native_invocation": None},
+                         artifact_sha256="b" * 64, blocker="Native invocation was not attempted.")
+        self.assertIsNone(pending.assertions["native_invocation"])
+        with self.assertRaisesRegex(ValueError, "all-true"):
+            record(state="pass", assertions={"native_discovery": True, "native_invocation": None})
+
     def test_fixture_pass_is_reported_but_never_full_target_acceptance(self):
         report = acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[record()], verify_record=lambda _: True)
         self.assertEqual(report["state"], "pending")

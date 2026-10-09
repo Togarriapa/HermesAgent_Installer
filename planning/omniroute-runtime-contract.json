@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "change": "providers-credentials-budgets-privacy",
+  "requirement_id": "PR02",
+  "task_id": "PR-T02",
+  "evidence_id": "EV-PR02",
+  "refines": [
+    "R0130"
+  ],
+  "source": {
+    "repository": "diegosouzapw/OmniRoute",
+    "commit": "4ea24a2f8e1faf8a606c8b8dce45e5b1ab6c9bb0",
+    "version": "3.8.52",
+    "manifest_url": "https://raw.githubusercontent.com/diegosouzapw/OmniRoute/4ea24a2f8e1faf8a606c8b8dce45e5b1ab6c9bb0/package.json",
+    "checked_on": "2026-10-09",
+    "declared_node_engines": ">=22.22.2 <23 || >=24.0.0 <27"
+  },
+  "selected_component_node": {
+    "package_id": "node",
+    "version": "26.7.0",
+    "upstream_target": "linux-arm64",
+    "artifact_index": 0,
+    "url": "https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-arm64.tar.xz",
+    "sha256": "afc7a004018485092ac8985b817b0d5684472bd9472e0b57d2ab88737e50090d",
+    "status": "upstream source declaration only; payload/native qualification pending; not activated"
+  },
+  "semver_result": "26.7.0 meets declared range; Node20.19 does not. Range match is not native dependency/build/runtime acceptance.",
+  "runtime_enrollment": "separate component-owned protected Node26.7.0 linuxARM64 instance staged from exact existing declared artifact; verify payload bytes/catalog/license before activation; not global node replacement or writable PM runtime reuse",
+  "protected_fields": [
+    "node_artifact_id",
+    "node_executable_digest",
+    "runtime_generation",
+    "omniroute_source_artifact_id",
+    "source_commit",
+    "reviewed_dependency_lock_digest",
+    "reviewed_build_recipe_digest",
+    "output_tree_digest",
+    "service_profile_id",
+    "authority_endpoint_id"
+  ],
+  "build_and_service": "root-reviewed fixed bounded component build/start profiles using protected Node path and sanitized PATH/module roots, no caller npm flags/URL/path or lazy install. Complete reviewed lock/transitive artifacts/native ABI dependencies needed before build; network acquisition through protected source catalog, runtime worker no arbitrary egress.",
+  "runtime_policy": "OmniRoute inbound/outbound loop/paid fallback/privacy/tool/source/recipient policy enforced by trusted host; source engine compatibility cannot bypass original dispatch/zero budget.",
+  "evidence": "version/ABI/path mismatch and writableancestor/unpinnedmodule/Node20 rejection fixture; actual isolated LinuxARM64 Node and OmniRoute native deps/build/health/provider integration separately measured",
+  "state": "official pinned manifest engine verified only; selected Node source declaration payload/ARM64 runtime qualification pending"
+}

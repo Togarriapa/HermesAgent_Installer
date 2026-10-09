@@ -308,7 +308,7 @@ class ChatGPTPlanAuth:
         now = self.monotonic_clock()
         if (isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now)
                 or attempt.issued_at_monotonic > now or attempt.monotonic_expires_at <= now
-                or attempt.monotonic_expires_at - attempt.issued_at_monotonic > 600):
+                or attempt.monotonic_expires_at - attempt.issued_at_monotonic > 600.0 + 1e-6):
             raise OAuthAttemptError("OpenAI sign-in attempt expired")
         fields = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
         if any(len(v) != 1 for v in fields.values()):

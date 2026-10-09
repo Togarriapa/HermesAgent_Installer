@@ -8,14 +8,18 @@ import hmac
 import http.server
 import json
 import os
+import re
 import socket
 import stat
 import threading
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Protocol
 
-from .policy import Dispatcher, PolicyDenied, Sensitivity
+from .policy import (
+    Dispatcher, PolicyDenied, ProviderResponse, Sensitivity,
+    PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING, normalize_chat_request,
+)
 from .state import OwnedRoot, OwnershipError
 from .provider_transport import ALLOWED_MODELS, MAX_REQUEST_BYTES
 
@@ -27,6 +31,14 @@ HOME_MARKER_CONTENT = b"hermes-installer-managed-home-v1\n"
 
 class GatewayError(RuntimeError):
     """Safe local gateway startup/configuration failure."""
+
+
+class NativeProviderBridge(Protocol):
+    """HI11 one-use event gateway; the root broker authenticates the caller."""
+
+    def dispatch_native_request(self, handle: object, normalized_payload: bytes, *,
+                                retry_index: int = 0, timeout: float = 30.0,
+                                cancelled: Callable[[], bool] | None = None) -> object: ...
 
 
 def _write_owned(root: OwnedRoot, relative: str, data: bytes, mode: int = 0o600) -> Path:
@@ -305,7 +317,9 @@ class LocalProviderGateway:
                  sensitivity: Sensitivity, model: str, max_output_tokens: int = 4096,
                  host: str = "127.0.0.1", port: int = 0, read_timeout_seconds: float = 10.0,
                  max_connections: int = 16,
-                 context_factory: Callable[..., object] | None = None):
+                 context_factory: Callable[..., object] | None = None,
+                 native_bridge: NativeProviderBridge | None = None,
+                 fixture_only_allow_synthetic_context: bool = False):
         if host != "127.0.0.1":
             raise GatewayError("Provider gateway must bind IPv4 loopback only")
         if not isinstance(port, int) or isinstance(port, bool) or (port != 0 and not 1024 <= port <= 65535):
@@ -320,8 +334,15 @@ class LocalProviderGateway:
             raise GatewayError("Configured output token limit is outside the supported range")
         if not 0.1 <= read_timeout_seconds <= 60 or not 1 <= max_connections <= 64:
             raise GatewayError("Gateway connection bounds are outside the supported range")
-        if not callable(context_factory):
-            raise GatewayError("A host-issued context factory is required for provider dispatch")
+        if context_factory is not None and (not callable(context_factory)
+                or not fixture_only_allow_synthetic_context):
+            raise GatewayError("Synthetic provider contexts are available only to explicit fixtures")
+        if native_bridge is not None and not callable(getattr(native_bridge, "dispatch_native_request", None)):
+            raise GatewayError("Native provider bridge does not expose the HI11 atomic dispatch")
+        if native_bridge is not None and max_output_tokens != PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING:
+            raise GatewayError("HI11 public provider route uses its fixed 4096-token output ceiling")
+        if context_factory is not None and native_bridge is not None:
+            raise GatewayError("Provider gateway cannot mix fixture contexts and the native host bridge")
         self.dispatcher = dispatcher
         self._token = token
         self.profile_id = profile_id
@@ -335,6 +356,8 @@ class LocalProviderGateway:
         # The host must provide broker-issued principal, namespace and provenance
         # claims. A missing factory yields an incomplete context and is denied.
         self.context_factory = context_factory
+        self.native_bridge = native_bridge
+        self.fixture_only_allow_synthetic_context = fixture_only_allow_synthetic_context
         self._closing = threading.Event()
         self._active_lock = threading.Lock()
         self._active_requests: set[threading.Event] = set()
@@ -461,34 +484,92 @@ class LocalProviderGateway:
                     value = json.loads(raw)
                     if not isinstance(value, dict) or value.get("model") != gateway.model:
                         raise PolicyDenied("route.model", "Only the configured model is available")
+                    output_aliases = [value[key] for key in
+                                      ("max_tokens", "max_completion_tokens", "max_output_tokens")
+                                      if key in value]
+                    if gateway.native_bridge is not None and len(output_aliases) > 1:
+                        raise PolicyDenied("request.bounds", "Output token aliases cannot be combined on the native route")
                     requested_caps = []
                     for key in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
                         if key in value:
                             cap = value[key]
                             if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1:
                                 raise PolicyDenied("request.bounds", "Output token cap is invalid")
+                            if (gateway.native_bridge is not None
+                                    and cap > PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING):
+                                raise PolicyDenied("request.bounds", "Output token cap exceeds the fixed native route ceiling")
                             requested_caps.append(cap)
-                    output_cap = min([gateway.max_output_tokens, *requested_caps])
-                    input_tokens = len(raw)  # byte upper bound; tokenizers cannot exceed encoded bytes here.
+                    if gateway.native_bridge is not None:
+                        output_cap = (requested_caps[0] if requested_caps
+                                      else PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING)
+                    else:
+                        output_cap = min([gateway.max_output_tokens, *requested_caps])
+                    # Bind host context to the exact canonical bytes that the
+                    # dispatcher and broker will send, never to caller JSON.
+                    normalized_payload = normalize_chat_request(raw, gateway.model, output_cap)
+                    input_tokens = len(normalized_payload)  # conservative byte upper bound.
                     tool_request = bool(value.get("tools")) or value.get("tool_choice") not in (None, "none")
+                    if gateway.native_bridge is not None:
+                        handles = self.headers.get_all("X-Hermes-Installer-Context", [])
+                        retry_headers = self.headers.get_all("X-Hermes-Installer-Retry-Index", [])
+                        if (len(handles) != 1 or not isinstance(handles[0], str)
+                                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handles[0])
+                                or len(retry_headers) != 1):
+                            raise PolicyDenied("context.handle_unavailable",
+                                               "A single valid host-issued native event handle is required")
+                        raw_retry = retry_headers[0]
+                        if not raw_retry.isascii() or not raw_retry.isdecimal() or len(raw_retry) > 3:
+                            raise PolicyDenied("request.retry", "Native retry index is malformed")
+                        retry_index = int(raw_retry)
+                        if retry_index > 100:
+                            raise PolicyDenied("request.retry", "Native retry index exceeds its bound")
+                        native_context_handle = handles[0]
+                    else:
+                        if not gateway.fixture_only_allow_synthetic_context or not callable(gateway.context_factory):
+                            raise PolicyDenied("authorization.unavailable",
+                                               "Root-owned native provider event broker is unavailable")
+                        native_context_handle = ""
+                        retry_index = 0
                     cancellation = self._begin_request()
                     if cancellation is None:
                         self._reply(503, _error_body("gateway.closing", "Gateway is shutting down"))
                         return
                     try:
-                        trace_id = str(uuid.uuid4())
-                        context = gateway.context_factory(
-                            purpose="native-hermes-chat",
-                            intent=trace_id,
-                            source_contexts=(),
-                            trace_id=trace_id,
-                            lease_seconds=30,
-                        )
-                        result = gateway.dispatcher.dispatch(
-                            context, gateway.model, raw, input_tokens=input_tokens,
-                            output_token_limit=output_cap, tool_request=tool_request,
-                            cancelled=lambda: cancellation.is_set() or gateway._closing.is_set(),
-                        )
+                        cancel_check = lambda: cancellation.is_set() or gateway._closing.is_set()
+                        if gateway.native_bridge is not None:
+                            # The header is an untrusted one-use lookup reference,
+                            # never a grant. The root resolves the stored lease,
+                            # producer/gateway identities and complete source
+                            # closure, then canonicalizes and dispatches atomically.
+                            result = gateway.native_bridge.dispatch_native_request(
+                                native_context_handle, normalized_payload,
+                                retry_index=retry_index,
+                                timeout=min(30.0, gateway.read_timeout_seconds),
+                                cancelled=cancel_check,
+                            )
+                            status, response_body, response_headers = (
+                                getattr(result, "status", None), getattr(result, "body", None),
+                                getattr(result, "headers", None),
+                            )
+                            if (type(status) is not int or not 100 <= status <= 599
+                                    or not isinstance(response_body, bytes)
+                                    or len(response_body) > 4 * 1024 * 1024
+                                    or not isinstance(response_headers, dict)):
+                                raise PolicyDenied("response.bounds", "Host provider broker returned an invalid response")
+                            result = ProviderResponse(status, response_body, response_headers, 0, 0)
+                        else:
+                            trace_id = str(uuid.uuid4())
+                            context = gateway.context_factory(
+                                profile_id=gateway.profile_id, sensitivity=gateway.sensitivity,
+                                purpose="fixture-only", intent=trace_id,
+                                trace_id=trace_id, cancelled=cancel_check,
+                                tool_request=tool_request, lease_seconds=30,
+                            )
+                            result = gateway.dispatcher.dispatch(
+                                context, gateway.model, normalized_payload, input_tokens=input_tokens,
+                                output_token_limit=output_cap, tool_request=tool_request,
+                                cancelled=cancel_check,
+                            )
                     finally:
                         self._end_request(cancellation)
                     if cancellation.is_set() or gateway._closing.is_set():
@@ -498,7 +579,8 @@ class LocalProviderGateway:
                     if gateway._closing.is_set():
                         self._reply(503, _error_body("gateway.cancelled", "Gateway request was cancelled"))
                     else:
-                        self._reply(403 if exc.code.startswith(("route.", "context.")) else 400,
+                        self._reply(503 if exc.code == "authorization.unavailable" else
+                                    403 if exc.code.startswith(("route.", "context.")) else 400,
                                     _error_body(exc.code, str(exc)))
                     return
                 except Exception:

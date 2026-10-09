@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import tarfile
 import tempfile
 import time
@@ -20,11 +21,15 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping
 
-from .state import Journal, OwnedRoot, OwnershipError, _atomic_write, process_lock
+from .state import Journal, OwnedRoot, OwnershipError, _atomic_write
 
 
 class LifecycleError(RuntimeError):
     """A safe operation failure with a journaled recovery path."""
+
+
+class LifecycleBlocked(LifecycleError):
+    """An operation was intentionally withheld because a custody precondition is absent."""
 
 
 _IDENTITY = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}\Z")
@@ -276,6 +281,39 @@ class GenerationStore:
             raise LifecycleError("Active generation no longer matches its recorded digest")
         return generation
 
+    @classmethod
+    def inspect_active_readonly(cls, data_root: OwnedRoot) -> Generation | None:
+        """Verify the active pointer without creating or repairing installer state."""
+        root = data_root.root
+        if root.is_symlink():
+            raise OwnershipError("Managed data root cannot be a symlink")
+        if not root.exists():
+            return None
+        info = root.lstat()
+        if (not root.is_dir() or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise OwnershipError("Managed data root ownership is not verified")
+        marker = root / ".hermes-installer-owned"
+        try:
+            fd = os.open(marker, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0))
+            try:
+                marker_info = os.fstat(fd)
+                marker_bytes = os.read(fd, 64)
+            finally:
+                os.close(fd)
+        except OSError:
+            raise OwnershipError("Managed data ownership marker is unavailable") from None
+        if (not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != os.getuid()
+                or stat.S_IMODE(marker_info.st_mode) & 0o077 or marker_bytes != b"schema=1\n"):
+            raise OwnershipError("Managed data ownership marker is invalid")
+        store = object.__new__(cls)
+        store.data_root = data_root
+        store.generations = data_root.path("generations")
+        if store.generations.is_symlink():
+            raise OwnershipError("Generation root cannot be a symlink")
+        return store.current()
+
     def rollback(self, *, health_check: Callable[[Generation], bool]) -> Generation:
         current = self.current()
         if current is None:
@@ -394,6 +432,9 @@ class LifecycleRecovery:
             raise LifecycleError("Backup schema version is incompatible with this installer")
         if self._hash(archive_path) != manifest.get("archive_sha256"):
             raise LifecycleError("Backup archive failed integrity verification")
+        entries = self._validated_backup_entries(manifest)
+        if database_destination is not None and "state/journal.sqlite3" not in entries:
+            raise LifecycleError("Backup has no installer database snapshot to restore")
         identity = candidate.name
         operation = "lifecycle:restore:" + identity
         self.journal.checkpoint(operation, "running", {"backup": identity, "schema_version": expected_schema_version})
@@ -402,17 +443,17 @@ class LifecycleRecovery:
         restored_database: str | None = None
         stage = Path(tempfile.mkdtemp(prefix="hermes-restore-", dir=self.data_root.root))
         try:
+            seen_entries: set[str] = set()
             with tarfile.open(archive_path, "r") as archive:
-                for member in archive.getmembers():
+                for member in archive:
                     posix = PurePosixPath(member.name)
-                    if member.issym() or member.islnk() or member.isdev() or posix.is_absolute() or ".." in posix.parts:
-                        raise LifecycleError("Backup contains an unsafe filesystem entry")
-            with tarfile.open(archive_path, "r") as archive:
-                for member in archive.getmembers():
-                    if member.isdir():
-                        continue
-                    if not member.isfile():
+                    if (member.issym() or member.islnk() or member.isdev() or not member.isfile()
+                            or posix.is_absolute() or any(part in {"", ".", ".."} for part in posix.parts)
+                            or "\\" in member.name):
                         raise LifecycleError("Backup contains an unsupported filesystem entry")
+                    expected = entries.get(member.name)
+                    if expected is None or member.name in seen_entries or member.size != expected[1]:
+                        raise LifecycleError("Backup archive entries do not match its manifest")
                     source = archive.extractfile(member)
                     if source is None:
                         raise LifecycleError("Backup entry could not be read")
@@ -421,35 +462,67 @@ class LifecycleRecovery:
                     if not destination.resolve(strict=False).is_relative_to(stage.resolve()):
                         raise LifecycleError("Backup entry escapes the restore staging root")
                     fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                    digest = hashlib.sha256()
+                    size = 0
                     with os.fdopen(fd, "wb") as output, source:
-                        shutil.copyfileobj(source, output)
+                        while block := source.read(1024 * 1024):
+                            digest.update(block)
+                            size += len(block)
+                            output.write(block)
                         output.flush()
                         os.fsync(output.fileno())
+                    if size != expected[1] or digest.hexdigest() != expected[0]:
+                        destination.unlink(missing_ok=True)
+                        raise LifecycleError("Backup file failed manifest digest verification")
+                    seen_entries.add(member.name)
+            if seen_entries != set(entries):
+                raise LifecycleError("Backup archive is missing files listed in its manifest")
             for source in stage.rglob("*"):
                 if source.is_dir():
                     continue
                 if source.is_symlink() or not source.is_file():
                     raise LifecycleError("Restored backup contains an unsafe file")
                 relative = source.relative_to(stage)
+                relative_text = relative.as_posix()
+                self.journal.checkpoint(operation, "restoring_entry", {
+                    "backup": identity, "entry": relative_text,
+                    "restored_count": len(restored), "conflict_count": len(conflicts)})
                 if relative.parts[:1] != ("data",):
                     if relative.parts[:1] == ("state",):
                         if relative.parts == ("state", "journal.sqlite3") and database_destination is not None:
                             restored_database = str(self._restore_database(source, database_destination))
+                            self.journal.event(operation, relative_text, "database_restored", {
+                                "database": Path(restored_database).name})
                         continue
                     raise LifecycleError("Backup contains an unsupported destination")
                 target = self.data_root.path(str(Path(*relative.parts[1:])))
                 if target.exists() and not overwrite:
                     if self._hash(target) == self._hash(source):
                         restored.append(str(relative))
+                        self.journal.event(operation, relative_text, "already_restored", {
+                            "sha256": self._hash(source)})
                         continue
                     conflicts.append(str(relative))
+                    self.journal.event(operation, relative_text, "conflict_preserved", {
+                        "reason": "existing user data retained"})
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 temp = target.with_name("." + target.name + ".restore-" + uuid.uuid4().hex)
-                shutil.copyfile(source, temp, follow_symlinks=False)
-                os.chmod(temp, 0o600)
-                os.replace(temp, target)
+                try:
+                    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                        | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+                    with os.fdopen(fd, "wb") as output, source.open("rb") as input_stream:
+                        shutil.copyfileobj(input_stream, output)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    os.replace(temp, target)
+                except BaseException:
+                    temp.unlink(missing_ok=True)
+                    raise
+                GenerationStore._fsync_directory(target.parent)
                 restored.append(str(relative))
+                self.journal.event(operation, relative_text, "restored", {
+                    "sha256": self._hash(target)})
             result = {"backup": identity, "restored": restored, "conflicts_preserved": conflicts,
                 "database_snapshot_present": any(str(row.get("path", "")).startswith("state/") for row in manifest.get("entries", [])),
                 "database_restored_to": restored_database}
@@ -478,37 +551,51 @@ class LifecycleRecovery:
                 raise LifecycleError("Backed-up SQLite database failed integrity verification")
         finally:
             check.close()
-        lock = self.state_root.path("installer.lock")
-        with process_lock(lock):
-            previous: Path | None = None
-            if target.exists():
-                previous = self.backups / ("pre-restore-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8] + ".sqlite3")
-                self._sqlite_backup(target, previous)
-                previous.chmod(0o600)
-            temp = target.with_name("." + target.name + ".restore-" + uuid.uuid4().hex)
-            self._sqlite_backup(source, temp)
-            temp.chmod(0o600)
-            for suffix in ("-wal", "-shm"):
-                sidecar = Path(str(target) + suffix)
-                if sidecar.exists() and (sidecar.is_symlink() or not sidecar.is_file()):
-                    temp.unlink(missing_ok=True)
-                    raise OwnershipError("Live SQLite sidecar is unsafe")
-            os.replace(temp, target)
-            for suffix in ("-wal", "-shm"):
-                Path(str(target) + suffix).unlink(missing_ok=True)
-            GenerationStore._fsync_directory(target.parent)
-        self.journal = Journal(target)
+        # LifecycleRecovery is called under the installer-wide exclusive lease.
+        # Acquiring the same flock here is not safely re-entrant: restore invoked
+        # by the CLI already holds it, so a nested lock would report a false
+        # concurrent operation and leave a valid restore incomplete.
+        previous: Path | None = None
+        if target.exists():
+            previous = self.backups / ("pre-restore-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8] + ".sqlite3")
+            self._sqlite_backup(target, previous)
+            previous.chmod(0o600)
+        temp = target.with_name("." + target.name + ".restore-" + uuid.uuid4().hex)
+        self._sqlite_backup(source, temp)
+        temp.chmod(0o600)
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(str(target) + suffix)
+            if sidecar.exists() and (sidecar.is_symlink() or not sidecar.is_file()):
+                temp.unlink(missing_ok=True)
+                raise OwnershipError("Live SQLite sidecar is unsafe")
+        os.replace(temp, target)
+        for suffix in ("-wal", "-shm"):
+            Path(str(target) + suffix).unlink(missing_ok=True)
+        GenerationStore._fsync_directory(target.parent)
+        Journal(target)
         self.journal.event("lifecycle:database-restore", target.name, "committed", {
             "database": target.name, "previous_snapshot": previous.name if previous else None})
         return target
 
-    def uninstall(self, *, stop_owned: Callable[[], None] | None = None) -> dict[str, object]:
+    def uninstall(self) -> dict[str, object]:
         """Remove only ledger-owned software artifacts and retain all user data."""
         operation = "lifecycle:uninstall"
         self.journal.checkpoint(operation, "running", {"data_retained": True})
         try:
-            if stop_owned is not None:
-                stop_owned()
+            pointer_generation = GenerationStore.inspect_active_readonly(self.data_root)
+            active = [row for row in self.journal.owned()
+                if row["kind"] in {"generation", "hermes-generation", "service", "process", "daemon"}
+                and row["state"] in {"active", "running", "enabled"}]
+            if active or pointer_generation is not None:
+                self.journal.checkpoint(operation, "blocked-active-generation", {
+                    "data_retained": True,
+                    "active_generation": pointer_generation.identity if pointer_generation else None,
+                    "resources": [str(row["resource_id"]) for row in active],
+                    "resume": "hermes-installer data uninstall"})
+                self.journal.event(operation, "uninstall", "blocked", {
+                    "reason": "active generation requires verified host-custody shutdown",
+                    "resource_count": len(active)})
+                raise LifecycleBlocked("Uninstall is blocked until host custody verifies shutdown of active generations")
             removed: list[str] = []
             for row in self.journal.owned():
                 if row["kind"] == "generation" and row["state"] in {"active", "staged", "rollback-retained"}:
@@ -555,6 +642,8 @@ class LifecycleRecovery:
             self.journal.checkpoint(operation, "complete", result)
             self.journal.event(operation, "uninstall", "complete", {"removed_count": len(removed), "data_retained": True})
             return result
+        except LifecycleBlocked:
+            raise
         except BaseException as exc:
             self.journal.checkpoint(operation, "failed", {"error_type": type(exc).__name__, "data_retained": True})
             self.journal.event(operation, "uninstall", "failed", {"error_type": type(exc).__name__})
@@ -606,3 +695,24 @@ class LifecycleRecovery:
             while block := stream.read(1024 * 1024):
                 digest.update(block)
         return digest.hexdigest()
+
+    @staticmethod
+    def _validated_backup_entries(manifest: object) -> dict[str, tuple[str, int]]:
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("entries"), list):
+            raise LifecycleError("Backup manifest entry table is invalid")
+        entries: dict[str, tuple[str, int]] = {}
+        for row in manifest["entries"]:
+            if not isinstance(row, dict):
+                raise LifecycleError("Backup manifest entry is invalid")
+            name, digest, size = row.get("path"), row.get("sha256"), row.get("size")
+            if (not isinstance(name, str) or not name or "\\" in name
+                    or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or type(size) is not int or size < 0):
+                raise LifecycleError("Backup manifest entry is invalid")
+            path = PurePosixPath(name)
+            if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+                raise LifecycleError("Backup manifest entry path is unsafe")
+            if name in entries:
+                raise LifecycleError("Backup manifest contains duplicate paths")
+            entries[name] = (digest, size)
+        return entries

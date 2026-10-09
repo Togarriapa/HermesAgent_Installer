@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    "HI08",
+    "HI09",
+    "RB08"
+  ],
+  "tasks": [
+    "HI-T08",
+    "HI-T09",
+    "RB-T09"
+  ],
+  "evidence": "Actual selected native loader/register/tool/memory dispatch through immutable closure and root observed issuer; mutated closure/resolver/parent, caller channel/role, wrong PID/profile/generation, sibling artifact, dynamic import/path escape, grant replay and private/public leak negatives; source inventory fixtures alone do not qualify native issuer.",
+  "state": "specification; installed closure and rooted source issuer not yet qualified",
+  "root_catalog": "native_packages strict root-owned immutable selected profile/generation records",
+  "package_record_fields": [
+    "package_id",
+    "profile_id",
+    "generation",
+    "source_revision",
+    "source_tree_sha256",
+    "compiled_closure_artifact_id",
+    "compiled_closure_sha256",
+    "entrypoint_artifact_id",
+    "entrypoint_sha256",
+    "resolver_artifact_id",
+    "resolver_sha256",
+    "service_package_root_id",
+    "service_mount_id",
+    "adapter_records"
+  ],
+  "adapter_record_fields": [
+    "adapter_id",
+    "manifest_sha256",
+    "adapter_artifact_id",
+    "adapter_sha256",
+    "action_id",
+    "argument_schema_id",
+    "result_schema_id",
+    "effect_enrollment_id",
+    "operation",
+    "capability",
+    "target_id",
+    "recipient",
+    "generation"
+  ],
+  "mount": "Root resolves opaque package root/mount from custody profile enrollment; immutable read-only closure visible only to selected service UID/private mount namespace. Caller journal root is separate. Root verifies all closure files/digests/path containment/no symlink escape/executable roles; no caller path/mount/loader/module or mutable profile plugin injection. Native package absence leaves native adapter unavailable.",
+  "binder": {
+    "method": "bind_native_package",
+    "request_fields": [
+      "schema=1",
+      "package_id",
+      "generation"
+    ],
+    "caller": "Only authenticated enrolled running native producer through profile-specific authority socket; root joins SO_PEERCRED UID/PID starttime/PIDFD/exe/cgroup/current profile generation, never caller profile/role claims",
+    "response_fields": [
+      "schema=1",
+      "opaque_binding_handle",
+      "package_id",
+      "generation",
+      "resolver_digest",
+      "expires_monotonic"
+    ],
+    "semantics": "Opaque binding resolves fixed in-process immutable loader/resolver only; not bearer authority. Root registry fixes issuer channels and action enrollment. No root access to arbitrary plugin imports from caller paths."
+  },
+  "plugin_effects": {
+    "signature": "invoke(adapter_id, action_id, arguments, idempotency_key=None, opaque_confirmation_attestation_id=None)",
+    "operation": "Exact selected plugin.<adapter-id>.<verb> from RB08; method name invoke is local facade, never unconstrained root generic proxy",
+    "semantics": "Facade derives immutable selected effect enrollment from bound package resolver; root verifies peer/package/generation/action/schema plus canonical complete argument digest and trusted source closure, issues fresh exact effect authorization and calls fixed backend handler. No source sensitivity/credential/role/capability/target supplied by worker.",
+    "result": "Typed RB08 result schema or owned immutable output artifact receipt; source receipt for effect result created only by root observing bounded actual backend result."
+  },
+  "source_issuer": {
+    "root_channels": [
+      "native-input",
+      "tool-result",
+      "memory-result",
+      "effect-result",
+      "delegated-child",
+      "schedule-event"
+    ],
+    "enrollment_fields": [
+      "issuer_channel_id",
+      "producer_profile_id",
+      "producer_role_artifact_id",
+      "producer_role_sha256",
+      "capture_schema_id",
+      "allowed_parent_channels",
+      "generation"
+    ],
+    "capture_api": "capture_source(payload:bytes,parent_receipt_handles=()) -> opaque peer-bound provenance handle; channel/role selected by root listener and live registry, never caller source_kind/sensitivity",
+    "trust": "Native-input requires root-observed selected authenticated user ingress/channel and exact event bytes; arbitrary worker submitted bytes remain UNKNOWN/private rather than proof of user/public origin. Tool/memory/effect results require root-observed registered invocation/result binding, not a worker claim; child joins exact parent/delegation/child peer admission, schedule root timer issuer. Missing actual observer preserves unavailable qualified capability, not permanently omitted original scope.",
+    "context": "All actual parent receipt closure inherited; receipt ancestry is provenance not repeat-effect authorization. Public clearance separate trusted exact-payload user review, no labels."
+  },
+  "artifacts": {
+    "receipt_fields": [
+      "artifact_id",
+      "sha256",
+      "size_bytes",
+      "media_type",
+      "profile_id",
+      "owner_generation",
+      "operation_id",
+      "source_receipt_handle",
+      "expires_monotonic"
+    ],
+    "read": "Opaque owned artifact ID with separate typed bounded root reads; no filesystem path/URL in response and no cross-profile receipt transfer"
+  },
+  "resolver_reader": {
+    "method": "read_native_resolver(binding_handle)",
+    "operation": "native.resolver.read",
+    "request_fields": [
+      "schema=1",
+      "opaque_binding_handle"
+    ],
+    "response_fields": [
+      "schema=1",
+      "package_id",
+      "profile_id",
+      "generation",
+      "resolver_sha256",
+      "adapters"
+    ],
+    "adapters": "Finite list of records with adapter_id,manifest_sha256,adapter_sha256,action_id,argument_schema_id,result_schema_id,effect_enrollment_id,operation,capability,target_id,recipient,generation matching package catalog; extra fields forbidden",
+    "semantics": "Root returns canonical bounded immutable resolver document from selected closure after same actual peer/package/generation validation; maximum2MiB and <=692 selected declarations. No request path, FD, module import or caller mount choice. Root selected loader reads only enrolled read-only namespace closure internally. Facade resolver is presentation/routing only: root re-resolves current effect enrollment and all identity/authority/schema/source conditions EVERY effect, never trusts returned record as permission."
+  },
+  "operation_recipes": {
+    "enrollment_field": "operation_recipes",
+    "key": "fixed root-reviewed operation_id; unique exact per selected profile/generation",
+    "record_fields": [
+      "executable_artifact_id",
+      "executable_sha256",
+      "argv_recipe",
+      "cwd_root_id",
+      "cwd_subpath",
+      "environment",
+      "child_artifact_refs",
+      "max_lifetime_seconds",
+      "max_output_bytes",
+      "stdin_mode",
+      "parameter_schema_id"
+    ],
+    "worker_request_fields": [
+      "enrollment_id",
+      "generation",
+      "operation_id",
+      "parameters"
+    ],
+    "constraints": "Root resolves executable/cwd/child artifacts from protected catalog and opaque roots, verifies actual pins. argv_recipe finite literals and typed parameter placeholders only; no caller shell/argv/path/env/URL/executable/substitution. cwd_subpath protected enrollment literal validated containment/no symlinks. environment root finite sanitized literals/ref bindings, never caller env or secret argv. stdin_mode closed|bounded-typed-bytes per schema, max lifetime<=600s unless separately reviewed existing operation cap. Parameters exact schema extra fields forbidden, argument output bounds required. Operation recipe selection not independent authorization: fixed process.start effect target and exact operation_id/parameters digest in grant. Missing recipe/pin/build dependencies unavailable."
+  }
+}

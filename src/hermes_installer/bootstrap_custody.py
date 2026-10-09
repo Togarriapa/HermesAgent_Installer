@@ -85,36 +85,51 @@ class BootstrapCustody:
         return self.client
 
     def fetch_artifact(self, *, artifact_id: str, sha256: str,
-                       max_bytes: int, timeout: float = 30.0) -> tuple[bytes, str]:
+                       max_bytes: int, timeout: float = 30.0) -> tuple[str, str]:
         client = self._required_client()
         target = f"artifact:{artifact_id}:{sha256}"
         payload = {"schema": 1, "artifact_id": artifact_id, "sha256": sha256,
                    "max_bytes": max_bytes}
         digest = hashlib.sha256(_canonical_bytes(payload)).hexdigest()
         context = client.context(purpose="hermes-bootstrap",
-                                 intent=f"Fetch pinned artifact {artifact_id}")
-        grant = client.authorize_effect(context, capability="hermes-bootstrap",
+                                 intent=f"Fetch pinned artifact {artifact_id}",
+                                 operation="artifact.fetch", final_payload_digest=digest)
+        grant = client.authorize_effect(context, capability="installer-bootstrap",
             target=target, recipient=None, request_digest=digest)
         response = client.fetch_artifact(grant, target=target, artifact_id=artifact_id,
             sha256=sha256, max_bytes=max_bytes, timeout=timeout)
         self._record_receipt("artifact.fetch", target, response)
-        if response.status != 200 or len(response.body) > max_bytes:
-            raise BootstrapCustodyError("Pinned host artifact fetch was denied or exceeded its size bound")
-        if hashlib.sha256(response.body).hexdigest() != sha256:
-            raise BootstrapCustodyError("Host artifact bytes do not match the enrolled digest")
-        return response.body, str(getattr(response, "receipt_id", ""))
+        if response.status != 200:
+            raise BootstrapCustodyError("Pinned host artifact fetch was denied")
+        try:
+            receipt = json.loads(response.body.decode("utf-8"))
+        except (AttributeError, UnicodeError, ValueError):
+            raise BootstrapCustodyError("Host artifact fetch receipt was malformed") from None
+        if (not isinstance(receipt, dict) or receipt.get("artifact_id") != artifact_id
+                or receipt.get("sha256") != sha256
+                or type(receipt.get("size_bytes")) is not int
+                or not 0 <= receipt["size_bytes"] <= max_bytes
+                or not isinstance(receipt.get("version"), str)
+                or receipt.get("store_id") != f"artifact:{artifact_id}:{sha256}"):
+            raise BootstrapCustodyError("Host artifact receipt does not match the requested immutable artifact")
+        return receipt["store_id"], str(getattr(response, "receipt_id", ""))
 
     def _control(self, *, profile_id: str, data_root: Path, operation: str,
                  payload: Mapping[str, Any], timeout: float = 5.0) -> dict[str, Any]:
         client = self._required_client()
         body = _canonical_bytes(payload)
-        target = f"hermes-profile-control:{profile_id}:{data_root.resolve(strict=True)}"
+        digest = hashlib.sha256(body).hexdigest()
+        verb = operation.removeprefix("process.")
+        if verb not in {"status", "read", "write", "stop"}:
+            raise BootstrapCustodyError("Host process control verb is not fixed")
+        target = f"hermes-profile-control:{profile_id}:{data_root.resolve(strict=True)}:{verb}"
         context = client.context(purpose="hermes-bootstrap",
-            intent=f"Control owned Hermes bootstrap process: {operation}")
+            intent=f"Control owned Hermes bootstrap process: {operation}",
+            operation=operation, final_payload_digest=digest)
         if context.profile_id != profile_id:
             raise BootstrapCustodyError("Host authority profile does not match the requested process")
-        grant = client.authorize_effect(context, capability="hermes-bootstrap", target=target,
-            recipient=None, request_digest=hashlib.sha256(body).hexdigest())
+        grant = client.authorize_effect(context, capability="hermes-process-control", target=target,
+            recipient=None, request_digest=digest)
         response = client.process_control(grant, operation=operation, target=target,
                                           payload=body, timeout=timeout)
         self._record_receipt(operation, target, response)
@@ -126,7 +141,7 @@ class BootstrapCustody:
                     timeout: float, output_limit: int = 4 * 1024 * 1024,
                     stdout_return_limit: int = 64 * 1024,
                     diagnostic_limit: int = 96 * 1024,
-                    child_artifact_hashes: Mapping[str, str] | None = None) -> ManagedCommandResult:
+                    child_artifact_refs: Mapping[str, str] | None = None) -> ManagedCommandResult:
         if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
                 or not math.isfinite(timeout) or not 0 < timeout <= 600
                 or type(output_limit) is not int or not 1 <= output_limit <= 4 * 1024 * 1024
@@ -138,12 +153,8 @@ class BootstrapCustody:
             from .authority import canonical_digest, canonical_profile_target, profile_launch_envelope
         except ImportError:
             raise BootstrapCustodyError("Host process launch contract is not installed") from None
-        context = client.context(purpose="hermes-bootstrap",
-            intent="Run one pinned Hermes bootstrap stage under host custody")
-        bound_profile = context.profile_id
-        if profile_id is not None and profile_id != bound_profile:
-            raise BootstrapCustodyError("Host authority profile does not match the requested launch")
-        profile_id = bound_profile
+        if profile_id is None:
+            raise BootstrapCustodyError("A protected host profile selection is required for process launch")
         executable = executable.resolve(strict=True)
         data_root = data_root.resolve(strict=True)
         artifact_root = artifact_root.resolve(strict=True)
@@ -155,12 +166,18 @@ class BootstrapCustody:
             argv=argv, env_allowlist=env_allowlist,
             max_lifetime_seconds=max(1, min(int(timeout), 600)),
             max_output_bytes=output_limit, stdin_mode="closed")
-        if child_artifact_hashes:
-            if "child_artifact_hashes" not in inspect.signature(profile_launch_envelope).parameters:
-                raise BootstrapCustodyError("Host launch contract cannot pin the installer script bytes")
-            launch_args["child_artifact_hashes"] = dict(child_artifact_hashes)
+        if child_artifact_refs:
+            if "child_artifact_refs" not in inspect.signature(profile_launch_envelope).parameters:
+                raise BootstrapCustodyError("Host launch contract cannot pin opaque installer artifact references")
+            launch_args["child_artifact_refs"] = dict(child_artifact_refs)
         launch = profile_launch_envelope(**launch_args)
-        grant = client.authorize_effect(context, capability="hermes-bootstrap",
+        launch_digest = canonical_digest(launch)
+        context = client.context(purpose="hermes-bootstrap",
+            intent="Run one pinned Hermes bootstrap stage under host custody",
+            operation="process.start", final_payload_digest=launch_digest)
+        if context.profile_id != profile_id:
+            raise BootstrapCustodyError("Host authority profile does not match the requested launch")
+        grant = client.authorize_effect(context, capability="hermes-profile-invoke",
             target=launch_target, recipient=None, request_digest=canonical_digest(launch))
         start_response = client.process_start(grant, target=launch_target,
             launch=launch, timeout=min(5.0, timeout))

@@ -27,6 +27,7 @@ DISABLED_PUBLIC_PLUGINS = [
     {"id": ident, "enabled": False}
     for ident in ("web", "file-parser", "response-healing", "pareto-router", "context-compression")
 ]
+PUBLIC_PROVIDER_OUTPUT_TOKEN_CEILING = 4096
 
 
 class PolicyDenied(RuntimeError):
@@ -485,7 +486,8 @@ class Dispatcher:
 
     def dispatch(self, context: object, model: str, payload: bytes, *, input_tokens: int,
                  output_token_limit: int, tool_request: bool = False,
-                 cancelled: Callable[[], bool] | None = None) -> ProviderResponse:
+                 cancelled: Callable[[], bool] | None = None,
+                 context_refresh: Callable[..., object] | None = None) -> ProviderResponse:
         if not isinstance(payload, bytes) or len(payload) > 4 * 1024 * 1024:
             raise PolicyDenied("request.bounds", "Serialized request must be bytes and at most 4 MiB")
         if not isinstance(input_tokens, int) or not isinstance(output_token_limit, int) or not 0 <= input_tokens <= 1_000_000 or not 0 <= output_token_limit <= 65_536:
@@ -498,7 +500,7 @@ class Dispatcher:
         if host_bound:
             required = ("principal_id", "profile_id", "namespace_id", "uid", "purpose", "intent_id",
                         "trace_id", "lineage_hash", "policy_revision", "issued_at_monotonic",
-                        "monotonic_expires_at", "sensitivity", "capabilities", "nonce", "signature")
+                        "monotonic_expires_at", "sensitivity", "capabilities", "nonce", "grant_id", "signature")
             if any(not getattr(context, name, None) for name in required):
                 raise PolicyDenied("authorization.context_unavailable", "Signed host provider context is incomplete")
             issued = getattr(context, "issued_at_monotonic")
@@ -582,12 +584,59 @@ class Dispatcher:
                 # the exact canonical bytes that the transport will send.
                 normalized_payload = normalize_chat_request(payload, model, output_token_limit)
                 input_bound = max(input_tokens, len(normalized_payload))
+                normalized_digest = __import__("hashlib").sha256(normalized_payload).hexdigest()
+                if host_bound and getattr(context, "final_payload_digest", None) != normalized_digest:
+                    raise PolicyDenied(
+                        "authorization.payload_mismatch",
+                        "Signed host context is not bound to the normalized provider payload",
+                    )
                 estimate = (input_bound * route.input_usd_per_million + output_token_limit * route.output_usd_per_million) / 1_000_000
                 if estimate > 0 and self.policy.metered_budget_usd <= 0:
                     continue
                 for attempt in range(self.policy.max_attempts):
                     if request_cancelled():
                         raise PolicyDenied("dispatch.cancelled", "Request was cancelled before attempt")
+                    if host_bound and effect_retry_index > 0:
+                        if context_refresh is None:
+                            raise PolicyDenied(
+                                "authorization.context_refresh_unavailable",
+                                "A fresh source-bound host context is required for every provider retry",
+                            )
+                        previous_context = context
+                        try:
+                            context = context_refresh(
+                                previous_context,
+                                final_payload_digest=normalized_digest,
+                                operation="provider.dispatch",
+                                retry_index=effect_retry_index,
+                                cancelled=request_cancelled,
+                            )
+                        except Exception:
+                            raise PolicyDenied(
+                                "authorization.context_refresh_failed",
+                                "Host could not refresh provider context for retry",
+                            ) from None
+                        stable_fields = (
+                            "principal_id", "profile_id", "namespace_id", "uid", "purpose",
+                            "trace_id", "lineage_hash", "policy_revision", "sensitivity",
+                            "source_receipts", "final_payload_digest", "capabilities",
+                        )
+                        if (any(getattr(context, name, None) != getattr(previous_context, name, None)
+                                for name in stable_fields)
+                                or getattr(context, "final_payload_digest", None) != normalized_digest
+                                or getattr(context, "monotonic_expires_at", 0) <= self._now()
+                                or getattr(context, "nonce", None) == getattr(previous_context, "nonce", None)
+                                or getattr(context, "grant_id", None) == getattr(previous_context, "grant_id", None)
+                                or getattr(context, "signature", None) == getattr(previous_context, "signature", None)
+                                or getattr(context, "issued_at_monotonic", 0) <= getattr(previous_context, "issued_at_monotonic", 0)):
+                            raise PolicyDenied(
+                                "authorization.context_changed",
+                                "Refreshed provider context changed identity, lineage or payload",
+                            )
+                        request_cancelled = cancelled if callable(cancelled) else (
+                            getattr(context, "cancelled", lambda: False)
+                            if callable(getattr(context, "cancelled", None)) else (lambda: False))
+                        deadline = min(deadline, getattr(context, "monotonic_expires_at", deadline))
                     remaining = deadline - self.clock()
                     if remaining <= 0:
                         raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
@@ -611,7 +660,27 @@ class Dispatcher:
                                 request_digest=effect_digest, retry_index=effect_retry_index)
                         except Exception:
                             raise PolicyDenied("authorization.failed", "Host provider effect authorization failed") from None
-                        if verified is not True or getattr(effect_grant, "monotonic_expires_at", 0) <= self._now():
+                        # AuthorityClient returns a typed verification receipt; a
+                        # bare truthy value is never sufficient in production.
+                        verified_grant = getattr(verified, "authorization", None)
+                        verified_operation = getattr(verified, "operation", None)
+                        verified_at = getattr(verified, "verified_at_monotonic", None)
+                        verification_receipt = getattr(verified, "verification_receipt", None)
+                        if (verified_grant != effect_grant
+                                or verified_operation != "provider.dispatch"
+                                or isinstance(verified_at, bool)
+                                or not isinstance(verified_at, (int, float))
+                                or not math.isfinite(verified_at)
+                                or verified_at > self._now()
+                                or verified_at < getattr(effect_grant, "issued_at_monotonic", float("inf"))
+                                or not isinstance(verification_receipt, str)
+                                or not verification_receipt
+                                or getattr(effect_grant, "capability", None) != capability
+                                or getattr(effect_grant, "target", None) != effect_target
+                                or getattr(effect_grant, "recipient", None) != effect_recipient
+                                or getattr(effect_grant, "request_digest", None) != effect_digest
+                                or getattr(effect_grant, "retry_index", None) != effect_retry_index
+                                or getattr(effect_grant, "monotonic_expires_at", 0) <= self._now()):
                             raise PolicyDenied("authorization.denied", "Host broker denied or expired the provider effect")
                         if self._now() >= deadline:
                             raise PolicyDenied("dispatch.deadline", "Request deadline elapsed before provider dispatch")

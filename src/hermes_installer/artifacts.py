@@ -7,9 +7,11 @@ an URL, filesystem path, command or package-manager option.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import errno
 import os
+import posixpath
 import re
 import shutil
 import signal
@@ -31,6 +33,10 @@ from typing import Any, Callable, Mapping
 
 from .authority.types import AuthorityDenied, EffectAuthorization, HostContext, canonical_digest
 
+PACKAGE_SET_MANIFEST_PATH = Path("/etc/hermes-installer/package-sets.json")
+CORAL_PACKAGE_SET_ID = "coral-cp39-runtime-v1"
+CORAL_INSTALLER_ARTIFACT_ID = "hermes-installer-artifact-broker-v1"
+
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 _VERSION = re.compile(r"[A-Za-z0-9+_.-]{1,128}\Z")
 _HOST = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*\Z")
@@ -46,6 +52,8 @@ class TreeFile:
     sha256: str
     size_bytes: int
     executable: bool = False
+    kind: str = "file"
+    link_target: str | None = None
 
     def __post_init__(self) -> None:
         _safe_relative(self.path)
@@ -54,6 +62,21 @@ class TreeFile:
             raise ValueError("tree file size is invalid")
         if type(self.executable) is not bool:
             raise ValueError("tree file executable flag is invalid")
+        if self.kind == "file":
+            if self.link_target is not None:
+                raise ValueError("regular tree files cannot declare a link target")
+        elif self.kind == "symlink":
+            if (self.executable or not isinstance(self.link_target, str)
+                    or not self.link_target or "\\" in self.link_target or "\x00" in self.link_target
+                    or self.link_target.startswith("/")
+                    or posixpath.normpath(posixpath.join(posixpath.dirname(self.path), self.link_target)).startswith("../")
+                    or posixpath.normpath(posixpath.join(posixpath.dirname(self.path), self.link_target)) == ".."):
+                raise ValueError("tree symlink must use a safe in-root relative target")
+            target = self.link_target.encode("utf-8")
+            if self.size_bytes != len(target) or hashlib.sha256(target).hexdigest() != self.sha256:
+                raise ValueError("tree symlink digest and size must bind its exact target")
+        else:
+            raise ValueError("tree entry kind is unsupported")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,10 +123,19 @@ class ArtifactSpec:
         paths = [entry.path for entry in self.tree_files]
         if len(paths) != len(set(paths)):
             raise ValueError("artifact tree has duplicate paths")
-        if self.archive_format not in {None, "zip", "tar.gz"}:
+        if len(paths) > _MAX_FILES:
+            raise ValueError("artifact tree exceeds its file-count bound")
+        symlink_paths = {item.path for item in self.tree_files if item.kind == "symlink"}
+        for item in self.tree_files:
+            parent = PurePosixPath(item.path).parent
+            while parent != PurePosixPath("."):
+                if parent.as_posix() in symlink_paths:
+                    raise ValueError("tree entry cannot be nested beneath an enrolled symlink")
+                parent = parent.parent
+        if self.archive_format not in {None, "zip", "tar.gz", "tar.xz"}:
             raise ValueError("artifact archive format is unsupported")
         if self.archive_root is not None:
-            if (self.archive_format != "tar.gz" or not isinstance(self.archive_root, str)
+            if (self.archive_format not in {"tar.gz", "tar.xz"} or not isinstance(self.archive_root, str)
                     or not self.archive_root.endswith("/")
                     or _safe_relative(self.archive_root[:-1]).as_posix() != self.archive_root[:-1]):
                 raise ValueError("archive root must be a normalized tar directory prefix")
@@ -144,6 +176,115 @@ class PackageSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class PackageWheel:
+    identity: str
+    version: str
+    artifact_id: str
+    artifact_sha256: str
+    artifact_bytes: int
+    license: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.identity, str) or self.identity.count("/") != 1:
+            raise ValueError("package wheel identity must be a canonical upstream project identity")
+        _validate_id(self.identity.split("/")[-1])
+        if not _valid_version(self.version):
+            raise ValueError("package wheel version is invalid")
+        _validate_id(self.artifact_id)
+        _validate_sha(self.artifact_sha256)
+        if type(self.artifact_bytes) is not int or self.artifact_bytes < 1:
+            raise ValueError("package wheel byte length is invalid")
+        if not isinstance(self.license, str) or not 1 <= len(self.license) <= 512 or "\x00" in self.license:
+            raise ValueError("package wheel license metadata is invalid")
+
+    @property
+    def distribution(self) -> str:
+        return _normalize_distribution(self.identity.rsplit("/", 1)[1])
+
+
+@dataclass(frozen=True, slots=True)
+class PackageSetSpec:
+    package_set_id: str
+    enrollment_id: str
+    generation: str
+    runtime_artifact_id: str
+    runtime_build_attestation_digest: str
+    runtime_executable_sha256: str
+    abi: str
+    target_glibc_min: str
+    service_uid: int
+    venv_root_id: str
+    wheel_entries: tuple[PackageWheel, ...]
+    reviewed_installer_artifact_id: str
+    policy_revision: str
+    manifest_sha256: str
+    key_id: str
+    signature: str
+
+    def __post_init__(self) -> None:
+        for value in (self.package_set_id, self.enrollment_id, self.generation,
+                      self.runtime_artifact_id, self.venv_root_id,
+                      self.reviewed_installer_artifact_id):
+            _validate_id(value)
+        for digest in (self.runtime_build_attestation_digest, self.runtime_executable_sha256,
+                       self.manifest_sha256):
+            _validate_sha(digest)
+        if self.abi != "cp39/aarch64" or self.target_glibc_min != "2.34":
+            raise ValueError("Coral package set requires CPython 3.9 ARM64 and glibc 2.34")
+        if type(self.service_uid) is not int or self.service_uid <= 0:
+            raise ValueError("package-set service UID is invalid")
+        if not isinstance(self.wheel_entries, tuple) or len(self.wheel_entries) != 2 or any(
+                not isinstance(item, PackageWheel) for item in self.wheel_entries):
+            raise ValueError("Coral package set must contain its exact two reviewed wheels")
+        expected = {
+            "tensorflow/tflite-runtime": ("2.14.0", "coral-tflite-runtime-cp39-arm64",
+                "be198b7dc4401204be54a15884d9e336389790eb707439524540f5a9329fdd02", 2_325_666),
+            "numpy/numpy": ("1.26.4", "coral-numpy-cp39-arm64",
+                "d5241e0a80d808d70546c697135da2c613f30e28251ff8307eb72ba696945764", 14_226_281),
+        }
+        actual = {item.identity: (item.version, item.artifact_id, item.artifact_sha256, item.artifact_bytes)
+                  for item in self.wheel_entries}
+        if actual != expected:
+            raise ValueError("Coral package set differs from its exact protected upstream wheel pins")
+        if self.runtime_artifact_id != "coral-python39-source":
+            raise ValueError("Coral package set must bind the protected CPython 3.9.25 source pin")
+        if not isinstance(self.policy_revision, str) or not self.policy_revision or len(self.policy_revision) > 256:
+            raise ValueError("package-set policy revision is invalid")
+        if not isinstance(self.key_id, str) or not self.key_id or len(self.key_id) > 128:
+            raise ValueError("package-set signing key identity is invalid")
+        _validate_sha(self.signature)
+
+
+@dataclass(frozen=True, slots=True)
+class PackageSetRuntimeBinding:
+    enrollment_id: str
+    generation: str
+    runtime_artifact_id: str
+    runtime_build_attestation_digest: str
+    runtime_executable_sha256: str
+    abi: str
+    glibc_version: str
+    service_uid: int
+    service_gid: int
+    venv_root_id: str
+    policy_revision: str
+    runtime_executable: Path
+    venv_root: Path
+
+    def __post_init__(self) -> None:
+        _validate_id(self.enrollment_id)
+        _validate_id(self.generation)
+        _validate_id(self.runtime_artifact_id)
+        _validate_sha(self.runtime_build_attestation_digest)
+        _validate_sha(self.runtime_executable_sha256)
+        _validate_id(self.venv_root_id)
+        if type(self.service_uid) is not int or self.service_uid <= 0 or type(self.service_gid) is not int or self.service_gid < 0:
+            raise ValueError("runtime service identity is invalid")
+        if not Path(self.runtime_executable).is_absolute() or not Path(self.venv_root).is_absolute():
+            raise ValueError("runtime binding paths must be absolute root-resolved paths")
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedArtifact:
     artifact_id: str
     version: str
@@ -154,6 +295,15 @@ class ResolvedArtifact:
     archive_format: str | None = None
     archive_root: str | None = None
     max_tree_bytes: int = 0
+
+    @property
+    def tree_manifest_sha256(self) -> str:
+        """Hash the exact sorted content-tree contract for copy verification."""
+        rows = [{"path": row.path, "sha256": row.sha256,
+                 "size_bytes": row.size_bytes, "executable": row.executable}
+                for row in sorted(self.tree_files, key=lambda item: item.path)]
+        body = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(body).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,10 +395,10 @@ class ArtifactCatalog:
 def load_protected_catalog(path: Path | str, *, expected_uid: int = 0) -> ArtifactCatalog:
     """Load a strict catalog from a root-owned, non-writable JSON file."""
     file_path = Path(path)
-    _secure_file(file_path, expected_uid, max_bytes=4 * 1024 * 1024)
+    _secure_file(file_path, expected_uid, max_bytes=16 * 1024 * 1024)
     try:
         raw = file_path.read_bytes()
-        if len(raw) > 4 * 1024 * 1024:
+        if len(raw) > 16 * 1024 * 1024:
             raise ValueError
         doc = json.loads(raw, object_pairs_hook=_unique_object)
         if (not isinstance(doc, dict) or set(doc) != {"schema", "artifacts", "packages"}
@@ -261,8 +411,428 @@ def load_protected_catalog(path: Path | str, *, expected_uid: int = 0) -> Artifa
         raise AuthorityDenied("artifact.catalog", "protected artifact catalog is malformed") from None
 
 
+def package_set_manifest_digest(record: Mapping[str, Any]) -> str:
+    """Hash a package-set manifest's canonical unsigned identity fields."""
+    claims = {key: value for key, value in record.items()
+              if key not in {"manifest_sha256", "key_id", "signature"}}
+    body = json.dumps(claims, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    return hashlib.sha256(body).hexdigest()
+
+
+def sign_package_set_manifest(record: Mapping[str, Any], *, signing_key: bytes,
+                              key_id: str) -> dict[str, Any]:
+    """Create the exact authority HMAC envelope for root enrollment tooling."""
+    if len(signing_key) < 32 or not isinstance(key_id, str) or not key_id:
+        raise ValueError("protected package-set signing key is invalid")
+    body = dict(record)
+    body.pop("manifest_sha256", None)
+    body.pop("signature", None)
+    body.pop("key_id", None)
+    digest = package_set_manifest_digest(body)
+    claims = {**body, "manifest_sha256": digest}
+    envelope = {"key_id": key_id, **claims}
+    encoded = json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    return {**claims, "key_id": key_id,
+            "signature": hmac.new(signing_key, encoded, hashlib.sha256).hexdigest()}
+
+
+def load_protected_package_sets(path: Path | str = PACKAGE_SET_MANIFEST_PATH, *,
+                                catalog: ArtifactCatalog, signing_key: bytes,
+                                key_id: str, expected_uid: int = 0) -> Mapping[str, PackageSetSpec]:
+    """Load signed, root-protected package-set manifests and bind every wheel to the artifact catalog."""
+    package_path = Path(path)
+    _secure_file(package_path, expected_uid, max_bytes=1024 * 1024)
+    try:
+        doc = json.loads(package_path.read_bytes(), object_pairs_hook=_unique_object)
+        if (not isinstance(doc, dict) or set(doc) != {"schema", "package_sets"}
+                or type(doc["schema"]) is not int or doc["schema"] != 1
+                or not isinstance(doc["package_sets"], list) or len(doc["package_sets"]) > 32):
+            raise ValueError
+        result: dict[str, PackageSetSpec] = {}
+        for raw in doc["package_sets"]:
+            spec = _package_set_from_record(raw, signing_key=signing_key, key_id=key_id)
+            if spec.package_set_id in result:
+                raise ValueError
+            source = catalog.artifacts.get(spec.runtime_artifact_id)
+            if (source is None or source.sha256 !=
+                    "00e07d7c0f2f0cc002432d1ee84d2a40dae404a99303e3f97701c10966c91834"):
+                raise ValueError
+            for wheel in spec.wheel_entries:
+                artifact = catalog.artifacts.get(wheel.artifact_id)
+                if (artifact is None or artifact.sha256 != wheel.artifact_sha256
+                        or artifact.size_bytes != wheel.artifact_bytes or artifact.archive_format is not None
+                        or artifact.filename != _expected_wheel_filename(wheel)):
+                    raise ValueError
+            result[spec.package_set_id] = spec
+        return MappingProxyType(result)
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        raise AuthorityDenied("package-set.catalog", "protected package-set manifest is invalid") from None
+
+
+def _package_set_from_record(raw: Any, *, signing_key: bytes, key_id: str) -> PackageSetSpec:
+    required = {"schema", "package_set_id", "enrollment_id", "generation", "runtime_artifact_id",
+                "runtime_build_attestation_digest", "runtime_executable_sha256", "abi", "target_glibc_min",
+                "service_uid", "venv_root_id", "wheel_entries", "reviewed_installer_artifact_id",
+                "policy_revision", "manifest_sha256", "key_id", "signature"}
+    if (not isinstance(raw, dict) or set(raw) != required or type(raw["schema"]) is not int
+            or raw["schema"] != 1 or raw["key_id"] != key_id):
+        raise ValueError
+    if not isinstance(raw["wheel_entries"], list) or len(raw["wheel_entries"]) != 2:
+        raise ValueError
+    wheel_rows = []
+    for row in raw["wheel_entries"]:
+        if not isinstance(row, dict) or set(row) != {
+                "identity", "version", "artifact_id", "artifact_sha256", "artifact_bytes", "license"}:
+            raise ValueError
+        wheel_rows.append(PackageWheel(**row))
+    claims = {key: value for key, value in raw.items()
+              if key not in {"manifest_sha256", "key_id", "signature"}}
+    digest = hashlib.sha256(json.dumps(
+        claims, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+    if digest != raw["manifest_sha256"]:
+        raise ValueError
+    signed = {"key_id": key_id, **claims, "manifest_sha256": digest}
+    expected_signature = hmac.new(
+        signing_key, json.dumps(signed, sort_keys=True, separators=(",", ":"),
+                                ensure_ascii=True).encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_signature, raw["signature"]):
+        raise ValueError
+    values = dict(claims)
+    values.pop("schema")
+    values.update(manifest_sha256=digest, key_id=key_id, signature=raw["signature"],
+                  wheel_entries=tuple(wheel_rows))
+    spec = PackageSetSpec(**values)
+    if spec.reviewed_installer_artifact_id != CORAL_INSTALLER_ARTIFACT_ID:
+        raise ValueError
+    return spec
+
+
+def _expected_wheel_filename(wheel: PackageWheel) -> str:
+    if wheel.identity == "tensorflow/tflite-runtime":
+        return "tflite_runtime-2.14.0-cp39-cp39-manylinux_2_34_aarch64.whl"
+    if wheel.identity == "numpy/numpy":
+        return "numpy-1.26.4-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+    raise ValueError("package wheel is not a member of the fixed Coral set")
+
+
+def build_package_set_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
+                               package_sets: Mapping[str, PackageSetSpec], *,
+                               runtime_resolver: Callable[[PackageSetSpec], PackageSetRuntimeBinding],
+                               expected_uid: int = 0, authorization_check: Callable[..., Any] | None = None
+                               ) -> Mapping[tuple[str, str], Callable[..., Mapping[str, Any]]]:
+    """Build root-only fixed handlers for signed offline package sets."""
+    root = _secure_directory(Path(staging_root), expected_uid)
+    if not hasattr(os, "geteuid") or os.geteuid() != expected_uid:
+        raise AuthorityDenied("package-set.identity", "package-set handler must run as its enrolled authority identity")
+    handlers: dict[tuple[str, str], Callable[..., Mapping[str, Any]]] = {}
+    for package_set_id, spec in package_sets.items():
+        if package_set_id != spec.package_set_id:
+            raise ValueError("package-set mapping key differs from its protected ID")
+        target = f"package-set:{spec.package_set_id}:{spec.manifest_sha256}"
+
+        def install_handler(*, context: HostContext, authorization: EffectAuthorization,
+                            payload: bytes, timeout: float, peer_pid: int,
+                            cancelled: Callable[[], bool], peer_pidfd: int | None = None,
+                            _spec: PackageSetSpec = spec) -> Mapping[str, Any]:
+            del peer_pid, peer_pidfd
+            expected = {"schema": 1, "package_set_id": _spec.package_set_id,
+                        "enrollment_id": _spec.enrollment_id, "generation": _spec.generation}
+            effect_target = f"package-set:{_spec.package_set_id}:{_spec.manifest_sha256}"
+            _check_grant_payload(authorization, payload, expected, effect_target)
+            _revalidate_effect(context, authorization, "package.install", authorization_check, cancelled)
+            runtime = runtime_resolver(_spec)
+            _validate_package_set_runtime(_spec, runtime, expected_uid)
+            wheels = tuple(catalog.resolve(item.artifact_id, item.artifact_sha256,
+                                            root, expected_uid=expected_uid)
+                           for item in _spec.wheel_entries)
+            _validate_coral_wheels(_spec, wheels)
+            _revalidate_effect(context, authorization, "package.install", authorization_check, cancelled)
+            deadline = min(float(timeout), 600.0,
+                           authorization.monotonic_expires_at - time.monotonic(),
+                           context.monotonic_expires_at - time.monotonic())
+            if deadline <= 0:
+                raise AuthorityDenied("grant.stale", "package-set effect lease expired before install")
+            effect_deadline = min(authorization.monotonic_expires_at,
+                                  context.monotonic_expires_at,
+                                  time.monotonic() + deadline)
+            destination, tree_digest = _install_coral_package_set(
+                _spec, runtime, wheels, expected_uid, deadline, effect_deadline, cancelled,
+                before_process=lambda: _revalidate_effect(
+                    context, authorization, "package.install", authorization_check, cancelled),
+                before_activation=lambda: _revalidate_effect(
+                    context, authorization, "package.install", authorization_check, cancelled))
+            response = dict(_json_response({"package_set_id": _spec.package_set_id,
+                                            "manifest_sha256": _spec.manifest_sha256,
+                                            "enrollment_id": _spec.enrollment_id,
+                                            "generation": _spec.generation,
+                                            "runtime_build_attestation_digest": _spec.runtime_build_attestation_digest,
+                                            "wheel_sha256": [wheel.artifact_sha256 for wheel in _spec.wheel_entries],
+                                            "installed_tree_sha256": tree_digest,
+                                            "status": "installed"}))
+            response["receipt_id"] = f"package-set:{_spec.package_set_id}:{_spec.manifest_sha256}"
+            return response
+
+        handlers[("package.install", target)] = install_handler
+    return MappingProxyType(handlers)
+
+
+def _validate_package_set_runtime(spec: PackageSetSpec, runtime: PackageSetRuntimeBinding,
+                                  expected_uid: int) -> None:
+    if not isinstance(runtime, PackageSetRuntimeBinding):
+        raise AuthorityDenied("package-set.runtime", "root runtime resolver returned an invalid enrollment")
+    if (runtime.enrollment_id != spec.enrollment_id or runtime.generation != spec.generation
+            or runtime.runtime_artifact_id != spec.runtime_artifact_id
+            or runtime.runtime_build_attestation_digest != spec.runtime_build_attestation_digest
+            or runtime.runtime_executable_sha256 != spec.runtime_executable_sha256
+            or runtime.abi != spec.abi or runtime.service_uid != spec.service_uid
+            or runtime.venv_root_id != spec.venv_root_id
+            or runtime.policy_revision != spec.policy_revision):
+        raise AuthorityDenied("package-set.runtime", "runtime attestation does not match protected package-set enrollment")
+    if _version_tuple(runtime.glibc_version) < _version_tuple(spec.target_glibc_min):
+        raise AuthorityDenied("package-set.glibc", "runtime glibc is below the reviewed wheel minimum")
+    # The builder publishes an immutable root-owned runtime executable; the
+    # package installer drops to service UID before the enrolled runtime runs.
+    python = _secure_executable(Path(runtime.runtime_executable), 0)
+    if _hash_file(python, 256 * 1024 * 1024)[0] != spec.runtime_executable_sha256:
+        raise AuthorityDenied("package-set.runtime", "runtime executable differs from its protected attestation")
+    _secure_directory(Path(runtime.venv_root), runtime.service_uid)
+    if expected_uid != 0:
+        raise AuthorityDenied("package-set.identity", "package-set effects require root authority")
+
+
+def _validate_coral_wheels(spec: PackageSetSpec,
+                           artifacts: tuple[ResolvedArtifact, ...]) -> None:
+    if len(artifacts) != 2 or len(spec.wheel_entries) != 2:
+        raise AuthorityDenied("package-set.wheels", "Coral package set must resolve exactly two pinned wheels")
+    by_id = {item.artifact_id: item for item in artifacts}
+    for wheel in spec.wheel_entries:
+        artifact = by_id.get(wheel.artifact_id)
+        if (artifact is None or artifact.sha256 != wheel.artifact_sha256
+                or artifact.size_bytes != wheel.artifact_bytes
+                or artifact.path.name != _expected_wheel_filename(wheel)):
+            raise AuthorityDenied("package-set.wheels", "wheel artifact differs from its protected package-set pin")
+        _validate_wheel_metadata(artifact.path, wheel)
+
+
+def _validate_wheel_metadata(path: Path, wheel: PackageWheel) -> None:
+    from email.parser import BytesParser
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = archive.infolist()
+            if not members or len(members) > 50_000:
+                raise ValueError
+            names: set[str] = set()
+            total = 0
+            metadata: bytes | None = None
+            wheel_metadata: bytes | None = None
+            for item in members:
+                name = item.filename.rstrip("/")
+                if item.is_dir():
+                    if name:
+                        _safe_relative(name)
+                    continue
+                pure = _safe_relative(name)
+                if name in names:
+                    raise ValueError
+                names.add(name)
+                mode = item.external_attr >> 16
+                if stat.S_IFMT(mode) not in {0, stat.S_IFREG}:
+                    raise ValueError
+                total += item.file_size
+                if item.file_size < 0 or total > 1024 * 1024 * 1024:
+                    raise ValueError
+                if name.endswith(".dist-info/METADATA"):
+                    if item.file_size > 64 * 1024:
+                        raise ValueError
+                    metadata = archive.read(item)
+                elif name.endswith(".dist-info/WHEEL"):
+                    if item.file_size > 16 * 1024:
+                        raise ValueError
+                    wheel_metadata = archive.read(item)
+            if metadata is None or wheel_metadata is None:
+                raise ValueError
+        parsed = BytesParser().parsebytes(metadata)
+        if (_normalize_distribution(parsed.get("Name", "")) != wheel.distribution
+                or parsed.get("Version") != wheel.version):
+            raise ValueError
+        text = wheel_metadata.decode("utf-8")
+        required_tag = ("cp39-cp39-manylinux_2_34_aarch64"
+                        if wheel.identity == "tensorflow/tflite-runtime"
+                        else "cp39-cp39-manylinux_2_17_aarch64")
+        if f"Tag: {required_tag}" not in text:
+            raise ValueError
+    except (OSError, ValueError, UnicodeError, zipfile.BadZipFile, RuntimeError):
+        raise AuthorityDenied("package-set.wheel-metadata", "pinned wheel metadata or archive structure is invalid") from None
+
+
+def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
+                               wheels: tuple[ResolvedArtifact, ...], expected_uid: int,
+                               timeout: float, effect_deadline: float,
+                               cancelled: Callable[[], bool], *,
+                               before_process: Callable[[], None],
+                               before_activation: Callable[[], None]) -> tuple[Path, str]:
+    owner = runtime.service_uid
+    base = _secure_directory(Path(runtime.venv_root), owner)
+    destination_parent = _mkdir_chain(base / spec.package_set_id, owner)
+    destination = destination_parent / spec.manifest_sha256
+    if destination.exists() or destination.is_symlink():
+        digest = _verify_installed_package_set(destination, spec, runtime)
+        before_activation()
+        return destination, digest
+    work = Path(tempfile.mkdtemp(prefix=".package-set-", dir=destination_parent))
+    os.chown(work, owner, runtime.service_gid)
+    os.chmod(work, 0o700)
+    try:
+        wheelhouse = work / "wheelhouse"
+        wheelhouse.mkdir(mode=0o700)
+        os.chown(wheelhouse, owner, runtime.service_gid)
+        resolved = {item.artifact_id: item for item in wheels}
+        requirements: list[str] = []
+        for wheel in sorted(spec.wheel_entries, key=lambda item: item.distribution):
+            if cancelled():
+                raise AuthorityDenied("package.cancelled", "package-set install cancelled while staging wheels")
+            artifact = resolved.get(wheel.artifact_id)
+            if artifact is None:
+                raise AuthorityDenied("package-set.wheels", "protected wheel artifact is missing")
+            _copy_verified_wheel(artifact, wheel, wheelhouse / _expected_wheel_filename(wheel),
+                                 owner, runtime.service_gid, cancelled)
+            requirements.append(f"{wheel.distribution}=={wheel.version} --hash=sha256:{wheel.artifact_sha256}")
+        manifest = work / "requirements.txt"
+        manifest.write_text("\n".join(requirements) + "\n", encoding="ascii")
+        os.chown(manifest, owner, runtime.service_gid)
+        os.chmod(manifest, 0o444)
+        temporary_env = work / "venv"
+        python = _secure_executable(Path(runtime.runtime_executable), 0)
+        safe_env = {"PATH": "/usr/bin:/bin", "HOME": str(work), "PIP_CONFIG_FILE": os.devnull,
+                    "PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+                    "PYTHONNOUSERSITE": "1", "PYTHONUTF8": "1"}
+        _run_fixed([str(python), "-m", "venv", "--copies", str(temporary_env)],
+                   cwd=work, timeout=timeout, cancelled=cancelled, expected_uid=expected_uid,
+                   env=safe_env, before_exec=before_process,
+                   run_as_uid=owner, run_as_gid=runtime.service_gid, deadline=effect_deadline,
+                   network_isolated=True)
+        env_python = temporary_env / "bin" / "python"
+        _secure_executable(env_python, owner)
+        _run_fixed([str(env_python.resolve(strict=True)), "-I", "-m", "pip", "install",
+                    "--no-index", "--find-links", str(wheelhouse), "--require-hashes",
+                    "--no-deps", "--only-binary=:all:", "--no-input", "--no-cache-dir",
+                    "--disable-pip-version-check", "-r", str(manifest)],
+                   cwd=work, timeout=timeout, cancelled=cancelled, expected_uid=expected_uid,
+                   env=safe_env, before_exec=before_process,
+                   run_as_uid=owner, run_as_gid=runtime.service_gid, deadline=effect_deadline,
+                   network_isolated=True)
+        validation = (
+            "import importlib.metadata as m; import numpy; import tflite_runtime.interpreter; "
+            "assert m.version('numpy') == '1.26.4'; "
+            "assert m.version('tflite-runtime') == '2.14.0'"
+        )
+        _run_fixed([str(env_python.resolve(strict=True)), "-I", "-c", validation],
+                   cwd=work, timeout=min(timeout, 30), cancelled=cancelled, expected_uid=expected_uid,
+                   env=safe_env, before_exec=before_process,
+                   run_as_uid=owner, run_as_gid=runtime.service_gid, deadline=effect_deadline,
+                   network_isolated=True)
+        tree_digest = _package_tree_digest(temporary_env)
+        marker = temporary_env / ".hermes-package-set.json"
+        marker.write_text(json.dumps({
+            "package_set_id": spec.package_set_id, "manifest_sha256": spec.manifest_sha256,
+            "runtime_build_attestation_digest": spec.runtime_build_attestation_digest,
+            "runtime_executable_sha256": spec.runtime_executable_sha256,
+            "wheel_sha256": [item.artifact_sha256 for item in spec.wheel_entries],
+            "installed_tree_sha256": tree_digest,
+        }, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
+        os.chown(marker, owner, runtime.service_gid)
+        os.chmod(marker, 0o444)
+        _freeze_tree(temporary_env, owner)
+        if cancelled():
+            raise AuthorityDenied("package.cancelled", "package-set install cancelled before activation")
+        before_activation()
+        os.rename(temporary_env, destination)
+        _fsync_dir(destination_parent)
+        installed_digest = _verify_installed_package_set(destination, spec, runtime)
+        return destination, installed_digest
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            raise AuthorityDenied("package.storage", "isolated package-set staging ran out of space; retry after freeing owned storage") from None
+        raise AuthorityDenied("package.storage", "isolated package-set staging failed safely") from None
+    finally:
+        _remove_private_tree(work)
+
+
+def _copy_verified_wheel(artifact: ResolvedArtifact, wheel: PackageWheel, destination: Path,
+                         owner: int, group: int, cancelled: Callable[[], bool]) -> None:
+    source_fd = os.open(artifact.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    target_fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                        getattr(os, "O_NOFOLLOW", 0), 0o600)
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with os.fdopen(source_fd, "rb") as src, os.fdopen(target_fd, "wb") as out:
+            while True:
+                if cancelled():
+                    raise AuthorityDenied("package.cancelled", "package-set install cancelled while copying wheels")
+                block = src.read(_CHUNK)
+                if not block:
+                    break
+                size += len(block)
+                if size > wheel.artifact_bytes:
+                    raise AuthorityDenied("package.wheel-size", "pinned wheel exceeded its enrolled byte length")
+                digest.update(block)
+                out.write(block)
+            out.flush()
+            os.fsync(out.fileno())
+        if size != wheel.artifact_bytes or digest.hexdigest() != wheel.artifact_sha256:
+            raise AuthorityDenied("package.wheel-digest", "staged wheel failed its catalog digest check")
+        os.chown(destination, owner, group)
+        os.chmod(destination, 0o444)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+
+
+def _package_tree_digest(root: Path) -> str:
+    observed = _observed_tree(root, 4 * 1024**3)
+    rows = [{"path": path, "sha256": values[0], "size_bytes": values[1],
+             "kind": values[2], "link_target": values[3], "executable": values[4]}
+            for path, values in sorted(observed.items()) if path != ".hermes-package-set.json"]
+    return hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _verify_installed_package_set(destination: Path, spec: Any,
+                                  runtime: PackageSetRuntimeBinding) -> str:
+    _secure_directory(destination, runtime.service_uid)
+    marker = destination / ".hermes-package-set.json"
+    try:
+        info = marker.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != runtime.service_uid
+                or info.st_mode & 0o222 or info.st_size > 4096):
+            raise ValueError
+        receipt = json.loads(marker.read_text("utf-8"))
+        digest = _package_tree_digest(destination)
+        expected = {"package_set_id": spec.package_set_id, "manifest_sha256": spec.manifest_sha256,
+                    "runtime_build_attestation_digest": spec.runtime_build_attestation_digest,
+                    "runtime_executable_sha256": spec.runtime_executable_sha256,
+                    "wheel_sha256": [item.artifact_sha256 for item in spec.wheel_entries],
+                    "installed_tree_sha256": digest}
+        if receipt != expected:
+            raise ValueError
+        return digest
+    except (OSError, ValueError, json.JSONDecodeError):
+        raise AuthorityDenied("package-set.conflict", "versioned component runtime is occupied or changed") from None
+
+
+def _version_tuple(value: str) -> tuple[int, ...]:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", value):
+        raise AuthorityDenied("package-set.runtime", "runtime ABI version is malformed")
+    return tuple(int(part) for part in value.split("."))
+
+
+def _normalize_distribution(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value).casefold()
+
+
 def build_artifact_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
-                            *, expected_uid: int = 0, opener: Callable[..., Any] | None = None
+                            *, expected_uid: int = 0, opener: Callable[..., Any] | None = None,
+                            authorization_check: Callable[..., Any] | None = None
                             ) -> Mapping[tuple[str, str], Callable[..., Mapping[str, Any]]]:
     """Build exact fixed-verb handlers for the protected authority service."""
     root = _secure_directory(Path(staging_root), expected_uid)
@@ -274,13 +844,22 @@ def build_artifact_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
         target = f"artifact:{spec.artifact_id}:{spec.sha256}"
 
         def fetch_handler(*, context: HostContext, authorization: EffectAuthorization,
-                          payload: bytes, timeout: float, peer_pid: int,
+                          payload: bytes, timeout: float, peer_pid: int, peer_pidfd: int | None = None,
                           cancelled: Callable[[], bool], _spec: ArtifactSpec = spec) -> Mapping[str, Any]:
-            del context, peer_pid
+            del peer_pid, peer_pidfd
             expected = {"schema": 1, "artifact_id": _spec.artifact_id,
                         "sha256": _spec.sha256, "max_bytes": _spec.max_bytes}
             _check_grant_payload(authorization, payload, expected, f"artifact:{_spec.artifact_id}:{_spec.sha256}")
-            resolved = _fetch_artifact(_spec, root, expected_uid, fetcher, timeout, cancelled)
+            _revalidate_effect(context, authorization, "artifact.fetch", authorization_check, cancelled)
+            effect_timeout = min(float(timeout),
+                                 authorization.monotonic_expires_at - time.monotonic(),
+                                 context.monotonic_expires_at - time.monotonic())
+            resolved = _fetch_artifact(
+                _spec, root, expected_uid, fetcher, effect_timeout, cancelled,
+                before_connect=lambda: _revalidate_effect(
+                    context, authorization, "artifact.fetch", authorization_check,
+                    cancelled),
+            )
             receipt = {"artifact_id": resolved.artifact_id, "version": resolved.version,
                        "sha256": resolved.sha256, "size_bytes": resolved.size_bytes,
                        "store_id": f"artifact:{resolved.artifact_id}:{resolved.sha256}"}
@@ -292,9 +871,9 @@ def build_artifact_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
         target = f"package:{package.package_id}:{package.version}:{package.artifact_sha256}"
 
         def install_handler(*, context: HostContext, authorization: EffectAuthorization,
-                            payload: bytes, timeout: float, peer_pid: int,
+                            payload: bytes, timeout: float, peer_pid: int, peer_pidfd: int | None = None,
                             cancelled: Callable[[], bool], _package: PackageSpec = package) -> Mapping[str, Any]:
-            del context, peer_pid
+            del peer_pid, peer_pidfd
             expected = {"schema": 1, "package_id": _package.package_id,
                         "version": _package.version,
                         "artifact_sha256": _package.artifact_sha256}
@@ -307,8 +886,13 @@ def build_artifact_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
                                         artifact.sha256, artifact.size_bytes,
                                         artifact_spec.tree_files, artifact_spec.archive_format,
                                         artifact_spec.archive_root, artifact_spec.max_tree_bytes)
+            _revalidate_effect(context, authorization, "package.install",
+                               authorization_check, cancelled)
             installed = _install_wheelhouse(_package, artifact, expected_uid,
-                                             min(timeout, _package.install_timeout_seconds), cancelled)
+                                             min(timeout, _package.install_timeout_seconds), cancelled,
+                                             before_process=lambda: _revalidate_effect(
+                                                 context, authorization, "package.install",
+                                                 authorization_check, cancelled))
             return _json_response({"package_id": _package.package_id,
                                    "version": _package.version,
                                    "artifact_sha256": _package.artifact_sha256,
@@ -322,9 +906,15 @@ def build_artifact_handlers(catalog: ArtifactCatalog, staging_root: Path | str,
 
 def _fetch_artifact(spec: ArtifactSpec, root: Path, expected_uid: int,
                     opener: Callable[..., Any], timeout: float,
-                    cancelled: Callable[[], bool]) -> ResolvedArtifact:
+                    cancelled: Callable[[], bool],
+                    before_connect: Callable[[], None]) -> ResolvedArtifact:
     final = root / "objects" / spec.artifact_id / spec.sha256 / spec.filename
     if final.exists():
+        # A cached receipt is still a protected effect: policy and the lease may
+        # have changed since dispatch, even though no network connection is needed.
+        if cancelled():
+            raise AuthorityDenied("artifact.cancelled", "artifact fetch was cancelled before cached receipt")
+        before_connect()
         return ArtifactCatalog({spec.artifact_id: spec}, {}).resolve(spec.artifact_id, spec.sha256, root,
                                                                      expected_uid=expected_uid)
     directory = _mkdir_chain(root / "objects" / spec.artifact_id / spec.sha256, expected_uid)
@@ -340,6 +930,9 @@ def _fetch_artifact(spec: ArtifactSpec, root: Path, expected_uid: int,
     if offset:
         matches_digest = _hash_file(part, spec.max_bytes)[0] == spec.sha256
         if matches_digest and (spec.size_bytes is None or offset == spec.size_bytes):
+            if cancelled():
+                raise AuthorityDenied("artifact.cancelled", "artifact fetch was cancelled before cached receipt")
+            before_connect()
             os.chmod(part, 0o444)
             os.replace(part, final)
             _fsync_dir(directory)
@@ -354,7 +947,10 @@ def _fetch_artifact(spec: ArtifactSpec, root: Path, expected_uid: int,
     if offset:
         headers["Range"] = f"bytes={offset}-"
     request = urllib.request.Request(spec.source_url, headers=headers, method="GET")
-    remaining_timeout = max(0.05, deadline - time.monotonic())
+    before_connect()
+    remaining_timeout = min(timeout, deadline - time.monotonic())
+    if remaining_timeout <= 0:
+        raise AuthorityDenied("artifact.timeout", "artifact fetch lease expired before network access")
     try:
         response = opener(request, timeout=remaining_timeout, allowed_hosts=frozenset(spec.redirect_hosts))
     except (OSError, urllib.error.URLError, TimeoutError) as exc:
@@ -462,7 +1058,8 @@ def _fetch_artifact(spec: ArtifactSpec, root: Path, expected_uid: int,
 
 def _install_wheelhouse(package: PackageSpec, artifact: ResolvedArtifact,
                         expected_uid: int, timeout: float,
-                        cancelled: Callable[[], bool]) -> Path:
+                        cancelled: Callable[[], bool],
+                        before_process: Callable[[], None]) -> Path:
     runtime_root = _secure_directory(Path(package.environment_root), expected_uid)
     python = Path(package.python_executable)
     python = _secure_executable(python, expected_uid)
@@ -489,7 +1086,8 @@ def _install_wheelhouse(package: PackageSpec, artifact: ResolvedArtifact,
         python_command = python.resolve(strict=True)
         _secure_executable(python_command, expected_uid)
         _run_fixed([str(python_command), "-m", "venv", "--copies", str(temporary_env)], cwd=work,
-                   timeout=timeout, cancelled=cancelled, expected_uid=expected_uid)
+                   timeout=timeout, cancelled=cancelled, expected_uid=expected_uid,
+                   before_exec=before_process)
         env_python = temporary_env / "bin" / "python"
         if not env_python.is_file():
             raise AuthorityDenied("package.runtime", "isolated Python runtime did not create its interpreter")
@@ -502,8 +1100,9 @@ def _install_wheelhouse(package: PackageSpec, artifact: ResolvedArtifact,
         _run_fixed([str(env_python.resolve(strict=True)), "-m", "pip", "install", "--no-index",
                     "--find-links", str(source), "--require-hashes", "--no-deps",
                     "--only-binary=:all:", "--no-input", "--no-cache-dir",
-                    "--disable-pip-version-check", "-r", str(manifest)], cwd=work,
-                   timeout=timeout, cancelled=cancelled, expected_uid=expected_uid, env=env)
+                   "--disable-pip-version-check", "-r", str(manifest)], cwd=work,
+                   timeout=timeout, cancelled=cancelled, expected_uid=expected_uid, env=env,
+                   before_exec=before_process)
         marker = temporary_env / ".hermes-package.json"
         marker.write_text(json.dumps({"package_id": package.package_id,
                                       "version": package.version,
@@ -534,7 +1133,7 @@ def _extract_checked_wheelhouse(artifact: ResolvedArtifact, destination: Path) -
     _extract_archive(artifact.path, artifact.archive_format, artifact.archive_root, artifact.tree_files,
                     artifact.max_tree_bytes, tree, artifact.path.stat().st_uid)
     observed = _observed_tree(tree, artifact.max_tree_bytes)
-    expected = {entry.path: (entry.sha256, entry.size_bytes) for entry in artifact.tree_files}
+    expected = {entry.path: _tree_signature(entry) for entry in artifact.tree_files}
     if observed != expected:
         raise AuthorityDenied("package.tree", "wheelhouse files differ from the protected content tree")
     if "requirements.txt" not in observed:
@@ -553,7 +1152,7 @@ def _materialize_tree(spec: ArtifactSpec, archive_path: Path, staging_root: Path
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid or info.st_mode & 0o222:
             raise AuthorityDenied("artifact.tree-custody", "materialized artifact tree custody is invalid")
         observed = _observed_tree(destination, spec.max_tree_bytes)
-        expected = {entry.path: (entry.sha256, entry.size_bytes) for entry in spec.tree_files}
+        expected = {entry.path: _tree_signature(entry) for entry in spec.tree_files}
         if observed != expected:
             raise AuthorityDenied("artifact.tree-digest", "materialized content tree no longer matches its protected catalog")
         return destination
@@ -562,7 +1161,7 @@ def _materialize_tree(spec: ArtifactSpec, archive_path: Path, staging_root: Path
         _extract_archive(archive_path, spec.archive_format, spec.archive_root, spec.tree_files,
                          spec.max_tree_bytes, temp, expected_uid)
         observed = _observed_tree(temp, spec.max_tree_bytes)
-        expected = {entry.path: (entry.sha256, entry.size_bytes) for entry in spec.tree_files}
+        expected = {entry.path: _tree_signature(entry) for entry in spec.tree_files}
         if observed != expected:
             raise AuthorityDenied("artifact.tree-digest", "archive content does not match its protected tree manifest")
         _freeze_tree(temp, expected_uid)
@@ -593,12 +1192,32 @@ def _extract_archive(archive_path: Path, archive_format: str | None, archive_roo
                             _safe_relative(name.rstrip("/"))
                         continue
                     mode = info.external_attr >> 16
-                    if stat.S_ISLNK(mode) or info.file_size < 0:
-                        raise AuthorityDenied("artifact.archive", "archive contains a link or invalid member")
+                    if info.file_size < 0:
+                        raise AuthorityDenied("artifact.archive", "archive contains an invalid member")
                     pure = _safe_relative(name)
                     entry = enrolled.get(pure.as_posix())
                     if entry is None or entry.size_bytes != info.file_size:
                         raise AuthorityDenied("artifact.tree-digest", "archive member is absent from the protected content tree")
+                    if stat.S_ISLNK(mode):
+                        if entry.kind != "symlink":
+                            raise AuthorityDenied("artifact.tree-digest", "archive link type differs from its protected content tree")
+                        raw_target = archive.read(info)
+                        try:
+                            target = raw_target.decode("utf-8")
+                        except UnicodeDecodeError:
+                            raise AuthorityDenied("artifact.archive", "archive symlink target is not UTF-8") from None
+                        if target != entry.link_target:
+                            raise AuthorityDenied("artifact.tree-digest", "archive symlink target differs from its protected content tree")
+                        _write_tree_symlink(destination, pure, target, expected_uid)
+                        count += 1
+                        total += entry.size_bytes
+                        if total > max_tree_bytes:
+                            raise AuthorityDenied("artifact.archive", "archive exceeds its expanded-size bound")
+                        continue
+                    if stat.S_IFMT(mode) not in {0, stat.S_IFREG}:
+                        raise AuthorityDenied("artifact.archive", "archive contains a special member")
+                    if entry.kind != "file":
+                        raise AuthorityDenied("artifact.tree-digest", "archive regular-file type differs from its protected content tree")
                     count += 1
                     total += info.file_size
                     if total > max_tree_bytes or (info.compress_size == 0 and info.file_size > 0):
@@ -606,8 +1225,9 @@ def _extract_archive(archive_path: Path, archive_format: str | None, archive_roo
                     with archive.open(info) as source:
                         _write_tree_file(source, destination, pure, info.file_size,
                                          expected_uid, entry.executable)
-        elif archive_format == "tar.gz":
-            with tarfile.open(archive_path, mode="r:gz") as archive:
+        elif archive_format in {"tar.gz", "tar.xz"}:
+            mode = "r:gz" if archive_format == "tar.gz" else "r:xz"
+            with tarfile.open(archive_path, mode=mode) as archive:
                 members = archive.getmembers()
                 if not members or len(members) > _MAX_FILES:
                     raise AuthorityDenied("artifact.archive", "archive member count is invalid")
@@ -618,12 +1238,24 @@ def _extract_archive(archive_path: Path, archive_format: str | None, archive_roo
                         if name:
                             _safe_relative(name.rstrip("/"))
                         continue
-                    if not info.isfile() or info.size < 0:
+                    if info.size < 0:
                         raise AuthorityDenied("artifact.archive", "archive contains a link or special member")
                     pure = _safe_relative(name)
                     entry = enrolled.get(pure.as_posix())
-                    if entry is None or entry.size_bytes != info.size:
+                    member_size = len(info.linkname.encode("utf-8")) if info.issym() else info.size
+                    if entry is None or entry.size_bytes != member_size:
                         raise AuthorityDenied("artifact.tree-digest", "archive member is absent from the protected content tree")
+                    if info.issym():
+                        if entry.kind != "symlink" or entry.link_target != info.linkname:
+                            raise AuthorityDenied("artifact.tree-digest", "archive symlink differs from its protected content tree")
+                        _write_tree_symlink(destination, pure, info.linkname, expected_uid)
+                        count += 1
+                        total += entry.size_bytes
+                        if total > max_tree_bytes:
+                            raise AuthorityDenied("artifact.archive", "archive exceeds its expanded-size bound")
+                        continue
+                    if not info.isfile() or entry.kind != "file":
+                        raise AuthorityDenied("artifact.archive", "archive contains a link or special member")
                     count += 1
                     total += info.size
                     if total > max_tree_bytes:
@@ -671,21 +1303,48 @@ def _write_tree_file(source: Any, destination: Path, relative: PurePosixPath,
     os.chmod(target, 0o555 if executable else 0o444)
 
 
-def _observed_tree(root: Path, max_bytes: int) -> dict[str, tuple[str, int]]:
-    observed: dict[str, tuple[str, int]] = {}
+def _write_tree_symlink(destination: Path, relative: PurePosixPath,
+                        target_text: str, expected_uid: int) -> None:
+    # TreeFile validates lexical containment. Resolve the target after publication
+    # too, so links to absent targets/cycles cannot enter a materialized tree.
+    target = destination.joinpath(*relative.parts)
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.symlink(target_text, target)
+    os.chown(target, expected_uid, -1, follow_symlinks=False)
+
+
+def _observed_tree(root: Path, max_bytes: int) -> dict[str, tuple[str, int, str, str | None, bool]]:
+    observed: dict[str, tuple[str, int, str, str | None, bool]] = {}
     total = 0
+    root_real = root.resolve(strict=True)
     for path in root.rglob("*"):
         info = path.lstat()
         if stat.S_ISDIR(info.st_mode):
             continue
-        if not stat.S_ISREG(info.st_mode):
+        if stat.S_ISLNK(info.st_mode):
+            target_text = os.readlink(path)
+            try:
+                resolved_target = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                raise AuthorityDenied("artifact.tree-custody", "materialized symlink target is missing or cyclic") from None
+            if not resolved_target.is_relative_to(root_real):
+                raise AuthorityDenied("artifact.tree-custody", "materialized symlink escapes its protected tree")
+            raw_target = target_text.encode("utf-8")
+            digest, size = hashlib.sha256(raw_target).hexdigest(), len(raw_target)
+            kind = "symlink"
+            executable = False
+        elif stat.S_ISREG(info.st_mode):
+            digest, size = _hash_file(path, max_bytes)
+            kind = "file"
+            target_text = None
+            executable = bool(info.st_mode & 0o111)
+        else:
             raise AuthorityDenied("artifact.tree-custody", "materialized tree contains a link or special file")
         relative = path.relative_to(root).as_posix()
-        digest, size = _hash_file(path, max_bytes)
         total += size
         if total > max_bytes:
             raise AuthorityDenied("artifact.tree-size", "materialized tree exceeds its enrolled size bound")
-        observed[relative] = (digest, size)
+        observed[relative] = (digest, size, kind, target_text, executable)
     return observed
 
 
@@ -721,29 +1380,69 @@ def _validate_requirements(path: Path) -> None:
 
 def _run_fixed(argv: list[str], *, cwd: Path, timeout: float,
                cancelled: Callable[[], bool], expected_uid: int,
-               env: Mapping[str, str] | None = None) -> None:
+               env: Mapping[str, str] | None = None,
+               before_exec: Callable[[], None] | None = None,
+               run_as_uid: int | None = None, run_as_gid: int | None = None,
+               deadline: float | None = None, network_isolated: bool = False) -> None:
     if not argv or any(not isinstance(arg, str) or "\x00" in arg for arg in argv):
         raise AuthorityDenied("package.argv", "fixed package command is malformed")
     # The only commands built by this module are an enrolled interpreter and its venv/pip verbs.
     if not Path(argv[0]).is_absolute():
         raise AuthorityDenied("package.argv", "package interpreter path is not canonical")
-    remaining = max(0.05, min(timeout, 600.0))
+    network_drop_uid: int | None = None
+    network_drop_gid: int | None = None
+    if network_isolated:
+        if os.name != "posix" or not hasattr(os, "geteuid") or os.geteuid() != 0:
+            raise AuthorityDenied("package.network-isolation", "offline package effects require root network-namespace custody")
+        if (type(run_as_uid) is not int or run_as_uid < 1
+                or type(run_as_gid) is not int or run_as_gid < 0):
+            raise AuthorityDenied("package.identity", "network-isolated package process requires an enrolled service identity")
+        unshare = next((Path(candidate) for candidate in ("/usr/bin/unshare", "/bin/unshare")
+                        if Path(candidate).exists()), None)
+        setpriv = next((Path(candidate) for candidate in ("/usr/bin/setpriv", "/bin/setpriv")
+                        if Path(candidate).exists()), None)
+        if unshare is None or setpriv is None:
+            raise AuthorityDenied("package.network-isolation", "required Linux namespace or privilege-drop utility is unavailable")
+        _secure_executable(unshare, 0)
+        _secure_executable(setpriv, 0)
+        network_drop_uid, network_drop_gid = run_as_uid, run_as_gid
+        argv = [str(unshare), "--net", "--", str(setpriv),
+                "--reuid", str(run_as_uid), "--regid", str(run_as_gid), "--clear-groups",
+                "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all",
+                "--bounding-set=-all", "--", *argv]
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+        raise AuthorityDenied("package.timeout", "fixed package operation has no live time budget")
+    command_deadline = min(time.monotonic() + timeout, deadline if deadline is not None else float("inf"))
+    if cancelled():
+        raise AuthorityDenied("package.cancelled", "package operation was cancelled before process start")
+    if before_exec is not None:
+        before_exec()
+    remaining = command_deadline - time.monotonic()
+    if remaining <= 0:
+        raise AuthorityDenied("grant.stale", "fixed package operation lease expired before process start")
+    identity: dict[str, Any] = {}
+    if run_as_uid is not None and network_drop_uid is None:
+        if type(run_as_uid) is not int or run_as_uid < 1 or type(run_as_gid) is not int or run_as_gid < 0:
+            raise AuthorityDenied("package.identity", "package subprocess identity is invalid")
+        if not hasattr(os, "geteuid") or os.geteuid() != expected_uid or expected_uid != 0:
+            if run_as_uid != os.getuid() or run_as_gid != os.getgid():
+                raise AuthorityDenied("package.identity", "privilege drop requires the root installer identity")
+        identity = {"user": run_as_uid, "group": run_as_gid, "extra_groups": ()}
     try:
         process = subprocess.Popen(argv, cwd=cwd, env=dict(env) if env is not None else {
             "PATH": "/usr/bin:/bin", "HOME": str(cwd), "PYTHONNOUSERSITE": "1", "PYTHONUTF8": "1"},
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            close_fds=True, start_new_session=True, bufsize=0)
+            close_fds=True, start_new_session=True, bufsize=0, **identity)
     except OSError:
         raise AuthorityDenied("package.runtime", "enrolled runtime could not start the fixed package operation") from None
     output = bytearray()
     if process.stdout is not None:
         os.set_blocking(process.stdout.fileno(), False)
-    started = time.monotonic()
     try:
         while process.poll() is None:
             if cancelled():
                 raise AuthorityDenied("package.cancelled", "package installation was cancelled")
-            if time.monotonic() - started >= remaining:
+            if time.monotonic() >= command_deadline:
                 raise AuthorityDenied("package.timeout", "package installation timed out and is resumable")
             if process.stdout is not None:
                 try:
@@ -805,6 +1504,36 @@ def _check_grant_payload(authorization: EffectAuthorization, payload: bytes,
         raise AuthorityDenied("artifact.binding", "fixed effect payload does not match enrolled identity and grant")
 
 
+def _check_effect_live(context: HostContext, authorization: EffectAuthorization,
+                       cancelled: Callable[[], bool]) -> None:
+    if cancelled():
+        raise AuthorityDenied("effect.cancelled", "fixed effect was cancelled before its side effect")
+    now = time.monotonic()
+    if (authorization.monotonic_expires_at <= now
+            or context.monotonic_expires_at <= now
+            or authorization.policy_revision != context.policy_revision
+            or authorization.principal_id != context.principal_id
+            or authorization.profile_id != context.profile_id
+            or authorization.namespace_id != context.namespace_id
+            or authorization.uid != context.uid):
+        raise AuthorityDenied("grant.stale", "host effect authorization is stale before the side effect")
+
+
+def _revalidate_effect(context: HostContext, authorization: EffectAuthorization,
+                       operation: str, authorization_check: Callable[..., Any] | None,
+                       cancelled: Callable[[], bool]) -> None:
+    _check_effect_live(context, authorization, cancelled)
+    if authorization_check is not None:
+        result = authorization_check(
+            context, authorization, operation=operation,
+            request_digest=authorization.request_digest,
+            retry_index=authorization.retry_index,
+        )
+        if result is False:
+            raise AuthorityDenied("grant.stale", "host policy generation changed before the side effect")
+    _check_effect_live(context, authorization, cancelled)
+
+
 def _json_response(value: Mapping[str, Any]) -> Mapping[str, Any]:
     body = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     return {"status": 200, "body": body,
@@ -821,7 +1550,8 @@ def _artifact_from_record(item: Any) -> ArtifactSpec:
         raise ValueError
     tree = []
     for row in item["tree_files"]:
-        if not isinstance(row, dict) or set(row) != {"path", "sha256", "size_bytes", "executable"}:
+        if not isinstance(row, dict) or set(row) not in ({"path", "sha256", "size_bytes", "executable"},
+                                                      {"path", "sha256", "size_bytes", "executable", "kind", "link_target"}):
             raise ValueError
         tree.append(TreeFile(**row))
     return ArtifactSpec(**{**item, "redirect_hosts": tuple(item["redirect_hosts"]), "tree_files": tuple(tree)})
@@ -851,6 +1581,10 @@ def _safe_relative(value: str) -> PurePosixPath:
     if path.is_absolute() or path.as_posix() != value or any(part in {"", ".", ".."} for part in path.parts):
         raise ValueError("path is not a normalized relative path")
     return path
+
+
+def _tree_signature(entry: TreeFile) -> tuple[str, int, str, str | None, bool]:
+    return entry.sha256, entry.size_bytes, entry.kind, entry.link_target, entry.executable
 
 
 def _strip_archive_root(value: str, archive_root: str | None,
@@ -914,16 +1648,25 @@ def _secure_file(path: Path, expected_uid: int, *, max_bytes: int) -> None:
 
 def _secure_executable(path: Path, expected_uid: int) -> Path:
     try:
-        resolved = path.resolve(strict=True)
-        info = resolved.lstat()
-        parent = resolved.parent.lstat()
+        if not path.is_absolute() or ".." in path.parts:
+            raise OSError
+        current = Path("/")
+        for part in path.parts[1:-1]:
+            current = current / part
+            ancestor = current.lstat()
+            if (not stat.S_ISDIR(ancestor.st_mode) or stat.S_ISLNK(ancestor.st_mode)
+                    or ancestor.st_uid != expected_uid or ancestor.st_mode & 0o022):
+                raise OSError
+        info = path.lstat()
+        parent = path.parent.lstat()
     except OSError:
         raise AuthorityDenied("package.runtime", "enrolled Python runtime is unavailable") from None
-    if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid or info.st_mode & 0o022
+    if (not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)
+            or info.st_uid != expected_uid or info.st_mode & 0o022
             or not info.st_mode & 0o111 or not stat.S_ISDIR(parent.st_mode)
             or parent.st_uid != expected_uid or parent.st_mode & 0o022):
         raise AuthorityDenied("package.runtime", "enrolled Python runtime custody is unsafe")
-    return resolved
+    return path
 
 
 def _mkdir_chain(path: Path, expected_uid: int) -> Path:
