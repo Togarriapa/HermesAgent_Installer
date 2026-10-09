@@ -1361,7 +1361,11 @@ class ManagedProcessEffectHandler:
                     exception_type = type(exc).__name__
                     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", exception_type):
                         exception_type = "Exception"
-                    self._diagnostic_sink(("inspect-deny:" + code + ":" + exception_type).encode("ascii"))
+                    import traceback
+                    frame = traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
+                    line = frame.lineno if frame is not None else 0
+                    self._diagnostic_sink(("inspect-deny:" + code + ":" + exception_type
+                                           + ":line=" + str(line)).encode("ascii"))
                 raise
         return self._control(profile, context, operation, payload, timeout, cancelled)
 
