@@ -236,3 +236,17 @@ The implementation SHALL use the distinct selected capture/JWT/session provenanc
 #### Scenario: Microphone permission exists
 - **WHEN** actual selected scoped capture is authorized
 - **THEN** input remains UNKNOWN/private and no human identity or public clearance is inferred from device permission
+
+### Requirement: Authenticated original WhatsApp channel enrollment
+The implementation SHALL use v45 exact authenticated selected trigger schema and signed account-scoped webhook provenance for original WhatsApp channel activation.
+
+#### Scenario: Manifest semantic alias has no verified provider slug
+- **WHEN** authenticated selected trigger schema is absent
+- **THEN** channel reports exact setup/schema prerequisite and retains required scope without inventing a slug or unsigned production provenance
+
+### Requirement: Peer authenticated root observed channel delivery
+The implementation SHALL use v48 actual selected root transport capture and fixed producer-bound delivery before native channel processing.
+
+#### Scenario: Worker presents an SDK message object
+- **WHEN** no actual retained root transport/account/event proof exists
+- **THEN** no source context is minted and channel effects remain unavailable with exact trusted setup prerequisite

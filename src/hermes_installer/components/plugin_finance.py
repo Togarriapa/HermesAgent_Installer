@@ -681,6 +681,12 @@ class _PluginImplementation:
 
 _CONFIRMATION_FIELD = "opaque_confirmation_attestation_id"
 _ATTESTATION = re.compile(r"^[A-Za-z0-9_-]{16,256}$")
+_PLUGIN_VERSIONS = {
+    "agent-live-wallet": "1.0.0",
+    "agent-sandbox-wallet": "1.0.0",
+    "financial-data-hub": "1.0.1",
+    "financial-execution-gateway": "1.0.0",
+}
 _DATA_ACTIONS: Mapping[tuple[DataProvider, DataOperation], str] = {
     (provider, operation): "read"
     for provider, operations in _DATA_SCOPES.items() for operation in operations
@@ -705,7 +711,8 @@ def _require_effect_runtime(runtime: object, adapter_id: str) -> object:
     identity = getattr(runtime, "identity", None)
     if (getattr(identity, "kind", None) != "plugins"
             or getattr(identity, "resource_id", None) != adapter_id
-            or getattr(identity, "version", "1.0.0") != "1.0.0"):
+            or adapter_id not in _PLUGIN_VERSIONS
+            or getattr(identity, "version", None) != _PLUGIN_VERSIONS[adapter_id]):
         raise FinanceUnavailable("selected financial Plugin identity does not match the pinned adapter")
     effects = getattr(runtime, "plugin_effects", None)
     invoke = getattr(effects, "invoke", None)
