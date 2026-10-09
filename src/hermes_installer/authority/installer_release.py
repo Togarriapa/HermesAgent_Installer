@@ -36,8 +36,8 @@ TEMPLATE = (
 PLAN_TEMPLATE = (
     "installer-root-setup-plan-template-v1",
     "templates/root-setup-plan-template-v1.json",
-    "9f96befca8dba54a8251df80ccbed236809e9affbf1116efed42e06a7b92ac31",
-    767,
+    "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5",
+    920,
 )
 AUTHENTIK_TEMPLATE = (
     "installer-authentik-policy-template-v1",
@@ -51,7 +51,21 @@ PREPARED_BASE_TEMPLATE = (
     "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953",
     369,
 )
-FIXED_TEMPLATES = (TEMPLATE, PLAN_TEMPLATE, AUTHENTIK_TEMPLATE, PREPARED_BASE_TEMPLATE)
+RECEIPT_BINDINGS_TEMPLATE = (
+    "installer-bootstrap-receipt-bindings-template-v1",
+    "templates/bootstrap-receipt-bindings-template-v1.json",
+    "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609",
+    10195,
+)
+COMPOSIO_READER_TEMPLATE = (
+    "installer-composio-whatsapp-catalog-read-policy-v1",
+    "templates/composio-whatsapp-catalog-read-policy-v1.json",
+    "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5",
+    528,
+)
+FIXED_TEMPLATES = (TEMPLATE, PLAN_TEMPLATE, AUTHENTIK_TEMPLATE,
+                   PREPARED_BASE_TEMPLATE, RECEIPT_BINDINGS_TEMPLATE,
+                   COMPOSIO_READER_TEMPLATE)
 LAUNCHER_PATH = "bin/hermes-installer-root-setup"
 INTERPRETER_PATH = "runtime/bin/python"
 PLAN_PATH = "plans/root-setup-plan-v1.json"
@@ -448,13 +462,13 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
     for role, (artifact_id, relative_path) in expected_fixed.items():
         role_rows = by_role[role]
         if len(role_rows) != 1 or (role_rows[0].artifact_id, role_rows[0].relative_path) != (artifact_id, relative_path):
-            raise InstallerReleaseError(f"installed {role} role differs from the fixed v63 layout")
+            raise InstallerReleaseError(f"installed {role} role differs from the current fixed release layout")
     expected_templates = {artifact_id: (relative_path, digest, size)
                           for artifact_id, relative_path, digest, size in FIXED_TEMPLATES}
     actual_templates = {row.artifact_id: (row.relative_path, row.sha256, row.size_bytes)
                         for row in by_role["template"]}
     if actual_templates != expected_templates or len(by_role["template"]) != len(FIXED_TEMPLATES):
-        raise InstallerReleaseError("installed templates differ from the fixed v63 artifact layout")
+        raise InstallerReleaseError("installed templates differ from the current fixed artifact layout")
     if any("bootstrap-policy" in row.roles for row in rows):
         raise InstallerReleaseError("generated bootstrap policy cannot be a base release role")
     modules = [row for row in by_role["module"]]
@@ -611,7 +625,7 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
     if roles == ["template"]:
         if not any(path == item[1] and digest == item[2] and size == item[3]
                    for item in FIXED_TEMPLATES):
-            raise InstallerReleaseError("installed template bytes differ from their exact v63 role pin")
+            raise InstallerReleaseError("installed template bytes differ from their exact protected role pin")
     if "module" in roles:
         _module_name(path)
     if "bootstrap-policy" in roles:

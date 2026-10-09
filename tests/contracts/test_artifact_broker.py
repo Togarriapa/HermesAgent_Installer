@@ -59,6 +59,31 @@ class ArtifactBrokerContracts(unittest.TestCase):
             **kwargs,
         )
 
+    def test_vendored_resources_source_is_an_exact_offline_catalog_artifact(self):
+        catalog_file = Path(__file__).parents[2] / "src/hermes_installer/authority/artifact-catalog.json"
+        catalog_copy = self.base / "artifact-catalog.json"
+        catalog_copy.write_bytes(catalog_file.read_bytes())
+        catalog_copy.chmod(0o600)
+        catalog = load_protected_catalog(catalog_copy, expected_uid=self.uid)
+        artifact_id = "resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83"
+        digest = "b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1"
+        spec = catalog._artifact(artifact_id, digest)
+        self.assertEqual(spec.size_bytes, 295368)
+        self.assertEqual(spec.version, "113f42d33be9e0c8f0f47f5ca998e687323dec83")
+        self.assertEqual(len(spec.tree_files), 739)
+        self.assertEqual(spec.archive_format, "tar.gz")
+
+        archive = Path(__file__).parents[2] / "src/hermes_installer/registry/bundle_data/hermes-agent-resources-2.3.1.tar.gz"
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), digest)
+        staged = self.root / "objects" / artifact_id / digest / spec.filename
+        staged.parent.mkdir(parents=True, mode=0o700)
+        staged.write_bytes(archive.read_bytes())
+        staged.chmod(0o444)
+        resolved = catalog.materialize_tree(artifact_id, digest, self.root, expected_uid=self.uid)
+        self.assertEqual(len(resolved.tree_files), 739)
+        self.assertEqual(resolved.tree_manifest_sha256, spec.tree_manifest_sha256)
+        self.assertTrue((resolved.path / "catalog.yaml").is_file())
+
     def request(self, spec: ArtifactSpec):
         payload = json.dumps({"schema": 1, "artifact_id": spec.artifact_id,
                               "sha256": spec.sha256, "max_bytes": spec.max_bytes},
