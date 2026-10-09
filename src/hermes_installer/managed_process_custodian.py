@@ -3033,7 +3033,9 @@ class ManagedBuildJobRunner:
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
                             timeout=1.0, check=False)
-                        if journal.returncode == 0 and len(journal.stdout) <= 16384:
+                        # `systemctl status` returns nonzero for a failed unit
+                        # while still placing the diagnostic status on stdout.
+                        if len(journal.stdout) <= 16384 and journal.stdout:
                             diagnostic_bytes.append(journal.stdout)
                             diagnostic_sources.append(journal.stdout.decode("utf-8", "replace").casefold())
                     except (OSError, subprocess.TimeoutExpired):
