@@ -43,7 +43,10 @@ class Profile:
     toolchain_sha256 = "2" * 64
     builder_artifact_id = "fixed-builder"
     builder_sha256 = "3" * 64
-    argv_recipe = ("/catalog/builder", "build", "--fixed")
+    argv_recipe = (
+        {"build_path": {"mount_id": "builder", "relative_path": ""}},
+        {"literal": "build"}, {"literal": "--fixed"},
+    )
     environment = {"LANG": "C"}
     max_lifetime_seconds = 600
     output_root_id = "build-output"
@@ -131,8 +134,9 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
             def resolve(self, artifact_id, _digest, _staging, *, expected_uid):
                 assert expected_uid == os.getuid()
                 path = artifact_paths[artifact_id]
+                manifest = hashlib.sha256(b"[]").hexdigest()
                 return SimpleNamespace(artifact_id=artifact_id, sha256=specs[artifact_id].sha256,
-                                       path=path)
+                                       path=path, tree_files=(), tree_manifest_sha256=manifest)
 
         class Catalog:
             def resolve(self, target_id, generation):
@@ -142,10 +146,16 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
         class Launcher:
             seen = False
 
-            def run(self, inputs, *, timeout, cancelled):
+            def run_selected_build(self, inputs, *, context, authorization, peer_pid,
+                                   peer_pidfd, timeout, cancelled):
                 self.seen = True
                 assert inputs.source_root == source and inputs.toolchain_root == toolchain
                 assert inputs.builder_executable == builder and timeout > 0
+                assert inputs.enrollment_id == "enrollment-1"
+                assert inputs.operation_id == "colibri-source-build-v1"
+                assert inputs.selection_digest == authorization.request_digest
+                assert inputs.argv_recipe[0] == {"build_path": {"mount_id": "builder", "relative_path": ""}}
+                assert peer_pid == 42 and peer_pidfd == 7 and context.enrollment_id == "enrollment-1"
                 assert not cancelled()
                 filled_output(inputs.output_root)
                 return completed()
