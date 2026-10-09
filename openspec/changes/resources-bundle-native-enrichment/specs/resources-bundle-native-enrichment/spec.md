@@ -394,3 +394,10 @@ The installer SHALL render dormant prepared authority and catalog read policy fr
 #### Scenario: Prepared authority treated as active
 - **WHEN** a dormant empty prepared policy is used to authorize runtime effects
 - **THEN** authorization denies until actual active compilation and receipts exist
+
+### Requirement: Actual raw event and predecessor result closure
+The installer SHALL authenticate exact original webhook bytes before root canonical event derivation and resolve actual validated prerequisite capsules for each DAG child context.
+
+#### Scenario: Reserialized HMAC or caller results
+- **WHEN** canonicalized body is substituted for raw authentication bytes or caller result dictionaries replace prerequisite capsules
+- **THEN** ingress or downstream child admission denies

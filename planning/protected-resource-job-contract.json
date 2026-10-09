@@ -887,5 +887,30 @@
       "expires_monotonic"
     ],
     "read_receipt_semantics": "Actual root-held bounded request/response bytes and parsed selected rows retained behind receipt; first page parent null, detail binds returned slug/current parent. No credential values/headers in receipt. Derivation registry reads exact response/schema member under actual receipt; root caller cannot inject response dictionary."
+  },
+  "root_event_payload_and_result_closure": {
+    "tasks": "RB-T08/HI-T08/HI-T12 existing original resource jobs",
+    "capture": "Root authenticated ingress proof retains exact raw protocol bytes and headers before any normalization. Webhook HMAC uses original raw body only, never canonical reserialization; selected protocol validator parses exact bytes with duplicate-key rejection and validates actual pinned event/account/delivery schema. Canonical context event is separate derived root envelope with parent raw observation handle/digest, not a claim that raw HMAC bytes were canonical JSON. Worker cannot submit this envelope as source proof.",
+    "capture_envelope_fields": {
+      "schema": "literal1",
+      "kind": "schedule-event|webhook-event|channel-event",
+      "resource_id": "selected resource ID",
+      "resource_generation": "selected Resources generation",
+      "profile_id": "selected root profile",
+      "controller_proof_handle": "actual root selected ingress proof",
+      "raw_observation_handle": "actual retained root raw bytes/transport receipt",
+      "raw_payload_sha256": "SHA256 of exact actual raw bytes",
+      "event_data": "actual source-validated parsed protocol event object or fixed timer object",
+      "observed_monotonic": "finite root observation time",
+      "replay_key_sha256": "actual root replay key hash"
+    },
+    "capture_API": "ResourceEventContextIssuer.capture_selected_ingress(proof_handle,root_observed_input_record) resolves retained raw observation and source_issuers.capture_schema_id fixed validator artifact, then creates canonical envelope internally. _require_canonical_event applies only internally derived envelope; it cannot reject valid original noncanonical raw webhook bytes before exact HMAC validation. event/body recipe paths resolve event_data exact protocol field map, not arbitrary wrapper/base64 fields. Raw record and derived envelope both remain root retained/digest bound.",
+    "protocol": "GitHub actual X-GitHub-Delivery/X-GitHub-Event and selected secret role/HMAC raw body/allowed repository event schema verified before parse and dispatch; registry webhook uses exact selected pinned manifest protocol/source schema, never assumed GitHub header reuse. Unknown validator/source schema leaves exact selected webhook resumable, no arbitrary schema fallback. Credential mapping and replay store existing strict joins retained.",
+    "cron": "Timer envelope event_data exactly {schedule_enrollment_id,scheduled_time_unix,occurrence_sequence}; all root scheduler actual values, not caller. Replay key SHA256 canonical {resource_id,resource_generation,schedule_enrollment_id,scheduled_time_unix}; durable occurrence_sequence strictly increases per enrollment/generation and each occurrence admitted once. Monotonic actual controller/session observation verifies original deadline; wall time is schedule fact only, not effect lease. Restart ambiguity cannot replay already admitted occurrence.",
+    "result_registry": "ResourceJobAuthority.resolve_node_result_closure(event_handle,admission_handle,node_id)->RootResourceNodeResultClosure root-private retained resolver. Current event->actual admitted job join, exact DAG prerequisites completed and each actual root validated result capsule/resource/profile/job/service generations/consent/source closure/deadline verified. No worker fields or _RootEventRecord mutable parent_results. Root child serializer resolves dynamic result fields from this registry closure and fixed recipe/schema catalogs.",
+    "DTO": "RootResourceNodeResultClosure in hermes_installer.registry.resource_jobs has schema,closure_handle,event_handle,admission_handle,node_id,job_handle,resource_generation,service_generation_digest,prerequisite_node_ids,result_capsule_handles,result_capsule_sha256s,parent_closure_digest,issued_monotonic,expires_monotonic. Registry-issued object/opaque handle only; capsule values privately retained behind exact handles, no caller dictionary as authority.",
+    "context_API": "RootResourceControllerRegistry.issue_resource_job_context(event_handle,node_id,operation,final_payload_digest,*,node_result_closure_handle=None) verifies actual retained admitted-job selection and exact backend operation/target/recipe; nodes with prerequisites require exact closure resolver handle, initial nodes use empty root prerequisite set only. Root injects actual result closure source receipts/lineage/sensitivity/recipient ceiling with original event; operation and digest must match independently root-serialized selected child bytes. Empty parent_results cannot authorize downstream node. Separate fresh per-child grant, no parent grant loop/reuse.",
+    "assembly": "RootResourceControllerRegistry attaches same ResourceJobAuthority node_result_closure_resolver at root composition after both registries constructed. bind_admitted_job(event_handle,admission_handle) checks both actual registries, once exact current event/job pair; no caller job ID binding. Result lookup rechecks active root job ledger and current validated immutable capsules immediately before effect.",
+    "evidence": "Actual webhook whitespace/noncanonical body valid HMAC accepted then source/schema validation; altered rawbody/replay/header/schema mismatch deny. DAG downstream sees exact predecessor capsule values and full inherited closure; missing/foreign/stale/caller result dictionary deny. Fixtures remain implementation only."
   }
 }
