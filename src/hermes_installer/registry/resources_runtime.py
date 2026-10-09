@@ -17,6 +17,7 @@ import stat
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 
@@ -705,6 +706,27 @@ class SelectedResourceRegistry:
         return row
 
 
+def selected_resource_specs_by_generation(
+    selected_resources: SelectedResourceRegistry,
+) -> Mapping[tuple[str, str], Mapping[str, Any]]:
+    """Project protected selected specs into the root controller lookup shape.
+
+    Root source controllers key a selected spec by ``(resource_id,
+    resource_generation)``. This projection accepts only the immutable typed
+    registry loaded from protected selection and rejects collisions across
+    resource kinds or source identities instead of silently choosing one.
+    """
+    if not isinstance(selected_resources, SelectedResourceRegistry):
+        raise TypeError("typed protected selected resources are required")
+    specs: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for selected in selected_resources.rows:
+        key = (selected.identity.resource_id, selected.generation_digest)
+        if key in specs:
+            raise ResourceRuntimeError("selected resource ID and generation are ambiguous")
+        specs[key] = selected.effective_spec
+    return MappingProxyType(specs)
+
+
 class SelectedResourceUnavailable(ResourceRuntimeError):
     """The selected source item lacks a protected execution target or dependency."""
 
@@ -941,6 +963,10 @@ def invoke_fixed_resource_effect(
         raise TypeError("trusted NativePluginRuntimeContext is required")
     if not isinstance(intent, str) or not intent or len(intent) > 512:
         raise ResourceRuntimeError("resource effect intent is invalid")
+    if effect.operation.startswith("resource."):
+        raise SelectedResourceUnavailable(
+            "worker-originated resource effects are retired; use protected root event and job admission"
+        )
     if purpose not in {"native-hermes-chat", "native-hermes-cron", "native-hermes-webhook", "native-hermes-channel"}:
         raise ResourceRuntimeError("resource effect purpose is not a reviewed Hermes execution source")
     if type(retry_index) is not int or not 0 <= retry_index <= 100:

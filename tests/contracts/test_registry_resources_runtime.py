@@ -21,6 +21,7 @@ from hermes_installer.registry.resources_runtime import (
     SelectedResourceExecution,
     SelectedResourceRegistry,
     ReviewedPluginAdapterRegistry,
+    selected_resource_specs_by_generation,
     ResourceRuntimeError,
     SelectedResourceUnavailable,
     WebhookVerifier,
@@ -116,10 +117,12 @@ class ResourcesRuntimeTests(unittest.TestCase):
     def test_channel_cron_and_webhook_are_typed_fixed_hermes_operations(self):
         channel, channel_auth = self._context(kind="channels", name="discord")
         channel_effect = FixedResourceEffect("channel.route", "resource:channels/discord@1.0.0", None, "resource.channel.route")
-        invoke_channel_route(channel, channel_effect, direction="inbound", conversation_id="c-1", content="hi", intent="inbound")
-        payload = channel_auth.calls[-1][2]["payload"]
-        self.assertIn(b'"profile_id":"hermes"', payload)
-        self.assertEqual(channel_auth.calls[0][1]["purpose"], "native-hermes-channel")
+        with self.assertRaisesRegex(SelectedResourceUnavailable, "protected root event and job admission"):
+            invoke_channel_route(
+                channel, channel_effect, direction="inbound", conversation_id="c-1",
+                content="unverified", intent="inbound",
+            )
+        self.assertEqual(channel_auth.calls, [])
 
         cron, cron_auth = self._context(kind="crons", name="daily")
         cron_effect = FixedResourceEffect("cron.run", "resource:crons/daily@1.0.0", None, "resource.cron.run")
@@ -136,8 +139,9 @@ class ResourcesRuntimeTests(unittest.TestCase):
             "body": b'{"x":1}', "body_sha256": hashlib.sha256(b'{"x":1}').hexdigest(), "received_at": 1.0,
         })()
         webhook_effect = FixedResourceEffect("webhook.deliver", "resource:webhooks/hook@1.0.0", None, "resource.webhook.deliver")
-        invoke_webhook_delivery(webhook, webhook_effect, receipt, intent="verified webhook")
-        self.assertEqual(webhook_auth.calls[0][1]["purpose"], "native-hermes-webhook")
+        with self.assertRaisesRegex(SelectedResourceUnavailable, "protected root event and job admission"):
+            invoke_webhook_delivery(webhook, webhook_effect, receipt, intent="unverified receipt")
+        self.assertEqual(webhook_auth.calls, [])
 
     def test_bundle_recruitment_cannot_escape_resolved_roster(self):
         context, authority = self._context(kind="bundles", name="research-agent")
@@ -146,6 +150,13 @@ class ResourcesRuntimeTests(unittest.TestCase):
             invoke_internal_bundle_recruitment(
                 context, effect, request_id="0123456789abcdef", user_request="research",
                 resolved_roster=("researcher",), selected_roster=("administrator",), intent="work request",
+            )
+        self.assertEqual(authority.calls, [])
+        with self.assertRaisesRegex(SelectedResourceUnavailable, "protected root event and job admission"):
+            invoke_internal_bundle_recruitment(
+                context, effect, request_id="0123456789abcdef", user_request="research",
+                resolved_roster=("researcher", "analyst"), selected_roster=("researcher",),
+                intent="caller-supplied bundle request",
             )
         self.assertEqual(authority.calls, [])
 
@@ -317,6 +328,11 @@ class ResourcesRuntimeTests(unittest.TestCase):
             profile_id="hermes", enabled=True,
         )
         registry = SelectedResourceRegistry((selected,))
+        root_specs = selected_resource_specs_by_generation(registry)
+        self.assertIs(root_specs[(selected.identity.resource_id, selected.generation_digest)],
+                      selected.effective_spec)
+        with self.assertRaises(TypeError):
+            root_specs[(selected.identity.resource_id, selected.generation_digest)] = {}
 
         class Service:
             calls = 0
@@ -352,6 +368,22 @@ class ResourcesRuntimeTests(unittest.TestCase):
             )
         self.assertEqual(cron_authority.calls, [])
         self.assertEqual(service.calls, 0)
+
+    def test_root_spec_projection_rejects_cross_kind_identity_collision(self):
+        first = SelectedResourceExecution(
+            identity=ResourceIdentity("same", "crons", "1.0.0", "crons/a.yaml", "a" * 40, "b" * 64),
+            generation_digest="c" * 64, effective_spec={}, capability="cron.run",
+            target="resource:crons/same@1.0.0", operation="resource.cron.run",
+            recipient=None, delegation_id="delegation-cron", profile_id="profile", enabled=False,
+        )
+        second = SelectedResourceExecution(
+            identity=ResourceIdentity("same", "webhooks", "1.0.0", "webhooks/a.yaml", "a" * 40, "d" * 64),
+            generation_digest="c" * 64, effective_spec={}, capability="webhook.deliver",
+            target="resource:webhooks/same@1.0.0", operation="resource.webhook.deliver",
+            recipient=None, delegation_id="delegation-webhook", profile_id="profile", enabled=False,
+        )
+        with self.assertRaisesRegex(ResourceRuntimeError, "ID and generation are ambiguous"):
+            selected_resource_specs_by_generation(SelectedResourceRegistry((first, second)))
 
     def test_candidate_assessment_rejects_partial_or_unpinned_bundle_artifact(self):
         with tempfile.TemporaryDirectory() as temp:
