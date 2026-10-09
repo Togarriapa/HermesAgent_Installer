@@ -4,13 +4,16 @@ import json
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest.mock import patch
 
 from hermes_installer.components.adapters import resolve_component_adapter
 from hermes_installer.components.source_bundle import (
     ComponentSourceError,
     GitHubComponentSourceFetcher,
     HttpResponse,
+    UrllibSourceTransport,
 )
 from hermes_installer.registry.generation import GenerationStore
 from hermes_installer.state import Journal, OwnedRoot, process_lock
@@ -25,6 +28,40 @@ class FakeTransport:
     def get(self, url, *, max_bytes, timeout_seconds):
         self.requested.append((url, max_bytes, timeout_seconds))
         return self.responses.pop(0)
+
+
+class _TransportResponse:
+    def __init__(self, url, body=b"ok", status=200):
+        self.url = url
+        self.body = body
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def geturl(self):
+        return self.url
+
+    def read(self, maximum):
+        return self.body[:maximum]
+
+
+class _RedirectingOpener:
+    def __init__(self, location, *, final_url=None):
+        self.location = location
+        self.final_url = final_url
+        self.requested = []
+
+    def open(self, request, timeout):
+        self.requested.append((request.full_url, timeout))
+        if len(self.requested) == 1 and self.location is not None:
+            raise urllib.error.HTTPError(
+                request.full_url, 302, "Found", {"Location": self.location}, io.BytesIO()
+            )
+        return _TransportResponse(self.final_url or request.full_url)
 
 
 def archive_bytes(identity, revision, entries):
@@ -51,6 +88,32 @@ def archive_bytes(identity, revision, entries):
 class ComponentSourceBundleTests(unittest.TestCase):
     IDENTITY = "affaan-m/ECC"
     REVISION = "ef648e01899ba3e8dc6371642deaaf64b4477775"
+
+    def test_urllib_transport_validates_each_redirect_before_request(self):
+        initial = "https://api.github.com/repos/example/project/commits/" + self.REVISION
+        opener = _RedirectingOpener("/repos/example/project/commit/" + self.REVISION)
+        with patch("hermes_installer.components.source_bundle.build_opener", return_value=opener):
+            response = UrllibSourceTransport().get(initial, max_bytes=1024, timeout_seconds=5)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(opener.requested), 2)
+        self.assertTrue(opener.requested[1][0].startswith("https://api.github.com/"))
+
+    def test_urllib_transport_blocks_loopback_private_and_foreign_redirects_pre_request(self):
+        initial = "https://codeload.github.com/example/project/legacy.tar.gz/" + self.REVISION
+        destinations = (
+            "http://127.0.0.1/private",
+            "https://192.168.1.10/private",
+            "https://attacker.example/collect",
+        )
+        for destination in destinations:
+            opener = _RedirectingOpener(destination)
+            with patch("hermes_installer.components.source_bundle.build_opener", return_value=opener):
+                with self.subTest(destination=destination), self.assertRaisesRegex(
+                    ComponentSourceError, "outside its exact HTTPS origin"
+                ):
+                    UrllibSourceTransport().get(initial, max_bytes=1024, timeout_seconds=5)
+            self.assertEqual(len(opener.requested), 1)
+            self.assertEqual(opener.requested[0][0], initial)
 
     def fixture_archive(self):
         return archive_bytes(self.IDENTITY, self.REVISION, [
