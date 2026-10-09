@@ -326,10 +326,10 @@ class HermesBootstrap:
         self._write_generation_marker()
         statuses: list[StageStatus] = []
         skipped = {"setup", "gateway"}
-        desktop_output = self.install_dir / "apps" / "desktop" / "release" / "linux-arm64-unpacked"
+        desktop_output = self.install_dir / "apps" / "desktop" / "dist" / "index.html"
         for stage in EXPECTED_STAGES:
             if done.get(stage) in {"complete", "skipped"}:
-                if stage != "products" or not include_desktop or desktop_output.is_dir():
+                if stage != "products" or not include_desktop or desktop_output.is_file():
                     statuses.append(StageStatus(stage, done[stage]))
                     continue
             extra: list[str] = []

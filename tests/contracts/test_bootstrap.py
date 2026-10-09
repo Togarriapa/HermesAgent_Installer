@@ -117,11 +117,14 @@ class BootstrapTests(unittest.TestCase):
             data=OwnedRoot(Path(td)/"data");data.ensure(); state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
             runner=FakeRunner(); boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=runner,desktop_builder=fake_desktop(data),agent_probe=lambda:True,expected_script_blob=git_blob_sha1(SCRIPT))
             boot.install(include_desktop=False)
-            desktop_before=sum(1 for call in runner.calls if "--include-desktop" in call[0])
-            report=boot.install(include_desktop=True)
-            desktop_after=sum(1 for call in runner.calls if "--include-desktop" in call[0])
-            self.assertTrue(report.desktop_built)
-            self.assertEqual(desktop_after,desktop_before+1)
+            desktop_calls=[]
+            def build(*,timeout):
+                desktop_calls.append(timeout)
+                return fake_desktop(data)(timeout=timeout)
+            boot.desktop_builder=build
+            boot.install(include_desktop=True)
+            self.assertTrue(boot.status()["complete"])
+            self.assertEqual(len(desktop_calls),1)
     def test_manifest_change_stops_before_any_stage(self):
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data");data.ensure()
