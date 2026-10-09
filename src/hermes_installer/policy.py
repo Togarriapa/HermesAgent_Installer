@@ -187,6 +187,8 @@ def _host_sensitivity(context: object) -> Sensitivity:
     value = getattr(context, "sensitivity", None)
     if isinstance(value, Sensitivity):
         return value
+    if not isinstance(value, str):
+        value = getattr(value, "value", None)
     names = {"public": Sensitivity.PUBLIC, "private": Sensitivity.PRIVATE,
              "confidential": Sensitivity.CONFIDENTIAL, "unknown": Sensitivity.UNKNOWN}
     if isinstance(value, str) and value.casefold() in names:
