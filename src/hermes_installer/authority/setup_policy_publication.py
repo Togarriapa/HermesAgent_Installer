@@ -107,7 +107,8 @@ class RootSetupPolicyGenerationPublisher:
 
     def __init__(self, release: Any, session_store: Any, root_journal: Any,
                  compiler_publication_registry: Any):
-        from .bootstrap_runtime_factory import RootActivePolicyCompilationRegistry, RootInitialCompilationRegistry
+        from .bootstrap_runtime_factory import RootInitialCompilationRegistry
+        from .active_policy_compiler import RootActivePolicyCompilationRegistry
         if not isinstance(compiler_publication_registry,
                           (RootInitialCompilationRegistry, RootActivePolicyCompilationRegistry)):
             raise ValueError("typed initial or active policy compilation registry is required")
@@ -124,7 +125,8 @@ class RootSetupPolicyGenerationPublisher:
                         ) -> "RootSetupPolicyGenerationPublisher":
         if not callable(getattr(verified_installer_release_receipt, "verify_current", None)):
             raise ValueError("verified installed release receipt is required")
-        from .bootstrap_runtime_factory import RootActivePolicyCompilationRegistry, RootInitialCompilationRegistry
+        from .bootstrap_runtime_factory import RootInitialCompilationRegistry
+        from .active_policy_compiler import RootActivePolicyCompilationRegistry
         if not isinstance(compiler_publication_registry,
                           (RootInitialCompilationRegistry, RootActivePolicyCompilationRegistry)):
             raise ValueError("publication requires a typed initial or active compiler registry")

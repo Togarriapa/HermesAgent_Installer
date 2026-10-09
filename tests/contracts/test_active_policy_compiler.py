@@ -130,3 +130,47 @@ def test_untyped_or_malformed_claim_handle_is_rejected():
     registry._claims = {}
     with pytest.raises(BootstrapEnrollmentError, match="malformed"):
         registry._get_claim("caller-controlled")
+
+
+def test_active_state_resolution_rechecks_current_selected_publication(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    import hermes_installer.authority.active_policy_compiler as compiler
+    from hermes_installer.authority.setup_policy_publication import PolicyPublicationReceiptResolver
+
+    row = {
+        "state": "active-committed", "transaction_handle": "T" * 64,
+        "publication_handle": "H" * 43, "claim_digest": "a" * 64,
+        "prepared_generation_id": "prepared-1",
+        "materialization_receipt_handles": ["B" * 43],
+        "active_selection_catalog_sha256": "b" * 64,
+        "publication_sha256": "c" * 64, "descriptor_sha256": "d" * 64,
+        "publication_generation_id": "installer-bootstrap-policy-generation-v1",
+        "publication_generation_device": 1, "publication_generation_inode": 2,
+    }
+    selected = SimpleNamespace(
+        state="active-committed", current_selection_catalog_sha256="b" * 64,
+        publication_sha256="c" * 64, descriptor_sha256="d" * 64,
+        generation_id="installer-bootstrap-policy-generation-v1",
+        generation_device=1, generation_inode=2,
+    )
+    seen = []
+    monkeypatch.setattr(compiler, "_read_json", lambda _path: row)
+    monkeypatch.setattr(PolicyPublicationReceiptResolver, "verify_current_active_claim",
+                        lambda **kwargs: (seen.append(kwargs), selected)[1])
+    session = SimpleNamespace(_authorization=SimpleNamespace(transaction_handle="T" * 64))
+    registry = object.__new__(RootActivePolicyCompilationRegistry)
+    registry.factory = SimpleNamespace(resolve_live_session=lambda _handle: session)
+    registry._claim_root = tmp_path
+
+    assert registry.resolve_active_state(object()) is row
+    assert seen == [{
+        "publication_handle": "H" * 43, "claim_digest": "a" * 64,
+        "prepared_generation_id": "prepared-1", "transaction_handle": "T" * 64,
+        "expected_materialization_receipt_handles": ("B" * 43,),
+    }]
+
+    monkeypatch.setattr(PolicyPublicationReceiptResolver, "verify_current_active_claim",
+                        lambda **_kwargs: SimpleNamespace(**{
+                            **selected.__dict__, "descriptor_sha256": "e" * 64}))
+    with pytest.raises(BootstrapEnrollmentPending, match="differs from the current selected publication"):
+        registry.resolve_active_state(object())

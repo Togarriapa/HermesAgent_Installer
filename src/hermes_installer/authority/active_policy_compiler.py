@@ -582,11 +582,31 @@ class RootActivePolicyCompilationRegistry:
         self._close_lock(publication_handle)
 
     def resolve_active_state(self, setup_session_handle: RootSetupSessionHandle) -> Mapping[str, Any]:
+        from .setup_policy_publication import PolicyPublicationReceiptResolver
         session = self.factory.resolve_live_session(setup_session_handle)
-        path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".json")
+        transaction_handle = session._authorization.transaction_handle
+        path = self._claim_root / ("transaction-" + transaction_handle + ".json")
         row = _read_json(path)
         if row.get("state") != "active-committed":
             raise BootstrapEnrollmentPending("active policy publication is not committed for this transaction")
+        handles = row.get("materialization_receipt_handles")
+        if not isinstance(handles, list) or not handles:
+            raise BootstrapEnrollmentPending("active policy journal lacks its native output receipt closure")
+        receipt = PolicyPublicationReceiptResolver.verify_current_active_claim(
+            publication_handle=row.get("publication_handle"),
+            claim_digest=row.get("claim_digest"),
+            prepared_generation_id=row.get("prepared_generation_id"),
+            transaction_handle=transaction_handle,
+            expected_materialization_receipt_handles=tuple(handles),
+        )
+        if (receipt.state != "active-committed"
+                or receipt.current_selection_catalog_sha256 != row.get("active_selection_catalog_sha256")
+                or receipt.publication_sha256 != row.get("publication_sha256")
+                or receipt.descriptor_sha256 != row.get("descriptor_sha256")
+                or receipt.generation_id != row.get("publication_generation_id")
+                or receipt.generation_device != row.get("publication_generation_device")
+                or receipt.generation_inode != row.get("publication_generation_inode")):
+            raise BootstrapEnrollmentPending("active policy journal differs from the current selected publication")
         return row
 
     def _compile_documents(self, session: Any) -> tuple[bytes, bytes, dict[str, Any], str]:
