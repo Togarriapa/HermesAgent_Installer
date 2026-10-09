@@ -121,7 +121,7 @@ class ProviderTransportTests(unittest.TestCase):
             network_factories.append(kwargs)
             return RecordingNetwork(**kwargs)
         transport = OpenRouterTransport(ref, secret_reader=lambda value: resolved.append(value) or "rotated-secret",
-            network_factory=network_factory, eligibility=fixture_gate)
+            network_factory=network_factory, eligibility=fixture_gate, allow_direct_fixture_transport=True)
         with self.assertRaisesRegex(PolicyDenied, "credential"):
             transport(default_public_route(), MODEL, b'{"messages":[{"role":"user","content":"hi"}]}',
                 output_token_limit=8, timeout=2, trace_id="bound-key")
