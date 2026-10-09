@@ -64,7 +64,7 @@ class ProviderPolicyTests(unittest.TestCase):
             dispatcher = Dispatcher(DispatchPolicy({"public": default_public_route()}, "public"),
                 BudgetLedger(self.ledger_root(Path(td))), provider)
             with self.assertRaisesRegex(PolicyDenied, "Trusted host provider authorization is unavailable"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC),
+                dispatcher.dispatch(fixture_context("hermes", "chat", Sensitivity.PUBLIC),
                     MODEL, b'{"messages":[{"role":"user","content":"hi"}]}',
                     input_tokens=2, output_token_limit=8)
             self.assertEqual(provider.calls, [])
@@ -83,7 +83,7 @@ class ProviderPolicyTests(unittest.TestCase):
                 context_authorizer=late_authorizer, clock=lambda: now[0],
             )
             with self.assertRaisesRegex(PolicyDenied, "exceeded the request deadline"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL,
+                dispatcher.dispatch(fixture_context("hermes", "chat", Sensitivity.PUBLIC), MODEL,
                     b'{"messages":[{"role":"user","content":"late auth"}]}',
                     input_tokens=2, output_token_limit=8)
             self.assertEqual(provider.calls, [])
@@ -102,7 +102,7 @@ class ProviderPolicyTests(unittest.TestCase):
             dispatcher = Dispatcher(DispatchPolicy({"public": default_public_route()}, "public"),
                 BudgetLedger(self.ledger_root(Path(td))), provider, context_authorizer=authorizer)
             with self.assertRaisesRegex(PolicyDenied, "Tool capability flag does not match"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL,
+                dispatcher.dispatch(fixture_context("hermes", "chat", Sensitivity.PUBLIC), MODEL,
                     b'{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"x"}}]}',
                     input_tokens=2, output_token_limit=8, tool_request=False)
             self.assertEqual(authorizations, [])
@@ -124,7 +124,7 @@ class ProviderPolicyTests(unittest.TestCase):
                 BudgetLedger(root), provider, context_authorizer=changing_authorizer,
                 sleep=lambda _delay: None)
             with self.assertRaisesRegex(PolicyDenied, "authorization changed"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL,
+                dispatcher.dispatch(fixture_context("hermes", "chat", Sensitivity.PUBLIC), MODEL,
                     b'{"messages":[{"role":"user","content":"retry"}]}',
                     input_tokens=2, output_token_limit=8)
             self.assertEqual(len(provider.calls), 1)
@@ -141,7 +141,7 @@ class ProviderPolicyTests(unittest.TestCase):
                 BudgetLedger(self.ledger_root(Path(td))), provider,
                 context_authorizer=private_host_policy)
             with self.assertRaisesRegex(PolicyDenied, "No private-capable route"):
-                dispatcher.dispatch(DispatchContext("claimed-public", "chat", Sensitivity.PUBLIC),
+                dispatcher.dispatch(fixture_context("claimed-public", "chat", Sensitivity.PUBLIC),
                     MODEL, b'{"messages":[{"role":"user","content":"private"}]}',
                     input_tokens=2, output_token_limit=8)
             self.assertEqual(provider.calls, [])
@@ -149,7 +149,7 @@ class ProviderPolicyTests(unittest.TestCase):
     def test_public_nemotron_tool_call_hits_only_exact_free_route(self):
         with tempfile.TemporaryDirectory() as td:
             provider = RecordingProvider()
-            result = self.make(Path(td), provider).dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL, b'{"messages":[{"role":"user","content":"hi"}],"tool_choice":"auto"}', input_tokens=8, output_token_limit=128, tool_request=True)
+            result = self.make(Path(td), provider).dispatch(fixture_context("hermes", "chat", Sensitivity.PUBLIC), MODEL, b'{"messages":[{"role":"user","content":"hi"}],"tool_choice":"auto"}', input_tokens=8, output_token_limit=128, tool_request=True)
             self.assertEqual(result.status, 200)
             self.assertEqual(provider.calls[0][0:2], ("openrouter-nemotron-free", MODEL))
             self.assertEqual(json.loads(provider.calls[0][2])["model"], MODEL)
@@ -159,7 +159,7 @@ class ProviderPolicyTests(unittest.TestCase):
     def test_private_derived_memory_is_blocked_before_public_dispatch(self):
         with tempfile.TemporaryDirectory() as td:
             provider = RecordingProvider()
-            ctx = DispatchContext("hermes", "memory-extraction", Sensitivity.PUBLIC, derived_from=(Sensitivity.PRIVATE,))
+            ctx = fixture_context("hermes", "memory-extraction", Sensitivity.PUBLIC, derived_from=(Sensitivity.PRIVATE,))
             with self.assertRaisesRegex(PolicyDenied, "No private-capable route"):
                 self.make(Path(td), provider).dispatch(ctx, MODEL,
                     b'{"messages":[{"role":"user","content":"private memory"}]}', input_tokens=4, output_token_limit=32)
@@ -172,7 +172,7 @@ class ProviderPolicyTests(unittest.TestCase):
             provider = RecordingProvider([ProviderResponse(503, b"unavailable")])
             dispatcher = self.make(Path(td), provider, private=True, budget=0.01)
             dispatcher.policy = replace(dispatcher.policy, fallbacks={"private": ("public",)})
-            ctx = DispatchContext("hermes-private", "tool-result", Sensitivity.PRIVATE)
+            ctx = fixture_context("hermes-private", "tool-result", Sensitivity.PRIVATE)
             with self.assertRaisesRegex(PolicyDenied, "No eligible provider route"):
                 dispatcher.dispatch(ctx, MODEL, b'{"messages":[{"role":"user","content":"private result"}],"tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object"}}}]}', input_tokens=20, output_token_limit=32, tool_request=True)
             self.assertTrue(provider.calls)
@@ -182,7 +182,7 @@ class ProviderPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             provider = RecordingProvider([ProviderResponse(429, b"", {"Retry-After": "999"}), ProviderResponse(200, b"ok")])
             sleeps = []
-            result = self.make(Path(td), provider, sleep=sleeps.append).dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=5)
+            result = self.make(Path(td), provider, sleep=sleeps.append).dispatch(fixture_context("hermes", "chat", Sensitivity.PUBLIC), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=5)
             self.assertEqual(result.status, 200)
             self.assertEqual(len(provider.calls), 2)
             self.assertAlmostEqual(sum(sleeps), 15.0)
@@ -195,7 +195,7 @@ class ProviderPolicyTests(unittest.TestCase):
             policy = DispatchPolicy({"public": default_public_route(), "private": paid}, "public", "private")
             dispatcher = Dispatcher(policy, BudgetLedger(self.ledger_root(Path(td))), provider, context_authorizer=synthetic_authorizer)
             with self.assertRaisesRegex(PolicyDenied, "No eligible provider route"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PRIVATE), "local/test", b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(fixture_context("hermes", "chat", Sensitivity.PRIVATE), "local/test", b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
             self.assertEqual(provider.calls, [])
 
     def test_ledger_reserves_and_accounts_across_dispatchers(self):
@@ -208,11 +208,11 @@ class ProviderPolicyTests(unittest.TestCase):
             policy = DispatchPolicy({"public": default_public_route(), "private": paid}, "public", "private", metered_budget_usd=estimate * 1.5)
             ledger_root = self.ledger_root(root)
             first = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider([ProviderResponse(200, b"ok", input_tokens=100, output_tokens=100)]), context_authorizer=synthetic_authorizer)
-            first.dispatch(DispatchContext("one", "chat", Sensitivity.PRIVATE), "local/test", payload, input_tokens=100, output_token_limit=100)
+            first.dispatch(fixture_context("one", "chat", Sensitivity.PRIVATE), "local/test", payload, input_tokens=100, output_token_limit=100)
             self.assertAlmostEqual(BudgetLedger(ledger_root).spent(), estimate)
             second = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider(), context_authorizer=synthetic_authorizer)
             with self.assertRaisesRegex(PolicyDenied, "Aggregate metered budget"):
-                second.dispatch(DispatchContext("two", "summary", Sensitivity.PRIVATE), "local/test", payload, input_tokens=100, output_token_limit=100)
+                second.dispatch(fixture_context("two", "summary", Sensitivity.PRIVATE), "local/test", payload, input_tokens=100, output_token_limit=100)
 
 
     def test_unknown_prices_are_never_treated_as_free(self):
@@ -222,7 +222,7 @@ class ProviderPolicyTests(unittest.TestCase):
             policy=DispatchPolicy({"unknown":unknown},"unknown")
             dispatcher=Dispatcher(policy,BudgetLedger(self.ledger_root(Path(td))),provider,context_authorizer=synthetic_authorizer)
             with self.assertRaisesRegex(PolicyDenied,"No eligible provider route"):
-                dispatcher.dispatch(DispatchContext("hermes","chat",Sensitivity.PUBLIC),MODEL,b'{"messages":[{"role":"user","content":"test"}]}',input_tokens=1,output_token_limit=1)
+                dispatcher.dispatch(fixture_context("hermes","chat",Sensitivity.PUBLIC),MODEL,b'{"messages":[{"role":"user","content":"test"}]}',input_tokens=1,output_token_limit=1)
             self.assertEqual(provider.calls,[])
 
     def test_ambiguous_paid_timeout_keeps_attempt_reservation(self):
@@ -239,7 +239,7 @@ class ProviderPolicyTests(unittest.TestCase):
             ledger=BudgetLedger(root)
             dispatcher=Dispatcher(policy,ledger,transport,context_authorizer=synthetic_authorizer)
             with self.assertRaisesRegex(PolicyDenied,"Aggregate metered budget"):
-                dispatcher.dispatch(DispatchContext("private","chat",Sensitivity.PRIVATE),"local/test",payload,input_tokens=1,output_token_limit=1)
+                dispatcher.dispatch(fixture_context("private","chat",Sensitivity.PRIVATE),"local/test",payload,input_tokens=1,output_token_limit=1)
             self.assertEqual(calls,["private"])
             self.assertAlmostEqual(ledger.spent(),estimate)
 
@@ -250,7 +250,7 @@ class ProviderPolicyTests(unittest.TestCase):
             def sleep(delay):
                 cancelled[0]=True
             dispatcher=self.make(Path(td),provider,sleep=sleep)
-            context=DispatchContext("hermes","chat",Sensitivity.PUBLIC,cancelled=lambda:cancelled[0])
+            context=fixture_context("hermes","chat",Sensitivity.PUBLIC,cancelled=lambda:cancelled[0])
             with self.assertRaisesRegex(PolicyDenied,"cancelled during retry delay"):
                 dispatcher.dispatch(context,MODEL,b'{"messages":[{"role":"user","content":"test"}]}',input_tokens=1,output_token_limit=2)
             self.assertEqual(len(provider.calls),1)
@@ -266,11 +266,11 @@ class ProviderPolicyTests(unittest.TestCase):
             provider = RecordingProvider()
             dispatcher = self.make(Path(td), provider)
             with self.assertRaisesRegex(PolicyDenied, "cancelled"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC, cancelled=lambda: True), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(fixture_context("hermes", "chat", Sensitivity.PUBLIC, cancelled=lambda: True), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
             with self.assertRaisesRegex(PolicyDenied, "No private-capable route"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.UNKNOWN), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(fixture_context("hermes", "chat", Sensitivity.UNKNOWN), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
             with self.assertRaisesRegex(PolicyDenied, "deadline"):
-                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC, deadline=1), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
+                dispatcher.dispatch(fixture_context("hermes", "chat", Sensitivity.PUBLIC, deadline=1), MODEL, b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=1, output_token_limit=1)
             self.assertEqual(provider.calls, [])
 
 
