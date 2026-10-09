@@ -326,27 +326,55 @@ class Dispatcher:
         self._lock = threading.Lock()
         self._active: set[str] = set()
 
-    def _authorize(self, context: DispatchContext, capability: str) -> DispatchAuthorization:
+    def _authorize(self, context: DispatchContext, capability: str, intent_id: str,
+                   deadline: float) -> DispatchAuthorization:
         authorizer = self.context_authorizer
         now = self.clock()
+        if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
+            raise PolicyDenied("authorization.clock", "Host monotonic clock is invalid")
         if authorizer is None:
             raise PolicyDenied("authorization.unavailable", "Trusted host provider authorization is unavailable")
         if context.cancelled():
             raise PolicyDenied("dispatch.cancelled", "Request was cancelled before provider authorization")
+        remaining = deadline - now
+        if remaining <= 0:
+            raise PolicyDenied("dispatch.deadline", "Request deadline elapsed before provider authorization")
+        def authorization_cancelled() -> bool:
+            return context.cancelled() or self.clock() >= deadline
         try:
-            grant = authorizer(context, capability, now)
+            # The injected host adapter must implement bounded, cancellable reads
+            # and join any helper it starts before returning or raising.
+            grant = authorizer(context, capability, intent_id, now, remaining, authorization_cancelled)
         except Exception:
+            if context.cancelled():
+                raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider authorization") from None
+            if self.clock() >= deadline:
+                raise PolicyDenied("dispatch.deadline", "Provider authorization exceeded the request deadline") from None
             raise PolicyDenied("authorization.failed", "Trusted host provider authorization failed") from None
+        finished = self.clock()
+        if isinstance(finished, bool) or not isinstance(finished, (int, float)) or not math.isfinite(finished):
+            raise PolicyDenied("authorization.clock", "Host monotonic clock is invalid")
+        if context.cancelled():
+            raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider authorization")
+        if finished >= deadline:
+            raise PolicyDenied("dispatch.deadline", "Provider authorization exceeded the request deadline")
         if not isinstance(grant, DispatchAuthorization):
             raise PolicyDenied("authorization.denied", "Trusted host denied this provider capability")
         if (not grant.principal_id or not grant.profile_id or not grant.namespace
-                or not grant.trace_id or not grant.policy_revision or not grant.grant_id
+                or not grant.trace_id or not grant.policy_revision or not grant.purpose
+                or not grant.capability or not grant.intent_id or not grant.grant_id
                 or grant.profile_id != context.profile_id or grant.trace_id != context.trace_id
-                or capability not in grant.capabilities
+                or grant.purpose != context.purpose or grant.capability != capability
+                or grant.intent_id != intent_id or capability not in grant.capabilities
                 or not isinstance(grant.effective_sensitivity, Sensitivity)
+                or isinstance(grant.expires_at_monotonic, bool)
+                or not isinstance(grant.expires_at_monotonic, (int, float))
                 or not math.isfinite(grant.expires_at_monotonic)
-                or grant.expires_at_monotonic <= now
-                or grant.expires_at_monotonic - now > 3600):
+                or grant.expires_at_monotonic <= finished
+                or grant.expires_at_monotonic - finished > 3600
+                or not isinstance(grant.lineage_sha256, str)
+                or len(grant.lineage_sha256) != 64
+                or any(ch not in "0123456789abcdef" for ch in grant.lineage_sha256)):
             raise PolicyDenied("authorization.stale", "Host provider authorization is stale, mismatched, or insufficient")
         return grant
 
