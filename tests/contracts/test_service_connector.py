@@ -251,11 +251,12 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         effect_handlers = {(operation, "xpra-native"):
                            (lambda **_: {"status": 200, "body": b"", "headers": {}, "receipt_id": "fixture"})
                            for operation in operations}
+        native_principal = PrincipalBinding(
+            2001, "principal:native", "hermes-desktop", "namespace:native",
+            frozenset({"hermes-service-connect"}))
         service = AuthorityService(
             signing_key=b"k" * 32, key_id="fixture-authority",
-            bindings_by_uid={2001: PrincipalBinding(
-                2001, "principal:native", "hermes-desktop", "namespace:native",
-                frozenset({"hermes-service-connect"}))},
+            bindings_by_uid={2001: native_principal},
             rules=effect_rules, handlers=effect_handlers, policy=Policy(),
             profile_generations={"hermes-desktop": "generation:1"},
             service_generation_digest="e" * 64,
@@ -263,6 +264,9 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         hi12 = AuthorityServiceHI12Adapter(
             service, boot_epoch=lambda: "boot:fixture",
             service_generation_digest=lambda: "e" * 64,
+            resolve_selected_native_principal=lambda profile, generation, digest:
+                native_principal if (profile, generation, digest) ==
+                ("hermes-desktop", "generation:1", "e" * 64) else None,
         )
         root_effects = RemoteConnectorEffectAuthority(
             runtime_state=lambda: state, enrollment=protected_remote,
@@ -409,17 +413,21 @@ class FixedServiceConnectorContracts(unittest.TestCase):
             handlers = {(operation, "xpra-native"):
                         (lambda **_: {"status": 200, "body": b"", "headers": {}, "receipt_id": "fixture"})
                         for operation in active}
+            native_principal = PrincipalBinding(
+                1234, "principal:fixture", "hermes-desktop", "namespace:fixture",
+                frozenset({"hermes-service-connect"}))
             service = AuthorityService(
                 signing_key=b"p" * 32, key_id="setup-probe-fixture",
-                bindings_by_uid={1234: PrincipalBinding(
-                    1234, "principal:fixture", "hermes-desktop", "namespace:fixture",
-                    frozenset({"hermes-service-connect"}))},
+                bindings_by_uid={1234: native_principal},
                 rules=rules, handlers=handlers, policy=Policy(),
                 profile_generations={"hermes-desktop": "generation:1"},
                 service_generation_digest="3" * 64)
             return AuthorityServiceHI12Adapter(
                 service, boot_epoch=lambda: "fixture-boot",
-                service_generation_digest=lambda: "3" * 64), service
+                service_generation_digest=lambda: "3" * 64,
+                resolve_selected_native_principal=lambda profile, generation, digest:
+                    native_principal if (profile, generation, digest) ==
+                    ("hermes-desktop", "generation:1", "3" * 64) else None), service
 
         def resolve(handle_arg, uid, pid, pidfd):
             if (handle_arg, uid, pid, pidfd) != (handle, 1234, os.getpid(), self.pidfd):
