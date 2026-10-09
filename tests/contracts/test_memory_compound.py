@@ -309,6 +309,7 @@ class MemoryCompoundTests(unittest.TestCase):
             "service_generation": "service-gen-1", "namespace_identity": "ns-1",
             "literal_loopback_port": 3111, "fixed_route_map": {"agentmemory-search": route},
             "data_root_id": "data-1", "auth_reference_id": "vault-ref-1",
+            "authority_state_root_id": "authority-root-1",
             "fixed_project_account_user_scope": {
                 "project_id": "project-1", "account_id": "account-1", "user_id": "profile-1",
             },

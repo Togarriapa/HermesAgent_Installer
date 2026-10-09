@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from hermes_installer.memory.broker import (
-    BrokerDenied, DurableMemoryQueue, MemoryTarget, build_memory_handlers,
+    BrokerDenied, BrokerUnavailable, DurableMemoryQueue, MemoryTarget, build_memory_handlers,
     canonical, ROUTE_IDS, build_memory_runtime,
 )
 
@@ -36,19 +36,20 @@ class Context:
 
 
 class Grant:
-    def __init__(self, profile, namespace, target, digest):
-        self.profile_id, self.namespace_id = profile, namespace
+    def __init__(self, context, target, digest):
+        self.profile_id, self.namespace_id = context.profile_id, context.namespace_id
         self.target, self.request_digest = target, digest
         action = target.rsplit(":", 1)[-1]
         self.capability = {"doctor":"memory-retrieval","search":"memory-retrieval",
             "extract":"memory-extraction","embed":"memory-embedding","capture":"memory-capture",
             "enqueue":"memory-capture","export":"memory-export","backup":"memory-backup",
             "restore":"memory-restore","delete":"memory-delete","result":"memory-retrieval"}[action]
-        self.principal_id, self.uid = "principal", 1001
-        self.purpose, self.intent_id = "memory-capture", "intent"
-        self.trace_id, self.policy_revision = "trace-one", "policy1"
-        self.lineage_hash = "a" * 64
-        self.sensitivity, self.source_receipts, self.final_payload_digest = "private", (), None
+        self.principal_id, self.uid = context.principal_id, context.uid
+        self.purpose, self.intent_id = context.purpose, context.intent_id
+        self.trace_id, self.policy_revision = context.trace_id, context.policy_revision
+        self.lineage_hash = context.lineage_hash
+        self.sensitivity, self.source_receipts = context.sensitivity, context.source_receipts
+        self.final_payload_digest = context.final_payload_digest
 
 
 class IPC:
@@ -69,8 +70,7 @@ def target(profile, namespace, service):
 
 def call(handler, context, action, value, *, digest_override=None, provider="agentmemory"):
     raw = canonical(value)
-    grant = Grant(context.profile_id, context.namespace_id,
-                  "memory:" + provider + ":" + action,
+    grant = Grant(context, "memory:" + provider + ":" + action,
                   digest_override or hashlib.sha256(raw).hexdigest())
     return handler(context=context, authorization=grant, payload=raw, timeout=1.0,
                    peer_pid=123, cancelled=lambda: False)
@@ -123,14 +123,13 @@ class MemoryBrokerTests(unittest.TestCase):
         t = MemoryTarget("agentmemory", "p1", "n1", "service-one",
             "df3d4a83b966d8d415cb9180d5a4724b07f729dc", 1, "root-data-p1",
             approved_route_ids=frozenset())
-        ipc = IPC()
+        ipc = None
         handlers = build_memory_handlers(
             targets={("p1","n1","agentmemory"):t},
             owner_state=lambda _: (None,0), queue=None, ipc=ipc)
         result = call(handlers[("memory.doctor","memory:agentmemory:doctor")],
                       Context(), "doctor", {"schema":1})
         self.assertEqual(result["status"], 403)
-        self.assertEqual(ipc.calls, [])
 
     def test_private_transform_is_unavailable_without_enrolled_local_engine(self):
         t = target("p1", "n1", "service-one")
@@ -198,7 +197,7 @@ class MemoryBrokerTests(unittest.TestCase):
             self.assertIn(b"synthetic", bytes(stored))
 
 
-    def test_root_runtime_binds_typed_consent_to_current_owner_epoch(self):
+    def test_root_runtime_stays_disabled_without_protected_state_catalog(self):
         class SignedConsent:
             def to_wire(self):
                 return {"consent_id":"runtime-consent","signature":"root-signed"}
@@ -208,25 +207,14 @@ class MemoryBrokerTests(unittest.TestCase):
             def perform_memory_effect(self, **_):
                 raise AssertionError("runtime must not start a background worker")
         t = target("p1", "n1", "service-one")
-        with tempfile.TemporaryDirectory() as directory:
-            runtime = build_memory_runtime({("p1","n1","agentmemory"):t},
-                Authority(), root_data_dir=Path(directory)/"runtime")
-            self.assertTrue(runtime["consent_ready"])
-            self.assertTrue(callable(runtime["consent_active"]))
-            self.assertIsNone(runtime["ipc"])
-            self.assertEqual(runtime["engines"], {})
-            runtime["owner_ledger"].set_owner("p1", "agentmemory")
-            context = Context()
-            receipt = runtime["queue"].enqueue(target=t, context=context, body={
-                "schema":1,"profile":"p1","namespace":"n1","event":"turn",
-                "session_id":"synthetic","user_content":"synthetic source",
-                "assistant_content":"synthetic reply"})
-            self.assertTrue(runtime["consent_active"]("runtime-consent"))
-            runtime["owner_ledger"].set_owner("p1", None)
-            self.assertFalse(runtime["consent_active"]("runtime-consent"))
-            self.assertEqual(runtime["queue"].revoke_owner("p1","agentmemory",1),1)
-            self.assertFalse(runtime["consent_active"]("runtime-consent"))
-            self.assertEqual(runtime["queue"].result(context,receipt)["status"],"failed")
+        runtime = build_memory_runtime({("p1","n1","agentmemory"):t}, Authority())
+        self.assertFalse(runtime["consent_ready"])
+        self.assertFalse(runtime["state_root_ready"])
+        self.assertIsNone(runtime["ipc"])
+        self.assertEqual(runtime["engines"], {})
+        self.assertIsNone(runtime["queue"])
+        with self.assertRaises(BrokerUnavailable):
+            runtime["owner_state"]("p1")
 
     def test_root_runtime_rejects_legacy_raw_connector_factory(self):
         t = target("p1", "n1", "service-one")
@@ -235,12 +223,10 @@ class MemoryBrokerTests(unittest.TestCase):
                 return {"consent_id": "consent", "signature": "signed"}
             def perform_memory_effect(self, **_):
                 raise AssertionError("runtime must not start a worker")
-        with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(ValueError, "raw memory HTTP connector factories"):
-                build_memory_runtime(
-                    {("p1", "n1", "agentmemory"): t}, Authority(),
-                    root_data_dir=Path(directory) / "runtime",
-                    connector_factory=lambda **_: IPC())
+        with self.assertRaisesRegex(ValueError, "raw memory HTTP connector factories"):
+            build_memory_runtime(
+                {("p1", "n1", "agentmemory"): t}, Authority(),
+                connector_factory=lambda **_: IPC())
 
     def test_pinned_route_catalog_is_distinct_from_unavailable_raw_transport(self):
         # Fixed routes were checked against each provider's exact enrolled source.

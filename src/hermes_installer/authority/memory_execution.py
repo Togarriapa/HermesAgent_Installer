@@ -31,6 +31,7 @@ from hermes_installer.authority.types import (
     EffectAuthorization, HostContext, canonical_digest,
 )
 from hermes_installer.state import OwnedRoot, process_lock
+from hermes_installer.memory.root_state import MemoryAuthorityStateDirectory, memory_state_lock
 
 
 class MemoryExecutionUnavailable(RuntimeError):
@@ -171,14 +172,15 @@ class MemoryJob:
 class MemoryCompoundLedger:
     """Durable root-only one-use compound job state with atomic transitions."""
 
-    def __init__(self, root: Path):
-        self.owned = OwnedRoot(root)
+    def __init__(self, root: Path | MemoryAuthorityStateDirectory):
+        self.owned = root if isinstance(root, MemoryAuthorityStateDirectory) else OwnedRoot(root)
+        self.profile_scope = self.owned.profile_id if isinstance(self.owned, MemoryAuthorityStateDirectory) else None
         self.owned.ensure()
         # Share the durable capture queue database and lock when installed, so
         # revocation can atomically erase pending events and compound payloads.
         self.path = self.owned.path("memory-queue.sqlite3")
         self.lock_path = self.owned.path("memory-queue.lock")
-        with process_lock(self.lock_path):
+        with memory_state_lock(self.owned, self.lock_path):
             db = self._connect()
             try:
                 db.executescript("""
@@ -214,9 +216,11 @@ class MemoryCompoundLedger:
         db = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
         os.chmod(self.path, 0o600)
         db.execute("PRAGMA busy_timeout=5000")
-        db.execute("PRAGMA journal_mode=DELETE")
+        db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA synchronous=FULL")
         db.execute("PRAGMA secure_delete=ON")
+        from hermes_installer.memory.owner_ledger import _secure_sqlite_files
+        _secure_sqlite_files(self.path)
         return db
 
     def admit(self, *, enrollment: MemoryServiceEnrollment,
@@ -229,6 +233,8 @@ class MemoryCompoundLedger:
               deadline_monotonic: float, maximum_bytes: int) -> MemoryJob:
         if recipe.approved_route_id not in enrollment.fixed_route_map or enrollment.fixed_route_map[recipe.approved_route_id] != recipe:
             raise MemoryExecutionDenied("memory route recipe differs from protected enrollment")
+        if self.profile_scope is not None and enrollment.profile_id != self.profile_scope:
+            raise MemoryExecutionDenied("memory compound ledger belongs to another profile")
         if not isinstance(request_body, Mapping):
             raise MemoryExecutionDenied("memory request body must be a typed object")
         body_wire = _canonical_map(request_body, min(maximum_bytes, recipe.maximum_bytes))
@@ -239,7 +245,7 @@ class MemoryCompoundLedger:
                 or deadline_monotonic <= now or deadline_monotonic > now + recipe.maximum_seconds):
             raise MemoryExecutionDenied("memory compound deadline exceeds its enrolled bound")
         handle = secrets.token_urlsafe(32)
-        with process_lock(self.lock_path):
+        with memory_state_lock(self.owned, self.lock_path):
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -264,7 +270,7 @@ class MemoryCompoundLedger:
     def get(self, handle: str) -> MemoryJob:
         if not isinstance(handle, str) or not handle or len(handle) > 128:
             raise MemoryExecutionDenied("memory job handle is invalid")
-        with process_lock(self.lock_path):
+        with memory_state_lock(self.owned, self.lock_path):
             db = self._connect()
             try:
                 row = db.execute("SELECT handle,profile,namespace,provider,service_generation,"
@@ -285,7 +291,7 @@ class MemoryCompoundLedger:
                    step_id: str, expected_step_id: str) -> tuple[bytes, bytes | None, MemoryJob]:
         if step_id != expected_step_id:
             raise MemoryExecutionDenied("memory compound step does not match the enrolled sequence")
-        with process_lock(self.lock_path):
+        with memory_state_lock(self.owned, self.lock_path):
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -306,7 +312,7 @@ class MemoryCompoundLedger:
 
     def verify_step_binding(self, binding: MemoryStepBinding) -> None:
         """Recheck the active reservation immediately before an effect."""
-        with process_lock(self.lock_path):
+        with memory_state_lock(self.owned, self.lock_path):
             db = self._connect()
             try:
                 row = db.execute("""
@@ -344,7 +350,7 @@ class MemoryCompoundLedger:
         if any(not isinstance(key, str) or not isinstance(value, str)
                for key, value in captures.items()):
             raise MemoryExecutionDenied("memory response captures must be strings")
-        with process_lock(self.lock_path):
+        with memory_state_lock(self.owned, self.lock_path):
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -375,7 +381,7 @@ class MemoryCompoundLedger:
                   state: str = "failed") -> None:
         if state not in {"failed", "ambiguous", "revoked", "unavailable"}:
             raise ValueError("invalid terminal memory job state")
-        with process_lock(self.lock_path):
+        with memory_state_lock(self.owned, self.lock_path):
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")
@@ -396,7 +402,7 @@ class MemoryCompoundLedger:
         if (not isinstance(profile_id, str) or not profile_id or not isinstance(provider, str)
                 or not provider or type(owner_generation) is not int or owner_generation < 1):
             raise ValueError("memory owner revocation identity is invalid")
-        with process_lock(self.lock_path):
+        with memory_state_lock(self.owned, self.lock_path):
             db = self._connect()
             try:
                 db.execute("BEGIN IMMEDIATE")

@@ -170,6 +170,15 @@ class MemoryServiceIPC:
                 session_id: str, deadline_monotonic: float, payload: bytes,
                 timeout: float, peer_pid: int, peer_pidfd: int | None,
                 cancelled: Callable[[], bool]) -> MemoryHTTPResponse:
+        # SK01 v1 requires a root-owned compound executor: callers submit
+        # typed step envelopes, while the root ledger selects the serializer,
+        # service request, response schema and per-step HI12 grant. This older
+        # direct request shape cannot express those atomic bindings safely.
+        raise MemoryTransportUnavailable(
+            "direct memory HTTP transport is retired; fixed compound executor is required")
+
+        # Kept below only as historical source during migration; unreachable
+        # code is deliberately not a registered transport path.
         key = (context.profile_id, context.namespace_id, provider)
         enrollment = self.enrollments.get(key)
         if enrollment is None:

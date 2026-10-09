@@ -48,6 +48,7 @@ def enrolled():
         data_root_id="data-one", auth_reference_id="vault-ref-one",
         fixed_project_account_user_scope={"project_id": "project-one", "account_id": "account-one",
                                           "user_id": "profile-one"},
+        authority_state_root_id="authority-root-one",
         memory_owner_generation=3,
         private_extraction_embedding_routes={"extract": "local-extract", "embed": "local-embed"},
         background_consent_revision="consent-one",
