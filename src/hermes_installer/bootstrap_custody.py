@@ -94,7 +94,7 @@ class BootstrapCustody:
         context = client.context(purpose="hermes-bootstrap",
             intent=f"Fetch pinned artifact {artifact_id}", operation="artifact.fetch",
             final_payload_digest=digest)
-        grant = client.authorize_effect(context, capability="hermes-bootstrap",
+        grant = client.authorize_effect(context, capability="installer-bootstrap",
             target=target, recipient=None, request_digest=digest)
         response = client.fetch_artifact(grant, target=target, artifact_id=artifact_id,
             sha256=sha256, max_bytes=max_bytes, timeout=timeout)
