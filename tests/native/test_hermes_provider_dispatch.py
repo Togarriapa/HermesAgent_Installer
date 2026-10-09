@@ -106,7 +106,7 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 "HOME": str(home),
                 "HERMES_HOME": str(home),
                 "HERMES_AGENT_SOURCE_ROOT": str(source),
-                "HERMES_INSTALLER_DATA_ROOT": str(data_root.path()),
+                "HERMES_INSTALLER_DATA_ROOT": str(data_root.root),
                 LOCAL_KEY_ENV: FIXTURE_KEY,
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PATH": "/usr/bin:/bin",
