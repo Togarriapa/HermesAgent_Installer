@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import re
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -46,7 +47,9 @@ class SelectedPluginEffectsResolver(Protocol):
 
 class PluginAuthority(Protocol):
     def context(self, *, purpose: str, intent: str, operation: str,
-                source_contexts: Sequence[object], final_payload_digest: str,
+                source_contexts: Sequence[object] = (),
+                source_receipt_handles: Sequence[str] = (),
+                final_payload_digest: str,
                 lease_seconds: float) -> object: ...
 
     def authorize_effect(self, context: object, *, capability: str, target: str,
@@ -62,7 +65,53 @@ class PluginAuthority(Protocol):
 
 
 class InvocationContexts(Protocol):
-    def __call__(self, *, purpose: str, intent: str) -> Sequence[object]: ...
+    def __call__(self, *, adapter_id: str, action_id: str,
+                 arguments_sha256: str, purpose: str, intent: str) -> object: ...
+
+
+class NativeInvocationContexts(Protocol):
+    """Root response for one currently executing pinned Hermes tool call."""
+    schema: int
+    invocation_handle: str
+    source_receipt_handles: Sequence[str]
+    parent_closure_digest: str
+    arguments_sha256: str
+    expires_monotonic: float
+
+
+def root_invocation_source_receipt_handles(
+    invocation_contexts: InvocationContexts, *, adapter_id: str, action_id: str,
+    arguments_sha256: str, purpose: str, intent: str,
+) -> tuple[str, ...]:
+    """Resolve root-owned lineage for this exact selected tool invocation.
+
+    The provider is expected to read only the opaque invocation binding scoped
+    by the trusted native tool executor, then call the root get-contexts RPC.
+    This helper validates the bounded response DTO; receipt handles remain
+    opaque and are accepted only by AuthorityClient.context.
+    """
+    lineage = invocation_contexts(
+        adapter_id=adapter_id, action_id=action_id,
+        arguments_sha256=arguments_sha256, purpose=purpose, intent=intent,
+    )
+    handles = getattr(lineage, "source_receipt_handles", None)
+    handles_valid = (
+        isinstance(handles, (tuple, list)) and len(handles) <= 64
+        and all(isinstance(handle, str)
+                and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
+                for handle in handles)
+    )
+    expires = getattr(lineage, "expires_monotonic", None)
+    if (getattr(lineage, "schema", None) != 1
+            or not isinstance(getattr(lineage, "invocation_handle", None), str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", lineage.invocation_handle)
+            or not _HEX.fullmatch(getattr(lineage, "parent_closure_digest", ""))
+            or getattr(lineage, "arguments_sha256", None) != arguments_sha256
+            or isinstance(expires, bool) or not isinstance(expires, (int, float))
+            or not time.monotonic() < expires <= time.monotonic() + 30
+            or not handles_valid):
+        raise PluginEffectUnavailable("trusted invocation lineage is unavailable")
+    return tuple(handles)
 
 
 @dataclass(frozen=True, slots=True)
@@ -438,12 +487,15 @@ class PluginEffectDispatcher:
         if len(payload) > schema.request_bytes_limit:
             raise PluginEffectUnavailable("plugin action exceeds its enrolled request byte bound")
         intent = f"Invoke selected native Plugin action {adapter_id}/{action_id}"
-        source_contexts = self.invocation_contexts(purpose="native-hermes-chat", intent=intent)
-        if not isinstance(source_contexts, Sequence) or not source_contexts:
-            raise PluginEffectUnavailable("trusted invocation lineage is unavailable")
+        arguments_digest = hashlib.sha256(_canonical(args)).hexdigest()
+        source_receipt_handles = root_invocation_source_receipt_handles(
+            self.invocation_contexts, adapter_id=adapter_id, action_id=action_id,
+            arguments_sha256=arguments_digest,
+            purpose="native-hermes-chat", intent=intent,
+        )
         context = self.authority.context(
             purpose="native-hermes-chat", intent=intent, operation=selected.operation,
-            source_contexts=source_contexts, final_payload_digest=digest,
+            source_receipt_handles=source_receipt_handles, final_payload_digest=digest,
             lease_seconds=min(30.0, float(schema.deadline_seconds)),
         )
         if (not isinstance(getattr(context, "principal_id", None), str)
