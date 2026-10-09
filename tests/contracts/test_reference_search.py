@@ -41,6 +41,16 @@ class ReferenceCatalogSearchTests(unittest.TestCase):
         self.assertEqual(1, len(result.hits))
         self.assertFalse(result.complete)
 
+    def test_hitting_limit_marks_result_non_exhaustive(self):
+        result = search_reference_catalog(
+            "awesome-design",
+            {"one.md": b"design\n", "two.md": b"design system\n"},
+            "design",
+            limit=1,
+        )
+        self.assertEqual(1, len(result.hits))
+        self.assertFalse(result.complete)
+
     def test_rejects_unsafe_paths_before_reporting_results(self):
         with self.assertRaisesRegex(ReferenceSearchError, "unsafe path"):
             search_reference_catalog("awesome-harness-engineering",

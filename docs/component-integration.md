@@ -21,3 +21,7 @@ OpenViking uses the native Hermes catalog plugin and a separately prestarted ser
 The `search_reference_catalog` handler provides actual local, read-only query behavior for the selected public-apis, awesome-harness-engineering, and awesome-design catalogs. It accepts only the verified source tree already fetched at the pinned revision, scans bounded UTF-8 documentation/data files, and returns file/line excerpts with source URL and revision. It does not call listed APIs or provision them. Oversized or non-UTF-8 candidate text is skipped and marks the result incomplete; callers must not present an incomplete result as exhaustive.
 
 This implements the searchable-reference behavior only. It does not establish upstream license redistribution permission, live service credentials, or functional runtime readiness for the other component adapters.
+
+### Skill discovery and host-hook inventory
+
+The component skill handler discovers each `SKILL.md` independently, retains its source directory and helper/shared-file references, and binds its record to the selected repository revision. It never concatenates root instructions into global Hermes instructions. The hook inventory is a static, inert review aid: it reports likely host hook files and effect signals, while every candidate remains `review-required` and cannot be installed by the inventory operation. Static signals do not prove absence of effects or replace a functional hook invocation fixture.

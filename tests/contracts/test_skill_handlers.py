@@ -21,7 +21,7 @@ class SkillHandlerTests(unittest.TestCase):
         }
         result = discover_component_skills("diagram-design", files)
         self.assertTrue(result.importable)
-        self.assertEqual(["Second", "Diagram Export"], [s.name for s in result.skills])
+        self.assertEqual(["Diagram Export", "Second"], [s.name for s in result.skills])
         diagram = next(s for s in result.skills if s.name == "Diagram Export")
         self.assertEqual("skills/diagram", diagram.skill_directory)
         self.assertIn("skills/diagram/scripts/render.py", diagram.references)
