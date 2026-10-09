@@ -1,0 +1,3 @@
+# First-stage policy publication and Hermes home v26
+
+BD-F01/BD-F03/LC-F03/HI-T01 original first-install user flow cannot rely on absent pre-generated policy files. Concrete installed root stage0 compiler verifies reviewed installer release/templates, actual root actor/NSS/held owned roots and explicit choices; renders/validates/publishes immutable policy/artifact-selection bytes before factory resolution. No caller authority rows/ambient defaults. HERMES_HOME is explicit service data root/hermes, separate from HOME and caller data. Source/output materialization receipts are actual root registry observations. All acceptance pending, no repeated approval or baseline changes.
