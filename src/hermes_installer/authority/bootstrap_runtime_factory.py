@@ -1524,6 +1524,7 @@ class RootComposioSetupSelectionAuthority:
         self._journal_identity = _secure_directory_identity(root_journal)
         self._root = root_journal / "composio-catalog-read"
         _ensure_root_directory(self._root)
+        self._root_identity = _secure_directory_identity(self._root)
         self._seal = secrets.token_hex(32)
         self._authorizations: dict[str, RootComposioCatalogReadAuthorization] = {}
         self._grants: dict[str, RootComposioCatalogGetGrant] = {}
@@ -1826,6 +1827,9 @@ class RootComposioSetupSelectionAuthority:
                 or context["plan_sha256"] != authorization.plan_sha256
                 or context["principal_receipt_handle"] != authorization._principal_receipt_handle):
             raise BootstrapEnrollmentPending("Composio setup authorization no longer joins current root session state")
+        if (_secure_directory_identity(self.root_journal) != self._journal_identity
+                or _secure_directory_identity(self._root) != self._root_identity):
+            raise BootstrapEnrollmentPending("Composio receipt journal custody changed during setup")
         principal = self._resolve_selected_principal(context, authorization._principal_receipt_handle)
         if principal.principal_id != authorization.principal_id:
             raise BootstrapEnrollmentPending("Composio selected principal changed during setup")
