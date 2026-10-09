@@ -2657,11 +2657,15 @@ class ManagedBuildJobRunner:
     }
 
     def __init__(self, manager: ManagedProcessEffectHandler, *,
-                 process_profile_resolver: Callable[[str, str], ManagedProfileCustody]):
+                 process_profile_resolver: Callable[[str, str], ManagedProfileCustody],
+                 diagnostic_observer: Callable[[bytes], None] | None = None):
         if not isinstance(manager, ManagedProcessEffectHandler) or not callable(process_profile_resolver):
             raise ValueError("build runner requires the root process manager and protected profile resolver")
+        if diagnostic_observer is not None and not callable(diagnostic_observer):
+            raise ValueError("build diagnostic observer must be callable")
         self.manager = manager
         self.process_profile_resolver = process_profile_resolver
+        self._diagnostic_observer = diagnostic_observer
         self._active: set[tuple[str, str]] = set()
         self._records: dict[str, Mapping[str, Any]] = {}
         self._lock = threading.RLock()
@@ -2910,7 +2914,7 @@ class ManagedBuildJobRunner:
             # effect point, after mounts and unit properties are prepared.
             self._verify_inputs(inputs)
             command = [str(manager.systemd_run), "--system", "--unit=" + unit,
-                "--service-type=exec", "--wait", "--collect", "--pipe", "--quiet",
+                "--service-type=exec", "--wait", "--collect", "--pipe",
                 "--working-directory=" + mount_targets["work"], *properties, *env_args, *argv]
             require_active()
             if manager.monotonic() >= authorization.monotonic_expires_at:
@@ -3032,6 +3036,11 @@ class ManagedBuildJobRunner:
                     if needle in output:
                         missing_proof.append("systemd_" + category)
                         break
+                if self._diagnostic_observer is not None:
+                    # Root-only injected diagnostic sink for isolated fixture
+                    # tests; normal production assembly leaves this unset.
+                    with contextlib.suppress(Exception):
+                        self._diagnostic_observer(bytes(log))
                 raise AuthorityDenied("build.cleanup", "terminal proof is incomplete: " + ",".join(missing_proof))
             finished = manager.monotonic()
             proc_id = job_id
