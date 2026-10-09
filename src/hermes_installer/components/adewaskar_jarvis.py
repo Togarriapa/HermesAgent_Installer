@@ -20,7 +20,6 @@ from io import BytesIO
 from typing import Callable, Iterable
 
 from hermes_installer.policy import (
-    DispatchContext,
     Dispatcher,
     ProviderResponse,
     Sensitivity,
@@ -125,25 +124,27 @@ class JarvisIntegration:
             return decision, None
         return decision, launcher()
 
-    def dispatch_synthetic_fixture(self, *, profile_id: str, model: str) -> ProviderResponse:
+    def dispatch_synthetic_fixture(self, *, context: object, model: str) -> ProviderResponse:
         """Send deterministic fixture bytes through the shared policy dispatcher."""
         fixture = make_synthetic_voice_fixture()
         payload = json.dumps(
             {
-                "kind": "synthetic_voice_fixture",
-                "transcript": fixture.transcript,
-                "audio_wav_base64": base64.b64encode(fixture.audio_wav).decode("ascii"),
+                "messages": [{
+                    "role": "user",
+                    "content": (
+                        "Synthetic voice fixture transcript: " + fixture.transcript
+                        + "\nWAV base64: " + base64.b64encode(fixture.audio_wav).decode("ascii")
+                    ),
+                }],
             },
             sort_keys=True,
             separators=(",", ":"),
         ).encode("ascii")
         return self.dispatcher.dispatch(
-            DispatchContext(profile_id, "jarvis-synthetic-voice-fixture", Sensitivity.PUBLIC),
+            context,
             model,
             payload,
             input_tokens=64,
             output_token_limit=64,
             tool_request=False,
-            background=False,
         )
-

@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import tempfile
+import time
+import uuid
 import unittest
 import wave
 from io import BytesIO
@@ -18,12 +20,16 @@ from hermes_installer.components.adewaskar_jarvis import (
 )
 from hermes_installer.policy import (
     BudgetLedger,
+    DispatchContext,
+    DispatchAuthorization,
     DispatchPolicy,
     Dispatcher,
     ProviderResponse,
     Route,
     Sensitivity,
+    Sensitivity,
 )
+from hermes_installer.state import OwnedRoot
 
 
 MODEL = "fixture/jarvis-voice:free"
@@ -35,7 +41,7 @@ class FixtureTransport:
     def __init__(self):
         self.calls: list[tuple[str, bytes]] = []
 
-    def __call__(self, route, model, payload, *, timeout, trace_id):
+    def __call__(self, route, model, payload, *, output_token_limit, timeout, trace_id, cancelled):
         self.calls.append((route.name, payload))
         return ProviderResponse(200, b"synthetic fixture reply", input_tokens=4, output_tokens=4)
 
@@ -44,28 +50,47 @@ class JarvisIntegrationTests(unittest.TestCase):
     def make_integration(self, root: Path):
         route = Route(
             "jarvis-fixture", "http://127.0.0.1:1/fixture", frozenset({MODEL}),
-            Sensitivity.PUBLIC, True, False,
+            Sensitivity.PUBLIC, True, False, 0.0, 0.0,
         )
         transport = FixtureTransport()
+
+        def fixture_authorizer(context, capability, intent_id, now, timeout, cancelled):
+            return DispatchAuthorization(
+                "fixture-principal", context.profile_id, "fixture-namespace", context.trace_id,
+                frozenset({"inference"}), context.effective_sensitivity, "fixture-policy",
+                context.purpose, capability, intent_id, "f" * 64, str(uuid.uuid4()),
+                now + min(60, timeout),
+            )
+
         dispatcher = Dispatcher(
             DispatchPolicy({"jarvis-fixture": route}, "jarvis-fixture", metered_budget_usd=0),
-            BudgetLedger(root / "budget.sqlite"),
+            BudgetLedger(OwnedRoot(root)),
             transport,
+            context_authorizer=fixture_authorizer,
         )
         return JarvisIntegration(dispatcher), transport
 
     def test_synthetic_audio_and_text_use_shared_dispatcher_fixture_route(self):
         with tempfile.TemporaryDirectory() as td:
             integration, transport = self.make_integration(Path(td))
-            response = integration.dispatch_synthetic_fixture(profile_id="fixture-profile", model=MODEL)
+            context = DispatchContext(
+                "fixture-profile", "jarvis-synthetic-voice-fixture", Sensitivity.PUBLIC,
+                principal_id="fixture-principal", namespace="fixture-namespace",
+                provenance="sha256:" + "f" * 64, capabilities=frozenset({"inference"}),
+                policy_revision="fixture-policy", grant_id="fixture-grant",
+                lease_expires_at=time.monotonic() + 30,
+            )
+            response = integration.dispatch_synthetic_fixture(context=context, model=MODEL)
 
             self.assertEqual(response.body, b"synthetic fixture reply")
             self.assertEqual(len(transport.calls), 1)
             route_name, payload = transport.calls[0]
             self.assertEqual(route_name, "jarvis-fixture")
             request = json.loads(payload)
-            self.assertEqual(request["transcript"], "hello from synthetic voice fixture")
-            audio = base64.b64decode(request["audio_wav_base64"], validate=True)
+            self.assertEqual(len(request["messages"]), 1)
+            content = request["messages"][0]["content"]
+            self.assertIn("Synthetic voice fixture transcript: hello from synthetic voice fixture", content)
+            audio = base64.b64decode(content.split("WAV base64: ", 1)[1], validate=True)
             self.assertTrue(audio.startswith(b"RIFF"))
             with wave.open(BytesIO(audio), "rb") as reader:
                 self.assertEqual((reader.getnchannels(), reader.getframerate(), reader.getnframes()), (1, 8000, 800))
