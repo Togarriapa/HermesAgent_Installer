@@ -316,19 +316,33 @@ class RootFirstStagePolicyCompiler:
             raw = b"".join(chunks)
         finally:
             os.close(fd)
+        # Fixed roots come from the reviewed v30 template, and namespace
+        # identity is the selected principal receipt's reviewed capability
+        # scope. Neither is caller-controlled. Dynamic UID/PM/native outputs
+        # remain unresolved in this prepared policy.
+        template_doc = _parse_closed_template(raw)
+        roots = template_doc["roots"]
+        if (roots.get("service_parent_root") != "/var/lib/hermes-installer/services/hermes-agent-native-v1"
+                or roots.get("home_child") != "home" or roots.get("work_child") != "work"
+                or roots.get("data_child") != "data"):
+            raise InitialPolicyCompilationError("closed template does not select the reviewed fixed root layout")
+        parent = roots["service_parent_root"]
         bindings = _RootBindings(
-            values={"transaction.process_generation": session.compilation_transaction_handle},
+            values={
+                "transaction.process_generation": session.compilation_transaction_handle,
+                "transaction.namespace_identity": selected.namespace_id,
+                "roots.home": f"{parent}/home", "roots.work": f"{parent}/work",
+                "roots.data": f"{parent}/data",
+            },
             principal_id=selected.principal_id,
         )
-        try:
-            _render_closed_template(raw, bindings)
-        except InitialPolicyCompilationError as exc:
-            # Stage zero has not issued these ownership and process facts yet.
-            # The profile namespace selected in policy is not kernel evidence.
-            raise InitialPolicyCompilationError(
-                f"pending-root-observation: resolve held root and process observations: {exc}") from exc
+        _render_closed_template(raw, bindings)
+        # The selected plan and renderer are now verified. Publication still
+        # requires the literal strict policy/receipt-rule source set and the
+        # initial selector/catalog identity pins to be installed in this
+        # release; do not mint a signing-key receipt until those are present.
         raise InitialPolicyCompilationError(
-            "strict policy envelope assembly requires a source-verified authority-base template and signer key ID")
+            "pending-policy-source: selected release lacks the closed initial policy and receipt-binding source")
 
 
 __all__ = ["RootFirstStagePolicyCompiler", "InitialPolicyCompilationError"]
