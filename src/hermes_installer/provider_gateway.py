@@ -8,6 +8,7 @@ import hmac
 import http.server
 import json
 import os
+import re
 import socket
 import stat
 import threading
@@ -474,6 +475,15 @@ class LocalProviderGateway:
                     normalized_payload = normalize_chat_request(raw, gateway.model, output_cap)
                     input_tokens = len(normalized_payload)  # conservative byte upper bound.
                     tool_request = bool(value.get("tools")) or value.get("tool_choice") not in (None, "none")
+                    handles = self.headers.get_all("X-Hermes-Installer-Context", [])
+                    if (len(handles) != 1
+                            or not isinstance(handles[0], str)
+                            or not re.fullmatch(r"[A-Za-z0-9_.:@~-]{16,512}", handles[0])):
+                        raise PolicyDenied(
+                            "context.handle_unavailable",
+                            "A single valid host-issued native request handle is required",
+                        )
+                    native_context_handle = handles[0]
                     cancellation = self._begin_request()
                     if cancellation is None:
                         self._reply(503, _error_body("gateway.closing", "Gateway is shutting down"))
@@ -484,14 +494,13 @@ class LocalProviderGateway:
                         final_digest = __import__("hashlib").sha256(normalized_payload).hexdigest()
 
                         def issue_context(retry_index: int):
-                            # The injected factory must be a host-owned native
-                            # event adapter. Empty receipts intentionally resolve
-                            # UNKNOWN; this gateway cannot certify input lineage.
+                            # This opaque handle is a lookup key only; the host
+                            # must authenticate its native process/generation and
+                            # recover the complete verified source closure.
                             return gateway.context_factory(
+                                native_context_handle=native_context_handle,
                                 purpose="native-hermes-chat",
                                 intent=trace_id,
-                                source_contexts=(),
-                                source_receipts=(),
                                 final_payload_digest=final_digest,
                                 operation="provider.dispatch",
                                 retry_index=retry_index,

@@ -13,6 +13,8 @@ import json
 import math
 import secrets
 import time
+from decimal import Decimal, InvalidOperation
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Callable, Mapping, Protocol
 
@@ -63,8 +65,10 @@ class ProviderAdmission(Protocol):
                       capability: str, target: str, recipient: str, endpoint: str,
                       model: str, request_digest: str, retry_index: int,
                       additional_metered_fee_usd: float, credential_ref: str,
-                      expected_zero_price: bool, allow_fallbacks: bool,
-                      plugins_enabled: bool, data_collection: str) -> None: ...
+                      credential: str, payload: bytes, timeout: float,
+                      cancelled: Callable[[], bool], expected_zero_price: bool,
+                      allow_fallbacks: bool, plugins_enabled: bool,
+                      data_collection: str) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +221,144 @@ def _safe_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return result
 
 
+
+
+class OpenRouterLiveAdmission:
+    """Fresh, zero-cost OpenRouter account/model check for public-only effects.
+
+    Uses documented read endpoints (/api/v1/key and /api/v1/model) and the
+    protected credential already held by the root effect handler. It does not
+    turn a public model catalog into a private-data or account-entitlement claim.
+    """
+
+    KEY_ENDPOINT = "https://openrouter.ai/api/v1/key"
+    MODEL_ENDPOINT = "https://openrouter.ai/api/v1/model/nvidia/nemotron-3-ultra-550b-a55b:free"
+
+    def __init__(self, *, network_factory: Callable[..., BoundedNetwork] = BoundedNetwork,
+                 clock: Callable[[], float] = time.time):
+        if not callable(network_factory) or not callable(clock):
+            raise TypeError("live account admission requires bounded network and clock")
+        self._network_factory = network_factory
+        self._clock = clock
+
+    @staticmethod
+    def _read_json(network: BoundedNetwork, endpoint: str, credential: str,
+                   cancelled: Callable[[], bool]) -> Mapping[str, object]:
+        if cancelled():
+            raise ProviderHandlerDenied("provider.cancelled", "Provider admission was cancelled")
+        try:
+            result = network.request(endpoint, method="GET", headers={
+                "Authorization": "Bearer " + credential, "Accept": "application/json",
+            }, cancelled=cancelled)
+        except Exception:
+            raise ProviderHandlerDenied("provider.account_check", "Fresh OpenRouter account eligibility check failed") from None
+        if (type(getattr(result, "status", None)) is not int or result.status != 200
+                or not isinstance(getattr(result, "body", None), bytes)
+                or not 1 <= len(result.body) <= 1_048_576):
+            raise ProviderHandlerDenied("provider.account_check", "Fresh OpenRouter eligibility response was invalid")
+        try:
+            value = json.loads(result.body)
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            raise ProviderHandlerDenied("provider.account_check", "Fresh OpenRouter eligibility response was malformed") from None
+        if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
+            raise ProviderHandlerDenied("provider.account_check", "Fresh OpenRouter eligibility response was malformed")
+        return value["data"]
+
+    def check_attempt(self, *, provider: str, account_id: str, profile_id: str,
+                      principal_id: str, namespace_id: str, sensitivity: str,
+                      capability: str, target: str, recipient: str, endpoint: str,
+                      model: str, request_digest: str, retry_index: int,
+                      additional_metered_fee_usd: float, credential_ref: str,
+                      credential: str, payload: bytes, timeout: float,
+                      cancelled: Callable[[], bool], expected_zero_price: bool,
+                      allow_fallbacks: bool, plugins_enabled: bool,
+                      data_collection: str) -> None:
+        if (provider != "openrouter" or not account_id or not profile_id or not principal_id
+                or not namespace_id or sensitivity != "public"
+                or target != canonical_provider_target(OPENROUTER_MODEL)
+                or recipient != PROVIDER_RECIPIENT or endpoint != OPENROUTER_ENDPOINT
+                or model != OPENROUTER_MODEL or not isinstance(payload, bytes)
+                or hashlib.sha256(payload).hexdigest() != request_digest
+                or isinstance(retry_index, bool) or type(retry_index) is not int
+                or not 0 <= retry_index < 3 or additional_metered_fee_usd != 0
+                or not credential_ref or not isinstance(credential, str) or not credential
+                or not math.isfinite(timeout) or timeout < 0.2 or not callable(cancelled)
+                or not expected_zero_price or allow_fallbacks or plugins_enabled
+                or data_collection != "deny"
+                or capability not in {"provider-inference", "provider-tool-call"}):
+            raise ProviderHandlerDenied("provider.account_policy", "OpenRouter effect is outside the enrolled public zero-cost route")
+        try:
+            request = json.loads(payload)
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            raise ProviderHandlerDenied("provider.request_format", "Canonical OpenRouter request is invalid") from None
+        if (not isinstance(request, dict) or request.get("model") != OPENROUTER_MODEL
+                or request.get("provider") != {"allow_fallbacks": False, "require_parameters": True, "data_collection": "deny"}
+                or request.get("plugins") != DISABLED_PUBLIC_PLUGINS
+                or request.get("stream") is True
+                or type(request.get("max_tokens")) is not int or not 1 <= request["max_tokens"] <= 65_536):
+            raise ProviderHandlerDenied("provider.request_policy", "OpenRouter request does not satisfy the enrolled public route")
+        now = self._clock()
+        if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
+            raise ProviderHandlerDenied("provider.account_policy", "OpenRouter eligibility clock is invalid")
+        per_check = min(10.0, float(timeout) / 2)
+        if per_check < 0.1:
+            raise ProviderHandlerDenied("provider.account_policy", "Provider grant has insufficient time for fresh account checks")
+        try:
+            network = self._network_factory(deadline_seconds=per_check,
+                socket_timeout=min(4.0, per_check), max_response_bytes=1_048_576)
+        except Exception:
+            raise ProviderHandlerDenied("provider.account_check", "OpenRouter account check is unavailable") from None
+        key = self._read_json(network, self.KEY_ENDPOINT, credential, cancelled)
+        if (key.get("is_free_tier") is not True
+                or key.get("is_management_key") is True
+                or key.get("is_provisioning_key") is True
+                or key.get("disabled") is True):
+            raise ProviderHandlerDenied("provider.account_ineligible", "OpenRouter key is not an eligible free inference key")
+        remaining = key.get("limit_remaining")
+        if remaining is not None:
+            try:
+                if not math.isfinite(float(remaining)) or float(remaining) < 0:
+                    raise ValueError("invalid quota")
+            except (TypeError, ValueError, OverflowError):
+                raise ProviderHandlerDenied("provider.account_ineligible", "OpenRouter free-key quota is invalid or exhausted") from None
+        expiry = key.get("expires_at")
+        if expiry:
+            try:
+                parsed = datetime.fromisoformat(str(expiry).replace("Z", "+00:00"))
+                if parsed.tzinfo is None or parsed.timestamp() <= now:
+                    raise ValueError("expired")
+            except (ValueError, TypeError, OverflowError):
+                raise ProviderHandlerDenied("provider.account_ineligible", "OpenRouter key is expired or has an invalid expiry") from None
+        if cancelled():
+            raise ProviderHandlerDenied("provider.cancelled", "OpenRouter account check was cancelled")
+        model_data = self._read_json(network, self.MODEL_ENDPOINT, credential, cancelled)
+        try:
+            pricing = model_data["pricing"]
+            architecture = model_data["architecture"]
+            top = model_data["top_provider"]
+            prompt_price = Decimal(str(pricing["prompt"]))
+            completion_price = Decimal(str(pricing["completion"]))
+            max_completion = int(top["max_completion_tokens"])
+            context_length = int(model_data["context_length"])
+        except (TypeError, ValueError, KeyError, InvalidOperation, OverflowError):
+            raise ProviderHandlerDenied("provider.model_ineligible", "OpenRouter model price or limits are unavailable") from None
+        supported = model_data.get("supported_parameters")
+        if (model_data.get("id") != OPENROUTER_MODEL
+                or not prompt_price.is_finite() or not completion_price.is_finite()
+                or prompt_price != 0 or completion_price != 0
+                or not isinstance(architecture, dict) or architecture.get("input_modalities") != ["text"]
+                or not isinstance(top, dict)
+                or not isinstance(supported, list)
+                or (capability == "provider-tool-call" and "tools" not in supported)
+                or type(top.get("max_completion_tokens")) is not int
+                or not 1 <= max_completion <= 65_536
+                or type(model_data.get("context_length")) is not int
+                or not len(payload) <= context_length):
+            raise ProviderHandlerDenied("provider.model_ineligible", "Current OpenRouter model metadata does not meet the zero-cost text route")
+        if request["max_tokens"] > max_completion or cancelled():
+            raise ProviderHandlerDenied("provider.model_ineligible", "OpenRouter request exceeds live model limits")
+
+
 class _FixedProviderHandler:
     def __init__(self, *, enrollment: ProviderEnrollment,
                  admission: ProviderAdmission, vault: HostCredentialVault,
@@ -231,8 +373,7 @@ class _FixedProviderHandler:
 
     def __call__(self, *, context: object, authorization: object, payload: bytes,
                  timeout: float, peer_pid: int,
-                 cancelled: Callable[[], bool],
-                 peer_pidfd: int | None = None) -> Mapping[str, object]:
+                 cancelled: Callable[[], bool], peer_pidfd: int | None = None) -> Mapping[str, object]:
         enrollment = self._enrollment
         if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
                 or not math.isfinite(timeout) or not 0.1 <= timeout <= MAX_TIMEOUT_SECONDS
@@ -281,7 +422,8 @@ class _FixedProviderHandler:
             model=model, request_digest=digest,
             retry_index=retry_index,
             additional_metered_fee_usd=enrollment.additional_metered_fee_usd,
-            credential_ref=enrollment.credential_ref,
+            credential_ref=enrollment.credential_ref, credential=token,
+            payload=body, timeout=remaining, cancelled=cancelled,
             expected_zero_price=(enrollment.provider == "openrouter"),
             allow_fallbacks=False, plugins_enabled=False, data_collection="deny",
         )

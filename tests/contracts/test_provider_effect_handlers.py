@@ -12,7 +12,7 @@ from hermes_installer.policy import (
 )
 from hermes_installer.provider_effect_handlers import (
     CODEX_ENDPOINT, OPENROUTER_ENDPOINT, OPENROUTER_MODEL,
-    ProviderEnrollment, ProviderHandlerDenied, build_provider_handlers,
+    OpenRouterLiveAdmission, ProviderEnrollment, ProviderHandlerDenied, build_provider_handlers,
 )
 
 
@@ -227,6 +227,96 @@ class ProviderEffectHandlerTests(unittest.TestCase):
         self.assertIn(("provider.dispatch", CODEX_TARGET), handlers)
         self.assertEqual(CODEX_ENDPOINT, "https://api.openai.com/v1/responses")
         self.assertEqual(enrollment.additional_metered_fee_usd, 0)
+
+
+
+
+class LiveAdmissionNetwork:
+    def __init__(self, key_data, model_data):
+        self.responses = {
+            OpenRouterLiveAdmission.KEY_ENDPOINT: key_data,
+            OpenRouterLiveAdmission.MODEL_ENDPOINT: model_data,
+        }
+        self.calls = []
+
+    def request(self, endpoint, *, method, headers, cancelled=None):
+        self.calls.append((endpoint, method, headers))
+        if cancelled and cancelled():
+            raise TimeoutError("cancelled")
+        body = json.dumps({"data": self.responses[endpoint]}).encode()
+        return SimpleNamespace(status=200, body=body, headers={"Content-Type": "application/json"})
+
+
+class OpenRouterLiveAdmissionTests(unittest.TestCase):
+    def _model_data(self, *, prompt="0", completion="0"):
+        return {
+            "id": OPENROUTER_MODEL,
+            "pricing": {"prompt": prompt, "completion": completion},
+            "architecture": {"input_modalities": ["text"]},
+            "supported_parameters": ["tools", "tool_choice"],
+            "context_length": 1_048_576,
+            "top_provider": {"max_completion_tokens": 65_536},
+        }
+
+    def _attempt(self, admission, payload, **overrides):
+        values = {
+            "provider": "openrouter", "account_id": "opaque-account",
+            "profile_id": "profile-test", "principal_id": "principal-test",
+            "namespace_id": "namespace-test", "sensitivity": "public",
+            "capability": "provider-inference",
+            "target": canonical_provider_target(OPENROUTER_MODEL),
+            "recipient": PROVIDER_RECIPIENT, "endpoint": OPENROUTER_ENDPOINT,
+            "model": OPENROUTER_MODEL,
+            "request_digest": __import__("hashlib").sha256(payload).hexdigest(),
+            "retry_index": 0, "additional_metered_fee_usd": 0.0,
+            "credential_ref": "vault://openrouter/account",
+            "credential": "opaque-test-token", "payload": payload, "timeout": 5.0,
+            "cancelled": lambda: False, "expected_zero_price": True,
+            "allow_fallbacks": False, "plugins_enabled": False,
+            "data_collection": "deny",
+        }
+        values.update(overrides)
+        admission.check_attempt(**values)
+
+    def test_live_admission_checks_key_and_exact_model_metadata(self):
+        payload = normalize_chat_request(
+            b'{"messages":[{"role":"user","content":"hello"}]}',
+            OPENROUTER_MODEL, 128,
+        )
+        network = LiveAdmissionNetwork(
+            {"is_free_tier": True, "is_management_key": False,
+             "is_provisioning_key": False, "limit_remaining": 20},
+            self._model_data(),
+        )
+        admission = OpenRouterLiveAdmission(
+            network_factory=lambda **_bounds: network,
+            clock=lambda: time.time(),
+        )
+        self._attempt(admission, payload)
+        self.assertEqual([call[0] for call in network.calls], [
+            OpenRouterLiveAdmission.KEY_ENDPOINT, OpenRouterLiveAdmission.MODEL_ENDPOINT])
+        self.assertTrue(all(call[1] == "GET" for call in network.calls))
+        self.assertTrue(all(call[2]["Authorization"] == "Bearer opaque-test-token"
+                            for call in network.calls))
+
+    def test_nonfree_key_paid_price_and_nontext_model_fail_closed(self):
+        payload = normalize_chat_request(
+            b'{"messages":[{"role":"user","content":"hello"}]}',
+            OPENROUTER_MODEL, 128,
+        )
+        cases = [
+            ({"is_free_tier": False}, self._model_data()),
+            ({"is_free_tier": True}, self._model_data(prompt="0.01")),
+            ({"is_free_tier": True}, {
+                **self._model_data(), "architecture": {"input_modalities": ["text", "image"]}}),
+        ]
+        for key_data, model_data in cases:
+            with self.subTest(key_data=key_data, model_data=model_data):
+                network = LiveAdmissionNetwork(key_data, model_data)
+                admission = OpenRouterLiveAdmission(
+                    network_factory=lambda **_bounds: network)
+                with self.assertRaises(ProviderHandlerDenied):
+                    self._attempt(admission, payload)
 
 
 if __name__ == "__main__":
