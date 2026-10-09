@@ -78,10 +78,10 @@ def build_root_runtime_bindings(
     devices = enrollment.protected_devices
     builds = enrollment.protected_build_records
     digest = enrollment.protected_enrollment_digest
-    if not isinstance(records, list) or not records or not isinstance(devices, list) or not devices:
-        raise EnrollmentDenied("protected service and exact Coral device records are required")
-    if not isinstance(builds, list) or not builds:
-        raise EnrollmentDenied("protected fixed build records are required")
+    if not isinstance(records, list) or not records:
+        raise EnrollmentDenied("protected service generation records are required")
+    if not isinstance(devices, list) or not isinstance(builds, list):
+        raise EnrollmentDenied("protected hardware catalog records are malformed")
 
     service_catalog = ProtectedEnrollmentCatalog.from_verified_records(
         records, protected_digest=digest, expected_uid=expected_uid,
