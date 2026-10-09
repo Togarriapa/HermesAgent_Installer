@@ -263,7 +263,6 @@ class Dispatcher:
             raise PolicyDenied("request.bounds", "Serialized request must be bytes and at most 4 MiB")
         if not isinstance(input_tokens, int) or not isinstance(output_token_limit, int) or not 0 <= input_tokens <= 1_000_000 or not 0 <= output_token_limit <= 65_536:
             raise PolicyDenied("request.bounds", "Token bounds are outside the supported limits")
-        normalized_payload = normalize_chat_request(payload, model, output_token_limit)
         with self._lock:
             if context.trace_id in self._active:
                 raise PolicyDenied("dispatch.loop", "Repeated trace indicates a provider routing loop")
@@ -304,10 +303,13 @@ class Dispatcher:
                     continue
                 if route.input_usd_per_million is None or route.output_usd_per_million is None:
                     continue
-                input_bound = max(input_tokens, len(normalized_payload))
+                input_bound = max(input_tokens, len(payload))
                 estimate = (input_bound * route.input_usd_per_million + output_token_limit * route.output_usd_per_million) / 1_000_000
                 if estimate > 0 and self.policy.metered_budget_usd <= 0:
                     continue
+                # Validate and normalize only after trusted route, sensitivity,
+                # cancellation, deadline and budget eligibility have passed.
+                normalized_payload = normalize_chat_request(payload, model, output_token_limit)
                 for attempt in range(self.policy.max_attempts):
                     if context.cancelled():
                         raise PolicyDenied("dispatch.cancelled", "Request was cancelled before attempt")
