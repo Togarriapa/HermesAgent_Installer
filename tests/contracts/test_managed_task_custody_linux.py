@@ -12,9 +12,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from hermes_installer.authority.types import canonical_digest
-from hermes_installer.managed_process_custodian import (
-    RootAdmittedTask,
-)
+from hermes_installer.managed_process_custodian import process_start_target
+from hermes_installer.registry.resource_jobs import RootAdmittedTask
 
 
 @unittest.skipUnless(platform.system() == "Linux" and hasattr(os, "pidfd_open"),
@@ -35,8 +34,11 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
         self.fixture.tearDown()
 
     def _admit_and_start(self, *, suffix: str, script: str, prompt: str,
-                         expected_hash_override: str | None = None):
+        expected_hash_override: str | None = None):
         fixture = self.fixture
+        package = fixture._native_package_fixture()
+        binding = package.binding
+        script = self._loader_prefix(binding) + script
         store_id, digest, _ = fixture._enroll_script("task-" + suffix, script)
         task_script = fixture.script_root / ("task-" + suffix + ".py")
         original_resolver = fixture.handler.artifact_resolver
@@ -48,43 +50,68 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
         recipe = fixture._operation_recipe(store_id, digest, "task-" + suffix)
         recipe["stdin_mode"] = "bounded-typed-bytes"
         recipes = dict(fixture.profile.operation_recipes or {})
-        recipes["task-" + suffix] = recipe
+        recipes["hermes-resource-profile-task-v1"] = recipe
         profile = replace(fixture.profile, child_artifact_refs=children,
+                          native_package=binding,
                           operation_recipes=recipes)
         fixture.profile = profile
         fixture.handler.profiles[profile.profile_id] = profile
+        fixture.handler.native_package_resolver = lambda profile_id, generation: (
+            package if profile_id == profile.profile_id and generation == profile.generation else None)
+        from hermes_installer.authority.native_custody_proof import (
+            NativeLoaderSelection, RootNativeLoaderObservationStore,
+        )
+
+        def active_loader_selection(owned_handle):
+            return NativeLoaderSelection(
+                process_id=owned_handle.process_id, package_id=binding.package_id,
+                profile_id=binding.profile_id, generation=binding.generation,
+                compiled_closure_sha256=binding.compiled_closure_sha256,
+                entrypoint_sha256=binding.entrypoint_sha256,
+                resolver_sha256=binding.resolver_sha256,
+                service_generation_digest="d" * 64,
+                loader_role_artifact_id=binding.entrypoint_artifact_id,
+                loader_role_sha256=binding.entrypoint_sha256,
+                registered_action_ids=("ci-native-action",),
+            )
+
+        store = RootNativeLoaderObservationStore(
+            fixture.handler, active_loader_selection, source_target_selector=lambda *_args: None)
+        fixture.handler.set_native_loader_observation_store(store)
 
         task_payload = json.dumps({"prompt": prompt}, sort_keys=True,
-            separators=(",", ":"), ensure_ascii=True).encode("ascii")
+            separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         exact_stdin = prompt.encode("utf-8")
         now = time.monotonic()
+        admission_id = "admission-" + fixture.token[:16]
+        admission_handle = "handle-" + fixture.token[:25]
         task = RootAdmittedTask(
-            handle_id="admission-" + fixture.token[:16], job_id="job-" + fixture.token[:16],
-            node_id="node-" + suffix, child_admission_id="child-" + fixture.token[:16],
-            attempt_index=0, backend_enrollment_id="backend-" + fixture.token[:16],
+            schema=1, admission_id=admission_id, job_id="job-" + fixture.token[:16],
+            node_id="node-" + suffix, backend_enrollment_id="backend-" + fixture.token[:16],
             resource_generation="resource-gen-" + fixture.token[:16],
-            profile_id=profile.profile_id, profile_generation=profile.generation,
             native_package_id="package-" + fixture.token[:16],
             native_package_generation=profile.generation,
             process_enrollment_id=profile.enrollment_id,
             process_generation=profile.generation,
-            operation_id="resource.bundle.node.run",
-            child_target_id="resource:fixture:task:" + fixture.token[:16],
-            child_capability="hermes-resource-runtime",
+            operation_id="hermes-resource-profile-task-v1",
             task_body_recipe_id="task-" + suffix,
-            task_request_schema_id="prompt-v1", task_payload=task_payload,
+            task_request_schema_id="prompt-v1", task_payload_bytes=task_payload,
             task_payload_sha256=hashlib.sha256(task_payload).hexdigest(),
-            parent_closure_digest="a" * 64, expires_monotonic=now + 20,
+            parent_closure_digest="a" * 64, deadline_monotonic=now + 20,
+            source_context_handle="source-context-" + fixture.token[:16],
             stdin_sha256=hashlib.sha256(exact_stdin).hexdigest(),
             stdin_size_bytes=len(exact_stdin))
         selection = json.dumps({"schema": 1, "enrollment_id": profile.enrollment_id,
-            "generation": profile.generation, "operation_id": task.task_body_recipe_id,
-            "parameters": {}}, sort_keys=True, separators=(",", ":"),
+            "generation": profile.generation, "operation_id": task.operation_id,
+            "parameters": {}, "admission_handle": admission_handle,
+            "node_id": task.node_id, "task_payload_sha256": task.task_payload_sha256,
+            "stdin_sha256": task.stdin_sha256, "stdin_size_bytes": task.stdin_size_bytes},
+            sort_keys=True, separators=(",", ":"),
             ensure_ascii=True).encode("ascii")
         final_digest = canonical_digest(selection)
         context = SimpleNamespace(
             profile_id=profile.profile_id, enrollment_id=profile.enrollment_id,
-            generation=profile.generation, operation=task.operation_id,
+            generation=profile.generation, operation="process.start",
             principal_id="resource-principal-" + fixture.token[:12],
             namespace_id="resource-namespace-" + fixture.token[:12],
             trace_id="resource-trace-" + fixture.token[:12], intent_id="resource-intent-" + fixture.token[:12],
@@ -93,22 +120,23 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
             final_payload_digest=final_digest)
         authorization = SimpleNamespace(
             profile_id=profile.profile_id, enrollment_id=profile.enrollment_id,
-            generation=profile.generation, operation=task.operation_id,
+            generation=profile.generation, operation="process.start",
             principal_id=context.principal_id, namespace_id=context.namespace_id,
             trace_id=context.trace_id, intent_id=context.intent_id,
             purpose=context.purpose, sensitivity=context.sensitivity,
             lineage_hash=context.lineage_hash, policy_revision=context.policy_revision,
-            uid=fixture.uid, capability=task.child_capability, target=task.child_target_id,
+            uid=fixture.uid, capability="hermes-profile-invoke", target=process_start_target(profile),
             request_digest=final_digest, final_payload_digest=final_digest,
             monotonic_expires_at=now + 20)
         admission_live = {"value": True}
-        fixture.handler.task_admission_current = lambda candidate: (
-            admission_live["value"] and candidate.handle_id == task.handle_id
-            and candidate.profile_generation == fixture.handler.profiles[profile.profile_id].generation)
+        fixture.handler.task_admission_current = lambda candidate, launch_payload: (
+            admission_live["value"] and candidate.admission_id == task.admission_id
+            and candidate.process_generation == fixture.handler.profiles[profile.profile_id].generation
+            and json.loads(launch_payload.decode("ascii"))["admission_handle"] == admission_handle)
         parent_pidfd = os.pidfd_open(os.getpid(), 0)
         try:
             handle = fixture.handler.start_selected_task(
-                profile, context, authorization, selection, task_admission=task,
+                profile, context, authorization, selection, task_handle=task,
                 exact_stdin=exact_stdin,
                 expected_stdin_sha256=expected_hash_override or task.stdin_sha256,
                 peer_pid=os.getpid(), peer_pidfd=parent_pidfd, timeout=10,
@@ -117,6 +145,30 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
             os.close(parent_pidfd)
             raise
         return handle, task, exact_stdin, admission_live, parent_pidfd
+
+    @staticmethod
+    def _loader_prefix(binding) -> str:
+        return (
+            "import json,socket,struct\n"
+            "_sock=socket.socket(fileno=3)\n"
+            "_nonce=b''\n"
+            "while len(_nonce)<43:\n"
+            "    _part=_sock.recv(43-len(_nonce))\n"
+            "    if not _part: raise SystemExit(91)\n"
+            "    _nonce+=_part\n"
+            f"_package={binding.package_id!r}\n"
+            f"_generation={binding.generation!r}\n"
+            f"_entrypoint={binding.entrypoint_sha256!r}\n"
+            f"_resolver={binding.resolver_sha256!r}\n"
+            "for _seq,_phase in enumerate(('entrypoint-imported','actions-registered','ready')):\n"
+            "    _record={'schema':1,'launch_nonce':_nonce.decode('ascii'),'sequence':_seq,"
+            "'phase':_phase,'package_id':_package,'generation':_generation,"
+            "'entrypoint_sha256':_entrypoint,'resolver_sha256':_resolver,"
+            "'registered_action_ids':['ci-native-action']}\n"
+            "    _body=json.dumps(_record,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')\n"
+            "    _sock.sendall(struct.pack('!I',len(_body))+_body)\n"
+            "_sock.close()\n"
+        )
 
     def test_prompt_is_written_once_eof_observed_and_terminal_cleanup_is_proven(self) -> None:
         fixture = self.fixture
@@ -132,7 +184,7 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
             suffix="positive", script=script, prompt=prompt)
         try:
             terminal = fixture.handler.wait_owned_task_terminal(
-                handle, deadline_monotonic=task.expires_monotonic, cancelled=lambda: False)
+                handle, deadline_monotonic=task.deadline_monotonic, cancelled=lambda: False)
         finally:
             os.close(parent_fd)
         self.assertEqual(query_file.read_bytes(), exact)
@@ -140,6 +192,9 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
         self.assertEqual(terminal.schema, 1)
         self.assertEqual(terminal.state, "completed")
         self.assertEqual(terminal.task_handle_id, handle.handle_id)
+        self.assertEqual(handle.process_id, terminal.process_id)
+        self.assertTrue(terminal.native_loader_ready_event_id)
+        self.assertEqual(terminal.admission_handle_id, "handle-" + self.fixture.token[:25])
         self.assertEqual(terminal.parent_closure_digest, "a" * 64)
         self.assertEqual(terminal.stdout_size_bytes, len(terminal.stdout))
         self.assertEqual(terminal.stderr_size_bytes, len(terminal.stderr))
@@ -160,7 +215,7 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
             suffix="cancel", script=script, prompt="cancel me")
         try:
             cancelled = self.fixture.handler.wait_owned_task_terminal(
-                handle, deadline_monotonic=task.expires_monotonic, cancelled=lambda: True)
+                handle, deadline_monotonic=task.deadline_monotonic, cancelled=lambda: True)
         finally:
             os.close(parent_fd)
         self.assertTrue(cancelled.cancelled)
