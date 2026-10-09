@@ -1,31 +1,147 @@
+"""Read-only MCP service policy, independent of user-provided labels."""
+from __future__ import annotations
+
+import time
 from dataclasses import dataclass
 from typing import Mapping
-@dataclass(frozen=True,slots=True)
+
+
+@dataclass(frozen=True, slots=True)
 class MCPService:
-    id:str; endpoint:str|None; allowed_tools:frozenset[str]; auth_kind:str; selection_required:str; official:bool=True; source_verified:bool=False
-SERVICES:Mapping[str,MCPService]={
- "figma":MCPService("figma","https://mcp.figma.com/mcp",frozenset({"get_file","get_file_nodes","get_screenshot","get_metadata"}),"OAuth","selected file"),
- "revenuecat":MCPService("revenuecat","https://mcp.revenuecat.ai/mcp",frozenset({"list_projects","get_project","list_apps","get_app"}),"OAuth or scoped API v2","selected project"),
- "google":MCPService("google",None,frozenset(),"Developer Preview OAuth","service and resource"),
- "google-community":MCPService("google-community",None,frozenset(),"user OAuth","service and resource",False),
- "home-assistant":MCPService("home-assistant",None,frozenset({"GetLiveContext","GetStates","ListEntities"}),"credential reference","selected entities"),
- "playwright":MCPService("playwright",None,frozenset({"browser_navigate","browser_snapshot","browser_screenshot","browser_inspect"}),"local process","loopback fixture")}
+    id: str
+    endpoint: str | None
+    allowed_tools: frozenset[str]
+    auth_kind: str
+    selection_required: str
+    official: bool = True
+    source_uri: str | None = None
+
+
+SERVICES: Mapping[str, MCPService] = {
+    "figma": MCPService("figma", "https://mcp.figma.com/mcp",
+        frozenset({"get_design_context", "get_metadata", "get_file", "get_file_nodes",
+                   "get_screenshot", "download_assets", "get_figjam"}),
+        "Figma OAuth", "selected file", True,
+        "https://developers.figma.com/docs/figma-mcp-server/tools-and-prompts/"),
+    "revenuecat": MCPService("revenuecat", "https://mcp.revenuecat.ai/mcp",
+        frozenset({"list_projects", "get_project", "list_apps", "get_app"}),
+        "RevenueCat OAuth or scoped API v2 key", "selected project", True,
+        "https://www.revenuecat.com/docs/tools/mcp/tools-reference"),
+    "google-gmail": MCPService("google-gmail", "https://gmailmcp.googleapis.com/mcp/v1",
+        frozenset(), "Google Workspace Developer Preview OAuth", "selected Gmail resource", True,
+        "https://developers.google.com/workspace/preview"),
+    "google-drive": MCPService("google-drive", "https://drivemcp.googleapis.com/mcp/v1",
+        frozenset(), "Google Workspace Developer Preview OAuth", "selected Drive resource", True,
+        "https://developers.google.com/workspace/preview"),
+    "google-calendar": MCPService("google-calendar", "https://calendarmcp.googleapis.com/mcp/v1",
+        frozenset(), "Google Workspace Developer Preview OAuth", "selected Calendar resource", True,
+        "https://developers.google.com/workspace/preview"),
+    "google-chat": MCPService("google-chat", "https://chatmcp.googleapis.com/mcp/v1",
+        frozenset(), "Google Workspace Developer Preview OAuth", "selected Chat resource", True,
+        "https://developers.google.com/workspace/preview"),
+    "google-people": MCPService("google-people", "https://people.googleapis.com/mcp/v1",
+        frozenset(), "Google Workspace Developer Preview OAuth", "selected People resource", True,
+        "https://developers.google.com/workspace/preview"),
+    "home-assistant": MCPService("home-assistant", None, frozenset(),
+        "existing Home Assistant token/OAuth", "explicit selected entities", True,
+        "https://www.home-assistant.io/integrations/mcp_server"),
+    "google-community": MCPService("google-community", None, frozenset(),
+        "user-configured OAuth", "selected Google resource", False,
+        "https://github.com/taylorwilsdon/google_workspace_mcp"),
+    "playwright": MCPService("playwright", None, frozenset(),
+        "host-managed pinned local process", "isolated loopback fixture", True,
+        "https://playwright.dev/docs/getting-started-mcp"),
+}
+
+
 class ReadOnlyAdapter:
-    def __init__(self,service,client,selection):self.service=service; self.client=client; self.selection=selection
-    async def inspect(self):
-        if not self.service.source_verified:
-            return {"service":self.service.id,"official":self.service.official,"selection":self.selection,
-                    "status":"pending_source_schema_transport_and_authorization_verification",
-                    "tools":(),"functionally_tested":False,"enabled":False}
-        init=await self.client.initialize()
-        tools=await self.client.discover()
-        self.client.allowed_tools=frozenset(set(tools)&set(self.service.allowed_tools))
-        return {"service":self.service.id,"official":self.service.official,"selection":self.selection,
-                "protocol":init["protocolVersion"],"tools":tuple(sorted(self.client.allowed_tools)),
-                "status":"discovered_not_enabled","functionally_tested":False,"enabled":False}
-    async def read(self,name,arguments):
-        if not self.service.source_verified:
-            raise PermissionError("native MCP service schema, transport and host-policy verification is pending")
+    """Connection state is earned by real authorized protocol responses.
+
+    Discovery alone never enables a connector. A separate harmless selected
+    resource read must succeed before functional testing is recorded.
+    """
+
+    def __init__(self, service: MCPService, client, selection):
+        if not isinstance(service, MCPService):
+            raise TypeError("MCP service definition is required")
+        if getattr(client, "service_id", None) not in (None, service.id):
+            raise ValueError("MCP client is bound to a different service")
+        self.service, self.client, self.selection = service, client, selection
+        self._functional = False
+        self._enabled = False
+        self._last_failure: str | None = None
+
+    def _authorization_ready(self) -> bool:
+        return bool(getattr(self.client, "context", None)
+                    and getattr(self.client, "authorizer", None) is not None)
+
+    def status(self) -> dict:
+        client = self.client
+        ready = bool(getattr(client, "ready", False))
+        return {
+            "service": self.service.id,
+            "official": self.service.official,
+            "source": self.service.source_uri,
+            "selection": self.selection,
+            "protocol": getattr(client, "protocol_version", None),
+            "transport_ready": ready,
+            "authorized": self._authorization_ready(),
+            "discovered": ready,
+            "tools": tuple(sorted(getattr(client, "discovered_tools", frozenset()) &
+                                  self.service.allowed_tools)),
+            "functionally_tested": self._functional,
+            "enabled": self._enabled,
+            "last_failure": self._last_failure,
+        }
+
+    async def inspect(self, *, timeout: float = 9.0) -> dict:
+        if not 0 < timeout <= 9:
+            raise ValueError("MCP inspect deadline must be in (0, 9] seconds")
+        if not self._authorization_ready():
+            result = self.status()
+            result["status"] = "pending_trusted_host_authorization"
+            return result
+        clock = getattr(self.client, "monotonic", time.monotonic)
+        deadline = clock() + timeout
+        try:
+            init = await self.client.initialize(deadline=deadline)
+            discovered = await self.client.discover(deadline=deadline)
+        except Exception:
+            self._last_failure = "initialize_or_discovery_failed"
+            result = self.status()
+            result["status"] = self._last_failure
+            return result
+        allowed = self.service.allowed_tools
+        self.client.allowed_tools = frozenset(self.client.allowed_tools & allowed)
+        self.client._tools = {name: schema for name, schema in discovered.items()
+                              if name in self.client.allowed_tools}
+        result = self.status()
+        result.update({"protocol": init["protocolVersion"],
+                       "status": "discovered_read_only_tools" if result["tools"]
+                                 else "no_reviewed_read_only_tools"})
+        return result
+
+    async def read(self, name: str, arguments: Mapping, *, timeout: float = 9.0):
+        if not 0 < timeout <= 9:
+            raise ValueError("MCP read deadline must be in (0, 9] seconds")
         if not self.selection or name not in self.service.allowed_tools:
-            raise PermissionError("read outside selected-resource policy")
-        return await self.client.call_read(name,arguments)
+            raise PermissionError("read outside the reviewed tool and selected-resource policy")
+        if not self._authorization_ready():
+            raise PermissionError("trusted host authorization is unavailable")
+        clock = getattr(self.client, "monotonic", time.monotonic)
+        try:
+            result = await self.client.call_read(name, arguments, deadline=clock() + timeout)
+        except Exception:
+            self._last_failure = "selected_resource_read_failed"
+            raise
+        self._functional = True
+        self._last_failure = None
+        return result
+
+    def enable(self) -> None:
+        if not self._functional or not self._authorization_ready():
+            raise PermissionError("a harmless selected-resource read and trusted host authorization are required")
+        self._enabled = True
+
+    def disable(self) -> None:
+        self._enabled = False
