@@ -155,6 +155,12 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         self.stage = Path(tempfile.mkdtemp(prefix="hermes-custody-ci-", dir="/run"))
         self.stage.chmod(0o755)
         self.runtime_dirs_created.append(self.stage)
+        repository = Path(__file__).resolve().parents[2]
+        self.client_source_root = self.stage / "client-source"
+        shutil.copytree(repository / "src/hermes_installer", self.client_source_root / "hermes_installer")
+        self.client_harness = self.stage / "managed_process_authority_harness.py"
+        shutil.copyfile(repository / "tests/fixtures/managed_process_authority_harness.py", self.client_harness)
+        self.client_harness.chmod(0o444)
         self.data_root = self.stage / "profile"
         self.data_root.mkdir(mode=0o700)
         os.chown(self.data_root, self.uid, self.gid)
@@ -313,11 +319,10 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             "mode": mode, "artifact_ref": self.run_store_id if mode == "run" else self.parent_store_id,
             "child_artifact_refs": self.child_refs,
         }
-        repository = Path(__file__).resolve().parents[2]
         env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent",
-               "PYTHONPATH": str(repository / "src"), "PYTHONDONTWRITEBYTECODE": "1"}
+               "PYTHONPATH": str(self.client_source_root), "PYTHONDONTWRITEBYTECODE": "1"}
         return subprocess.Popen(
-            [str(self.executable), str(repository / "tests/fixtures/managed_process_authority_harness.py")],
+            [str(self.executable), str(self.client_harness)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, cwd="/", env=env, close_fds=True,
             preexec_fn=_drop_to(self.uid, self.gid),
