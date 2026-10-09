@@ -234,7 +234,7 @@ class MCPClient:
                 await self._cancel(rid, grant)
                 raise MCPError(f"{method} exceeded its bounded deadline") from None
             except asyncio.CancelledError:
-                await self._cancel(rid)
+                await self._cancel(rid, grant)
                 raise
             except Exception as exc:
                 self._last_error = f"{method}: transport"
