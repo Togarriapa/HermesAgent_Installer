@@ -222,6 +222,7 @@ class DurableMemoryQueue:
         db.execute("PRAGMA busy_timeout=2000")
         db.execute("PRAGMA journal_mode=DELETE")
         db.execute("PRAGMA synchronous=FULL")
+        db.execute("PRAGMA secure_delete=ON")
         return db
 
     def enqueue(self, *, target: MemoryTarget, context: HostContext,
@@ -251,6 +252,8 @@ class DurableMemoryQueue:
             db = self._db()
             try:
                 db.execute("BEGIN IMMEDIATE")
+                db.execute("DELETE FROM jobs WHERE status IN ('complete','failed') AND updated<?",
+                           (now - 30 * 86400,))
                 n = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
                 if n >= 10000:
                     raise BrokerUnavailable("durable memory queue is full")
@@ -296,7 +299,9 @@ class DurableMemoryQueue:
             db = self._db()
             try:
                 db.execute("BEGIN IMMEDIATE")
-                db.execute("UPDATE jobs SET status='queued',lease_until=NULL,updated=? WHERE status='processing' AND lease_until<?",
+                # An expired in-flight effect has an ambiguous outcome. Never
+                # retry it automatically: upstream APIs may not offer idempotency.
+                db.execute("UPDATE jobs SET status='failed',error_code='worker_lost_outcome_unknown',source_context=X'',consent=X'',event=X'',lease_until=NULL,updated=? WHERE status='processing' AND lease_until<?",
                            (now, now))
                 row = db.execute("SELECT id,profile,namespace,provider,owner_generation,source_context,consent,event,attempts FROM jobs WHERE status='queued' ORDER BY created LIMIT 1").fetchone()
                 if row is None:
@@ -322,9 +327,28 @@ class DurableMemoryQueue:
         with process_lock(self.owned.path("memory-queue.lock")):
             db = self._db()
             try:
-                if db.execute("UPDATE jobs SET status=?,result=?,error_code=?,lease_until=NULL,updated=? WHERE id=? AND status='processing'",
+                if db.execute("UPDATE jobs SET status=?,result=?,error_code=?,source_context=X'',consent=X'',event=X'',lease_until=NULL,updated=? WHERE id=? AND status='processing'",
                     (status, raw, error_code[:64] if error_code else None, self.clock(), job["id"])).rowcount != 1:
                     raise BrokerUnavailable("queue lease changed before completion")
+            finally:
+                db.close()
+
+    def revoke_profile(self, profile_id: str, *, reason: str = "capture_disabled") -> int:
+        """Disable or remove pending captures and clear their private queue bytes."""
+        if not isinstance(profile_id,str) or not profile_id or len(profile_id)>128:
+            raise ValueError("invalid profile identifier")
+        code = reason if reason in {"capture_disabled","profile_removed","owner_changed"} else "capture_disabled"
+        with process_lock(self.owned.path("memory-queue.lock")):
+            db = self._db()
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                changed = db.execute("UPDATE jobs SET status='failed',error_code=?,source_context=X'',consent=X'',event=X'',lease_until=NULL,updated=? WHERE profile=? AND status IN ('queued','processing')",
+                    (code,self.clock(),profile_id)).rowcount
+                db.commit()
+                return int(changed)
+            except BaseException:
+                db.rollback()
+                raise
             finally:
                 db.close()
 
