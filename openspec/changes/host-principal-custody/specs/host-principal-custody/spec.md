@@ -365,3 +365,11 @@ The private probe issuer SHALL resolve the actual protected native PrincipalBind
 #### Scenario: Child action substitution
 - **WHEN** an asset, action, principal or sequence differs from current root selection
 - **THEN** admission is denied before connector bytes.
+
+### Requirement: Root observed initial input closure
+
+The implementation SHALL resolve actual installed release custody and full admitted source receipt closure before issuing native input provenance. Private or unknown sensitivity SHALL remain unchanged absent separate reviewed clearance.
+
+#### Scenario: Digest without source closure
+- **WHEN** only a digest or caller provenance label is available
+- **THEN** no trusted input receipt or admitted native effect is created.
