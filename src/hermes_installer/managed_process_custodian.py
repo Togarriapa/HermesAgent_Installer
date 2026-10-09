@@ -696,7 +696,9 @@ class ManagedProcessEffectHandler:
             }
             for key, value in expected_props.items():
                 actual_value = self._show(unit, key)
-                if actual_value != value:
+                matches = (set(actual_value.split()) == {"0.0.0.0/0", "::/0"}
+                           if key == "IPAddressDeny" else actual_value == value)
+                if not matches:
                     if self._diagnostic_sink is not None:
                         self._diagnostic_sink(
                             f"readback-mismatch:{key}:actual={actual_value[:160]!r}:expected={value!r}".encode("ascii", "backslashreplace"))
