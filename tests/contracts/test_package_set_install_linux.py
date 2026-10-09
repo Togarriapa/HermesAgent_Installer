@@ -151,7 +151,7 @@ class OfflinePackageSetLinuxTests(unittest.TestCase):
                     time.monotonic() + 120, lambda: False,
                     before_process=lambda: None, before_activation=lambda: None,
                 )
-            self.assertEqual(destination.owner().pw_uid, service_uid)
+            self.assertEqual(destination.stat().st_uid, service_uid)
             self.assertEqual(len(digest), 64)
             python = destination / "bin/python"
             check = subprocess.run(
