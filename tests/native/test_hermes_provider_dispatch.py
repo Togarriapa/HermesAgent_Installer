@@ -16,6 +16,11 @@ import shutil
 import uuid
 from pathlib import Path
 
+# Hermes bootstrap may re-exec this test after dependency preparation. Derive
+# our own source path before importing the installer, even with a sanitized env.
+INSTALLER_SRC = Path(__file__).resolve().parents[2] / "src"
+sys.path.insert(0, str(INSTALLER_SRC))
+
 from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
 from hermes_installer.provider_gateway import (
     LOCAL_KEY_ENV, LOCAL_PROVIDER_NAME, LocalProviderGateway,
