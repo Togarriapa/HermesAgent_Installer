@@ -5,6 +5,7 @@ bootstrap re-exec cannot destroy the listener or bypass cleanup.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
