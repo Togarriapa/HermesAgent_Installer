@@ -30,6 +30,7 @@ class Authorization:
     operation: str = "composio.whatsapp.catalog.read"
     target: str = "composio:whatsapp:catalog:20260721_00"
     toolkit_version: str = PIN
+    request_policy_artifact_id: str = "installer-composio-whatsapp-catalog-read-policy-v1"
     request_policy_sha256: str = COMPOSIO_CATALOG_POLICY_SHA256
 
 
@@ -41,6 +42,7 @@ class Grant:
     origin: str = COMPOSIO_ORIGIN
     method: str = "GET"
     toolkit_version: str = PIN
+    request_policy_artifact_id: str = "installer-composio-whatsapp-catalog-read-policy-v1"
     request_policy_sha256: str = COMPOSIO_CATALOG_POLICY_SHA256
 
 
@@ -144,6 +146,12 @@ def test_grant_query_and_policy_mismatch_fail_closed():
             credential_reference_id="composio_fixture_project_key", usage="composio-trigger-discovery",
             max_response_bytes=2 * 1024 * 1024, timeout_seconds=15)
     assert not network.calls
+
+
+def test_authorization_must_name_exact_immutable_policy_artifact():
+    bad = Authorization(request_policy_artifact_id="other-policy")
+    with pytest.raises(ValueError, match="root authorization"):
+        RootComposioCatalogTransport(Authority([]), bad, network=Network([]))
 
 
 def test_detail_fetch_requires_catalog_observation_and_gets_its_own_grant():

@@ -179,6 +179,7 @@ class RootComposioCatalogTransport:
                 or getattr(authorization, "target", None)
                 != f"composio:whatsapp:catalog:{COMPOSIO_TOOLKIT_VERSION}"
                 or getattr(authorization, "toolkit_version", None) != COMPOSIO_TOOLKIT_VERSION
+                or getattr(authorization, "request_policy_artifact_id", None) != COMPOSIO_CATALOG_POLICY_ID
                 or getattr(authorization, "request_policy_sha256", None) != COMPOSIO_CATALOG_POLICY_SHA256
                 or not isinstance(reference, str) or not reference):
             raise ValueError("root authorization does not match the selected catalog policy")
@@ -247,9 +248,11 @@ class RootComposioCatalogTransport:
         grant_method = getattr(grant, "method", None)
         grant_version = getattr(grant, "toolkit_version", None)
         grant_policy = getattr(grant, "request_policy_sha256", None)
+        grant_policy_id = getattr(grant, "request_policy_artifact_id", None)
         grant_deadline = getattr(grant, "expires_monotonic", None)
         if (grant_path != path or grant_origin != COMPOSIO_ORIGIN or grant_method != "GET"
                 or grant_version != COMPOSIO_TOOLKIT_VERSION
+                or grant_policy_id != COMPOSIO_CATALOG_POLICY_ID
                 or grant_policy != COMPOSIO_CATALOG_POLICY_SHA256
                 or isinstance(grant_deadline, bool) or not isinstance(grant_deadline, (int, float))
                 or not math.isfinite(grant_deadline) or grant_deadline <= self._monotonic()):
