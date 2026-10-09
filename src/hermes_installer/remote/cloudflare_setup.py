@@ -27,9 +27,9 @@ class PreparedAccessResources:
 
 class RemoteCloudflareProvisioner:
     """Only the caller-owned checkpoint callback persists state under process_lock."""
-    def __init__(self,client:CloudflareClient,setup:RemoteSetup,journal:RemoteJournal,*,checkpoint:Callable[[RemoteJournal],None],origin_ready:Callable[[],bool],policy_read_check:Callable[[RemoteJournal],Any]|None=None,gateway_port:int=8765):
+    def __init__(self,client:CloudflareClient,setup:RemoteSetup,journal:RemoteJournal,*,checkpoint:Callable[[RemoteJournal],None],policy_read_check:Callable[[RemoteJournal],Any]|None=None,gateway_port:int=8765):
         self.client,self.setup,self.journal=client,setup,journal
-        self.checkpoint,self.origin_ready,self.policy_read_check,self.gateway_port=checkpoint,origin_ready,policy_read_check,gateway_port
+        self.checkpoint,self.policy_read_check,self.gateway_port=checkpoint,policy_read_check,gateway_port
         self.account,self.zone=setup.zone.account_id,setup.zone.zone_id
         self.marker="HermesInstaller:"+journal.operation_id
         self.tunnel_name="hermes-installer-"+hashlib.sha256((journal.operation_id+setup.hostname).encode()).hexdigest()[:20]
@@ -206,13 +206,16 @@ class RemoteCloudflareProvisioner:
             self.checkpoint(self.journal)
             raise
     def provision_protected(self, *, runtime_token_writer: Callable[..., ProtectedTunnelTokenReceipt] | None = None,
+                            setup_transaction_handle: str | None = None,
                             tunnel_enrollment_id: str | None = None,
                             tunnel_generation: str | None = None,
                             remote_enrollment_id: str | None = None,
                             origin_receipt: RootOriginReadinessReceipt | None = None,
                             receipt_signer: ReceiptSigner | None = None):
         """Require root-signed origin and protected-token receipts before DNS."""
-        if (not callable(runtime_token_writer) or not tunnel_enrollment_id
+        if (not callable(runtime_token_writer) or not setup_transaction_handle
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", setup_transaction_handle)
+                or not tunnel_enrollment_id
                 or not tunnel_generation or not remote_enrollment_id or receipt_signer is None):
             raise CloudflareError("Protected writer, active enrollment binding and receipt verifier are required")
         self._preflight() # no resource mutation before exact hostname conflicts are checked
@@ -259,7 +262,8 @@ class RemoteCloudflareProvisioner:
             tunnel,token=self.ensure_tunnel()
             try:
                 receipt = runtime_token_writer(
-                    tunnel_enrollment_id, token.encode("ascii"), account_id=self.account,
+                    tunnel_enrollment_id, token.encode("ascii"),
+                    setup_transaction_handle=setup_transaction_handle, account_id=self.account,
                     tunnel_id=tunnel, generation=tunnel_generation,
                 )
                 if (not verify_token_receipt(receipt, receipt_signer,
@@ -303,6 +307,7 @@ class RemoteCloudflareProvisioner:
             raise
 
     def provision(self, *, runtime_token_writer: Callable[..., ProtectedTunnelTokenReceipt] | None = None,
+                  setup_transaction_handle: str | None = None,
                   tunnel_enrollment_id: str | None = None,
                   tunnel_generation: str | None = None,
                   remote_enrollment_id: str | None = None,
@@ -310,6 +315,7 @@ class RemoteCloudflareProvisioner:
                   receipt_signer: ReceiptSigner | None = None):
         """Compatibility name; protected verification and token storage are mandatory."""
         return self.provision_protected(runtime_token_writer=runtime_token_writer,
+            setup_transaction_handle=setup_transaction_handle,
             tunnel_enrollment_id=tunnel_enrollment_id, tunnel_generation=tunnel_generation,
             remote_enrollment_id=remote_enrollment_id, origin_receipt=origin_receipt,
             receipt_signer=receipt_signer)

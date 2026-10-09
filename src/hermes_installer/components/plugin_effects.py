@@ -12,6 +12,8 @@ import hashlib
 import json
 import math
 import re
+import time
+from dataclasses import dataclass, replace
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -46,7 +48,9 @@ class SelectedPluginEffectsResolver(Protocol):
 
 class PluginAuthority(Protocol):
     def context(self, *, purpose: str, intent: str, operation: str,
-                source_contexts: Sequence[object], final_payload_digest: str,
+                source_contexts: Sequence[object] = (),
+                source_receipt_handles: Sequence[str] = (),
+                final_payload_digest: str,
                 lease_seconds: float) -> object: ...
 
     def authorize_effect(self, context: object, *, capability: str, target: str,
@@ -62,7 +66,58 @@ class PluginAuthority(Protocol):
 
 
 class InvocationContexts(Protocol):
-    def __call__(self, *, purpose: str, intent: str) -> Sequence[object]: ...
+    def __call__(self, *, adapter_id: str, action_id: str,
+                 arguments_sha256: str, purpose: str, intent: str) -> object: ...
+
+
+class NativeInvocationContexts(Protocol):
+    """Root response for one currently executing pinned Hermes tool call."""
+    invocation_handle: str
+    source_receipt_handles: Sequence[str]
+    parent_closure_digest: str
+    arguments_sha256: str
+    expires_monotonic: float
+
+
+def root_invocation_source_receipt_handles(
+    invocation_contexts: InvocationContexts, *, adapter_id: str, action_id: str,
+    arguments_sha256: str, purpose: str, intent: str,
+) -> tuple[str, ...]:
+    """Resolve root-owned lineage for this exact selected tool invocation.
+
+    The provider is expected to read only the opaque invocation binding scoped
+    by the trusted native tool executor, then call the root get-contexts RPC.
+    This helper validates the bounded response DTO; receipt handles remain
+    opaque and are accepted only by AuthorityClient.context.
+    """
+    lineage = invocation_contexts(
+        adapter_id=adapter_id, action_id=action_id,
+        arguments_sha256=arguments_sha256, purpose=purpose, intent=intent,
+    )
+    handles = getattr(lineage, "source_receipt_handles", None)
+    handles_valid = (
+        isinstance(handles, tuple) and len(handles) <= 64
+        and all(isinstance(handle, str)
+                and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
+                for handle in handles)
+    )
+    expires = getattr(lineage, "expires_monotonic", None)
+    missing_schema = object()
+    schema = getattr(lineage, "schema", missing_schema)
+    # AuthorityClient's typed NativeInvocationContexts validates schema=1
+    # while parsing the RPC response and intentionally omits the wire-only
+    # schema field from the immutable DTO. Structural test doubles may include
+    # it, in which case it must still be the exact integer 1.
+    if ((schema is not missing_schema and (type(schema) is not int or schema != 1))
+            or not isinstance(getattr(lineage, "invocation_handle", None), str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", lineage.invocation_handle)
+            or not _HEX.fullmatch(getattr(lineage, "parent_closure_digest", ""))
+            or getattr(lineage, "arguments_sha256", None) != arguments_sha256
+            or isinstance(expires, bool) or not isinstance(expires, (int, float))
+            or not time.monotonic() < expires <= time.monotonic() + 30
+            or not handles_valid):
+        raise PluginEffectUnavailable("trusted invocation lineage is unavailable")
+    return tuple(handles)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,13 +139,15 @@ class PluginActionSchema:
 
 
 class PluginActionSchemaRegistry(Protocol):
-    def resolve(self, adapter_id: str, action_id: str) -> PluginActionSchema | None: ...
+    def resolve(self, adapter_id: str, action_id: str,
+                argument_schema_id: str | None = None) -> PluginActionSchema | None: ...
 
 
 class StaticPluginActionSchemas:
     """Installer-owned source schema table; declarations cannot extend it."""
 
-    def __init__(self, schemas: Mapping[tuple[str, str], PluginActionSchema]):
+    def __init__(self, schemas: Mapping[tuple[str, str], PluginActionSchema], *,
+                 variants: Mapping[tuple[str, str, str], PluginActionSchema] | None = None):
         if not isinstance(schemas, Mapping):
             raise TypeError("component-owned Plugin action schemas are required")
         checked: dict[tuple[str, str], PluginActionSchema] = {}
@@ -127,13 +184,66 @@ class StaticPluginActionSchemas:
                 expected_state=schema.expected_state,
             )
         self._schemas = MappingProxyType(checked)
+        checked_variants: dict[tuple[str, str, str], PluginActionSchema] = {}
+        if variants is not None:
+            if not isinstance(variants, Mapping):
+                raise TypeError("component action schema variants must be an immutable mapping")
+            for key, schema in variants.items():
+                if (not isinstance(key, tuple) or len(key) != 3
+                        or not isinstance(schema, PluginActionSchema)
+                        or key != (schema.adapter_id, schema.action_id, schema.argument_schema_id)
+                        or (schema.adapter_id, schema.action_id) not in checked
+                        or key[:2] != (schema.adapter_id, schema.action_id)
+                        or schema.operation != checked[(schema.adapter_id, schema.action_id)].operation
+                        or schema.adapter_sha256 != checked[(schema.adapter_id, schema.action_id)].adapter_sha256
+                        or checked[(schema.adapter_id, schema.action_id)].result_schema_id != schema.result_schema_id
+                        or schema.operation not in _OPERATIONS.get(schema.adapter_id, ())
+                        or not _HEX.fullmatch(schema.adapter_sha256)
+                        or not _OPAQUE.fullmatch(schema.argument_schema_id)
+                        or not _OPAQUE.fullmatch(schema.result_schema_id)
+                        or schema.argument_schema_id == checked[(schema.adapter_id, schema.action_id)].argument_schema_id
+                        or type(schema.request_bytes_limit) is not int
+                        or not 1 <= schema.request_bytes_limit <= 262_144
+                        or type(schema.response_bytes_limit) is not int
+                        or not 1 <= schema.response_bytes_limit <= 2_097_152
+                        or isinstance(schema.deadline_seconds, bool)
+                        or not isinstance(schema.deadline_seconds, (int, float))
+                        or not math.isfinite(schema.deadline_seconds)
+                        or not 0.1 <= schema.deadline_seconds <= 30.0
+                        or schema.expected_state not in {"read-complete", "committed"}
+                        or type(schema.requires_idempotency) is not bool
+                        or type(schema.requires_confirmation) is not bool):
+                    raise ValueError("component Plugin action schema variant is malformed")
+                checked_variants[key] = PluginActionSchema(
+                    adapter_id=schema.adapter_id, action_id=schema.action_id,
+                    argument_schema_id=schema.argument_schema_id,
+                    result_schema_id=schema.result_schema_id, operation=schema.operation,
+                    adapter_sha256=schema.adapter_sha256,
+                    argument_schema=_freeze_schema(schema.argument_schema),
+                    result_schema=_freeze_schema(schema.result_schema),
+                    request_bytes_limit=schema.request_bytes_limit,
+                    response_bytes_limit=schema.response_bytes_limit,
+                    deadline_seconds=float(schema.deadline_seconds),
+                    requires_idempotency=schema.requires_idempotency,
+                    requires_confirmation=schema.requires_confirmation,
+                    expected_state=schema.expected_state,
+                )
+        self._variants = MappingProxyType(checked_variants)
 
-    def resolve(self, adapter_id: str, action_id: str) -> PluginActionSchema | None:
-        return self._schemas.get((adapter_id, action_id))
+    def resolve(self, adapter_id: str, action_id: str,
+                argument_schema_id: str | None = None) -> PluginActionSchema | None:
+        if argument_schema_id is None:
+            return self._schemas.get((adapter_id, action_id))
+        default = self._schemas.get((adapter_id, action_id))
+        if default is not None and default.argument_schema_id == argument_schema_id:
+            return default
+        return self._variants.get((adapter_id, action_id, argument_schema_id))
 
 
-def merge_plugin_action_schema_catalogs(*catalogs: Mapping[tuple[str, str], PluginActionSchema]
-                                        ) -> StaticPluginActionSchemas:
+def merge_plugin_action_schema_catalogs(
+    *catalogs: Mapping[tuple[str, str], PluginActionSchema],
+    variants: Mapping[tuple[str, str, str], PluginActionSchema] | None = None,
+) -> StaticPluginActionSchemas:
     """Combine disjoint owner-reviewed schemas without allowing overrides."""
     merged: dict[tuple[str, str], PluginActionSchema] = {}
     for catalog in catalogs:
@@ -143,7 +253,7 @@ def merge_plugin_action_schema_catalogs(*catalogs: Mapping[tuple[str, str], Plug
         if overlap:
             raise ValueError(f"duplicate component action schemas: {sorted(overlap)!r}")
         merged.update(catalog)
-    return StaticPluginActionSchemas(merged)
+    return StaticPluginActionSchemas(merged, variants=variants)
 
 
 def component_plugin_action_schema_registry() -> StaticPluginActionSchemas:
@@ -181,6 +291,10 @@ def component_plugin_action_schema_registry() -> StaticPluginActionSchemas:
         PLUGIN_ACTION_SCHEMAS as local_voice_web,
         PLUGIN_LOCAL_VOICE_WEB_ADAPTER_SHA256,
     )
+    from hermes_installer.components import plugin_local_voice_web_schemas as local_voice_schema_module
+    local_voice_variant_catalog = getattr(
+        local_voice_schema_module, "PLUGIN_ACTION_SCHEMA_VARIANTS", MappingProxyType({}),
+    )
 
     root = Path(__file__).resolve().parents[3]
     implementation_pins = {
@@ -196,6 +310,10 @@ def component_plugin_action_schema_registry() -> StaticPluginActionSchemas:
                 or sha256(path.read_bytes()).hexdigest() != pinned_digest
                 or any(row.adapter_sha256 != pinned_digest for row in rows.values())):
             raise PluginEffectUnavailable(f"source-reviewed action catalog pin failed for {filename}")
+    if (not isinstance(local_voice_variant_catalog, Mapping)
+            or any(row.adapter_sha256 != PLUGIN_LOCAL_VOICE_WEB_ADAPTER_SHA256
+                   for row in local_voice_variant_catalog.values())):
+        raise PluginEffectUnavailable("source-reviewed native workflow schema source pin failed")
     validate_document_action_pins()
     validate_financial_plugin_pins()
     for plugin_id, pinned_digest in PLUGIN_HOMELAB_MANIFEST_SHA256.items():
@@ -208,7 +326,10 @@ def component_plugin_action_schema_registry() -> StaticPluginActionSchemas:
         if (not manifest.is_file() or not _HEX.fullmatch(pinned_digest)
                 or sha256(manifest.read_bytes()).hexdigest() != pinned_digest):
             raise PluginEffectUnavailable(f"source-reviewed manifest pin failed for {plugin_id}")
-    catalog = merge_plugin_action_schema_catalogs(accounts, documents, finance, homelab, local_voice_web)
+    catalog = merge_plugin_action_schema_catalogs(
+        accounts, documents, finance, homelab, local_voice_web,
+        variants=local_voice_variant_catalog,
+    )
     if set(catalog._schemas) != _EXPECTED_ACTION_KEYS:
         raise PluginEffectUnavailable("source-reviewed Plugin action catalog is incomplete or contains unexpected actions")
     return catalog
@@ -400,7 +521,8 @@ class PluginEffectDispatcher:
         selected = self.selected_effects.resolve(adapter_id, action_id)
         if selected is None:
             raise PluginEffectUnavailable(f"{adapter_id}/{action_id}: no selected root enrollment is available")
-        schema = self.action_schemas.resolve(adapter_id, action_id)
+        schema = self.action_schemas.resolve(adapter_id, action_id,
+                                             getattr(selected, "argument_schema_id", None))
         if schema is None:
             raise PluginEffectUnavailable(f"{adapter_id}/{action_id}: source-reviewed action schema is unavailable")
         self._validate_selection(selected, schema)
@@ -438,12 +560,15 @@ class PluginEffectDispatcher:
         if len(payload) > schema.request_bytes_limit:
             raise PluginEffectUnavailable("plugin action exceeds its enrolled request byte bound")
         intent = f"Invoke selected native Plugin action {adapter_id}/{action_id}"
-        source_contexts = self.invocation_contexts(purpose="native-hermes-chat", intent=intent)
-        if not isinstance(source_contexts, Sequence) or not source_contexts:
-            raise PluginEffectUnavailable("trusted invocation lineage is unavailable")
+        arguments_digest = hashlib.sha256(_canonical(args)).hexdigest()
+        source_receipt_handles = root_invocation_source_receipt_handles(
+            self.invocation_contexts, adapter_id=adapter_id, action_id=action_id,
+            arguments_sha256=arguments_digest,
+            purpose="native-hermes-chat", intent=intent,
+        )
         context = self.authority.context(
             purpose="native-hermes-chat", intent=intent, operation=selected.operation,
-            source_contexts=source_contexts, final_payload_digest=digest,
+            source_receipt_handles=source_receipt_handles, final_payload_digest=digest,
             lease_seconds=min(30.0, float(schema.deadline_seconds)),
         )
         if (not isinstance(getattr(context, "principal_id", None), str)
@@ -540,9 +665,6 @@ def build_plugin_effects_facade(*, authority: PluginAuthority,
     selects an action. The AuthorityClient still re-resolves the root grant for
     every effect and consumes its one-use authorization before performing it.
     """
-    binder = getattr(authority, "bind_selected_native_package", None)
-    if not callable(binder):
-        raise PluginEffectUnavailable("root native-package binding is unavailable")
     if not callable(getattr(invocation_contexts, "__call__", None)):
         raise PluginEffectUnavailable("root trusted invocation-context provider is unavailable")
     identity_digest = getattr(identity, "content_digest", None)
@@ -559,6 +681,9 @@ def build_plugin_effects_facade(*, authority: PluginAuthority,
             bind_current_native_plugin_package,
         )
         if selected_package is None:
+            binder = getattr(authority, "bind_selected_native_package", None)
+            if not callable(binder):
+                raise ValueError("root native-package binding is unavailable")
             selected = bind_current_native_plugin_package(authority)
         elif isinstance(selected_package, SelectedNativePackage):
             selected = selected_package
@@ -576,6 +701,130 @@ def build_plugin_effects_facade(*, authority: PluginAuthority,
                                   selected_effects=selected,
                                   action_schemas=action_schemas,
                                   identity=identity)
+
+
+def build_native_invocation_context_provider(*, authority: PluginAuthority,
+                                             selected_package: object,
+                                             current_binding: Any) -> InvocationContexts:
+    """Construct the root-owned provider for the loader's lexical call scope."""
+    try:
+        from hermes_installer.authority.native_runtime_observer import (
+            NativeInvocationContextProvider,
+        )
+        return NativeInvocationContextProvider(
+            authority=authority, selected_package=selected_package,
+            current_binding=current_binding,
+        )
+    except (ImportError, RuntimeError, ValueError, PermissionError, TypeError):
+        raise PluginEffectUnavailable(
+            "root native invocation provider or selected package is unavailable"
+        ) from None
+
+
+def build_native_plugin_effects_facade(*, authority: PluginAuthority,
+                                       selected_package: object,
+                                       identity: object,
+                                       current_binding: Any,
+                                       action_schemas: PluginActionSchemaRegistry | None = None,
+                                       invocation_contexts: InvocationContexts | None = None,
+                                       ) -> PluginEffectDispatcher:
+    """Compose the native lexical provider with the selected package facade.
+
+    The trusted native loader calls this while it constructs the per-plugin
+    runtime context. ``current_binding`` must be the pinned Hermes executor's
+    lexical getter. A provider may be supplied when the loader also exposes
+    that exact provider in the runtime context; worker-created provenance
+    callbacks are never accepted as authority.
+    """
+    try:
+        provider = invocation_contexts or build_native_invocation_context_provider(
+            authority=authority, selected_package=selected_package,
+            current_binding=current_binding,
+        )
+        return build_plugin_effects_facade(
+            authority=authority, invocation_contexts=provider,
+            identity=identity, action_schemas=action_schemas,
+            selected_package=selected_package,
+        )
+    except (ImportError, RuntimeError, ValueError, PermissionError, TypeError):
+        raise PluginEffectUnavailable(
+            "root native invocation provider or selected package is unavailable"
+        ) from None
+
+
+@dataclass(frozen=True, slots=True)
+class NativePluginEffectBinding:
+    """Paired values to install in trusted NativePluginRuntimeContext."""
+
+    invocation_contexts: InvocationContexts
+    plugin_effects: PluginEffectDispatcher
+
+
+def build_native_plugin_effect_binding(*, authority: PluginAuthority,
+                                       selected_package: object,
+                                       identity: object,
+                                       current_binding: Any,
+                                       action_schemas: PluginActionSchemaRegistry | None = None,
+                                       ) -> NativePluginEffectBinding:
+    """Build both runtime fields from the same root provider and package.
+
+    The protected runtime-context factory installs these returned fields
+    together. This prevents resource/plugin dispatch from receiving a different
+    invocation provider than the one used by the plugin effect facade.
+    """
+    provider = build_native_invocation_context_provider(
+        authority=authority, selected_package=selected_package,
+        current_binding=current_binding,
+    )
+    effects = build_plugin_effects_facade(
+        authority=authority, invocation_contexts=provider,
+        identity=identity, action_schemas=action_schemas,
+        selected_package=selected_package,
+    )
+    return NativePluginEffectBinding(provider, effects)
+
+
+def bind_plugin_effects_to_runtime_context(*, authority: PluginAuthority,
+                                          selected_package: object,
+                                          current_binding: Any,
+                                          runtime_context: object,
+                                          action_schemas: PluginActionSchemaRegistry | None = None,
+                                          ) -> object:
+    """Return the trusted context with its paired root invocation/effect facades.
+
+    This is the narrow composition point for the protected native runtime
+    factory. It accepts only the installer runtime DTO, checks that the DTO's
+    authority and selected resource identity agree with the root-selected
+    package, and replaces both facade fields together. The lexical binding
+    getter is supplied only by the pinned Hermes executor integration.
+    """
+    try:
+        from hermes_installer.registry.resources_runtime import NativePluginRuntimeContext
+    except ImportError:
+        raise PluginEffectUnavailable("trusted native Plugin runtime context type is unavailable") from None
+    try:
+        identity = runtime_context.identity
+        selected_digest = selected_package.manifest_digest_for_adapter(identity.resource_id)
+    except (AttributeError, TypeError, ValueError, PermissionError):
+        raise PluginEffectUnavailable("runtime context does not match the selected native Plugin package") from None
+    if (not isinstance(runtime_context, NativePluginRuntimeContext)
+            or runtime_context.authority is not authority
+            or not callable(current_binding)
+            or identity.kind != "plugins"
+            or not isinstance(identity.resource_id, str) or not identity.resource_id
+            or not isinstance(identity.content_digest, str) or not _HEX.fullmatch(identity.content_digest)
+            or selected_digest != identity.content_digest):
+        raise PluginEffectUnavailable("runtime context does not match the selected native Plugin package")
+    pair = build_native_plugin_effect_binding(
+        authority=authority, selected_package=selected_package,
+        identity=runtime_context.identity, current_binding=current_binding,
+        action_schemas=action_schemas,
+    )
+    try:
+        return replace(runtime_context, invocation_contexts=pair.invocation_contexts,
+                       plugin_effects=pair.plugin_effects)
+    except (TypeError, ValueError):
+        raise PluginEffectUnavailable("trusted runtime context cannot accept the native effect binding") from None
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

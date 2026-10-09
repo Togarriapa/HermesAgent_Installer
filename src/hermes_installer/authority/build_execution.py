@@ -4,8 +4,8 @@ Worker input is restricted to one reviewed operation identifier, generation,
 and the empty parameter object. A root composition resolves pinned artifacts
 and invokes its managed build-job launcher. This module validates the terminal
 isolation/exit receipt and atomically publishes a complete digest-checked tree
-to a private CAS. It remains unregistered until a concrete managed build-job
-launcher is present in daemon composition.
+to a private CAS. Runtime composition owns handler registration; `handlers()`
+exposes only fixed target IDs for which a target-fact inspector is qualified.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ import time
 import base64
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol
 
 from .types import AuthorityDenied, EffectAuthorization, HostContext, canonical_digest
@@ -125,6 +126,8 @@ def _plain(value: Any) -> Any:
 def _recipe_digest(profile: Any) -> str:
     return hashlib.sha256(_canonical({
         "target_id": profile.target_id, "generation": profile.generation,
+        "build_service_enrollment_id": profile.build_service_enrollment_id,
+        "build_service_generation": profile.build_service_generation,
         "source_artifact_id": profile.source_artifact_id, "source_sha256": profile.source_sha256,
         "toolchain_artifact_id": profile.toolchain_artifact_id,
         "toolchain_sha256": profile.toolchain_sha256,
@@ -146,6 +149,8 @@ class ResolvedBuildInputs:
     target_id: str
     generation: str
     service_generation_digest: str
+    build_service_enrollment_id: str
+    build_service_generation: str
     enrollment_id: str
     operation_id: str
     selection_digest: str
@@ -272,13 +277,61 @@ class RootManagedPythonProbe(Protocol):
     def inspect_cpython39(self, profile: Any, executable: Path) -> Mapping[str, Any]: ...
 
 
+class ProtectedBuildArtifactRootResolver:
+    """Resolve inspector inputs only from the immutable protected artifact catalog.
+
+    The build runner and inspector intentionally resolve the same pinned source
+    and toolchain independently: the runner binds their verified trees into
+    read-only mounts, while post-exit inspection rechecks catalog membership
+    and bytes before trusting source recipes or shared-library closures.
+    """
+
+    def __init__(self, artifact_catalog: Any, staging_root: Path, *, owner_uid: int = 0):
+        if (not isinstance(staging_root, Path) or not staging_root.is_absolute()
+                or type(owner_uid) is not int or owner_uid < 0
+                or not callable(getattr(artifact_catalog, "resolve", None))
+                or not callable(getattr(artifact_catalog, "materialize_tree", None))
+                or not isinstance(getattr(artifact_catalog, "artifacts", None), Mapping)):
+            raise AuthorityDenied("build.artifact_resolver", "root protected artifact resolver is unavailable")
+        self.artifact_catalog = artifact_catalog
+        self.staging_root = staging_root
+        self.owner_uid = owner_uid
+
+    def _resolve(self, artifact_id: str, digest: str) -> Path:
+        spec = self.artifact_catalog.artifacts.get(artifact_id)
+        if spec is None or spec.sha256 != digest:
+            raise AuthorityDenied("build.artifact", "inspector artifact differs from protected build pins")
+        try:
+            resolved = (self.artifact_catalog.materialize_tree(
+                artifact_id, digest, self.staging_root, expected_uid=self.owner_uid)
+                if spec.tree_files else self.artifact_catalog.resolve(
+                    artifact_id, digest, self.staging_root, expected_uid=self.owner_uid))
+            path = Path(resolved.path)
+            info = path.lstat()
+            if (path != path.resolve(strict=True)
+                    or (spec.tree_files and not stat.S_ISDIR(info.st_mode))
+                    or (not spec.tree_files and not stat.S_ISREG(info.st_mode))
+                    or info.st_uid != self.owner_uid or info.st_mode & 0o222):
+                raise ValueError("artifact root custody")
+            return path
+        except Exception:
+            raise AuthorityDenied("build.artifact", "pinned source or toolchain cannot be re-resolved") from None
+
+    def source_root(self, profile: Any) -> Path:
+        return self._resolve(profile.source_artifact_id, profile.source_sha256)
+
+    def toolchain_root(self, profile: Any) -> Path:
+        return self._resolve(profile.toolchain_artifact_id, profile.toolchain_sha256)
+
+
 class LinuxBuildOutputFactInspector:
     """Read-only ELF/sysconfig and isolated runtime inspector for ARM64 outputs."""
     def __init__(self, *, toolchain_root_resolver: Callable[[Any], Path],
-                 source_root_resolver: Callable[[Any], Path], runtime_probe: RootManagedPythonProbe,
+                 source_root_resolver: Callable[[Any], Path], runtime_probe: RootManagedPythonProbe | None,
                  owner_uid: int = 0):
         if (not callable(toolchain_root_resolver) or not callable(source_root_resolver)
-                or not callable(getattr(runtime_probe, "inspect_cpython39", None))
+                or (runtime_probe is not None
+                    and not callable(getattr(runtime_probe, "inspect_cpython39", None)))
                 or type(owner_uid) is not int):
             raise AuthorityDenied("build.inspector", "root source/toolchain resolvers and managed runtime probe are required")
         self.toolchain_root_resolver = toolchain_root_resolver
@@ -436,7 +489,10 @@ class LinuxBuildOutputFactInspector:
         if "aarch64" not in recipe_text or "-fopenmp" not in recipe_text + setup_text:
             raise AuthorityDenied("build.source_evidence", "Colibri ARM64/OpenMP build branch is absent")
         unsafe = ("-march=native", "-mcpu=native", "-mtune=native", "-mavx", "-msse", "-mavx2")
-        invocation_values = [*profile.argv_recipe, *profile.environment.values()]
+        invocation_values = [
+            node["literal"] for node in profile.argv_recipe
+            if isinstance(node, Mapping) and set(node) == {"literal"}
+        ] + list(profile.environment.values())
         if any(any(flag in value.lower() for flag in unsafe) for value in [*invocation_values, recipe_text, setup_text]):
             raise AuthorityDenied("build.source_evidence", "build recipe enables unmeasured host CPU instructions")
         build_text = recipe_text + " " + setup_text + " " + " ".join(invocation_values)
@@ -459,6 +515,8 @@ class LinuxBuildOutputFactInspector:
                     "resolved_dependency_closure": closure,
                     "instruction_policy": "actual target compatible ARM64 flags; no x86 default or unmeasured CPUflags"}
         if spec.relative_path == "runtime/bin/python3.9":
+            if self.runtime_probe is None:
+                raise AuthorityDenied("build.python_probe", "root-managed CPython ABI probe is unavailable")
             if sys.platform != "linux" or platform.machine().lower() not in {"aarch64", "arm64"}:
                 raise AuthorityDenied("build.target", "CPython output probe requires Linux ARM64")
             facts, needed = self._elf(path)
@@ -1306,7 +1364,9 @@ class RootBuildExecutionService:
     """Handler for fixed `process.start` selections; does not expose caller paths."""
     def __init__(self, *, build_catalog: FixedBuildCatalog, artifact_catalog: Any,
                  artifact_staging_root: Path, launcher: FixedBuildJobLauncher,
-                 fact_inspector: BuildOutputFactInspector, authority_key: bytes,
+                 fact_inspector: BuildOutputFactInspector, authority_key: bytes | None = None,
+                 service_catalog: Any,
+                 allowed_operation_ids: frozenset[str] | None = None,
                  store: ContentAddressedBuildStore | None = None, expected_uid: int = 0,
                  monotonic: Callable[[], float] = time.monotonic):
         if type(expected_uid) is not int or os.geteuid() != expected_uid:
@@ -1314,15 +1374,39 @@ class RootBuildExecutionService:
         if not artifact_staging_root.is_absolute():
             raise AuthorityDenied("build.artifacts", "artifact staging root must be absolute")
         self.catalog = build_catalog
+        self.services = service_catalog
         self.artifacts = artifact_catalog
         self.artifact_staging_root = artifact_staging_root
         self.launcher = launcher
         self.fact_inspector = fact_inspector
-        self.store = store or ContentAddressedBuildStore.root_store(authority_key=authority_key)
+        has_cpython_probe = callable(getattr(
+            getattr(fact_inspector, "runtime_probe", None), "inspect_cpython39", None))
+        default_operations = {"colibri-source-build-v1"}
+        if has_cpython_probe:
+            default_operations.add("coral-cpython39-source-build-v1")
+        selected_operations = default_operations if allowed_operation_ids is None else set(allowed_operation_ids)
+        if (not selected_operations or not selected_operations <= set(OPERATION_TARGETS)
+                or "coral-cpython39-source-build-v1" in selected_operations and not has_cpython_probe):
+            raise AuthorityDenied("build.operation", "build operation registration exceeds verified inspector support")
+        self.allowed_operation_ids = frozenset(selected_operations)
+        if store is None:
+            if not isinstance(authority_key, bytes) or len(authority_key) != 32:
+                raise AuthorityDenied("build.store", "root build signing key is unavailable")
+            store = ContentAddressedBuildStore.root_store(authority_key=authority_key)
+        elif not isinstance(store, ContentAddressedBuildStore):
+            raise AuthorityDenied("build.store", "root content-addressed build store is invalid")
+        self.store = store
         if self.store.owner_uid != expected_uid:
             raise AuthorityDenied("build.store_custody", "build store owner differs from the root executor identity")
         self.expected_uid = expected_uid
         self.monotonic = monotonic
+
+    def handlers(self) -> Mapping[tuple[str, str], Any]:
+        """Return only fixed operation targets supported by this inspector."""
+        return MappingProxyType({
+            ("process.start", OPERATION_TARGETS[operation_id]): self
+            for operation_id in self.allowed_operation_ids
+        })
 
     def __call__(self, *, context: HostContext, authorization: EffectAuthorization,
                  payload: bytes, timeout: float, peer_pid: int, peer_pidfd: int | None,
@@ -1335,6 +1419,8 @@ class RootBuildExecutionService:
                 or not 0 < timeout <= 600 or authorization.request_digest != canonical_digest(payload)):
             raise AuthorityDenied("build.request", "fixed build request is malformed")
         request = self._request(payload)
+        if request["operation_id"] not in self.allowed_operation_ids:
+            raise AuthorityDenied("build.operation", "this build target has no qualified root output inspector")
         target = OPERATION_TARGETS[request["operation_id"]]
         if (authorization.operation != "process.start" or authorization.target != target
                 or context.operation != "process.start"
@@ -1343,8 +1429,17 @@ class RootBuildExecutionService:
                 or context.generation != request["generation"]
                 or authorization.generation != request["generation"]):
             raise AuthorityDenied("build.binding", "grant does not bind this fixed build operation")
-        profile = self.catalog.resolve(target, request["generation"])
+        resolver = getattr(self.catalog, "resolve_service", None)
+        if not callable(resolver) or self.services is None:
+            raise AuthorityDenied("build.service", "root service enrollment join is unavailable")
+        profile, service_profile = resolver(target, request["generation"], self.services)
         if (profile.target_id != target or profile.generation != request["generation"]
+                or profile.build_service_enrollment_id != service_profile.enrollment_id
+                or profile.build_service_generation != service_profile.generation
+                or type(service_profile.service_uid) is not int
+                or type(service_profile.service_gid) is not int
+                or profile.output_owner_uid != service_profile.service_uid
+                or service_profile.service_uid <= 0 or service_profile.service_gid <= 0
                 or not re.fullmatch(r"[0-9a-f]{64}", profile.service_generation_digest)):
             raise AuthorityDenied("build.binding", "root catalog selected another build profile")
         deadline = self.monotonic() + timeout
@@ -1439,6 +1534,7 @@ class RootBuildExecutionService:
             raise
         return ResolvedBuildInputs(
             profile.target_id, profile.generation, profile.service_generation_digest,
+            profile.build_service_enrollment_id, profile.build_service_generation,
             enrollment_id, operation_id, selection_digest,
             source.artifact_id, source.sha256, source.path,
             tuple(source.tree_files), source.tree_manifest_sha256,
@@ -1452,9 +1548,15 @@ class RootBuildExecutionService:
     @staticmethod
     def _remove_job_output_root(path: Path, owner_uid: int) -> None:
         try:
-            ContentAddressedBuildStore._check_owned_directory(path, owner_uid, mode=0o700)
-        except (OSError, AuthorityDenied):
+            path.lstat()
+        except FileNotFoundError:
             return
+        except OSError:
+            raise AuthorityDenied("build.output_cleanup", "unique build output root cannot be inspected") from None
+        # Cleanup failure must fail the build before the receipt's current-index
+        # rename. In particular, never interpret changed ownership or a symlink
+        # substitution as if the output root had already been removed.
+        ContentAddressedBuildStore._check_owned_directory(path, owner_uid, mode=0o700)
         # This path is a uniquely created child of the protected enrolled output
         # root. Do not follow links while clearing the build-owned job output.
         for current, dirs, files in os.walk(path, topdown=False, followlinks=False):

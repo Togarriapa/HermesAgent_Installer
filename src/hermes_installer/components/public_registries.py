@@ -482,17 +482,30 @@ def build_registry_handlers() -> Mapping[tuple[str, str], _RegistryHandler]:
 
 def invoke_public_registry_read(runtime_context: object, *, service_id: str,
                                 query: Mapping[str, Any], limit: int = 20,
-                                cursor: str | None = None, intent: str) -> dict[str, Any]:
+                                cursor: str | None = None, action_id: str,
+                                invocation_arguments: Mapping[str, Any],
+                                intent: str) -> dict[str, Any]:
     """Use a fresh host context and one-use grant for a fixed public registry."""
     plugin_for_service = {
         "registry:modelcontextprotocol": "mcp-registry",
         "registry:agent37": "agent37-discovery",
     }
+    actions_for_service = {
+        "registry:modelcontextprotocol": frozenset({
+            "discover-servers", "inspect-server-metadata", "inspect-versions",
+        }),
+        "registry:agent37": frozenset({
+            "discover-skill-candidates", "inspect-public-metadata",
+        }),
+    }
     capability = _CAPABILITIES.get(service_id)
-    if capability is None or getattr(getattr(runtime_context, "identity", None), "kind", None) != "plugins" \
-            or getattr(runtime_context.identity, "resource_id", None) != plugin_for_service[service_id]:
+    if (capability is None or service_id not in plugin_for_service
+            or action_id not in actions_for_service[service_id]
+            or getattr(getattr(runtime_context, "identity", None), "kind", None) != "plugins"
+            or getattr(runtime_context.identity, "resource_id", None) != plugin_for_service[service_id]):
         raise PublicRegistryDenied("registry service does not match the selected Plugin source identity")
-    if not isinstance(query, Mapping) or type(limit) is not int or not 1 <= limit <= MAX_PAGE_SIZE:
+    if (not isinstance(query, Mapping) or not isinstance(invocation_arguments, Mapping)
+            or type(limit) is not int or not 1 <= limit <= MAX_PAGE_SIZE):
         raise PublicRegistryDenied("public registry query bounds are invalid")
     payload_object = {"schema": 1, "query": dict(query), "limit": limit, "cursor": cursor}
     body = canonical_registry_payload(payload_object)
@@ -506,18 +519,32 @@ def invoke_public_registry_read(runtime_context: object, *, service_id: str,
     intent = intent.strip() if isinstance(intent, str) else ""
     if not intent or len(intent) > 512:
         raise PublicRegistryDenied("registry read intent is invalid")
-    source_contexts = invocation_contexts(purpose="native-hermes-chat", intent=intent)
-    if not source_contexts:
-        raise PublicRegistryDenied("trusted Hermes invocation lineage is unavailable")
-    context = authority.context(purpose="native-hermes-chat", intent=intent,
-                               source_contexts=source_contexts, lease_seconds=30.0)
+    from hermes_installer.components.plugin_effects import (
+        PluginEffectUnavailable,
+        root_invocation_source_receipt_handles,
+    )
+    arguments_digest = hashlib.sha256(canonical_registry_payload(invocation_arguments)).hexdigest()
+    try:
+        source_receipt_handles = root_invocation_source_receipt_handles(
+            invocation_contexts, adapter_id=plugin_for_service[service_id],
+            action_id=action_id, arguments_sha256=arguments_digest,
+            purpose="native-hermes-chat", intent=intent,
+        )
+    except (PluginEffectUnavailable, TypeError, ValueError):
+        raise PublicRegistryDenied("trusted Hermes invocation lineage is unavailable") from None
     target = service_id
     recipient = _RECIPIENTS[target]
+    request_digest = hashlib.sha256(body).hexdigest()
+    context = authority.context(
+        purpose="native-hermes-chat", intent=intent, operation="registry.read",
+        source_receipt_handles=source_receipt_handles,
+        final_payload_digest=request_digest, lease_seconds=30.0,
+    )
     grant = authority.authorize_effect(context, capability=capability, target=target,
-                                       recipient=recipient, request_digest=hashlib.sha256(body).hexdigest(),
+                                       recipient=recipient, request_digest=request_digest,
                                        retry_index=0)
     authority.verify_effect(grant, context, capability=capability, target=target,
-                            recipient=recipient, request_digest=hashlib.sha256(body).hexdigest(),
+                            recipient=recipient, request_digest=request_digest,
                             retry_index=0)
     response = authority.perform_effect(grant, operation="registry.read", payload=body,
                                         timeout=MAX_DEADLINE_SECONDS)

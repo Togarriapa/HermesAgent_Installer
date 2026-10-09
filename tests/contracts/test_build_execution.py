@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import base64
+import sys
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -13,11 +15,40 @@ import pytest
 
 from hermes_installer.authority.build_execution import (
     BuildOutputSpec, ContentAddressedBuildStore, LinuxBuildOutputFactInspector,
-    ManagedBuildResult, RootBuildExecutionService, managed_process_identity_digest,
+    ManagedBuildResult, ProtectedBuildArtifactRootResolver, RootBuildExecutionService,
+    managed_process_identity_digest,
 )
 from hermes_installer.authority.types import (
     AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
 )
+
+
+def _test_temp_parent() -> str:
+    # Linux root-owned fixtures use /tmp's root-owned sticky parent; Darwin
+    # exposes the equivalent through its /private alias.
+    return "/private/tmp" if sys.platform == "darwin" else "/tmp"
+
+
+@pytest.mark.parametrize(("platform_name", "expected"),
+                         [("darwin", "/private/tmp"), ("linux", "/tmp")])
+def test_temp_parent_uses_only_the_platform_specific_sticky_root(monkeypatch, platform_name, expected):
+    monkeypatch.setattr(sys, "platform", platform_name)
+    assert _test_temp_parent() == expected
+
+
+def _test_builder_uid() -> int:
+    # Root-run Linux custody CI must still model the dedicated unprivileged
+    # builder identity used by production.
+    return 65534 if os.geteuid() == 0 else os.getuid()
+
+
+def _owned_output_root(path: Path) -> Path:
+    path.mkdir(mode=0o700, exist_ok=True)
+    owner_uid = _test_builder_uid()
+    if path.stat().st_uid != owner_uid:
+        os.chown(path, owner_uid, -1)
+    path.chmod(0o700)
+    return path
 
 
 def constraints():
@@ -37,6 +68,8 @@ class Profile:
     target_id = "colibri-source-build:start"
     generation = "generation-1"
     service_generation_digest = "a" * 64
+    build_service_enrollment_id = "builder-service-1"
+    build_service_generation = "service-generation-1"
     source_artifact_id = "colibri-source"
     source_sha256 = "1" * 64
     toolchain_artifact_id = "aarch64-sysroot"
@@ -50,7 +83,7 @@ class Profile:
     environment = {"LANG": "C"}
     max_lifetime_seconds = 600
     output_root_id = "build-output"
-    output_owner_uid = os.getuid()
+    output_owner_uid = _test_builder_uid()
     output_specs = constraints()
 
     def __init__(self, output_root: Path):
@@ -75,7 +108,7 @@ class FixtureInspector:
 def completed(**changes):
     now = time.monotonic()
     row = {
-        "process_id": "managed-build-1", "generation": "generation-1", "uid": os.getuid(),
+        "process_id": "managed-build-1", "generation": "generation-1", "uid": _test_builder_uid(),
         "pid": 12345, "start_ticks": 55, "exit_code": 0, "timed_out": False,
         "cancelled": False, "cleanup_verified": True, "started_monotonic": now - .25,
         "finished_monotonic": now - .05,
@@ -98,8 +131,15 @@ def completed(**changes):
 def write_file(root: Path, name: str, data: bytes, executable=False):
     path = root / name
     path.parent.mkdir(parents=True, exist_ok=True)
+    parent = path.parent
+    while parent != root:
+        if parent.stat().st_uid != _test_builder_uid():
+            os.chown(parent, _test_builder_uid(), -1)
+        parent = parent.parent
     path.write_bytes(data)
     path.chmod(0o700 if executable else 0o600)
+    if path.stat().st_uid != _test_builder_uid():
+        os.chown(path, _test_builder_uid(), -1)
     return path
 
 
@@ -108,10 +148,10 @@ def make_store(path: Path):
 
 
 def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_returns_receipt():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
-        output_root.mkdir(mode=0o700)
+        _owned_output_root(output_root)
         source = base / "source"
         toolchain = base / "toolchain"
         builder = base / "builder"
@@ -139,9 +179,13 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
                                        path=path, tree_files=(), tree_manifest_sha256=manifest)
 
         class Catalog:
-            def resolve(self, target_id, generation):
+            def resolve_service(self, target_id, generation, services):
                 assert target_id == profile.target_id and generation == profile.generation
-                return profile
+                assert services is service_catalog
+                return profile, SimpleNamespace(
+                    enrollment_id=profile.build_service_enrollment_id,
+                    generation=profile.build_service_generation,
+                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
 
         class Launcher:
             seen = False
@@ -182,10 +226,13 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
             nonce="nonce-1", context_digest="b" * 64, signature="sig",
             enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
         launcher = Launcher()
+        service_catalog = object()
         service = RootBuildExecutionService(
             build_catalog=Catalog(), artifact_catalog=Artifacts(), artifact_staging_root=base,
             launcher=launcher, fact_inspector=FixtureInspector(), authority_key=b"k" * 32,
+            service_catalog=service_catalog,
             store=make_store(base / "cas"), expected_uid=os.getuid())
+        assert set(service.handlers()) == {("process.start", profile.target_id)}
         response = service(context=context, authorization=authorization, payload=payload,
                            timeout=60, peer_pid=42, peer_pidfd=7, cancelled=lambda: False)
 
@@ -199,10 +246,10 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
 
 
 def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activating_receipt():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
-        output_root.mkdir(mode=0o700)
+        _owned_output_root(output_root)
         profile = Profile(output_root)
         source, toolchain = base / "source", base / "toolchain"
         source.mkdir(mode=0o700)
@@ -226,8 +273,11 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
                                        tree_manifest_sha256=hashlib.sha256(b"[]").hexdigest())
 
         class Catalog:
-            def resolve(self, _target_id, _generation):
-                return profile
+            def resolve_service(self, _target_id, _generation, _services):
+                return profile, SimpleNamespace(
+                    enrollment_id=profile.build_service_enrollment_id,
+                    generation=profile.build_service_generation,
+                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
 
         class Launcher:
             def run_selected_build(self, inputs, **_kwargs):
@@ -256,10 +306,12 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
             nonce="nonce-1", context_digest="b" * 64, signature="sig",
             enrollment_id="enrollment-1", generation=profile.generation, operation="process.start")
         store = make_store(base / "cas")
+        service_catalog = object()
         service = RootBuildExecutionService(
             build_catalog=Catalog(), artifact_catalog=Artifacts(), artifact_staging_root=base,
             launcher=Launcher(), fact_inspector=FixtureInspector(corrupt=True),
-            authority_key=b"k" * 32, store=store, expected_uid=os.getuid())
+            authority_key=b"k" * 32, service_catalog=service_catalog,
+            store=store, expected_uid=os.getuid())
 
         with pytest.raises(AuthorityDenied):
             service(context=context, authorization=authorization, payload=payload,
@@ -269,15 +321,64 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
         assert not (store.root / "current").exists()
 
 
+def test_output_cleanup_rejects_replaced_job_root_instead_of_succeeding():
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
+        base = Path(temp)
+        target = base / "target"
+        target.mkdir(mode=0o700)
+        replaced = base / "job-output"
+        replaced.symlink_to(target, target_is_directory=True)
+
+        with pytest.raises(AuthorityDenied):
+            RootBuildExecutionService._remove_job_output_root(replaced, os.getuid())
+
+        assert target.is_dir()
+        assert replaced.is_symlink()
+
+
+def test_inspector_roots_are_resolved_from_exact_protected_artifact_pins():
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
+        base = Path(temp)
+        source = base / "source"
+        sysroot = base / "sysroot"
+        source.mkdir(mode=0o700)
+        sysroot.mkdir(mode=0o700)
+        source.chmod(0o500)
+        sysroot.chmod(0o500)
+        profile = Profile(base)
+        expected_uid = os.getuid()
+        specs = {
+            profile.source_artifact_id: SimpleNamespace(sha256=profile.source_sha256, tree_files=(object(),)),
+            profile.toolchain_artifact_id: SimpleNamespace(sha256=profile.toolchain_sha256, tree_files=(object(),)),
+        }
+        roots = {profile.source_artifact_id: source, profile.toolchain_artifact_id: sysroot}
+
+        class ArtifactCatalog:
+            artifacts = specs
+
+            def resolve(self, *_args, **_kwargs):
+                raise AssertionError("tree artifacts must be materialized through their protected manifest")
+
+            def materialize_tree(self, artifact_id, digest, staging_root, *, expected_uid):
+                assert artifact_id in roots and specs[artifact_id].sha256 == digest
+                assert staging_root == base and expected_uid == expected_uid_outer
+                return SimpleNamespace(path=roots[artifact_id])
+
+        expected_uid_outer = expected_uid
+        resolver = ProtectedBuildArtifactRootResolver(ArtifactCatalog(), base, owner_uid=expected_uid)
+        assert resolver.source_root(profile) == source
+        assert resolver.toolchain_root(profile) == sysroot
+
+
 def filled_output(root):
-    root.mkdir(mode=0o700, exist_ok=True)
+    _owned_output_root(root)
     write_file(root, "bin/colibri", b"fixture ARM64 executable", executable=True)
     write_file(root, "runtime/lib/python3.9/os.py", b"stdlib fixture")
     write_file(root, "runtime/lib/python3.9/lib-dynload/_test.so", b"extension fixture")
 
 
 def test_dynamic_output_manifest_is_root_hashed_and_atomically_resolved():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
         output_root.mkdir(mode=0o700)
@@ -302,7 +403,7 @@ def test_dynamic_output_manifest_is_root_hashed_and_atomically_resolved():
 
 
 def test_root_fact_mismatch_or_inspector_error_never_publishes_receipt():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -321,7 +422,7 @@ def test_root_fact_mismatch_or_inspector_error_never_publishes_receipt():
     {"kernel_limits": {"PrivateNetwork": "no"}},
 ])
 def test_no_receipt_for_nonterminal_or_unproven_process(changes):
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -334,7 +435,7 @@ def test_no_receipt_for_nonterminal_or_unproven_process(changes):
 
 @pytest.mark.parametrize("mutation", ["missing", "extra", "symlink", "oversize"])
 def test_output_scanner_rejects_incomplete_or_unbounded_tree(mutation):
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -354,7 +455,7 @@ def test_output_scanner_rejects_incomplete_or_unbounded_tree(mutation):
 
 
 def test_cancellation_and_tampered_receipt_or_cas_object_fail_closed():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -421,7 +522,7 @@ def elf64_aarch64(needed=()):
 
 
 def test_linux_fact_inspector_parses_aarch64_elf_dependencies_and_rejects_x86():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         root = Path(temp)
         path = root / "colibri"
         path.write_bytes(elf64_aarch64(("libgomp.so.1", "libm.so.6", "libc.so.6")))
@@ -444,7 +545,7 @@ def test_linux_fact_inspector_parses_aarch64_elf_dependencies_and_rejects_x86():
 
 
 def test_linux_fact_inspector_hashes_actual_root_owned_dependency_closure():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         root = Path(temp)
         expected = {}
         for name in ("libgomp.so.1", "libm.so.6", "libc.so.6"):
