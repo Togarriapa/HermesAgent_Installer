@@ -184,3 +184,87 @@ The implementation SHALL resolve actual installed release custody and full admit
 #### Scenario: Digest without source closure
 - **WHEN** only a digest or caller provenance label is available
 - **THEN** no trusted input receipt or admitted native effect is created.
+
+### Requirement: Supported loader and current task controller
+
+The implementation SHALL use the exact named systemd FD transfer and kernel-authenticated loader progress contract, and SHALL distinguish historical source lineage from current verified execution controller.
+
+#### Scenario: Historical capsule mistaken for current peer
+- **WHEN** only serialized source metadata or manager socket credentials are available
+- **THEN** no live producer or loader proof is fabricated.
+
+### Requirement: Selected task result artifact validation
+
+The root SHALL validate actual complete task stdout using its exact selected protected result schema before result capsule or DAG advancement. Generic text or exit0 SHALL NOT create authoritative output fields.
+
+#### Scenario: Unregistered output schema
+- **WHEN** output lacks a current registered finite schema validator or violates its exact bounds
+- **THEN** completion fails and no success capsule advances dependent nodes.
+
+### Requirement: Protected setup store and bounded probe response
+
+The implementation SHALL resolve the protected setup catalog/store and validate the exact bounded private probe response against current root admission and actual observations.
+
+#### Scenario: Untrusted injected catalog or response
+- **WHEN** selected artifact custody or probe envelope/observation binding differs
+- **THEN** provisioning/readiness cannot be marked complete.
+
+### Requirement: Exact root peer delivery and controller roles
+
+The implementation SHALL use explicit protected observer delivery role joins and actual kernel controller DTOs with exact PIDFD ownership.
+
+#### Scenario: Unenrolled cross-peer selection
+- **WHEN** no exact current observer delivery mapping exists
+- **THEN** cross-peer delivery is denied without target-string inference.
+
+### Requirement: Actual root resource controller enrollment
+
+Root event context issuance SHALL require the exact active daemon/module/observer/backend role record and current kernel identity before fresh child effects.
+
+#### Scenario: Unverified root dispatcher role
+- **WHEN** role/module/kernel/event/body bindings are absent or stale
+- **THEN** no context or child effect is fabricated.
+
+### Requirement: Prepared native materialization receipt closure
+
+Root materialization SHALL occur under verified prepared transaction and exact fixed CAS output roles before runnable activation. HERMES_HOME SHALL equal selected service_home_root_id. Resources source proof SHALL remain independent from Hermes source proof.
+
+#### Scenario: Source or role substitution
+- **WHEN** a native output receipt substitutes another source or role
+- **THEN** active record publication is denied.
+
+### Requirement: Actual task native and credential closure
+
+Successful task completion SHALL bind actual native execution receipts and distinct service/resource epochs. Webhook verification SHALL use explicit protected placeholder-to-vault-role mapping.
+
+#### Scenario: Native or credential mapping absence
+- **WHEN** the current exact native or scoped credential join is missing
+- **THEN** no successful task capsule or authenticated webhook event is fabricated.
+
+### Requirement: Existing observation assembly joins
+The implementation SHALL apply the exact root registry, principal-selection and protected observation joins relevant to this change in `plans/amendments/2026-10-09-final-observation-assembly-v31.md`.
+
+#### Scenario: Static selection lacks actual runtime proof
+- **WHEN** an actual current role, display, source event or terminal execution receipt is absent
+- **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence
+
+### Requirement: Installed closure and native construction joins
+The implementation SHALL use the applicable exact root release and native assembly joins in the v33 amendment before activating selected runtime behavior.
+
+#### Scenario: First input precedes provider pending pair
+- **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
+- **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors
+
+### Requirement: Noncircular root observation receipts
+The implementation SHALL use exact v35 initial identity and terminal companion joins applicable to this change.
+
+#### Scenario: Companion proof follows immutable terminal
+- **WHEN** root custody has issued the actual terminal receipt
+- **THEN** root native registry binds a separate verified companion receipt without fabricating or modifying custody evidence
+
+### Requirement: Noncircular immutable first-stage publication
+The implementation SHALL use the exact applicable v36 release roles, immutable policy publication and pre-event root ingress custody joins.
+
+#### Scenario: First ingress has no source receipt yet
+- **WHEN** root resolves selected ingress controller custody
+- **THEN** actual process/module/selected ingress proof is checked independently before atomically minting the source receipt and event handle
