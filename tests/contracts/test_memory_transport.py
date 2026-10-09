@@ -28,6 +28,7 @@ class Stream:
 
     def write(self, data):
         self.writes.append(data)
+        return len(data)
 
     def read(self, max_bytes):
         if self.response is None:
@@ -44,8 +45,8 @@ class Connector:
         self.stream = stream
         self.opens = []
 
-    def open(self, *args):
-        self.opens.append(args)
+    def open(self, **kwargs):
+        self.opens.append(kwargs)
         return self.stream
 
 
@@ -116,9 +117,12 @@ class MemoryTransportTests(unittest.TestCase):
             peer_pidfd=None, cancelled=lambda: False)
         self.assertEqual(result.status, 200)
         self.assertEqual(result.body, b'{"healthy":true}')
-        self.assertEqual(client.opens, [("memory-service-one", 8,
-            "memory-agentmemory:profile-one", "agentmemory-ready", "trace-one",
-            client.opens[0][-1])])
+        self.assertEqual(client.opens, [{
+            "enrollment_id": "memory-service-one", "generation": "generation-eight",
+            "target_id": "memory-agentmemory:profile-one",
+            "approved_route_id": "agentmemory-ready", "session_id": "trace-one",
+            "deadline": client.opens[0]["deadline"],
+        }])
         self.assertEqual(len(client.stream.writes), 1)
         request = client.stream.writes[0]
         self.assertTrue(request.startswith(b"GET /agentmemory/livez HTTP/1.1\r\n"))
