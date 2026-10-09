@@ -160,3 +160,51 @@ The installer SHALL verify the actual immutable selected voice workflow recipe a
 #### Scenario: Recipe bytes available without handler
 - **WHEN** a selected recipe is verified but actual root engine, primitive handler or trusted session permission is missing
 - **THEN** capability remains incomplete and no recipe/fixture status claims native effect success
+
+### Requirement: Resource profile task terminal protocol
+
+The implementation SHALL enforce this protocol. RB-T08 / EV-RB07: use the exact root task runner protocol in planning/protected-resource-job-contract.json, including one-shot admitted UTF8 stdin plus EOF, actual terminal validation and result-capsule lineage; launch or fixture status cannot establish completion.
+
+#### Scenario: Missing concrete runtime proof
+- **WHEN** the exact protocol or current kernel/native observations are unavailable
+- **THEN** the affected task remains incomplete and no fixture or mount-only evidence establishes acceptance.
+
+### Requirement: Native health and typed task proof
+
+The implementation SHALL enforce the applicable native health receipt and typed task admission contracts. Use planning/protected-lifecycle-control-contract.json native_health_receipt for actual native health and planning/protected-resource-job-contract.json typed_admission/service_methods/recipe_domain for RB-T08. Original tasks/acceptance remain pending.
+
+#### Scenario: Status without native result
+- **WHEN** only source/status/exit evidence is available
+- **THEN** functional health and task result acceptance remain incomplete.
+
+### Requirement: Root observed initial input closure
+
+The implementation SHALL resolve actual installed release custody and full admitted source receipt closure before issuing native input provenance. Private or unknown sensitivity SHALL remain unchanged absent separate reviewed clearance.
+
+#### Scenario: Digest without source closure
+- **WHEN** only a digest or caller provenance label is available
+- **THEN** no trusted input receipt or admitted native effect is created.
+
+### Requirement: Supported loader and current task controller
+
+The implementation SHALL use the exact named systemd FD transfer and kernel-authenticated loader progress contract, and SHALL distinguish historical source lineage from current verified execution controller.
+
+#### Scenario: Historical capsule mistaken for current peer
+- **WHEN** only serialized source metadata or manager socket credentials are available
+- **THEN** no live producer or loader proof is fabricated.
+
+### Requirement: Selected task result artifact validation
+
+The root SHALL validate actual complete task stdout using its exact selected protected result schema before result capsule or DAG advancement. Generic text or exit0 SHALL NOT create authoritative output fields.
+
+#### Scenario: Unregistered output schema
+- **WHEN** output lacks a current registered finite schema validator or violates its exact bounds
+- **THEN** completion fails and no success capsule advances dependent nodes.
+
+### Requirement: Protected setup store and bounded probe response
+
+The implementation SHALL resolve the protected setup catalog/store and validate the exact bounded private probe response against current root admission and actual observations.
+
+#### Scenario: Untrusted injected catalog or response
+- **WHEN** selected artifact custody or probe envelope/observation binding differs
+- **THEN** provisioning/readiness cannot be marked complete.

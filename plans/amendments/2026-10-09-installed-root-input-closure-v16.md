@@ -1,0 +1,3 @@
+# Installed root and input closure joins v16
+
+BD-F01/HI-T01/HI-T08/HI-T11/RB-T08 original scope unchanged. The initial root selection catalog now includes exact root deployment directory binding in the same protected file. Resource admission retains full verified event/context closure and exposes a root-private typed resolver; hashes alone cannot create ancestry. Native input observers are finite root-admitted task, selected private health fixture, or authenticated constrained Desktop input paths; exact observed bytes/current producer custody and full parent receipts are required. None upgrades input to public or grants worker classification authority. All tasks and acceptance remain open; baseline unchanged.
