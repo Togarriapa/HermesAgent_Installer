@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import base64
+import json
 import time
 from dataclasses import replace
 import unittest
 
 from hermes_installer.openai_auth import (
     ChatGPTPlanAuth, DYNAMIC_CLIENT_ID, PLAN_SCOPE, RESOURCE, TOKEN_ENDPOINT,
-    OAuthAttemptError,
+    OAuthAttemptError, OpenAIIDTokenVerifier,
 )
 
 
@@ -56,6 +58,28 @@ class OpenAIAuthTests(unittest.TestCase):
         return ChatGPTPlanAuth(host_id="urn:uuid:6b87b55d-f3a8-4cb9-82b4-f5d28203f066",
             agent_name="Hermes Installer", transport=transport, vault=vault,
             verify_id_token=verify), transport, vault
+
+    def test_builtin_jwks_verifier_rejects_bad_signature(self):
+        def enc(raw):
+            return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+        header = enc(json.dumps({"alg": "RS256", "kid": "key-1"}).encode())
+        claims = enc(json.dumps({"iss": "https://auth.openai.com", "sub": "s",
+                                 "aud": "oaiapp_test", "exp": int(time.time()) + 60}).encode())
+        token = header + "." + claims + "." + enc(bytes(256))
+
+        class KeyTransport:
+            def get_json(self, endpoint, *, timeout):
+                if endpoint.endswith("openid-configuration"):
+                    return {"issuer": "https://auth.openai.com",
+                            "jwks_uri": "https://auth.openai.com/.well-known/jwks.json"}
+                return {"keys": [{"kid": "key-1", "kty": "RSA",
+                                  "n": enc(bytes([0x80]) + bytes(255)), "e": "AQAB"}]}
+            def post_form(self, endpoint, values, *, timeout):
+                return {}
+
+        verifier = OpenAIIDTokenVerifier(KeyTransport())
+        with self.assertRaisesRegex(OAuthAttemptError, "signature is invalid"):
+            verifier(token, "", "oaiapp_test")
 
     def test_pkce_dynamic_registration_and_callback_identity(self):
         auth, transport, vault = self.make_auth()
