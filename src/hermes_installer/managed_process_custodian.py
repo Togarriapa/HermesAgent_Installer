@@ -692,7 +692,11 @@ class ManagedProcessEffectHandler:
                 "ProtectProc": "invisible", "ProcSubset": "pid", "User": profile.service_user,
             }
             for key, value in expected_props.items():
-                if self._show(unit, key) != value:
+                actual_value = self._show(unit, key)
+                if actual_value != value:
+                    if self._diagnostic_sink is not None:
+                        self._diagnostic_sink(
+                            f"readback-mismatch:{key}:actual={actual_value[:160]!r}:expected={value!r}".encode("ascii", "backslashreplace"))
                     raise AuthorityDenied("process.sandbox", "manager isolation readback failed")
             if self._show(unit, "Description") != f"HermesInstaller {profile.profile_id} {profile.generation}":
                 raise AuthorityDenied("process.unit", "manager unit is not bound to the profile generation")
