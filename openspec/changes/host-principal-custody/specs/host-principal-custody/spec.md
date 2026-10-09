@@ -173,3 +173,10 @@ The installer SHALL resolve native package from actual enrolled peer and SHALL a
 #### Scenario: Caller chooses package or reuses compound grant
 - **WHEN** caller claims alternate package/scope or repeats one consumed authorization across steps
 - **THEN** reject before bytes and retain owned cleanup journal with no sibling deletion.
+
+### Requirement: Canonical native record digests
+The installer SHALL validate exact canonical resolver/policy document digest preimages, reject duplicate keys and keep module/archive hashes distinct.
+
+#### Scenario: Self hash or wrapper bytes substituted
+- **WHEN** digest uses wrong preimage or archive/module identity in place of canonical document
+- **THEN** reject enrollment before effects; verified presentation does not confer authority.

@@ -130,7 +130,8 @@
       "adapters"
     ],
     "adapters": "Finite list of records with adapter_id,manifest_sha256,adapter_sha256,action_id,argument_schema_id,result_schema_id,effect_enrollment_id,operation,capability,target_id,recipient,generation matching package catalog; extra fields forbidden",
-    "semantics": "Root returns canonical bounded immutable resolver document from selected closure after same actual peer/package/generation validation; maximum2MiB and <=692 selected declarations. No request path, FD, module import or caller mount choice. Root selected loader reads only enrolled read-only namespace closure internally. Facade resolver is presentation/routing only: root re-resolves current effect enrollment and all identity/authority/schema/source conditions EVERY effect, never trusts returned record as permission."
+    "semantics": "Root returns canonical bounded immutable resolver document from selected closure after same actual peer/package/generation validation; maximum2MiB and <=692 selected declarations. No request path, FD, module import or caller mount choice. Root selected loader reads only enrolled read-only namespace closure internally. Facade resolver is presentation/routing only: root re-resolves current effect enrollment and all identity/authority/schema/source conditions EVERY effect, never trusts returned record as permission.",
+    "digest": "SHA256 of UTF-8 canonical JSON object {schema,package_id,profile_id,generation,adapters}, excluding resolver_sha256, sorted keys, compact separators comma/colon, ensure_ascii=false, no trailing newline. Reject duplicate JSON keys and unknown fields. Protected resolver artifact stores exact canonical document bytes for same artifact/document SHA; wrapper archive must retain separately named artifact SHA and document SHA, never conflate. Worker verifies presentation digest/bounds, root re-resolves effect authority."
   },
   "operation_recipes": {
     "enrollment_field": "operation_recipes",
