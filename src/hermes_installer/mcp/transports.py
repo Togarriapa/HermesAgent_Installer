@@ -188,151 +188,71 @@ class StreamableHTTPTransport:
 
 
 class StdioTransport:
-    """A no-shell MCP stdio client for a pinned, reviewed executable."""
+    """Adapter over the host-managed child process; this class never spawns a process.
 
-    def __init__(
-        self,
-        argv: tuple[str, ...],
-        *,
-        cwd: Path,
-        env: Mapping[str, str] | None = None,
-        secret_env: Mapping[str, str] | None = None,
-        secret_resolver=None,
-        timeout: float = 15.0,
-    ) -> None:
-        if not argv or not Path(argv[0]).is_absolute() or not Path(argv[0]).is_file():
-            raise ValueError("MCP stdio executable must be an existing absolute file")
-        if any(not isinstance(arg, str) or "\x00" in arg for arg in argv):
-            raise ValueError("MCP stdio arguments must be NUL-free strings")
-        if any(arg.lower() in {"--token", "--api-key", "--authorization"} for arg in argv):
-            raise ValueError("MCP credentials must use secret references, never arguments")
-        if not cwd.is_absolute() or not cwd.is_dir():
-            raise ValueError("MCP stdio working directory must be an existing absolute directory")
-        if not 0 < timeout <= 120:
-            raise ValueError("transport timeout must be in (0, 120]")
-        values = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
-        for key, value in (env or {}).items():
-            if key not in _SAFE_ENV_KEYS or not isinstance(value, str) or "\x00" in value:
-                raise ValueError("MCP stdio environment contains an unreviewed value")
-            values[key] = value
-        if secret_env and secret_resolver is None:
-            raise ValueError("MCP secret references require the host credential resolver")
-        for key, reference in (secret_env or {}).items():
-            if not key.startswith("MCP_") or not key.replace("_", "").isalnum():
-                raise ValueError("MCP secret environment names must use the MCP_ prefix")
-            try:
-                value = secret_resolver(reference)
-            except Exception:
-                raise TransportError("MCP credential reference could not be resolved") from None
-            if not isinstance(value, str) or not value or "\x00" in value:
-                raise TransportError("MCP credential reference is missing or invalid")
-            values[key] = value
-        self.argv = argv
-        self.cwd = str(cwd)
-        self._env = values
+    The supervisor owns executable pinning, isolated cwd/data, explicit environment,
+    child custody and forced shutdown. This adapter only frames bounded MCP lines.
+    """
+    def __init__(self, handle, *, timeout: float = 9.0) -> None:
+        required = ("read", "write", "wait", "stop")
+        if handle is None or any(not callable(getattr(handle, name, None)) for name in required):
+            raise ValueError("MCP stdio requires a host-managed process handle")
+        if not 0 < timeout <= 9:
+            raise ValueError("MCP per-attempt timeout must be in (0, 9]")
+        self._handle = handle
         self.timeout = timeout
-        self._process: asyncio.subprocess.Process | None = None
-        self._stderr_task: asyncio.Task | None = None
-        self._stderr_bytes = 0
-        self._write_lock = asyncio.Lock()
-        self._read_lock = asyncio.Lock()
         self._closed = False
+        self._request_lock = asyncio.Lock()
 
     def __repr__(self) -> str:
-        return f"StdioTransport(program={Path(self.argv[0]).name!r}, env=<sanitized>)"
-
-    async def _start(self) -> None:
-        if self._process is not None and self._process.returncode is None:
-            return
-        if self._closed:
-            raise TransportError("MCP stdio transport is closed")
-        try:
-            self._process = await asyncio.create_subprocess_exec(
-                *self.argv, cwd=self.cwd, env=self._env, stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                start_new_session=True,
-            )
-        except (OSError, ValueError):
-            raise TransportError("MCP stdio server could not be started") from None
-        self._stderr_bytes = 0
-        self._stderr_task = asyncio.create_task(self._drain_stderr(self._process.stderr))
-
-    async def _drain_stderr(self, stream) -> None:
-        while True:
-            chunk = await stream.read(4096)
-            if not chunk:
-                return
-            self._stderr_bytes = min(MAX_STDERR_BYTES, self._stderr_bytes + len(chunk))
-            # stderr is drained to avoid deadlock but never retained or reported.
+        return "StdioTransport(process=<host-managed>)"
 
     async def request(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
-        await self._start()
-        process = self._process
-        assert process and process.stdin and process.stdout
-        raw = _encode(payload) + b"\n"
-        async with self._write_lock:
+        if self._closed:
+            raise TransportError("MCP stdio transport is closed")
+        line = _encode(payload) + b"\\n"
+        async with self._request_lock:
             try:
-                process.stdin.write(raw)
-                await asyncio.wait_for(process.stdin.drain(), self.timeout)
-            except (BrokenPipeError, ConnectionError, asyncio.TimeoutError, OSError):
-                await self.close()
-                raise TransportError("MCP stdio server disconnected while writing") from None
-        if "id" not in payload:
-            return {}
-        async with self._read_lock:
-            try:
+                await asyncio.wait_for(self._handle.write(line, timeout=self.timeout), self.timeout)
+                if "id" not in payload:
+                    return {}
                 while True:
-                    line = await asyncio.wait_for(process.stdout.readline(), self.timeout)
-                    if not line:
-                        raise TransportError("MCP stdio server disconnected")
-                    if len(line) > MAX_MESSAGE_BYTES:
-                        raise TransportError("MCP stdio response exceeded the 1 MiB limit")
-                    message = _decode(line.rstrip(b"\r\n"))
-                    if message.get("id") == payload.get("id"):
-                        return message
-                    # Notifications and progress from the server are ignored here;
-                    # callers receive only the correlated response.
+                    result = await asyncio.wait_for(
+                        self._handle.read(maximum_bytes=MAX_MESSAGE_BYTES + 1, timeout=self.timeout),
+                        self.timeout,
+                    )
+                    if not isinstance(result, bytes) or len(result) > MAX_MESSAGE_BYTES:
+                        raise TransportError("MCP stdio response exceeded the message limit")
+                    if not result:
+                        raise TransportError("MCP stdio process exited before responding")
+                    if not result.endswith(b"\\n"):
+                        raise TransportError("MCP stdio response must be one complete JSON line")
+                    response = _decode(result.rstrip(b"\\r\\n"))
+                    if response.get("id") == payload.get("id"):
+                        return response
             except asyncio.TimeoutError:
                 raise TransportError("MCP stdio request timed out") from None
+            except TransportError:
+                raise
+            except Exception:
+                raise TransportError("MCP stdio process disconnected") from None
 
     async def cancel_request(self, request_id: Any) -> None:
-        if self._closed or not self._process or not self._process.stdin:
+        if self._closed:
             return
         payload = {"jsonrpc": "2.0", "method": "notifications/cancelled",
                    "params": {"requestId": request_id, "reason": "caller cancelled"}}
         try:
-            async with self._write_lock:
-                self._process.stdin.write(_encode(payload) + b"\n")
-                await asyncio.wait_for(self._process.stdin.drain(), min(self.timeout, 2.0))
-        except (BrokenPipeError, ConnectionError, asyncio.TimeoutError, OSError, TransportError):
+            await asyncio.wait_for(self._handle.write(_encode(payload) + b"\\n", timeout=2.0), 2.0)
+        except Exception:
             return
 
     async def close(self) -> None:
-        self._closed = True
-        process, self._process = self._process, None
-        if process is None:
-            self._env.clear()
+        if self._closed:
             return
-        if process.stdin:
-            process.stdin.close()
-        if process.returncode is None:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                await asyncio.wait_for(process.wait(), 0.5)
-            except asyncio.TimeoutError:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                await process.wait()
-        if self._stderr_task:
-            self._stderr_task.cancel()
-            try:
-                await self._stderr_task
-            except asyncio.CancelledError:
-                pass
-            self._stderr_task = None
-        self._env.clear()
+        self._closed = True
+        try:
+            await asyncio.wait_for(self._handle.stop("MCP connection closed", timeout=2.0), 2.5)
+        except Exception:
+            # The host supervisor owns any forced kill and records its evidence.
+            raise TransportError("host-managed MCP process shutdown failed") from None
