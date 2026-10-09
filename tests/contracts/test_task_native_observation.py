@@ -75,6 +75,29 @@ def test_initial_input_receipt_accepts_enrolled_identity_lengths_but_requires_sa
         RootTaskInitialInputReceipt(**{**values, "node_id": "node\x00a"})
 
 
+def test_initial_input_event_joins_parent_closure_not_source_lineage_hash():
+    parent_digest = "d" * 64
+    receipt = SimpleNamespace(
+        source_receipt_handle="c" * 40, stdin_sha256="a" * 64,
+        stdin_size_bytes=12, native_loader_ready_event_id="l" * 40,
+        expires_monotonic=20.0,
+    )
+    task = SimpleNamespace(stdin_sha256="a" * 64, stdin_size_bytes=12,
+                           process_generation="profile-generation-a",
+                           parent_closure_digest=parent_digest)
+    run = SimpleNamespace(admitted_task=task, profile_id="profile-a")
+    event = SimpleNamespace(
+        input_origin_kind="root-admitted-task", source_receipt_handle="c" * 40,
+        payload_sha256="a" * 64, payload_size_bytes=12,
+        producer_profile_id="profile-a", producer_generation="profile-generation-a",
+        parent_closure_digest=parent_digest, lineage_hash="e" * 64,
+        native_loader_ready_event_id="l" * 40, expires_monotonic=30.0,
+    )
+    assert RootTaskNativeObservationRegistry._matches_initial_input_event(run, receipt, event)
+    event.parent_closure_digest = "e" * 64
+    assert not RootTaskNativeObservationRegistry._matches_initial_input_event(run, receipt, event)
+
+
 def test_issued_receipt_is_identity_bound_and_one_use():
     registry = _registry({})
     value = _dto()
