@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -17,7 +18,7 @@ from pathlib import Path
 INSTALLER_SRC = Path(__file__).resolve().parents[2] / "src"
 sys.path.insert(0, str(INSTALLER_SRC))
 
-from hermes_installer.policy import BudgetLedger, DispatchAuthorization, DispatchPolicy, Dispatcher, ProviderResponse, Route, Sensitivity, default_public_route
+from hermes_installer.policy import BudgetLedger, DispatchAuthorization, DispatchContext, DispatchPolicy, Dispatcher, ProviderResponse, Route, Sensitivity, default_public_route
 from hermes_installer.provider_gateway import LocalProviderGateway, materialize_hermes_profile_config, materialize_hermes_provider_plugin
 from hermes_installer.state import OwnedRoot
 
@@ -26,17 +27,29 @@ HERMES_PIN = "7085fbf7753266fc4943c55ac04926186bc90005"
 FIXTURE_KEY = "native-local-fixture-key-0123456789abcdef"
 
 
+def synthetic_host_context_factory(*, profile_id, purpose, sensitivity, trace_id, cancelled, tool_request):
+    # Synthetic test authority only; this is not a production context issuer.
+    if profile_id != "native-fixture-private":
+        return DispatchContext(profile_id, purpose, sensitivity, trace_id=trace_id, cancelled=cancelled)
+    return DispatchContext(
+        profile_id, purpose, sensitivity, trace_id=trace_id, cancelled=cancelled,
+        principal_id="fixture-process", namespace="fixture-private-namespace",
+        provenance="sha256:" + "a" * 64, capabilities=frozenset({"inference", "tool-call"}),
+        policy_revision="synthetic-host-policy", grant_id="fixture-context-grant",
+        lease_expires_at=time.monotonic() + 60,
+    )
+
+
 def synthetic_host_authorizer(context, capability, intent_id, now, timeout, cancelled):
     import uuid
-    # Test-owned profile mapping supplies the fixture's private classification;
-    # context sensitivity strings cannot change this host decision.
     if context.profile_id != "native-fixture-private" or capability not in {"inference", "tool-call"}:
         return None
     return DispatchAuthorization(
-        "fixture-process", context.profile_id, "fixture-private-namespace",
-        context.trace_id, frozenset({"inference", "tool-call"}), Sensitivity.PRIVATE,
-        "synthetic-host-policy", context.purpose, capability, intent_id,
-        "a" * 64, str(uuid.uuid4()), now + min(60, timeout),
+        context.principal_id, context.profile_id, context.namespace,
+        context.trace_id, context.capabilities, Sensitivity.PRIVATE,
+        context.policy_revision, context.purpose, capability, intent_id,
+        context.provenance[7:], str(uuid.uuid4()),
+        min(context.lease_expires_at, now + min(60, timeout)),
     )
 
 
@@ -243,6 +256,7 @@ plugins:
                 gateway = LocalProviderGateway(
                     dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-private",
                     sensitivity=Sensitivity.PRIVATE, model=MODEL, port=int(plugin["port"]),
+                    context_factory=synthetic_host_context_factory,
                 )
                 fixture_marker = Path(scratch) / "fixture-called"
                 worker_env = {
