@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import tempfile
 import threading
 import time
@@ -65,8 +66,20 @@ class ProviderGatewayTests(unittest.TestCase):
         self.assertEqual(status,401)
         status,_,_=self.request(path="/v1/responses",body=payload)
         self.assertEqual(status,404)
-        status,_,_=self.request(body=payload+b" "*1_048_576)
-        self.assertEqual(status,413)
+        # Send headers with an oversized Content-Length but no body. The
+        # gateway must reject before reading an attacker-controlled body; a
+        # full-body urllib client would correctly see a reset/BrokenPipe here.
+        with socket.create_connection(("127.0.0.1", self.port), timeout=2) as sock:
+            sock.sendall((
+                "POST /v1/chat/completions HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{self.port}\r\n"
+                f"Authorization: Bearer {TOKEN}\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: 1048577\r\n"
+                "Connection: close\r\n\r\n"
+            ).encode("ascii"))
+            response = sock.recv(4096)
+        self.assertIn(b"HTTP/1.1 413", response)
         self.assertEqual(self.transport.calls,[])
 
     def test_http_cannot_downgrade_trusted_private_profile_or_choose_public_model(self):
