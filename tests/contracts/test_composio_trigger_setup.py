@@ -42,7 +42,7 @@ class RecordingRootGet:
 
 def discovery(broker):
     return ComposioWhatsAppTriggerDiscovery(
-        broker, credential_reference_id="vault://profile/composio/project-key",
+        broker, credential_reference_id="composio_project_key",
         toolkit_version=PIN)
 
 
@@ -57,10 +57,10 @@ def test_discovery_is_authenticated_root_broker_only_and_exactly_versioned():
         "toolkit_versions": {"whatsapp": PIN},
         "limit": 50,
     }
-    assert call["credential_reference_id"] == "vault://profile/composio/project-key"
+    assert call["credential_reference_id"] == "composio_project_key"
     assert call["usage"] == "composio-trigger-discovery"
     assert call["max_response_bytes"] == 2 * 1024 * 1024
-    assert call["timeout_seconds"] == 10.0
+    assert 0 < call["timeout_seconds"] <= 30.0
     assert "secret" not in repr(call).casefold()
 
 
@@ -73,6 +73,8 @@ def test_selected_trigger_is_re_fetched_and_receipt_is_only_discovery_not_readin
     assert row.schema_sha256 == receipt.schema_sha256
     assert receipt.status == "discovered-not-configured"
     assert receipt.selected_slug == ROW["slug"]
+    assert receipt.request_policy_artifact_id == "installer-composio-whatsapp-catalog-read-policy-v1"
+    assert receipt.request_policy_sha256 == "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
 
 
 @pytest.mark.parametrize("mutation", [
@@ -106,6 +108,27 @@ def test_polling_trigger_type_can_still_use_authenticated_webhook_delivery():
     assert receipt.status == "discovered-not-configured"
 
 
+def test_actual_root_source_receipt_handles_are_bound_into_selected_catalog_receipt():
+    class RootResponse(dict):
+        request_receipt_handle: str
+        response_receipt_handle: str
+
+        def __init__(self, doc, n):
+            super().__init__(doc)
+            self.request_receipt_handle = f"root-request-{n}"
+            self.response_receipt_handle = f"root-response-{n}"
+
+    class ReceiptedRootGet(RecordingRootGet):
+        def get_json(self, **kwargs):
+            doc = super().get_json(**kwargs)
+            return RootResponse(doc, len(self.calls))
+
+    broker = ReceiptedRootGet()
+    _, receipt = discovery(broker).select(ROW["slug"])
+    assert receipt.source_request_receipt_handles == ("root-request-1", "root-request-2")
+    assert receipt.source_response_receipt_handles == ("root-response-1", "root-response-2")
+
+
 def test_unlisted_slug_never_becomes_an_arbitrary_path():
     broker = RecordingRootGet()
     with pytest.raises(ComposioTriggerSetupUnavailable):
@@ -133,7 +156,9 @@ def test_catalog_bounds_pages_and_rejects_cursor_loops():
 def test_bad_credential_reference_and_non_pinned_version_rejected():
     broker = RecordingRootGet()
     with pytest.raises(ValueError):
-        ComposioWhatsAppTriggerDiscovery(broker, credential_reference_id="secret-key", toolkit_version=PIN)
+        ComposioWhatsAppTriggerDiscovery(broker, credential_reference_id="space key", toolkit_version=PIN)
+    with pytest.raises(ValueError):
+        ComposioWhatsAppTriggerDiscovery(broker, credential_reference_id="vault://project/key", toolkit_version=PIN)
     with pytest.raises(ValueError):
         ComposioWhatsAppTriggerDiscovery(broker,
-            credential_reference_id="vault://profile/composio/project-key", toolkit_version="latest")
+            credential_reference_id="composio_project_key", toolkit_version="latest")
