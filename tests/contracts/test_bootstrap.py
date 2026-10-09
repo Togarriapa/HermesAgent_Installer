@@ -44,7 +44,10 @@ class BootstrapTests(unittest.TestCase):
             runner=FakeRunner()
             bootstrap=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,expected_script_blob=git_blob_sha1(SCRIPT))
             bootstrap.install(include_desktop=True)
+            first_stage_count=sum(1 for call in runner.calls if "--stage" in call[0])
+            bootstrap.install(include_desktop=True)
             stages=[call[0][call[0].index("--stage")+1] for call in runner.calls if "--stage" in call[0]]
+            self.assertEqual(sum(1 for call in runner.calls if "--stage" in call[0]),first_stage_count)
             self.assertEqual(stages,list(EXPECTED_STAGES))
             self.assertTrue(all("--non-interactive" in call[0] for call in runner.calls if "--stage" in call[0]))
             self.assertTrue(all("--skip-browser" in call[0] and "--skip-computer-use" in call[0] for call in runner.calls if "--stage" in call[0]))

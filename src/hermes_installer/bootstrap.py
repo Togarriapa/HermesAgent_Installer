@@ -173,19 +173,81 @@ class HermesBootstrap:
                 for row in self.state.owned("hermes-stage")
                 if str(row["resource_id"]).startswith(HERMES_COMMIT + ":")}
 
+    def _generation_marker(self) -> bytes:
+        return ("schema=1\ncommit=" + HERMES_COMMIT + "\n").encode("ascii")
+
+    def _write_generation_marker(self) -> None:
+        marker = self.install_dir / ".hermes-installer-generation"
+        if marker.exists() or marker.is_symlink():
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+            try:
+                fd = os.open(marker, flags)
+                try:
+                    info = os.fstat(fd)
+                    data = os.read(fd, 256)
+                finally:
+                    os.close(fd)
+            except OSError:
+                raise OwnershipError("Generation ownership marker cannot be safely verified") from None
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or data != self._generation_marker():
+                raise OwnershipError("Generation ownership marker is invalid; existing source was preserved")
+        else:
+            _write_private(marker, self._generation_marker(), 0o600)
+
+    def _source_head(self) -> str | None:
+        git = self.install_dir / ".git"
+        if git.is_symlink():
+            return None
+        if git.is_file():
+            try:
+                raw = git.read_text(encoding="utf-8").strip()
+            except OSError:
+                return None
+            if not raw.startswith("gitdir: ") or "\\" in raw:
+                return None
+            git = (self.install_dir / raw[8:]).resolve(strict=False)
+            if not git.is_relative_to(self.install_dir):
+                return None
+        if not git.is_dir():
+            return None
+        try:
+            value = (git / "HEAD").read_text(encoding="ascii").strip()
+        except OSError:
+            return None
+        if len(value) == 40 and all(ch in "0123456789abcdef" for ch in value):
+            return value
+        if value.startswith("ref: refs/heads/"):
+            refname = value[5:]
+            ref = git / refname
+            try:
+                resolved = ref.read_text(encoding="ascii").strip()
+            except OSError:
+                try:
+                    lines = (git / "packed-refs").read_text(encoding="ascii").splitlines()
+                except OSError:
+                    return None
+                resolved = next((fields[0] for line in lines if len(fields := line.split()) == 2 and fields[1] == refname), "")
+            if len(resolved) == 40 and all(ch in "0123456789abcdef" for ch in resolved):
+                return resolved
+        return None
+
     def _existing_source_is_resumable(self, previous: dict[str, object] | None) -> bool:
         if not self.install_dir.exists():
             return True
         if self.install_dir.is_symlink() or not self.install_dir.is_dir():
             return False
-        if previous is None or previous.get("status") != "running:repository":
-            return False
         owned = any(row["resource_id"] == str(self.install_dir) and row["state"] == "active"
                     for row in self.state.owned("hermes-generation"))
-        marker = self.install_dir / ".git"
-        if not marker.is_dir() or marker.is_symlink():
+        if not owned:
             return False
-        return owned or (previous is not None and previous.get("status") == "running:repository")
+        try:
+            self._write_generation_marker()
+        except OwnershipError:
+            return False
+        head = self._source_head()
+        if head is None:
+            return bool(previous and previous.get("status") == "running:repository")
+        return head == HERMES_COMMIT
 
     def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 7200) -> BootstrapReport:
         if not 60 <= timeout_per_stage <= 14_400:
@@ -196,7 +258,10 @@ class HermesBootstrap:
         if not self._existing_source_is_resumable(previous):
             raise OwnershipError("Pinned source generation already exists without a resumable installer checkpoint; it was preserved")
         done = self._completed_stages()
-        statuses: list[StageStatus] = []
+        self.install_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.state.record_owned("hermes-generation", str(self.install_dir), "active")
+        self._write_generation_marker()
+        statuses: list[StageStatus] =
         skipped = {"setup", "gateway"}
         for stage in EXPECTED_STAGES:
             if done.get(stage) in {"complete", "skipped"}:
@@ -223,8 +288,6 @@ class HermesBootstrap:
                 raise BootstrapError(f"Hermes stage {stage} did not complete (exit {code}); use hermes-installer resume")
             state = "skipped" if stage in skipped else "complete"
             self.state.record_owned("hermes-stage", HERMES_COMMIT + ":" + stage, state)
-            if stage == "repository":
-                self.state.record_owned("hermes-generation", str(self.install_dir), "active")
             self.state.checkpoint(self.operation, "stage:" + stage, {
                 "commit": HERMES_COMMIT, "stage": stage, "state": state,
                 "generation": str(self.install_dir), "hermes_home": str(self.hermes_home),
