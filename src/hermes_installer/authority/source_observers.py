@@ -22,6 +22,8 @@ MAX_OBSERVED_SOURCE_BYTES = 1_048_576
 MAX_PARENT_RECEIPTS = 64
 MAX_PENDING_EVENTS = 256
 MAX_PENDING_BYTES = 8 * 1024 * 1024
+MAX_RETAINED_CAPSULES = 4096
+MAX_RETAINED_CAPSULE_BYTES = 8 * 1024 * 1024
 MAX_EVENT_IDS_PER_EPOCH = 100_000
 MAX_EVENT_LEASE_SECONDS = 600
 
@@ -58,6 +60,7 @@ class SourceObserverEnrollment:
     role_artifact_id: str
     role_sha256: str
     channel_id: str
+    capture_schema_id: str
     source_action_id: str
     target_id: str
     recipient: str
@@ -71,7 +74,7 @@ class SourceObserverEnrollment:
             "observer_enrollment_id", "source_kind", "origin_id", "profile_id", "principal_id",
             "namespace_id", "enrollment_id", "generation", "producer_uid", "package_id",
             "producer_executable_sha256", "package_sha256", "role_id", "role_artifact_id",
-            "role_sha256", "channel_id",
+            "role_sha256", "channel_id", "capture_schema_id",
             "source_action_id", "target_id", "recipient",
             "allowed_parent_source_kinds",
         }
@@ -107,6 +110,7 @@ class SourceObserverEnrollment:
             "observer_enrollment_id", "origin_id", "profile_id", "principal_id",
             "namespace_id", "enrollment_id", "generation", "package_id", "role_id",
             "role_artifact_id", "channel_id", "source_action_id", "target_id", "recipient",
+            "capture_schema_id",
         ):
             _identifier(getattr(self, name), name)
         for name in ("producer_executable_sha256", "package_sha256", "role_sha256"):
@@ -245,6 +249,34 @@ class _ReceiptProcessBinding:
     delivered: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class RootSourcePayloadCapsule:
+    """One-use root-internal payload view for a selected event recipe.
+
+    This value must stay inside trusted root handlers. It has no wire encoder
+    and is never returned by an authority RPC or to a producer worker.
+    """
+
+    receipt_id: str
+    observer_enrollment_id: str
+    event_record_id: str
+    invocation_id: str
+    source_kind: str
+    channel_id: str
+    capture_schema_id: str
+    source_action_id: str
+    profile_id: str
+    principal_id: str
+    namespace_id: str
+    generation: str
+    payload_bytes: bytes = field(repr=False)
+    payload_sha256: str
+    parent_receipt_ids: tuple[str, ...]
+    parent_closure_digest: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+
 class SourceObserverRegistry:
     """Concrete root observer: protected enrollment -> captured event -> receipt handle."""
 
@@ -276,6 +308,10 @@ class SourceObserverRegistry:
         self._pending_bytes = 0
         self._receipt_process_bindings: dict[str, _ReceiptProcessBinding] = {}
         self._receipt_delivery_bindings: dict[str, _ReceiptProcessBinding] = {}
+        self._payload_capsules: dict[str, tuple[SourceReceipt, RootSourcePayloadCapsule, bytearray, str]] = {}
+        self._capsule_bytes = 0
+        self._capsule_slots_reserved = 0
+        self._capsule_bytes_reserved = 0
         self._receipt_slots_reserved = 0
         self._proof_token = object()
         self._proofs_pending: dict[str, int] = {}
@@ -448,7 +484,13 @@ class SourceObserverRegistry:
                 if (len(self._receipt_process_bindings) + self._receipt_slots_reserved >= 4096
                         or len(self._receipt_delivery_bindings) + self._receipt_slots_reserved >= 4096):
                     raise AuthorityDenied("source.capacity", "root source receipt identity table is full")
+                if (len(self._payload_capsules) + self._capsule_slots_reserved >= MAX_RETAINED_CAPSULES
+                        or self._capsule_bytes + self._capsule_bytes_reserved + len(event.payload)
+                        > MAX_RETAINED_CAPSULE_BYTES):
+                    raise AuthorityDenied("source.capacity", "root source payload capsule store is full")
                 self._receipt_slots_reserved += 1
+                self._capsule_slots_reserved += 1
+                self._capsule_bytes_reserved += len(event.payload)
                 reserved_receipt_slot = True
             proof = VerifiedSourceObservation(
                 observer_enrollment_id=observer.observer_enrollment_id,
@@ -540,6 +582,27 @@ class SourceObserverRegistry:
                     or receipt.monotonic_expires_at > event.expires
                     or receipt.monotonic_expires_at <= now):
                 raise AuthorityDenied("source.issuer", "root receipt does not match the verified observation")
+            parent_ids = tuple(sorted(item.receipt_id for item in event.parent_receipts))
+            capsule = RootSourcePayloadCapsule(
+                receipt_id=receipt.receipt_id,
+                observer_enrollment_id=observer.observer_enrollment_id,
+                event_record_id=event.event_record_id,
+                invocation_id=event.invocation_id,
+                source_kind=observer.source_kind,
+                channel_id=observer.channel_id,
+                capture_schema_id=observer.capture_schema_id,
+                source_action_id=observer.source_action_id,
+                profile_id=observer.profile_id,
+                principal_id=observer.principal_id,
+                namespace_id=observer.namespace_id,
+                generation=observer.generation,
+                payload_bytes=bytes(event.payload),
+                payload_sha256=event.payload_sha256,
+                parent_receipt_ids=parent_ids,
+                parent_closure_digest=canonical_digest(parent_ids),
+                issued_monotonic=event.issued,
+                expires_monotonic=min(event.expires, receipt.monotonic_expires_at),
+            )
             receipt_fd = os.dup(event.producer_pidfd)
             delivery_fd = os.dup(event.target_peer_pidfd)
             binding = _ReceiptProcessBinding(
@@ -556,6 +619,9 @@ class SourceObserverRegistry:
                         raise AuthorityDenied("source.closed", "root source observer is shutting down")
                     self._receipt_process_bindings[receipt.receipt_id] = binding
                     self._receipt_delivery_bindings[str(result)] = delivery_binding
+                    self._payload_capsules[str(result)] = (
+                        receipt, capsule, bytearray(event.payload), event.authority_epoch)
+                    self._capsule_bytes += len(event.payload)
                     receipt_fd = -1
                     delivery_fd = -1
             finally:
@@ -574,6 +640,8 @@ class SourceObserverRegistry:
             if reserved_receipt_slot:
                 with self._lock:
                     self._receipt_slots_reserved -= 1
+                    self._capsule_slots_reserved -= 1
+                    self._capsule_bytes_reserved -= len(event.payload)
             os.close(event.producer_pidfd)
             os.close(event.target_peer_pidfd)
 
@@ -610,6 +678,131 @@ class SourceObserverRegistry:
                 raise AuthorityDenied("source.delivery", "receipt target PIDFD identity changed")
             binding.delivered = True
             return SourceReceiptHandle(handle)
+
+    def lookup_source_handle(self, receipt_id: str, *, signed_context: HostContext,
+                             peer_uid: int, peer_pid: int,
+                             peer_pidfd: int) -> SourceReceiptHandle:
+        """Resolve a signed receipt ID to its opaque handle for a root handler.
+
+        The receipt ID comes from a root-verified signed context; the worker
+        cannot nominate a handle. This method is deliberately in-process only.
+        """
+        if (not isinstance(receipt_id, str) or not isinstance(signed_context, HostContext)
+                or type(peer_uid) is not int or type(peer_pid) is not int
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or not any(item.receipt_id == receipt_id for item in signed_context.source_receipts)):
+            raise AuthorityDenied("source.capsule", "signed source receipt lookup is malformed or unbound")
+        with self._lock:
+            if self._closed:
+                raise AuthorityDenied("source.closed", "root source observer is shutting down")
+            found = next(((handle, row) for handle, row in self._payload_capsules.items()
+                          if row[0].receipt_id == receipt_id), None)
+            if found is None:
+                raise AuthorityDenied("source.capsule", "source payload capsule is unavailable")
+            handle, (receipt, capsule, _payload, epoch) = found
+            target = self._receipt_delivery_bindings.get(handle)
+            now = self.service.monotonic()
+            if (epoch != self.service.authority_epoch or capsule.expires_monotonic <= now
+                    or target is None or target.expires <= now or target.uid != peer_uid
+                    or target.pid != peer_pid or signed_context.uid != peer_uid
+                    or signed_context.profile_id != target.profile_id
+                    or signed_context.generation != target.generation):
+                raise AuthorityDenied("source.capsule", "source capsule target, generation, or lease changed")
+            self.service._verify_context_signature(signed_context)
+            self.service._assert_current_context(
+                signed_context, self.service._binding(peer_uid), peer_uid)
+            live = self.process_resolver(peer_pid, peer_pidfd,
+                                         profile_id=target.profile_id,
+                                         generation=target.generation)
+            retained = self.process_resolver(target.pid, target.pidfd,
+                                             profile_id=target.profile_id,
+                                             generation=target.generation)
+            if (live is None or retained is None or live != target.identity
+                    or retained != target.identity or live.kernel_uid != peer_uid
+                    or receipt != next(item for item in signed_context.source_receipts
+                                       if item.receipt_id == receipt_id)):
+                raise AuthorityDenied("source.capsule", "signed receipt or live consumer peer does not match")
+            return SourceReceiptHandle(handle)
+
+    def consume_source_payload_capsule(self, handle: SourceReceiptHandle, *,
+                                      signed_context: HostContext, peer_uid: int,
+                                      peer_pid: int, peer_pidfd: int) -> RootSourcePayloadCapsule:
+        """Consume retained exact event bytes once inside an authorized root job handler.
+
+        Callers should first obtain ``handle`` via ``lookup_source_handle``.
+        This accessor is not exposed by AuthorityClient or any worker RPC.
+        Failure consumes and scrubs the capsule as a fail-closed one-use action.
+        """
+        if not isinstance(handle, SourceReceiptHandle) or not isinstance(signed_context, HostContext):
+            raise AuthorityDenied("source.capsule", "root capsule lookup key or context is invalid")
+        with self._lock:
+            row = self._payload_capsules.pop(str(handle), None)
+            if row is not None:
+                self._capsule_bytes -= len(row[2])
+        if row is None:
+            raise AuthorityDenied("source.capsule", "source payload capsule is unknown, expired, or consumed")
+        receipt, capsule, payload, epoch = row
+        try:
+            now = self.service.monotonic()
+            context_receipts = {item.receipt_id: item for item in signed_context.source_receipts}
+            required_ids = {receipt.receipt_id, *capsule.parent_receipt_ids}
+            with self._lock:
+                target = self._receipt_delivery_bindings.get(str(handle))
+            if (epoch != self.service.authority_epoch or capsule.expires_monotonic <= now
+                    or not isinstance(peer_uid, int) or isinstance(peer_uid, bool)
+                    or not isinstance(peer_pid, int) or isinstance(peer_pid, bool)
+                    or not isinstance(peer_pidfd, int) or isinstance(peer_pidfd, bool) or peer_pidfd < 0
+                    or target is None or target.expires <= now or peer_uid != target.uid
+                    or peer_pid != target.pid or signed_context.uid != peer_uid
+                    or signed_context.profile_id != target.profile_id
+                    or signed_context.generation != target.generation
+                    or not required_ids.issubset(context_receipts)
+                    or context_receipts.get(receipt.receipt_id) != receipt
+                    or capsule.parent_closure_digest != canonical_digest(capsule.parent_receipt_ids)
+                    or hashlib.sha256(payload).hexdigest() != capsule.payload_sha256
+                    or capsule.payload_bytes != bytes(payload)):
+                raise AuthorityDenied("source.capsule", "source payload capsule binding or closure changed")
+            self.service._verify_context_signature(signed_context)
+            self.service._assert_current_context(
+                signed_context, self.service._binding(peer_uid), peer_uid)
+            live = self.process_resolver(peer_pid, peer_pidfd,
+                                         profile_id=target.profile_id,
+                                         generation=target.generation)
+            retained = self.process_resolver(target.pid, target.pidfd,
+                                             profile_id=target.profile_id,
+                                             generation=target.generation)
+            if (live is None or retained is None or live != target.identity
+                    or retained != target.identity or live.kernel_uid != peer_uid):
+                raise AuthorityDenied("source.capsule", "capsule consumer PIDFD or process generation changed")
+            return capsule
+        finally:
+            payload[:] = b"\x00" * len(payload)
+
+    def cancel_source_payload_capsule(self, handle: SourceReceiptHandle) -> bool:
+        """Scrub a retained payload during root-side invocation cancellation."""
+        if not isinstance(handle, SourceReceiptHandle):
+            raise AuthorityDenied("source.capsule", "root capsule cancellation key is invalid")
+        with self._lock:
+            row = self._payload_capsules.pop(str(handle), None)
+            if row is None:
+                return False
+            self._capsule_bytes -= len(row[2])
+            row[2][:] = b"\x00" * len(row[2])
+            return True
+
+    def cancel_invocation_payload_capsules(self, invocation_id: str) -> int:
+        """Scrub every retained payload from a cancelled root invocation."""
+        if not isinstance(invocation_id, str) or not invocation_id:
+            raise AuthorityDenied("source.capsule", "root invocation cancellation ID is invalid")
+        with self._lock:
+            handles = [handle for handle, (_receipt, capsule, _payload, _epoch)
+                       in self._payload_capsules.items()
+                       if capsule.invocation_id == invocation_id]
+            for handle in handles:
+                row = self._payload_capsules.pop(handle)
+                self._capsule_bytes -= len(row[2])
+                row[2][:] = b"\x00" * len(row[2])
+            return len(handles)
 
     def consume_observation_proof(self, observation: VerifiedSourceObservation) -> bool:
         """Consume a one-use instance capability before AuthorityService signs.
@@ -823,6 +1016,14 @@ class SourceObserverRegistry:
             if binding.expires <= now:
                 self._receipt_delivery_bindings.pop(handle, None)
                 os.close(binding.pidfd)
+        self._prune_capsules_locked(now)
+
+    def _prune_capsules_locked(self, now: float) -> None:
+        for handle, (_receipt, capsule, payload, epoch) in tuple(self._payload_capsules.items()):
+            if capsule.expires_monotonic <= now or epoch != self.service.authority_epoch:
+                self._payload_capsules.pop(handle, None)
+                self._capsule_bytes -= len(payload)
+                payload[:] = b"\x00" * len(payload)
 
     def close(self) -> None:
         """Release every retained PIDFD when the root authority shuts down."""
@@ -842,6 +1043,12 @@ class SourceObserverRegistry:
             for binding in self._receipt_delivery_bindings.values():
                 os.close(binding.pidfd)
             self._receipt_delivery_bindings.clear()
+            for _receipt, _capsule, payload, _epoch in self._payload_capsules.values():
+                payload[:] = b"\x00" * len(payload)
+            self._payload_capsules.clear()
+            self._capsule_bytes = 0
+            self._capsule_bytes_reserved = 0
+            self._capsule_slots_reserved = 0
 
     def prune(self) -> None:
         """Release expired event and receipt PIDFDs from the root daemon watchdog."""

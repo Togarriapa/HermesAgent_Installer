@@ -142,7 +142,11 @@ class NativePluginRuntimeContext:
     provider_dispatcher: object | None = None
     local_overlay_store: "ProfileOverlayView | None" = None
     profile_targets: SelectedHermesProfileResolver | None = None
-    plugin_effects: PluginEffectsFacade | None = None
+    # Supplied only by the trusted native bootstrap after it binds this live
+    # process to the root-selected package resolver. A missing facade leaves
+    # Plugin registrations unavailable; resource declarations cannot construct
+    # one or supply any of its authority inputs.
+    plugin_effects: "PluginEffectsFacade | None" = None
     # Opaque per-profile local voice device/session enrollment, selected by
     # the trusted host. It is never read from the Plugin manifest or tool args.
     voice_session_enrollment_id: str | None = None
@@ -177,7 +181,8 @@ class BrokeredEffectResponse(Protocol):
 class AuthorityClient(Protocol):
     def context(self, *, purpose: str, intent: str, operation: str,
                 source_contexts: Sequence[HostContext] = (),
-                final_payload_digest: str | None = None,
+                source_receipt_handles: Sequence[str] = (),
+                final_payload_digest: str,
                 trace_id: str | None = None, lease_seconds: float = 30.0,
                 cancelled: Callable[[], bool] | None = None) -> HostContext: ...
 
@@ -216,6 +221,21 @@ class NativePluginImplementation(Protocol):
 
 class PluginAdapterRegistry(Protocol):
     def resolve_plugin_adapter(self, adapter_id: str) -> NativePluginImplementation | None: ...
+
+
+class PluginEffectsFacade(Protocol):
+    """Local facade over exact root-selected plugin actions.
+
+    This is the canonical native package binding surface. Implementations
+    resolve the adapter/action, schema, operation, target and recipient from
+    the live protected package binding, then preserve trusted invocation
+    lineage while dispatching. Callers provide only action arguments and
+    optional idempotency/confirmation references, never authority metadata.
+    """
+
+    def invoke(self, adapter_id: str, action_id: str, arguments: Mapping[str, Any],
+               idempotency_key: str | None = None,
+               opaque_confirmation_attestation_id: str | None = None) -> object: ...
 
 
 class ReviewedPluginAdapterRegistry:
@@ -723,13 +743,7 @@ def _cron_profile_prompt(selected: SelectedResourceExecution,
     mode = action.get("mode")
     if action.get("type") == "installer-resource-candidate-assessment":
         source = action["source"]
-        try:
-            root = target.artifact_root.resolve(strict=True)
-            bundle = (root / source["path"]).resolve(strict=True)
-        except OSError:
-            raise SelectedResourceUnavailable("pinned Resources snapshot is unavailable under the selected Hermes artifact root") from None
-        if not bundle.is_relative_to(root) or not bundle.is_dir():
-            raise SelectedResourceUnavailable("pinned Resources snapshot is not present under the selected Hermes artifact root")
+        bundle = _verified_installed_resource_bundle(target, source)
         return (
             "Assess only the installer-owned, pinned Resources snapshot at " + str(bundle)
             + f" (source revision {source['revision']}, catalog {source['catalogVersion']}). "
@@ -754,6 +768,74 @@ def _cron_profile_prompt(selected: SelectedResourceExecution,
     raise SelectedResourceUnavailable(
         "cron action has no reviewed local Hermes profile-run recipe; enroll exact targets before activation"
     )
+
+
+def _verified_installed_resource_bundle(
+    target: HermesProfileExecutionTarget, source: Mapping[str, Any],
+) -> Path:
+    """Resolve a complete expanded snapshot against the wheel's pinned bundle.
+
+    The installer package archive is authoritative input; the source checkout's
+    ``resources/vendor`` tree is never consulted. The Hermes child can only use
+    the expanded copy under its root-enrolled immutable artifact root, so check
+    every path, byte and executable mode before placing that path in a prompt.
+    A directory containing only the selected cron manifest is not sufficient.
+    """
+    from hermes_installer.registry.source import RegistrySourceError, load_bundled_source
+
+    try:
+        pinned = load_bundled_source()
+    except (OSError, ValueError, RegistrySourceError):
+        raise SelectedResourceUnavailable("packaged installer Resources archive cannot be verified") from None
+    if (source.get("catalogVersion") != pinned.catalog_version
+            or source.get("revision") != pinned.revision):
+        raise SelectedResourceUnavailable("cron source identity differs from the packaged installer Resources pin")
+    raw_path = source.get("path")
+    if (not isinstance(raw_path, str) or raw_path.startswith("/")
+            or any(part in {"", ".", ".."} for part in raw_path.split("/"))):
+        raise SelectedResourceUnavailable("cron Resources bundle path is not a safe relative path")
+    try:
+        root = target.artifact_root.resolve(strict=True)
+        bundle = root.joinpath(*raw_path.split("/")).resolve(strict=True)
+        if not bundle.is_relative_to(root) or not bundle.is_dir():
+            raise OSError("bundle directory is not contained by artifact root")
+        if bundle != root.joinpath(*raw_path.split("/")):
+            raise OSError("bundle path contains a symlink")
+
+        observed_files: dict[str, tuple[bytes, int]] = {}
+        total_bytes = 0
+        for current, directories, names in os.walk(bundle, topdown=True, followlinks=False):
+            current_path = Path(current)
+            if current_path.is_symlink():
+                raise OSError("bundle directory contains a symlink")
+            for name in tuple(directories):
+                child = current_path / name
+                info = child.lstat()
+                if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                    raise OSError("bundle contains an unsafe directory")
+            for name in names:
+                file_path = current_path / name
+                info = file_path.lstat()
+                if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                    raise OSError("bundle contains a non-regular file")
+                relative = file_path.relative_to(bundle).as_posix()
+                content = file_path.read_bytes()
+                total_bytes += len(content)
+                if total_bytes > 16 * 1024 * 1024:
+                    raise OSError("bundle exceeds its pinned expanded-size bound")
+                observed_files[relative] = (content, stat.S_IMODE(info.st_mode))
+        if set(observed_files) != set(pinned.files):
+            raise OSError("bundle file set differs from the packaged pinned snapshot")
+        for relative, expected in pinned.files.items():
+            content, mode = observed_files[relative]
+            if content != expected or mode != pinned.file_modes[relative]:
+                raise OSError("bundle bytes or executable mode differ from the packaged pinned snapshot")
+    except (OSError, ValueError):
+        raise SelectedResourceUnavailable(
+            "complete pinned Resources snapshot is not materialized under the selected Hermes artifact root; "
+            "stage the verified package-data bundle before enabling this cron"
+        ) from None
+    return bundle
 
 
 def _cron_recipe_is_supported(selected: SelectedResourceExecution) -> bool:
@@ -886,12 +968,29 @@ def selected_resource_effect_blockers(
         if selected.identity.kind == "crons":
             if not _cron_recipe_is_supported(selected):
                 reason = "the selected cron action has no reviewed local Hermes execution recipe"
-            elif selected.profile_id is None or profile_targets is None or profile_targets.resolve_profile(selected.profile_id) is None:
+            elif selected.profile_id is None or profile_targets is None:
                 reason = "the selected cron profile lacks a custody-resolved pinned Hermes process target"
             else:
-                # Handler factory assembly also needs a fixed root delegation
-                # rule for this exact selected resource and child process.
-                continue
+                selected_profile = profile_targets.resolve_profile(selected.profile_id)
+                if selected_profile is None:
+                    reason = "the selected cron profile lacks a custody-resolved pinned Hermes process target"
+                else:
+                    action = selected.effective_spec.get("action")
+                    if action.get("type") == "installer-resource-candidate-assessment":
+                        try:
+                            _verified_installed_resource_bundle(selected_profile, action["source"])
+                        except SelectedResourceUnavailable as exc:
+                            reasons[key] = str(exc)
+                            continue
+                    # A profile-launch handler is only the effect backend. Until a
+                    # root-owned timer producer captures an actual due event and
+                    # the job admission path mints a fresh child grant, a selected
+                    # cron must not appear operational merely because its target
+                    # and launch recipe resolve.
+                    reason = (
+                        "the protected timer event issuer and fresh resource-job "
+                        "child-admission handler are not registered"
+                    )
         elif selected.identity.kind == "channels":
             reason = "the official Hermes channel connector and protected account enrollment are unavailable"
         elif selected.identity.kind == "webhooks":
@@ -945,7 +1044,8 @@ def invoke_fixed_resource_effect(
     if not source_contexts:
         raise ResourceRuntimeError("trusted Hermes invocation lineage is unavailable")
     issued = context.authority.context(
-        purpose=purpose, intent=intent, source_contexts=source_contexts,
+        purpose=purpose, intent=intent, operation=effect.operation,
+        source_contexts=source_contexts, final_payload_digest=digest,
         trace_id=None, lease_seconds=30.0, cancelled=cancelled,
     )
     grant = context.authority.authorize_effect(

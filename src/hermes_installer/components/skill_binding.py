@@ -300,6 +300,14 @@ def stage_component_skill(
     contract = resolve_component_adapter(source.component_id)
     if source.source_identity != contract.source_identity or source.revision != contract.revision:
         raise ComponentBindingError("component source identity differs from the reviewed source pin")
+    if source.component_id == "diagram-design":
+        # This source has a specific export helper and shared reference/asset
+        # closure that generic skill discovery alone cannot establish.
+        from hermes_installer.components.diagram_design import verify_diagram_design_source
+        try:
+            verify_diagram_design_source(source)
+        except ValueError as exc:
+            raise ComponentBindingError(str(exc)) from None
     source_files = {
         name: body for name, body in source.files.items()
         if name != "INSTALLER-SOURCE-PROVENANCE.json"

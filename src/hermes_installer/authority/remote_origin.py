@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import stat
+import sys
 import time
 import uuid
 from urllib.parse import urlsplit
@@ -260,8 +261,23 @@ def _validate_tunnel_credential(token: bytes, selected: SelectedTunnel) -> None:
         raise RemoteOriginDenied("runtime credential is not scoped to the selected Cloudflare tunnel") from None
 
 
+def _canonical_system_path(path: Path) -> Path:
+    """Resolve only Apple's fixed `/var` and `/tmp` aliases before fd walking."""
+    if sys.platform != "darwin" or not path.is_absolute():
+        return path
+    for alias, canonical in ((Path("/var"), Path("/private/var")),
+                             (Path("/tmp"), Path("/private/tmp"))):
+        if path == alias or alias in path.parents:
+            if (not alias.is_symlink()
+                    or Path(os.path.realpath(alias)) != canonical):
+                raise RemoteOriginDenied("selected token sink uses an unexpected system alias")
+            return canonical / path.relative_to(alias)
+    return path
+
+
 def _open_secure_directory(path: Path) -> int:
     """Walk from `/` with held O_NOFOLLOW directory FDs; reject writable ancestors."""
+    path = _canonical_system_path(path)
     if (not path.is_absolute() or path == Path(path.anchor)
             or any(part in {".", ".."} for part in path.parts[1:])):
         raise RemoteOriginDenied("selected token sink must be absolute")
