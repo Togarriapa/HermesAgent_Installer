@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,8 +19,8 @@ class RecordingProvider:
         self.responses = list(responses or [ProviderResponse(200, b"ok", input_tokens=2, output_tokens=3)])
         self.calls = []
 
-    def __call__(self, route, model, payload, *, timeout, trace_id):
-        self.calls.append((route.name, model, payload, timeout, trace_id))
+    def __call__(self, route, model, payload, *, output_token_limit, timeout, trace_id):
+        self.calls.append((route.name, model, payload, output_token_limit, timeout, trace_id))
         return self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
 
 
@@ -43,7 +44,9 @@ class ProviderPolicyTests(unittest.TestCase):
             provider = RecordingProvider()
             result = self.make(Path(td), provider).dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL, b'{"tool_choice":"auto"}', input_tokens=8, output_token_limit=128, tool_request=True)
             self.assertEqual(result.status, 200)
-            self.assertEqual(provider.calls[0][:3], ("openrouter-nemotron-free", MODEL, b'{"tool_choice":"auto"}'))
+            self.assertEqual(provider.calls[0][0:2], ("openrouter-nemotron-free", MODEL))
+            self.assertEqual(json.loads(provider.calls[0][2])["model"], MODEL)
+            self.assertEqual(json.loads(provider.calls[0][2])["max_tokens"], 128)
 
     def test_private_derived_memory_is_blocked_before_public_dispatch(self):
         with tempfile.TemporaryDirectory() as td:
@@ -116,7 +119,7 @@ class ProviderPolicyTests(unittest.TestCase):
             paid=Route("private","http://127.0.0.1:8811/v1",frozenset({"local/test"}),Sensitivity.CONFIDENTIAL,False,True,1.0,1.0)
             policy=DispatchPolicy({"public":default_public_route(),"private":paid},"public","private",metered_budget_usd=0.000002,max_attempts=2)
             calls=[]
-            def transport(route,model,payload,*,timeout,trace_id):
+            def transport(route,model,payload,*,output_token_limit,timeout,trace_id):
                 calls.append(route.name)
                 raise TimeoutError("fixture timeout")
             ledger=BudgetLedger(root)

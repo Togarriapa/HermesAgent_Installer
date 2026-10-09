@@ -35,7 +35,7 @@ class ProviderTransportTests(unittest.TestCase):
         transport,networks=self.make()
         route=default_public_route()
         payload=b'{"model":"attacker/model","max_tokens":999999,"messages":[{"role":"user","content":"hello"}]}'
-        response=transport(route,MODEL,payload,timeout=3,trace_id="trace-1")
+        response=transport(route,MODEL,payload,output_token_limit=77,timeout=3,trace_id="trace-1")
         self.assertEqual(response.status,200)
         self.assertEqual((response.input_tokens,response.output_tokens),(3,4))
         self.assertEqual(response.headers,{"Retry-After":"1"})
@@ -46,7 +46,7 @@ class ProviderTransportTests(unittest.TestCase):
         self.assertNotIn("x-secret-echo",headers)
         sent=json.loads(body)
         self.assertEqual(sent["model"],MODEL)
-        self.assertEqual(sent["max_tokens"],65_536)
+        self.assertEqual(sent["max_tokens"],77)
         self.assertNotIn("max_completion_tokens",sent)
         self.assertNotIn("fixture-secret-r",repr(transport))
 
@@ -55,16 +55,16 @@ class ProviderTransportTests(unittest.TestCase):
         payload=b'{"messages":[]}'
         evil=Route("openrouter-nemotron-free","https://attacker.invalid/api/v1",frozenset({MODEL}),Sensitivity.PUBLIC,True,True,0,0)
         with self.assertRaisesRegex(PolicyDenied,"pinned public"):
-            transport(evil,MODEL,payload,timeout=2,trace_id="trace")
+            transport(evil,MODEL,payload,output_token_limit=8,timeout=2,trace_id="trace")
         private=Route("openrouter-nemotron-free",OPENROUTER_ENDPOINT,frozenset({MODEL}),Sensitivity.PRIVATE,True,True,0,0)
         with self.assertRaisesRegex(PolicyDenied,"non-public"):
-            transport(private,MODEL,payload,timeout=2,trace_id="trace")
+            transport(private,MODEL,payload,output_token_limit=8,timeout=2,trace_id="trace")
 
     def test_conflicting_model_and_invalid_request_are_rejected_or_normalized(self):
         transport,networks=self.make()
         route=default_public_route()
         payload=b'{"model":"private/hidden","max_completion_tokens":1,"messages":[]}'
-        response=transport(route,MODEL,payload,timeout=2,trace_id="trace")
+        response=transport(route,MODEL,payload,output_token_limit=8,timeout=2,trace_id="trace")
         self.assertEqual(response.status,200)
         self.assertEqual(json.loads(networks[0].calls[0][3])["model"],MODEL)
         for bad in (b"[]",b"not-json",b'{"messages":"not-an-array"}'):
@@ -74,9 +74,9 @@ class ProviderTransportTests(unittest.TestCase):
     def test_unapproved_model_and_unbounded_timeout_are_denied(self):
         transport,_=self.make()
         with self.assertRaisesRegex(PolicyDenied,"not approved"):
-            transport(default_public_route(),"attacker/model",b'{"messages":[]}',timeout=2,trace_id="trace")
+            transport(default_public_route(),"attacker/model",b'{"messages":[]}',output_token_limit=8,timeout=2,trace_id="trace")
         with self.assertRaisesRegex(PolicyDenied,"hard bound"):
-            transport(default_public_route(),MODEL,b'{"messages":[]}',timeout=31,trace_id="trace")
+            transport(default_public_route(),MODEL,b'{"messages":[]}',output_token_limit=8,timeout=31,trace_id="trace")
 
     def test_secret_reference_cannot_use_environment(self):
         with self.assertRaisesRegex(Exception,"private file or secure store"):

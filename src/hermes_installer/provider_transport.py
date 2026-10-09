@@ -67,7 +67,7 @@ class OpenRouterTransport:
             raise PolicyDenied("request.bounds", "Normalized provider request exceeds its byte limit")
         return encoded
 
-    def __call__(self, route: Route, model: str, payload: bytes, *, timeout: float, trace_id: str) -> ProviderResponse:
+    def __call__(self, route: Route, model: str, payload: bytes, *, output_token_limit: int, timeout: float, trace_id: str) -> ProviderResponse:
         if route.name != "openrouter-nemotron-free" or route.endpoint.rstrip("/") != OPENROUTER_ENDPOINT:
             raise PolicyDenied("route.endpoint", "Route is not the pinned public OpenRouter endpoint")
         if route.maximum_sensitivity.value != 0 or not route.free_only:
@@ -78,7 +78,7 @@ class OpenRouterTransport:
             raise PolicyDenied("request.deadline", "Provider transport deadline is outside its hard bound")
         if not trace_id or len(trace_id) > 128 or any(ord(c) < 33 for c in trace_id):
             raise PolicyDenied("request.trace", "Provider trace identifier is invalid")
-        body = self._request_body(payload, model, 65_536)
+        body = self._request_body(payload, model, output_token_limit)
         # Provider policy/Dispatcher has already clamped max_tokens to the user's
         # approved output limit. This adapter applies an upper ceiling as a final
         # endpoint-level guard; per-request tighter limits remain in the JSON.

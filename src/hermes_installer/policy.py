@@ -7,6 +7,7 @@ transport and direct provider credentials/routes are unavailable.
 from __future__ import annotations
 
 import contextlib
+import json
 import math
 import os
 import sqlite3
@@ -122,7 +123,31 @@ class ProviderResponse:
 
 
 class Transport(Protocol):
-    def __call__(self, route: Route, model: str, payload: bytes, *, timeout: float, trace_id: str) -> ProviderResponse: ...
+    def __call__(self, route: Route, model: str, payload: bytes, *, output_token_limit: int,
+                 timeout: float, trace_id: str) -> ProviderResponse: ...
+
+
+def normalize_chat_request(payload: bytes, model: str, output_token_limit: int) -> bytes:
+    """Override caller-controlled model/token fields before any provider transport."""
+    if not isinstance(payload, bytes) or len(payload) > 4 * 1024 * 1024:
+        raise PolicyDenied("request.bounds", "Serialized request must be bytes and at most 4 MiB")
+    try:
+        value = json.loads(payload)
+    except (ValueError, UnicodeDecodeError):
+        raise PolicyDenied("request.format", "Provider request must be valid JSON") from None
+    if not isinstance(value, dict) or not isinstance(value.get("messages"), list):
+        raise PolicyDenied("request.format", "Provider request must contain a messages array")
+    value["model"] = model
+    value.pop("max_completion_tokens", None)
+    value.pop("max_output_tokens", None)
+    value["max_tokens"] = output_token_limit
+    try:
+        normalized = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError):
+        raise PolicyDenied("request.format", "Provider request could not be serialized safely") from None
+    if len(normalized) > 4 * 1024 * 1024:
+        raise PolicyDenied("request.bounds", "Normalized request exceeds its byte limit")
+    return normalized
 
 
 class BudgetLedger:
@@ -238,6 +263,7 @@ class Dispatcher:
             raise PolicyDenied("request.bounds", "Serialized request must be bytes and at most 4 MiB")
         if not isinstance(input_tokens, int) or not isinstance(output_token_limit, int) or not 0 <= input_tokens <= 1_000_000 or not 0 <= output_token_limit <= 65_536:
             raise PolicyDenied("request.bounds", "Token bounds are outside the supported limits")
+        normalized_payload = normalize_chat_request(payload, model, output_token_limit)
         with self._lock:
             if context.trace_id in self._active:
                 raise PolicyDenied("dispatch.loop", "Repeated trace indicates a provider routing loop")
@@ -278,7 +304,7 @@ class Dispatcher:
                     continue
                 if route.input_usd_per_million is None or route.output_usd_per_million is None:
                     continue
-                input_bound = max(input_tokens, len(payload))
+                input_bound = max(input_tokens, len(normalized_payload))
                 estimate = (input_bound * route.input_usd_per_million + output_token_limit * route.output_usd_per_million) / 1_000_000
                 if estimate > 0 and self.policy.metered_budget_usd <= 0:
                     continue
@@ -295,7 +321,7 @@ class Dispatcher:
                         raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
                     try:
                         try:
-                            response = self.transport(route, model, payload, timeout=timeout, trace_id=context.trace_id)
+                            response = self.transport(route, model, normalized_payload, output_token_limit=output_token_limit, timeout=timeout, trace_id=context.trace_id)
                         except TimeoutError:
                             response = ProviderResponse(0, b"")
                         except Exception:
