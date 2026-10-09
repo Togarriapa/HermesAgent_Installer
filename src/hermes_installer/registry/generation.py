@@ -124,7 +124,7 @@ class GenerationStore:
                     raise ValueError("invalid generation path")
                 if not isinstance(content, bytes): raise TypeError("generation content must be bytes")
                 output = staging / rel
-                        directory = staging
+                directory = staging
                 for part in rel.parts[:-1]:
                     directory = directory / part
                     try:
