@@ -24,12 +24,17 @@ class SQLiteOwnerLedger:
             db = self._connect()
             try:
                 db.executescript("""
-                    CREATE TABLE IF NOT EXISTS owners(profile TEXT PRIMARY KEY, provider TEXT);
+                    CREATE TABLE IF NOT EXISTS owners(
+                        profile TEXT PRIMARY KEY, provider TEXT, generation INTEGER NOT NULL DEFAULT 1
+                    );
                     CREATE TABLE IF NOT EXISTS transitions(
                         id TEXT PRIMARY KEY, profile TEXT NOT NULL, old_provider TEXT,
                         new_provider TEXT, state TEXT NOT NULL
                     );
                 """)
+                columns = {row[1] for row in db.execute("PRAGMA table_info(owners)")}
+                if "generation" not in columns:
+                    db.execute("ALTER TABLE owners ADD COLUMN generation INTEGER NOT NULL DEFAULT 1")
                 db.commit()
             finally:
                 db.close()
@@ -61,6 +66,19 @@ class SQLiteOwnerLedger:
             finally:
                 db.close()
 
+    def get_owner_state(self, profile: str) -> tuple[str | None, int]:
+        """Return durable owner plus generation used to invalidate queued events."""
+        self._valid(profile)
+        with process_lock(self.owned.path("owner-ledger.lock")):
+            db = self._connect()
+            try:
+                if db.execute("SELECT 1 FROM transitions WHERE profile=? AND state='prepared'", (profile,)).fetchone():
+                    raise OwnerTransitionError("memory owner transition requires explicit recovery")
+                row = db.execute("SELECT provider,generation FROM owners WHERE profile=?", (profile,)).fetchone()
+                return (row[0], int(row[1])) if row else (None, 0)
+            finally:
+                db.close()
+
     def set_owner(self, profile: str, name: str | None) -> None:
         self._valid(profile, name)
         with process_lock(self.owned.path("owner-ledger.lock")):
@@ -69,7 +87,12 @@ class SQLiteOwnerLedger:
                 db.execute("BEGIN IMMEDIATE")
                 if db.execute("SELECT 1 FROM transitions WHERE profile=? AND state='prepared'", (profile,)).fetchone():
                     raise OwnerTransitionError("cannot change owner during a prepared transition")
-                db.execute("INSERT INTO owners(profile,provider) VALUES(?,?) ON CONFLICT(profile) DO UPDATE SET provider=excluded.provider", (profile, name))
+                row = db.execute("SELECT provider,generation FROM owners WHERE profile=?", (profile,)).fetchone()
+                if row is None:
+                    if name is not None:
+                        db.execute("INSERT INTO owners(profile,provider,generation) VALUES(?,?,1)", (profile,name))
+                elif row[0] != name:
+                    db.execute("UPDATE owners SET provider=?,generation=generation+1 WHERE profile=?", (name,profile))
                 db.commit()
             finally:
                 db.close()
@@ -110,7 +133,10 @@ class SQLiteOwnerLedger:
                 current = owner[0] if owner else None
                 if current != row[0]:
                     raise OwnerTransitionError("durable owner changed during transition")
-                db.execute("INSERT INTO owners(profile,provider) VALUES(?,?) ON CONFLICT(profile) DO UPDATE SET provider=excluded.provider", (profile, name))
+                if owner is None:
+                    db.execute("INSERT INTO owners(profile,provider,generation) VALUES(?,?,1)", (profile,name))
+                elif owner[0] != name:
+                    db.execute("UPDATE owners SET provider=?,generation=generation+1 WHERE profile=?", (name,profile))
                 db.execute("UPDATE transitions SET state='committed' WHERE id=?", (transition_id,))
                 db.commit()
             finally:
