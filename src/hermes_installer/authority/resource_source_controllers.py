@@ -605,10 +605,17 @@ class RootResourceControllerRegistry:
             recipe = enrollment.body_recipes.get(node.body_recipe_id)
             if recipe is None:
                 return None
+            parent_result_fields = {
+                parent_node_id: fields
+                for parent_node_id, value in record.parent_results.items()
+                if isinstance(value, tuple) and len(value) == 2
+                for receipt_id, fields in (value,)
+                if receipt_id in {item.receipt_id for item in record.parent_context.source_receipts}
+            }
             body = recipe.render(
                 backend=backend, scope_bindings=enrollment.scope_bindings,
                 validators=enrollment.validators, event_fields=record.event_fields,
-                parent_results={},
+                parent_results=parent_result_fields,
             )
             if (canonical_digest(body) != request.canonical_payload_sha256
                     or request.controller.expires_monotonic <= self.service.monotonic()
