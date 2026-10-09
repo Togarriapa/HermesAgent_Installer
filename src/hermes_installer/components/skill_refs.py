@@ -241,3 +241,25 @@ def audit_skill_file_map(
         problems=tuple(problems),
         skill_resolved_targets=tuple((name, tuple(sorted(targets))) for name, targets in sorted(skill_resolved.items())),
     )
+
+
+def audit_component_skill_file_map(
+    component_id: str, revision: str, files: dict[str, bytes], *,
+    skill_files: tuple[str, ...] | None = None,
+) -> SkillReferenceAudit:
+    """Apply only exact reviewed source-specific Markdown template rules.
+
+    Obsidian's pinned format skill uses literal ``[text](url)`` as a prose
+    template, not as a path to a bundled file. Audit a transformed copy while
+    retaining the original pinned bytes unchanged for provenance/staging.
+    """
+    audit_files = files
+    if (component_id == "obsidian-skills"
+            and revision == "3ccff5338ea700537839b21900aa5358a0402c98"):
+        path = "skills/obsidian-markdown/SKILL.md"
+        body = files.get(path)
+        placeholder = b"[text](url)"
+        if isinstance(body, bytes) and body.count(placeholder) == 1:
+            audit_files = dict(files)
+            audit_files[path] = body.replace(placeholder, b"[text](https://example.invalid/)")
+    return audit_skill_file_map(audit_files, skill_files=skill_files)

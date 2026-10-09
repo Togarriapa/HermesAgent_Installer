@@ -193,6 +193,40 @@ class ComponentSourceBundleTests(unittest.TestCase):
                     journal.owned("generation")[0]["state"],
                 )
 
+    def test_pinned_obsidian_template_is_audit_only_during_full_source_import(self):
+        contract = resolve_component_adapter("obsidian-skills")
+        skill = (
+            b"---\nname: obsidian-markdown\ndescription: fixture\n---\n"
+            b"Use [text](url) as a template for external URLs.\n"
+        )
+        files = {
+            "skills/obsidian-markdown/SKILL.md": skill,
+            "skills/obsidian-markdown/references/PROPERTIES.md": b"YAML frontmatter.\n",
+        }
+        modes = {name: 0o644 for name in files}
+        tree_sha, _ = _git_tree(files, modes)
+        archive = archive_bytes(contract.source_identity, contract.revision, [
+            (name, body, modes[name], "file") for name, body in files.items()
+        ])
+        commit_url = (
+            f"https://api.github.com/repos/{contract.source_identity}/commits/{contract.revision}"
+        )
+        commit_body = json.dumps({
+            "sha": contract.revision,
+            "html_url": f"https://github.com/{contract.source_identity}/commit/{contract.revision}",
+            "commit": {"tree": {"sha": tree_sha}},
+        }).encode("utf-8")
+        fetcher = GitHubComponentSourceFetcher(FakeTransport([
+            HttpResponse(200, commit_url, commit_body),
+            HttpResponse(200,
+                f"https://codeload.github.com/{contract.source_identity}/legacy.tar.gz/{contract.revision}",
+                archive),
+        ]))
+
+        source = fetcher.fetch(contract)
+        self.assertEqual(skill, source.files["skills/obsidian-markdown/SKILL.md"])
+        self.assertIn("skills/obsidian-markdown/references/PROPERTIES.md", source.files)
+
     def test_rejects_path_escape_and_symlinks(self):
         contract = resolve_component_adapter("affaan-m/ECC")
         escape = archive_bytes(self.IDENTITY, self.REVISION, [

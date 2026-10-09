@@ -21,7 +21,9 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from .types import AuthorityDenied, HostContext, SourceReceipt, canonical_digest
+from .types import (
+    AuthorityDenied, HostContext, NativeToolCallBinding, SourceReceipt, canonical_digest,
+)
 
 _MAX_RESULT_BYTES = 1_048_576
 _MAX_PARENT_RECEIPTS = 64

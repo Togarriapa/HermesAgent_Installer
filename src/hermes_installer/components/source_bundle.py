@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from hermes_installer.components.adapters import ComponentAdapterContract
-from hermes_installer.components.skill_refs import audit_skill_file_map
+from hermes_installer.components.skill_refs import audit_component_skill_file_map
 
 
 class ComponentSourceError(RuntimeError):
@@ -333,7 +333,9 @@ class GitHubComponentSourceFetcher:
             raise ComponentSourceError("component archive contents differ from the pinned Git tree")
         if not files:
             raise ComponentSourceError("refusing an empty component source tree")
-        audit = audit_skill_file_map(files, skill_files=skill_files)
+        audit = audit_component_skill_file_map(
+            contract.component_id, revision, files, skill_files=skill_files,
+        )
         if audit.problems:
             first = audit.problems[0]
             raise ComponentSourceError(
