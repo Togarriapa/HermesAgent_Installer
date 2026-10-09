@@ -53,6 +53,11 @@ class OpenRouterTransport:
                 self._api_key = value
             return self._api_key
 
+    def _verified_credential(self) -> str:
+        value = self._credential()
+        self._eligibility.verify_credential(value)
+        return value
+
     @staticmethod
     def _request_body(payload: bytes, model: str, output_limit: int) -> bytes:
         if not isinstance(payload, bytes) or len(payload) > MAX_REQUEST_BYTES:

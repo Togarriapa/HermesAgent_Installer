@@ -89,7 +89,7 @@ class ProviderTransportTests(unittest.TestCase):
 
         fixture_gate = AccountEligibilityGate(model=MODEL, credential_ref=ref,
             evidence=evidence, clock=lambda: 1001, allow_test_evidence=True)
-        with self.assertRaisesRegex(PolicyDenied, "identity"):
+        with self.assertRaisesRegex(PolicyDenied, "does not match"):
             fixture_gate.require_eligible(model=MODEL, credential_ref="file:///other/key")
         with self.assertRaisesRegex(PolicyDenied, "identity"):
             fixture_gate.require_eligible(model="other/model", credential_ref=ref)
@@ -150,7 +150,7 @@ class ProviderTransportTests(unittest.TestCase):
 
     def test_unapproved_model_and_unbounded_timeout_are_denied(self):
         transport,_=self.make()
-        with self.assertRaisesRegex(PolicyDenied,"not approved"):
+        with self.assertRaisesRegex(PolicyDenied,"does not match"):
             transport(default_public_route(),"attacker/model",b'{"messages":[]}',output_token_limit=8,timeout=2,trace_id="trace")
         with self.assertRaisesRegex(PolicyDenied,"hard bound"):
             transport(default_public_route(),MODEL,b'{"messages":[]}',output_token_limit=8,timeout=31,trace_id="trace")
