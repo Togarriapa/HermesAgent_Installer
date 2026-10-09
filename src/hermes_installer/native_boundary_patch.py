@@ -57,6 +57,13 @@ _FILES = {
                 "            logger.warning(\"Root-selected native plugins are unavailable; skipping this cohort\")\n",
                 1,
             ),
+            (
+                "        self._notify_plugin_loaded(loaded_before)\n",
+                "        self._notify_plugin_loaded(loaded_before)\n"
+                "        from hermes_installer.native_plugin_loader import finish_selected_native_plugin_discovery\n"
+                "        finish_selected_native_plugin_discovery(self)\n",
+                1,
+            ),
         ),
     },
     "agent/chat_completion_helpers.py": {
