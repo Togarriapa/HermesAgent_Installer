@@ -7,7 +7,7 @@ from pathlib import Path
 
 from hermes_installer.memory.broker import (
     BrokerDenied, DurableMemoryQueue, MemoryTarget, build_memory_handlers,
-    canonical,
+    canonical, ROUTES,
 )
 
 
@@ -132,6 +132,32 @@ class MemoryBrokerTests(unittest.TestCase):
             self.assertFalse(queue.result(Context("p2", "n2"), receipt)["found"])
             self.assertEqual(consent_calls[0]["provider_id"], "agentmemory")
             self.assertEqual(consent_calls[0]["owner_generation"], 7)
+
+    def test_pinned_provider_routes_and_payloads_match_upstream_contracts(self):
+        # These fixed routes were checked against each provider's exact enrolled
+        # source revision. The transport remains injected and root-owned.
+        self.assertEqual(ROUTES["agentmemory"]["doctor"], "GET /agentmemory/livez")
+        self.assertEqual(ROUTES["agentmemory"]["delete"], "POST /agentmemory/forget")
+        self.assertEqual(ROUTES["claude-mem"]["capture"], "POST /v1/memories")
+        self.assertEqual(ROUTES["claude-mem"]["delete"], "DELETE /v1/memories/{id}")
+        t = MemoryTarget("claude-mem", "p1", "n1", "claude-service",
+            "fa8ab09f06aa05f958c5225cf3756ce52a3ebb96", 2, "claude-data-p1")
+        ipc = IPC()
+        handlers = build_memory_handlers(
+            targets={("p1", "n1", "claude-mem"): t},
+            owner_state=lambda _: ("claude-mem", 4), queue=None, ipc=ipc,
+            eligibility=lambda *_: True)
+        response = call(handlers[("memory.capture", "memory:claude-mem:capture")],
+            Context(), "capture", {"schema": 1, "record_id": "synthetic-id",
+                "source": "hermes-session:synthetic", "facts": ["synthetic fact"],
+                "embeddings": [[0.1, 0.2]], "provenance": ["a" * 64]})
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(ipc.calls[0]["fixed_route"], "POST /v1/memories")
+        body = json.loads(ipc.calls[0]["payload"])
+        self.assertEqual(body["projectId"], "n1")
+        self.assertEqual(body["kind"], "manual")
+        self.assertEqual(body["facts"], ["synthetic fact"])
+        self.assertEqual(body["metadata"]["hermes_lineage"], "a" * 64)
 
     def test_owner_change_revokes_enqueue_before_journaling(self):
         t = target("p1", "n1", "service-one")

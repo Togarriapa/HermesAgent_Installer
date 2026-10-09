@@ -54,7 +54,7 @@ ROUTES = {
         "doctor": "GET /agentmemory/livez",
         "search": "POST /agentmemory/smart-search",
         "capture": "POST /agentmemory/remember",
-        "delete": "DELETE /agentmemory/governance/memories",
+        "delete": "POST /agentmemory/forget",
         "export": "GET /agentmemory/export",
         "backup": "GET /agentmemory/export",
         "restore": "POST /agentmemory/import",
@@ -430,11 +430,26 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     raise ValueError("capture has no facts")
                 if eligibility is None or not eligibility(target,"memory-capture",context):
                     raise BrokerUnavailable("provider internal extraction/embedding path is not private eligible")
-                request = {"record_id":_text(body.get("record_id"),"record id",256),
-                    "source":_text(body.get("source"),"source",512),"facts":facts,"embeddings":vectors,
-                    "lineage":context.lineage_hash,"owner_generation":generation}
-                if request["source"].startswith("memory:"):
+                record_id=_text(body.get("record_id"),"record id",256)
+                source=_text(body.get("source"),"source",512)
+                if source.startswith("memory:"):
                     raise BrokerDenied("recursive memory ingestion denied")
+                if target.provider=="claude-mem":
+                    request={"projectId":target.namespace_id,"kind":"manual","type":"fact",
+                        "facts":facts,"metadata":{"hermes_record_id":record_id,
+                        "hermes_lineage":context.lineage_hash,"hermes_source":source,
+                        "owner_generation":generation}}
+                elif target.provider=="agentmemory":
+                    # Native remember accepts one content string and project; it
+                    # does not accept arbitrary embeddings or provenance metadata.
+                    # The root-only adapter maps this bounded body to the pinned
+                    # REST operation. Per-profile service/data roots provide scope.
+                    request={"content":"\n".join(facts),"type":"fact",
+                        "project":target.namespace_id}
+                else:
+                    request={"record_id":record_id,"source":source,"facts":facts,
+                        "embeddings":vectors,"lineage":context.lineage_hash,
+                        "owner_generation":generation}
             elif action == "search":
                 q=_text(body.get("query"),"query",4096); limit=body.get("limit",10)
                 if type(limit) is not int or not 1 <= limit <= 100: raise ValueError("invalid search limit")
@@ -443,14 +458,14 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 elif target.provider=="claude-mem":
                     request={"projectId":target.namespace_id,"query":q,"limit":min(limit,50)}
                 else:
-                    request={"query":q,"limit":min(limit,20)}
+                    request={"query":q,"project":target.namespace_id,"limit":min(limit,20)}
             elif action=="doctor":
                 request={"profile_id":context.profile_id,"namespace_id":context.namespace_id,
                          "service_generation":target.service_generation}
             elif action=="delete":
                 rid=_text(body.get("record_id"),"record id",256)
                 if target.provider=="agentmemory":
-                    request={"memoryIds":[rid]}
+                    request={"memoryId":rid,"project":target.namespace_id}
                 elif target.provider=="claude-mem":
                     request={"id":rid,"projectId":target.namespace_id}
                 else:
@@ -505,7 +520,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                            "text":item.get("content") or item.get("summary") or item.get("text")}
                           for item in hits if isinstance(item,dict)]
                 else:
-                    hits=result.get("results",[])
+                    hits=result.get("results",result.get("memories",[]))
                     rows=[]
                     for item in hits:
                         if not isinstance(item,dict): continue
