@@ -346,6 +346,7 @@ class MCPClient:
         except Exception:
             raise MCPError("MCP request could not be bound to its selected resource") from None
         purpose = "mcp-selected-resource-read" if operation == "call" else "mcp-connection-lifecycle"
+        digest = canonical_digest(payload)
         expected_intent_id = canonical_digest({"purpose": purpose, "intent": intent})
         cancellation = __import__("threading").Event()
         async with self._semaphore:
@@ -355,13 +356,13 @@ class MCPClient:
             try:
                 context = await asyncio.wait_for(asyncio.to_thread(
                     authority.context, purpose=purpose, intent=intent,
+                    final_payload_digest=digest,
                     lease_seconds=min(30.0, remaining), cancelled=cancellation.is_set,
                 ), remaining)
                 if context.intent_id != expected_intent_id or context.monotonic_expires_at <= self.monotonic():
                     raise MCPError("host issued a stale or mismatched MCP context")
                 remaining = min(remaining, context.monotonic_expires_at - self.monotonic())
                 capability = f"mcp:{self.service_id}:{'read' if operation == 'call' else 'connect'}"
-                digest = canonical_digest(payload)
                 grant = await asyncio.wait_for(asyncio.to_thread(
                     authority.authorize_effect, context, capability=capability, target=target,
                     recipient=None, request_digest=digest, retry_index=0,
