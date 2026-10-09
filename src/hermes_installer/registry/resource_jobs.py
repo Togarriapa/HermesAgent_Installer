@@ -784,6 +784,61 @@ class RootResourceJobAdmissionHandle:
 
 
 @dataclass(frozen=True, slots=True)
+class RootAdmittedTask:
+    """Neutral root-created snapshot passed to process custody after consume.
+
+    This is metadata, not bearer authority. Custody must additionally resolve
+    the exact job admission handle from the authority's private registry.
+    """
+
+    handle_id: str
+    job_id: str
+    node_id: str
+    child_admission_id: str
+    attempt_index: int
+    backend_enrollment_id: str
+    resource_generation: str
+    profile_id: str
+    profile_generation: str
+    native_package_id: str
+    native_package_generation: str
+    process_enrollment_id: str
+    process_generation: str
+    operation_id: str
+    child_target_id: str
+    child_capability: str
+    task_body_recipe_id: str
+    task_request_schema_id: str
+    task_payload: bytes = field(repr=False)
+    task_payload_sha256: str
+    stdin_sha256: str
+    stdin_size_bytes: int
+    parent_closure_digest: str
+    expires_monotonic: float
+
+    @classmethod
+    def from_handle(cls, handle: RootResourceJobAdmissionHandle) -> "RootAdmittedTask":
+        if not isinstance(handle, RootResourceJobAdmissionHandle):
+            raise ResourceJobDenied("consumed root task handle is required")
+        try:
+            task_body = json.loads(handle.task_payload.decode("utf-8"))
+            prompt = task_body["prompt"]
+            stdin = prompt.encode("utf-8")
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, AttributeError, TypeError):
+            raise ResourceJobDenied("admitted prompt cannot be projected to selected stdin") from None
+        if (not isinstance(task_body, dict) or set(task_body) != {"prompt"}
+                or not isinstance(prompt, str) or not prompt
+                or _canonical(task_body) != handle.task_payload or len(stdin) > 262_144):
+            raise ResourceJobDenied("admitted prompt does not match its selected task schema")
+        values = {name: getattr(handle, name) for name in cls.__dataclass_fields__
+                  if name in handle.__dataclass_fields__}
+        values.update(task_payload=handle.task_payload,
+                      stdin_sha256=hashlib.sha256(stdin).hexdigest(),
+                      stdin_size_bytes=len(stdin))
+        return cls(**values)
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceChildAdmission:
     """Single-use bounded claim; it is not itself a HostContext or effect grant."""
 

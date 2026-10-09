@@ -440,5 +440,29 @@
       "workflow_sha256"
     ],
     "rules": "Strict bounded list<=61; exact IDs<=128chars and lowercaseSHA256, no duplicate external tool/action/schema association. Artifact reference resolves actual immutable RB08 workflow bytes, selected package/current profile generation and registered engine. Artifact path/size are source ledger information only, not serialized binding fields. Empty list means direct single effect."
+  },
+  "initial_native_input_observer": {
+    "scope": "HI-T08/HI-T11 and RB-T08 original real native input lineage. No inferred PUBLIC/human origin; unknown/private default preserved.",
+    "resource_call": "record_admitted_task_input(root_admission_handle,node_id,owned_process_handle,exact_initial_stdin_bytes)->root input event handle; root runner only after resolving full admitted event closure and current selected actual Hermes producer PIDFD/generation/loaded package. Exact bytes must equal admitted prompt SHA/size; root observes its own write+EOF. Existing schedule/webhook/channel ancestry retained fully, not reclassified as human.",
+    "health_call": "record_selected_health_input(health_observation_handle,owned_process_handle,selected_fixture_artifact_id)->root input event handle; root resolves actual fixture bytes/current producer and parent static-context artifact receipt. PRIVATE/UNKNOWN, not caller public labels.",
+    "desktop_call": "record_authenticated_desktop_input(root_remote_session_handle,owned_native_process_handle,observed_input_event)->root input event handle; root verified HI13 session/principal/profile/current lease, actual constrained gateway input observation and native custody/loaded closure required. This authenticates origin only; sensitivity stays PRIVATE/UNKNOWN absent separate explicit reviewed payload clearance. Ordinary worker/TUI bytes not upgraded.",
+    "issuance": "RootSourceObservationRegistry captures exact input bytes using current selected source_issuer/capture_schema_id/observer role from active digest-bound catalog. Store full parent closure and actual bound producer peer; root delivers same-peer opaque SourceReceiptHandle through existing protected pending delivery registry. No worker capture_source(source_kind) or supplied role/profile/sensitivity accepted.",
+    "producer_access": "take_source_receipt retrieves existing root-issued pending input handle for exact kernel producer/request correlation. prepare_native_event consumes verified handles as ancestry, canonicalizes exact final body, binds pending producer/gateway request and fresh effect as HI11. Initial input admission is not arbitrary request clearance; retries/aux/tools/memory preserve full closure and independent authorization.",
+    "closure": "Root input observer target peer resolver must verify current loaded package readiness proof and actual PIDFD/cgroup/exe/generation, no receipt if mount-only metadata or unavailable trusted observer. Sources lacking authenticated ingress remain private/unknown with unavailable effects requiring original integration; no permanent scope omission.",
+    "event_schema_fields": [
+      "schema=1",
+      "input_event_id",
+      "input_origin_kind",
+      "source_receipt_handle",
+      "payload_sha256",
+      "payload_size_bytes",
+      "producer_profile_id",
+      "producer_generation",
+      "parent_closure_digest",
+      "observed_monotonic",
+      "expires_monotonic"
+    ],
+    "origin_kind": "root-admitted-task|selected-health-fixture|authenticated-desktop-input only selected by separate root observer methods, not worker wire.",
+    "evidence": "Actual native request reaches allowed selected private backend from admitted input and actual source closure; caller forged origin/receipt/mismatched bytes/PIDFD/generation/replay/expiry/empty ancestry denies; fixtures do not establish live target acceptance."
   }
 }

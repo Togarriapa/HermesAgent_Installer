@@ -147,6 +147,105 @@
     "local_transport": "BootstrapEnrollmentClient is constructed only by installed root CLI with an in-process RootLocalBootstrapTransport owned by that root session registry instance. invoke(operation,payload) accepts only enrollment.provision, obtains kernel current root actor identity and validates exact current session/intent/transaction-scoped receipt set before RootBootstrapProvisionOperation.handle. No caller peer_uid parameter, globally importable capability, AF_INET or ordinary worker endpoint. If isolated root helper is used, only root-created private AF_UNIX socketpair inherited by selected helper with SO_PEERCRED/PIDFD/role proof; no named publicly accessible bootstrap socket.",
     "authorizer": "RootSetupAuthorizer.authorize(peer_uid,peer_gid,request) resolves operation_intent in this live root session registry, independently validates actual transport actor/target/plan/receipt closure and returns existing VerifiedRootSetupAuthorization target_id/setup_session_id/plan_digest/operator_uid/transaction_handle. peer_uid==0 alone never sufficient.",
     "phases": "Prepared snapshot may have empty service_records/enrollment_ids and prepared receipt, with actual root journal selection and artifact receipts. Stable transaction_handle persists; each new publication prepared->active gets NEW generation_id/digest CAS predecessor; runnable profile generation issued at activation. activation_state is root-only construction policy, not worker payload or unreviewed serialized authority field.",
-    "deny": "Wrong actor/import closure/target/plan/session/receipt transaction, expired/replayed intent or concurrent CAS mismatch denies before provision effects. No worker may construct this transport or session. No privileged installer execution on development Mac."
+    "deny": "Wrong actor/import closure/target/plan/session/receipt transaction, expired/replayed intent or concurrent CAS mismatch denies before provision effects. No worker may construct this transport or session. No privileged installer execution on development Mac.",
+    "installed_selection_catalog": {
+      "file": "/etc/hermes-installer/root-setup-selection.json; separate initial installed root trust source, not mutable worker authority sidecar. Installed only by the reviewed root deployment of the installer; no initial active worker required.",
+      "fields": [
+        "schema=1",
+        "selection_id",
+        "installer_release_commit",
+        "release_root",
+        "launcher",
+        "interpreter",
+        "module_closure",
+        "plans",
+        "catalog_sha256"
+      ],
+      "selection_id": "installer-root-setup-selection-v1",
+      "launcher_fields": [
+        "artifact_id",
+        "relative_path",
+        "sha256"
+      ],
+      "launcher_artifact_id": "installer-root-setup-launcher-v1",
+      "interpreter_fields": [
+        "artifact_id",
+        "relative_path",
+        "sha256"
+      ],
+      "interpreter_artifact_id": "installer-root-setup-interpreter-v1",
+      "module_row_fields": [
+        "module_name",
+        "artifact_id",
+        "relative_path",
+        "sha256"
+      ],
+      "plan_row_fields": [
+        "artifact_id",
+        "relative_path",
+        "sha256",
+        "baseline_tag_object",
+        "baseline_commit",
+        "baseline_tree_sha256",
+        "amendment_manifest_sha256",
+        "allowed_artifact_ids"
+      ],
+      "plan_artifact_id": "installer-root-setup-plan-v1",
+      "root": "Paths resolve only beneath the installed immutable release root selected by the root deployment manifest. relative_path normalized no absolute/escaping/symlink/hardlink. Owner0 files not writable by service/users; all ancestors root-owned non-group/world-write. Actual launcher/interpreter/module bytes verified by held nofollow FD SHA and inode before/after use. No source archive hash substituted for executable/module hash.",
+      "catalog_digest": "SHA256 canonical sorted compact UTF8 ensure_ascii=false JSON excluding catalog_sha256; entire lists included. Root regular0600 max2MiB <=1024 module rows and <=16 plans; duplicate keys/IDs/paths/unknown fields denied. Hash is integrity check, root deployment ownership supplies trust, not self-authenticating signature.",
+      "pins": "Fixed role IDs are catalog keys, not claims of staged binaries. Actual byte hashes are computed from the reviewed deployed installer release and separately isolated installer interpreter, recorded at root deployment; refuse missing/unverified pins. Hermes PM Python3.14 is for Hermes, not inferred setup interpreter. Selected plan binds immutable baseline tag object c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8/commit653ac5fbc7a02613c9951859a7d794599603459b plus actual full baseline tree and append-only amendment manifest hashes.",
+      "resolver": "InstalledRootSetupPlanResolver.resolve(artifact_id)->existing VerifiedRootSetupPlan; maps only selected catalog plan, joins launcher/interpreter/module rows and exact installed bytes. InstalledRootSetupActorVerifier.verify_current(plan) additionally checks actual proc executable/PIDFD/starttime and imported-module origins/closure, sanitized isolated import path/no user site/cwd/PYTHONPATH contamination. Protocol alone does not activate setup.",
+      "choice": "Installed CLI reads actual terminal/UI operator choice for mode and existing NSS target account, selects fixed reviewed plan ID, invokes begin_local; record actual current root actor and transaction. No env/worker chosen role/plan digest or euid-only admission.",
+      "release_root_fields": [
+        "root_id",
+        "absolute_path",
+        "device",
+        "inode",
+        "deployment_receipt_sha256"
+      ],
+      "release_root_resolution": "Exact root deployment receipt selects installed immutable release directory, captures nofollow actual device/inode/root ownership and entire launcher/interpreter/module/plan byte closure. Row release_root lives in this same initial root-owned selection file, covered catalog_sha256; no additional mutable manifest/resolver fallback. absolute_path root-only field, not worker API. InstalledRootSetupPlanResolver resolves relative rows under this held directory FD and verifies device/inode/current bytes; deployment_receipt_sha256 audit integrity, not external signature. Bootstrap root deployment is actual trust source, no arbitrary self-installed worker file can supply it."
+    },
+    "first_setup_artifact_fetch": {
+      "constructor": "RootSetupArtifactFetcher(session_store,receipt_registry,protected_artifact_catalog,owned_store_root) constructed by installed root CLI after actual selected actor verification. Catalog rows are root-owned installed source catalog; exact allowed_artifact_ids from selected verified plan. Concrete implementation reuses ArtifactCatalog and reviewed artifact broker bounded downloader/materializer, not worker BootstrapCustody.fetch_artifact or fabricated HostContext.",
+      "call": "fetch_selected_artifact(session_handle:RootSetupSessionHandle,artifact_id:str)->opaque transaction-scoped artifact_receipt_handle. Root verifies current actor/session/target/plan/catalog, resolves exact pre-enrolled artifact ID/SHA/URL/limits; caller cannot select URL/path/hash/headers/host. Each fetch reserves one root session action nonce before network and consumes once.",
+      "effect": "Fixed internal setup.artifact.fetch, target artifact:<artifact_id>:<sha256>; root-local setup action admission only, not public worker rule. TLS and selected finite redirects preserved, exact hash/size/tree limits enforced before atomic immutable CAS storage. Raw artifact bytes never returned through setup/worker transport.",
+      "receipt": "After verified CAS object, actual catalog.resolve_store_id validates current held source custody; RootArtifactReceiptRegistry.mint binds existing store ID/receipt ID to same VerifiedRootSetupAuthorization and transaction/session/target/plan. Return existing opaque handle only. Importer resolves handle in same registry and reads verified store bytes; no fabricated bytes-to-receipt conversion.",
+      "source": "Hermes full source archive exact80347460 bytes/SHA592ac0b09a7130cf2f8166f039098ba4ed40fb91535c601a6a7e5b1fcf889d01 and tree/normalization limits from protected-artifact-source-catalog.json; installer script034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86 and PM lock49b79259220160f147255078a19af541a5f328d3871c8041cc1eb909d19eb549 unchanged. Other PM payloads only actual pinned lock target rows, no arbitrary downloads.",
+      "failure": "Wrong role/actor/session/catalog/receipt transaction, unverified release or source, oversized transfer/hash mismatch/cancel/CAS conflict denies; incomplete first setup stays prepared with exact resume. No active profile before actual runnable artifact receipts."
+    }
+  },
+  "native_health_receipt": {
+    "tasks": "BD-F03/LC-F03/HI-T08/HI-T09/HI-T11; original native health and acceptance, no new tasks.",
+    "root_call": "RootNativeHealthObserver.begin_selected_health(control_handle)->opaque health_observation_handle; root resolves committed active enrollment receipt/current profile+generation, fixed hermes-agent-health-v1 recipe and reviewed health fixture artifact. Prepared empty service_records cannot start native health. Actual launch and observation all bound to original transaction/current catalog.",
+    "fixture": "Health adapter uses fixed reviewed local tool request and compatible selected private/zero-budget provider workflow. Fixture artifact/body/expected semantic result and approved finite action IDs are actual root catalog bytes/hash, not worker prompt/schema. No public route inference, account mutation, messages or huge model download. Missing selected model/account/native observer is incomplete with exact resume.",
+    "record": "Root-only observe_health_event(handle,root_event_record) resolves existing trusted observer registry event IDs. Required actual loader ready/current closure, registered Agent request boundary, actual complete provider result (if workflow requires), observed local safe tool invocation and semantic backend result, and terminal process status. No arbitrary worker booleans, stdout-only success, import/version/exit0 substitute.",
+    "finish": "finish_selected_health(handle)->RootNativeHealthReceipt after all required events belong to same actual peer/profile/generation/job and validated selected result schema. Root persists immutable receipt and full parent event closure; no success receipt until terminal success plus native semantic observations.",
+    "receipt_fields": [
+      "schema=1",
+      "health_receipt_handle",
+      "operation_id",
+      "enrollment_id",
+      "profile_id",
+      "process_generation",
+      "service_generation_digest",
+      "bootstrap_transaction_handle",
+      "committed_enrollment_receipt_id",
+      "process_id",
+      "loader_ready_event_id",
+      "native_request_event_id",
+      "provider_result_event_id",
+      "tool_invocation_event_id",
+      "tool_result_event_id",
+      "terminal_receipt_handle",
+      "result_schema_id",
+      "result_sha256",
+      "parent_closure_digest",
+      "status",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "nullable": "provider_result_event_id nullable only when the reviewed fixture explicitly requires no provider. Required loader/request/tool/result/terminal fields never nullable for functional health success. status enum passed|failed|incomplete; failed/incomplete do not activate functional health.",
+    "consume": "consume_selected_health_receipt(handle,committed_enrollment_receipt_id)->typed RootNativeHealthReceipt root registry lookup/current generation/event closure validation. Lifecycle may display typed presentation, but cannot construct/pass status as authority. Receipt is local functional health evidence, not all18AC or actual external account acceptance.",
+    "failure": "Changed profile/catalog/peer/mount/fixture, stale events, unrelated tool response, replay/cancel/expiry or semantic mismatch deny passed. Rollback preserves previous owned generation/data."
   }
 }

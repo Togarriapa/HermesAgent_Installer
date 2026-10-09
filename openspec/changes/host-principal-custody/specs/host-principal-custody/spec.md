@@ -341,3 +341,35 @@ The installer SHALL authorize private origin probes through a separate root-owne
 #### Scenario: Setup probe submitted to public issuer
 - **WHEN** a private probe handle or synthetic Access context reaches the public remote connector issuer
 - **THEN** it is rejected, and only the separate root-private exact probe issuer may admit selected local app readiness operations
+
+### Requirement: Native loaded closure observation
+
+The implementation SHALL enforce this protocol. HI-T08 / HI-T09: use planning/protected-runtime-assembly-contract.json native_custody_proof_protocol; immutable mount metadata alone cannot establish readiness, source provenance or action success.
+
+#### Scenario: Missing concrete runtime proof
+- **WHEN** the exact protocol or current kernel/native observations are unavailable
+- **THEN** the affected task remains incomplete and no fixture or mount-only evidence establishes acceptance.
+
+### Requirement: Finite loader progress receiver
+
+The root receiver SHALL enforce native_custody_proof_protocol.progress_wire framing, selected-role custody and ordered finite observations before issuing a loaded closure proof.
+
+#### Scenario: Forged or incomplete loader event
+- **WHEN** progress frames are malformed, stale, replayed or incomplete
+- **THEN** no readiness proof is issued and existing task acceptance remains pending.
+
+### Requirement: Private probe principal and sequence joins
+
+The private probe issuer SHALL resolve the actual protected native PrincipalBinding, separate effect and connector frame sequences, and admit only immutable per-action child probe handles.
+
+#### Scenario: Child action substitution
+- **WHEN** an asset, action, principal or sequence differs from current root selection
+- **THEN** admission is denied before connector bytes.
+
+### Requirement: Root observed initial input closure
+
+The implementation SHALL resolve actual installed release custody and full admitted source receipt closure before issuing native input provenance. Private or unknown sensitivity SHALL remain unchanged absent separate reviewed clearance.
+
+#### Scenario: Digest without source closure
+- **WHEN** only a digest or caller provenance label is available
+- **THEN** no trusted input receipt or admitted native effect is created.
