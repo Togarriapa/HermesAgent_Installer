@@ -31,9 +31,6 @@ for item in list(sys.argv[1:]):
     elif item.startswith("--installer-data-root="):
         OPTIONS["data"] = item.split("=", 1)[1]
         sys.argv.remove(item)
-    elif item.startswith("--pm-python="):
-        OPTIONS["python"] = item.split("=", 1)[1]
-        sys.argv.remove(item)
 
 
 class RecordingTransport:
@@ -56,9 +53,8 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
     def test_primary_and_auxiliary_use_selected_pm_profile_and_local_gateway(self):
         source_value = OPTIONS.get("source") or os.environ.get("HERMES_AGENT_SOURCE_ROOT", "")
         data_value = OPTIONS.get("data") or os.environ.get("HERMES_INSTALLER_DATA_ROOT", "")
-        pm_python = OPTIONS.get("python") or os.environ.get("HERMES_PM_PYTHON", "")
-        if not (source_value and data_value and pm_python):
-            self.skipTest("pass --hermes-source, --installer-data-root and --pm-python for native acceptance")
+        if not (source_value and data_value):
+            self.skipTest("pass --hermes-source and --installer-data-root for native acceptance")
         source = Path(source_value).resolve(strict=True)
         self.assertEqual(subprocess.run(
             ["git", "-C", str(source), "rev-parse", "HEAD"], cwd=source, check=True,
@@ -72,8 +68,6 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
         self.assertEqual(marker.read_bytes(), b"schema=1\n")
         self.assertEqual(data_path.stat().st_uid, os.geteuid())
         self.assertEqual(data_path.stat().st_mode & 0o077, 0)
-        interpreter = Path(pm_python).resolve(strict=True)
-        self.assertTrue(interpreter.is_file())
         profile_relative = "profiles/hermes-installer-native-" + uuid.uuid4().hex
         with tempfile.TemporaryDirectory(prefix="hermes-native-parent-") as scratch:
             root = OwnedRoot(Path(scratch) / "budget")
@@ -81,8 +75,16 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
             # Keep HOME outside the shared data root while materializing the
             # exact profile HERMES_HOME will use in the isolated worker.
             old_home = os.environ.get("HOME")
+            old_hermes_home = os.environ.get("HERMES_HOME")
             os.environ["HOME"] = str(Path(scratch))
+            os.environ["HERMES_HOME"] = str(data_path / "profiles" / "default")
+            sys.path.insert(0, str(source))
             try:
+                from pm.environments import committed_venv, venv_command
+                selected_venv = committed_venv(source)
+                self.assertIsNotNone(selected_venv, "pinned source has no committed PM environment")
+                command_prefix = venv_command(source, selected_venv)
+                self.assertTrue(command_prefix)
                 data_root = OwnedRoot(data_path)
                 plugin = materialize_hermes_provider_plugin(
                     data_root, profile_relative=profile_relative, port=None, model=MODEL)
@@ -94,6 +96,11 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                     os.environ.pop("HOME", None)
                 else:
                     os.environ["HOME"] = old_home
+                if old_hermes_home is None:
+                    os.environ.pop("HERMES_HOME", None)
+                else:
+                    os.environ["HERMES_HOME"] = old_hermes_home
+                sys.path.remove(str(source))
             transport = RecordingTransport()
             dispatcher = Dispatcher(
                 DispatchPolicy({"public": default_public_route()}, "public"),
@@ -117,7 +124,7 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
             try:
                 gateway.start()
                 result = subprocess.run(
-                    [str(interpreter), str(worker), "--source-root=" + str(source),
+                    [*command_prefix, str(worker), "--source-root=" + str(source),
                      "--home=" + str(profile_home), "--expected-sha=" + HERMES_PIN,
                      "--model=" + MODEL],
                     env=env, cwd=str(source), capture_output=True, text=True, timeout=75,
