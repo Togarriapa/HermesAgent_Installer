@@ -1,0 +1,5 @@
+# Native package binding and normalization v1
+
+Sol additive original-scope refinement of HI08/HI09/HI11/RB08 and PR-F03/PR-T01, preserving frozen baseline/tag and all open acceptance. Actual native package closure and immutable resolver were absent from the protected profile schema; worker registration is not trusted source provenance. planning/native-package-binding-contract.json defines strict root package/adapter records, opaque peer-bound binder, selected plugin facade and rooted issuer channels, with private UNKNOWN for unobserved caller bytes. No caller path/role/label/credential or generic proxy.
+
+planning/native-cross-process-bridge-contract.json clarifies complete API body versus transport controls and protected route-specific normalization policy shared at producer/root/gateway. Late independent clipping is forbidden;4096 is not a universal limit or unsupported SIWC field. Policy revision invalidates old handles. Existing HI-T08/09/11, RB-T09, PR-F03/PR-T01 carry implementation, exact parity and kernel/native negative evidence; no task completed.

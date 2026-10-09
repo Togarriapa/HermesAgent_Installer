@@ -1,0 +1,3 @@
+# Selected plugin facade schemas v2
+
+Sol additive clarification RB08/RB-T09/EV-RB08 and SK01/SK-T01/EV-SK01; frozen baseline/tag and scope unchanged. planning/protected-plugin-effect-contract.json defines exact bounded Epic create/read/add_item/move_item/delete_accepted and voice_transcribe/voice_speak facade schemas from pinned manifest workflow/types/modes. They are not fabricated upstream endpoints. Every backend mapping still needs actual protected selected source API enrollment. Root lifecycle/voice session receipts cannot be asserted by caller. Original plugin functions remain required, unsupported ones explicit incomplete. Memory service generation is opaque root-issued string distinct from integer memory-owner epoch. All task/native/account states remain open.

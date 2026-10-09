@@ -218,5 +218,142 @@
       "concurrency_per_profile_target": 1
     },
     "larger_binary_output": "Owned immutable artifact handle with separately authorized bounded reads; no unbounded inline binary or caller output path"
-  }
+  },
+  "selected_action_schemas": {
+    "epic-kanban": {
+      "create": {
+        "operation": "plugin.epic-kanban.write",
+        "arguments": {
+          "epic_id": "opaque root-authorized Epic scope",
+          "title": "bounded plain text<=256chars"
+        },
+        "result": "owned opaque board_id"
+      },
+      "read": {
+        "operation": "plugin.epic-kanban.read",
+        "arguments": {
+          "board_id": "opaque selected Epic-owned board"
+        },
+        "result": "bounded typed item records"
+      },
+      "add_item": {
+        "operation": "plugin.epic-kanban.write",
+        "arguments": {
+          "board_id": "owned opaque ID",
+          "item_type": "epic|user-story|task|defect|spike|risk|decision",
+          "title": "<=256chars",
+          "description": "<=16384chars"
+        },
+        "result": "owned opaque item_id"
+      },
+      "move_item": {
+        "operation": "plugin.epic-kanban.write",
+        "arguments": {
+          "board_id": "owned opaque ID",
+          "item_id": "owned opaque ID",
+          "state": "backlog|ready|in-progress|review|blocked|done"
+        },
+        "result": "verified item state"
+      },
+      "delete_accepted": {
+        "operation": "plugin.epic-kanban.delete",
+        "arguments": {
+          "board_id": "owned opaque ID",
+          "accepted_lifecycle_attestation_id": "root verified accepted-summary/Epic lifecycle receipt"
+        },
+        "result": "verified archive/deletion receipt; caller accepted bool forbidden"
+      }
+    },
+    "voice-pipeline": {
+      "voice_transcribe": {
+        "operation": "plugin.voice-pipeline.stt",
+        "arguments": {
+          "session_handle": "root enrolled active mic/session permission",
+          "audio_artifact_id": "owned bounded captured audio receipt",
+          "mode": "general|home_control"
+        },
+        "result": "bounded transcript and root source receipt; fixed mode maps to selected Whisper or Speech-to-Phrase; transcript/wakeword not action authority"
+      },
+      "voice_speak": {
+        "operation": "plugin.voice-pipeline.tts",
+        "arguments": {
+          "session_handle": "root enrolled active local output session",
+          "text": "<=16384chars"
+        },
+        "result": "owned bounded audio artifact receipt; no raw path/cloudfallback"
+      },
+      "open_session": {
+        "operation": "plugin.voice-pipeline.session",
+        "arguments": {
+          "session_enrollment_id": "opaque root-selected microphone/output device/local endpoint enrollment",
+          "direction": "input|output|duplex",
+          "requested_lease_seconds": "positive int<=60 (root may tighten)"
+        },
+        "result": "opaque peer/profile/generation-bound session_handle and monotonic expiry; requires trusted session-specific human microphone/output permission, no caller permission boolean"
+      },
+      "capture_audio": {
+        "operation": "plugin.voice-pipeline.session",
+        "arguments": {
+          "session_handle": "current input/duplex handle",
+          "maximum_seconds": "positive int<=30"
+        },
+        "result": "owned audio_artifact_id plus SHA/size/profile/gen/expiry provenance; root capture observes exact enrolled local device, not arbitrary file/path",
+        "capture": "In-memory bounded raw audio<=16MiB, no disk/raw persistence or network transfer; zero on cancellation/expiry/consume, maximum lifetime60s. Default no unreviewed continuous recorder; selected endpoint/source device root enrolled. Missing actual capture/permission issuer stays unavailable."
+      },
+      "close_session": {
+        "operation": "plugin.voice-pipeline.session",
+        "arguments": {
+          "session_handle": "owned session"
+        },
+        "result": "closed; owner cancellation/root expiry cleanup independent of expired effect grant, siblings cannot close"
+      }
+    },
+    "ebook-toolchain": {
+      "run": {
+        "operation": "plugin.ebook-toolchain.run",
+        "arguments": {
+          "source_id": "owned immutable source artifact receipt",
+          "format": "epub3|pdf",
+          "title": "bounded plain text<=256chars",
+          "recipe_id": "opaque root selected managed build recipe"
+        },
+        "result": "typed artifact receipt plus validation_status=valid|invalid|unsupported and bounded validation_report artifact; invalid EPUB not deliverable"
+      },
+      "inspect": {
+        "operation": "plugin.ebook-toolchain.run",
+        "arguments": {
+          "source_id": "owned source receipt",
+          "recipe_id": "fixed root inspection recipe"
+        },
+        "result": "bounded typed metadata/structure report"
+      },
+      "validate": {
+        "operation": "plugin.ebook-toolchain.run",
+        "arguments": {
+          "source_id": "owned book receipt",
+          "recipe_id": "fixed root validation recipe"
+        },
+        "result": "validation_status and owned bounded report receipt"
+      }
+    },
+    "kobo-bridge": {
+      "read": {
+        "operation": "plugin.kobo-bridge.read",
+        "arguments": {
+          "book_id": "opaque selected owned device notebook/book ID",
+          "enrollment_id": "opaque root-selected actual compatible device/backend generation"
+        },
+        "result": "owned notebook export artifact receipt and provenance; no password/scrape/DRM"
+      },
+      "deliver": {
+        "operation": "plugin.kobo-bridge.deliver",
+        "arguments": {
+          "export_id": "owned validated EPUB/PDF artifact receipt",
+          "enrollment_id": "opaque selected device/backend generation"
+        },
+        "result": "operation_id plus verified device destination receipt; explicit runtime user delivery and one-shot confirmation before any overwrite"
+      }
+    }
+  },
+  "schema_rule": "Additional argument fields forbidden. IDs resolve current root principal/profile/generation and cannot encode paths/URLs/commands. These facade action schemas are not guessed upstream endpoint schemas; protected selected backend handler must separately validate source-reviewed API mapping. Unsupported requested original actions remain explicit incomplete."
 }

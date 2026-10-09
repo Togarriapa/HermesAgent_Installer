@@ -128,5 +128,9 @@
     "https://github.com/rohitg00/agentmemory/blob/df3d4a83b966d8d415cb9180d5a4724b07f729dc/plugin/skills/agentmemory-rest-api/REFERENCE.md"
   ],
   "source_evidence": "Sol independently read listed pinned routes/docs; worker family/config details additionally reviewed by memory owner from pinned primary source; no target functionality claimed",
-  "outer_effect_binding": "Outer target memory:<provider>:<action> and connector target memory-<provider>:<root-enrolled-profile-id> are distinct exact root-enrolled identities. Both bind same principal/profile/owner generation, backend variant, typed action/digest/source closure and selected route. Neither arbitrary target substitution nor cross-variant route fallback is permitted; every connector operation retains HI12 fresh one-use grant."
+  "outer_effect_binding": "Outer target memory:<provider>:<action> and connector target memory-<provider>:<root-enrolled-profile-id> are distinct exact root-enrolled identities. Both bind same principal/profile/owner generation, backend variant, typed action/digest/source closure and selected route. Neither arbitrary target substitution nor cross-variant route fallback is permitted; every connector operation retains HI12 fresh one-use grant.",
+  "generation_types": {
+    "service_generation": "opaque nonempty root-issued string, exact equality/no int cast or ordering",
+    "memory_owner_generation": "separate positive integer owner epoch"
+  }
 }
