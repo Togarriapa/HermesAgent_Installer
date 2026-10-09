@@ -238,6 +238,7 @@ class ProtectedEnrollmentCatalog:
         if record is None:
             raise EnrollmentDenied("package runtime is not enrolled")
         if (record.runtime_artifact_id != "coral-python39-source" or record.abi != "cp39/aarch64"
+                or record.target_glibc_min != "2.34"
                 or record.build_target != "coral-cpython-build:start"):
             raise EnrollmentDenied("Coral package set is bound to a different runtime or build recipe")
         if record.runtime_artifact_id not in profile.runtime_artifact_ids:
