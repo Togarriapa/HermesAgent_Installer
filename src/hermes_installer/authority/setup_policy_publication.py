@@ -90,6 +90,12 @@ class RootSetupPublicationReceipt:
     input_receipt_handles: tuple[str, ...]
     state: str
     _seal: object = field(default=None, repr=False, compare=False)
+    publication_handle: str | None = None
+    claim_digest: str | None = None
+    prepared_generation_id: str | None = None
+    service_generation_digest: str | None = None
+    runtime_receipt_handles: tuple[str, ...] = ()
+    materialization_receipt_handles: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self._seal is not _SEAL:
@@ -142,7 +148,9 @@ class RootSetupPolicyGenerationPublisher:
                 if (compiled.compiled_policy_sha256 != _sha(compiled.policy_bytes)
                         or compiled.compiled_artifact_catalog_sha256 != _sha(compiled.artifact_catalog_bytes)
                         or compiled.compiled_selection_sha256 != _sha(_canonical(compiled.selection_document))
-                        or compiled.selection_catalog_sha256 != compiled.selection_document.get("catalog_sha256")):
+                        or compiled.selection_catalog_sha256 != compiled.selection_document.get("catalog_sha256")
+                        or not isinstance(compiled.claim_digest, str)
+                        or not _SHA.fullmatch(compiled.claim_digest)):
                     raise BootstrapEnrollmentError("active compiler claim digests differ from its canonical bytes")
             else:
                 self.registry.verify_current_compilation(compiled)
@@ -162,7 +170,7 @@ class RootSetupPolicyGenerationPublisher:
                 getattr(compiled, "release_commit", self.release.release_commit), self.release,
             )
             receipt = self._publish_compiled(compiled, expected_selection_catalog_sha256,
-                                             state="active" if self._active else "prepared")
+                                             state="active-committed" if self._active else "prepared")
             if self._active:
                 self.registry.complete_active_publication(receipt)
             else:
@@ -268,7 +276,7 @@ class PolicyPublicationReceiptResolver:
             raise BootstrapEnrollmentPending("current policy publication has no unique root journal receipt")
         record = matches[0]
         receipt = _receipt_from_record(record)
-        if receipt.state != "active":
+        if receipt.state != "active-committed":
             raise BootstrapEnrollmentPending("current root policy publication is prepared, not active")
         expected_root = POLICY_GENERATIONS / receipt.publication_sha256
         if (generation != {
@@ -291,9 +299,25 @@ class PolicyPublicationReceiptResolver:
                     != [handle for handle in receipt.input_receipt_handles
                         if handle != descriptor.get("inputs", {}).get("observed_root_receipt_handle")]):
             raise BootstrapEnrollmentError("current generation descriptor differs from its receipt closure")
+        _verify_active_receipt_descriptor(receipt, descriptor)
         if (files["plans/bootstrap-policy-v1.json"] != receipt.policy_sha256
                 or files["catalog/artifacts.json"] != receipt.artifact_catalog_sha256):
             raise BootstrapEnrollmentError("current generation file hashes differ from the receipt")
+        return receipt
+
+    @classmethod
+    def verify_current_active_claim(cls, *, publication_handle: str, claim_digest: str,
+                                    prepared_generation_id: str, transaction_handle: str,
+                                    expected_materialization_receipt_handles: tuple[str, ...]
+                                    ) -> RootSetupPublicationReceipt:
+        """Re-resolve the active selection and bind a native reservation to it."""
+        receipt = cls.resolve_current()
+        if (receipt.publication_handle != publication_handle
+                or receipt.claim_digest != claim_digest
+                or receipt.prepared_generation_id != prepared_generation_id
+                or receipt.transaction_handle != transaction_handle
+                or receipt.materialization_receipt_handles != expected_materialization_receipt_handles):
+            raise BootstrapEnrollmentPending("native output reservation differs from current active publication")
         return receipt
 
 
@@ -303,7 +327,11 @@ def _receipt_from_record(record: Mapping[str, Any]) -> RootSetupPublicationRecei
                 "policy_sha256", "artifact_catalog_sha256", "selection_sha256", "descriptor_sha256",
                 "previous_selection_catalog_sha256", "current_selection_catalog_sha256",
                 "input_receipt_handles", "state", "updated_monotonic"}
-    if not isinstance(record, Mapping) or set(record) != required or record.get("schema") != 1:
+    active_fields = {"publication_handle", "claim_digest", "prepared_generation_id",
+                     "service_generation_digest", "runtime_receipt_handles",
+                     "materialization_receipt_handles"}
+    expected = required | active_fields if isinstance(record, Mapping) and record.get("state") == "active-committed" else required
+    if not isinstance(record, Mapping) or set(record) != expected or record.get("schema") != 1:
         raise BootstrapEnrollmentError("root policy publication receipt record has an invalid schema")
     sha_fields = ("publication_sha256", "policy_sha256", "artifact_catalog_sha256",
                   "selection_sha256", "descriptor_sha256", "current_selection_catalog_sha256")
@@ -324,14 +352,53 @@ def _receipt_from_record(record: Mapping[str, Any]) -> RootSetupPublicationRecei
             or record.get("generation_root") != str(POLICY_GENERATIONS / record["publication_sha256"])
             or type(record.get("generation_device")) is not int or record["generation_device"] < 0
             or type(record.get("generation_inode")) is not int or record["generation_inode"] <= 0
-            or record.get("state") not in {"prepared", "active"}):
+            or record.get("state") not in {"prepared", "active-committed"}):
         raise BootstrapEnrollmentError("root policy publication receipt identity is malformed")
+    if record["state"] == "active-committed":
+        for key in ("claim_digest", "service_generation_digest"):
+            if not isinstance(record.get(key), str) or not _SHA.fullmatch(record[key]):
+                raise BootstrapEnrollmentError("active policy publication digest is malformed")
+        if (not isinstance(record.get("publication_handle"), str)
+                or not _HANDLE.fullmatch(record["publication_handle"])
+                or not isinstance(record.get("prepared_generation_id"), str)
+                or not _GENERATION_NAME.fullmatch(record["prepared_generation_id"])):
+            raise BootstrapEnrollmentError("active policy publication claim identity is malformed")
+        for key in ("runtime_receipt_handles", "materialization_receipt_handles"):
+            values = record.get(key)
+            if (not isinstance(values, list)
+                    or any(not isinstance(item, str) or not _HANDLE.fullmatch(item) for item in values)
+                    or len(set(values)) != len(values)):
+                raise BootstrapEnrollmentError("active policy input receipt handles are malformed")
     return RootSetupPublicationReceipt(
         1, record["publication_receipt_handle"], record["transaction_handle"],
         record["generation_id"], record["publication_sha256"], Path(record["generation_root"]),
         record["generation_device"], record["generation_inode"], record["policy_sha256"],
         record["artifact_catalog_sha256"], record["selection_sha256"], record["descriptor_sha256"],
-        previous, record["current_selection_catalog_sha256"], tuple(handles), record["state"], _SEAL)
+        previous, record["current_selection_catalog_sha256"], tuple(handles), record["state"], _SEAL,
+        record.get("publication_handle"), record.get("claim_digest"),
+        record.get("prepared_generation_id"), record.get("service_generation_digest"),
+        tuple(record.get("runtime_receipt_handles", ())),
+        tuple(record.get("materialization_receipt_handles", ())))
+
+
+def _verify_active_receipt_descriptor(receipt: RootSetupPublicationReceipt,
+                                      descriptor: Mapping[str, Any]) -> None:
+    if receipt.state != "active-committed":
+        return
+    inputs = descriptor.get("inputs")
+    if (not isinstance(inputs, Mapping)
+            or inputs.get("publication_handle") != receipt.publication_handle
+            or inputs.get("claim_digest") != receipt.claim_digest
+            or inputs.get("prepared_generation_id") != receipt.prepared_generation_id
+            or inputs.get("expected_service_generation_digest") != receipt.service_generation_digest
+            or inputs.get("transaction_handle") != receipt.transaction_handle
+            or tuple(inputs.get("runtime_receipt_handles", ())) != receipt.runtime_receipt_handles
+            or tuple(inputs.get("materialization_receipt_handles", ())) != receipt.materialization_receipt_handles
+            or descriptor.get("policy_sha256") != receipt.policy_sha256
+            or descriptor.get("artifact_catalog_sha256") != receipt.artifact_catalog_sha256
+            or descriptor.get("selection_sha256") != receipt.selection_sha256
+            or descriptor.get("inputs", {}).get("claim_digest") != receipt.claim_digest):
+        raise BootstrapEnrollmentError("committed active publication descriptor differs from its sealed receipt")
 
 
 def _read_generation_descriptor(receipt: RootSetupPublicationReceipt, uid: int
@@ -577,9 +644,15 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
         raise BootstrapEnrollmentError("policy publication roots must be absolute")
     policy_sha = getattr(compiled, "bootstrap_policy_sha256",
                          getattr(compiled, "compiled_policy_sha256", None))
-    if (publication_state not in {"prepared", "active"} or not _SHA.fullmatch(compiled.plan_sha256)
+    if (publication_state not in {"prepared", "active-committed"} or not _SHA.fullmatch(compiled.plan_sha256)
             or not isinstance(policy_sha, str) or not _SHA.fullmatch(policy_sha)):
         raise BootstrapEnrollmentError("compiler artifact digest is malformed")
+    if publication_state == "active-committed" and (
+            not isinstance(getattr(compiled, "publication_handle", None), str)
+            or not isinstance(getattr(compiled, "claim_digest", None), str)
+            or not isinstance(getattr(compiled, "prepared_generation_id", None), str)
+            or not isinstance(getattr(compiled, "expected_service_generation_digest", None), str)):
+        raise BootstrapEnrollmentError("active compiler claim is missing committed identity fields")
     _verify_deployment_parent(policy_root.parent, expected_uid)
     _verify_root_directory(policy_root, expected_uid, create=True, mode=0o700)
     _verify_root_directory(selection_path.parent, expected_uid, create=False, mode=0o755)
@@ -638,7 +711,13 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
             _sha(compiled.policy_bytes), _sha(compiled.artifact_catalog_bytes),
             _sha(final_selection_bytes), _sha(descriptor_bytes),
             expected_selection_catalog_sha256, final_selection["catalog_sha256"],
-            receipt_inputs, publication_state, _SEAL)
+            receipt_inputs, publication_state, _SEAL,
+            getattr(compiled, "publication_handle", None),
+            getattr(compiled, "claim_digest", None),
+            getattr(compiled, "prepared_generation_id", None),
+            getattr(compiled, "expected_service_generation_digest", None),
+            tuple(getattr(compiled, "runtime_receipt_handles", ())),
+            tuple(getattr(compiled, "materialization_receipt_handles", ())))
         _write_publication_record(journal_root, compiled.transaction_handle, receipt,
                                   descriptor_bytes, expected_uid)
         # Recheck CAS under the stable transaction lock immediately before replace.
@@ -730,6 +809,8 @@ def _build_descriptor(compiled: CompiledRootSetupPublication,
         input_doc["materialization_receipt_handles"] = list(compiled.materialization_receipt_handles)
         input_doc["policy_template_artifact_id"] = compiled.policy_template_artifact_id
         input_doc["policy_template_sha256"] = compiled.policy_template_sha256
+        input_doc["publication_handle"] = compiled.publication_handle
+        input_doc["claim_digest"] = compiled.claim_digest
     descriptor = {
         "schema": 1,
         "id": "installer-bootstrap-policy-publication-v1",
@@ -802,6 +883,15 @@ def _write_publication_record(journal_root: Path, transaction: str,
         "state": receipt.state,
         "updated_monotonic": time.monotonic(),
     }
+    if receipt.state == "active-committed":
+        record.update({
+            "publication_handle": receipt.publication_handle,
+            "claim_digest": receipt.claim_digest,
+            "prepared_generation_id": receipt.prepared_generation_id,
+            "service_generation_digest": receipt.service_generation_digest,
+            "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
+            "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
+        })
     _, info = _read_fixed(path, uid, 0o600, 64 * 1024)
     _atomic_replace(path, _canonical(record), uid, 0o600, (info.st_dev, info.st_ino))
     _fsync_dir(path.parent)
