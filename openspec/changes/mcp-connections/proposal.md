@@ -23,3 +23,13 @@ None; no runtime capability is currently implemented in this greenfield reposito
 ## Impact
 
 Planned modules: src/hermes_installer/mcp/. Depends on installer-bootstrap-desktop, resource-registry-import, providers-credentials-budgets-privacy. All implementation belongs to GPT-6 Luna; specification/refinement belongs to GPT-6.1 Sol. See design.md and explicit task/evidence DAG.
+
+### v24 native MCP handler binding
+
+MC-F01/MC-F02 and HI-T04/08/09 use native-package-binding-contract.json native_mcp_dispatch exact source-backed in-process hook/catalog/RPC/result joins. All original native/account acceptance remains pending.
+
+### v25 MCP lexical/config mapping
+
+Use native_mcp_dispatch row_types/invocation_mapping/native_config exact records, same one-use lexical binding and root-backed native candidate registration. MC/HI acceptance remains pending.
+
+Installed release/native assembly v33: `plans/amendments/2026-10-09-installed-release-native-assembly-v33.md`; exact root receipt and construction joins preserve existing task IDs and pending evidence.
