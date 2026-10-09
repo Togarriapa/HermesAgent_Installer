@@ -435,7 +435,9 @@ class Dispatcher:
                 raise PolicyDenied("authorization.request_mismatch", "Tool capability flag does not match the request body")
             capability = "tool-call" if requires_tools else "inference"
             payload_sha256 = __import__("hashlib").sha256(payload).hexdigest()
-            intent_material = "\\0".join((context.profile_id, context.trace_id, context.purpose, capability, model, payload_sha256))
+            lineage_claim = ",".join(value.name for value in context.derived_from)
+            intent_material = chr(31).join((context.profile_id, context.trace_id, context.purpose,
+                context.sensitivity.name, lineage_claim, capability, model, payload_sha256))
             intent_id = __import__("hashlib").sha256(intent_material.encode("utf-8")).hexdigest()
             initial_authorization = self._authorize(context, capability, intent_id, deadline)
             sensitivity = initial_authorization.effective_sensitivity
