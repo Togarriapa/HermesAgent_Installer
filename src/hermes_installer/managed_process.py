@@ -85,7 +85,7 @@ class ManagedProcessSpec:
     memory_max_bytes: int | None = None
     cpu_quota_percent: int | None = None
     io_weight: int | None = None
-    child_artifact_hashes: Mapping[str, str] | None = None
+    child_artifact_refs: Mapping[str, str] | None = None
     max_output_bytes: int = 1_048_576
     stdin_mode: str = "pipe"
 
@@ -411,7 +411,9 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
     try:
         root = spec.owned_root.root.resolve(strict=True)
         cwd = spec.owned_root.path(Path(spec.cwd).relative_to(root).as_posix()).resolve(strict=True)
-        data = spec.owned_root.path(Path(spec.data_root).relative_to(root).as_posix()).resolve(strict=True)
+        requested_data = Path(spec.data_root).resolve(strict=True)
+        data = (root if requested_data == root else
+                spec.owned_root.path(requested_data.relative_to(root).as_posix()).resolve(strict=True))
         journal_path = spec.journal.path.resolve(strict=True)
     except (OwnershipError, OSError, ValueError):
         raise ManagedProcessError("executable, cwd, data root, or journal is outside safe owned paths") from None
@@ -450,10 +452,13 @@ def _validate_spec(spec: ManagedProcessSpec) -> tuple[OwnedRoot, Path, Path, Pat
     exe_info = exe.stat(follow_symlinks=False)
     if not stat.S_ISREG(exe_info.st_mode) or exe_info.st_nlink != 1:
         raise ManagedProcessError("pinned executable must be a single-link regular file")
-    for child, digest in (spec.child_artifact_hashes or {}).items():
-        path = Path(child).resolve(strict=True)
-        if path != Path(child) or not path.is_relative_to(artifact) or _digest(path) != digest:
-            raise ManagedProcessError("child artifact must be pinned in the protected catalog")
+    for store_id, digest in (spec.child_artifact_refs or {}).items():
+        if (not isinstance(store_id, str) or not re.fullmatch(r"artifact:[A-Za-z0-9_.-]{1,128}:[0-9a-f]{64}", store_id)
+                or store_id.rsplit(":", 1)[-1] != digest):
+            raise ManagedProcessError("child artifact reference is malformed")
+    if any(arg.startswith("artifact:") and arg not in (spec.child_artifact_refs or {})
+           for arg in spec.argv):
+        raise ManagedProcessError("argv contains an unenrolled opaque artifact reference")
     if not spec.argv or spec.argv[0] != str(exe) or any(not isinstance(x, str) or "\x00" in x for x in spec.argv):
         raise ManagedProcessError("argv must start with the pinned executable and contain NUL-free strings")
     if any(re.search(r"(?i)(?:--?(?:token|secret|password|api[-_]?key|credential)(?:=|$)|authorization:\s*bearer\s+)", value)
@@ -535,16 +540,20 @@ class ManagedProcessHandle:
             await self.stop("bounded lifetime expired", timeout=5.0)
 
     def _control_sync(self, operation: str, fields: Mapping[str, object], timeout: float) -> dict[str, object]:
+        payload = json.dumps({"schema": 1, "process_id": self.identity.process_id,
+                              "generation": self.generation, **fields},
+                             sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
         context = self.authority.context(
             purpose="managed-process-control", intent=f"{operation}:{self.identity.pid}:{self.generation}",
             source_contexts=(self.spec.authority_context,) if self.spec.authority_context else (),
             trace_id=self.spec.authority_context.trace_id if self.spec.authority_context else None,
-            lease_seconds=min(5.0, max(.1, timeout)))
-        payload = json.dumps({"schema": 1, "process_id": self.identity.process_id,
-                              "generation": self.generation, **fields},
-                             sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+            lease_seconds=min(5.0, max(.1, timeout)),
+            final_payload_digest=canonical_digest(payload), operation=operation)
+        verb = operation.removeprefix("process.")
+        if verb not in {"status", "read", "write", "stop"}:
+            raise ManagedProcessError("process control verb is not fixed")
         target = (f"hermes-profile-control:{self.spec.profile_id}:"
-                  f"{Path(self.spec.data_root).resolve(strict=True)}")
+                  f"{Path(self.spec.data_root).resolve(strict=True)}:{verb}")
         grant = self.authority.authorize_effect(
             context, capability="hermes-process-control", target=target,
             request_digest=canonical_digest(payload), retry_index=0)
@@ -685,15 +694,19 @@ class ManagedProcessSupervisor:
             target=target, profile_id=spec.profile_id, executable=exe,
             artifact_sha256=spec.artifact_sha256, artifact_root=artifact, cwd=cwd,
             data_root=data, argv=spec.argv, env_allowlist=spec.env_allowlist,
-            child_artifact_hashes=spec.child_artifact_hashes,
+            child_artifact_refs=spec.child_artifact_refs,
             max_lifetime_seconds=spec.max_lifetime_seconds,
             max_output_bytes=spec.max_output_bytes, stdin_mode=spec.stdin_mode,
         )
         digest = canonical_digest(launch)
+        if (spec.authority_context.final_payload_digest != digest
+                or spec.authority_context.operation != "process.start"):
+            raise ManagedProcessError("host context does not bind this process.start payload")
         grant = spec.effect_authorization
         if (grant.capability != "hermes-profile-invoke" or grant.target != target
                 or grant.profile_id != spec.profile_id or grant.uid != spec.authority_context.uid
-                or grant.request_digest != digest or grant.retry_index != 0):
+                or grant.request_digest != digest or grant.retry_index != 0
+                or grant.operation != "process.start"):
             raise ManagedProcessError("host start grant does not match the canonical launch envelope")
         try:
             await asyncio.to_thread(spec.journal.checkpoint, spec.journal_operation, "starting", {

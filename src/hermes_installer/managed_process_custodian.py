@@ -40,7 +40,8 @@ class ManagedProfileCustody:
     cpu_quota_percent: int | None = None
     io_weight: int | None = None
     max_lifetime_seconds: float = 600.0
-    child_artifact_hashes: Mapping[str, str] | None = None
+    child_artifact_refs: Mapping[str, str] | None = None
+    argv_recipe: tuple[str, ...] | None = None
     authority_socket: Path | None = None
 
 
@@ -61,6 +62,7 @@ class _Handle:
     started: float
     expires: float
     output_cap: int
+    artifact_mount_dir: Path
     stdin_cursor: int = 0
     stdout_cursor: int = 0
     stderr_cursor: int = 0
@@ -70,7 +72,7 @@ class _Handle:
 
 _LAUNCH_FIELDS = {
     "schema", "target", "profile_id", "executable", "artifact_sha256", "artifact_root",
-    "cwd", "data_root", "argv", "env_allowlist", "child_artifact_hashes",
+    "cwd", "data_root", "argv", "env_allowlist", "child_artifact_refs",
     "max_lifetime_seconds", "max_output_bytes", "stdin_mode",
 }
 _ALLOWED_ENV = {
@@ -84,8 +86,38 @@ def process_start_target(profile: ManagedProfileCustody) -> str:
             f"{profile.artifact_sha256}:{profile.data_root}")
 
 
-def process_control_target(profile: ManagedProfileCustody) -> str:
-    return f"hermes-profile-control:{profile.profile_id}:{profile.data_root}"
+def process_control_target(profile: ManagedProfileCustody, operation: str) -> str:
+    if operation not in {"process.status", "process.read", "process.write", "process.stop"}:
+        raise ValueError("process control operation is not fixed")
+    verb = operation.removeprefix("process.")
+    return f"hermes-profile-control:{profile.profile_id}:{profile.data_root}:{verb}"
+
+
+def _code_interpreter(name: str) -> bool:
+    normalized = name.casefold()
+    return (normalized in {"bash", "sh", "dash", "zsh", "node", "ruby", "perl"}
+            or normalized.startswith("python"))
+
+
+def _argv_matches_recipe(profile: ManagedProfileCustody, argv: list[str],
+                         children: Mapping[str, str]) -> bool:
+    """Only root-enrolled argv templates may execute; child code is catalog-bound."""
+    recipe = profile.argv_recipe
+    if not recipe or len(recipe) != len(argv) or recipe[0] != str(profile.executable):
+        return False
+    code_interpreter = _code_interpreter(profile.executable.name)
+    if code_interpreter:
+        # A profile may run only an immutable, catalog-enrolled script. Never accept
+        # -c/-e, inline code, caller paths, or interpreter override flags.
+        return (len(recipe) == 2 and recipe[1] == "{child_artifact}" and len(children) > 0
+                and len(argv) == 2 and argv[1] in children)
+    if any(arg.startswith("artifact:") for arg in argv[1:]):
+        return False
+    # Application-specific options may be present only when the protected root
+    # enrollment pins them byte-for-byte in the recipe. Caller additions and
+    # profile/config overrides therefore fail the exact comparison below.
+    return all(expected == "{child_artifact}" and actual in children or expected == actual
+               for expected, actual in zip(recipe, argv))
 
 
 def _root_path(path: Path, *, directory: bool) -> Path:
@@ -134,12 +166,79 @@ def _response(status: int, body: Mapping[str, Any]) -> Mapping[str, Any]:
             "receipt_id": uuid.uuid4().hex}
 
 
+def _artifact_mount_slot(owner_uid: int, process_id: str) -> Path:
+    """Create a root-only-to-modify, per-process mount target below fixed /run."""
+    if type(owner_uid) is not int or owner_uid <= 0 or not re.fullmatch(r"[0-9a-f]{32}", process_id):
+        raise AuthorityDenied("process.artifact", "artifact mount identity is invalid")
+    base = Path("/run/hermes-installer")
+    info = base.lstat()
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != 0 or info.st_mode & 0o022):
+        raise AuthorityDenied("process.artifact", "fixed runtime directory custody is invalid")
+    parent = base / "process-artifacts"
+    try:
+        parent.mkdir(mode=0o711)
+    except FileExistsError:
+        pass
+    else:
+        os.chown(parent, 0, 0)
+        os.chmod(parent, 0o711)
+    info = parent.lstat()
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o711):
+        raise AuthorityDenied("process.artifact", "artifact runtime directory custody is invalid")
+    user_dir = parent / str(owner_uid)
+    try:
+        user_dir.mkdir(mode=0o711)
+    except FileExistsError:
+        pass
+    else:
+        os.chown(user_dir, 0, 0)
+        os.chmod(user_dir, 0o711)
+    info = user_dir.lstat()
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o711):
+        raise AuthorityDenied("process.artifact", "profile artifact runtime directory custody is invalid")
+    slot = user_dir / process_id
+    slot.mkdir(mode=0o711)
+    os.chown(slot, 0, 0)
+    os.chmod(slot, 0o711)
+    info = slot.lstat()
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o711):
+        raise AuthorityDenied("process.artifact", "per-process artifact mount slot is not protected")
+    return slot
+
+
+def _remove_artifact_mount(slot: Path) -> None:
+    """Remove only the exact root-created placeholder; never recurse through a path."""
+    try:
+        info = slot.lstat()
+    except FileNotFoundError:
+        return
+    parent_info = slot.parent.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o711
+            or slot.parent.parent != Path("/run/hermes-installer/process-artifacts")
+            or not slot.parent.name.isdecimal() or parent_info.st_uid != 0
+            or not stat.S_ISDIR(parent_info.st_mode) or stat.S_IMODE(parent_info.st_mode) != 0o711
+            or not re.fullmatch(r"[0-9a-f]{32}", slot.name)):
+        raise AuthorityDenied("process.artifact", "artifact mount slot changed custody")
+    for child in slot.iterdir():
+        child_info = child.lstat()
+        if (child.name != "child-1" or not stat.S_ISREG(child_info.st_mode)
+                or child_info.st_uid != 0 or stat.S_IMODE(child_info.st_mode) != 0o444):
+            raise AuthorityDenied("process.artifact", "unexpected artifact mount slot content")
+        child.unlink()
+    slot.rmdir()
+
+
 class ManagedProcessEffectHandler:
     """Root-only process.start/status/read/write/stop fixed-verb adapter."""
 
     def __init__(self, profiles: Mapping[str, ManagedProfileCustody], *,
                  systemd_run: Path = Path("/usr/bin/systemd-run"),
                  systemctl: Path = Path("/usr/bin/systemctl"),
+                 artifact_resolver: Callable[[str, str], Any] | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if not profiles or any(key != item.profile_id for key, item in profiles.items()):
             raise ValueError("root process custody requires an explicit profile registry")
@@ -147,6 +246,7 @@ class ManagedProcessEffectHandler:
         self.systemd_run = _root_path(systemd_run, directory=False)
         self.systemctl = _root_path(systemctl, directory=False)
         self.monotonic = monotonic
+        self.artifact_resolver = artifact_resolver
         self._handles: dict[str, _Handle] = {}
         self._finished: dict[str, tuple[str, float]] = {}
         self._starting: set[str] = set()
@@ -180,15 +280,22 @@ class ManagedProcessEffectHandler:
         data_info = data.stat(follow_symlinks=False)
         if data != profile.data_root or not data.is_dir() or data_info.st_uid != profile.owner_uid or data_info.st_mode & 0o077:
             raise ValueError("profile data root is not private to the service identity")
-        children = profile.child_artifact_hashes or {}
-        if len(children) > 32:
-            raise ValueError("child artifact registry exceeds its bound")
-        for child, digest in children.items():
-            child_path = _root_path(Path(child), directory=False)
-            if (not child_path.is_relative_to(artifacts) or child_path != Path(child)
-                    or not isinstance(digest, str) or len(digest) != 64
-                    or hashlib.sha256(child_path.read_bytes()).hexdigest() != digest):
-                raise ValueError("child artifact is not bound to the protected root catalog")
+        children = profile.child_artifact_refs or {}
+        if len(children) > 32 or any(
+                not isinstance(store_id, str)
+                or not re.fullmatch(r"artifact:[A-Za-z0-9_.-]{1,128}:[0-9a-f]{64}", store_id)
+                or store_id.rsplit(":", 1)[-1] != digest
+                for store_id, digest in children.items()):
+            raise ValueError("child artifact references are invalid")
+        recipe = profile.argv_recipe
+        if (not isinstance(recipe, tuple) or not recipe or len(recipe) > 128
+                or recipe[0] != str(exe)
+                or any(not isinstance(arg, str) or "\x00" in arg or len(arg) > 4096
+                       for arg in recipe)
+                or recipe.count("{child_artifact}") > 1):
+            raise ValueError("protected process argv recipe is invalid")
+        if _code_interpreter(exe.name) and recipe != (str(exe), "{child_artifact}"):
+            raise ValueError("code interpreters require one immutable child-artifact operand")
         sock = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
         if sock != Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock"):
             raise ValueError("profile authority socket path is not the per-UID endpoint")
@@ -211,24 +318,28 @@ class ManagedProcessEffectHandler:
         result = {}
         for profile in self.profiles.values():
             result[("process.start", process_start_target(profile))] = self._bound(profile, "process.start")
-            target = process_control_target(profile)
             for verb in ("process.status", "process.read", "process.write", "process.stop"):
+                target = process_control_target(profile, verb)
                 result[(verb, target)] = self._bound(profile, verb)
         return result
 
     def _bound(self, profile: ManagedProfileCustody, operation: str):
         def handler(*, context: HostContext, authorization: EffectAuthorization,
                     payload: bytes, timeout: float, peer_pid: int,
+                    peer_pidfd: int | None,
                     cancelled: Callable[[], bool]) -> Mapping[str, Any]:
             return self.dispatch(profile, operation, context=context, authorization=authorization,
                                  payload=payload, timeout=timeout, peer_pid=peer_pid,
+                                 peer_pidfd=peer_pidfd,
                                  cancelled=cancelled)
         return handler
 
     def dispatch(self, profile: ManagedProfileCustody, operation: str, *,
                  context: HostContext, authorization: EffectAuthorization, payload: bytes,
-                 timeout: float, peer_pid: int, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
-        target = process_start_target(profile) if operation == "process.start" else process_control_target(profile)
+                 timeout: float, peer_pid: int, peer_pidfd: int | None,
+                 cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        target = (process_start_target(profile) if operation == "process.start"
+                  else process_control_target(profile, operation))
         expected_capability = "hermes-profile-invoke" if operation == "process.start" else "hermes-process-control"
         if (operation not in {"process.start", "process.status", "process.read", "process.write", "process.stop"}
                 or context.profile_id != profile.profile_id or authorization.profile_id != profile.profile_id
@@ -238,10 +349,12 @@ class ManagedProcessEffectHandler:
                 or authorization.namespace_id != context.namespace_id
                 or authorization.trace_id != context.trace_id
                 or authorization.intent_id != context.intent_id
+                or context.operation != operation or authorization.operation != operation
                 or peer_pid <= 0 or canonical_digest(payload) != authorization.request_digest):
             raise AuthorityDenied("process.binding", "process grant does not match the enrolled profile effect")
         if operation == "process.start":
-            return self._start(profile, context, payload, timeout, peer_pid, cancelled)
+            return self._start(profile, context, authorization, payload, timeout, peer_pid,
+                               peer_pidfd, cancelled)
         return self._control(profile, context, operation, payload, timeout, cancelled)
 
     @staticmethod
@@ -256,21 +369,38 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.request", "process request must be an object")
         return value
 
-    def _start(self, profile: ManagedProfileCustody, context: HostContext, payload: bytes,
-               timeout: float, peer_pid: int, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+    def _start(self, profile: ManagedProfileCustody, context: HostContext,
+               authorization: EffectAuthorization, payload: bytes, timeout: float,
+               peer_pid: int, peer_pidfd: int | None,
+               cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         with self._lock:
             if (profile.profile_id in self._starting
                     or any(item.profile.profile_id == profile.profile_id for item in self._handles.values())):
                 raise AuthorityDenied("process.generation", "a managed process is already active for this profile")
             self._starting.add(profile.profile_id)
         try:
-            return self._start_reserved(profile, context, payload, timeout, peer_pid, cancelled)
+            return self._start_reserved(profile, context, authorization, payload, timeout,
+                                        peer_pid, peer_pidfd, cancelled)
         finally:
             with self._lock:
                 self._starting.discard(profile.profile_id)
 
-    def _start_reserved(self, profile: ManagedProfileCustody, context: HostContext, payload: bytes,
-                        timeout: float, peer_pid: int, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+    def _start_reserved(self, profile: ManagedProfileCustody, context: HostContext,
+                        authorization: EffectAuthorization, payload: bytes, timeout: float,
+                        peer_pid: int, peer_pidfd: int | None,
+                        cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        launch_deadline = min(self.monotonic() + max(0.0, timeout),
+                              authorization.monotonic_expires_at)
+
+        def require_live_start(parent_fd: int | None = None) -> None:
+            if (cancelled() or self.monotonic() >= launch_deadline
+                    or self.profiles.get(profile.profile_id) is not profile
+                    or (parent_fd is not None and _pidfd_exited(parent_fd))):
+                raise AuthorityDenied("process.start_expired", "start grant, profile enrollment or caller expired before launch")
+
+        if peer_pidfd is None:
+            raise AuthorityDenied("process.parent", "authority did not retain the peer pidfd")
+        require_live_start()
         request = self._json(payload)
         if set(request) != _LAUNCH_FIELDS or request.get("schema") != 1:
             raise AuthorityDenied("process.launch", "launch envelope fields are invalid")
@@ -281,26 +411,35 @@ class ManagedProcessEffectHandler:
         }
         if any(request.get(key) != value for key, value in expected.items()):
             raise AuthorityDenied("process.binding", "launch envelope differs from protected profile registration")
-        registered_children = dict(profile.child_artifact_hashes or {})
-        supplied_children = request.get("child_artifact_hashes")
+        registered_children = dict(profile.child_artifact_refs or {})
+        supplied_children = request.get("child_artifact_refs")
         if not isinstance(supplied_children, dict) or supplied_children != registered_children:
             raise AuthorityDenied("process.child", "child artifacts do not match the protected catalog")
-        for child_name, child_digest in supplied_children.items():
-            child = Path(child_name)
-            if (not child.is_absolute() or child != child.resolve(strict=True)
-                    or not child.is_relative_to(profile.artifact_root)
-                    or _root_path(child, directory=False) != child
-                    or hashlib.sha256(child.read_bytes()).hexdigest() != child_digest):
-                raise AuthorityDenied("process.child", "child artifact pin failed verification")
-        argv, env = request["argv"], request["env_allowlist"]
+        resolved_children: dict[str, Path] = {}
+        for store_id, child_digest in supplied_children.items():
+            if not self.artifact_resolver:
+                raise AuthorityDenied("process.child", "protected artifact resolver is not installed")
+            try:
+                resolved = self.artifact_resolver(store_id, child_digest)
+                child_path = Path(getattr(resolved, "path", resolved))
+                if (child_path != child_path.resolve(strict=True)
+                        or _root_path(child_path, directory=False) != child_path
+                        or hashlib.sha256(child_path.read_bytes()).hexdigest() != child_digest):
+                    raise ValueError("artifact identity mismatch")
+            except Exception:
+                raise AuthorityDenied("process.child", "root catalog could not resolve the enrolled artifact") from None
+            resolved_children[store_id] = child_path
+        argv = list(request["argv"])
+        env = request["env_allowlist"]
         if (not isinstance(argv, list) or not argv or len(argv) > 128 or argv[0] != str(profile.executable)
                 or any(not isinstance(item, str) or "\x00" in item or len(item) > 4096 for item in argv)
                 or sum(len(item.encode()) for item in argv) > 65536):
             raise AuthorityDenied("process.argv", "argv does not match pinned executable or is oversized")
-        if profile.executable.name in {"bash", "sh", "dash"} and len(argv) > 1:
-            script = Path(argv[1])
-            if not script.is_absolute() or str(script) not in registered_children:
-                raise AuthorityDenied("process.child", "shell script is not a pinned root-owned child artifact")
+        if not _argv_matches_recipe(profile, argv, registered_children):
+            raise AuthorityDenied("process.argv", "argv differs from the protected profile recipe")
+        artifact_args = [index for index, item in enumerate(argv) if item in registered_children]
+        if artifact_args:
+            argv[artifact_args[0]] = "__ROOT_ARTIFACT_MOUNT__"
         secrets = ("--token", "--secret", "--password", "--api-key", "--credential")
         if any(any(flag in item.casefold() for flag in secrets) for item in argv[1:]):
             raise AuthorityDenied("process.secret", "credential-bearing argv is forbidden")
@@ -330,12 +469,15 @@ class ManagedProcessEffectHandler:
                 or type(output_cap) is not int or not 1 <= output_cap <= 4 * 1024 * 1024
                 or request["stdin_mode"] not in {"closed", "pipe"}):
             raise AuthorityDenied("process.bounds", "process lifetime or stream mode is invalid")
-        if cancelled():
-            raise AuthorityDenied("effect.cancelled", "process start was cancelled")
+        require_live_start()
         try:
-            parent_fd = os.pidfd_open(peer_pid, 0)
-        except (AttributeError, OSError):
+            parent_fd = os.dup(peer_pidfd)
+        except OSError:
             raise AuthorityDenied("process.parent", "pidfd is required for parent-death custody") from None
+        process_id = uuid.uuid4().hex
+        artifact_mount_dir: Path | None = None
+        artifact_target: Path | None = None
+        artifact_path: Path | None = next(iter(resolved_children.values()), None)
         unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
         mount = f"/hermes/profiles/{profile.profile_id}"
         rel = cwd.relative_to(root).as_posix()
@@ -353,7 +495,6 @@ class ManagedProcessEffectHandler:
             "--property=PrivateNetwork=yes", "--property=IPAddressDeny=any",
             "--property=InaccessiblePaths=/etc/hermes-installer /var/lib/hermes-installer /etc/ssh /etc/ssl/private",
             f"--property=BindPaths={root}:{mount}",
-            f"--property=BindReadOnlyPaths={profile.artifact_root}:{profile.artifact_root}",
         ]
         authority_socket = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
         try:
@@ -375,10 +516,28 @@ class ManagedProcessEffectHandler:
         if profile.io_weight is not None:
             properties.append(f"--property=IOWeight={profile.io_weight}")
         env_args = ["--setenv=" + key + "=" + value for key, value in sorted(env.items())]
-        manager_env = subprocess.run([str(self.systemctl), "--system", "show-environment"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True, timeout=2,
-            check=False)
+        try:
+            require_live_start(parent_fd)
+        except BaseException:
+            os.close(parent_fd)
+            raise
+        remaining = launch_deadline - self.monotonic()
+        if remaining <= 0:
+            os.close(parent_fd)
+            raise AuthorityDenied("process.start_expired", "start lease ended during preparation")
+        try:
+            manager_env = subprocess.run([str(self.systemctl), "--system", "show-environment"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=min(2.0, remaining), check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            os.close(parent_fd)
+            raise AuthorityDenied("process.environment", "system manager environment could not be bounded") from None
+        try:
+            require_live_start(parent_fd)
+        except BaseException:
+            os.close(parent_fd)
+            raise
         if manager_env.returncode != 0 or len(manager_env.stdout) > 65536:
             os.close(parent_fd)
             raise AuthorityDenied("process.environment", "system manager environment cannot be safely cleared")
@@ -387,16 +546,44 @@ class ManagedProcessEffectHandler:
                         if "=" in line and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", line.split("=", 1)[0])}
         manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
                              "WATCHDOG_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES",
-                             "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"})
+                             "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME",
+                             "SHELL", "PWD"})
         unset_keys = sorted(manager_keys - set(env))
         if sum(len(key) + 1 for key in unset_keys) > 60000:
             os.close(parent_fd)
             raise AuthorityDenied("process.environment", "system manager environment exceeds its safe bound")
         if unset_keys:
             properties.append("--property=UnsetEnvironment=" + " ".join(unset_keys))
+        try:
+            require_live_start(parent_fd)
+            artifact_mount_dir = _artifact_mount_slot(profile.owner_uid, process_id)
+            require_live_start(parent_fd)
+            if resolved_children:
+                artifact_target = artifact_mount_dir / "child-1"
+                fd = os.open(artifact_target, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o444)
+                try:
+                    os.fchown(fd, 0, 0)
+                    os.fchmod(fd, 0o444)
+                finally:
+                    os.close(fd)
+                argv[artifact_args[0]] = str(artifact_target)
+                properties.append(f"--property=BindReadOnlyPaths={artifact_path}:{artifact_target}")
+        except BaseException:
+            os.close(parent_fd)
+            if artifact_mount_dir is not None:
+                _remove_artifact_mount(artifact_mount_dir)
+            raise
         command = [str(self.systemd_run), "--system", "--unit=" + unit, "--service-type=exec",
                    "--wait", "--collect", "--pipe", "--quiet", "--working-directory=" + target_cwd,
                    *properties, *env_args, str(profile.executable), *argv[1:]]
+        try:
+            require_live_start(parent_fd)
+        except BaseException:
+            os.close(parent_fd)
+            if artifact_mount_dir is not None:
+                _remove_artifact_mount(artifact_mount_dir)
+            raise
         try:
             launcher = subprocess.Popen(command,
                 stdin=subprocess.PIPE if request["stdin_mode"] == "pipe" else subprocess.DEVNULL,
@@ -404,14 +591,16 @@ class ManagedProcessEffectHandler:
                 env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True, shell=False)
         except OSError:
             os.close(parent_fd)
+            if artifact_mount_dir is not None:
+                _remove_artifact_mount(artifact_mount_dir)
             raise AuthorityDenied("process.start", "root process manager could not start the enrolled service") from None
-        for stream in (launcher.stdin, launcher.stdout, launcher.stderr):
-            if stream is not None:
-                os.set_blocking(stream.fileno(), False)
         started = self.monotonic()
-        deadline = started + min(max(timeout, .1), 10.0)
+        deadline = min(launch_deadline, started + 10.0)
         child_fd = None
         try:
+            for stream in (launcher.stdin, launcher.stdout, launcher.stderr):
+                if stream is not None:
+                    os.set_blocking(stream.fileno(), False)
             identity = None
             cgroup = ""
             while self.monotonic() < deadline:
@@ -485,10 +674,12 @@ class ManagedProcessEffectHandler:
                 fields = limits["io.weight"].split()
                 if not fields or int(fields[-1]) != profile.io_weight:
                     raise AuthorityDenied("process.limits", "kernel io.weight does not match enrolled bound")
-            process_id = uuid.uuid4().hex
+            if artifact_mount_dir is None:
+                raise AuthorityDenied("process.artifact", "artifact mount directory was not established")
             handle = _Handle(process_id, profile, unit, cgroup, launcher, parent_fd, child_fd, pid,
                 ticks, f"mnt:{mnt};net:{net}", context.principal_id, context.namespace_id,
-                started, started + float(lifetime), output_cap, lock=threading.RLock())
+                started, started + float(lifetime), output_cap, artifact_mount_dir,
+                lock=threading.RLock())
             child_fd = None
             with self._lock:
                 self._handles[process_id] = handle
@@ -503,13 +694,19 @@ class ManagedProcessEffectHandler:
                 "executable_inode": ino, "mount_namespace_inode": mnt,
                 "network_namespace_inode": net, "kernel_limits": limits})
         except BaseException:
-            self._stop_partial(unit, launcher)
-            for fd in (parent_fd, child_fd):
-                if fd is not None:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
+            try:
+                self._stop_partial(unit, launcher)
+            finally:
+                try:
+                    if artifact_mount_dir is not None:
+                        _remove_artifact_mount(artifact_mount_dir)
+                finally:
+                    for fd in (parent_fd, child_fd):
+                        if fd is not None:
+                            try:
+                                os.close(fd)
+                            except OSError:
+                                pass
             raise
 
     @staticmethod
@@ -701,6 +898,8 @@ class ManagedProcessEffectHandler:
                         handle.launcher.wait(timeout=1.0)
                     except subprocess.TimeoutExpired:
                         raise AuthorityDenied("process.cleanup", "root service launcher did not reap")
+                    finally:
+                        _remove_artifact_mount(handle.artifact_mount_dir)
 
     def _stop_partial(self, unit: str, launcher: subprocess.Popen[bytes]) -> None:
         if unit.startswith("hermes-installer-"):
