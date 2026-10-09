@@ -471,6 +471,7 @@ class FixedServiceConnector:
         done = threading.Event()
         def worker() -> None:
             original = None
+            sock = None
             try:
                 if not self._test_allow_current_namespace:
                     if not hasattr(os, "setns") or lease.namespace_fd < 0:
@@ -484,6 +485,8 @@ class FixedServiceConnector:
                 sock.connect(("127.0.0.1", route.port))
                 result.append(sock)
             except BaseException as exc:
+                if sock is not None:
+                    sock.close()
                 failure.append(exc)
             finally:
                 if original is not None:
