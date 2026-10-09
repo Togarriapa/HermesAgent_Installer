@@ -308,6 +308,8 @@ class HostServiceProfile:
         self.roots.validate()
         return ManagedProfileCustody(
             enrollment_id=self.enrollment_id,
+            home_id=self.roots.home_id, work_id=self.roots.work_id,
+            data_id=self.roots.data_id,
             profile_id=self.profile_id, owner_uid=self.service_uid,
             owner_gid=self.service_gid, service_user=self.service_user,
             executable=self.executable, artifact_sha256=self.executable_sha256,
