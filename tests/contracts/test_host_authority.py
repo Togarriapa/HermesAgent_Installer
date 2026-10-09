@@ -411,18 +411,17 @@ class HostAuthorityIPCContracts(unittest.TestCase):
 
     def test_source_receipt_is_private_process_bound_and_one_use(self):
         payload = b"derived-memory-payload"
-        source_context = self.client.context(
-            purpose="memory-capture", intent="captured source bytes",
-            operation="memory.capture", final_payload_digest=canonical_digest(payload))
-        receipt = self.service.issue_source_receipt(
-            source_context, source_kind="memory-record", origin_id="record:7",
-            payload=b"private source bytes")
-        self.assertEqual(receipt.sensitivity, Sensitivity.PRIVATE)
-        self.assertEqual(receipt.native_process_identity, source_context.native_process_identity)
+        source_bytes = b"private source bytes"
+        handle = self.client.capture_source(source_bytes)
         context = self.client.context(
             purpose="memory-capture", intent="derived memory write",
-            operation="memory.capture", source_receipts=(receipt,),
+            operation="memory.capture", source_receipt_handles=(handle,),
             final_payload_digest=canonical_digest(payload))
+        self.assertEqual(len(context.source_receipts), 1)
+        receipt = context.source_receipts[0]
+        self.assertIs(receipt.sensitivity, Sensitivity.UNKNOWN)
+        self.assertEqual(receipt.payload_digest, canonical_digest(source_bytes))
+        self.assertEqual(receipt.native_process_identity, context.native_process_identity)
         grant = self.client.authorize_effect(
             context, capability="memory-capture", target="memory:openviking:capture",
             request_digest=canonical_digest(payload))

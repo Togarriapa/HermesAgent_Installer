@@ -37,6 +37,7 @@ _AUTHORITY_OPERATIONS = frozenset({
     "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
     "resource.orchestrator.recruit",
+    "source.capture",
 })
 
 

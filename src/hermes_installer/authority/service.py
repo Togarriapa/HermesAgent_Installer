@@ -48,6 +48,7 @@ _OPERATIONS = frozenset({
     "process.read", "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
     "resource.orchestrator.recruit",
+    "source.capture",
 })
 
 
@@ -197,6 +198,7 @@ class AuthorityService:
         # Receipts are provenance evidence, not reusable bearer permissions.
         # Consumption is atomic with the one-use effect nonce below.
         self._source_receipts_consumed: dict[str, float] = {}
+        self._source_receipt_handles: dict[str, SourceReceipt] = {}
         self._lock = threading.RLock()
         self._client_nonces: dict[str, float] = {}
 
@@ -334,7 +336,9 @@ class AuthorityService:
             source_kind=source_kind, principal_id=binding.principal_id,
             profile_id=binding.profile_id, namespace_id=binding.namespace_id, uid=binding.uid,
             origin_id=origin_id, process_generation=self.profile_generations.get(binding.profile_id, "unversioned"),
-            payload_digest=canonical_digest(payload), sensitivity=Sensitivity.PRIVATE,
+            payload_digest=canonical_digest(payload),
+            sensitivity=max((Sensitivity.PRIVATE, parent_context.sensitivity),
+                            key=lambda value: list(Sensitivity).index(value)),
             parent_lineage_hash=parent_context.lineage_hash,
             policy_revision=self._policy_revision(), recipient_ceiling=frozenset(),
             issued_at_monotonic=now, monotonic_expires_at=expiry, signature="pending",
@@ -348,6 +352,46 @@ class AuthorityService:
             nonce=secrets.token_urlsafe(24),
         )
         return replace(receipt, signature=self._sign(receipt.claims()))
+
+    def _capture_source(self, uid: int, peer_pid: int, payload: Any) -> dict[str, str]:
+        """Hash exact bytes observed on the protected socket; the host assigns all source claims."""
+        if not isinstance(payload, dict) or set(payload) != {
+                "schema", "payload", "parent_receipt_handles"}:
+            raise AuthorityDenied("source.request", "source capture fields are invalid")
+        handles = payload["parent_receipt_handles"]
+        if (type(payload["schema"]) is not int or payload["schema"] != 1
+                or not isinstance(handles, list) or len(handles) > 64
+                or any(not isinstance(value, str) or not value for value in handles)):
+            raise AuthorityDenied("source.request", "source capture schema or parent handles are invalid")
+        import base64
+        try:
+            source_bytes = base64.b64decode(payload["payload"], validate=True)
+        except Exception:
+            raise AuthorityDenied("source.request", "source capture bytes are malformed") from None
+        if not 1 <= len(source_bytes) <= 1_048_576:
+            raise AuthorityDenied("source.request", "source capture exceeds its fixed byte limit")
+        digest = canonical_digest(source_bytes)
+        parent_context = HostContext.from_wire(self._issue_context(uid, {
+            "purpose": "native-source-capture", "intent": f"native-capture:{digest}",
+            "trace_id": secrets.token_urlsafe(24), "lease_seconds": 60.0,
+            "source_contexts": [], "source_receipt_handles": handles,
+            "final_payload_digest": digest, "operation": "source.capture",
+        }, peer_pid=peer_pid))
+        receipt = self.issue_source_receipt(
+            parent_context, source_kind="native-input",
+            origin_id=f"native-event:{secrets.token_urlsafe(24)}",
+            payload=source_bytes, ttl_seconds=300)
+        handle = secrets.token_urlsafe(40)
+        with self._lock:
+            now = self.monotonic()
+            self._source_receipt_handles = {
+                key: value for key, value in self._source_receipt_handles.items()
+                if value.monotonic_expires_at > now
+            }
+            if len(self._source_receipt_handles) >= 100_000:
+                raise AuthorityDenied("source.capacity", "source handle store is at capacity")
+            self._source_receipt_handles[handle] = receipt
+        return {"receipt_handle": handle}
 
     def revalidate_effect(self, context: HostContext, authorization: EffectAuthorization, *,
                           operation: str, request_digest: str,
@@ -523,7 +567,11 @@ class AuthorityService:
                   operation: Any, payload: Any,
                   *, cancelled: Callable[[], bool]) -> Any:
         if operation == "issue_context":
+            if isinstance(payload, dict) and "source_receipts" in payload:
+                raise AuthorityDenied("source.handle", "workers must resolve opaque source receipt handles")
             return self._issue_context(uid, payload, peer_pid=peer_pid)
+        if operation == "capture_source":
+            return self._capture_source(uid, peer_pid, payload)
         if operation == "authorize_effect":
             return self._authorize_effect(uid, payload, peer_pid=peer_pid)
         if operation == "verify_effect":
@@ -543,7 +591,7 @@ class AuthorityService:
                        peer_pid: int | None = None,
                        inherited_process_identity: str | None = None) -> dict[str, Any]:
         required = {"purpose", "intent", "trace_id", "lease_seconds", "source_contexts"}
-        optional = {"source_receipts", "final_payload_digest", "operation"}
+        optional = {"source_receipts", "source_receipt_handles", "final_payload_digest", "operation"}
         if (not isinstance(payload, dict) or not required.issubset(payload)
                 or set(payload) - required - optional):
             raise AuthorityDenied("context.request", "context request fields are invalid")
@@ -558,8 +606,12 @@ class AuthorityService:
             raise AuthorityDenied("context.lineage", "source lineage exceeds its bound")
         sources = tuple(HostContext.from_wire(item) for item in raw_sources)
         raw_receipts = payload.get("source_receipts", [])
+        raw_handles = payload.get("source_receipt_handles", [])
         if not isinstance(raw_receipts, list) or len(raw_receipts) > 64:
             raise AuthorityDenied("context.lineage", "source receipts are malformed or mixed with context lineage")
+        if (not isinstance(raw_handles, list) or len(raw_handles) > 64
+                or raw_receipts and raw_handles):
+            raise AuthorityDenied("context.lineage", "source receipt handles are malformed")
         parsed_receipts = [SourceReceipt.from_wire(item) for item in raw_receipts]
         now = self.monotonic()
         for source in sources:
@@ -571,6 +623,24 @@ class AuthorityService:
                     or source.policy_revision != self._policy_revision()):
                 raise AuthorityDenied("context.lineage", "source context belongs to another principal")
             parsed_receipts.extend(source.source_receipts)
+        if raw_handles:
+            if peer_pid is None:
+                raise AuthorityDenied("source.handle", "source handles require an authenticated native peer")
+            current_identity = self._native_process_identity(peer_pid, uid)
+            now_for_handles = self.monotonic()
+            with self._lock:
+                self._source_receipt_handles = {
+                    handle: receipt for handle, receipt in self._source_receipt_handles.items()
+                    if receipt.monotonic_expires_at > now_for_handles
+                }
+                resolved: list[SourceReceipt] = []
+                for handle in raw_handles:
+                    receipt = self._source_receipt_handles.get(handle) if isinstance(handle, str) else None
+                    if (receipt is None or receipt.uid != uid
+                            or receipt.native_process_identity != current_identity):
+                        raise AuthorityDenied("source.handle", "source receipt handle is unknown or bound to another peer")
+                    resolved.append(receipt)
+            parsed_receipts.extend(resolved)
         if len(parsed_receipts) > 64:
             raise AuthorityDenied("context.lineage", "complete source receipt closure exceeds its bound")
         receipts = tuple({receipt.receipt_id: receipt for receipt in parsed_receipts}.values())
@@ -1049,7 +1119,7 @@ class AuthorityService:
                 or not receipt.native_process_identity
                 or receipt.nonce == ""
                 or receipt.policy_revision != self._policy_revision()
-                or receipt.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL}
+                or receipt.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN}
                 or not allow_expired and receipt.monotonic_expires_at <= self.monotonic()):
             raise AuthorityDenied("source.lineage", "source receipt is stale or bound to another host identity")
 
