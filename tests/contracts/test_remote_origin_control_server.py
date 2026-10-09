@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
 import json
 import os
 import socket
@@ -65,6 +66,41 @@ class PrivateOriginProbeRequestTests(unittest.TestCase):
         with self.assertRaises(PrivateOriginProbeDenied):
             _valid_probe_request(changed, self.binding)
 
+    def test_incomplete_or_false_runtime_observation_never_becomes_ready_response(self):
+        complete = {
+            "loopback_only": True,
+            "unauthenticated_denied": True,
+            "authorized_asset_served": True,
+            "authorized_websocket_attached": True,
+            "official_desktop_window_observed": True,
+            "arbitrary_route_denied": True,
+            "shell_route_denied": True,
+            "full_host_desktop_denied": True,
+        }
+        with self.assertRaises(PrivateOriginProbeDenied):
+            OriginProbeObservation({**complete, "shell_route_denied": False},
+                                   ("probe:fixture",), "a" * 64,
+                                   "ws-fixture", "window-fixture")
+        with self.assertRaises(PrivateOriginProbeDenied):
+            OriginProbeObservation({key: value for key, value in complete.items()
+                                    if key != "official_desktop_window_observed"},
+                                   ("probe:fixture",), "a" * 64,
+                                   "ws-fixture", "window-fixture")
+
+    @unittest.skipUnless(importlib.util.find_spec("aiohttp"), "aiohttp isolated runtime is unavailable")
+    def test_probe_control_is_not_registered_as_a_public_http_route(self):
+        from hermes_installer.remote.gateway import RemotePolicy
+        from hermes_installer.remote.server import GatewayRuntime, create_app
+
+        runtime = GatewayRuntime(RemotePolicy(
+            "desk.example.net", "https://team.cloudflareaccess.com", "aud",
+            frozenset({"owner@example.net"}), {}))
+        app = create_app(runtime)
+        public_paths = {route.resource.canonical for route in app.router.routes()
+                        if hasattr(route.resource, "canonical")}
+        self.assertFalse(any("probe" in path.casefold() for path in public_paths))
+        self.assertIn("/session", public_paths)
+
 
 class _ObservedProbe(PrivateOriginProbeExecutor):
     async def run_selected_probe(self, binding, request):
@@ -108,8 +144,8 @@ class PrivateOriginProbeControlTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def _listener_identity(self):
-        st = os.fstat(self.listener.fileno())
-        return SelectedOriginProbeListener(st.st_dev, st.st_ino, st.st_uid,
+        st = os.lstat(self.socket_path)
+        return SelectedOriginProbeListener(self.socket_path, st.st_dev, st.st_ino, st.st_uid,
                                            "gateway-profile", self.binding.gateway_generation)
 
     def tearDown(self):

@@ -15,9 +15,12 @@ import re
 import secrets
 import socket
 import struct
+import stat
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Callable, Mapping
 from urllib.parse import parse_qs
 
 from .gateway import GatewayDenied, RemotePolicy
@@ -74,6 +77,7 @@ class SelectedOriginProbeBinding:
 @dataclass(frozen=True, slots=True)
 class SelectedOriginProbeListener:
     """Root-catalog identity for the systemd-created private listening socket."""
+    path: str | Path
     device: int
     inode: int
     owner_uid: int
@@ -81,7 +85,13 @@ class SelectedOriginProbeListener:
     gateway_generation: str
 
     def __post_init__(self) -> None:
-        if (self.device <= 0 or self.inode <= 0 or self.owner_uid < 0
+        try:
+            path = os.fspath(self.path)
+        except TypeError:
+            path = ""
+        if (not path or not os.path.isabs(path)
+                or os.path.normpath(path) != path
+                or self.device <= 0 or self.inode <= 0 or self.owner_uid < 0
                 or not re.fullmatch(r"[A-Za-z0-9_.:@/-]{1,128}", self.gateway_profile_id)
                 or not re.fullmatch(r"[A-Za-z0-9_.:@/-]{1,128}", self.gateway_generation)):
             raise ValueError("selected origin-probe listener identity is malformed")
@@ -111,6 +121,7 @@ class OriginProbeObservation:
                 or not isinstance(self.native_window_observation_id, str)
                 or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", self.native_window_observation_id)):
             raise PrivateOriginProbeDenied("protected origin probe observations are incomplete")
+        object.__setattr__(self, "assertions", MappingProxyType(dict(self.assertions)))
 
 
 class PrivateOriginProbeExecutor:
@@ -123,6 +134,17 @@ class PrivateOriginProbeExecutor:
     async def run_selected_probe(self, binding: SelectedOriginProbeBinding,
                                  request: Mapping[str, Any]) -> OriginProbeObservation:
         raise NotImplementedError
+
+
+@dataclass(slots=True)
+class PrivateOriginProbeControl:
+    """Root-assembled private probe dependencies for one selected gateway."""
+    listener: socket.socket = field(repr=False)
+    binding: SelectedOriginProbeBinding
+    listener_identity: SelectedOriginProbeListener
+    peer_authorizer: Callable[[int, int, int, int, SelectedOriginProbeBinding], bool] = field(repr=False)
+    executor: PrivateOriginProbeExecutor = field(repr=False)
+    server: asyncio.AbstractServer | None = field(default=None, init=False, repr=False)
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -205,10 +227,15 @@ async def create_private_origin_probe_server(
             or not 1 <= operation_timeout <= 25):
         raise ValueError("root-selected private origin probe socket and adapters are required")
     try:
-        socket_stat = os.fstat(listener.fileno())
+        expected_path = os.fspath(listener_identity.path)
+        bound_path = listener.getsockname()
+        socket_stat = os.lstat(expected_path)
     except OSError:
         raise ValueError("root-selected origin probe socket identity is unavailable") from None
-    if (socket_stat.st_dev != listener_identity.device
+    if (bound_path != expected_path or stat.S_ISLNK(socket_stat.st_mode)
+            or not stat.S_ISSOCK(socket_stat.st_mode)
+            or stat.S_IMODE(socket_stat.st_mode) & 0o077
+            or socket_stat.st_dev != listener_identity.device
             or socket_stat.st_ino != listener_identity.inode
             or socket_stat.st_uid != listener_identity.owner_uid):
         raise ValueError("private origin probe socket differs from the root-selected identity")
@@ -236,7 +263,8 @@ async def create_private_origin_probe_server(
                 raise PrivateOriginProbeDenied("private probe handle was replayed or capacity is exhausted")
             used_handles.add(handle)
             observation = await asyncio.wait_for(
-                executor.run_selected_probe(selected, request), timeout=min(operation_timeout, 25.0))
+                executor.run_selected_probe(selected, MappingProxyType(dict(request))),
+                timeout=min(operation_timeout, 25.0))
             if not isinstance(observation, OriginProbeObservation):
                 raise PrivateOriginProbeDenied("protected Xpra/app probe did not return typed observations")
             response = {
@@ -312,6 +340,7 @@ class GatewayRuntime:
     policy: RemotePolicy
     root_sessions: RootRemoteSessionClient | None = None
     connector_factory: Callable[[Any], Any] | None = field(default=None, repr=False)
+    private_origin_probe: PrivateOriginProbeControl | None = field(default=None, repr=False)
     monotonic: Callable[[], float] = time.monotonic
     max_lease_seconds: int = 60
     max_active_sockets: int = 1
@@ -324,6 +353,9 @@ class GatewayRuntime:
             raise ValueError("remote session lease/watchdog/concurrency exceeds its reviewed bound")
         if self.policy.hostname != (self.root_sessions.hostname if self.root_sessions else self.policy.hostname):
             raise ValueError("gateway and root enrollment hostname differ")
+        if (self.private_origin_probe is not None
+                and not isinstance(self.private_origin_probe, PrivateOriginProbeControl)):
+            raise ValueError("private origin probe must be assembled from a typed root-selected control")
 
     def validate_request_origin(self, request, *, require_origin: bool = False) -> str:
         host = request.headers.get("Host", "").casefold()
@@ -382,6 +414,25 @@ def create_app(runtime: GatewayRuntime):
     from aiohttp import web, WSMsgType
 
     app = web.Application(client_max_size=2048)
+
+    async def start_private_origin_probe(application):
+        control = runtime.private_origin_probe
+        if control is not None:
+            control.server = await create_private_origin_probe_server(
+                control.listener, control.binding, listener_identity=control.listener_identity,
+                peer_authorizer=control.peer_authorizer, executor=control.executor,
+                monotonic=runtime.monotonic)
+            application["private_origin_probe_server"] = control.server
+
+    async def stop_private_origin_probe(application):
+        server = application.get("private_origin_probe_server")
+        if server is not None:
+            server.close()
+            await server.wait_closed()
+            runtime.private_origin_probe.server = None
+
+    app.on_startup.append(start_private_origin_probe)
+    app.on_cleanup.append(stop_private_origin_probe)
 
     @web.middleware
     async def auth_errors(request, handler):
