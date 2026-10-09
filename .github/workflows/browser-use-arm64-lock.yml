@@ -137,6 +137,8 @@ jobs:
           }
           (directory / "provenance.json").write_text(json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8")
           PY
+          cat "$output_dir/provenance.json"
+          cat "$output_dir/provenance.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # upload-artifact v4
         with:
           name: browser-use-aarch64-python314-lock
