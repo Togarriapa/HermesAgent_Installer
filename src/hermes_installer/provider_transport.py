@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from .credentials import CredentialError, resolve_secret
 from .network import BoundedNetwork, NetworkError
 from .policy import PolicyDenied, ProviderResponse, Route, normalize_chat_request
+from .eligibility import AccountEligibilityGate
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1"
 ALLOWED_MODELS = frozenset({"nvidia/nemotron-3-ultra-550b-a55b:free"})
@@ -26,7 +27,8 @@ class OpenRouterTransport:
 
     def __init__(self, credential_ref: str, *,
                  secret_reader: Callable[[str], str] = resolve_secret,
-                 network_factory: Callable[..., BoundedNetwork] = BoundedNetwork):
+                 network_factory: Callable[..., BoundedNetwork] = BoundedNetwork,
+                 eligibility: AccountEligibilityGate | None = None):
         if not isinstance(credential_ref, str) or not credential_ref.startswith(("file://", "keyring://", "secret://")):
             raise CredentialError("Provider credential must use a private file or secure store reference")
         self._credential_ref = credential_ref
@@ -34,6 +36,7 @@ class OpenRouterTransport:
         self._api_key: str | None = None
         self._credential_lock = __import__("threading").Lock()
         self._network_factory = network_factory
+        self._eligibility = eligibility or AccountEligibilityGate(model=next(iter(ALLOWED_MODELS)))
 
     def __repr__(self) -> str:
         return "OpenRouterTransport(credential_ref=<redacted>, key=<redacted>)"
@@ -61,6 +64,8 @@ class OpenRouterTransport:
         return normalize_chat_request(payload, model, output_limit)
 
     def __call__(self, route: Route, model: str, payload: bytes, *, output_token_limit: int, timeout: float, trace_id: str, cancelled: Callable[[], bool] = lambda: False) -> ProviderResponse:
+        # Must deny before credential resolution, JSON body parsing, or network.
+        self._eligibility.require_eligible()
         if route.name != "openrouter-nemotron-free" or route.endpoint.rstrip("/") != OPENROUTER_ENDPOINT:
             raise PolicyDenied("route.endpoint", "Route is not the pinned public OpenRouter endpoint")
         if route.maximum_sensitivity.value != 0 or not route.free_only:

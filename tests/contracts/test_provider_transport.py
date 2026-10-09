@@ -9,6 +9,7 @@ from hermes_installer.network import HTTPResult
 from hermes_installer.policy import (BudgetLedger, DispatchContext, DispatchPolicy, Dispatcher,
     PolicyDenied, Route, Sensitivity, default_public_route)
 from hermes_installer.provider_transport import OPENROUTER_ENDPOINT, OpenRouterTransport
+from hermes_installer.eligibility import AccountEligibilityGate, EligibilityEvidence
 from hermes_installer.state import OwnedRoot
 
 MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -32,8 +33,40 @@ class ProviderTransportTests(unittest.TestCase):
             network=RecordingNetwork(**kwargs)
             networks.append(network)
             return network
-        transport=OpenRouterTransport("file:///secure/provider-token",secret_reader=lambda ref:"fixture-secret-r",network_factory=factory)
+        evidence = EligibilityEvidence.create(account_id="fixture", checked_at=1000, lifetime_seconds=60,
+            free_account=True, effective_plugins_disabled=True, approved_model=MODEL,
+            evidence_source="synthetic-test-only")
+        gate = AccountEligibilityGate(model=MODEL, evidence=evidence, clock=lambda: 1001)
+        transport=OpenRouterTransport("file:///secure/provider-token",secret_reader=lambda ref:"fixture-secret-r",network_factory=factory,eligibility=gate)
         return transport,networks
+
+    def test_absent_or_expired_account_policy_denies_before_secret_or_network(self):
+        resolved = []
+        network_calls = []
+        transport = OpenRouterTransport(
+            "file:///secure/provider-token",
+            secret_reader=lambda ref: resolved.append(ref) or "fixture",
+            network_factory=lambda **kwargs: network_calls.append(kwargs),
+        )
+        with self.assertRaisesRegex(PolicyDenied, "zero-charge account policy"):
+            transport(default_public_route(), MODEL, b'{"messages":[]}',
+                      output_token_limit=8, timeout=2, trace_id="trace")
+        self.assertEqual(resolved, [])
+        self.assertEqual(network_calls, [])
+
+        expired = EligibilityEvidence.create(account_id="fixture", checked_at=1000,
+            lifetime_seconds=10, free_account=True, effective_plugins_disabled=True,
+            approved_model=MODEL, evidence_source="synthetic-test-only")
+        expired_gate = AccountEligibilityGate(model=MODEL, evidence=expired, clock=lambda: 1011)
+        transport = OpenRouterTransport("file:///secure/provider-token",
+            secret_reader=lambda ref: resolved.append(ref) or "fixture",
+            network_factory=lambda **kwargs: network_calls.append(kwargs),
+            eligibility=expired_gate)
+        with self.assertRaisesRegex(PolicyDenied, "missing or expired"):
+            transport(default_public_route(), MODEL, b'{"messages":[]}',
+                      output_token_limit=8, timeout=2, trace_id="trace")
+        self.assertEqual(resolved, [])
+        self.assertEqual(network_calls, [])
 
     def test_fixed_endpoint_secret_and_response_usage(self):
         transport,networks=self.make()
@@ -86,7 +119,11 @@ class ProviderTransportTests(unittest.TestCase):
 
     def test_oversized_request_is_rejected_before_secret_resolution(self):
         resolved=[]
-        transport=OpenRouterTransport("file:///secure/provider-token",secret_reader=lambda ref:resolved.append(ref) or "fixture",network_factory=lambda **kwargs:None)
+        evidence = EligibilityEvidence.create(account_id="fixture", checked_at=1000, lifetime_seconds=60,
+            free_account=True, effective_plugins_disabled=True, approved_model=MODEL,
+            evidence_source="synthetic-test-only")
+        gate = AccountEligibilityGate(model=MODEL, evidence=evidence, clock=lambda: 1001)
+        transport=OpenRouterTransport("file:///secure/provider-token",secret_reader=lambda ref:resolved.append(ref) or "fixture",network_factory=lambda **kwargs:None,eligibility=gate)
         route=default_public_route()
         with self.assertRaisesRegex(PolicyDenied,"byte limit"):
             transport(route,MODEL,b'{"messages":[]}' + b"x"*1_048_577,output_token_limit=8,timeout=2,trace_id="trace")
