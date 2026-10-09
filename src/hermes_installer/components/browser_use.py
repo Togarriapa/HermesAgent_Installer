@@ -17,6 +17,7 @@ from hermes_installer.components.application_handlers import (
     RuntimeProfileError,
     _absolute_path,
 )
+from hermes_installer.components.locked_runtime import load_browser_use_lock_bundle
 
 
 _FIXTURE = re.compile(r"^http://127\.0\.0\.1:[1-9][0-9]{0,4}/[A-Za-z0-9._~/-]*$")
@@ -43,6 +44,35 @@ async def main():
 
 asyncio.run(asyncio.wait_for(main(), timeout=150))
 '''
+
+
+def build_browser_use_sync_invocation(
+    uv_executable: str,
+    runtime_root: str,
+    hermes_python: str,
+) -> ComponentInvocation:
+    """Describe a locked, per-component sync using Hermes's managed Python.
+
+    This emits no installer side effect; the caller must pass the path returned
+    by `stage_browser_use_runtime` and an authorized managed-process runner.
+    """
+    uv = _absolute_path(uv_executable, "uv executable")
+    root = _absolute_path(runtime_root, "Browser Use runtime root")
+    python = _absolute_path(hermes_python, "Hermes managed Python")
+    load_browser_use_lock_bundle()
+    return ComponentInvocation(
+        component_id="browser-use",
+        executable=uv,
+        argv=(uv, "sync", "--locked", "--no-dev", "--python", python, "--project", root),
+        cwd=root,
+        environment=(("BROWSER_USE_DISABLE_EXTENSIONS", "1"),),
+        credential_references=(),
+        capability_scopes=("component.browser-use.install", "network:python-packages"),
+        sensitivity="PRIVATE",
+        network="python-packages",
+        timeout_seconds=1800,
+        memory_limit_mb=3072,
+    )
 
 
 def build_browser_use_fixture_invocation(

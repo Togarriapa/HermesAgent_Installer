@@ -7,6 +7,7 @@ from hermes_installer.components.application_handlers import (
     build_graphify_code_fixture,
     review_isolated_runtime,
 )
+from hermes_installer.components.locked_runtime import load_browser_use_lock_bundle
 
 
 class ApplicationHandlerTests(unittest.TestCase):
@@ -35,22 +36,10 @@ class ApplicationHandlerTests(unittest.TestCase):
         self.assertTrue(any("ARM64" in blocker for blocker in result.blockers))
 
     def test_browser_use_requires_exact_aarch64_python314_resolution(self):
-        manifest = b'[project]\nname = "browser-use"\nversion = "0.13.11"\nrequires-python = ">=3.11,<4.0"\n'
-        lock = b'''version = 1
-requires-python = ">=3.11, <4.0"
-resolution-markers = ["sys_platform == 'linux' and platform_machine == 'aarch64' and python_version == '3.14'"]
-
-[[package]]
-name = "browser-use"
-version = "0.13.11"
-
-[[package]]
-name = "browser-use-core"
-version = "0.13.3"
-'''
+        bundle = load_browser_use_lock_bundle()
         result = review_isolated_runtime("browser-use", {
-            "pyproject.toml": manifest,
-            "uv.lock": lock,
+            "pyproject.toml": bundle.upstream_pyproject,
+            "uv.lock": bundle.uv_lock,
         })
         self.assertEqual("lockfile-integrity-reviewed; functional-probe-pending", result.evidence_state)
         self.assertFalse(result.blockers)
@@ -77,9 +66,11 @@ version = "0.13.3"
         )
         self.assertEqual("/owned/envs/graphify/bin/graphify", extract.executable)
         self.assertIn("--code-only", extract.argv)
+        self.assertIn("--no-cluster", extract.argv)
+        self.assertEqual("/owned/work/graphify-probe", extract.argv[extract.argv.index("--out") + 1])
         self.assertEqual("deny", extract.network)
         self.assertEqual("PRIVATE", extract.sensitivity)
-        self.assertIn(("GRAPHIFY_QUERY_LOG_DISABLE", "1"), extract.environment)
+        self.assertEqual((), extract.environment)
         self.assertEqual(90, extract.timeout_seconds)
         self.assertIn("--graph", query.argv)
         self.assertFalse(extract.credential_references)

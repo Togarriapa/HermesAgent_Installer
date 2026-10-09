@@ -4,6 +4,7 @@ import unittest
 from hermes_installer.components.application_handlers import RuntimeProfileError
 from hermes_installer.components.browser_use import (
     build_browser_use_fixture_invocation,
+    build_browser_use_sync_invocation,
     run_browser_use_fixture,
     verify_browser_use_fixture_result,
 )
@@ -20,6 +21,20 @@ class Supervisor:
 
 
 class BrowserUseAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def test_sync_invocation_consumes_staged_locked_runtime_with_managed_python(self):
+        spec = build_browser_use_sync_invocation(
+            "/owned/toolchain/uv", "/owned/profiles/default/components/browser-use-runtime",
+            "/opt/hermes/python3.14/bin/python",
+        )
+        self.assertEqual("python-packages", spec.network)
+        self.assertIn("--locked", spec.argv)
+        self.assertIn("--no-dev", spec.argv)
+        self.assertEqual("/opt/hermes/python3.14/bin/python", spec.argv[spec.argv.index("--python") + 1])
+        self.assertEqual("/owned/profiles/default/components/browser-use-runtime",
+                         spec.argv[spec.argv.index("--project") + 1])
+        self.assertIn(("BROWSER_USE_DISABLE_EXTENSIONS", "1"), spec.environment)
+        self.assertFalse(spec.credential_references)
+
     def test_invocation_is_loopback_scoped_private_and_has_no_credentials(self):
         spec = build_browser_use_fixture_invocation(
             "/owned/venvs/browser/bin/python", "http://127.0.0.1:8080/fixture", "/owned/work/browser"

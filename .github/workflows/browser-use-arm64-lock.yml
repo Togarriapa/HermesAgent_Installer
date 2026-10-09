@@ -37,6 +37,7 @@ jobs:
           upstream_pyproject_sha256="$(git -C "$source_dir" show "$SOURCE_REVISION:pyproject.toml" | sha256sum | cut -d' ' -f1)"
           export UPSTREAM_PYPROJECT_SHA256="$upstream_pyproject_sha256"
           printf 'UPSTREAM_PYPROJECT_SHA256=%s\n' "$upstream_pyproject_sha256" >> "$GITHUB_ENV"
+          cp pyproject.toml "$RUNNER_TEMP/browser-use-upstream-pyproject.toml"
           python "$GITHUB_WORKSPACE/scripts/apply_browser_use_uv_overlay.py" pyproject.toml
           overlay_pyproject_sha256="$(sha256sum pyproject.toml | cut -d' ' -f1)"
           export OVERLAY_PYPROJECT_SHA256="$overlay_pyproject_sha256"
@@ -116,7 +117,7 @@ jobs:
           asyncio.run(asyncio.wait_for(main(), timeout=150))
           PY
           mkdir -m 0700 -p "$output_dir"
-          cp pyproject.toml uv.lock "$output_dir/"
+          cp pyproject.toml uv.lock "$RUNNER_TEMP/browser-use-upstream-pyproject.toml" "$output_dir/"
           python - <<'PY'
           import hashlib, json, os, pathlib, platform, subprocess
           directory = pathlib.Path(os.environ["RUNNER_TEMP"]) / "browser-use-lock-evidence"

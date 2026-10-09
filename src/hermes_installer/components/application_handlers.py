@@ -91,8 +91,21 @@ def review_isolated_runtime(component_id: str, files: Mapping[str, bytes]) -> Ru
     blockers: list[str] = []
     manifests: list[tuple[str, str]] = []
     locks: list[tuple[str, str]] = []
+    runtime_files = files
+    if component_id == "browser-use":
+        from hermes_installer.components.locked_runtime import (
+            LockedRuntimeError,
+            load_browser_use_lock_bundle,
+        )
+        try:
+            bundle = load_browser_use_lock_bundle(source_pyproject=files.get("pyproject.toml"))
+            if "uv.lock" in files and files["uv.lock"] != bundle.uv_lock:
+                raise LockedRuntimeError("source tree contains a lock that differs from the packaged reviewed lock")
+            runtime_files = {**files, "uv.lock": bundle.uv_lock}
+        except LockedRuntimeError as exc:
+            blockers.append(str(exc))
     for path in profile.manifest_paths:
-        body = files.get(path)
+        body = runtime_files.get(path)
         if body is None:
             blockers.append(f"required upstream manifest is absent: {path}")
             continue
@@ -100,7 +113,7 @@ def review_isolated_runtime(component_id: str, files: Mapping[str, bytes]) -> Ru
             raise RuntimeProfileError(f"manifest is not byte content: {path}")
         manifests.append((path, hashlib.sha256(body).hexdigest()))
     for path in profile.lock_paths:
-        body = files.get(path)
+        body = runtime_files.get(path)
         if body is None:
             blockers.append(f"exact isolated dependency lock is absent: {path}")
             continue
@@ -114,12 +127,12 @@ def review_isolated_runtime(component_id: str, files: Mapping[str, bytes]) -> Ru
 
     def toml(path: str) -> dict:
         try:
-            return tomllib.loads(files[path].decode("utf-8"))
+            return tomllib.loads(runtime_files[path].decode("utf-8"))
         except (KeyError, UnicodeDecodeError, tomllib.TOMLDecodeError):
             blockers.append(f"upstream TOML file is invalid: {path}")
             return {}
 
-    if component_id == "graphify" and {"pyproject.toml", "uv.lock"}.issubset(files):
+    if component_id == "graphify" and {"pyproject.toml", "uv.lock"}.issubset(runtime_files):
         project = toml("pyproject.toml").get("project", {})
         lock = toml("uv.lock")
         package = next((p for p in lock.get("package", []) if p.get("name") == "graphifyy"), {})
@@ -129,11 +142,11 @@ def review_isolated_runtime(component_id: str, files: Mapping[str, bytes]) -> Ru
             blockers.append("uv.lock does not bind graphifyy 0.9.82")
         if lock.get("requires-python") != ">=3.10":
             blockers.append("uv.lock Python range differs from the source project range")
-    if component_id == "browser-use" and "pyproject.toml" in files:
+    if component_id == "browser-use" and "pyproject.toml" in runtime_files:
         project = toml("pyproject.toml").get("project", {})
         if project.get("requires-python") != ">=3.11,<4.0":
             blockers.append("Browser Use Python constraint differs from the reviewed pinned manifest")
-        if "uv.lock" in files:
+        if "uv.lock" in runtime_files:
             lock = toml("uv.lock")
             markers = " ".join(lock.get("resolution-markers", []))
             if "linux" not in markers or "aarch64" not in markers:
@@ -148,7 +161,7 @@ def review_isolated_runtime(component_id: str, files: Mapping[str, bytes]) -> Ru
                 blockers.append("Browser Use uv.lock does not bind the ARM64 browser core")
         else:
             blockers.append("generate and verify an isolated ARM64 dependency lock before installation")
-    if component_id == "scrapegraph-ai" and {"pyproject.toml", "uv.lock"}.issubset(files):
+    if component_id == "scrapegraph-ai" and {"pyproject.toml", "uv.lock"}.issubset(runtime_files):
         project = toml("pyproject.toml").get("project", {})
         lock = toml("uv.lock")
         if project.get("name") != "scrapegraphai" or project.get("version") != "2.3.1":
@@ -158,17 +171,17 @@ def review_isolated_runtime(component_id: str, files: Mapping[str, bytes]) -> Ru
         if not any("aarch64" in marker and "linux" in marker
                    for marker in lock.get("resolution-markers", [])):
             blockers.append("uv.lock lacks an explicit Linux aarch64 resolution marker")
-    if component_id == "omniroute" and "package.json" in files:
+    if component_id == "omniroute" and "package.json" in runtime_files:
         try:
-            package = json.loads(files["package.json"].decode("utf-8"))
+            package = json.loads(runtime_files["package.json"].decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             package = {}
             blockers.append("OmniRoute package.json is invalid")
         if package.get("engines", {}).get("node") != ">=22.22.2 <23 || >=24.0.0 <27":
             blockers.append("OmniRoute Node engine constraint differs from the reviewed pinned manifest")
-    if component_id == "hyperframes" and "packages/cli/package.json" in files:
+    if component_id == "hyperframes" and "packages/cli/package.json" in runtime_files:
         try:
-            package = json.loads(files["packages/cli/package.json"].decode("utf-8"))
+            package = json.loads(runtime_files["packages/cli/package.json"].decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             package = {}
             blockers.append("Hyperframes CLI package.json is invalid")
@@ -227,17 +240,20 @@ def build_graphify_code_fixture(
     work = _absolute_path(work_root, "work root")
     executable = runtime.rstrip("/") + "/bin/graphify"
     graph = work.rstrip("/") + "/graphify-out/graph.json"
-    common = (("GRAPHIFY_QUERY_LOG_DISABLE", "1"),)
+    # `--code-only` is the pinned CLI's local-AST/no-key mode. Direct all
+    # generated artifacts below the private work directory and skip clustering
+    # so this fixture cannot trigger semantic-labeling requests.
     return (
         ComponentInvocation(
-            "graphify", executable, ("extract", "--code-only", fixture), work,
-            common, (), ("component.graphify.read-fixture", "component.graphify.write-private-work"),
+            "graphify", executable,
+            ("extract", fixture, "--code-only", "--no-cluster", "--out", work), work,
+            (), (), ("component.graphify.read-fixture", "component.graphify.write-private-work"),
             "PRIVATE", "deny", 90, 1024,
         ),
         ComponentInvocation(
             "graphify", executable,
             ("query", "what connects the fixture entrypoint to its helper?", "--graph", graph),
-            work, common, (), ("component.graphify.read-private-work",),
+            work, (), (), ("component.graphify.read-private-work",),
             "PRIVATE", "deny", 30, 512,
         ),
     )
