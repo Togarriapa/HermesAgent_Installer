@@ -123,7 +123,8 @@ class AuthorityService:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
             raise ValueError("UID map must be an explicit protected identity mapping")
-        if set(handlers) - set(rules):
+        enrolled_operations = {(rule.operation, rule.target) for rule in rules.values()}
+        if set(handlers) - enrolled_operations:
             raise ValueError("effect handler has no protected enrollment rule")
         self._key = bytes(signing_key)
         self.key_id = key_id
@@ -400,9 +401,12 @@ class AuthorityService:
             raise AuthorityDenied("effect.unavailable", "fixed effect handler is not installed")
         self._consume(grant)
         started = self.monotonic()
+        remaining = min(timeout, grant.monotonic_expires_at - started)
+        if remaining <= 0:
+            raise AuthorityDenied("effect.expired", "fixed effect grant expired before dispatch")
         cancellation = lambda: (self.monotonic() >= grant.monotonic_expires_at or cancelled())
         response = handler(context=context, authorization=grant,
-                           payload=body, timeout=min(timeout, grant.monotonic_expires_at - started),
+                           payload=body, timeout=remaining,
                            peer_pid=peer_pid,
                            cancelled=cancellation)
         if cancellation():
@@ -412,10 +416,19 @@ class AuthorityService:
         body_bytes = response["body"]
         if not isinstance(body_bytes, bytes) or len(body_bytes) > 4 * 1024 * 1024:
             raise AuthorityDenied("effect.response", "fixed effect response exceeds its bound")
+        headers = response["headers"]
+        receipt_id = response["receipt_id"]
         if type(response["status"]) is not int or not 0 <= response["status"] <= 599:
             raise AuthorityDenied("effect.response", "fixed effect status is invalid")
+        if (not isinstance(headers, Mapping) or len(headers) > 32
+                or any(not isinstance(key, str) or not isinstance(value, str)
+                       or not key or len(key) > 128 or len(value) > 2048
+                       or any(char in key + value for char in "\r\n\x00")
+                       for key, value in headers.items())
+                or not isinstance(receipt_id, str) or not 1 <= len(receipt_id) <= 256):
+            raise AuthorityDenied("effect.response", "fixed effect response headers or receipt are invalid")
         return {"status": response["status"], "body": base64.b64encode(body_bytes).decode("ascii"),
-                "headers": dict(response["headers"]), "receipt_id": str(response["receipt_id"])}
+                "headers": dict(headers), "receipt_id": receipt_id}
 
     def _parse_effect_request(self, uid: int, payload: Any) -> tuple[EffectAuthorization, HostContext, EffectRule]:
         if not isinstance(payload, dict) or set(payload) != {"authorization", "context", "capability", "target", "recipient", "request_digest", "retry_index"}:

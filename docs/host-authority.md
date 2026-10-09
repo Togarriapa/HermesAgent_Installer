@@ -6,6 +6,8 @@ An effect grant binds the principal, profile, namespace, UID, purpose, intent, t
 
 Workers must not use direct sockets after requesting a grant. Provider requests, MCP HTTP/stdio calls, memory queue/read/write operations, and process start/read/write/stop use their fixed broker operation. The host broker recomputes the payload digest, checks the signed one-use grant, applies policy again immediately before the handler, bounds the request/response, and consumes the nonce. Disconnect and lease expiry are passed to effect handlers as cancellation. A missing service, grant, handler, target enrollment, or verified kernel feature leaves the operation unavailable.
 
+The optional Codex provider route has one exact `codex://responses` target and `openai:codex` recipient. Its root-owned handler must resolve OAuth solely from protected host custody and send only to the fixed official Responses endpoint; caller URL or token fields are rejected. The route remains unavailable without account enrollment, handler installation and policy approval.
+
 Trusted installer bootstrap uses separate `artifact.fetch` and `package.install` fixed verbs. Callers provide only pinned artifact/package IDs, versions, hashes, and size ceilings. The protected broker registry resolves the official source and staging location; there is no caller URL, package-manager command, or filesystem destination in these APIs. The actual artifact/package handlers must be root-enrolled before bootstrap can use them.
 
 ## Authentik System authority

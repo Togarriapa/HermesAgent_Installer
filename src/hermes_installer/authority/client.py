@@ -134,7 +134,8 @@ class AuthorityClient:
     def context(self, *, purpose: str, intent: str,
                 source_contexts: Sequence[HostContext] = (),
                 trace_id: str | None = None,
-                lease_seconds: float = 30.0) -> HostContext:
+                lease_seconds: float = 30.0,
+                cancelled: Callable[[], bool] | None = None) -> HostContext:
         """Ask the host to classify intent and lineage from its own policy."""
         if not isinstance(purpose, str) or not 1 <= len(purpose) <= 128:
             raise AuthorityDenied("context.invalid", "purpose is invalid")
@@ -150,7 +151,7 @@ class AuthorityClient:
             "purpose": purpose, "intent": intent, "trace_id": trace_id,
             "lease_seconds": float(lease_seconds),
             "source_contexts": [ctx.to_wire() for ctx in source_contexts],
-        })
+        }, timeout=min(self.timeout, float(lease_seconds)), cancelled=cancelled)
         return HostContext.from_wire(result)
 
     def authorize_effect(self, context: HostContext, *, capability: str,
@@ -237,9 +238,13 @@ class AuthorityClient:
         headers = result["headers"]
         if (type(result["status"]) is not int or not 0 <= result["status"] <= 599
                 or len(body) > 4 * 1024 * 1024 or not isinstance(headers, dict)
-                or any(not isinstance(k, str) or not isinstance(v, str) for k, v in headers.items())):
+                or len(headers) > 32
+                or any(not isinstance(k, str) or not isinstance(v, str)
+                       or not k or len(k) > 128 or len(v) > 2048
+                       or any(char in k + v for char in "\r\n\x00") for k, v in headers.items())
+                or not isinstance(result["receipt_id"], str) or not 1 <= len(result["receipt_id"]) <= 256):
             raise AuthorityDenied("effect.invalid", "broker effect response exceeds its bound")
-        return BrokeredEffectResponse(result["status"], body, dict(headers), str(result["receipt_id"]))
+        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"])
 
     def dispatch_provider(self, authorization: EffectAuthorization, *, target: str,
                           recipient: str, request_digest: str, payload: bytes,
@@ -247,6 +252,20 @@ class AuthorityClient:
         self._check_binding(authorization, target, recipient, request_digest)
         if canonical_digest(payload) != request_digest:
             raise AuthorityDenied("effect.binding", "provider payload digest does not match grant")
+        return self.perform_effect(authorization, operation="provider.dispatch", payload=payload,
+                                   timeout=timeout, cancelled=cancelled)
+
+    def dispatch_codex(self, authorization: EffectAuthorization, *,
+                       target: str = "codex://responses",
+                       recipient: str = "openai:codex",
+                       request_digest: str, payload: bytes, timeout: float,
+                       cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
+        """Use the host-enrolled Codex Responses credential and exact endpoint."""
+        if target != "codex://responses" or recipient != "openai:codex":
+            raise AuthorityDenied("effect.target", "Codex target and account identity are fixed")
+        if canonical_digest(payload) != request_digest:
+            raise AuthorityDenied("effect.binding", "Codex payload digest does not match request")
+        self._check_binding(authorization, target, recipient, request_digest)
         return self.perform_effect(authorization, operation="provider.dispatch", payload=payload,
                                    timeout=timeout, cancelled=cancelled)
 
