@@ -235,10 +235,10 @@ def test_confirmation_and_idempotency_are_policy_bound_and_not_optional():
 
 def test_trusted_factory_fails_closed_when_root_selected_package_binding_is_absent():
     authority = Authority()
-    with pytest.raises(PluginEffectUnavailable, match="native-package binding"):
+    with pytest.raises(PluginEffectUnavailable, match="package binding"):
         build_plugin_effects_facade(
             authority=authority, invocation_contexts=lambda **_: (),
-            identity=SimpleNamespace(kind="plugins", resource_id="web"),
+            identity=SimpleNamespace(kind="plugins", resource_id="web", content_digest="a" * 64),
             action_schemas=StaticPluginActionSchemas({}),
         )
     assert authority.calls == []
@@ -281,6 +281,19 @@ def test_trusted_factory_accepts_only_loader_package_matching_selected_manifest(
     )
     assert isinstance(facade, PluginEffectDispatcher)
     assert authority.calls == []
+
+    # The protected loader may already have performed the no-argument root
+    # package bind. In that case the component factory must consume its
+    # verified object without requiring a second binder on AuthorityClient.
+    loader_selected = SelectedNativePackage("a" * 64)
+    unbound_authority = Authority()
+    facade = build_plugin_effects_facade(
+        authority=unbound_authority, invocation_contexts=lambda **_: (object(),),
+        identity=identity, action_schemas=schema_registry,
+        selected_package=loader_selected,
+    )
+    assert isinstance(facade, PluginEffectDispatcher)
+    assert unbound_authority.calls == []
 
     with pytest.raises(PluginEffectUnavailable, match="package binding"):
         build_plugin_effects_facade(
