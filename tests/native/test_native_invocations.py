@@ -143,9 +143,17 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
 
     def _response_metadata(self, body: bytes):
         del body  # Body digest and request correlation are validated by the root take RPC.
-        return SimpleNamespace(
+        rows = self._metadata({"record": "one"})["tool_call_bindings"]
+        try:
+            from hermes_installer.authority.types import NativeResponseMetadata, NativeToolCallBinding
+        except ImportError:
+            # The source-only unit checkout may not yet include the Authority
+            # transport DTO commit. The merged integration run below exercises
+            # this branch with the actual immutable client DTO.
+            return SimpleNamespace(producer_context_handle="p" * 40, tool_call_bindings=tuple(rows))
+        return NativeResponseMetadata(
             producer_context_handle="p" * 40,
-            tool_call_bindings=tuple(self._metadata({"record": "one"})["tool_call_bindings"]),
+            tool_call_bindings=tuple(NativeToolCallBinding(**row) for row in rows),
         )
 
     def test_response_header_is_only_a_lookup_and_body_digest_binds_result(self):
