@@ -77,6 +77,9 @@ class OpenAIAuthTests(unittest.TestCase):
         self.assertNotIn("client_secret", form)
         self.assertIs(vault.accounts["host-vault://codex/default"], account)
         self.assertNotIn("access-secret", repr(account))
+        with self.assertRaisesRegex(OAuthAttemptError, "already consumed"):
+            auth.complete(attempt, callback, credential_ref="host-vault://replay")
+        self.assertEqual(len(transport.calls), 1)
 
     def test_callback_state_client_uri_and_scope_fail_before_storage(self):
         auth, transport, vault = self.make_auth()
