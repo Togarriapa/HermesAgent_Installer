@@ -39,6 +39,7 @@ def test_root_runtime_composition_requires_service_records_before_optional_hardw
         native_mcp_tool_binding_records=(), resource_controller_role_records=(),
         remote_observation_records=(), resource_backend_enrollment_records=(),
         native_schema_artifact_records=(),
+        composio_channel_enrollment_records=(), channel_delivery_binding_records=(),
     )
     with pytest.raises(EnrollmentDenied, match="service generation records"):
         build_root_runtime_bindings(
@@ -401,6 +402,41 @@ def test_native_schema_record_selection_joins_protected_package_action_and_kind(
         runtime.resolve_native_schema_record(
             "arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "result",
         )
+
+
+def test_composio_channel_selection_joins_active_resource_controller_and_observer():
+    from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+    from hermes_installer.protected_enrollment import EnrollmentDenied
+
+    row = {"id": "channel-a", "channel_resource_id": "resource-a",
+           "resource_generation": "resource-generation-a", "profile_id": "profile-a",
+           "controller_role_id": "controller-a", "source_issuer_id": "observer-a",
+           "composio_enrollment_id": "composio-a", "composio_user_id": "user-a",
+           "connected_account_id": "account-a", "auth_config_id": "auth-a",
+           "toolkit_version": "20260721_00", "trigger_artifact_id": "trigger-a",
+           "trigger_artifact_sha256": "a" * 64, "trigger_slug": "messages.received",
+           "trigger_instance_id": "instance-a", "webhook_subscription_id": "subscription-a",
+           "webhook_route_enrollment_id": "route-a", "webhook_secret_reference_id": "secret-a",
+           "allowed_user_numbers": ("+14155550123",),
+           "payload_field_bindings": {key: (key,) for key in
+                                       ("sender_number", "message_id", "message_text", "event_timestamp")},
+           "max_event_age_seconds": 120, "account_receipt_handle": "account-receipt-a",
+           "setup_receipt_handle": "setup-receipt-a"}
+    observer = SimpleNamespace(profile_id="profile-a", generation="process-generation-a")
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=None, build_catalog=None, device_catalog=None, process_manager=None,
+        effect_handlers={}, native_bridges={}, artifact_catalog=None, build_store=None,
+        service_connector=None, process_profiles={"profile-a": SimpleNamespace(generation="process-generation-a")},
+        source_observer_enrollments={"observer-a": observer},
+        composio_channel_enrollment_records=(row,),
+        resource_job_records=({"resource_id": "resource-a", "generation": "resource-generation-a",
+                               "profile_id": "profile-a"},),
+        resource_controller_role_records=({"id": "controller-a", "controller_kind": "root-channel",
+                                           "source_observer_enrollment_ids": ("observer-a",)},),
+    )
+    assert runtime.resolve_composio_channel_enrollment("channel-a", "resource-generation-a") is row
+    with pytest.raises(EnrollmentDenied, match="absent or ambiguous"):
+        runtime.resolve_composio_channel_enrollment("channel-a", "stale-resource-generation")
 
 
 def test_root_native_package_resolver_rejects_ambiguous_selected_profile_generation():
