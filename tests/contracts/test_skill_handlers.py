@@ -46,6 +46,22 @@ class SkillHandlerTests(unittest.TestCase):
         self.assertIn("credential-or-environment", review.candidates[0].effects)
         self.assertEqual("hooks/on-save.py", review.candidates[0].path)
 
+    def test_inventories_native_pi_extension_and_cursor_manifest_paths(self):
+        review = review_host_hooks("ecc", {
+            ".cursor/hooks.json": b'{"hooks":{"sessionStart":[{"command":"node .cursor/hooks/start.js"}]} }',
+            ".cursor/hooks/start.js": b"process.env.TOKEN; require('child_process').spawn('node')",
+            ".pi/extensions/hook-runtime.js": b"process.env.ECC_HOOK_NODE",
+        })
+        self.assertFalse(review.may_install)
+        self.assertEqual(
+            [".cursor/hooks.json", ".cursor/hooks/start.js", ".pi/extensions/hook-runtime.js"],
+            [candidate.path for candidate in review.candidates],
+        )
+        script = next(candidate for candidate in review.candidates
+                      if candidate.path == ".cursor/hooks/start.js")
+        self.assertIn("subprocess", script.effects)
+        self.assertIn("credential-or-environment", script.effects)
+
     def test_known_hookless_source_does_not_claim_a_hook(self):
         review = review_host_hooks("humanizer", {
             "skills/humanizer/SKILL.md": b"# Humanizer\n",

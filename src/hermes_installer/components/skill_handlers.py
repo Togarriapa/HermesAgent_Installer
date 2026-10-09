@@ -18,7 +18,7 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ /+-]{0,119}$")
 _EFFECTS = (
     ("network", re.compile(r"\b(fetch|curl|wget|requests\.|httpx\.|urllib\.|axios|https?://)", re.I)),
     ("subprocess", re.compile(r"\b(subprocess\.|os\.system|exec\(|spawn\(|child_process|shell\s*[:=])", re.I)),
-    ("filesystem-write", re.compile(r"\b(write_text|write_bytes|unlink\(|rmdir\(|mkdir\(|open\([^\n]{0,120}['\"]w)", re.I)),
+    ("filesystem-write", re.compile(r"\b(write_text|write_bytes|writeFile(?:Sync)?|appendFile(?:Sync)?|unlink(?:Sync)?\(|rmdir\(|mkdir\(|open\([^\n]{0,120}['\"]w)", re.I)),
     ("credential-or-environment", re.compile(r"\b(os\.environ|process\.env|environment|secret|token|credential)", re.I)),
     ("dynamic-code", re.compile(r"\b(eval\(|exec\(|import_module\()", re.I)),
 )
@@ -141,7 +141,7 @@ def review_host_hooks(component_id: str, files: Mapping[str, bytes]) -> HookRevi
             suffix == ".json"
             and relative.name.casefold() in {"settings.json", "plugin.json", "hooks.json"}
         )
-        hook_script = bool(parts & {"hook", "hooks"}) and suffix in _SCRIPT_SUFFIXES
+        hook_script = (bool(parts & {"hook", "hooks"}) or "hook" in relative.name.casefold()) and suffix in _SCRIPT_SUFFIXES
         if not (manifest_candidate or hook_script):
             continue
         body = files[path]
