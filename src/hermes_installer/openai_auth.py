@@ -25,6 +25,7 @@ PLAN_SCOPE = "chatgpt.tokens.use.direct"
 SCOPES = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"
 CALLBACK_PATH = "/auth/callback"
 MAX_TOKEN_LIFETIME = 86_400
+DISCOVERY_ENDPOINT = "https://auth.openai.com/.well-known/openid-configuration"
 
 
 class OAuthAttemptError(CredentialError):
@@ -40,7 +41,7 @@ class HostCredentialVault(Protocol):
 
     def save(self, reference: str, account: "ChatGPTAccount") -> None: ...
     def load(self, reference: str) -> "ChatGPTAccount": ...
-    def delete(self, reference: str) -> None: ...
+    def clear_tokens(self, reference: str) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +212,38 @@ class ChatGPTPlanAuth:
         except Exception:
             raise OAuthAttemptError("Host credential vault could not securely store the account") from None
         return account
+
+    def revoke(self, *, credential_ref: str) -> bool:
+        """Revoke through the issuer's advertised endpoint, then clear local tokens.
+
+        False means remote revocation could not be confirmed; registration
+        identity/client mapping remains available for a later sign-in.
+        """
+        try:
+            account = self.vault.load(credential_ref)
+            if account.host_id != self.host_id or not account.refresh_token:
+                raise OAuthAttemptError("Stored ChatGPT session is unavailable")
+            configuration = self.transport.get_json(DISCOVERY_ENDPOINT, timeout=10)
+            endpoint = configuration.get("revocation_endpoint") if isinstance(configuration, Mapping) else None
+            parsed = urlsplit(endpoint) if isinstance(endpoint, str) else None
+            if (parsed is None or parsed.scheme != "https" or parsed.hostname != "auth.openai.com"
+                    or parsed.path != "/api/accounts/oauth/revoke" or parsed.query or parsed.fragment):
+                raise OAuthAttemptError("OpenAI revocation endpoint is not the issuer endpoint")
+            response = self.transport.post_form(endpoint, {
+                "token": account.refresh_token, "token_type_hint": "refresh_token",
+                "client_id": account.client_id,
+            }, timeout=15)
+            confirmed = response == {} or response.get("status_code") == 200
+        except Exception:
+            confirmed = False
+        finally:
+            try:
+                self.vault.clear_tokens(credential_ref)
+            except Exception:
+                # Keep the result truthful: callers must not report local sign-out
+                # until their vault confirms token removal.
+                raise OAuthAttemptError("Host credential vault could not clear the local session") from None
+        return confirmed
 
     def refresh(self, *, credential_ref: str) -> ChatGPTAccount:
         with self._locks_guard:
