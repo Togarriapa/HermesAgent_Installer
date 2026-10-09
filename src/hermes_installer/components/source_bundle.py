@@ -61,6 +61,7 @@ class VerifiedComponentSource:
     file_modes: Mapping[str, int]
     archive_sha256: str
     content_sha256: str
+    source_tree_sha: str
     license: str | None
     license_files: tuple[str, ...]
     redistribution_license_review_required: bool
@@ -123,24 +124,57 @@ class GitHubComponentSourceFetcher:
         if contract.unresolved_reason():
             raise ComponentSourceError(contract.unresolved_reason())
         identity, revision = self._identity(contract)
-        url = f"https://api.github.com/repos/{identity}/tarball/{revision}"
+        commit_url = f"https://api.github.com/repos/{identity}/commits/{revision}"
+        try:
+            commit_response = self.transport.get(
+                commit_url, max_bytes=1024 * 1024, timeout_seconds=self.timeout_seconds
+            )
+        except Exception as exc:
+            raise ComponentSourceError("pinned component commit lookup failed") from exc
+        commit_final = urlsplit(commit_response.url)
+        if commit_final.scheme != "https" or commit_final.hostname != "api.github.com":
+            raise ComponentSourceError("component commit lookup redirected outside api.github.com")
+        if commit_response.status != 200:
+            raise ComponentSourceError(f"pinned component commit lookup returned HTTP {commit_response.status}")
+        try:
+            commit_data = json.loads(commit_response.body)
+            html_url = urlsplit(commit_data["html_url"])
+            html_parts = html_url.path.strip("/").split("/")
+            tree_sha = commit_data["commit"]["tree"]["sha"]
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+            raise ComponentSourceError("pinned component commit response is incomplete") from None
+        if (commit_data.get("sha") != revision or html_url.hostname != "github.com"
+            or len(html_parts) != 4
+            or "/".join(html_parts[:2]).casefold() != identity.casefold()
+            or html_parts[2] != "commit" or html_parts[3] != revision
+            or not isinstance(tree_sha, str) or not re.fullmatch(r"[a-f0-9]{40}", tree_sha)):
+            raise ComponentSourceError("GitHub commit identity or tree does not match the selected pin")
+
+        archive_url = f"https://codeload.github.com/{identity}/legacy.tar.gz/{revision}"
         try:
             response = self.transport.get(
-                url, max_bytes=self.max_archive_bytes, timeout_seconds=self.timeout_seconds
+                archive_url, max_bytes=self.max_archive_bytes, timeout_seconds=self.timeout_seconds
             )
         except ComponentSourceError:
             raise
         except Exception as exc:
             raise ComponentSourceError("pinned component source download failed") from exc
         final = urlsplit(response.url)
-        if final.scheme != "https" or final.hostname not in {"api.github.com", "codeload.github.com"}:
-            raise ComponentSourceError("component archive redirected outside the approved GitHub hosts")
+        if final.scheme != "https" or final.hostname != "codeload.github.com":
+            raise ComponentSourceError("component archive redirected outside codeload.github.com")
         if response.status != 200:
-            raise ComponentSourceError(f"pinned component source returned HTTP {response.status}")
+            raise ComponentSourceError(f"pinned component archive returned HTTP {response.status}")
         if not response.body or len(response.body) > self.max_archive_bytes:
             raise ComponentSourceError("component archive is empty or exceeds the compressed size limit")
 
         files, modes = self._unpack(response.body, identity, revision)
+        try:
+            from hermes_installer.registry.source import _git_tree
+            computed_tree, _ = _git_tree(files, modes)
+        except Exception as exc:
+            raise ComponentSourceError("component source tree could not be verified") from exc
+        if computed_tree != tree_sha:
+            raise ComponentSourceError("component archive contents differ from the pinned Git tree")
         if not files:
             raise ComponentSourceError("refusing an empty component source tree")
         audit = audit_skill_file_map(files)
@@ -170,6 +204,7 @@ class GitHubComponentSourceFetcher:
             "source_selection": contract.source_selection,
             "source_archive_sha256": archive_digest,
             "source_content_sha256": content_digest.hexdigest(),
+            "source_tree_sha": tree_sha,
             "declared_license": contract.license,
             "license_files": license_files,
             "redistribution_license_review_required": contract.redistribution_license_review_required,
@@ -189,6 +224,7 @@ class GitHubComponentSourceFetcher:
             file_modes=modes,
             archive_sha256=archive_digest,
             content_sha256=content_digest.hexdigest(),
+            source_tree_sha=tree_sha,
             license=contract.license,
             license_files=license_files,
             redistribution_license_review_required=contract.redistribution_license_review_required,
