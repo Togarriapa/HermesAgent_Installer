@@ -200,6 +200,23 @@ def stage_ecc_skills_for_profile(
     modes = {name: source.file_modes.get(name, 0o644) for name in filtered_files}
     modes[selection_path] = 0o644
     staged = store.stage(generation_id, filtered_files, file_modes=modes).resolve(strict=True)
+    try:
+        verified_root, manifest, _generation_digest = store._verify(generation_id)
+        expected_files = {
+            name: {
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "mode": store._private_mode(modes[name]),
+            }
+            for name, body in filtered_files.items()
+        }
+        if (verified_root.resolve(strict=True) != staged or staged.is_symlink()
+                or not staged.is_relative_to(store.root.resolve(strict=True))
+                or manifest.get("files") != expected_files):
+            raise SkillAdapterError("staged ECC profile generation failed ownership or content verification")
+    except SkillAdapterError:
+        raise
+    except Exception as exc:
+        raise SkillAdapterError("staged ECC profile generation failed ownership or content verification") from exc
     actual = {
         path.relative_to(staged).as_posix(): path.read_bytes()
         for path in staged.rglob("*") if path.is_file()
