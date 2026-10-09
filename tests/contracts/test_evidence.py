@@ -2,7 +2,7 @@
 
 import unittest
 
-from hermes_installer.evidence import EvidenceRecord, acceptance_report, write_report
+from hermes_installer.evidence import EvidenceRecord, acceptance_report, load_acceptance_catalog, write_report
 
 
 SHA = "a" * 40
@@ -55,7 +55,7 @@ class EvidenceContractTests(unittest.TestCase):
 
     def test_skip_and_config_only_cannot_be_pass_evidence(self):
         configured = record(evidence_class="configuration")
-        skipped = record(state="skipped", exit_code=None, assertions={}, artifact_sha256=None, blocker="hardware lane not enrolled")
+        skipped = record(evidence_id="EV-R0170", state="skipped", exit_code=None, assertions={}, artifact_sha256=None, blocker="hardware lane not enrolled")
         report = acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[configured, skipped])
         self.assertEqual(report["acceptance"][0]["state"], "pending")
         self.assertEqual(report["acceptance"][0]["target_state"], "pending")
@@ -70,12 +70,38 @@ class EvidenceContractTests(unittest.TestCase):
         from tempfile import TemporaryDirectory
         from pathlib import Path
         with TemporaryDirectory() as directory:
-            report = {"summary": "Authorization Bearer abcdefghijklmnop token=canary-secret", "api_token": "canary-secret"}
+            blocked = record(state="blocked", exit_code=None, assertions={}, artifact_sha256=None, blocker="token=canary-secret")
+            report = acceptance_report(candidate_sha=SHA, traceability=criterion_catalog(), records=[blocked])
             digest = write_report(str(Path(directory) / "evidence.json"), report)
             saved = (Path(directory) / "evidence.json").read_text()
             self.assertNotIn("canary-secret", saved)
             self.assertIn("[REDACTED]", saved)
             self.assertEqual(len(digest), 64)
+            with self.assertRaisesRegex(ValueError, "public evidence schema"):
+                write_report(str(Path(directory) / "bad.json"), {**report, "api_token": "canary-secret"})
+
+    def test_amendment_loader_builds_acceptance_16_to_18_from_task_graph(self):
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            traceability = criterion_catalog()
+            traceability["additional_acceptance"] = [row for row in traceability["additional_acceptance"] if row["id"] < "AC16"]
+            (root / "traceability.json").write_text(json.dumps(traceability))
+            manifests = {
+                "resources-bundle-amendment.json": {"requirements": [{"id": "RB01"}], "tasks": [{"id": "RB-T01", "requirement": "RB01", "evidence": "EV-RB01"}], "acceptance": [{"id": "AC16", "requirements": ["RB01"], "tasks": ["RB-T01"], "method": "offline native source bundle"}]},
+                "remote-policy-read-amendment.json": {"requirements": [{"id": "RP01", "evidence_id": "EV-RP01"}], "tasks": [{"id": "RP-T01", "requirement": "RP01"}], "acceptance": [{"id": "AC17", "requirements": ["RP01"], "method": "fresh account policy and revocation"}]},
+                "host-principal-custody-amendment.json": {"requirements": [{"id": "HI01", "evidence_id": "EV-HI01"}], "tasks": [{"id": "HI-T01", "requirement_ids": ["HI01"]}], "acceptance": [{"id": "AC18", "requirement_ids": ["HI01"], "method": "native host custody"}]},
+            }
+            for name, value in manifests.items():
+                (root / name).write_text(json.dumps(value))
+            catalog = load_acceptance_catalog(root)
+            additions = {row["id"]: row for row in catalog["additional_acceptance"] if row["id"] in {"AC16", "AC17", "AC18"}}
+            self.assertEqual(set(additions), {"AC16", "AC17", "AC18"})
+            self.assertEqual(additions["AC16"]["evidence_ids"], ["EV-RB01"])
+            self.assertEqual(additions["AC17"]["task_ids"], ["RP-T01"])
+            self.assertEqual(additions["AC18"]["evidence_ids"], ["EV-HI01"])
 
 
 if __name__ == "__main__":

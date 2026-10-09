@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 from typing import Any, Iterable, Mapping
+from pathlib import Path
 
 
 class EvidenceState(StrEnum):
@@ -93,6 +94,65 @@ class EvidenceRecord:
             raise ValueError("physical Pi and account evidence require an enrolled target identity")
 
 
+def load_acceptance_catalog(planning_dir: str | Path) -> dict[str, Any]:
+    """Load the baseline catalog and Sol-owned append-only acceptance amendments."""
+    root = Path(planning_dir)
+    baseline = json.loads((root / "traceability.json").read_text(encoding="utf-8"))
+    additions = []
+    amendment_files = (
+        "resources-bundle-amendment.json",
+        "remote-policy-read-amendment.json",
+        "host-principal-custody-amendment.json",
+    )
+    for filename in amendment_files:
+        path = root / filename
+        if not path.exists():
+            continue
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        requirements = {str(row["id"]): row for row in manifest.get("requirements", ()) if isinstance(row, Mapping) and row.get("id")}
+        tasks = [row for row in manifest.get("tasks", ()) if isinstance(row, Mapping)]
+        for item in manifest.get("acceptance", ()):
+            if not isinstance(item, Mapping) or not item.get("id"):
+                raise ValueError(f"invalid acceptance entry in {filename}")
+            requirement_ids = list(item.get("requirement_ids", item.get("requirements", ())))
+            if not requirement_ids:
+                raise ValueError(f"acceptance {item['id']} has no linked requirements")
+            task_ids = list(item.get("tasks", item.get("task_ids", ())))
+            if not task_ids:
+                wanted_requirements = set(requirement_ids)
+                task_ids = [str(row["id"]) for row in tasks if wanted_requirements.intersection(row.get("requirement_ids", ())) or row.get("requirement") in wanted_requirements]
+            evidence_ids = set()
+            for requirement_id in requirement_ids:
+                requirement = requirements.get(str(requirement_id), {})
+                evidence_id = requirement.get("evidence_id")
+                if isinstance(evidence_id, str) and evidence_id.startswith("EV-"):
+                    evidence_ids.add(evidence_id)
+            for task in tasks:
+                if task.get("id") not in task_ids:
+                    continue
+                for key in ("evidence", "evidence_id"):
+                    evidence_id = task.get(key)
+                    if isinstance(evidence_id, str) and evidence_id.startswith("EV-"):
+                        evidence_ids.add(evidence_id)
+            if not evidence_ids:
+                raise ValueError(f"acceptance {item['id']} has no linked evidence IDs")
+            additions.append({
+                "id": str(item["id"]),
+                "text": str(item.get("method", item.get("text", ""))),
+                "requirement_ids": requirement_ids,
+                "task_ids": task_ids,
+                "evidence_ids": sorted(evidence_ids),
+                "workflow": f"hermes-installer verify --acceptance {item['id']} --target <authorized-target.json> --output <evidence-dir>",
+            })
+    combined = dict(baseline)
+    combined["acceptance"] = list(baseline.get("acceptance", ()))
+    combined["additional_acceptance"] = list(baseline.get("additional_acceptance", ())) + additions
+    ids = [str(item.get("id")) for item in combined["acceptance"] + combined["additional_acceptance"]]
+    if len(ids) != len(set(ids)):
+        raise ValueError("acceptance catalog contains duplicate IDs")
+    return combined
+
+
 def acceptance_report(
     *, candidate_sha: str, traceability: Mapping[str, Any],
     records: Iterable[EvidenceRecord], required_acceptance_ids: Iterable[str] | None = None,
@@ -103,11 +163,6 @@ def acceptance_report(
     criteria = list(traceability.get("acceptance", ())) + list(traceability.get("additional_acceptance", ()))
     by_id = {str(item["id"]): item for item in criteria}
     required = set(required_acceptance_ids or (f"AC{i:02d}" for i in range(1, 19)))
-    supplemental_evidence = {
-        "AC16": {f"EV-RB0{i}" for i in range(1, 6)},
-        "AC17": {f"EV-RP0{i}" for i in range(1, 7)},
-        "AC18": {f"EV-HI0{i}" for i in range(1, 7)},
-    }
     if not required.issubset(by_id):
         raise ValueError(f"acceptance catalog is incomplete: {', '.join(sorted(required - by_id.keys()))}")
     accepted_records: dict[str, EvidenceRecord] = {}
@@ -122,7 +177,7 @@ def acceptance_report(
     workflows = []
     for acceptance_id in sorted(required):
         criterion = by_id[acceptance_id]
-        wanted = set(criterion.get("evidence_ids", ())) | supplemental_evidence.get(acceptance_id, set())
+        wanted = set(criterion.get("evidence_ids", ()))
         related = [row for row in accepted_records.values() if row.evidence_id in wanted]
         functional = [row for row in related if row.evidence_class in {EvidenceClass.FIXTURE, EvidenceClass.NATIVE_ARM64, EvidenceClass.PHYSICAL_PI, EvidenceClass.ACCOUNT} and row.state == EvidenceState.PASS]
         target = [row for row in functional if row.evidence_class in {EvidenceClass.PHYSICAL_PI, EvidenceClass.ACCOUNT}]
@@ -162,9 +217,17 @@ def acceptance_report(
 
 def write_report(path: str, report: Mapping[str, Any]) -> str:
     """Write only the allow-listed report model and return its content digest."""
+    top_keys = {"schema_version", "candidate_sha", "generated_at", "state", "full_acceptance", "acceptance", "evidence"}
+    if set(report) != top_keys:
+        raise ValueError("report does not match the public evidence schema")
+    acceptance_keys = {"acceptance_id", "description", "state", "requirement_ids", "task_ids", "evidence_ids", "observed_evidence_ids", "fixture_state", "native_arm64_state", "target_state", "blocker", "resume_command"}
+    record_keys = {"evidence_id", "candidate_sha", "evidence_class", "state", "platform", "target_id", "started_at", "finished_at", "command", "exit_code", "assertions", "artifact_sha256", "blocker", "resume_command"}
+    if any(set(row) != acceptance_keys for row in report.get("acceptance", ())):
+        raise ValueError("acceptance row does not match the public evidence schema")
+    if any(set(row) != record_keys for row in report.get("evidence", ())):
+        raise ValueError("evidence row does not match the public evidence schema")
     payload = json.dumps(_redact_secrets(dict(report)), sort_keys=True, indent=2).encode()
     digest = hashlib.sha256(payload).hexdigest()
-    from pathlib import Path
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(payload + b"\n")
