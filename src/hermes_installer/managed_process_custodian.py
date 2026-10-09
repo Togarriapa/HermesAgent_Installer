@@ -2914,7 +2914,7 @@ class ManagedBuildJobRunner:
             # effect point, after mounts and unit properties are prepared.
             self._verify_inputs(inputs)
             command = [str(manager.systemd_run), "--system", "--unit=" + unit,
-                "--service-type=exec", "--wait", "--collect", "--pipe",
+                "--service-type=exec", "--wait", "--pipe",
                 "--working-directory=" + mount_targets["work"], *properties, *env_args, *argv]
             require_active()
             if manager.monotonic() >= authorization.monotonic_expires_at:
@@ -3028,17 +3028,14 @@ class ManagedBuildJobRunner:
                 diagnostic_bytes = [bytes(log)]
                 if exit_code == 226:
                     try:
-                        journal = subprocess.run(["/usr/bin/journalctl", "--no-pager", "-n", "200",
-                            "-o", "cat", "--since=-30s"], stdin=subprocess.DEVNULL,
+                        journal = subprocess.run([str(manager.systemctl), "--system", "status",
+                            "--no-pager", "--full", unit], stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
-                            timeout=.75, check=False)
+                            timeout=1.0, check=False)
                         if journal.returncode == 0 and len(journal.stdout) <= 16384:
-                            unit_lines = [line for line in journal.stdout.splitlines() if job_id.encode() in line]
-                            if unit_lines:
-                                selected = b"\n".join(unit_lines)
-                                diagnostic_bytes.append(selected)
-                                diagnostic_sources.append(selected.decode("utf-8", "replace").casefold())
+                            diagnostic_bytes.append(journal.stdout)
+                            diagnostic_sources.append(journal.stdout.decode("utf-8", "replace").casefold())
                     except (OSError, subprocess.TimeoutExpired):
                         pass
                 for needle, category in (
@@ -3129,6 +3126,17 @@ class ManagedBuildJobRunner:
                     raise AuthorityDenied("build.mount_cleanup", "private build input mount could not be removed") from exc
             if job_root.exists():
                 shutil.rmtree(job_root)
+            # The unique transient unit is not auto-collected, so status can
+            # be inspected on failure. Remove its manager record after process
+            # and mount cleanup on every path.
+            subprocess.run([str(manager.systemctl), "--system", "stop", unit],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=1.0, check=False)
+            subprocess.run([str(manager.systemctl), "--system", "reset-failed", unit],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=1.0, check=False)
 
     def _capture_build_identity(self, unit: str, cgroup: str, inputs: Any,
                                 profile: ManagedProfileCustody) -> Mapping[str, Any] | None:
