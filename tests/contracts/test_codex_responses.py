@@ -47,7 +47,7 @@ class FakeAuthority:
             raise RuntimeError("fake broker failure")
         self.calls.append((grant, target, recipient, request_digest, payload, timeout, cancelled))
         return SimpleNamespace(status=200,
-            body=b'event: response.completed\\ndata: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":9,"output_tokens":4}}}\\n\\n',
+            body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":9,"output_tokens":4}}}\n\n',
             headers={"Content-Type": "text/event-stream", "Retry-After": "2", "Set-Cookie": "secret"})
 
 
@@ -166,19 +166,19 @@ class CodexResponsesTests(unittest.TestCase):
     def test_sse_requires_successful_bounded_terminal_completion(self):
         from hermes_installer.codex_responses import validate_responses_sse
 
-        good=b'event: response.output_text.delta\\ndata: {"type":"response.output_text.delta","delta":"partial"}\\n\\n'
+        good=b'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"partial"}\n\n'
         with self.assertRaisesRegex(PolicyDenied, "before response.completed"):
             validate_responses_sse(good, "text/event-stream")
-        bad=b'event: response.incomplete\\ndata: {"type":"response.incomplete","response":{}}\\n\\n'
+        bad=b'event: response.incomplete\ndata: {"type":"response.incomplete","response":{}}\n\n'
         with self.assertRaisesRegex(PolicyDenied, "incomplete"):
             validate_responses_sse(bad, "text/event-stream")
-        failure=b'event: response.failed\\ndata: {"type":"response.failed","error":{"code":"subscription_sharing_usage_limit_exceeded"}}\\n\\n'
+        failure=b'event: response.failed\ndata: {"type":"response.failed","error":{"code":"subscription_sharing_usage_limit_exceeded"}}\n\n'
         with self.assertRaisesRegex(PolicyDenied, "did not complete"):
             validate_responses_sse(failure, "text/event-stream")
-        unterminated=b'event: response.completed\\ndata: {"type":"response.completed","response":{}}'
+        unterminated=b'event: response.completed\ndata: {"type":"response.completed","response":{}}'
         with self.assertRaisesRegex(PolicyDenied, "before response.completed"):
             validate_responses_sse(unterminated, "text/event-stream")
-        complete=b'event: response.completed\\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":7,"output_tokens":3}}}\\n\\n'
+        complete=b'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":7,"output_tokens":3}}}\n\n'
         self.assertEqual(validate_responses_sse(complete, "text/event-stream"), (7, 3))
 
     def test_function_tool_output_requires_tool_capability(self):

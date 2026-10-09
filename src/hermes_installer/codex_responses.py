@@ -157,15 +157,15 @@ def validate_responses_sse(body: bytes, content_type: str) -> tuple[int, int]:
     if (not isinstance(body, bytes) or not 1 <= len(body) <= MAX_RESPONSE_BYTES
             or content_type != "text/event-stream"):
         raise PolicyDenied("response.stream_bounds", "Codex response is not a bounded SSE stream")
-    normalized = body.replace(b"\\r\\n", b"\\n")
-    if b"\\r" in normalized:
+    normalized = body.replace(b"\r\n", b"\n")
+    if b"\r" in normalized:
         raise PolicyDenied("response.stream_format", "Codex event stream uses invalid line endings")
     # SSE dispatches an event only when a blank line terminates it. Never accept
     # an unterminated final frame, even if it contains response.completed text.
-    if not normalized.endswith(b"\\n\\n"):
-        frames = normalized.split(b"\\n\\n")[:-1]
+    if not normalized.endswith(b"\n\n"):
+        frames = normalized.split(b"\n\n")[:-1]
     else:
-        frames = normalized[:-2].split(b"\\n\\n")
+        frames = normalized[:-2].split(b"\n\n")
     if len(frames) > MAX_SSE_EVENTS:
         raise PolicyDenied("response.stream_bounds", "Codex event stream exceeds its event limit")
     completed = False
@@ -177,7 +177,7 @@ def validate_responses_sse(body: bytes, content_type: str) -> tuple[int, int]:
             raise PolicyDenied("response.stream_bounds", "Codex event exceeds its frame limit")
         event_name = ""
         data_lines: list[bytes] = []
-        for line in frame.split(b"\\n"):
+        for line in frame.split(b"\n"):
             if line.startswith(b":"):
                 continue
             field, separator, value = line.partition(b":")
@@ -194,7 +194,7 @@ def validate_responses_sse(body: bytes, content_type: str) -> tuple[int, int]:
                 data_lines.append(value)
         if not data_lines:
             continue
-        raw_data = b"\\n".join(data_lines)
+        raw_data = b"\n".join(data_lines)
         if len(raw_data) > MAX_SSE_EVENT_BYTES:
             raise PolicyDenied("response.stream_bounds", "Codex event data exceeds its frame limit")
         try:
