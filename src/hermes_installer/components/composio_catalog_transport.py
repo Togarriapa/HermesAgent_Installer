@@ -14,7 +14,7 @@ import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 from urllib.parse import urlencode
 
 from hermes_installer.network import BoundedNetwork
@@ -108,17 +108,6 @@ class _BoundedComposioNetwork:
             socket_timeout=min(10.0, deadline),
             max_response_bytes=min(MAX_RESPONSE_BYTES, max_response_bytes))
         return network.request(url, method=method, headers=headers, body=body)
-
-
-def _canonical_json(value: object, *, maximum: int) -> bytes:
-    try:
-        body = json.dumps(value, sort_keys=True, separators=(",", ":"),
-                          ensure_ascii=False, allow_nan=False).encode("utf-8")
-    except (TypeError, ValueError, RecursionError):
-        raise ComposioCatalogTransportDenied("catalog query is not finite JSON") from None
-    if len(body) > maximum:
-        raise ComposioCatalogTransportDenied("catalog query exceeds its bound")
-    return body
 
 
 def _query_string(query: Mapping[str, Any]) -> str:
