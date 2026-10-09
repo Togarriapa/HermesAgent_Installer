@@ -303,3 +303,10 @@ The implementation SHALL enforce v43 exact first-publication predecessor and adm
 #### Scenario: Admission exists before process launch
 - **WHEN** no actual managed producer and loader proof exists
 - **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge
+
+### Requirement: Exact native registration and retained source joins
+The implementation SHALL apply the v44 source snapshot and native registration distinctions without repeated one-use resolution.
+
+#### Scenario: Root source was already consumed for launch
+- **WHEN** binding the actual running task to native observation registry
+- **THEN** the same verified source snapshot is passed internally and revalidated, without resolving or reusing parent authorization again
