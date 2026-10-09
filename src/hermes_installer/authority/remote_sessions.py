@@ -8,6 +8,8 @@ targets, generations, and lease values are never accepted here.
 from __future__ import annotations
 
 import base64
+import asyncio
+import concurrent.futures
 import hashlib
 import math
 import re
@@ -21,7 +23,6 @@ from urllib.parse import urlsplit
 
 from ..remote.gateway import GatewayDenied, Principal, RemotePolicy, validate_access_jwt
 from ..remote.jwks import JWKSCache
-from ..remote.policy import FreshAccessPolicyAuthority
 from ..remote.client_assets import canonical_asset
 from .types import AuthorityDenied, canonical_bytes, canonical_digest
 
@@ -33,6 +34,7 @@ MAX_CHALLENGE_SECONDS = 30.0
 MAX_FRAME_BYTES = 1024 * 1024
 MAX_ASSET_BYTES = 2 * 1024 * 1024
 MAX_CONNECTOR_CALL_SECONDS = 5.0
+MAX_POLICY_VERIFY_SECONDS = 9.0
 _OPAQUE = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.:@/-]{1,128}\Z")
 _EMAIL = re.compile(r"[^@\s]{1,64}@[^@\s.]+(?:\.[^@\s.]+)+\Z")
@@ -231,7 +233,6 @@ class RemoteSessionEnrollment:
     jwt_algorithm_allowlist: tuple[str, ...]
     allowed_email_reference_id: str
     policy_verifier_enrollment_id: str
-    profile_id: str
     gateway_profile_id: str
     gateway_role_artifact_id: str
     gateway_role_sha256: str
@@ -245,6 +246,9 @@ class RemoteSessionEnrollment:
     policy_revision: str
     policy_config_digest: str
     principal_bindings_by_subject: Mapping[str, RemotePrincipalBinding] = field(repr=False)
+    # Optional migration constraint only; active user profile always comes from
+    # the verified subject mapping, which may contain multiple root profiles.
+    profile_id: str | None = None
     maximum_lease_seconds: float = MAX_LEASE_SECONDS
     watchdog_interval_seconds: float = MAX_WATCHDOG_SECONDS
 
@@ -253,7 +257,7 @@ class RemoteSessionEnrollment:
         origin = urlsplit(self.expected_origin) if isinstance(self.expected_origin, str) else None
         issuer = urlsplit(self.jwt_issuer) if isinstance(self.jwt_issuer, str) else None
         if (not _ID.fullmatch(self.enrollment_id)
-                or not _ID.fullmatch(self.profile_id)
+                or self.profile_id is not None and not _ID.fullmatch(self.profile_id)
                 or not _ID.fullmatch(self.gateway_profile_id)
                 or not _ID.fullmatch(self.gateway_role_artifact_id)
                 or not _DIGEST.fullmatch(self.gateway_role_sha256)
@@ -292,7 +296,7 @@ class RemoteSessionEnrollment:
                 or not self.principal_bindings_by_subject):
             raise ValueError("remote session enrollment is invalid or exceeds lease bounds")
         bindings = dict(self.principal_bindings_by_subject)
-        if any(key != binding.subject or binding.profile_id != self.profile_id
+        if any(key != binding.subject or self.profile_id is not None and binding.profile_id != self.profile_id
                for key, binding in bindings.items()):
             raise ValueError("subject-to-profile mapping differs from protected enrollment")
         identities = [(b.subject, b.email) for b in bindings.values()]
@@ -361,6 +365,7 @@ class RemoteRuntimeState:
     gateway_role_sha256: str
     connector_target_id: str
     principal_mapping_digest: str
+    service_generation_digest: str
     active: bool = True
 
 
@@ -371,8 +376,121 @@ class VerifiedRemoteIdentity:
     token_fingerprint: str = field(repr=False)
     jwt_expires_monotonic: float
     policy_verified_monotonic: float
+    policy_valid_until_monotonic: float
     policy_revision: str
     policy_config_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class RemotePolicyDecision:
+    """Authenticated response copied from the dedicated policy-verifier IPC."""
+
+    action: str
+    session_id: str
+    email: str = field(repr=False)
+    subject: str = field(repr=False)
+    token_fingerprint: str = field(repr=False)
+    observed_start_monotonic: float
+    observed_end_monotonic: float
+    jwt_deadline_monotonic: float
+    valid_until_monotonic: float
+    config_digest: str
+    nonce: str = field(repr=False)
+
+
+class RemotePolicyVerifierClient(Protocol):
+    """Root-side authenticated client for the secret-isolated verifier UID.
+
+    Production adapters may bridge the verifier IPC's async `authorize` call
+    onto a fixed event-loop thread. The authority process receives decisions,
+    never a vault resolver or FreshAccessPolicyAuthority.
+    """
+
+    config_digest: str
+
+    def authorize_access(self, *, action: str, session_id: str,
+                         access_jwt: bytes, expected: Principal) -> RemotePolicyDecision: ...
+
+
+class AsyncRemotePolicyVerifierAdapter:
+    """Synchronous root adapter for the authenticated async verifier IPC client.
+
+    The dedicated verifier process owns the selected Access-policy credential.
+    This adapter owns only a socket client and one persistent event-loop thread;
+    it never resolves vault references or returns verifier exception text.
+    """
+
+    def __init__(self, async_client: Any, *, config_digest: str,
+                 timeout_seconds: float = MAX_POLICY_VERIFY_SECONDS):
+        if (not callable(getattr(async_client, "authorize", None))
+                or getattr(async_client, "config_digest", None) != config_digest
+                or not _DIGEST.fullmatch(config_digest)
+                or isinstance(timeout_seconds, bool)
+                or not isinstance(timeout_seconds, (int, float))
+                or not 0 < timeout_seconds <= MAX_POLICY_VERIFY_SECONDS):
+            raise ValueError("isolated policy-verifier IPC client and exact digest are required")
+        self.async_client = async_client
+        self.config_digest = config_digest
+        self.timeout_seconds = float(timeout_seconds)
+        self._ready = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._closed = False
+        self._thread = threading.Thread(target=self._run_loop, name="remote-policy-verifier-ipc", daemon=True)
+        self._thread.start()
+        if not self._ready.wait(self.timeout_seconds):
+            self.close()
+            raise ValueError("policy-verifier event loop did not start")
+
+    def _run_loop(self) -> None:
+        loop = asyncio.new_event_loop()
+        self._loop = loop
+        asyncio.set_event_loop(loop)
+        self._ready.set()
+        try:
+            loop.run_forever()
+        finally:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.close()
+
+    def authorize_access(self, *, action: str, session_id: str,
+                         access_jwt: bytes, expected: Principal) -> RemotePolicyDecision:
+        loop = self._loop
+        if self._closed or loop is None or not isinstance(access_jwt, bytes):
+            raise GatewayDenied("isolated policy verifier is unavailable")
+        try:
+            token = access_jwt.decode("ascii", errors="strict")
+            coroutine = self.async_client.authorize(
+                action=action, session_id=session_id, access_jwt=token, expected=expected)
+            future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+            grant = future.result(timeout=self.timeout_seconds)
+            principal = grant.principal
+            if not isinstance(principal, Principal):
+                raise ValueError("verifier IPC principal is malformed")
+            return RemotePolicyDecision(
+                grant.action, grant.session_id, principal.email, principal.subject,
+                principal.token_fingerprint, grant.observed_start_monotonic,
+                grant.observed_end_monotonic, grant.jwt_deadline_monotonic,
+                grant.valid_until_monotonic, grant.config_digest, grant.nonce)
+        except concurrent.futures.TimeoutError:
+            if "future" in locals():
+                future.cancel()
+            raise GatewayDenied("isolated policy verification exceeded its deadline") from None
+        except Exception:
+            raise GatewayDenied("isolated policy verifier denied or is unavailable") from None
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        if self._thread is not threading.current_thread():
+            self._thread.join(timeout=MAX_POLICY_VERIFY_SECONDS + 1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -504,6 +622,11 @@ class RemoteConnectorBinding:
     gateway_generation: str
     native_profile_id: str
     native_generation: str
+    policy_revision: str
+    policy_config_digest: str
+    service_generation_digest: str
+    connector_handle: str | None
+    next_sequence: int
     gateway_identity: RemoteGatewayIdentity
     token_fingerprint: str = field(repr=False)
     issued_monotonic: float
@@ -513,64 +636,69 @@ class RemoteConnectorBinding:
 
 
 @dataclass(frozen=True, slots=True)
-class RemoteConnectorAuthorization:
-    """Root-minted one-use HI12 context/grant wrapper; never a wire value."""
+class InternalRemoteConnectorAuthorization:
+    """Root-only dual-principal, one-use authorization from HI13 to HI07."""
 
-    operation: str
-    target_id: str
-    request_digest: str
-    session_id: str
-    sequence: int
-    maximum_bytes: int
+    effective_principal_id: str
+    effective_native_profile_id: str
+    effective_native_generation: str
+    controller_gateway_identity_digest: str
+    controller_gateway_generation: str
+    remote_session_id: str
+    token_fingerprint: str = field(repr=False)
+    policy_revision: str
+    policy_config_digest: str
+    connector_target_id: str
     route_id: str
-    principal_id: str
-    profile_id: str
-    profile_generation: str
-    gateway_profile_id: str
-    gateway_generation: str
-    native_profile_id: str
-    native_generation: str
-    generation: str
-    deadline: float
-    lease_expires_monotonic: float
-    nonce: str
-    grant_id: str
-    host_context: Any = field(repr=False, compare=False)
-    effect_authorization: Any = field(repr=False, compare=False)
+    operation: str
+    canonical_payload_sha256: str
+    sequence: int
+    one_use_nonce: str = field(repr=False)
+    issued_monotonic: float
+    expires_monotonic: float
+    service_generation_digest: str
 
     def __post_init__(self) -> None:
-        if (self.operation not in {"connector.open", "connector.read", "connector.write", "connector.close"}
-                or not _DIGEST.fullmatch(self.request_digest)
-                or not _ID.fullmatch(self.session_id)
+        identifiers = (self.effective_principal_id, self.effective_native_profile_id,
+                       self.effective_native_generation, self.controller_gateway_generation,
+                       self.remote_session_id, self.policy_revision, self.connector_target_id,
+                       self.route_id)
+        if (any(not _ID.fullmatch(value) for value in identifiers)
+                or not _DIGEST.fullmatch(self.controller_gateway_identity_digest)
+                or not _DIGEST.fullmatch(self.token_fingerprint)
+                or not _DIGEST.fullmatch(self.policy_config_digest)
+                or not _DIGEST.fullmatch(self.canonical_payload_sha256)
+                or not _DIGEST.fullmatch(self.service_generation_digest)
+                or self.operation not in {"connector.open", "connector.read", "connector.write", "connector.close"}
+                or not _opaque(self.one_use_nonce, "connector one-use nonce")
                 or type(self.sequence) is not int or self.sequence < 0
-                or type(self.maximum_bytes) is not int or self.maximum_bytes < 0
-                or any(not _ID.fullmatch(x) for x in (
-                    self.target_id, self.route_id, self.principal_id, self.profile_id,
-                    self.profile_generation, self.gateway_profile_id, self.gateway_generation,
-                    self.native_profile_id, self.native_generation, self.generation,
-                    self.nonce, self.grant_id))
-                or not math.isfinite(self.lease_expires_monotonic)
-                or not math.isfinite(self.deadline)
-                or self.host_context is None or self.effect_authorization is None):
-            raise ValueError("root connector authorization is incomplete")
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
+                or self.expires_monotonic <= self.issued_monotonic):
+            raise ValueError("internal remote connector authorization is invalid")
 
 
 class RemoteConnectorBackend(Protocol):
     """Root service connector; implementation mints exact one-use HI12 grants."""
 
-    def open(self, binding: RemoteConnectorBinding, *, authorization: RemoteConnectorAuthorization,
+    def open(self, binding: RemoteConnectorBinding, *, authorization: InternalRemoteConnectorAuthorization,
              peer_uid: int, peer_pid: int, peer_pidfd: int) -> str: ...
     def read(self, binding: RemoteConnectorBinding, connector_handle: str,
-             sequence: int, maximum_bytes: int, *, authorization: RemoteConnectorAuthorization,
+             sequence: int, maximum_bytes: int, *, authorization: InternalRemoteConnectorAuthorization,
              peer_uid: int, peer_pid: int, peer_pidfd: int,
              cancelled: Callable[[], bool]) -> tuple[bytes, bool]: ...
     def write(self, binding: RemoteConnectorBinding, connector_handle: str,
-              sequence: int, data_bytes: bytes, *, authorization: RemoteConnectorAuthorization,
+              sequence: int, data_bytes: bytes, *, authorization: InternalRemoteConnectorAuthorization,
               peer_uid: int, peer_pid: int, peer_pidfd: int,
               cancelled: Callable[[], bool]) -> int: ...
     def close(self, binding: RemoteConnectorBinding, connector_handle: str, *,
-              authorization: RemoteConnectorAuthorization | None,
+              authorization: InternalRemoteConnectorAuthorization | None,
               cleanup: bool) -> None: ...
+
+    def consume_remote_connector_effect(self, authorization: InternalRemoteConnectorAuthorization,
+                                        binding: RemoteConnectorBinding, operation: str,
+                                        canonical_effect_payload_bytes: bytes, sequence: int, *,
+                                        peer_uid: int, peer_pid: int, peer_pidfd: int) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -656,52 +784,86 @@ class RootRemoteAccessVerifier:
     """Actual root-side JWT/JWKS verification followed by a fresh selected policy read."""
 
     def __init__(self, *, policy: RemotePolicy, jwks: JWKSCache,
-                 fresh_policy: FreshAccessPolicyAuthority, policy_revision: str,
+                 policy_verifier: RemotePolicyVerifierClient, policy_revision: str,
                  config_digest: str, verifier_enrollment_id: str,
                  monotonic: Callable[[], float] = time.monotonic,
                  wall_clock: Callable[[], float] = time.time):
-        identity = fresh_policy.identity
         if (policy.jwks is not jwks or policy.issuer != jwks.issuer
-                or policy.hostname.casefold() != identity.hostname
-                or policy.audience != identity.audience
-                or frozenset(x.casefold() for x in policy.allowed_emails) != identity.allowed_emails
+                or policy.hostname.casefold() != policy.hostname
                 or not _ID.fullmatch(policy_revision) or not _DIGEST.fullmatch(config_digest)
-                or not _ID.fullmatch(verifier_enrollment_id)):
+                or not _ID.fullmatch(verifier_enrollment_id)
+                or not isinstance(getattr(policy_verifier, "config_digest", None), str)
+                or policy_verifier.config_digest != config_digest
+                or not callable(getattr(policy_verifier, "authorize_access", None))):
             raise ValueError("root JWT, JWKS, selected policy and digest enrollment must match exactly")
         self.policy = policy
         self.jwks = jwks
-        self.fresh_policy = fresh_policy
+        self.policy_verifier = policy_verifier
         self.policy_revision = policy_revision
         self.config_digest = config_digest
         self.verifier_enrollment_id = verifier_enrollment_id
         self.monotonic = monotonic
         self.wall_clock = wall_clock
+        self._used_policy_nonces: dict[str, float] = {}
+        self._policy_nonce_lock = threading.Lock()
 
-    def verify(self, access_jwt: bytes) -> VerifiedRemoteIdentity:
+    def verify(self, access_jwt: bytes, *, session_id: str,
+               action: str) -> VerifiedRemoteIdentity:
         if not isinstance(access_jwt, bytes) or not 1 <= len(access_jwt) <= MAX_JWT_BYTES:
             raise _deny("remote.jwt", "Access token size is invalid")
+        if action not in {"issue", "renew"} or not _ID.fullmatch(session_id):
+            raise _deny("remote.verify", "root policy-verifier binding is invalid")
         try:
             token = access_jwt.decode("ascii", errors="strict")
             start_mono, start_wall = self.monotonic(), self.wall_clock()
             if not math.isfinite(start_mono) or not math.isfinite(start_wall):
                 raise ValueError("clock")
-            deadline = start_mono + FreshAccessPolicyAuthority.MAX_READ_SECONDS
+            deadline = _bounded_deadline(start_mono, MAX_POLICY_VERIFY_SECONDS)
             principal: Principal = validate_access_jwt(
                 token, policy=self.policy, now=lambda: start_wall,
                 deadline_monotonic=deadline)
             if self.monotonic() >= deadline:
                 raise GatewayDenied("Access verification deadline expired")
-            allowed = self.fresh_policy.allows(
-                principal.email, deadline_monotonic=deadline)
+            decision = self.policy_verifier.authorize_access(
+                action=action, session_id=session_id, access_jwt=access_jwt,
+                expected=principal)
             verified = self.monotonic()
-            if not allowed or verified >= deadline:
+            if (not isinstance(decision, RemotePolicyDecision)
+                    or decision.action != action or decision.session_id != session_id
+                    or decision.email != principal.email or decision.subject != principal.subject
+                    or not secrets.compare_digest(decision.token_fingerprint, principal.token_fingerprint)
+                    or decision.config_digest != self.config_digest
+                    or not _opaque(decision.nonce, "policy verifier nonce")
+                    or verified >= deadline):
                 raise GatewayDenied("fresh enrolled Access policy denied")
+            observed_start = _finite(decision.observed_start_monotonic, "policy observation start")
+            observed_end = _finite(decision.observed_end_monotonic, "policy observation end")
+            verifier_jwt_deadline = _finite(decision.jwt_deadline_monotonic, "policy JWT deadline")
+            policy_valid_until = _finite(decision.valid_until_monotonic, "policy decision expiry")
+            if (observed_start < start_mono - 0.01 or observed_start > observed_end
+                    or observed_end > verified + 0.01 or verified - observed_start > MAX_POLICY_VERIFY_SECONDS
+                    or policy_valid_until > _bounded_deadline(observed_start, MAX_LEASE_SECONDS)
+                    or policy_valid_until > verifier_jwt_deadline or policy_valid_until <= verified
+                    or verifier_jwt_deadline > deadline + max(0.0, principal.expires_at - start_wall)):
+                raise GatewayDenied("policy verifier decision is stale or exceeds its bound")
+            with self._policy_nonce_lock:
+                self._used_policy_nonces = {
+                    nonce: until for nonce, until in self._used_policy_nonces.items()
+                    if until > verified
+                }
+                if decision.nonce in self._used_policy_nonces:
+                    raise GatewayDenied("policy verifier decision nonce was replayed")
+                if len(self._used_policy_nonces) >= 4096:
+                    raise GatewayDenied("policy verifier nonce capacity is exhausted")
+                self._used_policy_nonces[decision.nonce] = policy_valid_until
             jwt_deadline = start_mono + max(0.0, principal.expires_at - start_wall)
+            jwt_deadline = min(jwt_deadline, verifier_jwt_deadline)
             if jwt_deadline <= verified:
                 raise GatewayDenied("Access token expired during policy verification")
             return VerifiedRemoteIdentity(
                 principal.email, principal.subject, principal.token_fingerprint,
-                jwt_deadline, verified, self.policy_revision, self.config_digest)
+                jwt_deadline, verified, policy_valid_until,
+                self.policy_revision, self.config_digest)
         except AuthorityDenied:
             raise
         except Exception:
@@ -748,7 +910,7 @@ class RemoteSessionAuthority:
                  gateway_identity_resolver: Callable[[int, int, int], RemoteGatewayIdentity],
                  gateway_identity_is_current: Callable[[RemoteGatewayIdentity], bool],
                  runtime_state: Callable[[], RemoteRuntimeState],
-                 authorize_connector_operation: Callable[..., RemoteConnectorAuthorization],
+                 issue_remote_connector_effect: Callable[..., InternalRemoteConnectorAuthorization],
                  connector_backend: RemoteConnectorBackend,
                  monotonic: Callable[[], float] = time.monotonic,
                  watchdog: bool = True):
@@ -756,7 +918,7 @@ class RemoteSessionAuthority:
                 or not isinstance(verifier, RootRemoteAccessVerifier)
                 or not callable(gateway_identity_resolver)
                 or not callable(gateway_identity_is_current) or not callable(runtime_state)
-                or not callable(authorize_connector_operation) or connector_backend is None):
+                or not callable(issue_remote_connector_effect) or connector_backend is None):
             raise ValueError("root remote session authority requires protected enrollment, verifier, peer and connector adapters")
         if (verifier.policy.hostname.casefold() != enrollment.hostname
                 or verifier.policy.issuer != enrollment.jwt_issuer
@@ -771,7 +933,7 @@ class RemoteSessionAuthority:
         self.gateway_identity_resolver = gateway_identity_resolver
         self.gateway_identity_is_current = gateway_identity_is_current
         self.runtime_state = runtime_state
-        self.authorize_connector_operation = authorize_connector_operation
+        self.issue_remote_connector_effect = issue_remote_connector_effect
         self.connector_backend = connector_backend
         self.monotonic = monotonic
         self._sessions: dict[str, _Session] = {}
@@ -815,7 +977,8 @@ class RemoteSessionAuthority:
         now = self.monotonic()
         self._consume_request_nonce(request, now)
         try:
-            identity = self.verifier.verify(access_jwt)
+            session_id = secrets.token_urlsafe(24)
+            identity = self.verifier.verify(access_jwt, session_id=session_id, action="issue")
             binding = self.enrollment.principal_bindings_by_subject.get(identity.subject)
             if (binding is None or binding.email != identity.email
                     or identity.policy_revision != self.enrollment.policy_revision
@@ -827,13 +990,12 @@ class RemoteSessionAuthority:
             raise _deny("remote.verify", "root remote admission failed closed") from None
         issued = self.monotonic()
         expiry = min(_bounded_deadline(issued, self.enrollment.maximum_lease_seconds),
-                     identity.jwt_expires_monotonic,
+                     identity.jwt_expires_monotonic, identity.policy_valid_until_monotonic,
                      _bounded_deadline(identity.policy_verified_monotonic,
                                        self.enrollment.maximum_lease_seconds))
         if expiry <= issued:
             raise _deny("remote.expired", "verified Access and policy lease is already expired")
         handle = secrets.token_urlsafe(32)
-        session_id = secrets.token_urlsafe(24)
         principal_ref = secrets.token_urlsafe(24)
         state = _Session(handle, session_id, principal_ref, binding, identity, gateway,
                          self.enrollment.enrollment_id, request.action, request.route_id,
@@ -889,7 +1051,7 @@ class RemoteSessionAuthority:
                 self._close_state(session)
                 raise _deny("remote.renewal", "renewal challenge is invalid, stale, or already consumed")
         try:
-            identity = self.verifier.verify(access_jwt)
+            identity = self.verifier.verify(access_jwt, session_id=session.session_id, action="renew")
         except Exception:
             with self._lock:
                 self._close_state(session)
@@ -905,7 +1067,7 @@ class RemoteSessionAuthority:
             self._assert_runtime(session.gateway)
             verified = self.monotonic()
             expiry = min(_bounded_deadline(verified, self.enrollment.maximum_lease_seconds),
-                         identity.jwt_expires_monotonic,
+                         identity.jwt_expires_monotonic, identity.policy_valid_until_monotonic,
                          _bounded_deadline(identity.policy_verified_monotonic,
                                            self.enrollment.maximum_lease_seconds))
             if expiry <= verified:
@@ -937,7 +1099,7 @@ class RemoteSessionAuthority:
                     raise _deny("remote.connector-replay", "remote connector is already open")
                 binding = self._connector_binding(session)
                 auth = self._authorize_connector(
-                    binding, "connector.open", canonical_digest(_connector_effect_payload(
+                    binding, "connector.open", canonical_bytes(_connector_effect_payload(
                         binding, "connector.open", sequence=0)),
                     0, 0, peer_uid, peer_pid, peer_pidfd)
             try:
@@ -985,7 +1147,7 @@ class RemoteSessionAuthority:
                 maximum_bytes = min(maximum_bytes, remaining)
                 binding = self._connector_binding(session)
                 auth = self._authorize_connector(
-                    binding, "connector.read", canonical_digest(_connector_effect_payload(
+                    binding, "connector.read", canonical_bytes(_connector_effect_payload(
                         binding, "connector.read", sequence=sequence,
                         maximum_bytes=maximum_bytes, connector_id=connector_handle)),
                     sequence, maximum_bytes, peer_uid, peer_pid, peer_pidfd)
@@ -1042,10 +1204,10 @@ class RemoteSessionAuthority:
                     raise _deny("remote.connector-write", "remote action does not permit connector writes")
                 self._assert_frame(session, sequence, len(data_bytes) if isinstance(data_bytes, bytes) else 0)
                 binding = self._connector_binding(session)
-                payload_digest = canonical_digest(_connector_effect_payload(
+                payload_bytes = canonical_bytes(_connector_effect_payload(
                     binding, "connector.write", sequence=sequence,
                     connector_id=connector_handle, data_bytes=data_bytes))
-                auth = self._authorize_connector(binding, "connector.write", payload_digest,
+                auth = self._authorize_connector(binding, "connector.write", payload_bytes,
                                                  sequence, len(data_bytes), peer_uid, peer_pid, peer_pidfd)
                 if asset_request:
                     # Consume before crossing the backend boundary so failures
@@ -1140,6 +1302,7 @@ class RemoteSessionAuthority:
                 or snapshot.native_generation != self.enrollment.native_generation
                 or snapshot.gateway_role_sha256 != self.enrollment.gateway_role_sha256
                 or snapshot.connector_target_id != self.enrollment.connector_target_id
+                or not _DIGEST.fullmatch(snapshot.service_generation_digest)
                 or snapshot.principal_mapping_digest != _principal_mapping_digest(self.enrollment.principal_bindings_by_subject)):
             raise _deny("remote.state", "remote policy, gateway, Desktop or connector enrollment changed")
 
@@ -1225,6 +1388,11 @@ class RemoteSessionAuthority:
                     or binding.native_profile_id != self.enrollment.native_desktop_profile_id
                     or binding.native_generation != self.enrollment.native_generation
                     or binding.gateway_generation != self.enrollment.gateway_generation
+                    or binding.policy_revision != self.enrollment.policy_revision
+                    or binding.policy_config_digest != self.enrollment.policy_config_digest
+                    or binding.service_generation_digest != self.runtime_state().service_generation_digest
+                    or binding.connector_handle != session.connector_handle
+                    or binding.next_sequence != session.next_sequence
                     or binding.lease_expires_monotonic != session.lease_expires_monotonic
                     or binding.frame_deadline_monotonic <= self.monotonic()):
                 raise _deny("remote.connector-binding", "root connector binding no longer matches active enrollment")
@@ -1242,6 +1410,9 @@ class RemoteSessionAuthority:
     def _connector_binding(self, session: _Session) -> RemoteConnectorBinding:
         now = self.monotonic()
         frame_deadline = min(session.lease_expires_monotonic, now + MAX_CONNECTOR_CALL_SECONDS)
+        snapshot = self.runtime_state()
+        if not isinstance(snapshot, RemoteRuntimeState):
+            raise _deny("remote.state", "current remote service generation is unavailable")
         return RemoteConnectorBinding(
             enrollment_id=self.enrollment.enrollment_id,
             session_id=session.session_id, action=session.action, route_id=session.route_id,
@@ -1252,6 +1423,11 @@ class RemoteSessionAuthority:
             gateway_generation=self.enrollment.gateway_generation,
             native_profile_id=self.enrollment.native_desktop_profile_id,
             native_generation=self.enrollment.native_generation,
+            policy_revision=self.enrollment.policy_revision,
+            policy_config_digest=self.enrollment.policy_config_digest,
+            service_generation_digest=snapshot.service_generation_digest,
+            connector_handle=session.connector_handle,
+            next_sequence=session.next_sequence,
             gateway_identity=session.gateway, token_fingerprint=session.identity.token_fingerprint,
             issued_monotonic=session.issued_monotonic,
             lease_expires_monotonic=session.lease_expires_monotonic,
@@ -1289,7 +1465,7 @@ class RemoteSessionAuthority:
         cleanup = peer_uid is None or peer_pid is None or peer_pidfd is None
         try:
             authorization = self._authorize_connector(
-                binding, "connector.close", canonical_digest(_connector_effect_payload(
+                binding, "connector.close", canonical_bytes(_connector_effect_payload(
                     binding, "connector.close", sequence=session.next_sequence,
                     connector_id=handle)),
                 session.next_sequence, 0, peer_uid, peer_pid, peer_pidfd, cleanup=cleanup)
@@ -1314,41 +1490,43 @@ class RemoteSessionAuthority:
         session.closed = True
 
     def _authorize_connector(self, binding: RemoteConnectorBinding, operation: str,
-                             request_digest: str, sequence: int, maximum_bytes: int,
+                             canonical_effect_payload_bytes: bytes, sequence: int, maximum_bytes: int,
                              peer_uid: int | None, peer_pid: int | None, peer_pidfd: int | None,
-                             *, cleanup: bool = False) -> RemoteConnectorAuthorization:
+                             *, cleanup: bool = False) -> InternalRemoteConnectorAuthorization:
         if operation not in {"connector.open", "connector.read", "connector.write", "connector.close"}:
             raise _deny("remote.connector-operation", "connector operation is not enrolled")
         peer_values = (peer_uid, peer_pid, peer_pidfd)
         if ((not cleanup and any(value is None for value in peer_values))
                 or any(value is not None for value in peer_values) and any(value is None for value in peer_values)
-                or not _DIGEST.fullmatch(request_digest)):
+                or not isinstance(canonical_effect_payload_bytes, bytes)
+                or not 2 <= len(canonical_effect_payload_bytes) <= MAX_REQUEST_BYTES):
             raise _deny("remote.connector-peer", "connector grant requires current root peer identity")
+        request_digest = hashlib.sha256(canonical_effect_payload_bytes).hexdigest()
         try:
-            result = self.authorize_connector_operation(
-                binding, operation, request_digest, sequence, maximum_bytes,
+            result = self.issue_remote_connector_effect(
+                binding, operation, canonical_effect_payload_bytes, sequence, maximum_bytes,
                 peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                 cleanup=cleanup)
         except Exception:
             raise _deny("remote.connector-grant", "root could not authorize this exact connector operation") from None
-        if not isinstance(result, RemoteConnectorAuthorization):
-            raise _deny("remote.connector-grant", "root connector authorizer returned an invalid grant")
-        expected = (operation, binding.target_id, request_digest, binding.session_id,
-                    sequence, maximum_bytes, binding.route_id, binding.principal_id,
-                    binding.profile_id, binding.profile_generation, binding.gateway_profile_id,
-                    binding.gateway_generation, binding.native_profile_id, binding.native_generation)
-        actual = (result.operation, result.target_id, result.request_digest, result.session_id,
-                  result.sequence, result.maximum_bytes, result.route_id, result.principal_id,
-                  result.profile_id, result.profile_generation, result.gateway_profile_id,
-                  result.gateway_generation, result.native_profile_id, result.native_generation,
-                  result.generation)
-        expected += (binding.native_generation,)
+        if not isinstance(result, InternalRemoteConnectorAuthorization):
+            raise _deny("remote.connector-grant", "root connector authorizer returned an invalid internal authorization")
+        expected = (binding.principal_id, binding.native_profile_id, binding.native_generation,
+                    binding.gateway_identity.identity_digest, binding.gateway_generation,
+                    binding.session_id, binding.token_fingerprint, binding.route_id,
+                    binding.target_id, operation, request_digest, sequence)
+        actual = (result.effective_principal_id, result.effective_native_profile_id,
+                  result.effective_native_generation, result.controller_gateway_identity_digest,
+                  result.controller_gateway_generation, result.remote_session_id,
+                  result.token_fingerprint, result.route_id, result.connector_target_id,
+                  result.operation, result.canonical_payload_sha256, result.sequence)
         expected_deadline = (binding.lease_expires_monotonic if operation == "connector.open"
                              else binding.frame_deadline_monotonic)
-        if (actual != expected or result.lease_expires_monotonic > binding.lease_expires_monotonic
-                or result.deadline != expected_deadline
-                or result.lease_expires_monotonic > expected_deadline
-                or not cleanup and (self.monotonic() >= result.lease_expires_monotonic
+        if (actual != expected or result.policy_revision != self.enrollment.policy_revision
+                or result.policy_config_digest != self.enrollment.policy_config_digest
+                or result.service_generation_digest != binding.service_generation_digest
+                or result.expires_monotonic > min(binding.lease_expires_monotonic, expected_deadline)
+                or not cleanup and (self.monotonic() >= result.expires_monotonic
                                     or self.monotonic() >= expected_deadline)):
             raise _deny("remote.connector-grant", "root connector grant binding or lease differs")
         return result

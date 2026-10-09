@@ -25,8 +25,44 @@ class _Identity:
 
 
 @dataclass(frozen=True)
+class _TargetPeer:
+    pid: int
+    pidfd: int
+    uid: int
+    profile_id: str
+    generation: str
+    identity: _Identity
+
+
+@dataclass(frozen=True)
+class _LoadedProof:
+    proof_id: str
+    package_id: str
+    profile_id: str
+    generation: str
+    compiled_closure_sha256: str
+    entrypoint_sha256: str
+    resolver_sha256: str
+    mount_namespace_inode: int
+    mount_id: str
+    mount_target_digest: str
+    mount_flags: frozenset[str]
+    source_root_device: int
+    source_root_inode: int
+    target_peer_identity: _Identity
+    loader_role_artifact_id: str
+    loader_role_sha256: str
+    loader_ready_event_id: str
+    observed_entrypoint_action_ids: tuple[str, ...]
+    issued_monotonic: float
+    expires_monotonic: float
+    service_generation_digest: str
+
+
+@dataclass(frozen=True)
 class _Adapter:
     adapter_id: str = "hermes-main"
+    adapter_artifact_id: str = "hermes-main"
     adapter_sha256: str = "b" * 64
     target_id: str = "provider.fixed"
     recipient: str = "public-provider"
@@ -99,6 +135,7 @@ class _Service:
     def issue_observed_source(self, observation):
         if not isinstance(observation, VerifiedSourceObservation):
             raise AssertionError("service received unverified source DTO")
+        self.observation_registry.consume_observation_proof(observation)
         self.observations.append(observation)
         if self.fail_issuance:
             raise AuthorityDenied("source.issuer", "fixture authority issuance failed")
@@ -145,11 +182,14 @@ def _enrollment(**changes):
         enrollment_id="producer-enrollment",
         generation="gen-4",
         producer_uid=2001,
+        producer_executable_sha256=_digest("b"),
         package_id="hermes-package",
         package_sha256=_digest("a"),
         role_id="hermes-main",
+        role_artifact_id="hermes-main",
         role_sha256=_digest("b"),
         channel_id="chat.request",
+        source_action_id="authenticated-input",
         target_id="provider.fixed",
         recipient="public-provider",
         allowed_parent_source_kinds=frozenset({"native-input"}),
@@ -178,6 +218,7 @@ class SourceObserverContracts(unittest.TestCase):
         self.enrollment = _enrollment()
         self.identity = _Identity("producer-profile", "gen-4", 2001, 811, _digest("b"))
         self.resolved = self.identity
+        self.target_identity = _Identity("gateway-profile", "gen-8", 2002, 992, _digest("f"))
         self.selected_package = _Package()
         self.closed = []
         self.patches = [
@@ -192,18 +233,33 @@ class SourceObserverContracts(unittest.TestCase):
             observers={self.enrollment.observer_enrollment_id: self.enrollment},
             process_resolver=self.resolve,
             package_resolver=self.package,
+            target_peer_resolver=self.target_peer,
+            loaded_package_proof_resolver=self.loaded_package_proof,
         )
+        self.service.observation_registry = self.registry
         self.addCleanup(self.registry.close)
 
     def resolve(self, pid, pidfd, *, profile_id, generation):
-        if pidfd not in {901, 1001, 1101, 1201, 1301} or pid != 733:
+        if pidfd not in {901, 1001, 1101, 1201, 1301, 1401, 1501, 1601} or pid not in {733, 844}:
             return None
-        if pidfd != 901 and self.resolved != self.identity:
+        if pid == 733 and pidfd != 901 and self.resolved != self.identity:
             return None
-        identity = self.resolved if pidfd == 901 else self.identity
+        identity = (self.resolved if pidfd == 901 else self.identity) if pid == 733 else self.target_identity
         if (identity.profile_id, identity.generation) != (profile_id, generation):
             return None
         return identity
+
+    def target_peer(self, _observer, _context):
+        return _TargetPeer(844, 1401, 2002, "gateway-profile", "gen-8", self.target_identity)
+
+    def loaded_package_proof(self, identity, _observer):
+        return _LoadedProof(
+            "proof-1", self.selected_package.package_id, self.selected_package.profile_id,
+            self.selected_package.generation, self.selected_package.compiled_closure_sha256,
+            self.selected_package.entrypoint_sha256, self.selected_package.resolver_sha256,
+            123, "mount-1", _digest("1"), frozenset({"ro", "nosuid", "nodev"}),
+            8, 99, identity, "hermes-main", _digest("b"), "loader-ready-event",
+            ("authenticated-input",), 9.0, 39.0, _digest("2"))
 
     def package(self, package_id, generation):
         return (self.selected_package if package_id == "hermes-package"
@@ -232,8 +288,31 @@ class SourceObserverContracts(unittest.TestCase):
         self.assertEqual(observation.channel_id, self.enrollment.channel_id)
         self.assertEqual(observation.target_id, self.enrollment.target_id)
         self.assertEqual(observation.recipient, self.enrollment.recipient)
+        self.assertEqual(observation.target_peer_identity, self.target_identity)
+        self.assertEqual(observation.target_peer_profile_id, "gateway-profile")
+        self.assertEqual(observation.target_peer_generation, "gen-8")
         self.assertEqual(observation.parent_receipts, ())
-        self.assertEqual(self.closed, [1001])
+        self.assertEqual(set(self.closed), {1001, 1501})
+        delivered = self.registry.take_source_receipt(
+            str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        self.assertEqual(delivered, result)
+        with self.assertRaises(AuthorityDenied):
+            self.registry.take_source_receipt(
+                str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+
+    def test_peer_delivery_rejects_wrong_identity_and_never_returns_receipt_claims(self):
+        event_id = self.record()
+        handle = self.registry.capture_observed_source(
+            self.enrollment.observer_enrollment_id, event_id, b"captured request")
+        with self.assertRaises(AuthorityDenied):
+            self.registry.take_source_receipt(
+                str(handle), peer_uid=2001, peer_pid=844, peer_pidfd=1501)
+        with self.assertRaises(AuthorityDenied):
+            self.registry.take_source_receipt(
+                str(handle), peer_uid=2002, peer_pid=733, peer_pidfd=901)
+        self.assertEqual(
+            self.registry.take_source_receipt(
+                str(handle), peer_uid=2002, peer_pid=844, peer_pidfd=1501), handle)
 
     def test_unknown_or_forged_event_id_cannot_mint_and_event_is_one_use(self):
         with self.assertRaises(AuthorityDenied):
@@ -245,6 +324,49 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.registry.capture_observed_source(
                 self.enrollment.observer_enrollment_id, event_id, b"captured request")
+
+    def test_observation_dto_without_this_registry_instance_capability_is_rejected(self):
+        event_id = self.record()
+        event = self.registry._pending[event_id]
+        # A structurally plausible DTO with a module-importable class is not
+        # sufficient to reach the issuer; the registry consumes exact object
+        # identity plus an instance-scoped capability.
+        with self.assertRaises(AuthorityDenied):
+            forged = VerifiedSourceObservation(
+                observer_enrollment_id=self.enrollment.observer_enrollment_id,
+                event_record_id=event_id, source_kind=self.enrollment.source_kind,
+                origin_id="forged", payload_bytes=event.payload,
+                payload_sha256=event.payload_sha256, parent_context=event.parent_context,
+                parent_receipts=(), parent_receipt_handles=(),
+                profile_id=self.enrollment.profile_id, principal_id=self.enrollment.principal_id,
+                namespace_id=self.enrollment.namespace_id, enrollment_id=self.enrollment.enrollment_id,
+                generation=self.enrollment.generation, producer_uid=self.enrollment.producer_uid,
+                producer_pid=event.producer_pid, producer_pidfd=event.producer_pidfd,
+                producer_identity=event.producer_identity, target_peer_uid=2002,
+                target_peer_pid=844, target_peer_pidfd=1401,
+                target_peer_profile_id="gateway-profile", target_peer_generation="gen-8",
+                target_peer_identity=self.target_identity,
+                loaded_package_proof=self.loaded_package_proof(event.producer_identity, self.enrollment),
+                package_id=self.enrollment.package_id,
+                package_sha256=self.enrollment.package_sha256, source_revision="pinned-revision",
+                source_tree_sha256="c" * 64, compiled_closure_artifact_id="compiled-closure",
+                entrypoint_artifact_id="entrypoint", entrypoint_sha256="d" * 64,
+                resolver_artifact_id="resolver", resolver_sha256="e" * 64,
+                service_package_root_id="package-root", service_mount_id="mount-hermes",
+                role_id=self.enrollment.role_id,
+                observer_role_artifact_id=self.enrollment.role_artifact_id,
+                role_sha256=self.enrollment.role_sha256,
+                source_action_id=self.enrollment.source_action_id,
+                action_id="chat.complete", argument_schema_id="schema.arguments",
+                result_schema_id="schema.result", effect_enrollment_id="provider.enrollment",
+                operation="provider.dispatch", capability="provider-inference",
+                invocation_id=event.invocation_id, channel_id=self.enrollment.channel_id,
+                target_id=self.enrollment.target_id, recipient=self.enrollment.recipient,
+                authority_epoch=event.authority_epoch, issued_monotonic=event.issued,
+                expires_monotonic=event.expires, proof_nonce="z" * 48,
+                _issuer_token=object(),
+            )
+            self.registry.consume_observation_proof(forged)
 
     def test_concurrent_capture_has_one_winner(self):
         event_id = self.record()
@@ -275,7 +397,7 @@ class SourceObserverContracts(unittest.TestCase):
             self.registry.capture_observed_source(
                 self.enrollment.observer_enrollment_id, event_id, b"forged payload")
         self.assertEqual(self.registry._pending, {})
-        self.assertEqual(self.closed, [1001])
+        self.assertEqual(set(self.closed), {1001, 1501})
 
     def test_parent_closure_requires_registered_handle_and_same_live_process_generation(self):
         first_event = self.record()
@@ -312,13 +434,28 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.registry.capture_observed_source(
                 self.enrollment.observer_enrollment_id, event_id, b"captured request")
-        self.assertEqual(self.closed, [1001])
-        self.assertEqual(self.closed, [1001])
+        self.assertEqual(set(self.closed), {1001, 1501})
 
     def test_package_or_adapter_replacement_after_event_capture_denies(self):
         event_id = self.record()
         self.selected_package = replace(
             self.selected_package, compiled_closure_sha256=_digest("f"))
+        with self.assertRaises(AuthorityDenied):
+            self.registry.capture_observed_source(
+                self.enrollment.observer_enrollment_id, event_id, b"captured request")
+
+    def test_changed_loaded_package_closure_proof_after_event_capture_denies(self):
+        event_id = self.record()
+        original = self.loaded_package_proof
+        self.registry.loaded_package_proof_resolver = lambda identity, _observer: replace(
+            original(identity, self.enrollment), loader_ready_event_id="replacement-event")
+        with self.assertRaises(AuthorityDenied):
+            self.registry.capture_observed_source(
+                self.enrollment.observer_enrollment_id, event_id, b"captured request")
+
+    def test_target_peer_replacement_after_event_capture_denies(self):
+        event_id = self.record()
+        self.target_identity = _Identity("gateway-profile", "gen-8", 2002, 993, _digest("f"))
         with self.assertRaises(AuthorityDenied):
             self.registry.capture_observed_source(
                 self.enrollment.observer_enrollment_id, event_id, b"captured request")
@@ -336,6 +473,8 @@ class SourceObserverContracts(unittest.TestCase):
             observers={self.enrollment.observer_enrollment_id: self.enrollment},
             process_resolver=self.resolve,
             package_resolver=self.package,
+            target_peer_resolver=self.target_peer,
+            loaded_package_proof_resolver=self.loaded_package_proof,
             max_pending_events=1,
         )
         first = full.record_observed_event(
@@ -387,18 +526,22 @@ class SourceObserverContracts(unittest.TestCase):
                 parent_receipts=(), parent_receipt_handles=(), profile_id="profile",
                 principal_id="principal", namespace_id="namespace", enrollment_id="enrollment",
                 generation="generation", producer_uid=2001, producer_pid=733, producer_pidfd=1,
-                producer_identity=self.identity, package_id="package", package_sha256=_digest("a"),
+                producer_identity=self.identity, target_peer_uid=2002, target_peer_pid=844,
+                target_peer_pidfd=1, target_peer_profile_id="gateway-profile",
+                target_peer_generation="gen-8", target_peer_identity=self.target_identity,
+                loaded_package_proof=self.loaded_package_proof(self.identity, self.enrollment),
+                package_id="package", package_sha256=_digest("a"),
                 source_revision="revision", source_tree_sha256=_digest("a"),
                 compiled_closure_artifact_id="closure", entrypoint_artifact_id="entrypoint",
                 entrypoint_sha256=_digest("b"), resolver_artifact_id="resolver",
                 resolver_sha256=_digest("c"), service_package_root_id="root", service_mount_id="mount",
-                role_id="role", role_sha256=_digest("b"), invocation_id="invocation",
+                role_id="role", observer_role_artifact_id="role-artifact",
+                role_sha256=_digest("b"), source_action_id="action-id", invocation_id="invocation",
                 action_id="action", argument_schema_id="arguments", result_schema_id="result",
                 effect_enrollment_id="effect", operation="provider.dispatch", capability="provider-inference",
                 channel_id="channel", target_id="target", recipient="recipient",
                 authority_epoch="epoch", issued_monotonic=1.0, expires_monotonic=2.0,
-                _issuer=object())
-
+                proof_nonce="z" * 48, _issuer_token=object())
 
 if __name__ == "__main__":
     unittest.main()
