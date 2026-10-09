@@ -7,16 +7,13 @@ The root maps the fixed action and plugin identity to protected enrollment.
 from __future__ import annotations
 
 import ipaddress
-import json
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Protocol
 
 from hermes_installer.registry.resources_runtime import (
-    FixedResourceEffect,
     NativePluginRuntimeContext,
     PluginRegistrationContext,
-    invoke_fixed_resource_effect,
 )
 
 
@@ -43,13 +40,20 @@ _WRITE_ACTIONS = frozenset({
 })
 _DESTRUCTIVE = frozenset({
     "update-approved-service-or-container", "rollback-approved-service-or-container",
-    "run-approved-restore", "bounded-approved-cleanup",
+    "run-approved-restore", "run-approved-nextcloud-repair", "bounded-approved-cleanup",
 })
 _MAX_RESULT_BYTES = 1_048_576
 
 
 class HomelabPluginUnavailable(RuntimeError):
     """The reviewed root effect is not enrolled or its target is unavailable."""
+
+
+class SelectedPluginEffectResolver(Protocol):
+    """Root-selected plugin actions; enrollment identity never comes from the caller."""
+    def invoke(self, *, adapter_id: str, action_id: str, arguments: Mapping[str, Any],
+               idempotency_key: str | None = None,
+               opaque_confirmation_attestation_id: str | None = None) -> object: ...
 
 
 def _selected(runtime: object, plugin_id: str) -> NativePluginRuntimeContext:
@@ -60,6 +64,8 @@ def _selected(runtime: object, plugin_id: str) -> NativePluginRuntimeContext:
         raise HomelabPluginUnavailable("plugin identity does not match the pinned v1.0.0 adapter")
     if runtime.authority is None or not callable(runtime.invocation_contexts):
         raise HomelabPluginUnavailable("root authority and trusted invocation lineage are required")
+    if not callable(getattr(getattr(runtime, "plugin_effects", None), "invoke", None)):
+        raise HomelabPluginUnavailable("protected selected-plugin effect enrollment is unavailable")
     return runtime
 
 
@@ -81,28 +87,48 @@ def _text(value: object, *, name: str, max_length: int = 128) -> str:
 
 
 def _response(response: object) -> dict[str, Any]:
-    status, body = getattr(response, "status", None), getattr(response, "body", None)
-    if type(status) is not int or status != 200 or not isinstance(body, bytes) or len(body) > _MAX_RESULT_BYTES:
-        raise HomelabPluginUnavailable("root homelab effect did not return a bounded successful result")
-    try:
-        value = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
-        raise HomelabPluginUnavailable("root homelab effect returned malformed JSON") from None
-    if not isinstance(value, dict) or set(value) != {"result"} or not isinstance(value["result"], (dict, list, str, int, float, bool, type(None))):
-        raise HomelabPluginUnavailable("root homelab effect returned an unexpected response shape")
-    return value["result"] if isinstance(value["result"], dict) else {"result": value["result"]}
+    if isinstance(response, Mapping):
+        value = dict(response)
+    else:
+        status, body = getattr(response, "status", None), getattr(response, "body", None)
+        if type(status) is not int or status != 200 or not isinstance(body, bytes) or len(body) > _MAX_RESULT_BYTES:
+            raise HomelabPluginUnavailable("root homelab effect did not return a bounded successful result")
+        try:
+            import json
+            value = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+            raise HomelabPluginUnavailable("root homelab effect returned malformed JSON") from None
+    required = {"schema", "operation_id", "state", "result", "verification_status", "resume_action_id"}
+    if (not isinstance(value, dict) or set(value) != required or value["schema"] != 1
+            or value["state"] not in {"committed", "read-complete", "pending", "ambiguous", "unavailable"}
+            or not isinstance(value["operation_id"], str) or len(value["operation_id"]) > 128):
+        raise HomelabPluginUnavailable("root homelab effect returned an unexpected operation envelope")
+    if value["state"] in {"ambiguous", "pending", "unavailable"}:
+        return {"operation_id": value["operation_id"], "state": value["state"],
+                "verification_status": value["verification_status"],
+                "resume_action_id": value["resume_action_id"]}
+    result = value["result"]
+    if not isinstance(result, (dict, list, str, int, float, bool, type(None))):
+        raise HomelabPluginUnavailable("root homelab effect result is malformed")
+    return result if isinstance(result, dict) else {"result": result}
 
 
 def _call(runtime: NativePluginRuntimeContext, *, plugin_id: str, capability: str,
           operation: str, action: str, arguments: Mapping[str, Any], intent: str,
-          timeout: float = 15.0) -> dict[str, Any]:
+          timeout: float = 15.0, idempotency_key: str | None = None,
+          confirmation: str | None = None) -> dict[str, Any]:
     runtime = _selected(runtime, plugin_id)
-    target = f"resource:plugins/{runtime.identity.resource_id}@{runtime.identity.version}"
-    effect = FixedResourceEffect(capability=capability, target=target,
-                                 recipient=None, operation=operation,
-                                 timeout_seconds=timeout)
-    payload = {"schema": 1, "plugin": plugin_id, "action": action, "arguments": dict(arguments)}
-    response = invoke_fixed_resource_effect(runtime, effect, payload, intent=intent)
+    effect_api: SelectedPluginEffectResolver = runtime.plugin_effects
+    expected_operation = {
+        "authentik-authorization": "plugin.authentik-authorization.read",
+        "cloudflare-homelab": "plugin.cloudflare-homelab.write" if operation.endswith("write") else "plugin.cloudflare-homelab.read",
+        "homelab-ops-broker": "plugin.homelab-ops-broker.write" if operation.endswith("write") else "plugin.homelab-ops-broker.read",
+    }[plugin_id]
+    if operation != expected_operation or capability != f"plugin:{plugin_id}":
+        raise HomelabPluginUnavailable("adapter operation does not match its finite root-enrolled verb")
+    response = effect_api.invoke(adapter_id=plugin_id, action_id=action, arguments=dict(arguments),
+                                 idempotency_key=idempotency_key,
+                                 opaque_confirmation_attestation_id=confirmation)
     return _response(response)
 
 
@@ -115,17 +141,17 @@ class AuthentikAuthorizationImplementation:
         # from tool arguments. Root resolves the signed session and live groups.
         empty = {"type": "object", "properties": {}, "additionalProperties": False}
         actions = (
-            ("authentik_current_principal", "read-current-principal", "Read the signed session's current Authentik identity."),
+            ("authentik_current_principal", "resolve-session-principal-to-user", "Read the signed session's current Authentik identity."),
             ("authentik_active_user_identity", "read-active-user-identity", "Read the signed principal's current active Authentik user record."),
             ("authentik_effective_groups", "read-user-effective-groups", "Read the signed principal's current direct and indirect Authentik groups."),
-            ("authentik_verify_system_membership", "verify-effective-system-membership", "Freshly check this signed principal's effective System membership."),
-            ("authentik_system_alarm_recipients", "list-current-system-alarm-recipients", "Resolve the current System alarm recipient set."),
+            ("authentik_verify_system_membership", "verify-effective-System-membership", "Freshly check this signed principal's effective System membership."),
+            ("authentik_system_alarm_recipients", "list-current-effective-System-members-for-alarm-delivery", "Resolve the current System alarm recipient set."),
         )
         for name, action, description in actions:
             def handler(args: object, action: str = action) -> dict[str, Any]:
                 _object(args, frozenset())
                 return _call(runtime_context, plugin_id="authentik-authorization",
-                             capability="plugin.authentik.read", operation="provider.dispatch",
+                             capability="plugin:authentik-authorization", operation="plugin.authentik-authorization.read",
                              action=action, arguments={}, intent=description)
             ctx.register_tool(name=name, toolset="authentik_authorization", schema=empty,
                               handler=handler, requires_env=None, is_async=False,
@@ -146,21 +172,23 @@ class CloudflareHomelabImplementation:
             "content": {"type": "string", "minLength": 1, "maxLength": 253},
             "ttl": {"type": "integer", "minimum": 60, "maximum": 86400},
             "proxied": {"type": "boolean"},
-            "confirmation_id": {"type": "string", "minLength": 24, "maxLength": 128},
-        }, "required": ["hostname", "content", "ttl", "proxied", "confirmation_id"], "additionalProperties": False}
+            "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 128},
+            "opaque_confirmation_attestation_id": {"type": "string", "minLength": 8, "maxLength": 128},
+        }, "required": ["hostname", "content", "ttl", "proxied", "idempotency_key", "opaque_confirmation_attestation_id"], "additionalProperties": False}
         tunnel_write_schema = {"type": "object", "properties": {
             "tunnel": {"type": "string", "enum": sorted(_TUNNELS)},
             "hostname": {"type": "string", "enum": sorted(_CLOUDFLARE_HOSTNAMES)},
-            "confirmation_id": {"type": "string", "minLength": 24, "maxLength": 128},
-        }, "required": ["tunnel", "hostname", "confirmation_id"], "additionalProperties": False}
+            "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 128},
+            "opaque_confirmation_attestation_id": {"type": "string", "minLength": 8, "maxLength": 128},
+        }, "required": ["tunnel", "hostname", "idempotency_key", "opaque_confirmation_attestation_id"], "additionalProperties": False}
 
         def read_dns(args: object) -> dict[str, Any]:
             fields = _object(args, frozenset({"hostname"}), frozenset({"hostname"}))
             hostname = fields["hostname"]
             if hostname not in _CLOUDFLARE_HOSTNAMES:
                 raise ValueError("hostname is outside the approved homelab set")
-            return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin.cloudflare.read",
-                         operation="provider.dispatch", action="read-approved-dns-record",
+            return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin:cloudflare-homelab",
+                         operation="plugin.cloudflare-homelab.read", action="read-approved-dns-records",
                          arguments={"hostname": hostname}, intent="Read one approved homelab DNS record")
 
         def read_tunnel(args: object, *, view: str) -> dict[str, Any]:
@@ -168,13 +196,13 @@ class CloudflareHomelabImplementation:
             tunnel = fields["tunnel"]
             if tunnel not in _TUNNELS:
                 raise ValueError("tunnel is outside the approved homelab set")
-            return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin.cloudflare.read",
-                         operation="provider.dispatch", action=view,
+            return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin:cloudflare-homelab",
+                         operation="plugin.cloudflare-homelab.read", action=view,
                          arguments={"tunnel": tunnel}, intent="Read one approved homelab tunnel")
 
         def update_dns(args: object) -> dict[str, Any]:
-            fields = _object(args, frozenset({"hostname", "content", "ttl", "proxied", "confirmation_id"}),
-                             frozenset({"hostname", "content", "ttl", "proxied", "confirmation_id"}))
+            fields = _object(args, frozenset({"hostname", "content", "ttl", "proxied", "idempotency_key", "opaque_confirmation_attestation_id"}),
+                             frozenset({"hostname", "content", "ttl", "proxied", "idempotency_key", "opaque_confirmation_attestation_id"}))
             hostname, content = fields["hostname"], fields["content"]
             if hostname not in _CLOUDFLARE_HOSTNAMES:
                 raise ValueError("hostname is outside the approved homelab set")
@@ -183,33 +211,31 @@ class CloudflareHomelabImplementation:
             try:
                 ipaddress.ip_address(content)
             except ValueError:
-                if not re.fullmatch(r"[A-Za-z0-9.-]+\.togarriapahome\.uk\.?", content, re.IGNORECASE):
-                    raise ValueError("DNS target must be an IP address or a hostname in the approved domain")
+                allowed_domain = re.fullmatch(r"[A-Za-z0-9.-]+\.togarriapahome\.uk\.?", content, re.IGNORECASE)
+                tunnel_target = re.fullmatch(r"[0-9a-fA-F-]{36}\.cfargotunnel\.com\.?", content, re.IGNORECASE)
+                if not allowed_domain and not tunnel_target:
+                    raise ValueError("DNS target must be an IP address, approved domain host, or enrolled Cloudflare tunnel")
             if type(fields["ttl"]) is not int or not 60 <= fields["ttl"] <= 86400 or type(fields["proxied"]) is not bool:
                 raise ValueError("DNS TTL or proxy flag is invalid")
-            confirmation = fields["confirmation_id"]
-            if not isinstance(confirmation, str) or not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", confirmation):
-                raise ValueError("DNS update requires a host-issued one-shot confirmation reference")
-            return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin.cloudflare.write",
-                         operation="host.write", action="update-approved-dns-record",
+            return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin:cloudflare-homelab",
+                         operation="plugin.cloudflare-homelab.write", action="update-approved-dns-record",
                          arguments={"hostname": hostname, "content": content,
-                                    "ttl": fields["ttl"], "proxied": fields["proxied"],
-                                    "confirmation_id": confirmation},
-                         intent="Update one approved homelab DNS record")
+                                    "ttl": fields["ttl"], "proxied": fields["proxied"]},
+                         intent="Update one approved homelab DNS record",
+                         idempotency_key=fields["idempotency_key"],
+                         confirmation=fields["opaque_confirmation_attestation_id"])
 
         def update_tunnel(args: object) -> dict[str, Any]:
-            fields = _object(args, frozenset({"tunnel", "hostname", "confirmation_id"}),
-                             frozenset({"tunnel", "hostname", "confirmation_id"}))
+            fields = _object(args, frozenset({"tunnel", "hostname", "idempotency_key", "opaque_confirmation_attestation_id"}),
+                             frozenset({"tunnel", "hostname", "idempotency_key", "opaque_confirmation_attestation_id"}))
             if fields["tunnel"] not in _TUNNELS or fields["hostname"] not in _CLOUDFLARE_HOSTNAMES:
                 raise ValueError("tunnel or hostname is outside the approved homelab set")
-            confirmation = fields["confirmation_id"]
-            if not isinstance(confirmation, str) or not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", confirmation):
-                raise ValueError("tunnel update requires a host-issued one-shot confirmation reference")
-            return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin.cloudflare.write",
-                         operation="host.write", action="update-approved-tunnel-configuration",
-                         arguments={"tunnel": fields["tunnel"], "hostname": fields["hostname"],
-                                    "confirmation_id": confirmation},
-                         intent="Reconcile one approved tunnel to its enrolled hostname")
+            return _call(runtime_context, plugin_id="cloudflare-homelab", capability="plugin:cloudflare-homelab",
+                         operation="plugin.cloudflare-homelab.write", action="update-approved-tunnel-configuration",
+                         arguments={"tunnel": fields["tunnel"], "hostname": fields["hostname"]},
+                         intent="Reconcile one approved tunnel to its enrolled hostname",
+                         idempotency_key=fields["idempotency_key"],
+                         confirmation=fields["opaque_confirmation_attestation_id"])
 
         for name, schema, handler, description in (
             ("cloudflare_homelab_read_dns", read_schema, read_dns, "Read an approved homelab DNS record."),
@@ -239,35 +265,37 @@ class HomelabOpsBrokerImplementation:
         write_schema = {"type": "object", "properties": {
             "host": {"type": "string", "enum": sorted(_HOSTS)},
             "action": {"type": "string", "enum": sorted(_WRITE_ACTIONS)},
-            "confirmation_id": {"type": "string", "maxLength": 128},
-        }, "required": ["host", "action"], "additionalProperties": False}
+            "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 128},
+            "opaque_confirmation_attestation_id": {"type": "string", "minLength": 8, "maxLength": 128},
+        }, "required": ["host", "action", "idempotency_key"], "additionalProperties": False}
 
         def inspect(args: object) -> dict[str, Any]:
             fields = _object(args, frozenset({"host", "query"}), frozenset({"host", "query"}))
             if fields["host"] not in _HOSTS or fields["query"] not in _READ_QUERIES:
                 raise ValueError("host or query is outside the approved broker scope")
-            return _call(runtime_context, plugin_id="homelab-ops-broker", capability="plugin.homelab.read",
-                         operation="provider.dispatch", action="inspect-approved-target",
+            return _call(runtime_context, plugin_id="homelab-ops-broker", capability="plugin:homelab-ops-broker",
+                         operation="plugin.homelab-ops-broker.read", action=fields["query"],
                          arguments={"host": fields["host"], "query": fields["query"]},
                          intent="Inspect an allowlisted homelab health or service target")
 
         def operate(args: object) -> dict[str, Any]:
-            fields = _object(args, frozenset({"host", "action", "confirmation_id"}),
-                             frozenset({"host", "action"}))
+            fields = _object(args, frozenset({"host", "action", "idempotency_key", "opaque_confirmation_attestation_id"}),
+                             frozenset({"host", "action", "idempotency_key"}))
             host, action = fields["host"], fields["action"]
             if host not in _HOSTS or action not in _WRITE_ACTIONS:
                 raise ValueError("host or action is outside the approved broker scope")
-            confirmation = fields.get("confirmation_id")
+            confirmation = fields.get("opaque_confirmation_attestation_id")
             if action in _DESTRUCTIVE:
-                if not isinstance(confirmation, str) or not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", confirmation):
-                    raise ValueError("destructive action requires a host-issued one-shot confirmation reference")
+                if not isinstance(confirmation, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", confirmation):
+                    raise ValueError("destructive action requires an opaque host confirmation attestation")
             elif confirmation is not None:
-                raise ValueError("confirmation_id is accepted only for destructive operations")
-            return _call(runtime_context, plugin_id="homelab-ops-broker", capability="plugin.homelab.write",
-                         operation="host.write", action=action,
-                         arguments={"host": host, "confirmation_id": confirmation},
+                raise ValueError("confirmation attestation is accepted only for destructive operations")
+            return _call(runtime_context, plugin_id="homelab-ops-broker", capability="plugin:homelab-ops-broker",
+                         operation="plugin.homelab-ops-broker.write", action=action,
+                         arguments={"host": host, "action": action},
                          intent=f"Run the approved {action} operation on the configured {host} target",
-                         timeout=120.0)
+                         timeout=30.0, idempotency_key=fields["idempotency_key"],
+                         confirmation=confirmation)
 
         for name, schema, handler, description in (
             ("homelab_ops_inspect", read_schema, inspect, "Read bounded status from configured Hermes or Nextcloud targets."),
