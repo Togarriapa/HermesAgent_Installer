@@ -349,6 +349,7 @@ class ManagedProcessEffectHandler:
                 or authorization.namespace_id != context.namespace_id
                 or authorization.trace_id != context.trace_id
                 or authorization.intent_id != context.intent_id
+                or context.operation != operation or authorization.operation != operation
                 or peer_pid <= 0 or canonical_digest(payload) != authorization.request_digest):
             raise AuthorityDenied("process.binding", "process grant does not match the enrolled profile effect")
         if operation == "process.start":

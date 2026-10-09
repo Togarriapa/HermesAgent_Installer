@@ -546,7 +546,7 @@ class ManagedProcessHandle:
             source_contexts=(self.spec.authority_context,) if self.spec.authority_context else (),
             trace_id=self.spec.authority_context.trace_id if self.spec.authority_context else None,
             lease_seconds=min(5.0, max(.1, timeout)),
-            final_payload_digest=canonical_digest(payload))
+            final_payload_digest=canonical_digest(payload), operation=operation)
         verb = operation.removeprefix("process.")
         if verb not in {"status", "read", "write", "stop"}:
             raise ManagedProcessError("process control verb is not fixed")
@@ -697,12 +697,14 @@ class ManagedProcessSupervisor:
             max_output_bytes=spec.max_output_bytes, stdin_mode=spec.stdin_mode,
         )
         digest = canonical_digest(launch)
-        if spec.authority_context.final_payload_digest != digest:
-            raise ManagedProcessError("host context does not bind the canonical process launch payload")
+        if (spec.authority_context.final_payload_digest != digest
+                or spec.authority_context.operation != "process.start"):
+            raise ManagedProcessError("host context does not bind this process.start payload")
         grant = spec.effect_authorization
         if (grant.capability != "hermes-profile-invoke" or grant.target != target
                 or grant.profile_id != spec.profile_id or grant.uid != spec.authority_context.uid
-                or grant.request_digest != digest or grant.retry_index != 0):
+                or grant.request_digest != digest or grant.retry_index != 0
+                or grant.operation != "process.start"):
             raise ManagedProcessError("host start grant does not match the canonical launch envelope")
         try:
             await asyncio.to_thread(spec.journal.checkpoint, spec.journal_operation, "starting", {

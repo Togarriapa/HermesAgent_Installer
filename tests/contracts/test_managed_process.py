@@ -73,6 +73,7 @@ def _authorized_spec(spec: ManagedProcessSpec) -> ManagedProcessSpec:
         issued_at_monotonic=now, monotonic_expires_at=now + 30,
         nonce="fixture-context-nonce", grant_id="fixture-context-grant", signature="fixture-signature",
         final_payload_digest=canonical_digest(envelope),
+        operation="process.start",
     )
     grant = EffectAuthorization(
         principal_id=context.principal_id, profile_id=context.profile_id,
@@ -84,6 +85,7 @@ def _authorized_spec(spec: ManagedProcessSpec) -> ManagedProcessSpec:
         issued_at_monotonic=now, monotonic_expires_at=now + 20, grant_id="fixture-effect-grant",
         nonce="fixture-effect-nonce", context_digest="b" * 64, signature="fixture-signature",
         final_payload_digest=canonical_digest(envelope),
+        operation="process.start",
     )
     return replace(spec, authority_context=context, effect_authorization=grant)
 

@@ -49,6 +49,7 @@ async def main() -> None:
         purpose="custody-kernel-ci", intent="launch-controlled-kernel-probe",
         trace_id=request["trace_id"], lease_seconds=60,
         final_payload_digest=payload_digest,
+        operation="process.start",
     )
     grant = client.authorize_effect(
         context, capability="hermes-profile-invoke", target=target,
