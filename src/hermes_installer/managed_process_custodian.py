@@ -1292,11 +1292,26 @@ class ManagedProcessEffectHandler:
                 except AuthorityDenied:
                     owned = False
                 if owned:
-                    self._ctl(["kill", "--kill-whom=all", "--signal=SIGTERM", handle.unit], 1)
-                    time.sleep(min(.25, max(0, deadline - time.monotonic())))
                     if self._pids(handle.cgroup):
-                        self._ctl(["kill", "--kill-whom=all", "--signal=SIGKILL", handle.unit], 1)
-                    self._ctl(["stop", handle.unit], min(1, max(.1, deadline - time.monotonic())))
+                        try:
+                            self._ctl(["kill", "--kill-whom=all", "--signal=SIGTERM", handle.unit], 1)
+                        except AuthorityDenied:
+                            if self._pids(handle.cgroup):
+                                raise AuthorityDenied("process.cleanup", "owned unit rejected termination") from None
+                    if self._pids(handle.cgroup):
+                        time.sleep(min(.25, max(0, deadline - time.monotonic())))
+                    if self._pids(handle.cgroup):
+                        try:
+                            self._ctl(["kill", "--kill-whom=all", "--signal=SIGKILL", handle.unit], 1)
+                        except AuthorityDenied:
+                            if self._pids(handle.cgroup):
+                                raise AuthorityDenied("process.cleanup", "owned unit rejected forced termination") from None
+                    if self._pids(handle.cgroup):
+                        try:
+                            self._ctl(["stop", handle.unit], min(1, max(.1, deadline - time.monotonic())))
+                        except AuthorityDenied:
+                            if self._pids(handle.cgroup):
+                                raise AuthorityDenied("process.cleanup", "owned unit could not be stopped") from None
                 while self._pids(handle.cgroup) and time.monotonic() < deadline:
                     time.sleep(.02)
                 if self._pids(handle.cgroup):
