@@ -44,7 +44,10 @@ class NativePackageBinding:
 
     opaque_binding_handle: str
     package_id: str
+    profile_id: str
     generation: str
+    compiled_closure_sha256: str
+    entrypoint_sha256: str
     resolver_digest: str
     expires_monotonic: float
 
@@ -98,25 +101,31 @@ def _valid_id(value: object, label: str) -> str:
 
 def _binding_from_wire(raw: object, *, now: float) -> NativePackageBinding:
     if not isinstance(raw, Mapping) or set(raw) != {
-        "schema", "opaque_binding_handle", "package_id", "generation",
-        "resolver_digest", "expires_monotonic",
+        "schema", "opaque_binding_handle", "package_id", "profile_id", "generation",
+        "resolver_digest", "compiled_closure_sha256", "entrypoint_sha256", "expires_monotonic",
     }:
         raise NativePluginBindingUnavailable("root returned an invalid native package binding")
     if type(raw["schema"]) is not int or raw["schema"] != 1:
         raise NativePluginBindingUnavailable("root returned an unsupported native package binding")
     returned_package = _valid_id(raw["package_id"], "package identity")
+    returned_profile = _valid_id(raw["profile_id"], "profile identity")
     returned_generation = _valid_id(raw["generation"], "package generation")
     handle = raw["opaque_binding_handle"]
     digest = raw["resolver_digest"]
+    closure_digest = raw["compiled_closure_sha256"]
+    entrypoint_digest = raw["entrypoint_sha256"]
     expiry = raw["expires_monotonic"]
     if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
             or not isinstance(digest, str) or not _SHA256.fullmatch(digest)
+            or not isinstance(closure_digest, str) or not _SHA256.fullmatch(closure_digest)
+            or not isinstance(entrypoint_digest, str) or not _SHA256.fullmatch(entrypoint_digest)
             or isinstance(expiry, bool) or not isinstance(expiry, (int, float))
             or not math.isfinite(float(expiry))
             or not now < float(expiry) <= now + _MAX_BINDING_LEASE_SECONDS):
         raise NativePluginBindingUnavailable("root returned an invalid native package lease")
-    return NativePackageBinding(handle, returned_package, returned_generation,
-                                digest, float(expiry))
+    return NativePackageBinding(handle, returned_package, returned_profile,
+                                returned_generation, closure_digest, entrypoint_digest, digest,
+                                float(expiry))
 
 
 def _effect_from_wire(raw: object, *, package_generation: str) -> SelectedPluginEffect:
@@ -202,6 +211,8 @@ class RootSelectedPluginEffects:
                 or not _SHA256.fullmatch(raw["resolver_sha256"])):
             raise NativePluginBindingUnavailable("root resolver does not match its package binding")
         profile_id = _valid_id(raw["profile_id"], "resolver profile ID")
+        if profile_id != binding.profile_id:
+            raise NativePluginBindingUnavailable("root package and resolver profile do not match")
         adapters = raw["adapters"]
         if not isinstance(adapters, list) or len(adapters) > _MAX_ADAPTERS:
             raise NativePluginBindingUnavailable("root resolver exceeds its selected adapter bound")
@@ -243,6 +254,24 @@ class RootSelectedPluginEffects:
     @property
     def resolver_digest(self) -> str:
         return self._binding.resolver_digest
+
+    @property
+    def compiled_closure_sha256(self) -> str:
+        """Root-selected closure digest used only to derive its fixed mount."""
+        self._require_live()
+        return self._binding.compiled_closure_sha256
+
+    @property
+    def entrypoint_sha256(self) -> str:
+        """Root-pinned native assembly entrypoint manifest digest."""
+        self._require_live()
+        return self._binding.entrypoint_sha256
+
+    @property
+    def adapter_rows(self) -> tuple[SelectedPluginEffect, ...]:
+        """Immutable presentation rows; effect authority is re-resolved per call."""
+        self._require_live()
+        return tuple(self._effects.values())
 
     def resolve(self, adapter_id: str, action_id: str) -> SelectedPluginEffect | None:
         self._require_live()

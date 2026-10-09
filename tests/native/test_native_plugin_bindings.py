@@ -53,8 +53,11 @@ class AuthorityFixture:
             "schema": 1,
             "opaque_binding_handle": "opaque_binding_handle_fixture_0001",
             "package_id": "native-package-fixture",
+            "profile_id": "profile-fixture",
             "generation": "generation-fixture",
             "resolver_digest": self.resolver["resolver_sha256"],
+            "compiled_closure_sha256": "c" * 64,
+            "entrypoint_sha256": "d" * 64,
             "expires_monotonic": self.expires,
         }
 
@@ -104,8 +107,11 @@ class NativePluginBindingTests(unittest.TestCase):
             "schema": 1,
             "opaque_binding_handle": "../attacker",
             "package_id": "native-package-fixture",
+            "profile_id": "profile-fixture",
             "generation": "generation-fixture",
             "resolver_digest": "0" * 64,
+            "compiled_closure_sha256": "c" * 64,
+            "entrypoint_sha256": "d" * 64,
             "expires_monotonic": 20.0,
         }
         with self.assertRaises(NativePluginBindingUnavailable):
