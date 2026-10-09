@@ -172,7 +172,32 @@
       "argv_recipe": "list token objects, each EXACTLY {literal:string} or {parameter:string}; parameter names refer to schema fields. No concatenation/interpolation/conditional/default/shell expansion. Each token yields exactly one argv element; literals protected exact strings; strings preserved, integers canonical base10, booleans literal true or false. Optional absent parameter cannot occur in argv recipe; choose separately enrolled recipe instead. First executable not an argv token, fixed enrolled executable.",
       "operation_id": "Opaque finite recipe ID, distinct from effect operation process.start. operation_targets maps process.start exact admission target; selected recipe ID+parameters+enrollment/generation all part of canonical effect request digest. Reject unsupported recipe before custody launch.",
       "device_join": "Root-selected HW02 device enrollment joins selected process profile/generation via opaque device_enrollment_id in protected profile, never RPC parameter. Build HW03 recipes normally have no TPU device access. Inference worker exact selected device identity only; no all-device defaults."
-    }
+    },
+    "model_recipe_bindings": [
+      {
+        "operation_id": "colibri-source-build-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "colibri-source-build:start"
+      },
+      {
+        "operation_id": "coral-cpython39-source-build-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "coral-cpython-build:start"
+      },
+      {
+        "operation_id": "coral-selected-inference-worker-v1",
+        "parameter_schema_id": "no-caller-parameters-v1",
+        "effect_operation": "process.start",
+        "target": "coral-inference:start"
+      }
+    ],
+    "empty_parameter_schema": {
+      "id": "no-caller-parameters-v1",
+      "fields": []
+    },
+    "model_recipe_note": "All parameters {}, no caller model/input/device/path/buildflag. Root pins actual source/toolchain/builder/fixedargv/worker and selecteddevice. Inference input/model supplied only through separately authorized exact root-enrolled fixed worker protocol, not arbitrary process.start argv. coral-inference:start is fixed root-selected inference profile target, not existing successful enrollment claim."
   },
   "protected_file_schema": {
     "file": "/etc/hermes-installer/native-packages.json",

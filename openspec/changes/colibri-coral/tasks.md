@@ -41,3 +41,5 @@ Dependencies: installer-bootstrap-desktop, providers-credentials-budgets-privacy
 
 - [ ] 4.1 `HW-T02` Implement HW02 Exact selected Coral device custody; prerequisites HI-T02, HI-T09, HW-T01. Evidence EV-HW02: actual isolated native positive execution plus wrong identity/source/toolchain/device/path/network/hotplug/generation/deadline/recovery negatives. Preserve original hardware/model acceptance open and distinguish fixtures/kernel/native evidence.
 - [ ] 4.2 `HW-T03` Implement HW03 Fixed bounded source build profiles; prerequisites HI-T01, HI-T02, HI-T09, BD-F01. Evidence EV-HW03: actual isolated native positive execution plus wrong identity/source/toolchain/device/path/network/hotplug/generation/deadline/recovery negatives. Preserve original hardware/model acceptance open and distinguish fixtures/kernel/native evidence.
+
+Closed memory/model recipe identities v6: plans/amendments/2026-10-09-closed-memory-model-recipe-ids-v6.md and protected contract JSON define finite schema/recipe IDs, empty model launch parameters and root-owned forced scope. Actual serializer/result/ARM64 effect evidence remains pending, existing tasks open.

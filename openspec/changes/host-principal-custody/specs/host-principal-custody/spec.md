@@ -194,3 +194,10 @@ The installer SHALL verify actual Access JWT and fresh root selected policy at r
 #### Scenario: Forged gateway claims or expired active stream
 - **WHEN** root JWT/policy/principal verification fails or active lease revokes/expires
 - **THEN** deny before bytes or close both stream directions within tested bounded lease and preserve setup/read/tunnel credential separation.
+
+### Requirement: Closed selected recipe identities
+The installer SHALL use finite source-bound request/recipe/validator IDs with root-enforced scope and fixed parameter-free model launches; absent actual validator identity SHALL remain unavailable.
+
+#### Scenario: Caller supplies scope or model launch parameters
+- **WHEN** caller attempts to replace root scope, URI, device or fixed build/inference parameters
+- **THEN** reject before backend/launch bytes and preserve exact incomplete native evidence.
