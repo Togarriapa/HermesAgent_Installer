@@ -239,7 +239,7 @@ class BootstrapTests(unittest.TestCase):
             data=OwnedRoot(Path(td)/"data");data.ensure()
             state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=FakeRunner())
-            with self.assertRaisesRegex(BootstrapError,"download broker"): boot.prepare()
+            with self.assertRaisesRegex(BootstrapError,"object identity"): boot.prepare()
             self.assertFalse(boot.script_path.exists())
 
     def test_default_bootstrap_runner_fails_closed_without_host_custody(self):
@@ -247,7 +247,7 @@ class BootstrapTests(unittest.TestCase):
             data=OwnedRoot(Path(td)/"data"); data.ensure()
             state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
-            with self.assertRaisesRegex(BootstrapError,"managed host process authority"):
+            with self.assertRaisesRegex(BootstrapError,"(?i)managed host process authority"):
                 boot._run_process(["--manifest"],timeout=5,capture=True)
 
     def test_install_records_download_broker_block_without_network_effect(self):
