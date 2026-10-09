@@ -27,7 +27,7 @@ def resolve_secret(reference: str, *, environ: Mapping[str, str] | None = None,
         if parsed.netloc or parsed.query or parsed.fragment or not parsed.path.startswith("/"):
             raise CredentialError("File secret reference must be an absolute local path without query or fragment")
         parts = [unquote(p) for p in parsed.path.split("/") if p]
-        if not parts or any(p in {".", ".."} or "\\x00" in p for p in parts):
+        if not parts or any(p in {".", ".."} or "\x00" in p for p in parts):
             raise CredentialError("Invalid secret file path")
         flags_dir = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
         current = os.open("/", flags_dir)
@@ -43,7 +43,7 @@ def resolve_secret(reference: str, *, environ: Mapping[str, str] | None = None,
                 if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or info.st_size > 4096:
                     raise CredentialError("Secret file must be a small user-owned regular file with mode 0600 or stricter")
                 with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as stream:
-                    value = stream.read(4097).rstrip("\\r\\n")
+                    value = stream.read(4097).rstrip("\r\n")
             finally:
                 os.close(fd)
         except OSError:

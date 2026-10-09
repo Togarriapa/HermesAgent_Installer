@@ -34,7 +34,7 @@ def validate_emails(values: Iterable[str]) -> tuple[str, ...]:
     return items
 
 def collect_remote_setup(*, interactive: bool, config: dict | None = None,
-        input_fn: Callable[[str], str] = input, hidden_reader: Callable[[str], str] = getpass.getpass,
+        input_fn: Callable[[str], str] = input, hidden_reader: Callable[[str], str] | None = None,
         environ=None, keyring_lookup=None, secret_lookup=None,
         client_factory=CloudflareClient) -> RemoteSetup:
     data = config or {}
@@ -47,7 +47,7 @@ def collect_remote_setup(*, interactive: bool, config: dict | None = None,
             raise RemoteConfigError("A hostname is required; no default was selected")
         hostname = validate_hostname(hostname_raw)
         emails = validate_emails(input_fn("Allowed email addresses (comma-separated): ").split(","))
-        token = hidden_reader("Cloudflare API token (input hidden): ")
+        token = read_hidden_token(prompt="Cloudflare API token (input hidden): ", reader=hidden_reader or getpass.getpass)
         if not token:
             raise CredentialError("A valid Cloudflare API token is required")
     else:
@@ -67,7 +67,8 @@ def collect_remote_setup(*, interactive: bool, config: dict | None = None,
     selected_id = remote.get("zone_id")
     if selected_id:
         matches = tuple(z for z in matches if z.zone_id == selected_id)
-    if selected_id and not matches:\n        raise RemoteConfigError("The explicitly selected zone_id does not match an accessible active zone")\n    if len(matches) > 1:
+    if selected_id and not matches:
+        raise RemoteConfigError("The explicitly selected zone_id does not match an accessible active zone")
         if not interactive:
             raise RemoteConfigError("Several equally specific zones match; add explicit zone_id and resume")
         choices = ", ".join(f"{i + 1}) {zone.name} ({zone.account_id})" for i, zone in enumerate(matches))
