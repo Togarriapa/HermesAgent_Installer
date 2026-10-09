@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from hermes_installer.preflight import _disk_facts, _held_package_locks, _ports, _coral_facts, _resolve_dns, _linux_release_supported, _runtime_platform_ready, _matching_service_units, _graphical_session
+from hermes_installer.preflight import _disk_facts, _held_package_locks, _ports, _coral_facts, _resolve_dns, _tls_probe, _linux_release_supported, _runtime_platform_ready, _matching_service_units, _graphical_session
 
 
 def _hold_file_lock(path: str, ready, release) -> None:
