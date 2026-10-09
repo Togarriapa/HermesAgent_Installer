@@ -77,7 +77,7 @@ def _validate_entry(name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
             if not isinstance(env, Mapping) or any(
                 not isinstance(key, str) or not re.fullmatch(r"MCP_[A-Z0-9_]{1,120}", key)
                 or not isinstance(value, str) or not value.startswith("\u0024{")
-                or not re.fullmatch(r"\\$\\{[A-Za-z_][A-Za-z0-9_]{0,127}\\}", value)
+                or not re.fullmatch(r"\$\{[A-Za-z_][A-Za-z0-9_]{0,127}\}", value)
                 for key, value in env.items()
             ):
                 raise HermesMCPConfigError("MCP stdio env must contain secret variable references only")
@@ -89,7 +89,7 @@ def _validate_entry(name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
             headers = entry["headers"]
             if not isinstance(headers, Mapping) or any(
                 not isinstance(key, str) or not isinstance(value, str)
-                or not re.fullmatch(r"\\$\\{[A-Za-z_][A-Za-z0-9_]{0,127}\\}", value)
+                or not re.fullmatch(r"\$\{[A-Za-z_][A-Za-z0-9_]{0,127}\}", value)
                 for key, value in headers.items()
             ):
                 raise HermesMCPConfigError("MCP HTTP headers must contain secret references only")
