@@ -277,16 +277,19 @@ class ResourcesRuntimeTests(unittest.TestCase):
         self.assertTrue(any("PluginContext loader" in blocker for blocker in artifact.blockers))
 
     def test_unavailable_plugin_keeps_canonical_adapter_and_specific_blocker(self):
+        from hermes_installer.components.native_plugins import NATIVE_PLUGIN_ADAPTERS
+
+        unavailable = next(row for row in NATIVE_PLUGIN_ADAPTERS
+                           if not row.handler_available and row.blocker)
         artifact = materialize_runtime_resource(
-            "plugins", "agent37-discovery", "1.0.0",
-            "plugins/agent37-discovery.yaml", {"name": "agent37-discovery"},
+            "plugins", unavailable.resource_id, "1.0.0",
+            f"plugins/{unavailable.resource_id}.yaml", {"name": unavailable.resource_id},
             {}, "a" * 40, "2.3.1",
         )
-        self.assertEqual(artifact.adapter_id, "agent37-discovery")
+        self.assertEqual(artifact.adapter_id, unavailable.adapter_id)
         self.assertIsNone(artifact.native_path)
         self.assertFalse(artifact.readiness.materialized)
-        self.assertTrue(any("No one-to-one reviewed seed-source crosswalk" in blocker
-                            for blocker in artifact.blockers))
+        self.assertIn(f"{unavailable.resource_id}: {unavailable.blocker}.", artifact.blockers)
 
     def test_selected_cron_handler_delegates_only_the_pinned_profile_launch(self):
         with tempfile.TemporaryDirectory() as temp:
