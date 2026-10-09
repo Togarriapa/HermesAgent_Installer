@@ -640,13 +640,17 @@ class ManagedProcessEffectHandler:
                     break
                 if launcher.poll() is not None:
                     sink = self._diagnostic_sink
-                    if sink is not None and launcher.stderr is not None:
-                        try:
-                            diagnostic = launcher.stderr.read(2048)
-                        except (OSError, ValueError):
-                            diagnostic = b""
-                        if diagnostic:
-                            sink(diagnostic[:2048])
+                    if sink is not None:
+                        parts = [f"launcher-exit={launcher.returncode}".encode("ascii")]
+                        for name, stream in ((b"stdout", launcher.stdout), (b"stderr", launcher.stderr)):
+                            if stream is None:
+                                continue
+                            try:
+                                output = stream.read(1024)
+                            except (OSError, ValueError):
+                                output = b""
+                            parts.append(name + b"=" + output[:1024])
+                        sink(b"\n".join(parts)[:2048])
                     raise AuthorityDenied("process.launcher_early_exit", "service exited before admission")
                 time.sleep(.025)
             if identity is None:
