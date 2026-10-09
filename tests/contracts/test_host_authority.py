@@ -765,6 +765,24 @@ class NativeEventClientContracts(unittest.TestCase):
             service._dispatch(binding.uid, 123, 8, "native.response.take",
                               {**request, "delivery_handle": "bad"}, cancelled=lambda: False)
 
+    def test_partial_native_registry_cannot_be_attached(self):
+        binding = PrincipalBinding(1234, "principal:native", "profile:native", "namespace:native",
+                                   frozenset({"native.request.dispatch"}))
+
+        class PartialRegistry:
+            def begin_native_invocation(self, **_kwargs):
+                return {}
+
+            def get_invocation_contexts(self, **_kwargs):
+                return {}
+
+        service = AuthorityService(
+            signing_key=b"n" * 32, key_id="native-registry-attachment-fixture",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={}, policy=FixturePolicy(),
+        )
+        with self.assertRaises(AuthorityDenied):
+            service.attach_native_invocation_registry(PartialRegistry())
+
     def test_authority_wire_rejects_duplicate_keys_at_nested_depth(self):
         wire = b'{"outer":{"schema":1,"schema":2}}\n'
 
