@@ -2794,7 +2794,7 @@ class ManagedBuildJobRunner:
         mounted: list[Path] = []
         job_root = Path("/run/hermes-installer/build-jobs") / job_id
         log = bytearray()
-        selectors = None
+        selector = None
         timed_out = False
         was_cancelled = False
         exit_code: int | None = None
@@ -2918,12 +2918,12 @@ class ManagedBuildJobRunner:
                 stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
                 close_fds=True, shell=False)
             unit_started = True
-            import selectors
-            selectors = selectors.DefaultSelector()
+            import selectors as selectors_module
+            selector = selectors_module.DefaultSelector()
             for stream_name, stream in (("stdout", launcher.stdout), ("stderr", launcher.stderr)):
                 if stream is not None:
                     os.set_blocking(stream.fileno(), False)
-                    selectors.register(stream, selectors.EVENT_READ, stream_name)
+                    selector.register(stream, selectors_module.EVENT_READ, stream_name)
             started = manager.monotonic()
             while launcher.poll() is None:
                 try:
@@ -2945,15 +2945,15 @@ class ManagedBuildJobRunner:
                         kernel_limits = observed["limits"]
                         cgroup_limits = observed["cgroup_limits"]
                         main_pidfd = observed["pidfd"]
-                for key, _ in selectors.select(.02):
+                for key, _ in selector.select(.02):
                     data = os.read(key.fileobj.fileno(), 65536)
                     if data:
                         if len(log) + len(data) > self._LOG_LIMIT:
                             raise AuthorityDenied("build.logs", "build emitted more than the root log bound")
                         log.extend(data)
                     else:
-                        selectors.unregister(key.fileobj)
-                if launcher.poll() is None and not selectors.get_map():
+                        selector.unregister(key.fileobj)
+                if launcher.poll() is None and not selector.get_map():
                     time.sleep(.01)
             if was_cancelled or timed_out:
                 self._terminate_unit(unit, cgroup, launcher)
@@ -2964,8 +2964,8 @@ class ManagedBuildJobRunner:
                     launcher.kill()
                     launcher.wait(timeout=1.0)
             # Drain the remaining pipe bytes without blocking or exceeding the cap.
-            if selectors is not None:
-                for key in list(selectors.get_map().values()):
+            if selector is not None:
+                for key in list(selector.get_map().values()):
                     stream = key.fileobj
                     while True:
                         try:
@@ -2978,7 +2978,7 @@ class ManagedBuildJobRunner:
                             raise AuthorityDenied("build.logs", "build emitted more than the root log bound")
                         log.extend(data)
                     with contextlib.suppress(Exception):
-                        selectors.unregister(stream)
+                        selector.unregister(stream)
             exit_code = launcher.returncode
             launcher_reaped = exit_code is not None
             # systemd-run --wait holds its caller until the transient unit is
@@ -3047,9 +3047,9 @@ class ManagedBuildJobRunner:
                     self._terminate_unit(unit, cgroup, launcher)
             raise
         finally:
-            if selectors is not None:
+            if selector is not None:
                 with contextlib.suppress(Exception):
-                    selectors.close()
+                    selector.close()
             if launcher is not None:
                 for stream in (launcher.stdout, launcher.stderr, launcher.stdin):
                     if stream is not None:
