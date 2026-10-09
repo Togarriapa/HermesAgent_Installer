@@ -37,6 +37,7 @@ for item in list(sys.argv[1:]):
 class RecordingTransport:
     def __init__(self):
         self.calls = []
+        self.stream_calls = 0
 
     def __call__(self, route, model, payload, *, output_token_limit, timeout, trace_id, cancelled=lambda: False):
         request = json.loads(payload)
@@ -49,19 +50,23 @@ class RecordingTransport:
             item.get("name") for item in request.get("messages", [])
             if isinstance(item, dict) and item.get("role") == "tool"
         ]
+        stream_index = None
+        if request.get("stream") is True:
+            stream_index = self.stream_calls
+            self.stream_calls += 1
         tool_call = None
-        if "tool_search" in tool_names and "tool_search" not in tool_results:
+        if stream_index == 0:
             tool_call = ("tool_search", {"queries": ["fixture_echo"], "limit": 5})
-        elif "tool_describe" in tool_names and "tool_describe" not in tool_results:
+        elif stream_index == 1:
             tool_call = ("tool_describe", {"names": ["fixture_echo"]})
-        elif "tool_call" in tool_names and "tool_call" not in tool_results:
+        elif stream_index == 2:
             tool_call = ("tool_call", {"calls": [{
                 "name": "fixture_echo",
                 "arguments": {"text": "SYNTHETIC_PRIVATE_CANARY_7f4c"},
             }]})
         response_text = (
             "private fixture tool result received"
-            if "tool_call" in tool_results else "native fixture response"
+            if stream_index is not None and stream_index >= 3 else "native fixture response"
         )
         completion_id = "chatcmpl-native-fixture"
         if request.get("stream") is True:
