@@ -101,7 +101,84 @@
   "channel": {
     "target": "root-selected fixed official Hermes channel/account connector ID; no caller account or destination",
     "inbound": "authenticated account/route/event provenance before source receipt",
-    "outbound": "fresh selected recipient authority/explicit runtime consent and per-effect policy; no installation-test external message"
+    "outbound": "fresh selected recipient authority/explicit runtime consent and per-effect policy; no installation-test external message",
+    "source_adapter_enrollments": {
+      "requirements": [
+        "RG-F03",
+        "R0060",
+        "RB07",
+        "HI08"
+      ],
+      "tasks": [
+        "RG-F03",
+        "RB-T08",
+        "HI-T08"
+      ],
+      "source_kind": "native-input for actual authenticated/captured channel input; no new source_kind or Telegram/Discord proof reuse. Transport adapter provenance is separate protected selection metadata, never caller classification.",
+      "active_join": "resource_controller_roles selected root-channel role + source_issuers matching fixed source action/capture schema + backend/channel account/resource generation and ingress selection in complete active snapshot digest",
+      "http_selection_fields": [
+        "id",
+        "channel_resource_id",
+        "resource_generation",
+        "profile_id",
+        "controller_role_id",
+        "source_issuer_id",
+        "listener_enrollment_id",
+        "jwt_verifier_enrollment_id",
+        "allowed_session_policy_id",
+        "body_schema_id",
+        "max_body_bytes",
+        "max_event_age_seconds"
+      ],
+      "http_proof_fields": [
+        "schema",
+        "proof_handle",
+        "selection_id",
+        "session_handle",
+        "authenticated_subject_receipt_handle",
+        "request_receipt_handle",
+        "body_sha256",
+        "controller_identity_digest",
+        "service_generation_digest",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "http_observation": "Root-selected private HTTP reader authenticates actual root-selected JWT signature/issuer/audience/time and current session/revocation against protected verifier, exact route/method/body schema and bounded bytes before event. proof registry retains exact request/body/session principal receipt/current controller PIDFD/module and replay nonce. No caller authorization boolean/arbitrary listener/issuer/audience/session claim. Identity follows verified session principal binding only, not body fields. Missing actual JWT/account/session enrollment pending.",
+      "audio_selection_fields": [
+        "id",
+        "channel_resource_id",
+        "resource_generation",
+        "profile_id",
+        "controller_role_id",
+        "source_issuer_id",
+        "device_enrollment_id",
+        "capture_backend_artifact_id",
+        "capture_backend_sha256",
+        "session_policy_id",
+        "max_capture_bytes",
+        "max_capture_seconds",
+        "sample_format_schema_id"
+      ],
+      "audio_proof_fields": [
+        "schema",
+        "proof_handle",
+        "selection_id",
+        "session_handle",
+        "consent_receipt_handle",
+        "capture_receipt_handle",
+        "audio_artifact_id",
+        "audio_sha256",
+        "size_bytes",
+        "format_schema_id",
+        "controller_identity_digest",
+        "service_generation_digest",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "audio_observation": "Root-selected device/session reader verifies actual scoped session permission/explicit capture consent, exact root protected device identity/backend pin/current controller PIDFD/module and bounded captured bytes. Root seals actual owned audio artifact and receipt, lease/replay and capture lifetime bound consent. No worker device/path/audio source labels or authorized_bool. Mic permission establishes capture permission only, never authenticated human identity or PUBLIC source; sensitivity UNKNOWN/private with full source ancestry.",
+      "calls": "observe_selected_http_ingress(selection_handle,root_request_record)->RootChannelInputProof; observe_selected_audio_ingress(selection_handle,root_capture_record)->RootChannelInputProof. Root-private adapters only; resolve retained actual proof via capture_selected_ingress then atomically source receipt/event mint as v36. Proof_handle transport lookup only and registry instance/current PIDFD/session/consent checked, not standalone worker proof.",
+      "delivery": "Actual captured input may invoke only already selected profile/task/voice workflow under fresh independent grants; response delivery requires separately selected channel/session recipient scope and consent/current auth. No outgoing installation-test messaging, no arbitrary outbound URL/audio device, no JARVIS expansion. Both actual denied/allowed auth or consent plus cancellation/replay/expiry/device/session changes need native target evidence."
+    }
   },
   "bundle": {
     "graph": "root reviewed selected immutable DAG nodes/actions/dependencies; no caller graph expansion",
@@ -467,8 +544,12 @@
           "dto": "RootTaskNativeExecutionReceipt",
           "composition_attribute": "task_native_observations",
           "constructor": "RootTaskNativeObservationRegistry(source_observer_registry, native_bridge_broker, admitted_task_registry, process_custody_registry)",
-          "inputs": "All four dependencies are the actual root-composed registries, not worker callbacks. Root observers record actual during-live event receipts keyed admitted task/process/profile generation. Resolve immutable terminal receipt against retained admission and event closure; no source receipt ID inferred from stdout. Runner consumes root_runtime.task_native_observations.resolve_task_execution(task_handle, terminal_receipt). Registry owns retained event handles; caller gets immutable receipt, not authority to mint events."
-        }
+          "inputs": "All four dependencies are the actual root-composed registries, not worker callbacks. Root observers record actual during-live event receipts keyed admitted task/process/profile generation. Resolve immutable terminal receipt against retained admission and event closure; no source receipt ID inferred from stdout. Runner consumes root_runtime.task_native_observations.resolve_task_execution(task_handle, terminal_receipt). Registry owns retained event handles; caller gets immutable receipt, not authority to mint events.",
+          "implementation_module": "hermes_installer.authority.task_native_observation",
+          "canonical_public_import": "hermes_installer.authority.source_observers.RootTaskNativeObservationRegistry re-export",
+          "implementation_owner": "luna_task_native_observation only; source_observers owner adds agreed re-export, not competing implementation"
+        },
+        "terminal_sequence": "Custody issues immutable terminal receipt first after actual EOF/reap/output/cgroup observations; native_execution_receipt_handle may remain null. Runner passes that exact terminal receipt to root registry resolve_task_execution; registry returns immutable companion RootTaskNativeExecutionReceipt bound its terminal_receipt_handle and full during-live event closure. Successful selected-result capsule requires BOTH actual immutable terminal receipt and verified companion handle. Do not mutate/replace custody terminal receipt, fabricate a nonnull field or require terminal to pre-reference a later registry receipt. Optional custody finalizer may record companion after registry validation but is not required for success; companion join is authoritative."
       }
     },
     "recipe_domain": "task_body_recipe_id/task_request_schema_id select inner Hermes prompt recipe/schema; node/body_recipe_id and backend/body_recipe_id select outer resource request recipe/schema. Distinct domains, no automatic equality requirement. Both protected/current/source-pinned/forced-scope joins are mandatory; caller cannot choose either."
@@ -523,7 +604,36 @@
     "joins": "daemon_unit_id root-selected actual system daemon unit, not caller service name. Root custody resolves its current MainPID/PIDFD/starttime/cgroup/executable pin and root-owned loader/module closure. UID0 actual root dispatcher required. role_module artifact verified actual loaded immutable module, not inferred from job artifact/receipt labels. Each source_observer ID joins exact active source_issuer/current observer role and capture schema; allowed backend IDs join active resource backend rows/current resource/profile generation.",
     "resolver": "RootResourceControllerRegistry.resolve_for_event(root_event_handle,node_id)->RootTaskController; root event handle created only by concrete selected timer/HMAC+replay/channel ingress root observer, retains full immutable event closure/consent/body/current policy. Resolve role row by exact observer ID+kind and backend ID unique match; verify daemon kernel identity/actual module pins/current snapshot, duplicate its owned PIDFD for runner. No synthetic source process or caller self-enrollment.",
     "issuer": "issue_resource_job_context(root_event_handle,node_id,operation,canonical_payload_sha256) root-private registry: operation must equal exact selected node/backend operation and row allowed_operations, payload digest must equal root-rendered canonical body from protected body recipe/forced scope/full source closure. Root event registration stores actual action/body bindings. Fresh child grant selects only enrolled reduced process.start target/recipe, no caller operation/digest accepted as truth. Missing event/role/module/current peer denies.",
-    "ownership": "Source observer owner implements authority/resource_source_controllers.py actual role/event resolver and root issuer integration; authority owner consumes typed current controller and emits fresh reduced effect. Runtime task adapter consumes these APIs, never substitutes callbacks/worker claims."
+    "ownership": "Source observer owner implements authority/resource_source_controllers.py actual role/event resolver and root issuer integration; authority owner consumes typed current controller and emits fresh reduced effect. Runtime task adapter consumes these APIs, never substitutes callbacks/worker claims.",
+    "initial_ingress_custody": {
+      "owner_module": "hermes_installer.authority.resource_source_controllers",
+      "resolve_call": "resolve_selected_ingress_controller(controller_role_id,selected_source_issuer_id,selected_backend_id)->RootIngressControllerProof",
+      "proof_fields": [
+        "schema",
+        "proof_handle",
+        "controller_role_id",
+        "controller_kind",
+        "controller_generation",
+        "source_issuer_id",
+        "backend_enrollment_id",
+        "resource_generation",
+        "service_generation_digest",
+        "pid",
+        "pidfd",
+        "uid",
+        "live_peer_identity",
+        "role_artifact_id",
+        "role_artifact_sha256",
+        "namespace_id",
+        "selected_ingress_binding_id",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "selection": "Arguments are internal root static ingress/scheduler selection IDs, never public caller selectors. Resolve active resource_controller_roles/source_issuers/backend rows/current generations and actual root daemon/service PIDFD/executable/cgroup/module closure. This lookup requires no event handle or SourceReceipt. Timer exact root timer registration; webhook fixed selected route/account/HMAC credential binding+durable replay record; channel selected authenticated account/session binding. selected_ingress_binding_id is that actual protected registry record, not event ID.",
+      "mint_call": "capture_selected_ingress(proof_handle,root_observed_input_record)->RootResourceEventHandle",
+      "capture": "Private actual observer supplies bounded exact authenticated timer/webhook/channel record, not worker dict. Registry revalidates proof/controller PIDFD/module/lease/selection/HMAC/session/replay/time, atomically reserves input nonce then captures actual bytes and mints SourceReceipt plus event capsule/handle in single journal transaction. SourceReceipt.native_process_identity derives actual controller process proof, not source labels/event contents. After mint, downstream admitted source resolver may use event/receipt. No circular prerequisite or fake daemon identity.",
+      "ownership": "Registry retains controller PIDFD; proof caller receives root-local borrowed/dup clearly managed handle, capture uses retained registry lookup. On revocation/restart/gen mismatch proof expires and event mint denies. Historical source ancestry and current task execution controller remain distinct."
+    }
   },
   "profile_handler_artifact": {
     "artifact_id": "hermes-installer.resource-profile-task.v1",

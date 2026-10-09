@@ -25,7 +25,7 @@ from hermes_installer.native_boundary_patch import (
 UPSTREAM = Path("/tmp/hermes-agent-hi08")
 EXPECTED = {
     "hermes_cli/__init__.py": "84d0d7f5b6d8340897c4c53947890f88f93de146fcc228d4f4fdd096f2a8d81b",
-    "hermes_cli/plugins.py": "8e623533c5031d1dc4cc2cfe39d383f5a9780cfaeb0ff5422a8fc4a744007326",
+    "hermes_cli/plugins.py": "11d8e9606b2b274a30f11384233bee36cd44a683abdaca674201c30a9319ca86",
     "agent/__init__.py": "067ee01cbc088b572cbdabbbe4116d9bec0939acc0bd30ac67b287cb5d6743e6",
     "agent/chat_completion_helpers.py": "0f234b4f9bf3e2fd29c6e2da517b1302de4c1bc3e6780d443080526fb69d9ef9",
     "agent/auxiliary_client.py": "876a97cc1c81fb1e4bc97d92872e03ceb0b1d8f43680d551d974b4376e8950c6",
@@ -46,6 +46,9 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
         self.assertIn("manifests = install_selected_native_plugins(self, manifests)", patched)
         self.assertLess(patched.index("install_selected_native_plugins(self, manifests)"),
                         patched.index("winners = resolve_manifest_winners(manifests)"))
+        self.assertIn("finish_selected_native_plugin_discovery(self)", patched)
+        self.assertGreater(patched.index("finish_selected_native_plugin_discovery(self)"),
+                           patched.index("self._notify_plugin_loaded(loaded_before)"))
         self.assertIn("_predeclared_modules", (UPSTREAM / "hermes_cli/plugins_loader.py").read_text())
 
     def test_overlay_package_initializers_extend_real_pinned_source_path(self):

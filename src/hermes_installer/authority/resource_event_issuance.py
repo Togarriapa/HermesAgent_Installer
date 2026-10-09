@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import secrets
+from dataclasses import replace
 from typing import Any, Callable
 
 from .types import AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest
@@ -32,15 +33,12 @@ _MAX_RECEIPTS = 64
 
 
 class _SourceProducerBinding:
-    __slots__ = ("producer", "capability", "source_kind", "observer_id", "validator",
-                 "resolve_controller")
+    __slots__ = ("producer", "capability", "source_kind", "observer_id", "validator")
 
     def __init__(self, producer: object, capability: object, source_kind: str,
-                 observer_id: str, validator: Callable[[object], bool],
-                 resolve_controller: Callable[..., Any]):
+                 observer_id: str, validator: Callable[[object], bool]):
         self.producer, self.capability = producer, capability
         self.source_kind, self.observer_id, self.validator = source_kind, observer_id, validator
-        self.resolve_controller = resolve_controller
 
 
 class ResourceEventContextIssuer:
@@ -80,13 +78,12 @@ class ResourceEventContextIssuer:
 
     def register_source_producer(self, producer: object, *, source_kind: str,
                                  observer_enrollment_id: str,
-                                 validate_provenance: Callable[[object], bool],
-                                 resolve_controller: Callable[..., Any]) -> object:
+                                 validate_provenance: Callable[[object], bool]) -> object:
         """Root-assembly-only one-time binding for a concrete native source adapter."""
         if (producer is None or source_kind not in _SOURCE_KIND_BY_RESOURCE.values()
                 or not isinstance(observer_enrollment_id, str) or not observer_enrollment_id
-                or not callable(validate_provenance) or not callable(resolve_controller)):
-            raise ValueError("an enrolled root source producer, validator, and custody resolver are required")
+                or not callable(validate_provenance)):
+            raise ValueError("an enrolled root source producer and validator are required")
         key = id(producer)
         with self._producer_lock:
             if key in self._producer_bindings:
@@ -94,7 +91,7 @@ class ResourceEventContextIssuer:
             capability = object()
             self._producer_bindings[key] = _SourceProducerBinding(
                 producer, capability, source_kind, observer_enrollment_id,
-                validate_provenance, resolve_controller)
+                validate_provenance)
             return capability
 
     def mint_source_proof(self, capability: object, *, event_id: str,
@@ -122,57 +119,81 @@ class ResourceEventContextIssuer:
 
     def issue_source_event(self, proof: RootResourceSourceEventProof,
                            registry_capability: object) -> RootResourceIssuedSourceEvent:
-        """Consume producer evidence and mint original source context and receipt.
+        """Reject pre-v36 issuance that lacks the registry's retained custody proof."""
+        raise AuthorityDenied("resource.source", "initial ingress custody proof is required")
 
-        The registry capability is checked by the attached root registry before
-        it calls this method; producer proof identity and validation are checked
-        here.  The registry subsequently verifies the complete signed closure.
-        """
+    def capture_selected_ingress(self, controller_proof: Any,
+                                 root_observed_input_record: RootResourceSourceEventProof,
+                                 registry_capability: object) -> RootResourceIssuedSourceEvent:
+        """Consume source input together with registry-reserved live ingress custody."""
         from .resource_source_controllers import RootResourceEventIssuerCapability
-        if (type(proof) is not RootResourceSourceEventProof
+        if (type(root_observed_input_record) is not RootResourceSourceEventProof
                 or type(registry_capability) is not RootResourceEventIssuerCapability
                 or registry_capability is not self._registry_capability):
-            raise AuthorityDenied("resource.source", "root source proof type is invalid")
+            raise AuthorityDenied("resource.source", "root source proof or registry capability is invalid")
         with self._producer_lock:
-            retained = self._source_proofs.pop(id(proof), None)
+            retained = self._source_proofs.pop(id(root_observed_input_record), None)
             binding = retained[1] if retained is not None else None
+        proof = root_observed_input_record
         if (retained is None or retained[0] is not proof
                 or proof.issuer_token is not self._registry_capability._token
                 or binding is None):
             raise AuthorityDenied("resource.source", "root source proof is stale or already consumed")
-        self._validate_initial_source(proof, binding)
-        parent_context, role_proof, role, enrollment, observer = self._source_parent_context(proof, binding)
+        producer_observer = getattr(binding.producer, "observer", None)
+        consume = getattr(producer_observer, "consume", None)
         try:
-            receipt = self.service.issue_source_receipt(
-                parent_context, source_kind=proof.source_kind,
-                origin_id=f"{observer.origin_id}:{proof.event_id}", payload=proof.payload,
-                ttl_seconds=min(300, max(1, int(role_proof.expires_monotonic - self.monotonic()))),
-            )
-            event_context = replace(
-                parent_context, source_receipts=(receipt,),
-                monotonic_expires_at=min(parent_context.monotonic_expires_at,
-                                         receipt.monotonic_expires_at),
-                nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24),
-                signature="pending", final_payload_digest=canonical_digest(proof.payload),
-            )
-            signed = self.service._signed_context(event_context,
-                                                  self.service._sign(event_context.claims()))
-            source_context = HostContext.from_wire(signed)
-            self.service._verify_context_signature(source_context)
-            self.service._verify_source_receipt(receipt, self.controller_registry._profile_binding(enrollment))
-            return RootResourceIssuedSourceEvent(
-                source_context=source_context, receipt=receipt,
-                parent_receipts=(receipt,), payload=proof.payload,
-                producer_handle=proof.producer_handle, event_id=proof.event_id,
-                resource_id=proof.resource_id,
-                resource_generation=proof.resource_generation,
-                source_observer_enrollment_id=proof.source_observer_enrollment_id,
-                source_kind=proof.source_kind, controller_role_id=role.id,
-                controller_proof=role_proof,
-            )
-        except BaseException:
-            role_proof.close()
-            raise
+            return self._capture_consumed_source(proof, binding, controller_proof)
+        finally:
+            if callable(consume):
+                try:
+                    consume(proof.verified_provenance)
+                except Exception:
+                    pass
+
+    def _capture_consumed_source(self, proof: RootResourceSourceEventProof,
+                                 binding: _SourceProducerBinding,
+                                 controller_proof: Any) -> RootResourceIssuedSourceEvent:
+        self._validate_initial_source(proof, binding)
+        parent_context, role_proof, role, enrollment, observer = self._source_parent_context(
+            proof, controller_proof)
+        parent_receipts = self._resolve_parent_receipts(proof, binding, enrollment, parent_context)
+        if parent_receipts:
+            parent_context = replace(parent_context, source_receipts=parent_receipts,
+                                     monotonic_expires_at=min(
+                                         parent_context.monotonic_expires_at,
+                                         *(item.monotonic_expires_at for item in parent_receipts)),
+                                     signature="pending")
+            parent_context = HostContext.from_wire(self.service._signed_context(
+                parent_context, self.service._sign(parent_context.claims())))
+        receipt = self.service.issue_source_receipt(
+            parent_context, source_kind=proof.source_kind,
+            origin_id=f"{observer.origin_id}:{proof.event_id}", payload=proof.payload,
+            ttl_seconds=min(300, max(1, int(role_proof.expires_monotonic - self.monotonic()))),
+        )
+        complete_receipts = tuple(sorted((*parent_receipts, receipt),
+                                         key=lambda item: item.receipt_id))
+        event_context = replace(
+            parent_context, source_receipts=complete_receipts,
+            monotonic_expires_at=min(parent_context.monotonic_expires_at,
+                                     receipt.monotonic_expires_at),
+            nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24),
+            signature="pending", final_payload_digest=canonical_digest(proof.payload),
+        )
+        signed = self.service._signed_context(event_context,
+                                             self.service._sign(event_context.claims()))
+        source_context = HostContext.from_wire(signed)
+        self.service._verify_context_signature(source_context)
+        self.service._verify_source_receipt(receipt, self.controller_registry._profile_binding(enrollment))
+        return RootResourceIssuedSourceEvent(
+            source_context=source_context, receipt=receipt,
+            parent_receipts=complete_receipts,
+            producer_handle=proof.producer_handle, event_id=proof.event_id,
+            resource_id=proof.resource_id,
+            resource_generation=proof.resource_generation,
+            source_observer_enrollment_id=proof.source_observer_enrollment_id,
+            source_kind=proof.source_kind, controller_role_id=role.id,
+            controller_proof=role_proof,
+        )
 
     def _validate_initial_source(self, proof: RootResourceSourceEventProof,
                                  producer: _SourceProducerBinding) -> None:
@@ -187,8 +208,70 @@ class ResourceEventContextIssuer:
             raise AuthorityDenied("resource.source", "source provenance or selected source bytes changed")
         self._require_canonical_event(proof.payload)
 
+    def _resolve_parent_receipts(self, proof: RootResourceSourceEventProof,
+                                 producer: _SourceProducerBinding,
+                                 enrollment: Any, parent_context: HostContext) -> tuple[Any, ...]:
+        """Resolve native proof receipt handles through its exact root observer.
+
+        Receipt handles never enter the public event DTO. The registered adapter
+        must expose its concrete root observer, which consumes those handles once
+        and resolves them to real service-signed receipts.
+        """
+        observer = getattr(producer.producer, "observer", None)
+        consume = getattr(observer, "consume_source_receipts", None)
+        if not callable(consume):
+            return ()
+        try:
+            receipts = consume(proof.verified_provenance)
+        except Exception:
+            raise AuthorityDenied("resource.source", "native source receipt closure is stale or unavailable") from None
+        from .types import SourceReceipt
+        if (not isinstance(receipts, tuple) or len(receipts) > _MAX_RECEIPTS
+                or any(type(item) is not SourceReceipt for item in receipts)):
+            raise AuthorityDenied("resource.source", "native source receipt closure is malformed")
+        if not receipts:
+            return ()
+        by_id = {item.receipt_id: item for item in receipts}
+        if len(by_id) != len(receipts):
+            raise AuthorityDenied("resource.source", "native source receipt closure has duplicates")
+        allowed_kinds = getattr(
+            self.controller_registry.source_observers.observers.get(
+                enrollment.observer_enrollment_id), "allowed_parent_source_kinds", frozenset())
+        for receipt in receipts:
+            try:
+                self.service._verify_source_receipt(
+                    receipt, self.controller_registry._profile_binding(enrollment))
+            except Exception:
+                raise AuthorityDenied("resource.source", "native source parent receipt signature is invalid") from None
+            if (receipt.source_kind not in allowed_kinds
+                    or receipt.profile_id != enrollment.profile_id
+                    or receipt.principal_id != enrollment.principal_id
+                    or receipt.namespace_id != parent_context.namespace_id
+                    or receipt.uid != parent_context.uid
+                    or receipt.process_generation != self.service.profile_generations.get(
+                        enrollment.profile_id, "unversioned")
+                    or receipt.monotonic_expires_at <= self.monotonic()):
+                raise AuthorityDenied("resource.source", "native source parent receipt is outside the active selection")
+            if any(parent_id not in by_id for parent_id in receipt.parent_receipt_ids):
+                raise AuthorityDenied("resource.source", "native source parent receipt closure is incomplete")
+        referenced = {parent_id for item in receipts for parent_id in item.parent_receipt_ids}
+        reachable: set[str] = set()
+        pending = list(set(by_id) - referenced)
+        while pending:
+            receipt_id = pending.pop()
+            if receipt_id in reachable:
+                continue
+            row = by_id.get(receipt_id)
+            if row is None:
+                raise AuthorityDenied("resource.source", "native source parent closure is incomplete")
+            reachable.add(receipt_id)
+            pending.extend(row.parent_receipt_ids)
+        if reachable != set(by_id):
+            raise AuthorityDenied("resource.source", "native source parent closure contains unrelated receipts")
+        return tuple(sorted(receipts, key=lambda item: item.receipt_id))
+
     def _source_parent_context(self, proof: RootResourceSourceEventProof,
-                               producer: _SourceProducerBinding) -> tuple[Any, Any, Any, Any]:
+                               controller_proof: Any) -> tuple[Any, Any, Any, Any, Any]:
         """Resolve selected enrollment and live controller role before first receipt mint."""
         registry = self.controller_registry
         enrollment = registry.job_enrollments.get((proof.resource_id, proof.resource_generation))
@@ -211,26 +294,50 @@ class ResourceEventContextIssuer:
         binding = registry._profile_binding(enrollment)
         role = registry._select_source_role(
             enrollment, proof.source_observer_enrollment_id, proof.source_kind)
-        try:
-            role_proof = producer.resolve_controller(role, enrollment, observer, spec)
-        except Exception:
-            raise AuthorityDenied("resource.controller", "root source controller custody is unavailable") from None
-        from .root_controller_custody import RootControllerRoleCustody
-        if (type(role_proof) is not RootControllerRoleCustody
-                or getattr(role_proof, "row", None) != role
-                or getattr(role_proof, "generation_digest", None) != self.service.service_generation_digest
-                or getattr(role_proof, "loaded_role_proof", None) is None
-                or getattr(getattr(role_proof, "identity", None), "daemon_unit_id", None)
-                != role.daemon_unit_id
+        role_proof = self._controller_custody_from_ingress_proof(controller_proof)
+        from .root_controller_custody import (
+            RootControllerProcessIdentity, RootControllerRoleResolver,
+            RootIngressControllerProof,
+        )
+        if (type(role_proof) is not RootIngressControllerProof
+                or role_proof._resolver is not registry.custody_resolver
+                or type(role_proof.schema) is not int or role_proof.schema != 1
+                or role_proof.controller_role_id != role.id
+                or role_proof.controller_kind != role.controller_kind
+                or role_proof.controller_generation != role.controller_generation
+                or role_proof.source_issuer_id != enrollment.source_issuer_channel_id
+                or role_proof.resource_generation != enrollment.generation
+                or role_proof.backend_enrollment_id not in role.allowed_backend_enrollment_ids
+                or role_proof.authority_epoch != self.service.authority_epoch
+                or role_proof.service_generation_digest != self.service.service_generation_digest
+                or role_proof.role_artifact_id != role.role_module_artifact_id
+                or role_proof.role_artifact_sha256 != role.role_module_sha256
+                or not isinstance(role_proof.namespace_id, str)
+                or not role_proof.namespace_id
+                or type(role_proof.live_peer_identity) is not RootControllerProcessIdentity
+                or role_proof.live_peer_identity.pid != role_proof.pid
+                or role_proof.live_peer_identity.uid != 0
+                or role_proof.live_peer_identity.daemon_unit_id != role.daemon_unit_id
+                or role_proof.live_peer_identity.executable_artifact_id != role.daemon_executable_artifact_id
+                or role_proof.live_peer_identity.executable_sha256 != role.daemon_executable_sha256
+                or role_proof.namespace_id != RootControllerRoleResolver._namespace_binding_id(
+                    role_proof.live_peer_identity)
+                or type(role_proof.uid) is not int or role_proof.uid != 0
+                or type(role_proof.pid) is not int or role_proof.pid <= 0
+                or type(role_proof.pidfd) is not int or role_proof.pidfd < 0
+                or not role_proof.proof_handle or not role_proof.selected_ingress_binding_id
                 or not callable(getattr(role_proof, "revalidate", None))
                 or role_proof.revalidate() is not True
-                or getattr(role_proof, "uid", None) != 0):
-            close = getattr(role_proof, "close", None)
-            if callable(close): close()
+                or type(role_proof.issued_monotonic) not in (int, float)
+                or not math.isfinite(role_proof.issued_monotonic)
+                or type(role_proof.expires_monotonic) not in (int, float)
+                or not math.isfinite(role_proof.expires_monotonic)
+                or role_proof.issued_monotonic > self.monotonic()
+                or role_proof.expires_monotonic <= self.monotonic()
+                or role_proof.expires_monotonic > self.monotonic() + role.max_lease_seconds):
             raise AuthorityDenied("resource.controller", "root source controller custody is stale")
         now = self.monotonic()
         if not math.isfinite(now) or role_proof.expires_monotonic <= now:
-            role_proof.close()
             raise AuthorityDenied("resource.controller", "root source controller lease expired")
         expiry = min(now + role.max_lease_seconds, role_proof.expires_monotonic,
                      now + 300.0)
@@ -259,11 +366,21 @@ class ResourceEventContextIssuer:
                 "authority_epoch": self.service.authority_epoch}),
             generation=self.service.profile_generations.get(binding.profile_id, "unversioned"),
             operation="resource.job.admit",
-            native_process_identity=f"{role_proof.identity.daemon_unit_id}:{role_proof.pid}:{role_proof.identity.start_time_ticks}",
+            native_process_identity=(f"{role.daemon_unit_id}:{role_proof.pid}:"
+                                     f"{role_proof.live_peer_identity.start_time_ticks}:"
+                                     f"{role.daemon_executable_sha256}:{role_proof.role_artifact_sha256}:"
+                                     f"{role_proof.namespace_id}"),
         )
         parent = HostContext.from_wire(self.service._signed_context(parent,
                                          self.service._sign(parent.claims())))
         return parent, role_proof, role, enrollment, observer
+
+    def _controller_custody_from_ingress_proof(self, ingress_proof: Any) -> Any:
+        """Extract only the registry-retained custody object behind v36 proof."""
+        from .root_controller_custody import RootIngressControllerProof
+        if type(ingress_proof) is not RootIngressControllerProof:
+            raise AuthorityDenied("resource.controller", "selected ingress proof type is invalid")
+        return ingress_proof
 
     def issue(self, request: Any) -> tuple[HostContext, EffectAuthorization]:
         """Consume one registry-minted request and sign its exact selected effect."""
