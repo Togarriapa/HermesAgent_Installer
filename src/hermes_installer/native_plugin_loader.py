@@ -9,6 +9,7 @@ effect is re-authorized by the root broker.
 from __future__ import annotations
 
 import hashlib
+import contextlib
 import importlib.util
 import inspect
 import json
@@ -452,7 +453,133 @@ def predeclare_selected_native_package(plugin_manager: object, package: Selected
     if any(key in predeclared for key in prepared):
         raise NativePluginLoadUnavailable("selected native plugin key collided during loader preparation")
     predeclared.update(prepared)
+    setattr(plugin_manager, "_hermes_installer_native_plugin_keys", frozenset(prepared))
     return tuple(prepared)
+
+
+def _selected_runtime_context_factory(authority: object, package: SelectedNativePackage):
+    """Build one typed component context from current root-selected bindings.
+
+    Imports are delayed until Hermes actually loads a selected adapter. This
+    keeps ordinary plugin discovery independent of the optional component
+    cohort, while a selected plugin cannot fall back to source files or a
+    caller-supplied context when any trusted part is absent.
+    """
+    def create(adapter_id: str):
+        try:
+            from hermes_installer.components.plugin_effects import bind_plugin_effects_to_runtime_context
+            from hermes_installer.registry.resources_runtime import (
+                NativePluginRuntimeContext, ResourceIdentity, ReviewedPluginAdapterRegistry,
+            )
+        except Exception:
+            raise NativePluginLoadUnavailable("trusted native component context is unavailable") from None
+        if any(not callable(getattr(authority, method, None)) for method in (
+                "begin_native_invocation", "get_invocation_contexts", "context")):
+            raise NativePluginLoadUnavailable("root native invocation context APIs are unavailable")
+        digest = package.manifest_digest_for_adapter(adapter_id)
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            raise NativePluginLoadUnavailable("root selected no source manifest for this adapter")
+        identity = ResourceIdentity(
+            resource_id=adapter_id, kind="plugins", version=package.generation,
+            source_path="root-selected-native-package", source_revision=package.compiled_closure_sha256,
+            content_digest=digest,
+        )
+        try:
+            capabilities = tuple(sorted({
+                effect.capability for action in _selected_actions(package, adapter_id)
+                if (effect := package.resolve(adapter_id, action)) is not None
+            }))
+            runtime_context = NativePluginRuntimeContext(
+                identity=identity, declared_capabilities=capabilities, authority=authority,
+                invocation_contexts=None,
+                selected_adapters=ReviewedPluginAdapterRegistry(), plugin_effects=None,
+            )
+            return bind_plugin_effects_to_runtime_context(
+                authority=authority, selected_package=package,
+                current_binding=_current_native_invocation_binding,
+                runtime_context=runtime_context,
+            )
+        except Exception:
+            raise NativePluginLoadUnavailable("root invocation or selected effect context is unavailable") from None
+    return create
+
+
+def _selected_actions(package: SelectedNativePackage, adapter_id: str) -> tuple[str, ...]:
+    adapter = package.resolve_adapter(adapter_id)
+    return tuple(adapter.action_ids) if adapter is not None else ()
+
+
+def _current_native_invocation_binding() -> Any | None:
+    try:
+        from hermes_installer.native_invocations import current_native_invocation_binding
+        return current_native_invocation_binding()
+    except Exception:
+        return None
+
+
+def install_selected_native_plugins(plugin_manager: object, manifests: list[Any]) -> list[Any]:
+    """Bind the root-selected closure into the real pinned PluginManager sweep.
+
+    Only adapter IDs in the no-argument root-selected resolver become synthetic
+    bundled manifests. Any disk/entrypoint plugin claiming one of those keys is
+    removed from this sweep, and the loader consumes its predeclared verified
+    module. This function is called by the reviewed exact-source overlay before
+    Hermes resolves winners and runs its normal registration lifecycle.
+    """
+    if not isinstance(manifests, list):
+        raise NativePluginLoadUnavailable("pinned Hermes discovery manifest list is unavailable")
+    try:
+        from hermes_installer.authority.client import AuthorityClient
+        authority = AuthorityClient.for_current_process()
+        package = bind_current_native_plugin_package(authority)
+    except Exception:
+        # Native binding is optional for the rest of Hermes discovery, but no
+        # selected native adapter is introduced without the current root bind.
+        return manifests
+    return _install_root_selected_package(
+        plugin_manager, manifests, package,
+        _selected_runtime_context_factory(authority, package),
+    )
+
+
+def _install_root_selected_package(plugin_manager: object, manifests: list[Any],
+                                   package: SelectedNativePackage,
+                                   runtime_context_factory: Any) -> list[Any]:
+    """Install a verified selected package into the real Hermes discovery pass."""
+    try:
+        predeclared_ids = predeclare_selected_native_package(
+            plugin_manager, package, runtime_context_factory,
+        )
+        if set(predeclared_ids) != set(package.adapter_ids):
+            raise NativePluginLoadUnavailable("selected native adapter set changed during discovery")
+        from hermes_cli.plugins_manifest import PluginManifest, manifest_key
+        selected = set(predeclared_ids)
+        # A user, project, or entrypoint copy cannot shadow the protected
+        # selected adapter module under the same plugin key.
+        survivors = [manifest for manifest in manifests if manifest_key(manifest) not in selected]
+        synthetic = [
+            PluginManifest(
+                name=adapter_id, key=adapter_id, source="bundled", kind="backend",
+                path=str(package.mount_target / "closure"),
+            )
+            for adapter_id in predeclared_ids
+        ]
+        return survivors + synthetic
+    except NativePluginLoadUnavailable:
+        # A partial registration map would let normal file discovery win over
+        # a selected package. Remove every module installed by this call and
+        # leave the untrusted manifest list without selected adapter keys.
+        predeclared = getattr(plugin_manager, "_predeclared_modules", None)
+        if isinstance(predeclared, dict):
+            for adapter_id in package.adapter_ids:
+                module = predeclared.get(adapter_id)
+                if isinstance(module, ModuleType) and module.__name__.startswith("hermes_installer_selected_"):
+                    predeclared.pop(adapter_id, None)
+        with contextlib.suppress(Exception):
+            delattr(plugin_manager, "_hermes_installer_native_plugin_keys")
+        return [manifest for manifest in manifests
+                if getattr(manifest, "key", "") not in set(package.adapter_ids)
+                and getattr(manifest, "name", "") not in set(package.adapter_ids)]
 
 
 def bind_current_native_plugin_package(authority: object) -> SelectedNativePackage:

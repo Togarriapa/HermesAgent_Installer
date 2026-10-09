@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import base64
 import tempfile
 import time
@@ -18,6 +19,19 @@ from hermes_installer.authority.build_execution import (
 from hermes_installer.authority.types import (
     AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
 )
+
+
+def _test_temp_parent():
+    # Darwin exposes its root-owned sticky temp directory at /private/tmp; Linux
+    # uses /tmp. Never make Linux tests depend on a Darwin-only alias.
+    return "/private/tmp" if sys.platform == "darwin" else "/tmp"
+
+
+@pytest.mark.parametrize(("platform_name", "expected"),
+                         [("darwin", "/private/tmp"), ("linux", "/tmp")])
+def test_temp_parent_uses_only_the_platform_specific_sticky_root(monkeypatch, platform_name, expected):
+    monkeypatch.setattr(sys, "platform", platform_name)
+    assert _test_temp_parent() == expected
 
 
 def constraints():
@@ -110,7 +124,7 @@ def make_store(path: Path):
 
 
 def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_returns_receipt():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
         output_root.mkdir(mode=0o700)
@@ -207,7 +221,7 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
 
 
 def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activating_receipt():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
         output_root.mkdir(mode=0o700)
@@ -282,6 +296,21 @@ def test_fixed_build_handler_fact_failure_cleans_unique_output_without_activatin
         assert not (store.root / "current").exists()
 
 
+def test_output_cleanup_rejects_replaced_job_root_instead_of_succeeding():
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
+        base = Path(temp)
+        target = base / "target"
+        target.mkdir(mode=0o700)
+        replaced = base / "job-output"
+        replaced.symlink_to(target, target_is_directory=True)
+
+        with pytest.raises(AuthorityDenied):
+            RootBuildExecutionService._remove_job_output_root(replaced, os.getuid())
+
+        assert target.is_dir()
+        assert replaced.is_symlink()
+
+
 def filled_output(root):
     root.mkdir(mode=0o700, exist_ok=True)
     write_file(root, "bin/colibri", b"fixture ARM64 executable", executable=True)
@@ -290,7 +319,7 @@ def filled_output(root):
 
 
 def test_dynamic_output_manifest_is_root_hashed_and_atomically_resolved():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         output_root = base / "outputs"
         output_root.mkdir(mode=0o700)
@@ -315,7 +344,7 @@ def test_dynamic_output_manifest_is_root_hashed_and_atomically_resolved():
 
 
 def test_root_fact_mismatch_or_inspector_error_never_publishes_receipt():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -334,7 +363,7 @@ def test_root_fact_mismatch_or_inspector_error_never_publishes_receipt():
     {"kernel_limits": {"PrivateNetwork": "no"}},
 ])
 def test_no_receipt_for_nonterminal_or_unproven_process(changes):
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -347,7 +376,7 @@ def test_no_receipt_for_nonterminal_or_unproven_process(changes):
 
 @pytest.mark.parametrize("mutation", ["missing", "extra", "symlink", "oversize"])
 def test_output_scanner_rejects_incomplete_or_unbounded_tree(mutation):
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -367,7 +396,7 @@ def test_output_scanner_rejects_incomplete_or_unbounded_tree(mutation):
 
 
 def test_cancellation_and_tampered_receipt_or_cas_object_fail_closed():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         base = Path(temp)
         root = base / "outputs"
         filled_output(root)
@@ -434,7 +463,7 @@ def elf64_aarch64(needed=()):
 
 
 def test_linux_fact_inspector_parses_aarch64_elf_dependencies_and_rejects_x86():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         root = Path(temp)
         path = root / "colibri"
         path.write_bytes(elf64_aarch64(("libgomp.so.1", "libm.so.6", "libc.so.6")))
@@ -457,7 +486,7 @@ def test_linux_fact_inspector_parses_aarch64_elf_dependencies_and_rejects_x86():
 
 
 def test_linux_fact_inspector_hashes_actual_root_owned_dependency_closure():
-    with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(dir=_test_temp_parent()) as temp:
         root = Path(temp)
         expected = {}
         for name in ("libgomp.so.1", "libm.so.6", "libc.so.6"):

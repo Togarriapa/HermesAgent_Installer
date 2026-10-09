@@ -343,6 +343,9 @@ class ManagedProcessKernelEvidenceTests(unittest.TestCase):
                         self.assertEqual(set(fields), {"data_bytes", "sequence"})
                         self.assertIs(type(fields["sequence"]), int)
                         self.assertEqual(fields["sequence"], cursors["stdin_sequence"])
+                        # This replaces _control before AuthorityClient's JSON
+                        # wire encoding, so the typed API still carries bytes;
+                        # the actual RPC encodes these as canonical base64.
                         encoded = fields["data_bytes"]
                         self.assertIsInstance(encoded, bytes)
                         self.assertLessEqual(len(encoded), 65536)

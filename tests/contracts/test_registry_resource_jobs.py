@@ -10,7 +10,8 @@ import pytest
 from hermes_installer.registry.resource_jobs import (
     ResourceBackendEnrollment, ResourceBodyRecipe, ResourceBodyRecipeField,
     ResourceChildAdmission, ResourceJobDenied, ResourceJobEnrollment,
-    ResourceJobLedger, ResourceJobNode,
+    ResourceJobLedger, ResourceJobNode, ResourceBodyRecipeScope,
+    ResourceScopeBinding, ResourceValidator, RootResourceJobAdmissionHandle,
 )
 
 
@@ -236,9 +237,78 @@ def test_backend_and_literal_recipe_freeze_protected_values() -> None:
         (ResourceBodyRecipeField("action", "literal", "run", "enum-run"),), {}, 512,
     )
     assert recipe.render_literals() == b'{"action":"run"}'
-    with pytest.raises(ResourceJobDenied, match="protected root payload"):
+    with pytest.raises(ResourceJobDenied, match="protected event, result, or scope values"):
         ResourceBodyRecipe(
             "event-recipe", "request-schema", "recipe-artifact", digest,
             (ResourceBodyRecipeField("message", "observed-event-field", "message", "bounded-text"),),
             {}, 512,
         ).render_literals()
+
+
+def test_bounded_json_validator_fails_closed_without_loaded_schema_artifact() -> None:
+    validator = ResourceValidator(
+        "schema-validator", "bounded-json", 1024, None, None, None,
+        "artifact-schema", hashlib.sha256(b"schema").hexdigest(),
+    )
+    with pytest.raises(ResourceJobDenied, match="schema artifact validator is unavailable"):
+        validator.validate_scalar({"selected": "value"})
+
+
+def test_recipe_renders_only_exact_event_fields_and_backend_scope() -> None:
+    digest = hashlib.sha256(b"recipe").hexdigest()
+    backend = ResourceBackendEnrollment(
+        "backend", "demo", "profile", "principal", hashlib.sha256(b"g").hexdigest(),
+        "consent", "source", "observer", "package", "pkg-gen", "handler", digest,
+        {"action"}, "resource.cron.run", "resource:demo:action:g", None, set(),
+        "request", "result", "recipe", "scope", 1024, 2048, 20,
+    )
+    scope = ResourceScopeBinding(
+        "scope", "demo", "profile", "principal", backend.generation, "profile-gen",
+        "backend", {"channel": "fixed-channel"}, frozenset(), None,
+    )
+    validators = {
+        "text": ResourceValidator("text", "utf8-string", 128, None, None, None, None, None),
+        "id": ResourceValidator("id", "opaque-id", 128, None, None, None, None, None),
+    }
+    recipe = ResourceBodyRecipe(
+        "recipe", "request", "recipe-artifact", digest,
+        (ResourceBodyRecipeField("message", "observed-event-field", "message", "text"),),
+        (ResourceBodyRecipeScope("channel", "scope", "channel", "id"),), 512,
+    )
+    rendered = recipe.render(
+        backend=backend, scope_bindings={"scope": scope}, validators=validators,
+        event_fields={"message": "hello"}, parent_results={},
+    )
+    assert rendered == b'{"channel":"fixed-channel","message":"hello"}'
+    with pytest.raises(ResourceJobDenied, match="selected event field is absent"):
+        recipe.render(backend=backend, scope_bindings={"scope": scope}, validators=validators,
+                     event_fields={}, parent_results={})
+    other_scope = ResourceScopeBinding(
+        "other-scope", "demo", "profile", "principal", backend.generation, "profile-gen",
+        "backend", {"channel": "attacker"}, frozenset(), None,
+    )
+    with pytest.raises(ResourceJobDenied, match="scope binding or validator"):
+        recipe.render(backend=backend, scope_bindings={"scope": other_scope}, validators=validators,
+                     event_fields={"message": "hello"}, parent_results={})
+
+
+def test_root_profile_task_handle_is_immutable_bound_and_does_not_reveal_prompt_in_repr():
+    payload = b'{"prompt":"private selected prompt"}'
+    handle = RootResourceJobAdmissionHandle(
+        handle_id="handle-1", job_id="job-1", node_id="node-1",
+        child_admission_id="attempt-1", attempt_index=0, backend_enrollment_id="backend-1",
+        resource_generation=hashlib.sha256(b"resource").hexdigest(),
+        profile_id="profile-1", profile_generation="profile-generation",
+        native_package_id="package-1", native_package_generation="package-generation",
+        process_enrollment_id="process-1", process_generation="process-generation",
+        operation_id="hermes-resource-profile-task-v1", child_target_id="process:profile:chat",
+        child_capability="hermes-profile-invoke", task_body_recipe_id="task-recipe",
+        task_request_schema_id="prompt-v1", task_payload=payload,
+        task_payload_sha256=hashlib.sha256(payload).hexdigest(),
+        parent_closure_digest=hashlib.sha256(b"closure").hexdigest(), expires_monotonic=20.0,
+    )
+    assert "private selected prompt" not in repr(handle)
+    with pytest.raises((AttributeError, TypeError)):
+        handle.node_id = "other-node"
+    with pytest.raises(ResourceJobDenied, match="payload or closure digest"):
+        replace(handle, task_payload=b'{"prompt":"changed"}')

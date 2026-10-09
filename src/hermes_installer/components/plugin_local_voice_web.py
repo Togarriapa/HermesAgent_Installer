@@ -67,9 +67,7 @@ class WyomingVoiceImplementation:
         effects = getattr(runtime_context, "plugin_effects", None)
         if not callable(getattr(effects, "invoke", None)):
             raise PluginAdapterError("protected selected-plugin effects are not enrolled")
-        enrollment_id = getattr(runtime_context, "voice_session_enrollment_id", None)
-        _bounded_text(enrollment_id, "root-selected voice session enrollment", 128)
-        WyomingVoicePlugin(effects, enrollment_id).register(ctx, runtime_context)
+        WyomingVoicePlugin(effects).register(ctx, runtime_context)
 
 
 class PublicWebImplementation:
@@ -150,12 +148,11 @@ class LocalKanbanPlugin:
 
 
 class WyomingVoicePlugin:
-    """Session-only local voice adapter; never stores or returns raw audio."""
-    def __init__(self, effects: PluginEffectResolver, session_enrollment_id: str):
+    """Root-composite-only local voice adapter; never handles raw audio."""
+    def __init__(self, effects: PluginEffectResolver):
         if not callable(getattr(effects, "invoke", None)):
             raise TypeError("voice tools require the root plugin effect resolver")
-        _bounded_text(session_enrollment_id, "root-selected voice session enrollment", 128)
-        self.effects, self.session_enrollment_id = effects, session_enrollment_id
+        self.effects = effects
 
     def register(self, ctx: ToolContext, runtime_context: object) -> None:
         ctx.register_tool("voice_transcribe", "voice_pipeline", {
@@ -170,54 +167,27 @@ class WyomingVoicePlugin:
     def transcribe(self, *, mode: str) -> dict[str, Any]:
         if mode not in {"general", "home_control"}:
             raise PluginAdapterError("unknown utterance kind")
-        session = _invoke_plugin_effect(self.effects, "voice-pipeline", "open_session", {
-            "session_enrollment_id": self.session_enrollment_id,
-            "direction": "input", "requested_lease_seconds": 60})
-        session_handle, expires = _voice_session(session)
-        try:
-            artifact = _invoke_plugin_effect(self.effects, "voice-pipeline", "capture_audio", {
-                "session_handle": session_handle, "maximum_seconds": 30})
-            audio_id = _opaque_handle(artifact, "audio_artifact_id")
-            if type(artifact.get("size_bytes")) is not int or not 1 <= artifact["size_bytes"] <= 16_777_216:
-                raise PluginAdapterError("root voice capture returned an invalid bounded audio receipt")
-            if not isinstance(artifact.get("sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", artifact["sha256"]):
-                raise PluginAdapterError("root voice capture returned an invalid content digest")
-            if time.monotonic() >= expires:
-                raise PluginAdapterError("root voice capture session expired before transcription")
-            result = _invoke_plugin_effect(self.effects, "voice-pipeline", "voice_transcribe", {
-                "session_handle": session_handle, "audio_artifact_id": audio_id, "mode": mode})
-            if (set(result) != {"schema", "transcript", "source_receipt_handle", "profile_id",
-                                "owner_generation", "operation_id", "expires_monotonic"}
-                    or result.get("schema") != 1
-                    or not isinstance(result.get("transcript"), str)
-                    or len(result["transcript"]) > 65_536
-                    or not _opaque_value(result.get("source_receipt_handle"))
-                    or not all(isinstance(result.get(k), str) and result[k]
-                               for k in ("profile_id", "owner_generation", "operation_id"))
-                    or isinstance(result.get("expires_monotonic"), bool)
-                    or not isinstance(result.get("expires_monotonic"), (int, float))
-                    or result["expires_monotonic"] <= time.monotonic()):
-                raise PluginAdapterError("local STT returned invalid transcript provenance")
-            return result
-        finally:
-            _invoke_plugin_effect(self.effects, "voice-pipeline", "close_session",
-                                  {"session_handle": session_handle})
+        result = _invoke_plugin_effect(self.effects, "voice-pipeline", "voice_transcribe", {"mode": mode})
+        if (set(result) != {"schema", "transcript", "source_receipt_handle", "profile_id",
+                            "owner_generation", "operation_id", "expires_monotonic"}
+                or result.get("schema") != 1
+                or not isinstance(result.get("transcript"), str)
+                or len(result["transcript"]) > 65_536
+                or not _opaque_value(result.get("source_receipt_handle"))
+                or not all(isinstance(result.get(k), str) and result[k]
+                           for k in ("profile_id", "owner_generation", "operation_id"))
+                or isinstance(result.get("expires_monotonic"), bool)
+                or not isinstance(result.get("expires_monotonic"), (int, float))
+                or result["expires_monotonic"] <= time.monotonic()):
+            raise PluginAdapterError("local STT returned invalid transcript provenance")
+        return result
 
     def speak(self, *, text: str) -> dict[str, Any]:
         _bounded_text(text, "text", 16384)
-        session = _invoke_plugin_effect(self.effects, "voice-pipeline", "open_session", {
-            "session_enrollment_id": self.session_enrollment_id,
-            "direction": "output", "requested_lease_seconds": 60})
-        session_handle, _expires = _voice_session(session)
-        try:
-            result = _invoke_plugin_effect(self.effects, "voice-pipeline", "voice_speak",
-                                           {"session_handle": session_handle, "text": text})
-            if set(result) != {"audio_artifact"} or not _valid_artifact_receipt(result["audio_artifact"]):
-                raise PluginAdapterError("local Piper returned no bounded output receipt")
-            return result
-        finally:
-            _invoke_plugin_effect(self.effects, "voice-pipeline", "close_session",
-                                  {"session_handle": session_handle})
+        result = _invoke_plugin_effect(self.effects, "voice-pipeline", "voice_speak", {"text": text})
+        if set(result) != {"audio_artifact"} or not _valid_artifact_receipt(result["audio_artifact"]):
+            raise PluginAdapterError("local Piper returned no bounded output receipt")
+        return result
 
 
 class PublicWebPlugin:
@@ -256,8 +226,7 @@ def _invoke_plugin_effect(effects: PluginEffectResolver, adapter_id: str, action
     if not callable(invoke):
         raise PluginAdapterError("protected selected-plugin effects are unavailable")
     actions = {"epic-kanban": {"create", "read", "add_item", "move_item", "delete_accepted"},
-               "voice-pipeline": {"open_session", "capture_audio", "close_session",
-                                  "voice_transcribe", "voice_speak"},
+               "voice-pipeline": {"voice_transcribe", "voice_speak"},
                "web": {"retrieve"}}
     if (adapter_id not in actions or action_id not in actions[adapter_id]
             or not isinstance(arguments, dict)):
@@ -290,9 +259,6 @@ def _invoke_plugin_effect(effects: PluginEffectResolver, adapter_id: str, action
     result_fields = {
         "create": {"board_id"}, "read": {"board"}, "add_item": {"item_id"},
         "move_item": {"state"}, "delete_accepted": {"receipt_id"},
-        "open_session": {"session_handle", "expires_monotonic"},
-        "capture_audio": {"audio_artifact_id", "sha256", "size_bytes"},
-        "close_session": {"closed"},
         "voice_transcribe": {"schema", "transcript", "source_receipt_handle", "profile_id",
                              "owner_generation", "operation_id", "expires_monotonic"},
         "voice_speak": {"audio_artifact"},
