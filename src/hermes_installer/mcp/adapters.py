@@ -28,28 +28,37 @@ SERVICES: Mapping[str, MCPService] = {
         "RevenueCat OAuth or scoped API v2 key", "selected project", True,
         "https://www.revenuecat.com/docs/tools/mcp/tools-reference"),
     "google-gmail": MCPService("google-gmail", "https://gmailmcp.googleapis.com/mcp/v1",
-        frozenset(), "Google Workspace Developer Preview OAuth", "selected Gmail resource", True,
-        "https://developers.google.com/workspace/preview"),
+        frozenset({"get_message", "get_thread", "search_threads", "list_labels"}),
+        "Google Workspace Developer Preview OAuth", "one selected message or thread", True,
+        "https://developers.google.com/workspace/gmail/api/reference/mcp"),
     "google-drive": MCPService("google-drive", "https://drivemcp.googleapis.com/mcp/v1",
-        frozenset(), "Google Workspace Developer Preview OAuth", "selected Drive resource", True,
-        "https://developers.google.com/workspace/preview"),
+        frozenset({"get_file", "search_files", "read_file_content"}),
+        "Google Workspace Developer Preview OAuth", "one selected Drive file", True,
+        "https://developers.google.com/workspace/drive/api/reference/mcp"),
+    "google-docs": MCPService("google-docs", "https://docsmcp.googleapis.com/mcp",
+        frozenset({"read_doc"}), "Google Workspace Developer Preview OAuth",
+        "one selected Docs document", True,
+        "https://developers.google.com/workspace/docs/api/reference/mcp"),
+    "google-sheets": MCPService("google-sheets", "https://sheetsmcp.googleapis.com/mcp",
+        frozenset({"get_spreadsheet"}), "Google Workspace Developer Preview OAuth",
+        "one selected spreadsheet", True,
+        "https://developers.google.com/workspace/sheets/api/reference/mcp"),
     "google-calendar": MCPService("google-calendar", "https://calendarmcp.googleapis.com/mcp/v1",
-        frozenset(), "Google Workspace Developer Preview OAuth", "selected Calendar resource", True,
-        "https://developers.google.com/workspace/preview"),
-    "google-chat": MCPService("google-chat", "https://chatmcp.googleapis.com/mcp/v1",
-        frozenset(), "Google Workspace Developer Preview OAuth", "selected Chat resource", True,
-        "https://developers.google.com/workspace/preview"),
-    "google-people": MCPService("google-people", "https://people.googleapis.com/mcp/v1",
-        frozenset(), "Google Workspace Developer Preview OAuth", "selected People resource", True,
-        "https://developers.google.com/workspace/preview"),
-    "home-assistant": MCPService("home-assistant", None, frozenset(),
-        "existing Home Assistant token/OAuth", "explicit selected entities", True,
+        frozenset({"get_event", "list_events", "list_calendars", "search_events"}),
+        "Google Workspace Developer Preview OAuth", "one selected event or calendar", True,
+        "https://developers.google.com/workspace/calendar/api/v3/reference/mcp"),
+    "google-people": MCPService("google-people", "https://people.googleapis.com/mcp",
+        frozenset({"search_directory_people"}),
+        "Google Workspace Developer Preview OAuth", "one explicitly selected directory person", True,
+        "https://developers.google.com/people/api/mcp"),
+    "home-assistant": MCPService("home-assistant", None,
+        frozenset(), "existing Home Assistant token/OAuth", "explicit selected entities", True,
         "https://www.home-assistant.io/integrations/mcp_server"),
-    "google-community": MCPService("google-community", None, frozenset(),
-        "user-configured OAuth", "selected Google resource", False,
+    "google-community": MCPService("google-community", None,
+        frozenset(), "user-configured OAuth", "one selected Google resource", False,
         "https://github.com/taylorwilsdon/google_workspace_mcp"),
-    "playwright": MCPService("playwright", None, frozenset(),
-        "host-managed pinned local process", "isolated loopback fixture", True,
+    "playwright": MCPService("playwright", None,
+        frozenset(), "host-managed pinned local process", "isolated loopback fixture", True,
         "https://playwright.dev/docs/getting-started-mcp"),
 }
 
@@ -111,10 +120,17 @@ class ReadOnlyAdapter:
             result = self.status()
             result["status"] = self._last_failure
             return result
-        allowed = self.service.allowed_tools
-        self.client.allowed_tools = frozenset(self.client.allowed_tools & allowed)
-        self.client._tools = {name: schema for name, schema in discovered.items()
-                              if name in self.client.allowed_tools}
+        self.client.allowed_tools = frozenset(self.client.allowed_tools & self.service.allowed_tools)
+        # Even allowlisted names are rejected unless the server advertises the
+        # MCP read-only hint. The static list remains the authoritative ceiling.
+        accepted = {}
+        for name, schema in discovered.items():
+            annotations = schema.get("annotations", {})
+            if (name in self.client.allowed_tools
+                    and annotations.get("readOnlyHint") is True
+                    and annotations.get("destructiveHint") is not True):
+                accepted[name] = schema
+        self.client._tools = accepted
         result = self.status()
         result.update({"protocol": init["protocolVersion"],
                        "status": "discovered_read_only_tools" if result["tools"]
@@ -128,6 +144,8 @@ class ReadOnlyAdapter:
             raise PermissionError("read outside the reviewed tool and selected-resource policy")
         if not self._authorization_ready():
             raise PermissionError("trusted host authorization is unavailable")
+        if name not in getattr(self.client, "discovered_tools", frozenset()):
+            raise PermissionError("MCP read tool has not passed live schema review")
         clock = getattr(self.client, "monotonic", time.monotonic)
         try:
             result = await self.client.call_read(name, arguments, deadline=clock() + timeout)
