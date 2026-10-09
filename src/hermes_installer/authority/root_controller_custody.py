@@ -9,17 +9,20 @@ active generation agree.
 from __future__ import annotations
 
 import hashlib
+import math
 import marshal
 import os
 import re
 import select
+import secrets
 import stat
 import subprocess
 import sys
+import threading
 import time
 import types
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import FunctionType
 from types import MappingProxyType
@@ -40,6 +43,13 @@ def _valid_id(value: object, field: str) -> str:
     if not isinstance(value, str) or not _ID.fullmatch(value):
         raise AuthorityDenied("controller.role", f"invalid {field}")
     return value
+
+
+def _finite_number(value: int | float) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, TypeError, ValueError):
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -512,6 +522,76 @@ class RootControllerEventBinding:
     expires_monotonic: float
 
 
+@dataclass(frozen=True, slots=True)
+class RootSelectedIngressBinding:
+    """Exact active static ingress selection, resolved before an event exists.
+
+    The callback supplying this value is root-private and must join the active
+    issuer, observer, resource/backend enrollment, and timer/route/account
+    registration.  ``selected_ingress_binding_id`` names that static record;
+    it is never an event or receipt identifier.
+    """
+
+    role: RootControllerRoleEnrollment
+    source_issuer: Any
+    source_observer: Any
+    backend: Any
+    resource_generation: str
+    service_generation_digest: str
+    authority_epoch: str
+    selected_ingress_binding_id: str
+    expires_monotonic: float
+
+
+@dataclass(slots=True)
+class RootIngressControllerProof:
+    """Root-local proof of the selected live ingress dispatcher.
+
+    ``pidfd`` is an owned duplicate and is closed by ``close``.  The resolver
+    separately retains the custody PIDFD under ``proof_handle`` until explicit
+    release, so the source registry can close this value after copying the
+    proof into its retained pre-event record.
+    """
+
+    schema: int
+    proof_handle: str
+    controller_role_id: str
+    controller_kind: str
+    controller_generation: str
+    source_issuer_id: str
+    backend_enrollment_id: str
+    resource_generation: str
+    service_generation_digest: str
+    authority_epoch: str
+    pid: int
+    pidfd: int
+    uid: int
+    live_peer_identity: RootControllerProcessIdentity
+    role_artifact_id: str
+    role_artifact_sha256: str
+    namespace_id: str
+    selected_ingress_binding_id: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _resolver: Any = field(repr=False, compare=False)
+    _fd_closed: bool = field(default=False, init=False, repr=False, compare=False)
+
+    def revalidate(self) -> bool:
+        return self._resolver.revalidate_ingress_proof(self.proof_handle)
+
+    def close(self) -> None:
+        if not self._fd_closed:
+            self._fd_closed = True
+            self._resolver._inspector.close_pidfd(self.pidfd)
+
+
+@dataclass(slots=True)
+class _RetainedIngressProof:
+    binding: RootSelectedIngressBinding
+    custody: "RootControllerRoleCustody"
+    proof: RootIngressControllerProof
+
+
 class RootControllerRoleCustody:
     """Held custody lease for one selected root controller process and role."""
 
@@ -606,6 +686,7 @@ class RootControllerRoleResolver:
                  executable_resolver: Callable[[str], ControllerExecutablePin],
                  loaded_role_registry: RootControllerRoleModuleRegistry,
                  current_generation_digest: Callable[[], str],
+                 selected_ingress_binding_resolver: Callable[[str, str, str], RootSelectedIngressBinding] | None = None,
                  monotonic: Callable[[], float] = time.monotonic) -> None:
         if not all(callable(value) for value in (
                 event_binding_resolver, executable_resolver,
@@ -613,6 +694,8 @@ class RootControllerRoleResolver:
                 getattr(inspector, "duplicate_pidfd", None), getattr(inspector, "close_pidfd", None),
                 getattr(inspector, "is_pidfd_live", None))):
             raise ValueError("root controller resolver dependencies are incomplete")
+        if selected_ingress_binding_resolver is not None and not callable(selected_ingress_binding_resolver):
+            raise ValueError("selected ingress binding resolver must be callable")
         self.catalog = catalog
         self._event_binding_resolver = event_binding_resolver
         self._inspector, self._executable_resolver = inspector, executable_resolver
@@ -620,7 +703,206 @@ class RootControllerRoleResolver:
             raise ValueError("root loaded-role module registry is required")
         self._loaded_role_registry = loaded_role_registry
         self._current_generation_digest = current_generation_digest
+        self._selected_ingress_binding_resolver = selected_ingress_binding_resolver
         self._monotonic = monotonic
+        self._ingress_proofs: dict[str, _RetainedIngressProof] = {}
+        self._ingress_lock = threading.RLock()
+
+    @staticmethod
+    def _ingress_join(binding: RootSelectedIngressBinding, role_id: str,
+                      issuer_id: str, backend_id: str) -> None:
+        """Fail closed unless this is the exact active static ingress join."""
+        role, issuer = binding.role, binding.source_issuer
+        observer, backend = binding.source_observer, binding.backend
+        if not isinstance(role, RootControllerRoleEnrollment) or role.id != role_id:
+            raise AuthorityDenied("controller.role", "selected ingress role is not the active role")
+        if (getattr(issuer, "issuer_channel_id", None) != issuer_id
+                or getattr(observer, "channel_id", None) != issuer_id
+                or getattr(backend, "source_issuer_channel_id", None) != issuer_id
+                or getattr(issuer, "producer_profile_id", None) != getattr(observer, "profile_id", None)
+                or getattr(issuer, "capture_schema_id", None) != getattr(observer, "capture_schema_id", None)
+                or getattr(backend, "profile_id", None) != getattr(observer, "profile_id", None)
+                or getattr(backend, "principal_id", None) != getattr(observer, "principal_id", None)
+                or getattr(backend, "generation", None) != binding.resource_generation):
+            raise AuthorityDenied("controller.issuer", "selected ingress issuer join is invalid")
+        observer_id = getattr(observer, "observer_enrollment_id", None)
+        kind = {"schedule-event": "root-scheduler", "webhook-event": "root-webhook",
+                "native-input": "root-channel"}.get(getattr(observer, "source_kind", None))
+        if (kind != role.controller_kind or observer_id not in role.source_observer_enrollment_ids
+                or getattr(issuer, "observer_enrollment_id", None) != observer_id
+                or getattr(backend, "observer_enrollment_id", None) != observer_id
+                or getattr(backend, "backend_id", None) != backend_id
+                or backend_id not in role.allowed_backend_enrollment_ids
+                or getattr(backend, "operation", None) not in role.allowed_operations):
+            raise AuthorityDenied("controller.join", "selected ingress observer/backend join is invalid")
+        if (not isinstance(binding.resource_generation, str)
+                or not _DIGEST.fullmatch(binding.resource_generation)
+                or not isinstance(binding.service_generation_digest, str)
+                or not _DIGEST.fullmatch(binding.service_generation_digest)
+                or not isinstance(binding.authority_epoch, str) or not binding.authority_epoch
+                or not isinstance(binding.selected_ingress_binding_id, str)
+                or not _ID.fullmatch(binding.selected_ingress_binding_id)
+                or isinstance(binding.expires_monotonic, bool)
+                or not isinstance(binding.expires_monotonic, (int, float))
+                or not _finite_number(binding.expires_monotonic)):
+            raise AuthorityDenied("controller.ingress", "selected ingress binding is malformed")
+
+    def resolve_selected_ingress_controller(
+            self, controller_role_id: str, selected_source_issuer_id: str,
+            selected_backend_id: str) -> RootIngressControllerProof:
+        """Resolve static root-selected ingress custody before any event/receipt.
+
+        IDs are internal selection keys.  No PID, source event, receipt, or
+        process identity is accepted from the caller.
+        """
+        role_id = _valid_id(controller_role_id, "controller role ID")
+        issuer_id = _valid_id(selected_source_issuer_id, "source issuer ID")
+        backend_id = _valid_id(selected_backend_id, "backend enrollment ID")
+        callback = self._selected_ingress_binding_resolver
+        if callback is None:
+            raise AuthorityDenied("controller.ingress", "selected ingress resolver is not configured")
+        if self._current_generation_digest() != self.catalog.generation_digest:
+            raise AuthorityDenied("controller.generation", "active controller catalog is stale")
+        binding = callback(role_id, issuer_id, backend_id)
+        if not isinstance(binding, RootSelectedIngressBinding):
+            raise AuthorityDenied("controller.ingress", "selected ingress resolver returned an invalid binding")
+        self._ingress_join(binding, role_id, issuer_id, backend_id)
+        role = binding.role
+        if self.catalog.get(role.id) != role:
+            raise AuthorityDenied("controller.role", "selected ingress role differs from active catalog")
+        now = self._monotonic()
+        if (binding.service_generation_digest != self.catalog.generation_digest
+                or now >= binding.expires_monotonic
+                or binding.expires_monotonic > now + role.max_lease_seconds):
+            raise AuthorityDenied("controller.ingress", "selected ingress generation or lease is stale")
+        if len(self._ingress_proofs) >= 256:
+            self._expire_ingress_proofs()
+            if len(self._ingress_proofs) >= 256:
+                raise AuthorityDenied("controller.ingress", "retained ingress proof capacity is exhausted")
+        pin = self._executable_resolver(role.daemon_executable_artifact_id)
+        if (not isinstance(pin, ControllerExecutablePin)
+                or pin.artifact_id != role.daemon_executable_artifact_id
+                or pin.sha256 != role.daemon_executable_sha256):
+            raise AuthorityDenied("controller.executable", "daemon executable pin does not match selected role")
+        identity = self._inspector.inspect(role.daemon_unit_id, pin)
+        owned_pidfd = caller_pidfd = None
+        custody = None
+        try:
+            if (identity.daemon_unit_id != role.daemon_unit_id or identity.uid != 0
+                    or identity.executable_artifact_id != role.daemon_executable_artifact_id
+                    or identity.executable_sha256 != role.daemon_executable_sha256
+                    or not self._inspector.is_pidfd_live(identity.pidfd, identity.pid)):
+                raise AuthorityDenied("controller.identity", "selected systemd MainPID identity is invalid")
+            loaded = self._loaded_role_registry.require_loaded(
+                role.role_module_artifact_id, role.role_module_sha256, pid=identity.pid,
+                start_time_ticks=identity.start_time_ticks,
+                service_generation_digest=self.catalog.generation_digest,
+                controller_generation=role.controller_generation)
+            if (loaded.pid != identity.pid or loaded.start_time_ticks != identity.start_time_ticks
+                    or loaded.module_artifact_id != role.role_module_artifact_id
+                    or loaded.module_sha256 != role.role_module_sha256):
+                raise AuthorityDenied("controller.module", "selected daemon has no current loaded role proof")
+            owned_pidfd = self._inspector.duplicate_pidfd(identity.pidfd, identity.pid)
+            if (not self._inspector.is_pidfd_live(owned_pidfd, identity.pid)
+                    or self._current_generation_digest() != self.catalog.generation_digest
+                    or self._monotonic() >= binding.expires_monotonic):
+                raise AuthorityDenied("controller.stale", "selected ingress custody changed during resolution")
+            expiry = min(float(binding.expires_monotonic), now + role.max_lease_seconds)
+            custody = RootControllerRoleCustody(
+                row=role, identity=replace(identity, pidfd=owned_pidfd), owned_pidfd=owned_pidfd,
+                loaded_role_proof=loaded, generation_digest=self.catalog.generation_digest,
+                expires_monotonic=expiry, inspector=self._inspector, executable_pin=pin,
+                proof_registry=self._loaded_role_registry,
+                current_generation_digest=self._current_generation_digest, monotonic=self._monotonic)
+            caller_pidfd = custody.duplicate_pidfd()
+            namespace_id = self._namespace_binding_id(identity)
+            handle = secrets.token_urlsafe(32)
+            proof = RootIngressControllerProof(
+                schema=1, proof_handle=handle, controller_role_id=role.id,
+                controller_kind=role.controller_kind, controller_generation=role.controller_generation,
+                source_issuer_id=issuer_id, backend_enrollment_id=backend_id,
+                resource_generation=binding.resource_generation,
+                service_generation_digest=binding.service_generation_digest,
+                authority_epoch=binding.authority_epoch,
+                pid=identity.pid, pidfd=caller_pidfd, uid=identity.uid,
+                live_peer_identity=replace(identity, pidfd=caller_pidfd),
+                role_artifact_id=role.role_module_artifact_id,
+                role_artifact_sha256=role.role_module_sha256, namespace_id=namespace_id,
+                selected_ingress_binding_id=binding.selected_ingress_binding_id,
+                issued_monotonic=now, expires_monotonic=expiry, _resolver=self)
+            # Re-read the exact static binding after acquiring process custody.
+            current = callback(role_id, issuer_id, backend_id)
+            self._ingress_join(current, role_id, issuer_id, backend_id)
+            if current != binding or self._current_generation_digest() != self.catalog.generation_digest:
+                raise AuthorityDenied("controller.stale", "selected ingress changed during custody resolution")
+            with self._ingress_lock:
+                if len(self._ingress_proofs) >= 256:
+                    raise AuthorityDenied("controller.ingress", "retained ingress proof capacity is exhausted")
+                self._ingress_proofs[handle] = _RetainedIngressProof(binding, custody, proof)
+            custody = None
+            caller_pidfd = None
+            return proof
+        except BaseException:
+            if custody is not None:
+                custody.close()
+            elif owned_pidfd is not None:
+                self._inspector.close_pidfd(owned_pidfd)
+            if caller_pidfd is not None:
+                self._inspector.close_pidfd(caller_pidfd)
+            raise
+        finally:
+            self._inspector.close_pidfd(identity.pidfd)
+
+    @staticmethod
+    def _namespace_binding_id(identity: RootControllerProcessIdentity) -> str:
+        value = "|".join(str(part) for namespace in (
+            identity.pid_namespace, identity.mount_namespace, identity.user_namespace)
+                         for part in namespace)
+        return "ns1:" + hashlib.sha256(value.encode("ascii")).hexdigest()
+
+    def _expire_ingress_proofs(self) -> None:
+        with self._ingress_lock:
+            expired = [key for key, item in self._ingress_proofs.items()
+                       if self._monotonic() >= item.proof.expires_monotonic
+                       or self._current_generation_digest() != item.proof.service_generation_digest]
+            for key in expired:
+                item = self._ingress_proofs.pop(key)
+                item.proof.close()
+                item.custody.close()
+
+    def revalidate_ingress_proof(self, proof_handle: str) -> bool:
+        with self._ingress_lock:
+            item = self._ingress_proofs.get(proof_handle)
+        if item is None:
+            return False
+        if not item.custody.revalidate():
+            self.release_ingress_proof(proof_handle)
+            return False
+        if self._selected_ingress_binding_resolver is None:
+            self.release_ingress_proof(proof_handle)
+            return False
+        try:
+            fresh = self._selected_ingress_binding_resolver(
+                item.proof.controller_role_id, item.proof.source_issuer_id,
+                item.proof.backend_enrollment_id)
+            self._ingress_join(fresh, item.proof.controller_role_id,
+                               item.proof.source_issuer_id, item.proof.backend_enrollment_id)
+            valid = (fresh == item.binding
+                     and fresh.service_generation_digest == item.proof.service_generation_digest
+                     and fresh.authority_epoch == item.binding.authority_epoch
+                     and fresh.selected_ingress_binding_id == item.proof.selected_ingress_binding_id)
+        except (AuthorityDenied, OSError, ValueError, TypeError):
+            valid = False
+        if not valid:
+            self.release_ingress_proof(proof_handle)
+        return valid
+
+    def release_ingress_proof(self, proof_handle: str) -> None:
+        with self._ingress_lock:
+            item = self._ingress_proofs.pop(proof_handle, None)
+        if item is not None:
+            item.proof.close()
+            item.custody.close()
 
     def resolve_for_event(self, root_event_handle: str, node_id: str) -> RootControllerRoleCustody:
         _valid_id(root_event_handle, "root event handle")
