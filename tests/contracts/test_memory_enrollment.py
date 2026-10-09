@@ -95,10 +95,51 @@ def record(provider="agentmemory", variant="default", port=3111):
         "background_consent_revision": "consent-policy-one",
         "limits": {"request_bytes": 262144, "response_bytes": 2097152, "result_limit": 100,
                    "operation_timeout_seconds": 15, "whole_compound_timeout_seconds": 60},
+        "lifecycle_binding": None,
     }
 
 
 class MemoryEnrollmentTests(unittest.TestCase):
+    def test_lifecycle_binding_is_exact_variant_generation_and_readiness_recipe(self):
+        value = record()
+        value["lifecycle_binding"] = {
+            "service_enrollment_id": value["service_enrollment_id"],
+            "service_generation": value["service_generation"],
+            "start_operation_id": "memory-agentmemory-serve-v1",
+            "start_parameter_schema_id": "no-caller-parameters-v1",
+            "prestart_receipt_handles": ["package-receipt", "engine-receipt"],
+            "readiness_route_id": "agentmemory-ready",
+            "readiness_schema_id": "agentmemory-livez-result-v1",
+            "restart_policy": "manual-owned-restart",
+            "maximum_restart_attempts": 0,
+            "original_deadline_seconds": 60,
+        }
+        enrollment = MemoryServiceEnrollment.from_protected_record(value)
+        self.assertEqual(enrollment.lifecycle_binding.start_operation_id,
+                         "memory-agentmemory-serve-v1")
+        self.assertEqual(enrollment.lifecycle_binding.readiness_route_id,
+                         "agentmemory-ready")
+        self.assertEqual(enrollment.lifecycle_binding.prestart_receipt_handles,
+                         ("package-receipt", "engine-receipt"))
+
+        for mutate in (
+            lambda row: row["lifecycle_binding"].update(start_operation_id="unreviewed"),
+            lambda row: row["lifecycle_binding"].update(service_generation="stale-generation"),
+            lambda row: row["lifecycle_binding"].update(readiness_schema_id="generic-health"),
+            lambda row: row["lifecycle_binding"].update(start_parameter_schema_id="caller-args"),
+            lambda row: row["lifecycle_binding"].update(prestart_receipt_handles=[]),
+            lambda row: row["lifecycle_binding"].update(maximum_restart_attempts=True),
+        ):
+            candidate = record()
+            candidate["lifecycle_binding"] = dict(value["lifecycle_binding"])
+            mutate(candidate)
+            with self.subTest(binding=candidate["lifecycle_binding"]):
+                with self.assertRaises(MemoryEnrollmentError):
+                    MemoryServiceEnrollment.from_protected_record(candidate)
+
+    def test_null_lifecycle_binding_is_explicit_unavailable_startup(self):
+        self.assertIsNone(MemoryServiceEnrollment.from_protected_record(record()).lifecycle_binding)
+
     def test_pins_literal_listener_ports_and_source_pinned_recipes_are_required(self):
         self.assertEqual(MemoryServiceEnrollment.from_protected_record(record()).literal_loopback_port, 3111)
         self.assertEqual(MemoryServiceEnrollment.from_protected_record(

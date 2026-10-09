@@ -381,6 +381,7 @@ class MemoryCompoundTests(unittest.TestCase):
                 "request_bytes": 262144, "response_bytes": 2097152, "result_limit": 100,
                 "operation_timeout_seconds": 15, "whole_compound_timeout_seconds": 60,
             },
+            "lifecycle_binding": None,
         }
         enrollment = MemoryServiceEnrollment.from_protected_record(record)
         self.assertEqual(enrollment.fixed_route_map["agentmemory-search"].steps[0].step_id, "search")
