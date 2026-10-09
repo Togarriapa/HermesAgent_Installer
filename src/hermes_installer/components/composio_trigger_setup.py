@@ -94,6 +94,18 @@ def _sha(value: object, *, maximum: int = _MAX_SCHEMA_BYTES) -> str:
     return hashlib.sha256(_json_bytes(value, maximum=maximum)).hexdigest()
 
 
+def _schema_sha(value: object) -> str:
+    """Match the root reader's canonical normalized-row digest exactly."""
+    try:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=True, allow_nan=False).encode("ascii")
+    except (TypeError, ValueError, RecursionError):
+        raise ComposioTriggerSetupUnavailable("Composio trigger schema is not finite canonical JSON") from None
+    if len(encoded) > _MAX_SCHEMA_BYTES:
+        raise ComposioTriggerSetupUnavailable("Composio trigger schema exceeds the 256 KiB bound")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _required_text(value: object, pattern: re.Pattern[str], what: str) -> str:
     if not isinstance(value, str) or not pattern.fullmatch(value):
         raise ComposioTriggerSetupUnavailable(f"Composio {what} is invalid")
@@ -125,15 +137,17 @@ def _parse_trigger(row: object, *, toolkit_version: str) -> ComposioTriggerType:
         raise ComposioTriggerSetupUnavailable("Composio trigger instructions are invalid")
     schema_projection = {
         "slug": slug, "name": name, "description": description,
-        "instructions": instructions,
         "type": trigger_type, "toolkit": {"slug": "whatsapp", "version": version},
         "config": config, "payload": payload,
-        "requires_webhook_endpoint_setup": row.get("requires_webhook_endpoint_setup"),
     }
-    digest = _sha(schema_projection)
+    if "instructions" in row:
+        schema_projection["instructions"] = instructions
     requires_webhook = row.get("requires_webhook_endpoint_setup")
     if requires_webhook is not None and type(requires_webhook) is not bool:
         raise ComposioTriggerSetupUnavailable("Composio webhook requirement field is invalid")
+    if "requires_webhook_endpoint_setup" in row:
+        schema_projection["requires_webhook_endpoint_setup"] = requires_webhook
+    digest = _schema_sha(schema_projection)
     return ComposioTriggerType(slug, name, description, trigger_type, "whatsapp", version,
                                dict(config), dict(payload), requires_webhook, digest)
 

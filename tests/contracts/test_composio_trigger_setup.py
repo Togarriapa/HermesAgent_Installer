@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+import json
 
 import pytest
 
@@ -95,6 +97,23 @@ def test_schema_drift_between_catalog_and_selected_get_type_fails_closed():
     broker = RecordingRootGet(selected=changed)
     with pytest.raises(ComposioTriggerSetupUnavailable, match="schema changed"):
         discovery(broker).select(ROW["slug"])
+
+
+def test_schema_digest_matches_root_canonical_optional_field_projection():
+    row = deepcopy(ROW)
+    row["name"] = "WhatsApp Nachricht"
+    broker = RecordingRootGet(pages=[{"items": [row], "next_cursor": None}], selected=row)
+    parsed, _ = discovery(broker).select(ROW["slug"])
+    projection = {
+        "slug": row["slug"], "name": row["name"], "description": row["description"],
+        "type": row["type"], "toolkit": {"slug": "whatsapp", "version": PIN},
+        "config": row["config"], "payload": row["payload"],
+        "requires_webhook_endpoint_setup": True,
+    }
+    expected = hashlib.sha256(json.dumps(
+        projection, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        allow_nan=False).encode("ascii")).hexdigest()
+    assert parsed.schema_sha256 == expected
 
 
 def test_polling_trigger_type_can_still_use_authenticated_webhook_delivery():
