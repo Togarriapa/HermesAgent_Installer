@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import os
 import re
+import pwd
 import select
 import stat
 import contextlib
@@ -151,8 +152,7 @@ def _bus_environment() -> dict[str, str]:
         raise ManagedProcessError("user runtime directory is not private and UID-owned")
     if bus_info.st_uid != uid or not stat.S_ISSOCK(bus_info.st_mode):
         raise ManagedProcessError("user systemd bus is not an owned socket")
-    return {"PATH": "/usr/bin:/bin", "LANG": "C", "XDG_RUNTIME_DIR": str(runtime),
-            "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + str(bus)}
+    return {"PATH": "/usr/bin:/bin", "LANG": "C"}
 
 
 def sys_platform_linux() -> bool:
@@ -166,7 +166,7 @@ async def _systemctl_async(*args: str, timeout: float = 2.0) -> str:
     process = None
     try:
         process = await asyncio.create_subprocess_exec(
-            path, "--user", *args, stdin=asyncio.subprocess.DEVNULL,
+            path, "-n", "systemctl", "--system", *args, stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             env=_bus_environment(), close_fds=True,
         )
@@ -192,7 +192,7 @@ async def _systemctl_async(*args: str, timeout: float = 2.0) -> str:
 
 
 async def _show_async(unit: str, prop: str, timeout: float = 1.0) -> str:
-    if prop not in {"ControlGroup", "MainPID", "ActiveState", "SubState", "Description", "RuntimeMaxUSec", "KillMode", "ProtectSystem", "ProtectHome", "PrivateTmp", "PrivateDevices", "NoNewPrivileges", "IPAddressDeny"}:
+    if prop not in {"ControlGroup", "MainPID", "ActiveState", "SubState", "Description", "RuntimeMaxUSec", "KillMode", "ProtectSystem", "ProtectHome", "PrivateTmp", "PrivateDevices", "NoNewPrivileges", "IPAddressDeny", "PrivateNetwork", "RestrictAddressFamilies", "ProtectHome", "ProtectProc", "ProcSubset", "User"}:
         raise ValueError("unsupported systemd property")
     return await _systemctl_async("show", "--property=" + prop, "--value", unit, timeout=timeout)
 
@@ -518,17 +518,22 @@ class ManagedProcessSupervisor:
             "--property=Description=" + description,
             "--property=ProtectSystem=strict",
             "--property=ProtectHome=tmpfs",
+            "--property=ProtectProc=invisible",
+            "--property=ProcSubset=pid",
+            "--property=InaccessiblePaths=-/run/user -/run/dbus/system_bus_socket -/run/docker.sock -/var/run/docker.sock -/run/containerd -/run/podman/podman.sock",
             "--property=PrivateTmp=yes",
             "--property=PrivateDevices=yes",
             "--property=NoNewPrivileges=yes",
+            "--property=User=" + spec.service_user,
+            "--property=SupplementaryGroups=",
             "--property=ProtectKernelTunables=yes",
             "--property=ProtectKernelModules=yes",
             "--property=ProtectControlGroups=yes",
             "--property=RestrictSUIDSGID=yes",
             "--property=RestrictNamespaces=user",
-            "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+            "--property=RestrictAddressFamilies=AF_UNIX",
+            "--property=PrivateNetwork=yes",
             "--property=IPAddressDeny=any",
-            "--property=IPAddressAllow=localhost",
             "--property=BindPaths=" + str(data) + ":/hermes",
             "--property=BindReadOnlyPaths=" + str(artifact) + ":" + str(artifact),
             "--property=UnsetEnvironment=" + " ".join(unset_names),
@@ -537,7 +542,7 @@ class ManagedProcessSupervisor:
             raise ManagedProcessError("environment allowlist exceeds its bound")
         env_args = ["--setenv=" + key + "=" + value
                     for key, value in sorted(spec.env_allowlist.items())]
-        argv = [systemd_run, "--user", "--unit=" + unit, "--service-type=exec",
+        argv = [shutil.which("sudo", path="/usr/bin:/bin") or "/usr/bin/sudo", "-n", systemd_run, "--system", "--unit=" + unit, "--service-type=exec",
                 "--wait", "--collect", "--pipe", "--quiet",
                 "--working-directory=" + target_cwd, *properties, *env_args,
                 str(exe), *spec.argv[1:]]
