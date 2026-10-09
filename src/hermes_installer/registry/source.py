@@ -97,7 +97,8 @@ def _git_tree(files: Mapping[str, bytes], modes: Mapping[str, int]):
                 directory = True
             else:
                 content, file_mode = value
-                mode = "100755" if file_mode == 0o755 else "100644" if file_mode == 0o644 else ""
+                mode = ("100755" if file_mode == 0o755 else "100644" if file_mode == 0o644
+                        else "120000" if file_mode == 0o120000 else "")
                 if not mode:
                     raise RegistrySourceError("unexpected tracked source file mode")
                 object_id = _git_blob(content)

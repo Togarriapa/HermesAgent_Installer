@@ -178,69 +178,153 @@ class FixedServiceConnectorContracts(unittest.TestCase):
     def test_hi13_backend_drives_fixed_socket_effect_and_closes_it(self):
         from types import SimpleNamespace
         from hermes_installer.service_connector import RemoteServiceConnectorBackend
+        from hermes_installer.authority.remote_connector_authority import (
+            AuthorityServiceHI12Adapter, GatewayRoleProof, RemoteConnectorEffectAuthority,
+        )
+        from hermes_installer.authority.remote_sessions import (
+            RemoteConnectorBinding, RemoteGatewayIdentity, RemoteRuntimeState,
+        )
+        from hermes_installer.authority.service import AuthorityService, EffectRule, PrincipalBinding
+        from hermes_installer.authority.types import Sensitivity
 
         session_id = "session:fixture"
         lease_deadline = time.monotonic() + 20
-        frame_deadline = time.monotonic() + 5
-        gateway_identity = SimpleNamespace(uid=1234, pid=os.getpid(),
-                                            profile_id="gateway-profile",
-                                            generation="gateway-generation")
-        binding = SimpleNamespace(
-            gateway_identity=gateway_identity, gateway_profile_id="gateway-profile",
-            gateway_generation="gateway-generation", session_id=session_id,
-            target_id="xpra-native", route_id="xpra-http", action="asset-read",
-            enrollment_id="enrollment:fixture", native_generation="generation:1",
-            native_profile_id="hermes-desktop", lease_expires_monotonic=lease_deadline,
-            frame_deadline_monotonic=frame_deadline, cancelled=lambda: False,
+        peer_uid, peer_pid, peer_pidfd = 1234, os.getpid(), self.pidfd
+        gateway_identity = RemoteGatewayIdentity(
+            peer_uid, peer_pid, "123456", "b" * 64, "gateway-cgroup", "gateway-profile",
+            "gateway-generation", "c" * 64, gid=peer_uid, pid_starttime_ticks="123456",
+            executable_device=2049, executable_inode=7001, mount_namespace_inode=3001,
+            network_namespace_inode=3002, enrollment_id="enrollment:fixture",
+            pidfd_registry_handle="registry:fixture",
+        )
+        binding = RemoteConnectorBinding(
+            enrollment_id="enrollment:fixture", session_id=session_id,
+            action="asset-read", route_id="xpra-http", target_id="xpra-native",
+            subject="subject:fixture", principal_id="principal:remote",
+            profile_id="user-profile", profile_generation="user-generation",
+            gateway_profile_id="gateway-profile", gateway_generation="gateway-generation",
+            native_profile_id="hermes-desktop", native_generation="generation:1",
+            policy_revision="policy:fixture", policy_config_digest="d" * 64,
+            service_generation_digest="e" * 64, connector_handle=None, next_sequence=0,
+            gateway_identity=gateway_identity, token_fingerprint="f" * 64,
+            issued_monotonic=time.monotonic(), lease_expires_monotonic=lease_deadline,
+            frame_deadline_monotonic=lease_deadline, cancelled=lambda: False,
+        )
+        state = RemoteRuntimeState(
+            "enrollment:fixture", "policy:fixture", "d" * 64, "gateway-generation",
+            "generation:1", "hermes-desktop", "generation:1", "b" * 64,
+            "xpra-native", "a" * 64, "e" * 64,
+        )
+        protected_remote = SimpleNamespace(
+            enrollment_id="enrollment:fixture", gateway_profile_id="gateway-profile",
+            gateway_generation="gateway-generation", gateway_role_artifact_id="gateway-role",
+            gateway_role_sha256="b" * 64, native_desktop_profile_id="hermes-desktop",
+            native_generation="generation:1", connector_target_id="xpra-native",
+            policy_revision="policy:fixture", policy_config_digest="d" * 64,
+        )
+        entrypoint_artifact_id, entrypoint_digest = "gateway-entrypoint", "9" * 64
+        role_proof = GatewayRoleProof(
+            "enrollment:fixture", "gateway-profile", "gateway-generation", "b" * 64,
+            "gateway-role", "b" * 64, entrypoint_artifact_id, entrypoint_digest,
+            "boot:fixture", time.monotonic() - 1, time.monotonic() + 30,
         )
 
-        def root_auth(operation, payload, deadline, sequence, maximum_bytes):
-            context = _context(operation, generation="generation:1", payload=payload)
-            return SimpleNamespace(
-                operation=operation, target_id="xpra-native", route_id="xpra-http",
-                session_id=session_id, generation="generation:1", deadline=deadline,
-                sequence=sequence, maximum_bytes=maximum_bytes,
-                request_digest=canonical_digest(payload), host_context=context,
-                effect_authorization=_authorization(context, operation, "xpra-native", payload),
+        class Policy:
+            def classify(self, *, purpose, intent, source_contexts, binding):
+                return Sensitivity.PRIVATE, "a" * 64
+            def allow_effect(self, *, context, rule, request_digest, retry_index):
+                return context.sensitivity is Sensitivity.PRIVATE and retry_index == 0
+
+        operations = ("connector.open", "connector.read", "connector.write", "connector.close")
+        effect_rules = {("hermes-service-connect", operation, "xpra-native"):
+                        EffectRule("hermes-service-connect", operation, "xpra-native")
+                        for operation in operations}
+        effect_handlers = {(operation, "xpra-native"):
+                           (lambda **_: {"status": 200, "body": b"", "headers": {}, "receipt_id": "fixture"})
+                           for operation in operations}
+        service = AuthorityService(
+            signing_key=b"k" * 32, key_id="fixture-authority",
+            bindings_by_uid={2001: PrincipalBinding(
+                2001, "principal:native", "hermes-desktop", "namespace:native",
+                frozenset({"hermes-service-connect"}))},
+            rules=effect_rules, handlers=effect_handlers, policy=Policy(),
+            profile_generations={"hermes-desktop": "generation:1"},
+            service_generation_digest="e" * 64,
+        )
+        hi12 = AuthorityServiceHI12Adapter(
+            service, boot_epoch=lambda: "boot:fixture",
+            service_generation_digest=lambda: "e" * 64,
+        )
+        root_effects = RemoteConnectorEffectAuthority(
+            runtime_state=lambda: state, enrollment=protected_remote,
+            boot_epoch=lambda: "boot:fixture", gateway_entrypoint_artifact_id=entrypoint_artifact_id,
+            gateway_entrypoint_sha256=entrypoint_digest,
+            gateway=lambda uid, pid, pidfd: gateway_identity
+            if (uid, pid, pidfd) == (peer_uid, peer_pid, peer_pidfd)
+            else (_ for _ in ()).throw(ValueError("foreign peer")),
+            role_proof=lambda _identity: role_proof,
+            session_current=lambda _binding, _operation, _sequence: True,
+            hi12=hi12,
+        )
+
+        def authorize(current_binding, operation, payload, sequence, maximum_bytes=0):
+            return root_effects.issue_remote_connector_effect(
+                current_binding, operation, payload, sequence, maximum_bytes,
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
             )
 
-        def authorize(operation, payload, deadline, sequence, maximum_bytes):
-            return root_auth(operation, payload, deadline, sequence, maximum_bytes)
-
-        backend = RemoteServiceConnectorBackend(self.connector, validate_binding=lambda *_: True)
+        backend = RemoteServiceConnectorBackend(
+            self.connector, validate_binding=lambda *_: True,
+            consume_effect=root_effects.consume_remote_connector_effect,
+        )
         open_payload = open_request_bytes(
             enrollment_id="enrollment:fixture", generation="generation:1",
             target_id="xpra-native", route_id="xpra-http", session_id=session_id,
             deadline=lease_deadline,
         )
+        denied_backend = RemoteServiceConnectorBackend(
+            self.connector, validate_binding=lambda *_: True,
+            consume_effect=lambda *_args, **_kwargs: False,
+        )
+        with self.assertRaises(AuthorityDenied):
+            denied_backend.open(
+                binding,
+                authorization=authorize(binding, "connector.open", open_payload, 0),
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            )
+        self.assertFalse(self.accepted.wait(0.05), "denied HI12 open reached the service socket")
+
         opened = backend.open(
             binding,
-            authorization=authorize("connector.open", open_payload, lease_deadline, 0, 0),
-            peer_uid=1234, peer_pid=os.getpid(), peer_pidfd=self.pidfd,
+            authorization=authorize(binding, "connector.open", open_payload, 0),
+            peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
         )
         self.assertTrue(self.accepted.wait(2))
 
         request = b"GET /client/index.html HTTP/1.1\r\nHost: attacker.invalid\r\n\r\n"
+        binding = replace(binding, connector_handle=opened, next_sequence=0,
+                          frame_deadline_monotonic=time.monotonic() + 5)
         write_body = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
                       "connector_id": opened, "session_id": session_id,
-                      "generation": "generation:1", "deadline": frame_deadline,
+                      "generation": "generation:1", "deadline": binding.frame_deadline_monotonic,
                       "sequence": 0, "data_b64": __import__("base64").b64encode(request).decode("ascii")}
         write_payload = json.dumps(write_body, sort_keys=True, separators=(",", ":")).encode()
         self.assertEqual(backend.write(
             binding, opened, 0, request,
-            authorization=authorize("connector.write", write_payload, frame_deadline, 0, len(request)),
-            peer_uid=1234, peer_pid=os.getpid(), peer_pidfd=self.pidfd, cancelled=lambda: False,
+            authorization=authorize(binding, "connector.write", write_payload, 0, len(request)),
+            peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=lambda: False,
         ), len(request))
 
+        binding = replace(binding, next_sequence=1, frame_deadline_monotonic=time.monotonic() + 5)
         read_body = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
                      "connector_id": opened, "session_id": session_id,
-                     "generation": "generation:1", "deadline": frame_deadline,
+                     "generation": "generation:1", "deadline": binding.frame_deadline_monotonic,
                      "sequence": 1, "max_bytes": 1024}
         read_payload = json.dumps(read_body, sort_keys=True, separators=(",", ":")).encode()
         reply, eof = backend.read(
             binding, opened, 1, 1024,
-            authorization=authorize("connector.read", read_payload, frame_deadline, 1, 1024),
-            peer_uid=1234, peer_pid=os.getpid(), peer_pidfd=self.pidfd, cancelled=lambda: False,
+            authorization=authorize(binding, "connector.read", read_payload, 1, 1024),
+            peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=lambda: False,
         )
         expected = (b"GET /client/index.html HTTP/1.1\r\nHost: 127.0.0.1:" + str(self.port).encode()
                     + b"\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n")
@@ -248,13 +332,16 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         self.assertEqual(reply, expected)
         self.assertEqual(bytes(self.received), expected)
 
+        binding = replace(binding, next_sequence=2, frame_deadline_monotonic=time.monotonic() + 5)
         close_body = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
                       "connector_id": opened, "session_id": session_id,
-                      "generation": "generation:1", "deadline": frame_deadline, "sequence": 2}
+                      "generation": "generation:1", "deadline": binding.frame_deadline_monotonic, "sequence": 2}
         close_payload = json.dumps(close_body, sort_keys=True, separators=(",", ":")).encode()
         backend.close(binding, opened,
-                      authorization=authorize("connector.close", close_payload, frame_deadline, 2, 0))
+                      authorization=authorize(binding, "connector.close", close_payload, 2),
+                      peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
         self.assertNotIn(opened, self.connector._streams)
+        self.assertEqual(len(service._nonces), 4)
 
 
 class FixedConnectorProtocolContracts(unittest.TestCase):
@@ -273,7 +360,8 @@ class FixedConnectorProtocolContracts(unittest.TestCase):
             frame_deadline_monotonic=time.monotonic() + 5,
         )
         backend = RemoteServiceConnectorBackend(
-            connector=None, validate_binding=lambda *_args: False)
+            connector=None, validate_binding=lambda *_args: False,
+            consume_effect=lambda *_args, **_kwargs: True)
         with self.assertRaises(AuthorityDenied):
             backend.open(binding, authorization=object(), peer_uid=1234, peer_pid=os.getpid(), peer_pidfd=1)
 

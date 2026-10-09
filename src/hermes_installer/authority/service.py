@@ -29,7 +29,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity, SourceReceipt,
-    canonical_bytes, canonical_digest,
+    canonical_bytes, canonical_digest, strict_json_loads,
 )
 
 MAX_REQUEST = 4 * 1024 * 1024 + 16_384
@@ -190,6 +190,9 @@ class AuthorityService:
                  remote_session_authority: Any | None = None,
                  source_receipt_delivery: Any | None = None,
                  source_observer_registry: Any | None = None,
+                 native_runtime_observer: Any | None = None,
+                 native_invocation_registry: Any | None = None,
+                 memory_step_effect_authority: Any | None = None,
                  service_generation_digest: str | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
@@ -224,6 +227,9 @@ class AuthorityService:
         self.remote_session_authority = remote_session_authority
         self.source_receipt_delivery = source_receipt_delivery
         self.source_observer_registry = source_observer_registry
+        self.native_runtime_observer = native_runtime_observer
+        self.native_invocation_registry = native_invocation_registry
+        self.memory_step_effect_authority = memory_step_effect_authority
         if (service_generation_digest is not None
                 and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
             raise ValueError("active service generation digest is invalid")
@@ -257,6 +263,69 @@ class AuthorityService:
         self.source_observer_registry = registry
         if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
             self.source_receipt_delivery = registry
+
+    def attach_native_runtime_observer(self, observer: Any) -> None:
+        """Attach the root-only post-effect observer exactly once after loading.
+
+        The observer itself must be built from selected effect and source
+        enrollments; no worker RPC can install or select observer IDs.
+        """
+        if (self.native_runtime_observer is not None
+                or not callable(getattr(observer, "observe_effect_result", None))
+                or not isinstance(getattr(observer, "effect_observer_ids", None), Mapping)):
+            raise AuthorityDenied("source.observer", "root native result observer binding is invalid")
+        self.native_runtime_observer = observer
+
+    def attach_native_invocation_registry(self, registry: Any) -> None:
+        """Attach the root-built observed-call registry once during startup."""
+        if (self.native_invocation_registry is not None
+                or not callable(getattr(registry, "begin_native_invocation", None))
+                or not callable(getattr(registry, "get_invocation_contexts", None))
+                or not callable(getattr(registry, "take_native_response_metadata", None))):
+            raise AuthorityDenied("native.invocation", "root invocation registry binding is invalid")
+        self.native_invocation_registry = registry
+
+    def attach_memory_step_effect_authority(self, authority: Any) -> None:
+        """Attach the root-only memory compound step issuer exactly once."""
+        if (self.memory_step_effect_authority is not None
+                or not callable(getattr(authority, "perform_memory_connector_step", None))):
+            raise AuthorityDenied("memory.step", "root memory step authority binding is invalid")
+        self.memory_step_effect_authority = authority
+
+    def perform_memory_connector_step(self, reservation_handle: str,
+                                     canonical_connector_payload_bytes: bytes,
+                                     serialized_service_request_sha256: str, *,
+                                     timeout: float,
+                                     cancelled: Callable[[], bool]) -> tuple[int, bytes]:
+        """Root-private fixed memory step call; never exposed as a worker RPC.
+
+        The attached typed authority must consume the durable one-use step
+        reservation, re-resolve the enrolled route and current consent, then
+        issue and consume a fresh connector HI12 grant before any service I/O.
+        """
+        authority = self.memory_step_effect_authority
+        if authority is None or not callable(getattr(authority, "perform_memory_connector_step", None)):
+            raise AuthorityDenied("memory.step", "root memory step effect authority is unavailable")
+        if (not isinstance(reservation_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", reservation_handle)
+                or not isinstance(canonical_connector_payload_bytes, bytes)
+                or not 1 <= len(canonical_connector_payload_bytes) <= 4 * 1024 * 1024
+                or not isinstance(serialized_service_request_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", serialized_service_request_sha256)
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= MAX_CONTEXT_LEASE
+                or not callable(cancelled) or cancelled()):
+            raise AuthorityDenied("memory.step", "root memory step request is malformed, expired, or cancelled")
+        result = authority.perform_memory_connector_step(
+            reservation_handle, canonical_connector_payload_bytes,
+            serialized_service_request_sha256, timeout=float(timeout), cancelled=cancelled,
+        )
+        if (not isinstance(result, tuple) or len(result) != 2
+                or type(result[0]) is not int or not 100 <= result[0] <= 599
+                or not isinstance(result[1], bytes) or len(result[1]) > 4 * 1024 * 1024
+                or cancelled()):
+            raise AuthorityDenied("memory.step", "root memory connector returned an invalid or cancelled result")
+        return result
 
     def perform_delegated_effect(self, parent_authorization: EffectAuthorization, *,
                                  delegation_id: str, payload: bytes, peer_pid: int,
@@ -555,7 +624,10 @@ class AuthorityService:
             raise AuthorityDenied("source.expired", "root observation lease is too short")
         receipt = self.issue_source_receipt(
             context, source_kind=observation.source_kind,
-            origin_id=f"{observation.origin_id}:{observation.event_record_id}",
+            # VerifiedSourceObservation.origin_id is already derived by the
+            # registry from its protected origin and event_record_id. Appending
+            # the event here a second time breaks the registry's receipt join.
+            origin_id=observation.origin_id,
             payload=observation.payload_bytes, ttl_seconds=ttl,
         )
         receipt = replace(
@@ -771,6 +843,59 @@ class AuthorityService:
                 raise AuthorityDenied("native.unavailable", "native provider gateway is not enrolled")
             return broker.dispatch(uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                                    payload=payload, cancelled=cancelled)
+        if operation in {"native.invocation.begin", "native.invocation.contexts"}:
+            return self._dispatch_native_invocation(
+                operation, uid, peer_pid, peer_pidfd, payload,
+            )
+        if operation == "native.response.take":
+            registry = self.native_invocation_registry
+            if registry is None or peer_pidfd is None:
+                raise AuthorityDenied("native.response.take", "root provider response registry is unavailable")
+            expected = {"schema", "delivery_handle", "response_body_sha256", "native_request_handle"}
+            if (not isinstance(payload, dict) or set(payload) != expected
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or not isinstance(payload.get("delivery_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{43}", payload["delivery_handle"])
+                    or not isinstance(payload.get("response_body_sha256"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", payload["response_body_sha256"])
+                    or not isinstance(payload.get("native_request_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["native_request_handle"])):
+                raise AuthorityDenied("native.response.take", "provider response lookup request is malformed")
+            take = getattr(registry, "take_native_response_metadata", None)
+            if not callable(take):
+                raise AuthorityDenied("native.response.take", "root provider response lookup is unavailable")
+            metadata = take(
+                uid, peer_pid, peer_pidfd, payload["delivery_handle"],
+                payload["response_body_sha256"], payload["native_request_handle"],
+            )
+            result = metadata.to_wire() if callable(getattr(metadata, "to_wire", None)) else metadata
+            if (not isinstance(result, Mapping)
+                    and isinstance(getattr(result, "producer_context_handle", None), str)
+                    and isinstance(getattr(result, "tool_call_bindings", None), tuple)):
+                result = {
+                    "producer_context_handle": result.producer_context_handle,
+                    "tool_call_bindings": list(result.tool_call_bindings),
+                }
+            fields = {"producer_context_handle", "tool_call_bindings"}
+            if (not isinstance(result, Mapping) or set(result) != fields
+                    or not isinstance(result["producer_context_handle"], str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["producer_context_handle"])
+                    or not isinstance(result["tool_call_bindings"], (list, tuple))
+                    or len(result["tool_call_bindings"]) > 128):
+                raise AuthorityDenied("native.response.take", "root provider response metadata is invalid")
+            from .types import NativeToolCallBinding
+            calls = tuple(item if isinstance(item, NativeToolCallBinding)
+                          else NativeToolCallBinding.from_wire(item)
+                          for item in result["tool_call_bindings"])
+            if len({item.observed_call_handle for item in calls}) != len(calls):
+                raise AuthorityDenied("native.response.take", "root provider call handles are duplicated")
+            return {"producer_context_handle": result["producer_context_handle"],
+                    "tool_call_bindings": [item.to_wire() if callable(getattr(item, "to_wire", None))
+                                           else {"observed_call_handle": item.observed_call_handle,
+                                                 "provider_tool_call_id": item.provider_tool_call_id,
+                                                 "tool_name": item.tool_name,
+                                                 "arguments_sha256": item.arguments_sha256}
+                                           for item in calls]}
         if operation == "source.receipt.take":
             delivery = self.source_receipt_delivery
             if delivery is None or peer_pidfd is None:
@@ -797,6 +922,64 @@ class AuthorityService:
                 operation, uid, peer_pid, peer_pidfd, payload,
             )
         raise AuthorityDenied("protocol.operation", "authority operation is unavailable")
+
+    def _dispatch_native_invocation(self, operation: str, peer_uid: int,
+                                    peer_pid: int, peer_pidfd: int | None,
+                                    payload: Any) -> Mapping[str, Any]:
+        """Resolve only root-observed invocation records for this live peer."""
+        registry = self.native_invocation_registry
+        if registry is None or peer_pidfd is None:
+            raise AuthorityDenied("native.invocation", "root observed invocation registry is unavailable")
+        if operation == "native.invocation.begin":
+            expected = {"schema", "producer_context_handle", "observed_call_handle",
+                        "canonical_arguments_b64"}
+            if (not isinstance(payload, dict) or set(payload) != expected
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or any(not isinstance(payload.get(key), str)
+                           or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload[key])
+                           for key in ("producer_context_handle", "observed_call_handle"))
+                    or not isinstance(payload.get("canonical_arguments_b64"), str)
+                    or len(payload["canonical_arguments_b64"]) > 2_800_000):
+                raise AuthorityDenied("native.invocation", "native invocation begin request is malformed")
+            try:
+                arguments = base64.b64decode(payload["canonical_arguments_b64"], validate=True)
+            except (ValueError, TypeError):
+                raise AuthorityDenied("native.invocation", "native invocation arguments are malformed") from None
+            if (not 1 <= len(arguments) <= 2 * 1024 * 1024
+                    or base64.b64encode(arguments).decode("ascii") != payload["canonical_arguments_b64"]):
+                raise AuthorityDenied("native.invocation", "native invocation arguments exceed their bound")
+            binding = registry.begin_native_invocation(
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                producer_context_handle=payload["producer_context_handle"],
+                observed_call_handle=payload["observed_call_handle"],
+                canonical_arguments=arguments,
+            )
+            result = binding.to_wire() if callable(getattr(binding, "to_wire", None)) else binding
+            fields = {"schema", "invocation_handle", "package_id", "profile_id", "generation",
+                      "adapter_id", "action_id", "arguments_sha256", "parent_closure_digest",
+                      "expires_monotonic", "binding_sha256"}
+            if not isinstance(result, Mapping) or set(result) != fields:
+                raise AuthorityDenied("native.invocation", "root invocation registry returned an invalid binding")
+            return dict(result)
+        expected = {"schema", "invocation_handle"}
+        if (not isinstance(payload, dict) or set(payload) != expected
+                or type(payload.get("schema")) is not int or payload["schema"] != 1
+                or not isinstance(payload.get("invocation_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["invocation_handle"])):
+            raise AuthorityDenied("native.invocation", "native invocation context request is malformed")
+        contexts = registry.get_invocation_contexts(
+            peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            invocation_handle=payload["invocation_handle"],
+        )
+        result = contexts.to_wire() if callable(getattr(contexts, "to_wire", None)) else contexts
+        fields = {"schema", "invocation_handle", "source_receipt_handles",
+                  "parent_closure_digest", "arguments_sha256", "expires_monotonic"}
+        if (not isinstance(result, Mapping) or set(result) != fields
+                or result.get("invocation_handle") != payload["invocation_handle"]
+                or not isinstance(result.get("source_receipt_handles"), (list, tuple))
+                or len(result["source_receipt_handles"]) > 128):
+            raise AuthorityDenied("native.invocation", "root invocation registry returned invalid ancestry")
+        return {**dict(result), "source_receipt_handles": list(result["source_receipt_handles"])}
 
     def _dispatch_process_control(self, uid: int, peer_pid: int,
                                   peer_pidfd: int | None, payload: Any, *,
@@ -1448,8 +1631,38 @@ class AuthorityService:
                        for key, value in headers.items())
                 or not isinstance(receipt_id, str) or not 1 <= len(receipt_id) <= 256):
             raise AuthorityDenied("effect.response", "fixed effect response headers or receipt are invalid")
-        return {"status": response["status"], "body": base64.b64encode(body_bytes).decode("ascii"),
-                "headers": dict(headers), "receipt_id": receipt_id}
+        result: dict[str, Any] = {
+            "status": response["status"], "body": base64.b64encode(body_bytes).decode("ascii"),
+            "headers": dict(headers), "receipt_id": receipt_id,
+        }
+        observer = self.native_runtime_observer
+        observer_key = (rule.capability, rule.operation, rule.target)
+        observer_ids = getattr(observer, "effect_observer_ids", {}) if observer is not None else {}
+        if (observer is not None and observer_key in observer_ids
+                and 200 <= response["status"] < 300):
+            observe = getattr(observer, "observe_effect_result", None)
+            if not callable(observe):
+                raise AuthorityDenied("source.observer", "root native result observer is unavailable")
+            handle = observe(
+                service=self, context=context, authorization=grant,
+                operation=rule.operation, target=rule.target,
+                response_status=response["status"], result_payload=body_bytes,
+                peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                cancelled=current_or_cancelled,
+            )
+            if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+                raise AuthorityDenied("source.observer", "root result observer returned an invalid receipt handle")
+            delivery = self.source_receipt_delivery
+            take = getattr(delivery, "take_source_receipt", None)
+            if not callable(take) or peer_pidfd is None:
+                raise AuthorityDenied("source.delivery", "peer-bound result receipt delivery is unavailable")
+            delivered = take(handle, peer_uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+            if str(delivered) != handle:
+                raise AuthorityDenied("source.delivery", "root delivered a different result receipt handle")
+            # The registry atomically marks this handle delivered to the exact
+            # live peer before the opaque reference enters the response.
+            result["source_receipt_handle"] = handle
+        return result
 
     def _parse_effect_request(self, uid: int, payload: Any, *, peer_pid: int | None = None
                               ) -> tuple[EffectAuthorization, HostContext, EffectRule]:
@@ -1653,8 +1866,8 @@ class AuthorityService:
                 break
             if chunk == b"\n":
                 try:
-                    return json.loads(data.decode("ascii"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return strict_json_loads(data.decode("ascii"))
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                     raise AuthorityDenied("protocol.json", "authority request is malformed") from None
             data.extend(chunk)
         raise AuthorityDenied("protocol.bounds", "authority request is incomplete or oversized")

@@ -38,6 +38,8 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
                             remote_session_authority: Any | None = None,
                             source_receipt_delivery: Any | None = None,
                             source_observer_registry: Any | None = None,
+                            native_runtime_observer: Any | None = None,
+                            native_invocation_registry: Any | None = None,
                             service_generation_digest: str | None = None) -> AuthorityService:
     """Build the root service from already validated protected enrollments.
 
@@ -66,6 +68,8 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
         remote_session_authority=remote_session_authority,
         source_receipt_delivery=source_receipt_delivery,
         source_observer_registry=source_observer_registry,
+        native_runtime_observer=native_runtime_observer,
+        native_invocation_registry=native_invocation_registry,
         service_generation_digest=service_generation_digest,
     )
 
@@ -195,34 +199,19 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
     )
     service.root_runtime_bindings = runtime_bindings
     service_ref["service"] = service
-    # Native request bridging remains unavailable until the protected
-    # root-observer registry is composed with an actual ingress/terminal event
-    # source. Enrollment metadata alone cannot turn worker-submitted bytes into
-    # trusted input provenance.
-    if enrollment.memory_providers:
-        from hermes_installer.memory.broker import MemoryTarget, build_memory_handlers, build_memory_runtime
-        targets = {}
-        for raw in enrollment.memory_providers.values():
-            fields = {key: value for key, value in raw.items() if key != "id"}
-            fields["approved_route_ids"] = frozenset(fields["approved_route_ids"])
-            target = MemoryTarget(**fields)
-            targets[(target.profile_id, target.namespace_id, target.provider)] = target
-        runtime = build_memory_runtime(
-            targets, service, root_data_dir=Path("/var/lib/hermes-installer/memory"), vault=vault)
-        service.memory_owner_state = runtime["owner_state"]
-        active_lookup = runtime["consent_active"]
-        if callable(active_lookup):
-            service.background_consent_active = active_lookup
-        memory_handlers = build_memory_handlers(
-            targets=runtime["targets"], owner_state=runtime["owner_state"], queue=runtime["queue"],
-            ipc=runtime["ipc"], engines=runtime["engines"], eligibility=runtime["eligibility"],
-            maximum_timeout=runtime["maximum_timeout"],
+    authority_runtime = None
+    if runtime_bindings is not None and artifact_catalog is not None:
+        from .runtime_composition import compose_root_authority_runtime
+        authority_runtime = compose_root_authority_runtime(
+            service=service, enrollment=enrollment, bindings=runtime_bindings,
+            artifact_catalog=artifact_catalog, vault=vault,
         )
-        enrolled_operations = {(rule.operation, rule.target) for rule in enrollment.rules.values()}
-        for key, handler in memory_handlers.items():
-            if key not in enrolled_operations or key in service.handlers:
-                raise AuthorityDenied("authority.configuration", "memory handler lacks a unique protected effect rule")
-            service.handlers[key] = handler
+    service.root_authority_runtime = authority_runtime
+    # Memory stays unavailable until the active service-generation records
+    # join typed MemoryServiceEnrollment values to a protected root-journal
+    # resolver and the per-step HI12 effect issuer. The older memory_providers
+    # sidecar and a guessed /var/lib path are not authority to create state or
+    # register effects.
     return service, enrollment
 
 
@@ -250,6 +239,19 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
     failures: list[BaseException] = []
     failure_lock = threading.Lock()
 
+    def prune_root_observers() -> None:
+        while not stop_event.wait(1.0):
+            runtime = getattr(service, "root_authority_runtime", None)
+            prune = getattr(runtime, "prune", None)
+            if callable(prune):
+                try:
+                    prune()
+                except BaseException as exc:
+                    with failure_lock:
+                        failures.append(exc)
+                    stop_event.set()
+                    return
+
     def run_one(uid: int, gid: int) -> None:
         try:
             service.serve_unix(socket_dir / f"{uid}.sock", socket_gid=gid,
@@ -263,10 +265,15 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
     threads = [threading.Thread(target=run_one, args=(uid, gid),
                                 name=f"authority-uid-{uid}", daemon=False)
                for uid, gid in sorted(socket_gid_by_uid.items())]
+    pruner = threading.Thread(target=prune_root_observers,
+                              name="authority-observer-prune", daemon=False)
+    pruner.start()
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
+    stop_event.set()
+    pruner.join()
     if failures:
         raise AuthorityDenied("authority.listener", "protected authority listener exited") from failures[0]
 
@@ -274,7 +281,8 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
 def main() -> int:
     """System-service entry point; does not mutate installation state."""
     service, enrollment = build_enrolled_authority_service()
-    runtime = getattr(service, "root_runtime_bindings", None)
+    runtime = (getattr(service, "root_authority_runtime", None)
+               or getattr(service, "root_runtime_bindings", None))
     process_manager = getattr(runtime, "process_manager", None)
     process_profiles = (process_manager.profiles if process_manager is not None
                         else enrollment.process_profiles)
@@ -290,6 +298,10 @@ def main() -> int:
     try:
         serve_authority(service, socket_gid_by_uid=socket_gid_by_uid, stop_event=stop_event)
     finally:
+        authority_runtime = getattr(service, "root_authority_runtime", None)
+        close_runtime = getattr(authority_runtime, "close", None)
+        if callable(close_runtime):
+            close_runtime()
         if runtime is not None:
             connector = getattr(runtime, "service_connector", None)
             shutdown = getattr(connector, "shutdown", None)

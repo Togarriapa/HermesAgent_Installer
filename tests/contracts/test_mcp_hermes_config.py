@@ -50,6 +50,14 @@ class HermesMCPConfigTests(unittest.TestCase):
         with self.assertRaises(HermesMCPConfigError):
             merge_hermes_mcp_config(modified, {"installer-figma": self.ENTRY}, owned_fingerprints=owners)
 
+    def test_installer_entries_cannot_be_enabled_before_native_mediation(self):
+        with self.assertRaisesRegex(
+            HermesMCPConfigError, "cannot be enabled until native calls are authority-mediated",
+        ):
+            merge_hermes_mcp_config(
+                None, {"installer-figma": {**self.ENTRY, "enabled": True}},
+            )
+
     def test_rejects_non_tls_and_unbounded_or_unallowlisted_entries(self):
         for bad in (
             {**self.ENTRY, "url": "http://mcp.example.test/mcp"},
@@ -63,7 +71,9 @@ class HermesMCPConfigTests(unittest.TestCase):
 
     def test_profile_config_write_is_private_and_preserves_foreign_entries(self):
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            # macOS exposes temporary directories through /var -> /private/var.
+            # Pass the canonical, symlink-free selected Hermes home to the writer.
+            home = Path(temporary).resolve(strict=True)
             selected = home / "profiles" / "selected"
             selected.mkdir(mode=0o700, parents=True)
             os.chmod(home, 0o700)

@@ -332,6 +332,5 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="a" * 64,
                      purpose="native-hermes-chat", intent="x")
 
-
 if __name__ == "__main__":
     unittest.main()

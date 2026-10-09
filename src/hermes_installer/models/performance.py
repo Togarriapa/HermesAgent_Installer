@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import io
 import math
 import os
 import platform
@@ -173,7 +174,7 @@ def run_chat_trial(endpoint: str, token: str, *, prompt: str, tool_request: bool
                    opener: Callable[..., object] = urllib.request.urlopen) -> RequestMetrics:
     if not endpoint.startswith("http://127.0.0.1:") and not endpoint.startswith("http://[::1]:"):
         raise ValueError("Colibri benchmark endpoint must be loopback HTTP")
-    if not token or "\n" in token:
+    if not token or "\n" in token or "\r" in token:
         raise ValueError("Colibri benchmark requires an in-memory protected API key")
     if request_timeout <= 0 or request_timeout > 600 or max_tokens < 1 or max_tokens > 2048:
         raise ValueError("benchmark request bounds are invalid")
@@ -197,6 +198,144 @@ def run_chat_trial(endpoint: str, token: str, *, prompt: str, tool_request: bool
     tps = (output_tokens / max(total - ttft, 1e-9)) if output_tokens is not None and total > ttft else None
     return RequestMetrics(ttft, total, prompt_tokens, output_tokens, tps, tool_request, valid_tool,
                           memory_reader(), throttling_before, throttle_reader())
+
+
+def _decode_http_response(raw: bytes) -> bytes:
+    """Validate one bounded HTTP/1.1 response from the fixed Colibri connector route."""
+    boundary = raw.find(b"\r\n\r\n")
+    if boundary < 0 or boundary > 16 * 1024:
+        raise ValueError("Colibri connector returned a malformed or oversized HTTP header")
+    header_lines = raw[:boundary].split(b"\r\n")
+    try:
+        status = header_lines[0].decode("ascii").split(" ", 2)
+        if len(status) < 2 or not status[1].isdigit():
+            raise ValueError
+        status_code = int(status[1])
+        headers: dict[str, str] = {}
+        for line in header_lines[1:]:
+            name, separator, value = line.partition(b":")
+            if not separator:
+                raise ValueError
+            key = name.decode("ascii").strip().casefold()
+            if key in headers:
+                raise ValueError
+            headers[key] = value.decode("latin-1").strip()
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("Colibri connector returned invalid HTTP response headers") from None
+    if not 200 <= status_code < 300:
+        raise RuntimeError(f"Colibri inference endpoint returned HTTP {status_code}")
+    body = raw[boundary + 4:]
+    transfer = headers.get("transfer-encoding", "").casefold()
+    if transfer:
+        if transfer != "chunked":
+            raise ValueError("Colibri connector returned an unsupported transfer encoding")
+        decoded = bytearray()
+        cursor = 0
+        while True:
+            end = body.find(b"\r\n", cursor)
+            if end < 0:
+                raise ValueError("Colibri connector returned a truncated chunk header")
+            try:
+                size = int(body[cursor:end].split(b";", 1)[0], 16)
+            except ValueError:
+                raise ValueError("Colibri connector returned an invalid chunk size") from None
+            cursor = end + 2
+            if size == 0:
+                if body[cursor:cursor + 2] != b"\r\n" and b"\r\n\r\n" not in body[cursor:]:
+                    raise ValueError("Colibri connector returned malformed chunk trailers")
+                break
+            if size < 0 or len(decoded) + size > 2 * 1024 * 1024 or body[cursor + size:cursor + size + 2] != b"\r\n":
+                raise ValueError("Colibri connector returned a truncated or oversized response chunk")
+            decoded.extend(body[cursor:cursor + size])
+            cursor += size + 2
+        return bytes(decoded)
+    length = headers.get("content-length")
+    if length is not None:
+        try:
+            expected = int(length)
+        except ValueError:
+            raise ValueError("Colibri connector returned an invalid response length") from None
+        if expected < 0 or expected > 2 * 1024 * 1024 or len(body) != expected:
+            raise ValueError("Colibri connector returned an incomplete or oversized response")
+    elif len(body) > 2 * 1024 * 1024:
+        raise ValueError("Colibri connector response exceeds the fixed 2 MiB bound")
+    return body
+
+
+def make_colibri_connector_opener(connector_client, *, enrollment_id: str, generation: str,
+                                  session_id: str, clock: Callable[[], float] = time.monotonic,
+                                  max_response_bytes: int = 2 * 1024 * 1024):
+    """Adapt only the reviewed OpenAI chat route to the host's opaque service stream."""
+    if (not enrollment_id or not generation or not session_id
+            or not 1 <= max_response_bytes <= 2 * 1024 * 1024):
+        raise ValueError("Colibri connector enrollment, generation, session and response bound are required")
+
+    def open_fixed_route(request, *, timeout: float = 600):
+        if not 0 < timeout <= 600:
+            raise ValueError("Colibri connector deadline must be bounded to 600 seconds")
+        if (request.get_method() != "POST" or request.full_url != "http://127.0.0.1:8000/v1/chat/completions"
+                or request.data is None):
+            raise ValueError("Colibri connector permits only the fixed OpenAI chat-completions request")
+        request_headers = {key.casefold(): value for key, value in request.header_items()}
+        allowed = {"authorization", "content-type", "accept"}
+        if set(request_headers) != allowed or request_headers.get("content-type") != "application/json" \
+                or request_headers.get("accept") != "text/event-stream" \
+                or not request_headers.get("authorization", "").startswith("Bearer "):
+            raise ValueError("Colibri connector request headers are outside the reviewed inference contract")
+        body = bytes(request.data)
+        if not body or len(body) > 256 * 1024:
+            raise ValueError("Colibri connector request body exceeds its fixed 256 KiB bound")
+        deadline = clock() + timeout
+        stream = connector_client.open(
+            enrollment_id=enrollment_id,
+            generation=generation,
+            target_id="colibri-main",
+            approved_route_id="colibri-openai-v1",
+            session_id=session_id,
+            deadline=deadline,
+        )
+        try:
+            frame_bytes = getattr(stream, "max_frame_bytes", None)
+            byte_budget = getattr(stream, "remaining_byte_budget", None)
+            stream_generation = getattr(stream, "generation", generation)
+            if (type(frame_bytes) is not int or not 1 <= frame_bytes <= 1024 * 1024
+                    or type(byte_budget) is not int or byte_budget < 1
+                    or stream_generation != generation
+                    or getattr(stream, "expires_monotonic", deadline) <= clock()):
+                raise RuntimeError("host connector returned an invalid generation, deadline or stream bound")
+            target = request.full_url.removeprefix("http://")
+            headers = ("POST /v1/chat/completions HTTP/1.1\r\n"
+                       f"Host: {target.split('/', 1)[0]}\r\n"
+                       "Content-Type: application/json\r\n"
+                       "Accept: text/event-stream\r\n"
+                       f"Authorization: {request_headers['authorization']}\r\n"
+                       f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n").encode("ascii")
+            outbound = headers + body
+            if len(outbound) > byte_budget:
+                raise RuntimeError("Colibri connector request exceeds its root byte budget")
+            for offset in range(0, len(outbound), frame_bytes):
+                if clock() >= deadline:
+                    raise TimeoutError("Colibri connector request exceeded its deadline")
+                stream.write(outbound[offset:offset + frame_bytes])
+            received = bytearray()
+            while True:
+                if clock() >= deadline:
+                    raise TimeoutError("Colibri connector response exceeded its deadline")
+                piece = stream.read(min(frame_bytes, max_response_bytes + 16 * 1024 + 1 - len(received)))
+                if piece == b"":
+                    break
+                if not isinstance(piece, bytes):
+                    raise RuntimeError("host connector returned a non-byte stream frame")
+                received.extend(piece)
+                if len(received) > max_response_bytes + 16 * 1024:
+                    raise RuntimeError("Colibri connector response exceeds the fixed response bound")
+                if len(outbound) + len(received) > byte_budget:
+                    raise RuntimeError("Colibri connector response exceeds its root byte budget")
+            return io.BytesIO(_decode_http_response(bytes(received)))
+        finally:
+            stream.close()
+
+    return open_fixed_route
 
 
 def measure_ssd_read(path: Path, *, bytes_to_read: int = 256 * 1024 * 1024,
@@ -276,8 +415,10 @@ def run_glm_benchmark_workflow(*, manifest: ArtifactManifest, engine_revision: s
                                thresholds: BenchmarkThresholds = BenchmarkThresholds(),
                                memory_reader: Callable[[], int | None] = lambda: None,
                                throttle_reader: Callable[[], str | None] = lambda: None,
-                               fio_runner: Callable[..., object],
-                               chat_opener: Callable[..., object] = urllib.request.urlopen) -> BenchmarkReport:
+                               fio_runner: Callable[..., object], connector_client=None,
+                               service_enrollment_id: str | None = None,
+                               service_generation: str | None = None,
+                               session_id: str | None = None) -> BenchmarkReport:
     """Run a fresh cold start, warm tool trials, and core chats during a read-only SSD test."""
     if warm_trials < 3 or warm_trials > 20:
         raise ValueError("the measured warm trial count must be between 3 and 20")
@@ -287,6 +428,8 @@ def run_glm_benchmark_workflow(*, manifest: ArtifactManifest, engine_revision: s
         raise ValueError("the benchmark route must use the exact requested GLM-5.2 artifact")
     if model_file.is_symlink() or not model_file.is_file():
         raise ValueError("SSD benchmark input must be a regular file from the selected model generation")
+    if connector_client is None or not service_enrollment_id or not service_generation or not session_id:
+        raise ValueError("GLM benchmark requires the host-authenticated Colibri service connector enrollment")
     try:
         relative_model = model_file.resolve(strict=True).relative_to(service.plan.model_directory.resolve(strict=True)).as_posix()
     except (OSError, ValueError) as exc:
@@ -297,7 +440,9 @@ def run_glm_benchmark_workflow(*, manifest: ArtifactManifest, engine_revision: s
     service.stop("prepare fresh cold benchmark")
     service.start()
     try:
-        endpoint = f"http://127.0.0.1:{service.plan.bind_port}"
+        endpoint = "http://127.0.0.1:8000"
+        chat_opener = make_colibri_connector_opener(connector_client,
+            enrollment_id=service_enrollment_id, generation=service_generation, session_id=session_id)
         cold = run_chat_trial(endpoint, api_key, prompt="Reply with a short greeting, then call benchmark_add with a=1 and b=2.",
             tool_request=True, memory_reader=memory_reader, throttle_reader=throttle_reader, opener=chat_opener)
         warm = tuple(run_chat_trial(endpoint, api_key,

@@ -14,7 +14,6 @@ import shutil
 import sqlite3
 import stat
 import tarfile
-import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -377,16 +376,92 @@ class LifecycleRecovery:
         self.backups = self.state_root.path("backups")
         self.backups.mkdir(parents=True, exist_ok=True, mode=0o700)
 
+    @staticmethod
+    def _remove_recovery_stage(parent: Path, name: object, prefix: str) -> bool:
+        if not isinstance(name, str) or not re.fullmatch(re.escape(prefix) + r"[0-9a-f]{32}", name):
+            return False
+        path = parent / name
+        if path.parent != parent or path.is_symlink():
+            return False
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return True
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            return False
+        shutil.rmtree(path)
+        GenerationStore._fsync_directory(parent)
+        return True
+
+    def _recover_abandoned_backups(self) -> None:
+        for row in self.journal.operations(prefix="lifecycle:backup:", statuses=("running", "cleanup-pending")):
+            payload = row["payload"]
+            if not isinstance(payload, dict):
+                continue
+            backup_id = payload.get("backup")
+            stage_name = payload.get("staging_path")
+            if (not isinstance(backup_id, str)
+                    or not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backup_id)):
+                continue
+            target = self.backups / backup_id
+            if target.exists() and not target.is_symlink():
+                try:
+                    manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+                    archive = target / "user-data.tar"
+                    if (manifest.get("schema_version") == 1
+                            and archive.is_file() and not archive.is_symlink()
+                            and self._hash(archive) == manifest.get("archive_sha256")):
+                        self._validated_backup_entries(manifest)
+                        self.journal.record_owned("backup", backup_id, "active")
+                        self.journal.checkpoint(str(row["id"]), "complete_recovered", {
+                            "backup": backup_id, "archive_sha256": manifest["archive_sha256"],
+                            "entries": len(manifest["entries"]), "recovered_after_interruption": True})
+                        self.journal.event(str(row["id"]), "backup", "complete_recovered", {
+                            "backup": backup_id, "entries": len(manifest["entries"])})
+                        continue
+                except (OSError, ValueError, LifecycleError, TypeError, KeyError):
+                    pass
+                self.journal.checkpoint(str(row["id"]), "recovery_blocked", {
+                    "backup": backup_id, "reason": "committed backup failed recovery verification"})
+                self.journal.event(str(row["id"]), "backup", "recovery_blocked", {
+                    "backup": backup_id, "reason": "integrity check failed; existing files preserved"})
+                continue
+            if self._remove_recovery_stage(self.backups, stage_name, ".stage-"):
+                self.journal.checkpoint(str(row["id"]), "interrupted_cleaned", {
+                    "backup": backup_id, "staging_path": stage_name,
+                    "resume": "hermes-installer data backup"})
+                self.journal.event(str(row["id"]), "backup", "interrupted_cleaned", {
+                    "staging_path": stage_name, "data_preserved": True})
+
+    def _recover_abandoned_restores(self) -> None:
+        for row in self.journal.operations(prefix="lifecycle:restore:", statuses=("running", "restoring_entry", "cleanup-pending")):
+            payload = row["payload"]
+            if not isinstance(payload, dict):
+                continue
+            stage_name = payload.get("staging_path")
+            if self._remove_recovery_stage(self.data_root.root, stage_name, ".hermes-restore-"):
+                self.journal.checkpoint(str(row["id"]), "interrupted_cleaned", {
+                    "backup": payload.get("backup"), "staging_path": stage_name,
+                    "resume": "hermes-installer data restore"})
+                self.journal.event(str(row["id"]), "restore", "interrupted_cleaned", {
+                    "staging_path": stage_name,
+                    "note": "resume verifies each already-restored file before continuing"})
+
     def backup(self, *, database: Path | None = None, schema_version: int = 1) -> Path:
         if schema_version < 1:
             raise LifecycleError("Backup schema version must be positive")
+        self._recover_abandoned_backups()
         identity = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
         target = self.backups / identity
         stage = self.backups / (".stage-" + uuid.uuid4().hex)
-        stage.mkdir(mode=0o700)
         operation = "lifecycle:backup:" + identity
-        self.journal.checkpoint(operation, "running", {"schema_version": schema_version})
+        self.journal.checkpoint(operation, "running", {"schema_version": schema_version,
+            "backup": identity, "staging_path": stage.name})
+        stage_created = False
         try:
+            stage.mkdir(mode=0o700)
+            stage_created = True
             entries: list[dict[str, object]] = []
             archive_path = stage / "user-data.tar"
             with tarfile.open(archive_path, "w") as archive:
@@ -412,13 +487,21 @@ class LifecycleRecovery:
             self.journal.event(operation, "backup", "complete", {"backup": identity, "entries": len(entries), "archive_sha256": manifest["archive_sha256"]})
             return target
         except BaseException as exc:
-            shutil.rmtree(stage, ignore_errors=True)
+            if stage_created:
+                self._remove_recovery_stage(self.backups, stage.name, ".stage-")
             self.journal.checkpoint(operation, "failed", {"error_type": type(exc).__name__, "resume": "hermes-installer data backup"})
             self.journal.event(operation, "backup", "failed", {"error_type": type(exc).__name__})
+            if stage_created and stage.exists() and not self._remove_recovery_stage(self.backups, stage.name, ".stage-"):
+                self.journal.checkpoint(operation, "cleanup-pending", {
+                    "backup": identity, "staging_path": stage.name,
+                    "error_type": type(exc).__name__, "resume": "hermes-installer data backup"})
+                self.journal.event(operation, "backup", "cleanup_pending", {
+                    "staging_path": stage.name, "resume": "hermes-installer data backup"})
             raise
 
     def restore(self, backup: Path, *, expected_schema_version: int = 1, overwrite: bool = False,
                 database_destination: Path | None = None) -> dict[str, object]:
+        self._recover_abandoned_restores()
         candidate = backup.absolute()
         if candidate.is_symlink() or not candidate.is_dir() or not candidate.is_relative_to(self.backups.absolute()):
             raise OwnershipError("Restore source must be an installer-owned backup directory")
@@ -437,12 +520,16 @@ class LifecycleRecovery:
             raise LifecycleError("Backup has no installer database snapshot to restore")
         identity = candidate.name
         operation = "lifecycle:restore:" + identity
-        self.journal.checkpoint(operation, "running", {"backup": identity, "schema_version": expected_schema_version})
+        stage = self.data_root.root / (".hermes-restore-" + uuid.uuid4().hex)
+        self.journal.checkpoint(operation, "running", {"backup": identity,
+            "schema_version": expected_schema_version, "staging_path": stage.name})
         conflicts: list[str] = []
         restored: list[str] = []
         restored_database: str | None = None
-        stage = Path(tempfile.mkdtemp(prefix="hermes-restore-", dir=self.data_root.root))
+        stage_created = False
         try:
+            stage.mkdir(mode=0o700)
+            stage_created = True
             seen_entries: set[str] = set()
             with tarfile.open(archive_path, "r") as archive:
                 for member in archive:
@@ -486,7 +573,8 @@ class LifecycleRecovery:
                 relative_text = relative.as_posix()
                 self.journal.checkpoint(operation, "restoring_entry", {
                     "backup": identity, "entry": relative_text,
-                    "restored_count": len(restored), "conflict_count": len(conflicts)})
+                    "restored_count": len(restored), "conflict_count": len(conflicts),
+                    "staging_path": stage.name})
                 if relative.parts[:1] != ("data",):
                     if relative.parts[:1] == ("state",):
                         if relative.parts == ("state", "journal.sqlite3") and database_destination is not None:
@@ -534,7 +622,13 @@ class LifecycleRecovery:
             self.journal.event(operation, "restore", "failed", {"backup": identity, "error_type": type(exc).__name__})
             raise
         finally:
-            shutil.rmtree(stage, ignore_errors=True)
+            if stage_created:
+                if not self._remove_recovery_stage(self.data_root.root, stage.name, ".hermes-restore-"):
+                    self.journal.event(operation, "restore", "cleanup_pending", {
+                        "staging_path": stage.name, "resume": "hermes-installer data restore"})
+                    self.journal.checkpoint(operation, "cleanup-pending", {
+                        "backup": identity, "staging_path": stage.name,
+                        "resume": "hermes-installer data restore"})
 
     def _restore_database(self, source: Path, destination: Path) -> Path:
         target = destination.expanduser().absolute()
@@ -615,7 +709,7 @@ class LifecycleRecovery:
                             shutil.rmtree(path)
                             removed.append(name)
                     self.journal.record_owned("generation", name, "uninstalled")
-                if row["kind"] == "hermes-generation" and row["state"] == "active":
+                if row["kind"] == "hermes-generation" and row["state"] in {"active", "staged", "installed"}:
                     candidate = Path(str(row["resource_id"])).absolute()
                     expected_root = self.data_root.path("generations").absolute()
                     if candidate.is_symlink() or not candidate.is_relative_to(expected_root) or not candidate.is_dir():

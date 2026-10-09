@@ -3,7 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from hermes_installer.components.skill_refs import audit_skill_file_map, audit_skill_references
+from hermes_installer.components.skill_refs import (
+    audit_component_skill_file_map, audit_skill_file_map, audit_skill_references,
+)
 
 
 class SkillReferenceAuditTests(unittest.TestCase):
@@ -61,6 +63,33 @@ class SkillReferenceAuditTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "unsafe path"):
             audit_skill_file_map({"../outside.md": b"bad"})
+
+    def test_ignores_markdown_link_examples_inside_code_but_checks_prose(self):
+        files = {
+            "skills/demo/SKILL.md": (
+                b"See `[missing](inline-example.md)` in this code sample.\n"
+                b"\n```python\nprint('[missing](fenced-example.md)')\n```\n"
+                b"\n    [missing](indented-example.md)\n"
+                b"\n[real missing](actual-missing.md)\n"
+            ),
+        }
+        audit = audit_skill_file_map(files)
+        self.assertEqual(1, len(audit.problems))
+        self.assertEqual("actual-missing.md", audit.problems[0].target)
+
+    def test_obsidian_link_template_exception_is_exact_and_preserves_source_bytes(self):
+        revision = "3ccff5338ea700537839b21900aa5358a0402c98"
+        original = b"---\nname: obsidian-markdown\n---\nUse [text](url) for external URLs.\n"
+        files = {
+            "skills/obsidian-markdown/SKILL.md": original,
+            "skills/obsidian-markdown/references/PROPERTIES.md": b"Properties.\n",
+        }
+        audit = audit_component_skill_file_map("obsidian-skills", revision, files)
+        self.assertTrue(audit.complete, audit.problems)
+        self.assertEqual(original, files["skills/obsidian-markdown/SKILL.md"])
+
+        wrong_revision = audit_component_skill_file_map("obsidian-skills", "0" * 40, files)
+        self.assertFalse(wrong_revision.complete)
 
     def test_reports_symlinked_helper_target(self):
         with tempfile.TemporaryDirectory() as temporary:

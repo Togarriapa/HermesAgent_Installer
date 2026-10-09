@@ -38,6 +38,7 @@ class PreflightContractTests(unittest.TestCase):
         with patch("hermes_installer.runner.CommandRunner", FakeRunner):
             self.assertTrue(_graphical_session({}, True))
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux /proc/locks semantics")
     def test_existing_apt_lock_file_is_not_mistaken_for_an_active_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "dpkg.lock"

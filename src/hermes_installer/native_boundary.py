@@ -18,6 +18,7 @@ import re
 import threading
 import time
 import uuid
+from contextvars import ContextVar
 from collections import OrderedDict
 from typing import Any, Mapping, Sequence
 
@@ -133,6 +134,18 @@ _pending_receipts: "OrderedDict[int, tuple[list[Any], list[str]]]" = OrderedDict
 _failed_source_events: "OrderedDict[int, list[Any]]" = OrderedDict()
 _attempt_states: "OrderedDict[int, tuple[list[Any], dict[str, tuple[str, str, str, int]]]]" = OrderedDict()
 _source_tracking_exhausted = False
+_CURRENT_NATIVE_REQUEST_HANDLE: ContextVar[str | None] = ContextVar(
+    "hermes_native_request_handle", default=None,
+)
+
+
+def take_prepared_native_request_handle() -> str:
+    """Consume the exact event handle emitted by the immediately preceding prepare hook."""
+    handle = _CURRENT_NATIVE_REQUEST_HANDLE.get()
+    _CURRENT_NATIVE_REQUEST_HANDLE.set(None)
+    if not isinstance(handle, str) or not _HANDLE.fullmatch(handle):
+        raise NativeBoundaryUnavailable("native provider request has no current root event handle")
+    return handle
 
 
 def _conversation_receipts(messages: list[Any]) -> list[str]:
@@ -270,6 +283,7 @@ def prepare_provider_request(kwargs: Mapping[str, Any], *, purpose: str) -> dict
         raise NativeBoundaryUnavailable("host native-event lease expired before dispatch")
     if request_timeout is not None:
         remaining = min(remaining, float(request_timeout))
+    _CURRENT_NATIVE_REQUEST_HANDLE.set(handle)
     result = dict(kwargs)
     result["timeout"] = remaining
     result["max_retries"] = 0

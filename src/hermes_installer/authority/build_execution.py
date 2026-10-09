@@ -30,6 +30,13 @@ from .types import AuthorityDenied, EffectAuthorization, HostContext, canonical_
 BUILD_ATTESTATION_STORE = Path("/var/lib/hermes-installer/build-attestations")
 MAX_OUTPUT_FILES = 512
 MAX_OUTPUT_BYTES = 2 * 1024**3
+BUILD_MOUNT_TARGETS = {
+    "builder": "/run/hermes-installer/build/builder",
+    "source": "/run/hermes-installer/build/source",
+    "toolchain": "/run/hermes-installer/build/toolchain",
+    "work": "/run/hermes-installer/build/work",
+    "output": "/run/hermes-installer/build/output",
+}
 OPERATION_TARGETS = {
     "coral-cpython39-source-build-v1": "coral-cpython-build:start",
     "colibri-source-build-v1": "colibri-source-build:start",
@@ -67,9 +74,44 @@ def _safe_output_name(value: Any) -> str:
     if not isinstance(value, str) or not value or "\\" in value or "\x00" in value:
         raise AuthorityDenied("build.output", "build output name is invalid")
     path = PurePosixPath(value)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+    if (path.is_absolute() or path.as_posix() != value
+            or any(part in {"", ".", ".."} for part in path.parts)):
         raise AuthorityDenied("build.output", "build output name escapes its enrolled output root")
     return path.as_posix()
+
+
+def _resolve_argv_recipe(value: Any) -> tuple[Mapping[str, Any], ...]:
+    """Validate Sol's strict tagged argv grammar before a runner sees it."""
+    if not isinstance(value, (tuple, list)) or not value or len(value) > 128:
+        raise AuthorityDenied("build.argv", "protected build argv recipe is malformed")
+    result = []
+    for node in value:
+        if not isinstance(node, Mapping):
+            raise AuthorityDenied("build.argv", "build argv nodes must use the tagged protected grammar")
+        if set(node) == {"literal"}:
+            literal = node["literal"]
+            if (not isinstance(literal, str) or "\x00" in literal or "\n" in literal
+                    or "\r" in literal or len(literal) > 4096):
+                raise AuthorityDenied("build.argv", "protected build literal is invalid")
+            result.append({"literal": literal})
+            continue
+        if set(node) != {"build_path"} or not isinstance(node["build_path"], Mapping):
+            raise AuthorityDenied("build.argv", "build argv node has unknown tags or fields")
+        item = node["build_path"]
+        if set(item) != {"mount_id", "relative_path"}:
+            raise AuthorityDenied("build.argv", "build path node fields are invalid")
+        mount_id, relative_path = item["mount_id"], item["relative_path"]
+        if (not isinstance(mount_id, str) or mount_id not in BUILD_MOUNT_TARGETS
+                or not isinstance(relative_path, str)):
+            raise AuthorityDenied("build.argv", "build path mount is not an enrolled fixed mount")
+        if relative_path:
+            if _safe_output_name(relative_path) != relative_path:
+                raise AuthorityDenied("build.argv", "build path is not normalized")
+        result.append({"build_path": {"mount_id": mount_id, "relative_path": relative_path}})
+    first = result[0]
+    if first != {"build_path": {"mount_id": "builder", "relative_path": ""}}:
+        raise AuthorityDenied("build.argv", "argv[0] must resolve to the enrolled builder executable mount")
+    return tuple(result)
 
 
 def _plain(value: Any) -> Any:
@@ -83,11 +125,13 @@ def _plain(value: Any) -> Any:
 def _recipe_digest(profile: Any) -> str:
     return hashlib.sha256(_canonical({
         "target_id": profile.target_id, "generation": profile.generation,
+        "build_service_enrollment_id": profile.build_service_enrollment_id,
+        "build_service_generation": profile.build_service_generation,
         "source_artifact_id": profile.source_artifact_id, "source_sha256": profile.source_sha256,
         "toolchain_artifact_id": profile.toolchain_artifact_id,
         "toolchain_sha256": profile.toolchain_sha256,
         "builder_artifact_id": profile.builder_artifact_id, "builder_sha256": profile.builder_sha256,
-        "argv_recipe": list(profile.argv_recipe), "environment": dict(profile.environment),
+        "argv_recipe": _plain(profile.argv_recipe), "environment": dict(profile.environment),
         "max_lifetime_seconds": profile.max_lifetime_seconds,
         "service_generation_digest": profile.service_generation_digest,
         "output_specs": {
@@ -104,18 +148,29 @@ class ResolvedBuildInputs:
     target_id: str
     generation: str
     service_generation_digest: str
+    build_service_enrollment_id: str
+    build_service_generation: str
+    enrollment_id: str
+    operation_id: str
+    selection_digest: str
     source_artifact_id: str
     source_sha256: str
     source_root: Path
+    source_tree_files: tuple[Any, ...]
+    source_tree_manifest_sha256: str
     toolchain_artifact_id: str
     toolchain_sha256: str
     toolchain_root: Path
+    toolchain_tree_files: tuple[Any, ...]
+    toolchain_tree_manifest_sha256: str
     builder_artifact_id: str
     builder_sha256: str
     builder_executable: Path
-    argv_recipe: tuple[str, ...]
+    argv_recipe: tuple[Mapping[str, Any], ...]
     environment: Mapping[str, str]
+    output_specs: Mapping[str, BuildOutputSpec]
     output_root: Path
+    output_root_id: str
     output_owner_uid: int
     max_lifetime_seconds: int
 
@@ -150,8 +205,10 @@ class FixedBuildCatalog(Protocol):
 
 class FixedBuildJobLauncher(Protocol):
     """Root-owned managed process boundary; worker adapters cannot supply it."""
-    def run(self, inputs: ResolvedBuildInputs, *, timeout: float,
-            cancelled: Callable[[], bool]) -> ManagedBuildResult: ...
+    def run_selected_build(self, inputs: ResolvedBuildInputs, *, context: HostContext,
+                           authorization: EffectAuthorization, peer_pid: int,
+                           peer_pidfd: int, timeout: float,
+                           cancelled: Callable[[], bool]) -> ManagedBuildResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,7 +440,10 @@ class LinuxBuildOutputFactInspector:
         if "aarch64" not in recipe_text or "-fopenmp" not in recipe_text + setup_text:
             raise AuthorityDenied("build.source_evidence", "Colibri ARM64/OpenMP build branch is absent")
         unsafe = ("-march=native", "-mcpu=native", "-mtune=native", "-mavx", "-msse", "-mavx2")
-        invocation_values = [*profile.argv_recipe, *profile.environment.values()]
+        invocation_values = [
+            node["literal"] for node in profile.argv_recipe
+            if isinstance(node, Mapping) and set(node) == {"literal"}
+        ] + list(profile.environment.values())
         if any(any(flag in value.lower() for flag in unsafe) for value in [*invocation_values, recipe_text, setup_text]):
             raise AuthorityDenied("build.source_evidence", "build recipe enables unmeasured host CPU instructions")
         build_text = recipe_text + " " + setup_text + " " + " ".join(invocation_values)
@@ -409,7 +469,7 @@ class LinuxBuildOutputFactInspector:
             if sys.platform != "linux" or platform.machine().lower() not in {"aarch64", "arm64"}:
                 raise AuthorityDenied("build.target", "CPython output probe requires Linux ARM64")
             facts, needed = self._elf(path)
-            tree = Path(profile.output_root) / "runtime/lib/python3.9"
+            tree = path.parent.parent / "lib/python3.9"
             config = self._python_config(tree)
             if config.get("SOABI") != "cpython-39-aarch64-linux-gnu" or config.get("Py_DEBUG") not in {0, False}:
                 raise AuthorityDenied("build.python_abi", "built CPython sysconfig ABI is not the enrolled nondebug ABI")
@@ -565,9 +625,12 @@ class ContentAddressedBuildStore:
 
     def publish(self, profile: Any, *, enrollment_id: str, operation_id: str,
                 process: ManagedBuildResult, fact_inspector: BuildOutputFactInspector,
-                cancelled: Callable[[], bool] = lambda: False) -> BuildAttestation:
+                cancelled: Callable[[], bool] = lambda: False,
+                output_root: Path | None = None,
+                before_activate: Callable[[], None] | None = None) -> BuildAttestation:
         self._require_completed_isolated_process(profile, process)
-        observed = self._inspect_complete_output_tree(profile, fact_inspector)
+        observed = self._inspect_complete_output_tree(profile, fact_inspector,
+                                                      output_root=output_root)
         if cancelled():
             raise AuthorityDenied("build.expired", "build authorization expired before output publication")
         self._ensure_store()
@@ -614,6 +677,8 @@ class ContentAddressedBuildStore:
                              hashlib.sha256).hexdigest()
         record = replace(record, signature=signature)
         self._publish_attestation(record, cancelled=cancelled)
+        if before_activate is not None:
+            before_activate()
         self._publish_current(record, cancelled=cancelled)
         return record
 
@@ -684,8 +749,9 @@ class ContentAddressedBuildStore:
         return type(required) is type(observed) and required == observed
 
     def _inspect_complete_output_tree(self, profile: Any,
-                                     inspector: BuildOutputFactInspector) -> dict[str, dict[str, Any]]:
-        root = Path(profile.output_root)
+                                     inspector: BuildOutputFactInspector,
+                                     *, output_root: Path | None = None) -> dict[str, dict[str, Any]]:
+        root = Path(output_root if output_root is not None else profile.output_root)
         self._check_owned_directory(root, profile.output_owner_uid, mode=0o700)
         try:
             specs = dict(profile.output_specs)
@@ -1248,6 +1314,7 @@ class RootBuildExecutionService:
     def __init__(self, *, build_catalog: FixedBuildCatalog, artifact_catalog: Any,
                  artifact_staging_root: Path, launcher: FixedBuildJobLauncher,
                  fact_inspector: BuildOutputFactInspector, authority_key: bytes,
+                 service_catalog: Any,
                  store: ContentAddressedBuildStore | None = None, expected_uid: int = 0,
                  monotonic: Callable[[], float] = time.monotonic):
         if type(expected_uid) is not int or os.geteuid() != expected_uid:
@@ -1255,6 +1322,7 @@ class RootBuildExecutionService:
         if not artifact_staging_root.is_absolute():
             raise AuthorityDenied("build.artifacts", "artifact staging root must be absolute")
         self.catalog = build_catalog
+        self.services = service_catalog
         self.artifacts = artifact_catalog
         self.artifact_staging_root = artifact_staging_root
         self.launcher = launcher
@@ -1284,31 +1352,52 @@ class RootBuildExecutionService:
                 or context.generation != request["generation"]
                 or authorization.generation != request["generation"]):
             raise AuthorityDenied("build.binding", "grant does not bind this fixed build operation")
-        profile = self.catalog.resolve(target, request["generation"])
+        resolver = getattr(self.catalog, "resolve_service", None)
+        if not callable(resolver) or self.services is None:
+            raise AuthorityDenied("build.service", "root service enrollment join is unavailable")
+        profile, service_profile = resolver(target, request["generation"], self.services)
         if (profile.target_id != target or profile.generation != request["generation"]
+                or profile.build_service_enrollment_id != service_profile.enrollment_id
+                or profile.build_service_generation != service_profile.generation
+                or type(service_profile.service_uid) is not int
+                or type(service_profile.service_gid) is not int
+                or profile.output_owner_uid != service_profile.service_uid
+                or service_profile.service_uid <= 0 or service_profile.service_gid <= 0
                 or not re.fullmatch(r"[0-9a-f]{64}", profile.service_generation_digest)):
             raise AuthorityDenied("build.binding", "root catalog selected another build profile")
         deadline = self.monotonic() + timeout
         self._require_live(cancelled, deadline)
-        inputs = self._resolve_inputs(profile)
+        inputs = self._resolve_inputs(profile, enrollment_id=request["enrollment_id"],
+                                      operation_id=request["operation_id"],
+                                      selection_digest=authorization.request_digest)
         self._require_live(cancelled, deadline)
         started = self.monotonic()
         job_deadline = min(deadline, started + profile.max_lifetime_seconds)
-        process = self.launcher.run(
-            inputs, timeout=max(0.0, job_deadline - self.monotonic()),
-            cancelled=lambda: cancelled() or self.monotonic() >= job_deadline,
-        )
-        self._require_live(cancelled, deadline)
-        attestation = self.store.publish(profile, enrollment_id=request["enrollment_id"],
-                                         operation_id=request["operation_id"], process=process,
-                                         fact_inspector=self.fact_inspector,
-                                         cancelled=lambda: cancelled() or self.monotonic() >= deadline)
-        # The current-index rename in publish is the success linearization point;
-        # cancellation after that point cannot revoke an already-issued receipt.
-        return {"status": 200, "body": base64.b64encode(_canonical(attestation.to_wire())).decode("ascii"),
-                "headers": {"content-type": "application/json"}, "receipt_id": attestation.attestation_id}
+        try:
+            process = self.launcher.run_selected_build(
+                inputs, context=context, authorization=authorization, peer_pid=peer_pid,
+                peer_pidfd=peer_pidfd, timeout=max(0.0, job_deadline - self.monotonic()),
+                cancelled=lambda: cancelled() or self.monotonic() >= job_deadline,
+            )
+            self._require_live(cancelled, deadline)
+            attestation = self.store.publish(profile, enrollment_id=request["enrollment_id"],
+                                             operation_id=request["operation_id"], process=process,
+                                             fact_inspector=self.fact_inspector,
+                                             cancelled=lambda: cancelled() or self.monotonic() >= deadline,
+                                             output_root=inputs.output_root,
+                                             before_activate=lambda: self._remove_job_output_root(
+                                                 inputs.output_root, profile.output_owner_uid))
+            # The current-index rename in publish is the success linearization point;
+            # cancellation after that point cannot revoke an already-issued receipt.
+            return {"status": 200,
+                    "body": base64.b64encode(_canonical(attestation.to_wire())).decode("ascii"),
+                    "headers": {"content-type": "application/json"},
+                    "receipt_id": attestation.attestation_id}
+        finally:
+            self._remove_job_output_root(inputs.output_root, profile.output_owner_uid)
 
-    def _resolve_inputs(self, profile: Any) -> ResolvedBuildInputs:
+    def _resolve_inputs(self, profile: Any, *, enrollment_id: str, operation_id: str,
+                        selection_digest: str) -> ResolvedBuildInputs:
         resolved = []
         for artifact_id, digest in (
             (profile.source_artifact_id, profile.source_sha256),
@@ -1335,15 +1424,82 @@ class RootBuildExecutionService:
         if (source.sha256 != profile.source_sha256 or toolchain.sha256 != profile.toolchain_sha256
                 or builder.sha256 != profile.builder_sha256):
             raise AuthorityDenied("build.artifact", "materialized build input digest changed")
-        output = Path(profile.output_root)
+        output_parent = Path(profile.output_root)
+        ContentAddressedBuildStore._check_owned_directory(
+            output_parent, profile.output_owner_uid, mode=0o700)
+        output_root_id = secrets.token_hex(16)
+        output = output_parent / ("job-" + output_root_id)
+        try:
+            output.mkdir(mode=0o700)
+            if output.stat().st_uid != profile.output_owner_uid:
+                os.chown(output, profile.output_owner_uid, -1, follow_symlinks=False)
+            os.chmod(output, 0o700, follow_symlinks=False)
+        except OSError:
+            try:
+                output.rmdir()
+            except OSError:
+                pass
+            raise AuthorityDenied("build.output_custody", "fresh private output root could not be created") from None
         ContentAddressedBuildStore._check_owned_directory(output, profile.output_owner_uid, mode=0o700)
+        output_specs = {}
+        try:
+            for relative_path, raw in profile.output_specs.items():
+                output_specs[relative_path] = BuildOutputSpec(
+                    raw.relative_path, raw.kind, raw.maximum_bytes,
+                    raw.executable_role, raw.target_facts)
+        except Exception:
+            self._remove_job_output_root(output, profile.output_owner_uid)
+            raise AuthorityDenied("build.output_spec", "protected output constraints are malformed") from None
+        try:
+            argv_recipe = _resolve_argv_recipe(profile.argv_recipe)
+        except Exception:
+            self._remove_job_output_root(output, profile.output_owner_uid)
+            raise
         return ResolvedBuildInputs(
             profile.target_id, profile.generation, profile.service_generation_digest,
+            profile.build_service_enrollment_id, profile.build_service_generation,
+            enrollment_id, operation_id, selection_digest,
             source.artifact_id, source.sha256, source.path,
-            toolchain.artifact_id, toolchain.sha256, toolchain.path, builder.artifact_id,
-            builder.sha256, builder.path, tuple(profile.argv_recipe), dict(profile.environment),
-            output, profile.output_owner_uid, profile.max_lifetime_seconds,
+            tuple(source.tree_files), source.tree_manifest_sha256,
+            toolchain.artifact_id, toolchain.sha256, toolchain.path,
+            tuple(toolchain.tree_files), toolchain.tree_manifest_sha256, builder.artifact_id,
+            builder.sha256, builder.path, argv_recipe, dict(profile.environment),
+            output_specs, output, output_root_id,
+            profile.output_owner_uid, profile.max_lifetime_seconds,
         )
+
+    @staticmethod
+    def _remove_job_output_root(path: Path, owner_uid: int) -> None:
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return
+        except OSError:
+            raise AuthorityDenied("build.output_cleanup", "unique build output root cannot be inspected") from None
+        # Cleanup failure must fail the build before the receipt's current-index
+        # rename. In particular, never interpret changed ownership or a symlink
+        # substitution as if the output root had already been removed.
+        ContentAddressedBuildStore._check_owned_directory(path, owner_uid, mode=0o700)
+        # This path is a uniquely created child of the protected enrolled output
+        # root. Do not follow links while clearing the build-owned job output.
+        for current, dirs, files in os.walk(path, topdown=False, followlinks=False):
+            for filename in files:
+                item = Path(current) / filename
+                info = item.lstat()
+                if stat.S_ISREG(info.st_mode) and info.st_uid == owner_uid:
+                    item.chmod(0o600, follow_symlinks=False)
+                    item.unlink()
+                elif stat.S_ISLNK(info.st_mode):
+                    item.unlink()
+            for dirname in dirs:
+                item = Path(current) / dirname
+                info = item.lstat()
+                if stat.S_ISDIR(info.st_mode) and info.st_uid == owner_uid:
+                    item.chmod(0o700, follow_symlinks=False)
+                    item.rmdir()
+                elif stat.S_ISLNK(info.st_mode):
+                    item.unlink()
+        path.rmdir()
 
     @staticmethod
     def _request(payload: bytes) -> dict[str, Any]:
