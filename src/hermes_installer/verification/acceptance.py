@@ -82,6 +82,7 @@ class WorkflowResult:
     record: EvidenceRecord | None = None
     blocker_code: str | None = None
     next_step: str | None = None
+    observed_state: EvidenceState | None = None
 
 
 class TargetWorkflowRunner:
@@ -129,8 +130,9 @@ class TargetWorkflowRunner:
         verified = verify_operator_result(request.to_dict(), result_value, target)
         record = verified.retain(evidence_root)
         return WorkflowResult(
-            request.acceptance_id, record.state,
+            request.acceptance_id, EvidenceState.PENDING,
             "Structured target observation retained; an enrolled evidence verifier must authenticate the artifact before acceptance.",
             record, blocker_code="artifact_authentication_required",
             next_step="Authenticate the retained artifact with the enrolled verifier; keep the acceptance pending until it verifies.",
+            observed_state=record.state,
         )
