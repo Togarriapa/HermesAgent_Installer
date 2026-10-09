@@ -82,7 +82,7 @@ class NativeBridgeBrokerContracts(unittest.TestCase):
             prepared = service._dispatch(producer.uid, 41001, producer_read,
                 "prepare_native_event", {
                     "schema": 1, "payload": base64.b64encode(raw).decode("ascii"),
-                    "parent_receipt_handles": [], "purpose": "native-chat",
+                "parent_receipt_handles": [], "purpose": "native-hermes-chat",
                     "intent_id": "intent:fixture", "trace_id": "trace:fixture", "retry_index": 0,
                 }, cancelled=lambda: False)
             event_key = prepared["native_event_handle"]

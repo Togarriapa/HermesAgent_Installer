@@ -12,6 +12,7 @@ import os
 import pwd
 import re
 import stat
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -26,8 +27,11 @@ _BUILD_ENV = frozenset({"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "SOURC
                         "CC", "CXX", "AR", "RANLIB", "CFLAGS", "CPPFLAGS", "LDFLAGS", "MAKEFLAGS"})
 _PROFILE_ENV = frozenset({"HOME", "PATH", "LANG", "LC_ALL", "DISPLAY", "WAYLAND_DISPLAY",
                           "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "TMPDIR"})
+_OPERATION_ENV = frozenset({"HOME", "PATH", "LANG", "LC_ALL", "TMPDIR", "SOURCE_DATE_EPOCH",
+                            "CC", "CXX", "AR", "RANLIB", "CFLAGS", "CPPFLAGS", "LDFLAGS", "MAKEFLAGS"})
 _FIXED_OPERATIONS = frozenset({"process.start", "process.status", "process.read", "process.write",
                                "process.stop", "process.inspect", "connector.open", "package.install"})
+OPERATION_PARAMETER_CATALOG_PATH = Path("/etc/hermes-installer/operation-parameters.json")
 
 
 def _canonical(value: Any) -> bytes:
@@ -117,6 +121,160 @@ class PackageRuntimeEnrollment:
 
 
 @dataclass(frozen=True, slots=True)
+class OperationParameterField:
+    name: str
+    type: str
+    required: bool
+    enum: tuple[str, ...] | None = None
+    max_length: int | None = None
+    minimum: int | None = None
+    maximum: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OperationParameterSchema:
+    schema_id: str
+    fields: Mapping[str, OperationParameterField]
+
+    @classmethod
+    def from_protected_record(cls, item: Mapping[str, Any]) -> "OperationParameterSchema":
+        if not isinstance(item, Mapping) or set(item) != {"id", "fields"}:
+            raise EnrollmentDenied("protected operation parameter schema fields are invalid")
+        schema_id = _id(item["id"], "operation parameter schema ID")
+        rows = item["fields"]
+        if not isinstance(rows, list) or len(rows) > 64:
+            raise EnrollmentDenied("operation parameter schema fields are invalid")
+        fields = {}
+        for row in rows:
+            keys = {"name", "type", "required", "enum", "max_length", "minimum", "maximum"}
+            if not isinstance(row, Mapping) or set(row) != keys:
+                raise EnrollmentDenied("operation parameter field shape is invalid")
+            name, kind, required = row["name"], row["type"], row["required"]
+            if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name)
+                    or name in fields or not isinstance(kind, str) or kind not in {"string", "integer", "boolean"}
+                    or type(required) is not bool):
+                raise EnrollmentDenied("operation parameter field identity or type is invalid")
+            enum = row["enum"]
+            max_length, minimum, maximum = row["max_length"], row["minimum"], row["maximum"]
+            if kind == "string":
+                if (enum is not None and (not isinstance(enum, list) or not enum
+                        or any(not isinstance(v, str) or not v or any(unicodedata.category(c) == "Cc" for c in v)
+                               for v in enum)
+                        or len(enum) != len(set(enum)))
+                        or type(max_length) is not int or not 1 <= max_length <= 4096
+                        or minimum is not None or maximum is not None or enum is None):
+                    raise EnrollmentDenied("bounded string parameter schema is invalid")
+            elif kind == "integer":
+                if (enum is not None or max_length is not None or type(minimum) is not int
+                        or type(maximum) is not int or minimum > maximum):
+                    raise EnrollmentDenied("bounded integer parameter schema is invalid")
+            elif enum is not None or max_length is not None or minimum is not None or maximum is not None:
+                raise EnrollmentDenied("boolean parameter schema has unsupported constraints")
+            fields[name] = OperationParameterField(
+                name, kind, required, None if enum is None else tuple(enum),
+                max_length, minimum, maximum,
+            )
+        return cls(schema_id, MappingProxyType(fields))
+
+    def validate(self, value: Any) -> Mapping[str, str]:
+        if not isinstance(value, Mapping) or set(value) - self.fields.keys():
+            raise EnrollmentDenied("operation parameters contain unknown fields")
+        rendered = {}
+        for name, field in self.fields.items():
+            if name not in value:
+                if field.required:
+                    raise EnrollmentDenied("required operation parameter is absent")
+                continue
+            item = value[name]
+            if field.type == "string":
+                if (not isinstance(item, str) or not item or len(item) > field.max_length
+                        or any(unicodedata.category(char) == "Cc" for char in item)
+                        or field.enum is not None and item not in field.enum):
+                    raise EnrollmentDenied("string operation parameter is invalid")
+                rendered[name] = item
+            elif field.type == "integer":
+                if type(item) is not int or not field.minimum <= item <= field.maximum:
+                    raise EnrollmentDenied("integer operation parameter is invalid")
+                rendered[name] = str(item)
+            else:
+                if type(item) is not bool:
+                    raise EnrollmentDenied("boolean operation parameter is invalid")
+                rendered[name] = "true" if item else "false"
+        return MappingProxyType(rendered)
+
+
+def load_operation_parameter_schemas(
+    path: Path = OPERATION_PARAMETER_CATALOG_PATH, *, expected_uid: int = 0,
+) -> tuple[OperationParameterSchema, ...]:
+    """Load the exact root-owned parameter catalog used by launch recipes."""
+    if path != OPERATION_PARAMETER_CATALOG_PATH or type(expected_uid) is not int or expected_uid != 0:
+        raise EnrollmentDenied("operation parameter catalog path and owner are fixed")
+    _owned_path(path, uid=expected_uid, directory=False)
+    info = path.stat(follow_symlinks=False)
+    if stat.S_IMODE(info.st_mode) != 0o600:
+        raise EnrollmentDenied("operation parameter catalog must be mode 0600")
+
+    def unique_pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("duplicate key")
+            result[key] = value
+        return result
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_pairs)
+    except (OSError, UnicodeError, ValueError):
+        raise EnrollmentDenied("operation parameter catalog is malformed") from None
+    if (not isinstance(raw, dict) or set(raw) != {"schema", "parameter_schemas"}
+            or type(raw["schema"]) is not int or raw["schema"] != 1
+            or not isinstance(raw["parameter_schemas"], list)
+            or len(raw["parameter_schemas"]) > 1024):
+        raise EnrollmentDenied("operation parameter catalog schema is invalid")
+    result = []
+    ids = set()
+    for row in raw["parameter_schemas"]:
+        schema = OperationParameterSchema.from_protected_record(row)
+        if schema.schema_id in ids:
+            raise EnrollmentDenied("operation parameter schema ID is duplicated")
+        ids.add(schema.schema_id)
+        result.append(schema)
+    return tuple(result)
+
+
+@dataclass(frozen=True, slots=True)
+class OperationLaunchRecipe:
+    operation_id: str
+    executable_artifact_id: str
+    executable_sha256: str
+    argv_recipe: tuple[Mapping[str, str], ...]
+    cwd_root_id: str
+    cwd_subpath: str
+    environment: Mapping[str, str]
+    child_artifact_refs: Mapping[str, str]
+    max_lifetime_seconds: int
+    max_output_bytes: int
+    stdin_mode: str
+    parameter_schema_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedLaunchRecipe:
+    enrollment_id: str
+    generation: str
+    profile_id: str
+    principal_id: str
+    service_uid: int
+    service_gid: int
+    operation_id: str
+    process_start_target: str
+    recipe: OperationLaunchRecipe
+    executable_artifact_id: str
+    cwd: Path
+    parameter_schema: OperationParameterSchema
+
+
+@dataclass(frozen=True, slots=True)
 class HostServiceProfile:
     enrollment_id: str
     generation: str
@@ -135,6 +293,7 @@ class HostServiceProfile:
     socket_policy_id: str
     target_route_ids: tuple[str, ...]
     operation_targets: Mapping[str, str]
+    operation_recipes: Mapping[str, OperationLaunchRecipe]
     argv_recipe: tuple[str, ...]
     environment: Mapping[str, str]
     max_lifetime_seconds: int
@@ -142,19 +301,43 @@ class HostServiceProfile:
     cpu_quota_percent: int
     io_weight: int
 
-    def as_managed_profile(self, *, artifact_root: Path, child_artifact_refs: Mapping[str, str]):
+    def as_managed_profile(self, *, artifact_root: Path, child_artifact_refs: Mapping[str, str],
+                           parameter_schemas: Mapping[str, OperationParameterSchema] | None = None):
         """Create the process-custodian record using only root-resolved fields."""
         from hermes_installer.managed_process_custodian import ManagedProfileCustody
         self.roots.validate()
         return ManagedProfileCustody(
+            enrollment_id=self.enrollment_id,
             profile_id=self.profile_id, owner_uid=self.service_uid,
             owner_gid=self.service_gid, service_user=self.service_user,
             executable=self.executable, artifact_sha256=self.executable_sha256,
             artifact_root=artifact_root, data_root=self.roots.data,
+            home_root=self.roots.home, work_root=self.roots.work,
             generation=self.generation, memory_max_bytes=self.memory_max_bytes,
             cpu_quota_percent=self.cpu_quota_percent, io_weight=self.io_weight,
             max_lifetime_seconds=self.max_lifetime_seconds,
             child_artifact_refs=dict(child_artifact_refs), argv_recipe=self.argv_recipe,
+            operation_targets=dict(self.operation_targets),
+            operation_recipes={key: {
+                "executable_artifact_id": value.executable_artifact_id,
+                "executable_sha256": value.executable_sha256,
+                "argv_recipe": [dict(token) for token in value.argv_recipe],
+                "cwd_root_id": value.cwd_root_id, "cwd_subpath": value.cwd_subpath,
+                "environment": dict(value.environment),
+                "child_artifact_refs": dict(value.child_artifact_refs),
+                "max_lifetime_seconds": value.max_lifetime_seconds,
+                "max_output_bytes": value.max_output_bytes, "stdin_mode": value.stdin_mode,
+                "parameter_schema_id": value.parameter_schema_id,
+            } for key, value in self.operation_recipes.items()},
+            parameter_schemas={key: {
+                "id": value.schema_id,
+                "fields": [{"name": field.name, "type": field.type,
+                            "required": field.required,
+                            "enum": list(field.enum) if field.enum is not None else None,
+                            "max_length": field.max_length, "minimum": field.minimum,
+                            "maximum": field.maximum}
+                           for field in value.fields.values()],
+            } for key, value in (parameter_schemas or {}).items()},
         )
 
 
@@ -162,7 +345,9 @@ class ProtectedEnrollmentCatalog:
     """Immutable root-owned mapping from caller opaque IDs to service policy."""
 
     def __init__(self, records: Mapping[tuple[str, str], HostServiceProfile], *, digest: str,
-                 native_packages: list[Mapping[str, Any]] | None = None):
+                 native_packages: list[Mapping[str, Any]] | None = None,
+                 memory_enrollments: Mapping[tuple[str, str], Any] | None = None,
+                 parameter_schemas: list[Mapping[str, Any]] | None = None):
         if not records:
             raise EnrollmentDenied("protected service enrollment is empty")
         self._records = MappingProxyType(dict(records))
@@ -175,6 +360,14 @@ class ProtectedEnrollmentCatalog:
                 raise EnrollmentDenied("native package generation is duplicated")
             parsed_native[key] = package
         self._native_packages = MappingProxyType(parsed_native)
+        self._memory_enrollments = MappingProxyType(dict(memory_enrollments or {}))
+        parsed_schemas = {}
+        for raw in parameter_schemas or []:
+            schema = OperationParameterSchema.from_protected_record(raw)
+            if schema.schema_id in parsed_schemas:
+                raise EnrollmentDenied("operation parameter schema ID is duplicated")
+            parsed_schemas[schema.schema_id] = schema
+        self._parameter_schemas = MappingProxyType(parsed_schemas)
 
     def resolve_native_package(self, package_id: str, generation: str) -> "NativePackageBinding":
         """Resolve a selected package row joined to this exact service generation.
@@ -196,6 +389,10 @@ class ProtectedEnrollmentCatalog:
         if service.generation != row.generation:
             raise EnrollmentDenied("native package belongs to a stale service generation")
         return row
+
+    @property
+    def parameter_schemas(self) -> Mapping[str, OperationParameterSchema]:
+        return self._parameter_schemas
 
     @classmethod
     def from_file(cls, path: Path, *, signature_verifier: Callable[[bytes, str], bool],
@@ -223,7 +420,9 @@ class ProtectedEnrollmentCatalog:
     @classmethod
     def from_verified_records(cls, raw_records: list[Mapping[str, Any]], *,
                               protected_digest: str, expected_uid: int = 0,
-                              native_packages: list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
+                              native_packages: list[Mapping[str, Any]] | None = None,
+                              memory_enrollments: Mapping[tuple[str, str], Any] | None = None,
+                              parameter_schemas: list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
         """Build from records already authenticated by the root enrollment loader."""
         if (not isinstance(protected_digest, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", protected_digest)
@@ -237,7 +436,9 @@ class ProtectedEnrollmentCatalog:
                 raise EnrollmentDenied("protected enrollment ID and generation are duplicated")
             profile.roots.validate(root_uid=expected_uid)
             records[key] = profile
-        return cls(records, digest=protected_digest, native_packages=native_packages)
+        return cls(records, digest=protected_digest, native_packages=native_packages,
+                   memory_enrollments=memory_enrollments,
+                   parameter_schemas=parameter_schemas)
 
     def resolve(self, enrollment_id: str, generation: str) -> HostServiceProfile:
         key = (_id(enrollment_id, "enrollment ID"), _id(generation, "generation"))
@@ -327,6 +528,43 @@ class ProtectedEnrollmentCatalog:
         profile = self.resolve(enrollment_id, generation)
         target = _id(target_id, "connector target")
         route = _id(route_id, "connector route")
+        if target.startswith("memory-"):
+            parts = target.split(":", 1)
+            if len(parts) != 2 or parts[0] not in {
+                    "memory-openviking", "memory-claude-mem", "memory-agentmemory"}:
+                raise EnrollmentDenied("memory connector target is malformed")
+            provider, profile_id = parts[0].removeprefix("memory-"), parts[1]
+            matches = [record for (service_id, service_generation), record in self._memory_enrollments.items()
+                       if service_id == profile.enrollment_id and service_generation == profile.generation
+                       and getattr(record, "profile_id", None) == profile_id
+                       and getattr(record, "provider", None) == provider]
+            if len(matches) != 1:
+                raise EnrollmentDenied("memory connector target is not joined to this service generation")
+            memory = matches[0]
+            if (getattr(memory, "principal_id", None) != profile.principal_id
+                    or getattr(memory, "namespace_identity", None) != profile.namespace_identity
+                    or getattr(memory, "data_root_id", None) != profile.roots.data_id):
+                raise EnrollmentDenied("memory connector identity, namespace, or store root changed")
+            port = getattr(memory, "literal_loopback_port", None)
+            if type(port) is not int or not 1 <= port <= 65535:
+                raise EnrollmentDenied("memory connector literal loopback port is invalid")
+            routes = getattr(memory, "fixed_route_map", None)
+            if not isinstance(routes, Mapping) or route not in routes:
+                raise EnrollmentDenied("memory connector route is outside the selected backend variant")
+            route_record = routes[route]
+            if (not isinstance(route_record, Mapping) or set(route_record) != {"method", "path", "body"}
+                    or not isinstance(route_record["method"], str)
+                    or not isinstance(route_record["path"], str)
+                    or not isinstance(route_record["body"], Mapping)):
+                raise EnrollmentDenied("memory connector route schema is malformed")
+            variant = getattr(memory, "backend_variant", None)
+            if provider == "claude-mem" and variant not in {
+                    "server-v1-sqlite", "server-v1-postgres", "worker-observation"}:
+                raise EnrollmentDenied("Claude memory connector backend variant is unsupported")
+            return ConnectorRouteBinding(
+                profile_id, profile.generation, profile.namespace_identity, target, route,
+                variant, port, MappingProxyType(dict(route_record)),
+            )
         if target not in {"xpra-native", "colibri-main"} or route not in profile.target_route_ids:
             raise EnrollmentDenied("connector target or route is outside protected enrollment")
         if target == "xpra-native" and profile.profile_id != "hermes-desktop":
@@ -349,6 +587,44 @@ class ProtectedEnrollmentCatalog:
                                 profile.principal_id, verb, target, profile.service_uid,
                                 profile.service_gid, profile.authority_endpoint_id,
                                 profile.namespace_identity)
+
+    def resolve_launch_recipe(self, enrollment_id: str, generation: str,
+                              operation_id: str) -> ResolvedLaunchRecipe:
+        profile = self.resolve(enrollment_id, generation)
+        selected_id = _id(operation_id, "operation recipe ID")
+        recipe = profile.operation_recipes.get(selected_id)
+        if recipe is None:
+            raise EnrollmentDenied("operation recipe is not enrolled for this generation")
+        if "process.start" not in profile.operation_targets:
+            raise EnrollmentDenied("operation recipe has no fixed process.start effect target")
+        schema = self._parameter_schemas.get(recipe.parameter_schema_id)
+        if schema is None:
+            raise EnrollmentDenied("operation parameter schema is unavailable")
+        for token in recipe.argv_recipe:
+            parameter = token.get("parameter")
+            if parameter is not None:
+                field = schema.fields.get(parameter)
+                if field is None or not field.required:
+                    raise EnrollmentDenied("argv recipe references an absent or optional parameter")
+        roots = {profile.roots.home_id: profile.roots.home,
+                 profile.roots.work_id: profile.roots.work,
+                 profile.roots.data_id: profile.roots.data}
+        root = roots.get(recipe.cwd_root_id)
+        if root is None:
+            raise EnrollmentDenied("operation cwd root is outside the enrolled service roots")
+        cwd = root.joinpath(*Path(recipe.cwd_subpath).parts)
+        try:
+            resolved = cwd.resolve(strict=True)
+        except OSError:
+            raise EnrollmentDenied("operation cwd is unavailable") from None
+        if resolved != cwd or (root not in cwd.parents and cwd != root):
+            raise EnrollmentDenied("operation cwd escapes its enrolled root")
+        return ResolvedLaunchRecipe(
+            profile.enrollment_id, profile.generation, profile.profile_id, profile.principal_id,
+            profile.service_uid, profile.service_gid, selected_id,
+            profile.operation_targets["process.start"], recipe,
+            recipe.executable_artifact_id, cwd, schema,
+        )
 
 
 def _system_glibc_version() -> str:
@@ -380,6 +656,9 @@ class ConnectorRouteBinding:
     namespace_identity: str
     target_id: str
     route_id: str
+    backend_variant: str | None = None
+    literal_loopback_port: int | None = None
+    route_record: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,7 +775,7 @@ class NativePackageBinding:
 def _parse_profile(item: Any) -> HostServiceProfile:
     fields = {"enrollment_id", "generation", "profile_id", "principal_id", "service_uid", "service_gid", "service_user",
               "executable", "executable_sha256", "runtime_artifact_ids", "package_runtime_records", "roots", "authority_endpoint_id",
-              "namespace_identity", "socket_policy_id", "target_route_ids", "operation_targets", "argv_recipe", "environment",
+              "namespace_identity", "socket_policy_id", "target_route_ids", "operation_targets", "operation_recipes", "argv_recipe", "environment",
               "max_lifetime_seconds", "memory_max_bytes", "cpu_quota_percent", "io_weight"}
     if not isinstance(item, dict) or set(item) != fields:
         raise EnrollmentDenied("protected service profile fields are invalid")
@@ -515,11 +794,13 @@ def _parse_profile(item: Any) -> HostServiceProfile:
     recipe = item["argv_recipe"]
     env = item["environment"]
     targets = item["operation_targets"]
+    raw_operation_recipes = item["operation_recipes"]
     routes = item["target_route_ids"]
     raw_packages = item["package_runtime_records"]
     if (not isinstance(recipe, list) or not recipe or any(not isinstance(x, str) or "\x00" in x for x in recipe)
             or not isinstance(env, dict) or any(not isinstance(k, str) or not isinstance(v, str) or "\x00" in v for k, v in env.items())
             or not isinstance(targets, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in targets.items())
+            or not isinstance(raw_operation_recipes, dict) or not raw_operation_recipes
             or not isinstance(routes, list) or any(not isinstance(route, str) for route in routes)
             or len(routes) != len(set(routes)) or not isinstance(raw_packages, dict)):
         raise EnrollmentDenied("protected launch or operation policy is malformed")
@@ -527,6 +808,63 @@ def _parse_profile(item: Any) -> HostServiceProfile:
         raise EnrollmentDenied("profile environment contains an unapproved or credential-like variable")
     if set(targets) - _FIXED_OPERATIONS:
         raise EnrollmentDenied("protected operation map contains an unreviewed operation")
+    roots_by_id = {roots[name + "_id"] for name in ("home", "work", "data")}
+    operation_recipes = {}
+    recipe_fields = {"executable_artifact_id", "executable_sha256", "argv_recipe", "cwd_root_id",
+                     "cwd_subpath", "environment", "child_artifact_refs", "max_lifetime_seconds",
+                     "max_output_bytes", "stdin_mode", "parameter_schema_id"}
+    for operation_id, raw in raw_operation_recipes.items():
+        operation_id = _id(operation_id, "operation recipe ID")
+        if not isinstance(raw, dict) or set(raw) != recipe_fields:
+            raise EnrollmentDenied("operation launch recipe fields are invalid")
+        if (not isinstance(raw["executable_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", raw["executable_sha256"])):
+            raise EnrollmentDenied("operation executable digest is invalid")
+        argv = raw["argv_recipe"]
+        if not isinstance(argv, list) or not argv or len(argv) > 128:
+            raise EnrollmentDenied("operation argv recipe is invalid")
+        tokens = []
+        for token in argv:
+            if not isinstance(token, dict) or len(token) != 1:
+                raise EnrollmentDenied("operation argv token must be one fixed literal or typed parameter")
+            if set(token) == {"literal"}:
+                literal = token["literal"]
+                if not isinstance(literal, str) or "\x00" in literal or len(literal) > 4096:
+                    raise EnrollmentDenied("operation argv literal is invalid")
+                tokens.append(MappingProxyType({"literal": literal}))
+            elif set(token) == {"parameter"}:
+                tokens.append(MappingProxyType({"parameter": _id(token["parameter"], "parameter name")}))
+            else:
+                raise EnrollmentDenied("operation argv token has unknown fields")
+        cwd_root = _id(raw["cwd_root_id"], "cwd root ID")
+        if cwd_root not in roots_by_id:
+            raise EnrollmentDenied("operation cwd root is outside protected service roots")
+        subpath = raw["cwd_subpath"]
+        if (not isinstance(subpath, str) or "\\" in subpath or "\x00" in subpath
+                or Path(subpath).is_absolute() or any(part in {"", ".", ".."} for part in Path(subpath).parts)):
+            raise EnrollmentDenied("operation cwd subpath is unsafe")
+        environment = raw["environment"]
+        if (not isinstance(environment, dict) or set(environment) - _OPERATION_ENV
+                or any(not isinstance(k, str) or not isinstance(v, str) or any(c in v for c in "\x00\r\n")
+                       or "$" in v or "`" in v for k, v in environment.items())
+                or any(re.search(r"token|secret|credential|password|api[_-]?key", k, re.I) for k in environment)):
+            raise EnrollmentDenied("operation environment is not a fixed sanitized mapping")
+        refs = raw["child_artifact_refs"]
+        if (not isinstance(refs, dict) or any(not isinstance(k, str) or not isinstance(v, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", v) for k, v in refs.items())):
+            raise EnrollmentDenied("operation child artifact pins are malformed")
+        lifetime, output_cap = raw["max_lifetime_seconds"], raw["max_output_bytes"]
+        if (type(lifetime) is not int or not 1 <= lifetime <= 600
+                or type(output_cap) is not int or not 1 <= output_cap <= 4 * 1024 * 1024
+                or not isinstance(raw["stdin_mode"], str)
+                or raw["stdin_mode"] not in {"closed", "bounded-typed-bytes"}):
+            raise EnrollmentDenied("operation launch bounds or stdin mode are invalid")
+        operation_recipes[operation_id] = OperationLaunchRecipe(
+            operation_id, _id(raw["executable_artifact_id"], "executable artifact ID"),
+            raw["executable_sha256"], tuple(tokens), cwd_root, subpath,
+            MappingProxyType(dict(environment)), MappingProxyType(dict(refs)),
+            lifetime, output_cap, raw["stdin_mode"], _id(raw["parameter_schema_id"], "parameter schema ID"),
+        )
     packages = {}
     package_fields = {"runtime_artifact_id", "runtime_build_attestation_digest", "runtime_executable_sha256",
                       "runtime_build_output", "abi", "target_glibc_min", "venv_root_id", "policy_revision", "runtime_executable",
@@ -565,6 +903,7 @@ def _parse_profile(item: Any) -> HostServiceProfile:
         tuple(_id(route, "target route ID") for route in routes),
         MappingProxyType({_id(key, "operation"): _id(value, "operation target")
                           for key, value in targets.items()}),
+        MappingProxyType(operation_recipes),
         tuple(recipe), MappingProxyType(dict(env)),
         item["max_lifetime_seconds"], item["memory_max_bytes"],
         item["cpu_quota_percent"], item["io_weight"],
