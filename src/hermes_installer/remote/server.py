@@ -196,8 +196,8 @@ def create_app(runtime:GatewayRuntime):
         up=urlsplit(runtime.upstream);wsurl=URL.build(scheme="ws",host=up.hostname,port=up.port or 80,path="/")
         async with request.app["client"].ws_connect(wsurl,protocols=("binary",),origin=runtime.upstream.rstrip("/"),timeout=3,receive_timeout=None,max_msg_size=16777216,autoping=False,autoclose=False) as upstream:
             downstream=web.WebSocketResponse(protocols=("binary",),max_msg_size=16777216,autoping=False,autoclose=False,compress=False)
-                await downstream.prepare(request)
-                runtime.sockets[key]=downstream
+            await downstream.prepare(request)
+            runtime.sockets[key]=downstream
             async def watchdog():
                 while not downstream.closed:
                     await asyncio.sleep(runtime.watchdog_seconds)
