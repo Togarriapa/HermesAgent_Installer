@@ -354,13 +354,16 @@ class MCPClient:
             if remaining <= 0:
                 raise MCPError("MCP request deadline expired")
             try:
+                broker_operation = "mcp.stdio" if channel == "stdio" else "mcp.request"
                 context = await asyncio.wait_for(asyncio.to_thread(
                     authority.context, purpose=purpose, intent=intent,
-                    operation="mcp.stdio" if channel == "stdio" else "mcp.request",
-                    final_payload_digest=digest,
+                    operation=broker_operation, final_payload_digest=digest,
                     lease_seconds=min(30.0, remaining), cancelled=cancellation.is_set,
                 ), remaining)
-                if context.intent_id != expected_intent_id or context.monotonic_expires_at <= self.monotonic():
+                if (context.intent_id != expected_intent_id
+                        or context.operation != broker_operation
+                        or context.final_payload_digest != digest
+                        or context.monotonic_expires_at <= self.monotonic()):
                     raise MCPError("host issued a stale or mismatched MCP context")
                 remaining = min(remaining, context.monotonic_expires_at - self.monotonic())
                 capability = f"mcp:{self.service_id}:{'read' if operation == 'call' else 'connect'}"
@@ -371,6 +374,7 @@ class MCPClient:
                 ), remaining)
                 if (grant.target != target or grant.capability != capability
                         or grant.request_digest != digest or grant.intent_id != expected_intent_id
+                        or grant.operation != broker_operation or grant.final_payload_digest != digest
                         or grant.context_digest == ""):
                     raise MCPError("host MCP grant is stale or mismatched")
                 remaining = min(remaining, grant.monotonic_expires_at - self.monotonic())
