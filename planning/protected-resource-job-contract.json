@@ -385,7 +385,8 @@
           "stdin_size_bytes": "int1..262144",
           "parent_closure_digest": "str SHA256",
           "deadline_monotonic": "float finite",
-          "source_context_handle": "str root-private lookup only"
+          "source_context_handle": "str root-private lookup only",
+          "task_payload_bytes": "bytes exact canonical {prompt} UTF8, non-wire repr excluded, root immutable admitted bytes; recompute task_payload_sha256 before use"
         },
         "stdin": "task_payload_sha256 hashes canonical UTF8 JSON {prompt:string}; stdin_sha256 hashes ONLY prompt.encode(UTF8), stdin_size_bytes its exact length, no newline/BOM/normalization. Both hashes/size in root frozen admission snapshot and exact child-grant internal launch body digest; recompute before initial write/EOF.",
         "RootAdmittedTaskSource_fields": {

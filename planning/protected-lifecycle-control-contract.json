@@ -159,7 +159,9 @@
         "interpreter",
         "module_closure",
         "plans",
-        "catalog_sha256"
+        "catalog_sha256",
+        "artifact_catalog",
+        "artifact_store"
       ],
       "selection_id": "installer-root-setup-selection-v1",
       "launcher_fields": [
@@ -203,7 +205,30 @@
         "inode",
         "deployment_receipt_sha256"
       ],
-      "release_root_resolution": "Exact root deployment receipt selects installed immutable release directory, captures nofollow actual device/inode/root ownership and entire launcher/interpreter/module/plan byte closure. Row release_root lives in this same initial root-owned selection file, covered catalog_sha256; no additional mutable manifest/resolver fallback. absolute_path root-only field, not worker API. InstalledRootSetupPlanResolver resolves relative rows under this held directory FD and verifies device/inode/current bytes; deployment_receipt_sha256 audit integrity, not external signature. Bootstrap root deployment is actual trust source, no arbitrary self-installed worker file can supply it."
+      "release_root_resolution": "Exact root deployment receipt selects installed immutable release directory, captures nofollow actual device/inode/root ownership and entire launcher/interpreter/module/plan byte closure. Row release_root lives in this same initial root-owned selection file, covered catalog_sha256; no additional mutable manifest/resolver fallback. absolute_path root-only field, not worker API. InstalledRootSetupPlanResolver resolves relative rows under this held directory FD and verifies device/inode/current bytes; deployment_receipt_sha256 audit integrity, not external signature. Bootstrap root deployment is actual trust source, no arbitrary self-installed worker file can supply it.",
+      "artifact_catalog_fields": [
+        "artifact_id",
+        "relative_path",
+        "sha256"
+      ],
+      "artifact_catalog_resolution": "artifact_id installer-protected-artifact-catalog-v1, relative_path catalog/artifacts.json under same verified immutable release_root; actual deployed SHA over exact strict ArtifactCatalog file bytes, load_protected_catalog with expected_uid0. Existing strict catalog envelope {schema:1,artifacts,packages} retained, no new alternate format. Entire reference included catalog_sha256; selected plan allowlist IDs must join exact loaded artifact records. No independent constructor catalog of unknown provenance.",
+      "artifact_store_fields": [
+        "root_id",
+        "journal_root_id",
+        "relative_path",
+        "owner_uid",
+        "owner_gid",
+        "mode"
+      ],
+      "artifact_store_selection": {
+        "root_id": "installer-bootstrap-artifact-store-v1",
+        "journal_root_id": "installer-authority-journal-v1",
+        "relative_path": "bootstrap-artifacts",
+        "owner_uid": 0,
+        "owner_gid": 0,
+        "mode": 448
+      },
+      "artifact_store_resolution": "Resolve selected initial/active root_journal_roots row through existing nofollow held directory owner/mode/device/inode checks; create/validate fixed child bootstrap-artifacts0700 root0. ArtifactCatalog CAS object layout remains objects/<artifact_id>/<sha>/<filename>, verifiedimmutable objects rootowned notwritable after atomic publication. Constructor facade and RootArtifactReceiptRegistry must share the identical verified catalog/store selection; after prepared snapshot active root journal row binds its actual observed identity. No worker store path or new hardcoded external state root."
     },
     "first_setup_artifact_fetch": {
       "constructor": "RootSetupArtifactFetcher(session_store,receipt_registry,protected_artifact_catalog,owned_store_root) constructed by installed root CLI after actual selected actor verification. Catalog rows are root-owned installed source catalog; exact allowed_artifact_ids from selected verified plan. Concrete implementation reuses ArtifactCatalog and reviewed artifact broker bounded downloader/materializer, not worker BootstrapCustody.fetch_artifact or fabricated HostContext.",

@@ -381,3 +381,11 @@ The implementation SHALL use the exact named systemd FD transfer and kernel-auth
 #### Scenario: Historical capsule mistaken for current peer
 - **WHEN** only serialized source metadata or manager socket credentials are available
 - **THEN** no live producer or loader proof is fabricated.
+
+### Requirement: Protected setup store and bounded probe response
+
+The implementation SHALL resolve the protected setup catalog/store and validate the exact bounded private probe response against current root admission and actual observations.
+
+#### Scenario: Untrusted injected catalog or response
+- **WHEN** selected artifact custody or probe envelope/observation binding differs
+- **THEN** provisioning/readiness cannot be marked complete.
