@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 from types import SimpleNamespace
 
+import pytest
+
 from hermes_installer.authority.resource_jobs import index_resource_job_records
 from hermes_installer.registry.resource_jobs import (
     ResourceBackendEnrollment,
@@ -22,7 +24,7 @@ _EXECUTION_BINDING = {
     "native_package_generation": "service-generation",
     "child_operation": "process.start",
     "child_target_id": "process:profile:chat",
-    "child_capability": "hermes-process-runtime",
+    "child_capability": "hermes-profile-invoke",
     "task_body_recipe_id": "task-recipe",
     "task_request_schema_id": "hermes-resource-profile-query-v1",
 }
@@ -230,3 +232,106 @@ def test_protected_resource_job_index_rejects_wrong_observer_origin_or_action():
     assert not index_resource_job_records([row], **kwargs, source_observers=(wrong_origin,))
     wrong_action = SimpleNamespace(**{**observer.__dict__, "source_action_id": "unselected-action"})
     assert not index_resource_job_records([row], **kwargs, source_observers=(wrong_action,))
+
+
+def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
+    import time
+
+    from hermes_installer.authority.resource_jobs import (
+        ResourceJobAuthority, RootResourceProcessReceipt, _JobEvent,
+    )
+    from hermes_installer.authority.service import AuthorityService
+    from hermes_installer.authority.types import AuthorityDenied, Sensitivity
+    from hermes_installer.registry.resource_backends import ResourceProfileTaskAdapter
+    from hermes_installer.registry.resource_jobs import ResourceJobLedger
+
+    row, _raw_backend, _recipes, _scope, _validators, _issuer, _observer, enrollment = _fixture()
+    data = tmp_path / "private"
+    data.mkdir(mode=0o700)
+    data.chmod(0o700)
+    ledger = ResourceJobLedger(data / "jobs.sqlite")
+    now = time.monotonic
+    admission = ledger.admit_job(
+        enrollment, event_id="observed-event-123", verified_source_receipt_ids=("source-receipt-1",),
+        current_generation=enrollment.generation, ttl_seconds=30,
+        parent_lineage_hash=hashlib.sha256(b"source lineage").hexdigest(),
+        parent_sensitivity="private",
+    )
+    child = ledger.admit_child(
+        admission, enrollment, node_id="node-1",
+        parent_result_receipt_ids=(), current_generation=enrollment.generation,
+    )
+
+    service = object.__new__(AuthorityService)
+    service.monotonic = now
+    service.profile_generations = {"profile-1": "service-generation"}
+    task_adapter = object.__new__(ResourceProfileTaskAdapter)
+    backend = enrollment.backends["backend-1"]
+    binding = backend.execution_binding
+    task_adapter.selection = SimpleNamespace(
+        resource_backend_id=backend.backend_id, resource_generation=enrollment.generation,
+        profile_id=backend.profile_id, profile_generation=backend.profile_generation,
+        native_package_id=backend.native_package_id,
+        native_package_generation=backend.native_package_generation,
+        process_enrollment_id=binding["process_enrollment_id"],
+        process_generation=binding["process_generation"], operation_id=binding["operation_id"],
+        process_start_target=binding["child_target_id"], child_capability=binding["child_capability"],
+        task_body_recipe_id=binding["task_body_recipe_id"],
+        task_request_schema_id=binding["task_request_schema_id"],
+    )
+    task_adapter.node_id = "node-1"
+    task_adapter.launcher = service
+    observed_handles = []
+    authority = None
+
+    def launcher(handle, node_id):
+        observed_handles.append(handle)
+        authority.consume_task_handle(handle, node_id)
+        authority.start_task_handle(handle, node_id)
+        return RootResourceProcessReceipt(
+            job_id=handle.job_id, node_id=handle.node_id,
+            backend_enrollment_id=handle.backend_enrollment_id, process_id="process-1",
+            process_generation=handle.process_generation,
+            native_package_generation=handle.native_package_generation,
+            task_payload_sha256=handle.task_payload_sha256,
+            parent_closure_digest=handle.parent_closure_digest,
+            terminal_receipt_handle="terminal-1", result_capsule_handle="capsule-1",
+            expires_monotonic=min(admission.expires_monotonic, now() + 20),
+        )
+
+    service.launch_resource_profile_task = launcher
+    service.consume_resource_task_completion = lambda _receipt, *, cancelled: {
+        "status": 200, "body": b'{"ok":true}', "headers": {"content-type": "application/json"},
+        "receipt_id": "root-result-receipt", "result_fields": {"ok": True},
+    }
+    authority = ResourceJobAuthority(
+        service=service, enrollments={("demo", enrollment.generation): enrollment},
+        ledger=ledger, selected_generation=lambda _resource: enrollment.generation,
+        profile_task_adapters={("backend-1", "node-1"): task_adapter},
+    )
+    assert authority.handlers() == {}  # no service launcher/receipt consumer, no admission route
+    service.resource_job_authority = authority
+    service.rules = {
+        ("hermes-resource-runtime", "resource.job.admit", authority._job_target(enrollment)):
+            SimpleNamespace(recipient=None),
+        ("hermes-resource-runtime", "resource.job.child.admit",
+         authority._child_target(enrollment, enrollment.nodes[0])):
+            SimpleNamespace(recipient=None),
+    }
+    service.handlers = {}
+    registrations = authority.handlers()
+    assert set(registrations) == {
+        ("resource.job.admit", authority._job_target(enrollment)),
+        ("resource.job.child.admit", authority._child_target(enrollment, enrollment.nodes[0])),
+    }
+    event = _JobEvent(
+        enrollment, admission, ("source-receipt-1",), Sensitivity.PRIVATE,
+        hashlib.sha256(b"source lineage").hexdigest(), {}, {},
+    )
+    result = authority._launch_profile_task(child, event, enrollment.backends["backend-1"], 30.0, lambda: False)
+    assert result["receipt_id"] == "root-result-receipt"
+    assert len(observed_handles) == 1
+    assert observed_handles[0].attempt_index == 0
+    assert observed_handles[0].task_payload == b'{"prompt":"perform the selected action"}'
+    with pytest.raises(AuthorityDenied, match="forged, replayed, or consumed"):
+        authority.consume_task_handle(observed_handles[0], "node-1")
