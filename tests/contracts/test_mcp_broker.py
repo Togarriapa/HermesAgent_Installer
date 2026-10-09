@@ -42,7 +42,7 @@ class FakeBrokerTransport:
 class MCPBrokerTests(unittest.TestCase):
     def setUp(self):
         self.service = ProtectedMCPService(
-            "fixture", "http", frozenset({"get_state"}), "root-binding-fixture",
+            "fixture", "http", frozenset({"get_state"}), "root-binding-fixture", "a" * 64,
             selection_arguments={"get_state": ("entity_id",)},
         )
         self.transport = FakeBrokerTransport()
@@ -75,6 +75,16 @@ class MCPBrokerTests(unittest.TestCase):
             context=context, authorization=authorization, payload=payload, timeout=1.0,
             peer_pid=1234, cancelled=lambda: False,
         )
+
+    def test_protected_service_selection_policy_is_immutable_and_pinned(self):
+        record = self.service
+        with self.assertRaises(TypeError):
+            record.selection_arguments["get_state"] = ("other",)
+        with self.assertRaises(ValueError):
+            ProtectedMCPService(
+                "unreviewed", "http", frozenset({"read"}), "root-binding",
+                "0" * 64,
+            )
 
     def test_protected_schema_and_effect_gate_selected_read(self):
         initialize = self.invoke("initialize", {
