@@ -35,7 +35,9 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
                             process_effect_handler: Any | None = None,
                             register_process_handlers: bool = True,
                             selected_operation_resolver: Any | None = None,
-                            remote_session_authority: Any | None = None) -> AuthorityService:
+                            remote_session_authority: Any | None = None,
+                            source_receipt_delivery: Any | None = None,
+                            source_observer_registry: Any | None = None) -> AuthorityService:
     """Build the root service from already validated protected enrollments.
 
     `process_profiles`, policy, rules and handler adapters must be created by
@@ -61,6 +63,8 @@ def build_authority_service(*, signing_key_path: Path, key_id: str,
         process_effect_handler=manager,
         selected_operation_resolver=selected_operation_resolver,
         remote_session_authority=remote_session_authority,
+        source_receipt_delivery=source_receipt_delivery,
+        source_observer_registry=source_observer_registry,
     )
 
 
