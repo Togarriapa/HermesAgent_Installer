@@ -128,7 +128,9 @@ def build_root_runtime_bindings(
         memory_enrollments=getattr(enrollment, "memory_enrollments", None),
         parameter_schemas=getattr(enrollment, "operation_parameter_schemas", None),
     )
-    build_catalog = ProtectedBuildCatalog.from_protected_records(builds)
+    build_catalog = ProtectedBuildCatalog.from_protected_records(
+        builds, service_generation_digest=digest,
+    )
     device_catalog = ProtectedDeviceCatalog.from_protected_records(devices)
 
     process_profiles = {}
@@ -197,6 +199,10 @@ def build_root_runtime_bindings(
     ))
     effect_handlers = {key: handler for key, handler in artifact_handlers.items()
                        if key[0] == "artifact.fetch"}
+    for key, handler in process_manager.handlers().items():
+        if key in effect_handlers:
+            raise EnrollmentDenied("managed process handler conflicts with an existing root handler")
+        effect_handlers[key] = handler
 
     # Generic wheel/environment installation does not bind a selected Coral
     # source-build output. Use only the signed package-set API and resolve its

@@ -7,12 +7,15 @@ individual root-only files only when Authentik authority is queried.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import re
 import secrets
 import stat
 from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from .authentik import (
@@ -27,7 +30,7 @@ AUTHORITY_KEY_PATH = Path("/etc/hermes-installer/authority.key")
 CREDENTIAL_DIRECTORY = Path("/etc/hermes-installer/credentials")
 ARTIFACT_CATALOG_PATH = Path("/etc/hermes-installer/artifact-catalog.json")
 ARTIFACT_STAGING_DIRECTORY = Path("/var/lib/hermes-installer/artifacts")
-MAX_CONFIG_BYTES = 1_048_576
+MAX_CONFIG_BYTES = 8 * 1_048_576
 MAX_CREDENTIAL_BYTES = 16_384
 
 
@@ -153,10 +156,11 @@ def write_authority_config(document: Mapping[str, Any], *, expected_uid: int = 0
     _reject_secret_material(root)
     required = {"schema", "key_id", "principals", "rules", "authentik", "process_profiles",
                 "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers",
-                "native_bridges", "normalization_policies", "delegations"}
+                "native_bridges", "normalization_policies", "delegations", "service_generations"}
     root = _exact(root, required, "authority")
     if root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "authority configuration schema version is unsupported")
+    _validate_service_generations(root["service_generations"])
     encoded = json.dumps(root, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
     write_protected_file(AUTHORITY_CONFIG_PATH, encoded, expected_uid=expected_uid)
 
@@ -361,6 +365,41 @@ class ProtectedEnrollment:
     package_catalog: Mapping[str, Any]
     artifact_catalog_path: Path
     artifact_staging_directory: Path
+    service_records: list[Mapping[str, Any]]
+    protected_devices: list[Mapping[str, Any]]
+    protected_build_records: list[Mapping[str, Any]]
+    protected_enrollment_digest: str
+    native_package_records: list[Mapping[str, Any]]
+    memory_enrollments: Mapping[tuple[str, str], Any]
+    operation_parameter_schemas: list[Mapping[str, Any]]
+
+
+def _validate_service_generations(value: Any) -> dict[str, Any]:
+    """Validate the one active, root-owned HI09 catalog snapshot and its digest."""
+    keys = {"schema", "generation_id", "service_records", "protected_devices",
+            "protected_build_records", "native_packages", "memory_enrollments",
+            "operation_parameter_schemas", "generation_digest"}
+    item = _exact(value, keys, "service generation snapshot")
+    if type(item["schema"]) is not int or item["schema"] != 1:
+        raise AuthorityDenied("enrollment.generation", "service generation snapshot schema is unsupported")
+    _read_id(item["generation_id"], "service generation snapshot ID")
+    digest = item["generation_digest"]
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise AuthorityDenied("enrollment.generation", "service generation snapshot digest is invalid")
+    unsigned = {key: child for key, child in item.items() if key != "generation_digest"}
+    actual = hashlib.sha256(json.dumps(
+        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    if actual != digest:
+        raise AuthorityDenied("enrollment.generation", "service generation snapshot digest does not match")
+    list_fields = ("service_records", "protected_devices", "protected_build_records",
+                   "native_packages", "memory_enrollments", "operation_parameter_schemas")
+    for name in list_fields:
+        rows = item[name]
+        if (not isinstance(rows, list) or len(rows) > 1024
+                or any(not isinstance(row, dict) for row in rows)):
+            raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    return item
 
 
 def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
@@ -374,10 +413,11 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                            object_pairs_hook=_unique_pairs)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         raise AuthorityDenied("enrollment.schema", "protected authority configuration is malformed") from None
-    root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges", "normalization_policies", "delegations"}, "authority")
+    root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges", "normalization_policies", "delegations", "service_generations"}, "authority")
     _reject_secret_material(root)
     if type(root["schema"]) is not int or root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "protected authority schema version is unsupported")
+    service_generations = _validate_service_generations(root["service_generations"])
     key_id = _read_id(root["key_id"], "key_id")
     if not isinstance(root["principals"], list) or not root["principals"] or len(root["principals"]) > 256:
         raise AuthorityDenied("enrollment.schema", "protected principal catalog is invalid")
@@ -763,59 +803,53 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             raise ValueError("every protected HTTP service needs exactly one binding")
     except (TypeError, ValueError, ImportError):
         raise AuthorityDenied("enrollment.mcp", "protected MCP service/endpoint enrollment is invalid") from None
-    memory_targets: set[tuple[str, str, str]] = set()
-    used_memory_paths: set[tuple[str, str, str]] = set()
-    profiles_by_id = process_profiles
-    bindings_by_profile = {binding.profile_id: binding for binding in bindings.values()}
-    for raw in catalogs["memory_providers"].values():
-        target = _exact(raw, {"id", "provider", "profile_id", "namespace_id", "service_id",
-                              "source_revision", "service_generation", "data_root_id", "dedicated_store",
-                              "approved_route_ids"},
-                        "memory provider")
-        profile_id = _read_id(target["profile_id"], "memory profile ID")
-        namespace_id = _read_id(target["namespace_id"], "memory namespace ID")
-        provider = _read_id(target["provider"], "memory provider ID")
-        service_id = _read_id(target["service_id"], "memory service ID")
-        source_revision = _read_id(target["source_revision"], "memory source revision")
-        service_generation = target["service_generation"]
-        if type(service_generation) is not int or service_generation < 1:
-            raise AuthorityDenied("enrollment.memory", "memory service generation is invalid")
-        data_root_id = _read_id(target["data_root_id"], "memory data-root identity")
-        route_ids = target["approved_route_ids"]
-        route_catalog = {
-            "openviking": {"memory.openviking.ready.v1", "memory.openviking.search.find.v1",
-                           "memory.openviking.session.capture.v1"},
-            "claude-mem": {"memory.claude-mem.healthz.v1", "memory.claude-mem.search.v1",
-                           "memory.claude-mem.create.v1", "memory.claude-mem.delete.v1"},
-            "agentmemory": {"memory.agentmemory.livez.v1", "memory.agentmemory.smart-search.v1",
-                            "memory.agentmemory.remember.v1", "memory.agentmemory.forget.v1",
-                            "memory.agentmemory.export.v1", "memory.agentmemory.import.v1"},
-        }
-        if (not isinstance(route_ids, list) or not route_ids or len(route_ids) > 16
-                or any(not isinstance(route, str) for route in route_ids)
-                or len(route_ids) != len(set(route_ids))
-                or not set(route_ids).issubset(route_catalog.get(provider, set()))):
-            raise AuthorityDenied("enrollment.memory", "approved memory route IDs are invalid")
-        profile = profiles_by_id.get(profile_id)
-        binding = bindings_by_profile.get(profile_id)
-        if (provider not in {"openviking", "claude-mem", "agentmemory"}
-                or target["dedicated_store"] is not True
-                or profile is None or binding is None
-                or binding.namespace_id != namespace_id
-                or not Path(data_root_id).is_absolute()
-                or Path(data_root_id) != profile.data_root):
-            raise AuthorityDenied("enrollment.memory", "memory target lacks a matching protected profile data root")
-        key = (profile_id, namespace_id, provider)
-        uniqueness = (profile_id, service_id, data_root_id)
-        if key in memory_targets or uniqueness in used_memory_paths:
-            raise AuthorityDenied("enrollment.memory", "memory target or private store is duplicated")
-        memory_targets.add(key)
-        used_memory_paths.add(uniqueness)
-    return ProtectedEnrollment(key_id, bindings, rules, policy, process_profiles,
-                               catalogs["provider_enrollments"], catalogs["mcp_services"],
-                               mcp_bindings, delegations, catalogs["memory_providers"],
-                               native_bridges, {}, {}, ARTIFACT_CATALOG_PATH,
-                               ARTIFACT_STAGING_DIRECTORY)
+    if catalogs["memory_providers"]:
+        raise AuthorityDenied("enrollment.memory", "legacy memory provider rows cannot authorize active services")
+    memory_enrollments: dict[tuple[str, str], Any] = {}
+    if service_generations["memory_enrollments"]:
+        try:
+            from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+            generation_records: dict[tuple[str, str], Mapping[str, Any]] = {}
+            for service_record in service_generations["service_records"]:
+                identity = (service_record.get("enrollment_id"), service_record.get("generation"))
+                if not all(isinstance(value, str) and value for value in identity) or identity in generation_records:
+                    raise ValueError("service generation identity is malformed or duplicated")
+                generation_records[identity] = service_record
+            for raw_memory in service_generations["memory_enrollments"]:
+                memory = MemoryServiceEnrollment.from_protected_record(raw_memory)
+                key = (memory.service_enrollment_id, memory.service_generation)
+                if key in memory_enrollments:
+                    raise ValueError("memory service enrollment generation is duplicated")
+                service_record = generation_records.get(key)
+                profile = process_profiles.get(memory.profile_id)
+                principal = next((binding for binding in bindings.values()
+                                  if binding.profile_id == memory.profile_id), None)
+                if (service_record is None or service_record.get("profile_id") != memory.profile_id
+                        or service_record.get("principal_id") != memory.principal_id
+                        or service_record.get("namespace_identity") != memory.namespace_identity
+                        or profile is None or profile.generation != memory.service_generation
+                        or principal is None
+                        or memory.principal_id != principal.principal_id
+                        or memory.namespace_identity != principal.namespace_id
+                        or memory.data_root_id != profile.data_id):
+                    raise ValueError("memory row does not join its protected service identity and data root")
+                memory_enrollments[key] = memory
+        except (ImportError, TypeError, ValueError, KeyError):
+            raise AuthorityDenied("enrollment.memory", "protected memory service generation is invalid") from None
+    return ProtectedEnrollment(
+        key_id, bindings, rules, policy, process_profiles,
+        catalogs["provider_enrollments"], catalogs["mcp_services"],
+        mcp_bindings, delegations, catalogs["memory_providers"],
+        native_bridges, {}, {}, ARTIFACT_CATALOG_PATH,
+        ARTIFACT_STAGING_DIRECTORY,
+        service_generations["service_records"],
+        service_generations["protected_devices"],
+        service_generations["protected_build_records"],
+        service_generations["generation_digest"],
+        service_generations["native_packages"],
+        MappingProxyType(memory_enrollments),
+        service_generations["operation_parameter_schemas"],
+    )
 
 
 def load_artifact_catalog(enrollment: ProtectedEnrollment) -> Any:

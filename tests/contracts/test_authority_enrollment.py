@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import tempfile
 import unittest
@@ -9,12 +10,32 @@ from pathlib import Path
 from hermes_installer.authority.enrollment import (
     AUTHORITY_CONFIG_PATH, CREDENTIAL_DIRECTORY, RootCredentialVault,
     _reject_secret_material, _unique_pairs, write_authority_config,
-    write_protected_file,
+    write_protected_file, _validate_service_generations,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
 
 class ProtectedEnrollmentContracts(unittest.TestCase):
+    def test_service_generation_snapshot_is_one_digest_bound_strict_catalog(self):
+        snapshot = {
+            "schema": 1, "generation_id": "root-generation-a",
+            "service_records": [{"profile": "café"}], "protected_devices": [],
+            "protected_build_records": [], "native_packages": [],
+            "memory_enrollments": [], "operation_parameter_schemas": [],
+        }
+        snapshot["generation_digest"] = hashlib.sha256(json.dumps(
+            snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        self.assertEqual(_validate_service_generations(snapshot)["generation_id"], "root-generation-a")
+        changed = dict(snapshot)
+        changed["service_records"] = [{"profile": "cafe"}]
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(changed)
+        malformed = dict(snapshot)
+        malformed["unreviewed_catalog"] = []
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(malformed)
+
     def test_duplicate_json_keys_and_secret_values_are_rejected(self):
         with self.assertRaises(ValueError):
             json.loads('{"schema":1,"schema":2}', object_pairs_hook=_unique_pairs)
