@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "change": "host-principal-custody",
+  "requirement_ids": [
+    "HI07",
+    "HI08",
+    "HI09"
+  ],
+  "task_ids": [
+    "HI-T07",
+    "HI-T08",
+    "HI-T09"
+  ],
+  "state": "specified; not installed/native-verified",
+  "enrollment": {
+    "caller_fields": [
+      "enrollment_id",
+      "generation",
+      "approved_operation",
+      "operation_payload",
+      "operation_id"
+    ],
+    "host_owned_mapping": [
+      "profile_id",
+      "principal_id",
+      "service_uid",
+      "service_gid",
+      "immutable_runtime_artifact_ids",
+      "service_home_id",
+      "work_root_id",
+      "data_root_id",
+      "authority_endpoint_id",
+      "namespace_identity",
+      "target_route_ids"
+    ],
+    "caller_root": "caller-owned operation/journal root only; no requirement to equal service roots",
+    "service_roots": "distinct serviceUID-owned0700 data/home/work roots with protected host-owned policy/ancestors; exact approved writes resolved by host",
+    "forbidden_caller_authority": [
+      "physical_root",
+      "cwd",
+      "script_path",
+      "executable",
+      "socket_path",
+      "PID",
+      "namespace_path",
+      "URL",
+      "port"
+    ]
+  },
+  "fixed_connector": {
+    "request": [
+      "enrollment_id",
+      "generation",
+      "target_id",
+      "action",
+      "approved_route_id",
+      "context_handle",
+      "one_use_effect_grant",
+      "session_id",
+      "deadline"
+    ],
+    "response": "bounded typed stream handle; connectedFD only with independently proven retained shutdown/limits across duplicate descriptors",
+    "target_examples": {
+      "xpra-native": "hermes-desktop profile; selected namespace-localIPv4loopback14500",
+      "colibri-main": "selected namespace-localIPv4loopback8000; inferenceAPI only"
+    },
+    "forbidden": "calleraddress/PID/port/URL or arbitraryAF_INET; generalworkersremainAF_UNIX-only",
+    "lifetime": "owned watchdog; prior Access lease unchanged during renewal; bidirectional revoke/timeout/cancel and bounded reap"
+  },
+  "source_receipt": {
+    "issuer": "trusted host broker only",
+    "fields": [
+      "receipt_id",
+      "source_id",
+      "origin_class",
+      "source_resource_id",
+      "content_sha256",
+      "principal_id",
+      "profile_id",
+      "enrollment_id",
+      "native_process_identity",
+      "generation",
+      "parent_receipt_ids",
+      "derived_sensitivity",
+      "policy_revision",
+      "issued_monotonic",
+      "expires_monotonic",
+      "nonce",
+      "signature"
+    ],
+    "clearance": "protected enrolledsourcepolicy +actualbrokerobserved/authenticatedingress or effectresult; no callerclassification; unknown=private/ineligible-public",
+    "source_coverage": [
+      "primaryinput",
+      "system/staticcontext",
+      "toolresults",
+      "memoryretrieval/extraction/embedding",
+      "auxiliary/title/summary",
+      "retry/fallback",
+      "schedules/webhooks/background",
+      "childdelegation"
+    ],
+    "transformation": "each derived context inherits complete parent closure; no dropping/private-to-public relabeling"
+  },
+  "native_context_request": {
+    "request": [
+      "enrollment_id",
+      "generation",
+      "purpose",
+      "intent_id",
+      "trace_id",
+      "canonical_final_payload_sha256",
+      "receipt_ids",
+      "operation",
+      "bounded_lease_seconds"
+    ],
+    "response": "opaque context_handle and signedHostContext bound to authenticated enrollednativeprocess, sourceclosure and finalpayload",
+    "no_credentials": "worker receives only nonsecret references/opaque peer-bound handles over protected IPC, never reusable secret in argv/env/profile/socketFD",
+    "per_effect": "authority validates canonicalbody digest, fixedcapability/target/recipient/retry, freshcontext+one-usegrant at actualeffectboundary"
+  },
+  "native_wiring": "reviewed installer-owned boundary adapter/overlay for actual core provider/tool/memory/aux/retry/background/delegation call sites; preserve pristine source. PluginContext/register(ctx) alone is not complete coverage. Missing wiring stays open, not permanentdefaultdeny completion.",
+  "evidence": "actual installednative producer positiveflow plus hostile forged/stale/droppedparents/unknownsource/crossPID/childdelegation and mixedroots negativeeffects; fixtures/kernel/native/account distinctly labeled"
+}
