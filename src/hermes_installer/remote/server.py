@@ -44,8 +44,8 @@ class GatewayRuntime:
             raise
         except Exception:
             raise GatewayDenied("fresh Access policy authority unavailable") from None
-    def create_lease(self,principal):
-        self.assert_current_access(principal)
+    def create_lease(self,principal,*,current_access_checked=False):
+        if not current_access_checked:self.assert_current_access(principal)
         key=secrets.token_urlsafe(24)
         for old_key,old in tuple(self.leases.items()):
             try:old.authorize_frame(now=self.monotonic())
@@ -53,10 +53,11 @@ class GatewayRuntime:
         if len(self.leases)>=self.max_active_sockets or any(x.principal.subject==principal.subject for x in self.leases.values()):raise GatewayDenied("profile session limit reached")
         lease=SocketLease.create(principal,now=self.monotonic(),wall_now=self.clock(),requested_seconds=self.max_lease_seconds)
         self.leases[key]=lease;return key,lease
-    def renew(self,key,principal,challenge):
+    def renew(self,key,principal,challenge,*,current_access_checked=False):
         lease=self.leases.get(key)
         if lease is None:raise GatewayDenied("unknown lease")
-        lease.renew(principal,challenge=challenge,now=self.monotonic(),wall_now=self.clock(),policy_current=self.policy_current,requested_seconds=self.max_lease_seconds);return lease
+        if not current_access_checked:self.assert_current_access(principal)
+        lease.renew(principal,challenge=challenge,now=self.monotonic(),wall_now=self.clock(),policy_current=lambda email: email==principal.email,requested_seconds=self.max_lease_seconds);return lease
 
 _BOOTSTRAP="""<!doctype html><meta charset=utf-8><title>Hermes Desktop</title><p id=s>Starting protected Desktop session…</p><script>
 (async()=>{try{const r=await fetch('/session',{method:'POST',cache:'no-store',credentials:'same-origin'});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-lease',x.lease_id);sessionStorage.setItem('hd-challenge',x.renewal_challenge);location.replace('/client/index.html?path='+encodeURIComponent('/client/?lease='+encodeURIComponent(x.lease_id)+'&profile=hermes-desktop&nonce='+encodeURIComponent(x.socket_nonce)))}catch(e){document.getElementById('s').textContent='Access authorization required.'}})();
@@ -66,6 +67,13 @@ _RENEW="""<script>(()=>{let busy=false;async function renew(){if(busy)return;bus
 def create_app(runtime:GatewayRuntime):
     from aiohttp import ClientSession,web,WSMsgType
     app=web.Application(client_max_size=2048);app["runtime"]=runtime
+    async def fresh_access(principal):
+        try:
+            await asyncio.wait_for(asyncio.to_thread(runtime.assert_current_access,principal),timeout=9)
+        except GatewayDenied:
+            raise
+        except Exception:
+            raise GatewayDenied("fresh Access policy authority unavailable") from None
     async def startup(a):a["client"]=ClientSession(timeout=__import__("aiohttp").ClientTimeout(total=30,connect=3,sock_read=10),connector=__import__("aiohttp").TCPConnector(limit=12,limit_per_host=8),trust_env=False,auto_decompress=False)
     async def cleanup(a):await a["client"].close()
     @web.middleware
@@ -78,7 +86,8 @@ def create_app(runtime:GatewayRuntime):
     async def create(request):
         p=runtime.principal(request,"POST","/session")
         if request.can_read_body:raise GatewayDenied("request body forbidden")
-        key,lease=runtime.create_lease(p)
+        await fresh_access(p)
+        key,lease=runtime.create_lease(p,current_access_checked=True)
         return web.json_response({"lease_id":key,"profile_id":runtime.profile_id,"renewal_challenge":lease.renewal_challenge,"socket_nonce":lease.socket_nonce,"expires_in":max(0,int(lease.expires_at-runtime.monotonic()))},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
     async def renew(request):
         p=runtime.principal(request,"POST","/renew")
@@ -86,7 +95,8 @@ def create_app(runtime:GatewayRuntime):
         try:body=await asyncio.wait_for(request.json(),timeout=3)
         except Exception:raise GatewayDenied("invalid renewal body") from None
         if not isinstance(body,dict) or set(body)!={"lease_id","challenge"} or not all(isinstance(body[x],str) for x in body):raise GatewayDenied("invalid renewal fields")
-        lease=runtime.renew(body["lease_id"],p,body["challenge"])
+        await fresh_access(p)
+        lease=runtime.renew(body["lease_id"],p,body["challenge"],current_access_checked=True)
         return web.json_response({"renewal_challenge":lease.renewal_challenge,"expires_in":max(0,int(lease.expires_at-runtime.monotonic()))},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
     async def client(request):
         if request.path=="/client/" and request.headers.get("Upgrade","").casefold()=="websocket":return await stream(request)
@@ -131,7 +141,7 @@ def create_app(runtime:GatewayRuntime):
         if set(request.query)!={"lease","profile","nonce"} or request.query["profile"]!=runtime.profile_id:raise GatewayDenied("socket profile/lease binding required")
         key=request.query["lease"];lease=runtime.leases.get(key)
         if lease is None or (lease.principal.subject,lease.principal.email)!=(p.subject,p.email):raise GatewayDenied("socket/principal mismatch")
-        runtime.assert_current_access(p)
+        await fresh_access(p)
         lease.claim_socket(request.query["nonce"],now=runtime.monotonic())
         from yarl import URL
         up=urlsplit(runtime.upstream);wsurl=URL.build(scheme="ws",host=up.hostname,port=up.port or 80,path="/")
