@@ -165,7 +165,15 @@ class _PrivateControlFixture:
                 headers += b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
             conn.sendall(headers + b"\r\n")
             conn.settimeout(2)
-            return conn.recv(8192)
+            response = bytearray()
+            while True:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                response.extend(chunk)
+                if len(response) > 8192:
+                    raise AssertionError("fixture origin response exceeded its read bound")
+            return bytes(response)
 
     def _serve(self):
         while not self.stop.is_set():

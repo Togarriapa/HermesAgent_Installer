@@ -18,6 +18,7 @@ from typing import Sequence
 
 PINNED_HERMES_REVISION = "7085fbf7753266fc4943c55ac04926186bc90005"
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,95}$")
+_PROFILE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 class NativeInstallError(RuntimeError):
@@ -27,12 +28,28 @@ class NativeInstallError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class NativeInstallReceipt:
     hermes_revision: str
+    python_version: str
     profile_id: str
     discovered_profile: bool
     profile_identity_loaded: bool
     discovered_skills: tuple[str, ...]
     loaded_skills: tuple[str, ...]
     content_digests: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class NativeBundleReceipt:
+    """Bounded actual-source receipt for every profile and skill in the bundle."""
+
+    hermes_revision: str
+    python_version: str
+    profiles_discovered: tuple[str, ...]
+    profiles_loaded: tuple[str, ...]
+    profile_aliases: dict[str, str]
+    skills_discovered: tuple[str, ...]
+    skills_loaded: tuple[str, ...]
+    profile_digests: dict[str, str]
+    skill_digests: dict[str, str]
 
 
 def selected_profile_materialization(generation: str | Path, profile_id: str) -> dict[str, str]:
@@ -45,7 +62,7 @@ def selected_profile_materialization(generation: str | Path, profile_id: str) ->
     dependency closure, so an all-resources generation cannot be projected by
     accident into every profile.
     """
-    if not isinstance(profile_id, str) or not _IDENTIFIER.fullmatch(profile_id):
+    if not isinstance(profile_id, str) or not _PROFILE_ID.fullmatch(profile_id):
         raise NativeInstallError("selected profile id is malformed")
     root = Path(generation)
     ledger = root / "installer-registry" / "crosswalk.json"
@@ -93,6 +110,8 @@ def selected_profile_materialization(generation: str | Path, profile_id: str) ->
 _PROBE = r'''import hashlib, json, os, sys
 from pathlib import Path
 
+if sys.version_info[:2] != (3, 14):
+    raise RuntimeError("Hermes native probe requires official Python 3.14 runtime")
 root = Path(sys.argv[1]).resolve()
 profile_id = sys.argv[2]
 skill_ids = json.loads(sys.argv[3])
@@ -137,8 +156,65 @@ for name in skill_ids:
         raise RuntimeError("selected skill requested a PM dependency during discovery")
     loaded.append(name)
     digests["skill:" + name] = hashlib.sha256(content.encode()).hexdigest()
-print(json.dumps({"profile": profile_id, "skills": sorted(names), "loaded": loaded,
+print(json.dumps({"python_version": sys.version.split()[0], "profile": profile_id,
+                  "skills": sorted(names), "loaded": loaded,
                   "digests": digests}, sort_keys=True))
+'''
+
+
+_BUNDLE_PROBE = r'''import hashlib, json, os, sys
+from pathlib import Path
+
+if sys.version_info[:2] != (3, 14):
+    raise RuntimeError("Hermes native probe requires official Python 3.14 runtime")
+root = Path(sys.argv[1]).resolve()
+profile_ids = json.loads(sys.argv[2])
+skill_ids = json.loads(sys.argv[3])
+
+from hermes_cli.profiles import list_profiles
+profiles = list_profiles()
+by_name = {p.name: p for p in profiles}
+missing_profiles = [name for name in profile_ids if name not in by_name]
+if missing_profiles:
+    raise RuntimeError("one or more bundled profiles were not discovered")
+from agent.prompt_builder import load_soul_md
+profile_digests = {}
+profile_aliases = {}
+for name in profile_ids:
+    home = Path(by_name[name].path).resolve()
+    soul = load_soul_md(home_override=home)
+    if not isinstance(soul, str) or not soul.strip():
+        raise RuntimeError("one or more native profile identities failed to load")
+    profile_digests[name] = hashlib.sha256(soul.encode()).hexdigest()
+    profile_aliases[name] = str(by_name[name].display_name or "")
+
+# Full-bundle skill audit is performed in the selected/default HERMES_HOME,
+# whose native skills/ root represents the package's discoverable skill set.
+os.environ["HERMES_HOME"] = str(root)
+from tools import skills_tool
+listed = json.loads(skills_tool.skills_list())
+if listed.get("success") is not True:
+    raise RuntimeError("Hermes skill discovery failed")
+rows = listed.get("skills", [])
+names = {item.get("name") for item in rows if isinstance(item, dict)}
+missing_skills = [name for name in skill_ids if name not in names]
+if missing_skills:
+    raise RuntimeError("one or more bundled skills were not discovered")
+skill_digests = {}
+for name in skill_ids:
+    result = json.loads(skills_tool.skill_view(name, preprocess=False))
+    if result.get("success") is not True or result.get("name") != name:
+        raise RuntimeError("one or more bundled skills failed to load")
+    content = result.get("content")
+    if not isinstance(content, str) or not content.strip() or result.get("deps_note"):
+        raise RuntimeError("a bundled skill is empty or requested dependency installation")
+    skill_digests[name] = hashlib.sha256(content.encode()).hexdigest()
+print(json.dumps({"python_version": sys.version.split()[0],
+                  "profiles": sorted(name for name in profile_ids if name in by_name),
+                  "skills": sorted(name for name in skill_ids if name in names),
+                  "profile_aliases": profile_aliases,
+                  "profile_digests": profile_digests, "skill_digests": skill_digests},
+                 sort_keys=True))
 '''
 
 
@@ -175,7 +251,7 @@ def discover_and_load_selected(
     Only roots supplied by the installer are used. The caller retains lifecycle
     ownership of writing, rollback, overlays, and activation.
     """
-    if not isinstance(profile_id, str) or not _IDENTIFIER.fullmatch(profile_id):
+    if not isinstance(profile_id, str) or not _PROFILE_ID.fullmatch(profile_id):
         raise NativeInstallError("selected profile id is malformed")
     if len(skill_ids) > 64 or any(not isinstance(name, str) or not _IDENTIFIER.fullmatch(name) for name in skill_ids):
         raise NativeInstallError("selected skill ids are malformed or exceed the probe bound")
@@ -188,15 +264,21 @@ def discover_and_load_selected(
     if not 0.1 <= timeout <= 60:
         raise NativeInstallError("probe timeout is outside the supported bound")
 
-    source = Path(hermes_source).resolve(strict=True)
+    source_input = Path(hermes_source)
+    if source_input.is_symlink():
+        raise NativeInstallError("pinned Hermes source checkout cannot be a symlink")
+    source = source_input.resolve(strict=True)
     revision = _hermes_revision(source)
     # Keep a venv/PM executable symlink intact: resolving it bypasses the
     # interpreter's adjacent site-packages and silently selects the system
     # Python executable instead.
     interpreter = Path(os.path.abspath(os.fspath(python)))
-    if not interpreter.is_file():
+    if not interpreter.is_file() or not os.access(interpreter, os.X_OK):
         raise NativeInstallError("selected official Hermes Python runtime is unavailable")
-    root = Path(hermes_root).resolve(strict=True)
+    root_input = Path(hermes_root)
+    if root_input.is_symlink():
+        raise NativeInstallError("selected Hermes root cannot be a symlink")
+    root = root_input.resolve(strict=True)
     profile_home = (root / "profiles" / profile_id).resolve(strict=False)
     if root.is_symlink() or not profile_home.is_relative_to(root):
         raise NativeInstallError("selected Hermes roots escape the installer-owned root")
@@ -229,10 +311,101 @@ def discover_and_load_selected(
         raise NativeInstallError("pinned Hermes returned an incomplete native discovery receipt")
     return NativeInstallReceipt(
         hermes_revision=revision,
+        python_version=str(payload.get("python_version", "")),
         profile_id=profile_id,
         discovered_profile=True,
         profile_identity_loaded=True,
         discovered_skills=tuple(sorted(found_skills)),
         loaded_skills=loaded_skills,
         content_digests=dict(payload.get("digests", {})),
+    )
+
+
+def discover_and_load_bundle(
+    *,
+    hermes_source: str | Path,
+    python: str | Path,
+    hermes_root: str | Path,
+    profile_ids: Sequence[str],
+    skill_ids: Sequence[str],
+    timeout: float = 60.0,
+) -> NativeBundleReceipt:
+    """Exercise Hermes discovery and content loading for a complete bounded bundle.
+
+    The fixture must contain every profile under ``profiles/<id>/`` and every
+    skill under the selected Hermes root's ``skills/<id>/SKILL.md``. This
+    validates all native identities/cards with real pinned Hermes APIs; it does
+    not claim that each profile's distinct dependency closure or required
+    external effects are functional.
+    """
+    if len(profile_ids) != 208 or len(skill_ids) != 396:
+        raise NativeInstallError("full-bundle probe requires exactly 208 profiles and 396 skills")
+    if any(not isinstance(value, str) or not _PROFILE_ID.fullmatch(value) for value in profile_ids):
+        raise NativeInstallError("full-bundle profile ids are malformed")
+    if any(not isinstance(value, str) or not _IDENTIFIER.fullmatch(value) for value in skill_ids):
+        raise NativeInstallError("full-bundle native ids are malformed")
+    if len(set(profile_ids)) != 208 or len(set(skill_ids)) != 396:
+        raise NativeInstallError("full-bundle native ids contain duplicates")
+    try:
+        timeout = float(timeout)
+    except (TypeError, ValueError):
+        raise NativeInstallError("probe timeout is invalid") from None
+    if not 0.1 <= timeout <= 300:
+        raise NativeInstallError("full-bundle probe timeout is outside the supported bound")
+
+    source_input = Path(hermes_source)
+    if source_input.is_symlink():
+        raise NativeInstallError("pinned Hermes source checkout cannot be a symlink")
+    source = source_input.resolve(strict=True)
+    revision = _hermes_revision(source)
+    interpreter = Path(os.path.abspath(os.fspath(python)))
+    if not interpreter.is_file() or not os.access(interpreter, os.X_OK):
+        raise NativeInstallError("selected official Hermes Python runtime is unavailable")
+    root_input = Path(hermes_root)
+    if root_input.is_symlink():
+        raise NativeInstallError("full-bundle Hermes root cannot be a symlink")
+    root = root_input.resolve(strict=True)
+    skill_root = root / "skills"
+    if root.is_symlink() or skill_root.is_symlink() or not skill_root.is_dir():
+        raise NativeInstallError("full-bundle Hermes skill root is not materialized")
+    profile_root = root / "profiles"
+    if profile_root.is_symlink() or not profile_root.is_dir():
+        raise NativeInstallError("full-bundle Hermes profile root is not materialized")
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(root),
+        "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+        "HERMES_HOME": str(root),
+        "PYTHONPATH": str(source),
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    try:
+        result = subprocess.run(
+            [str(interpreter), "-c", _BUNDLE_PROBE, str(root), json.dumps(list(profile_ids)), json.dumps(list(skill_ids))],
+            cwd=source, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, timeout=timeout, check=True,
+        )
+        payload = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise NativeInstallError("pinned Hermes full-bundle discovery or content loading failed") from None
+    profiles = tuple(payload.get("profiles", ()))
+    skills = tuple(payload.get("skills", ()))
+    if set(profiles) != set(profile_ids) or set(skills) != set(skill_ids):
+        raise NativeInstallError("pinned Hermes full-bundle receipt is incomplete")
+    profile_digests = dict(payload.get("profile_digests", {}))
+    skill_digests = dict(payload.get("skill_digests", {}))
+    profile_aliases = dict(payload.get("profile_aliases", {}))
+    if set(profile_digests) != set(profile_ids) or set(skill_digests) != set(skill_ids) or set(profile_aliases) != set(profile_ids):
+        raise NativeInstallError("pinned Hermes full-bundle content digests are incomplete")
+    return NativeBundleReceipt(
+        hermes_revision=revision,
+        python_version=str(payload.get("python_version", "")),
+        profiles_discovered=tuple(sorted(profiles)),
+        profiles_loaded=tuple(sorted(profile_ids)),
+        profile_aliases=profile_aliases,
+        skills_discovered=tuple(sorted(skills)),
+        skills_loaded=tuple(skill_ids),
+        profile_digests=profile_digests,
+        skill_digests=skill_digests,
     )
