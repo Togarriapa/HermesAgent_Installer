@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -23,6 +24,9 @@ if TYPE_CHECKING:
 TEMPLATE_ARTIFACT_ID = "installer-bootstrap-compiler-template-v1"
 TEMPLATE_SHA256 = "27854f8f8c67ce42832f020dbfd96512607e39576b27e484598ff397cb9432e5"
 TEMPLATE_SIZE_BYTES = 4281
+PREPARED_BASE_TEMPLATE_ARTIFACT_ID = "installer-prepared-authority-base-template-v1"
+PREPARED_BASE_TEMPLATE_SHA256 = "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953"
+PREPARED_BASE_TEMPLATE_SIZE_BYTES = 369
 _TEMPLATE_KEYS = frozenset({
     "schema", "id", "source_artifact_id", "authority_base_source",
     "empty_parameter_schema", "identity", "initial_catalog_mode", "roots",
@@ -36,6 +40,7 @@ _BINDING_KEYS = frozenset({
     "pm.catalog_executable_path", "pm.executable_sha256",
     "pm.executable_artifact_id", "pm.runtime_artifact_ids",
     "pm.package_runtime_records", "native.child_artifact_refs",
+    "authority_key.key_id", "prepared_service_generation.exact_empty_snapshot",
 })
 _PREPARED_DEFERRED_BINDINGS = frozenset({
     "nss.service_uid", "nss.service_gid", "pm.catalog_executable_path",
@@ -133,6 +138,78 @@ def _render_closed_template(raw: bytes, bindings: _RootBindings) -> dict[str, An
            for value in _walk(rendered)):
         raise InitialPolicyCompilationError("rendered template still contains an unresolved binding")
     return rendered
+
+
+def _empty_prepared_service_generation(root_journal_root: Mapping[str, Any], *,
+                                       generation_id: str | None = None) -> dict[str, Any]:
+    """Create the exact dormant service catalog from the held journal-root fact."""
+    if not isinstance(root_journal_root, Mapping):
+        raise InitialPolicyCompilationError("prepared service snapshot requires the held root journal receipt")
+    generation_id = generation_id or "prepared-" + secrets.token_hex(16)
+    if not isinstance(generation_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", generation_id):
+        raise InitialPolicyCompilationError("prepared service snapshot generation ID is malformed")
+    rows = dict(root_journal_root)
+    expected_root_fields = {"root_id", "absolute_path", "owner_uid", "owner_gid", "mode",
+                            "device", "inode", "generation", "purpose"}
+    if set(rows) != expected_root_fields or rows.get("root_id") != "installer-authority-journal-v1":
+        raise InitialPolicyCompilationError("prepared service snapshot has no exact selected journal-root row")
+    value = {
+        "schema": 1, "generation_id": generation_id, "service_records": [],
+        "protected_devices": [], "protected_build_records": [], "native_packages": [],
+        "memory_enrollments": [], "operation_parameter_schemas": [], "source_issuers": [],
+        "resource_jobs": [], "remote_session_enrollments": [], "resource_backend_enrollments": [],
+        "resource_body_recipes": [], "resource_scope_bindings": [], "resource_validators": [],
+        "root_journal_roots": [rows],
+    }
+    value["generation_digest"] = hashlib.sha256(_canonical_json(value)).hexdigest()
+    from .enrollment import _validate_service_generations
+    try:
+        return _validate_service_generations(value)
+    except Exception as exc:
+        raise InitialPolicyCompilationError("prepared service snapshot failed the installed authority schema") from exc
+
+
+def _canonical_json(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def _parse_prepared_base_template(raw: bytes) -> dict[str, Any]:
+    if not isinstance(raw, bytes) or len(raw) != PREPARED_BASE_TEMPLATE_SIZE_BYTES:
+        raise InitialPolicyCompilationError("prepared authority-base template has the wrong size")
+    if hashlib.sha256(raw).hexdigest() != PREPARED_BASE_TEMPLATE_SHA256:
+        raise InitialPolicyCompilationError("prepared authority-base template differs from v63")
+    try:
+        doc = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                         parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise InitialPolicyCompilationError("prepared authority-base template is not strict JSON") from exc
+    required = {"schema", "key_id", "principals", "rules", "authentik", "process_profiles",
+                "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers",
+                "native_bridges", "normalization_policies", "delegations", "service_generations"}
+    if not isinstance(doc, dict) or set(doc) != required or doc.get("schema") != 1:
+        raise InitialPolicyCompilationError("prepared authority-base template has an unexpected schema")
+    return doc
+
+
+def _render_prepared_authority_base(raw: bytes, *, key_id: str,
+                                    root_journal_root: Mapping[str, Any],
+                                    generation_id: str | None = None) -> dict[str, Any]:
+    """Render v63's dormant-only authority base; it does not authorize effects."""
+    if not isinstance(key_id, str) or not re.fullmatch(r"authority-key-[0-9a-f]{32}", key_id):
+        raise InitialPolicyCompilationError("prepared authority base requires the verified root key receipt ID")
+    template = _parse_prepared_base_template(raw)
+    template["key_id"] = key_id
+    template["service_generations"] = _empty_prepared_service_generation(
+        root_journal_root, generation_id=generation_id)
+    required_maps = {"principals", "rules", "authentik", "process_profiles", "provider_enrollments",
+                     "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges",
+                     "normalization_policies", "delegations"}
+    if any(not isinstance(template[name], dict) or template[name] for name in required_maps):
+        raise InitialPolicyCompilationError("prepared authority snapshot contains unsupported authority rows")
+    from .bootstrap_enrollment import _validate_authority_base
+    _validate_authority_base(template)
+    return template
 
 
 def _walk(value: Any):

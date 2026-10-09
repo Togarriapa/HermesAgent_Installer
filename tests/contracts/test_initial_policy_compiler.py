@@ -11,11 +11,13 @@ from hermes_installer.authority.initial_policy_compiler import (
     InitialPolicyCompilationError,
     _RootBindings,
     _render_closed_template,
+    _render_prepared_authority_base,
 )
 
 
 REPO = Path(__file__).resolve().parents[2]
 TEMPLATE = REPO / "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json"
+PREPARED_BASE = REPO / "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/prepared-authority-base-template-v1.json"
 
 
 def _binding_names(value):
@@ -93,3 +95,57 @@ def test_namespace_identity_remains_pending_without_a_root_issued_observation():
     values.pop("transaction.namespace_identity", None)
     with pytest.raises(InitialPolicyCompilationError, match="transaction.namespace_identity"):
         _render_closed_template(raw, _RootBindings(values, bindings.principal_id))
+
+
+def test_v63_prepared_authority_binds_actual_key_and_exact_dormant_snapshot():
+    journal = {
+        "root_id": "installer-authority-journal-v1", "absolute_path": "/owned/journal",
+        "owner_uid": 0, "owner_gid": 0, "mode": 0o700, "device": 4, "inode": 9,
+        "generation": "journal-4-9", "purpose": "authority-journal",
+    }
+    rendered = _render_prepared_authority_base(
+        PREPARED_BASE.read_bytes(), key_id="authority-key-" + "a" * 32,
+        root_journal_root=journal, generation_id="prepared-test")
+
+    assert rendered["key_id"] == "authority-key-" + "a" * 32
+    assert rendered["authentik"] == {}
+    assert rendered["principals"] == rendered["rules"] == rendered["process_profiles"] == {}
+    snapshot = rendered["service_generations"]
+    assert snapshot["generation_id"] == "prepared-test"
+    assert snapshot["service_records"] == []
+    assert snapshot["root_journal_roots"] == [journal]
+    assert set(snapshot) == {
+        "schema", "generation_id", "service_records", "protected_devices", "protected_build_records",
+        "native_packages", "memory_enrollments", "operation_parameter_schemas", "source_issuers",
+        "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
+        "resource_body_recipes", "resource_scope_bindings", "resource_validators", "root_journal_roots",
+        "generation_digest",
+    }
+
+
+@pytest.mark.parametrize("key_id", ["guessed", "authority-key-abc", "authority-key-" + "A" * 32])
+def test_prepared_authority_rejects_unverified_or_malformed_key_ids(key_id):
+    journal = {
+        "root_id": "installer-authority-journal-v1", "absolute_path": "/owned/journal",
+        "owner_uid": 0, "owner_gid": 0, "mode": 0o700, "device": 4, "inode": 9,
+        "generation": "journal-4-9", "purpose": "authority-journal",
+    }
+    with pytest.raises(InitialPolicyCompilationError, match="verified root key receipt"):
+        _render_prepared_authority_base(PREPARED_BASE.read_bytes(), key_id=key_id,
+                                        root_journal_root=journal, generation_id="prepared-test")
+
+
+def test_prepared_authority_rejects_template_drift_and_nonempty_policy_rows():
+    journal = {
+        "root_id": "installer-authority-journal-v1", "absolute_path": "/owned/journal",
+        "owner_uid": 0, "owner_gid": 0, "mode": 0o700, "device": 4, "inode": 9,
+        "generation": "journal-4-9", "purpose": "authority-journal",
+    }
+    raw = PREPARED_BASE.read_bytes()
+    with pytest.raises(InitialPolicyCompilationError, match="wrong size"):
+        _render_prepared_authority_base(raw + b" ", key_id="authority-key-" + "a" * 32,
+                                        root_journal_root=journal, generation_id="prepared-test")
+    with pytest.raises(InitialPolicyCompilationError, match="installed authority schema"):
+        _render_prepared_authority_base(raw, key_id="authority-key-" + "a" * 32,
+                                        root_journal_root={**journal, "owner_uid": 1000},
+                                        generation_id="prepared-test")
