@@ -353,7 +353,9 @@ class SourceObserverContracts(unittest.TestCase):
             process_id="managed-task-process", profile_id=self.identity.profile_id,
             generation=self.identity.generation, peer_pid=733, peer_pidfd=901,
             uid=self.identity.kernel_uid, live_peer_identity=self.identity,
-            loaded_package_proof=None, service_generation_digest=_digest("2"),
+            loaded_package_proof=self.registry.loaded_package_proof_resolver(
+                self.identity, self.enrollment, peer_pid=733, peer_pidfd=901),
+            service_generation_digest=_digest("2"),
             expires_monotonic=39.0,
         )
 
