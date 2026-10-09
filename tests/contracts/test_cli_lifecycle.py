@@ -46,10 +46,14 @@ class CliLifecycleTests(unittest.TestCase):
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             args=SimpleNamespace(command="resume",config=config)
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
+                 patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
+                     state="unverified",blocker_code="ROOT_ATTESTATION_REQUIRED",
+                     message="The installed launcher has not been verified by its root actor.")), \
                  patch("hermes_installer.cli.HermesBootstrap") as bootstrap:
                 result=run(args)
-            self.assertEqual(result.state,OutcomeState.FAILED)
-            self.assertIn("no readable installer checkpoint",result.message)
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertIn("not been verified",result.message)
+            self.assertEqual(result.resume_command,"hermes-installer status")
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
             bootstrap.assert_not_called()
@@ -57,11 +61,14 @@ class CliLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
+                 patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
+                     state="unverified",blocker_code="ROOT_ATTESTATION_REQUIRED",
+                     message="The installed launcher has not been verified by its root actor.")), \
                  patch("hermes_installer.cli.HermesBootstrap") as bootstrap:
                 first=run(SimpleNamespace(command="install",config=config,dry_run=False))
                 self.assertEqual(first.state,OutcomeState.PENDING)
                 self.assertEqual(first.resume_command,"hermes-installer status")
-                self.assertIn("root-local setup launcher",first.message)
+                self.assertIn("not been verified",first.message)
                 self.assertFalse((root/"data").exists())
                 self.assertFalse((root/"state").exists())
                 bootstrap.assert_not_called()
@@ -69,12 +76,28 @@ class CliLifecycleTests(unittest.TestCase):
     def test_update_apply_stays_pending_without_root_owned_lifecycle_effects(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
-            with patch("hermes_installer.cli.discover_host",return_value=self.host):
+            with patch("hermes_installer.cli.discover_host",return_value=self.host), \
+                 patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
+                     state="unverified",blocker_code="ROOT_ATTESTATION_REQUIRED",
+                     message="The installed launcher has not been verified by its root actor.")):
                 result=run(SimpleNamespace(command="update",action="apply",config=config))
             self.assertEqual(result.state,OutcomeState.PENDING)
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
             self.assertTrue(result.findings[0].details["effects_started"] is False)
+
+    def test_install_shows_fixed_root_command_only_after_launcher_verification(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
+            with patch("hermes_installer.cli.discover_host",return_value=self.host), \
+                 patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
+                     state="verified",blocker_code=None,
+                     message="The current process matches the installed root launcher.")):
+                result=run(SimpleNamespace(command="install",config=config,dry_run=False))
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertEqual(result.resume_command,"sudo -- hermes-installer-root-setup install")
+            self.assertFalse((root/"data").exists())
+            self.assertFalse((root/"state").exists())
 
     def test_update_check_verifies_active_generation_without_creating_state(self):
         with tempfile.TemporaryDirectory() as td:

@@ -94,6 +94,16 @@ def _configuration(path: Path | None) -> InstallerConfig:
     return load_config(path) if path else validate_config({"schema_version": 1})
 
 
+def _root_launcher_status() -> tuple[str, str | None, str]:
+    """Read the root entrypoint's pathless status without escalating or launching it."""
+    try:
+        from .root_setup import launcher_status
+        status = launcher_status()
+        return status.state, status.blocker_code, status.message
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return "unverified", "ROOT_ATTESTATION_REQUIRED", "The installed launcher has not been verified by its root actor."
+
+
 def _run_setup(args: argparse.Namespace) -> CommandResult:
     from .setup_wizard import PrivateFileCredentialStore, run_setup_wizard
 
@@ -703,22 +713,19 @@ def run(args: argparse.Namespace) -> CommandResult:
             return CommandResult("install", OutcomeState.READY, "Dry run completed; no installer files, packages, services, or accounts were changed.", _host_findings(config))
         if config.components.get("hermes_agent") is False:
             return CommandResult(args.command, OutcomeState.FAILED, "Hermes Agent is explicitly disabled in configuration; no Agent stages were run.", exit_code=2)
-        state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
-        if args.command == "resume" and not _resume_checkpoint_exists(state_path):
-            return CommandResult("resume", OutcomeState.FAILED,
-                "There is no readable installer checkpoint to resume; the state directory was not created.", exit_code=2)
+        launcher_state, blocker_code, launcher_message = _root_launcher_status()
         # Install/update execution belongs to the separately installed root-local
-        # setup entrypoint. The user-mode CLI has no authenticated launcher-status
-        # proof yet, so it must not create state roots or fall back to worker-side
+        # setup entrypoint. The pathless launcher-status check is informational
+        # only; an unverified caller must not create state roots or fall back to worker-side
         # downloads/process execution. Root setup revalidates the durable selection
         # and owns the transaction, enrollment, and managed effects.
-        resume_command = "hermes-installer status"
+        resume_command = (f"sudo -- hermes-installer-root-setup {args.command}"
+                          if launcher_state == "verified" else "hermes-installer status")
         return CommandResult(args.command, OutcomeState.PENDING,
-            "The verified root-local setup launcher is not available through this user-mode command. "
-            "No installer state, data root, package, service, or account was changed. "
-            "Check the installed setup launcher with the supported status flow, then resume there.",
-            (Finding("lifecycle.root-setup", "Root-local launcher status is not verified; install/resume effects were not started.", OutcomeState.PENDING,
-                     {"launcher_verified": False, "effects_started": False}),),
+            f"{launcher_message} No installer state, data root, package, service, or account was changed.",
+            (Finding("lifecycle.root-setup", "Root-local launcher status gates privileged setup effects.", OutcomeState.PENDING,
+                     {"launcher_verified": launcher_state == "verified", "blocker_code": blocker_code,
+                      "effects_started": False}),),
             resume_command=resume_command)
     if args.command == "data":
         facts = discover_host()
@@ -749,13 +756,15 @@ def run(args: argparse.Namespace) -> CommandResult:
                     {"active_generation": identity, "active_digest": active.digest if active else None,
                      "candidate_generation": None, "candidate_available": False}),),
                 resume_command=f"hermes-installer update check" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
-        message = ("The verified root-local setup launcher is not available through this user-mode command. "
-                   "No update or rollback effect was started; managed generation activation requires the root-owned transaction and live health observer.")
+        launcher_state, blocker_code, launcher_message = _root_launcher_status()
+        message = f"{launcher_message} No update or rollback effect was started; managed generation activation requires the root-owned transaction and live health observer."
         return CommandResult("update", OutcomeState.PENDING, message,
             (Finding("lifecycle.update", message, OutcomeState.PENDING,
                 {"candidate_generation": None, "health_probe": "protected-managed-process-not-enrolled",
+                 "launcher_verified": launcher_state == "verified", "blocker_code": blocker_code,
                  "effects_started": False}),),
-            resume_command="hermes-installer status")
+            resume_command=(f"sudo -- hermes-installer-root-setup update"
+                            if launcher_state == "verified" else "hermes-installer status"))
     if args.command in {"configure", "test-connection", "select-memory", "resolve-source"}:
         facts = discover_host()
         if not facts.supported_arm64_linux:
