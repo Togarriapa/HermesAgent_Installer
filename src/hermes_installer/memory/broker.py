@@ -22,6 +22,11 @@ MAX_RESPONSE = 1024 * 1024
 MAX_EVENT = 64 * 1024
 MAX_FACTS = 64
 PROVIDERS = frozenset({"openviking", "claude-mem", "agentmemory"})
+SOURCE_REVISIONS = {
+    "openviking": "e7b2e974b1fb97cd8c6087ff013181ddfec94f77",
+    "claude-mem": "fa8ab09f06aa05f958c5225cf3756ce52a3ebb96",
+    "agentmemory": "df3d4a83b966d8d415cb9180d5a4724b07f729dc",
+}
 ACTIONS = frozenset({"doctor", "extract", "embed", "capture", "search", "export",
                      "delete", "backup", "restore", "enqueue", "result"})
 CAPABILITIES = {
@@ -35,8 +40,9 @@ ROUTES = {
     "openviking": {
         "doctor": "GET /ready",
         "search": "POST /api/v1/search/find",
-        "capture": "POST /api/v1/sessions;POST /api/v1/sessions/{id}/messages/batch;POST /api/v1/sessions/{id}/commit",
-        "delete": "DELETE /api/v1/sessions/{id}",
+        "capture": "openviking.session.capture.v1",
+        # OpenViking's documented API has session deletion, not per-memory
+        # deletion; do not mislabel deleting a session as memory removal.
     },
     "claude-mem": {
         "doctor": "GET /healthz",
@@ -112,9 +118,8 @@ class MemoryTarget:
                 isinstance(x, str) and x and len(x) <= 256 for x in
                 (self.profile_id, self.namespace_id, self.service_id, self.data_root_id)):
             raise ValueError("invalid protected provider enrollment")
-        if (len(self.source_revision) != 40 or
-                any(c not in "0123456789abcdef" for c in self.source_revision)):
-            raise ValueError("provider source must be commit pinned")
+        if self.source_revision != SOURCE_REVISIONS[self.provider]:
+            raise ValueError("provider source revision differs from the reviewed pin")
         if type(self.service_generation) is not int or self.service_generation < 1:
             raise ValueError("supervised service generation is required")
         if self.provider == "agentmemory" and self.dedicated_store is not True:
@@ -419,7 +424,12 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                          "service_generation":target.service_generation}
             elif action=="delete":
                 rid=_text(body.get("record_id"),"record id",256)
-                request={"record_id":rid,"profile_id":context.profile_id,"namespace_id":context.namespace_id}
+                if target.provider=="agentmemory":
+                    request={"memoryIds":[rid]}
+                elif target.provider=="claude-mem":
+                    request={"id":rid,"projectId":target.namespace_id}
+                else:
+                    raise BrokerUnavailable("OpenViking pinned API has no per-memory delete operation")
             elif action in {"export","backup","restore"}:
                 if action not in ROUTES[target.provider]:
                     raise BrokerUnavailable(target.provider+" has no pinned safe "+action+" API")
@@ -435,8 +445,66 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
             route=ROUTES[target.provider].get(action)
             if route is None or ipc is None:
                 raise BrokerUnavailable("root-owned authenticated memory service connector is unavailable")
-            result=_result(ipc.request(service_id=target.service_id,service_generation=target.service_generation,provider=target.provider,
-                fixed_route=route,payload=canonical(request),timeout=timeout,cancelled=cancelled))
+            if action=="restore":
+                import base64
+                archive=body.get("archive")
+                digest=body.get("sha256")
+                if not isinstance(archive,str) or len(archive)>2*MAX_RESPONSE:
+                    raise ValueError("restore archive exceeds its bound")
+                try:
+                    decoded=base64.b64decode(archive,validate=True)
+                except (ValueError,base64.binascii.Error):
+                    raise ValueError("restore archive is malformed") from None
+                if hashlib.sha256(decoded).hexdigest()!=digest:
+                    raise BrokerDenied("restore archive digest mismatch")
+                try:
+                    export_data=json.loads(decoded.decode("utf-8"))
+                except (UnicodeDecodeError,json.JSONDecodeError):
+                    raise ValueError("restore archive is not a provider export") from None
+                if not isinstance(export_data,dict):
+                    raise ValueError("restore archive must contain a provider export object")
+                request={"exportData":export_data,"strategy":"replace"}
+            raw_result=ipc.request(service_id=target.service_id,
+                service_generation=target.service_generation,provider=target.provider,
+                fixed_route=route,payload=canonical(request),timeout=timeout,cancelled=cancelled)
+            result=_result(raw_result)
+            if action=="search":
+                if target.provider=="openviking":
+                    hits=result.get("memories",[])
+                    rows=[{"id":item.get("uri"),"source":"openviking",
+                           "text":item.get("abstract") or item.get("overview")}
+                          for item in hits if isinstance(item,dict)]
+                elif target.provider=="claude-mem":
+                    hits=result.get("memories",result.get("observations",result.get("results",[])))
+                    rows=[{"id":item.get("id"),"source":"claude-mem",
+                           "text":item.get("content") or item.get("summary") or item.get("text")}
+                          for item in hits if isinstance(item,dict)]
+                else:
+                    hits=result.get("results",[])
+                    rows=[]
+                    for item in hits:
+                        if not isinstance(item,dict): continue
+                        observation=item.get("observation",item)
+                        if not isinstance(observation,dict): continue
+                        rows.append({"id":observation.get("id") or observation.get("memoryId"),
+                                     "source":"agentmemory",
+                                     "text":observation.get("narrative") or observation.get("content") or observation.get("title")})
+                records=[]
+                for item in rows[:limit]:
+                    if not isinstance(item.get("id"),str) or not isinstance(item.get("text"),str): continue
+                    records.append({"id":item["id"],"profile":context.profile_id,
+                                    "namespace":context.namespace_id,"source":item["source"],
+                                    "text":item["text"][:8192],"provenance":[context.lineage_hash]})
+                result={"records":records}
+            elif action=="doctor":
+                healthy=result.get("healthy") is True or result.get("ok") is True or result.get("status")=="ok"
+                result={"healthy":healthy,"revision":target.source_revision,
+                        "service_generation":target.service_generation}
+            elif action=="backup":
+                import base64
+                archive=canonical(result,MAX_RESPONSE)
+                result={"archive":base64.b64encode(archive).decode("ascii"),
+                        "sha256":hashlib.sha256(archive).hexdigest()}
             result["profile_id"]=context.profile_id
             result["namespace_id"]=context.namespace_id
             return _reply(result)
