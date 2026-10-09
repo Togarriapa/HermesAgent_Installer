@@ -94,3 +94,9 @@ prove source installation, voice/audio dependencies, Claude Code
 authentication, provider reachability, ARM64 support, or operation on a Pi.
 Those states remain pending under `B-ACCOUNTS` and `B-TARGET`; Jarvis remains
 disabled until they are verified.
+
+### Diagram Design SVG export (R0075)
+
+`components.diagram_design` binds the source to `cathrynlavery/diagram-design` at `f4547ee95f88e5b28a52517feff6b6c11cc657f9` and checks its Git tree, native skill, export helper, and transitive Markdown reference closure before profile staging. The generic profile binding retains the complete immutable source tree, including skill references, example/template assets, license, and `skills/diagram-design/scripts/export_svg.py`. The runtime adapter invokes that original standard-library helper through the managed component supervisor with private fixture/output paths, no credentials, network denied, and fixed time/memory limits. It verifies well-formed SVG XML, the viewBox, expected labels, bounded output, and each local asset reference. PNG rendering remains unavailable until a reviewed isolated browser/Playwright runtime is supplied; this adapter installs no dependencies.
+
+`tests/integrations/test_diagram_design.py` verifies the pinned helper bytes, source/reference closure, and an offline export fixture with an SVG icon beside the output. This proves the source helper's fixture behavior only. Native Hermes discovery, compatible runtime setup, and Raspberry Pi/ARM64 acceptance remain pending; B-TARGET stays open.
