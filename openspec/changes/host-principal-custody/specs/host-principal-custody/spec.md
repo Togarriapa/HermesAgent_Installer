@@ -122,3 +122,12 @@ Protected effect rules SHALL key exact capability, operation and enrolled target
 
 - **WHEN** same service target has open/read/write/close rules or caller changes operation under a prior target grant
 - **THEN** root evaluates only exact enrolled operation tuple and consumes bounded frame grant; wrong operation/replay denies and expiry cleanup still closes the stream
+
+### Requirement: Protected native enrollment proof (HI10/HI11 refinement)
+
+Desktop renderer and native bridge enrollment SHALL use actual protected installed artifact digests and unambiguous root-owned identity/policy mappings. Inspector attestation SHALL derive fresh role-specific process/sandbox/relaunch/window evidence; missing pins, caller booleans or main-process-only proof SHALL leave native exposure incomplete.
+
+#### Scenario: Missing renderer or bridge canonicalizer pin
+
+- **WHEN** protected enrollment lacks actual renderer/monitor/patch/canonicalizer digest or identity join is ambiguous
+- **THEN** root denies affected native exposure/dispatch with exact incomplete evidence and never substitutes caller-provided claims
