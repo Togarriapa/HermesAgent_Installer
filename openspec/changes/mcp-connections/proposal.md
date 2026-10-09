@@ -41,3 +41,5 @@ Native schema artifact joins v39: `plans/amendments/2026-10-09-native-schema-art
 Candidate toolset envelope v41: `plans/amendments/2026-10-09-native-candidate-toolset-envelope-v41.md`; exact source-backed owner/envelope metadata, tasks stay open.
 
 Native registration/source snapshot v44: `plans/amendments/2026-10-09-native-registration-source-snapshot-v44.md`; exact existing task join, target gates open.
+
+Actual EOF/schema derivation v54: `plans/amendments/2026-10-09-stdin-eof-schema-derivation-v54.md`; exact root receipt joins in planning contracts, existing task IDs remain unchecked.

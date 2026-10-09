@@ -352,6 +352,55 @@
         "baseline": "all paths under plans/2026-10-09-v1 roles exactly [baseline], actual frozen full tree",
         "amendment": "all selected reviewed files under plans/amendments roles exactly [amendment], actual receipt plan amendment manifest",
         "bootstrap-policy": "generated artifact installer-bootstrap-policy-v1 relative plans/bootstrap-policy-v1.json belongs immutable policy generation below; NOT required base deployment closure role before compiler and NOT a source module/plan role"
+      },
+      "release_build_input": {
+        "owner_module": "hermes_installer.authority.setup_policy_publication",
+        "build_class": "RootInstalledReleaseBuilder",
+        "build_call": "build_selected(verified_installer_distribution_receipt_handle,verified_installer_interpreter_receipt_handle)->opaque release_build_receipt_handle",
+        "input_trust": "Actual root operator-authorized installer distribution from fixed Togarriapa/HermesAgent_Installer and exact selected candidateGitSHA, complete source/tree/byte closure verified via TLS/source acquisition registry, frozen tag/tree checks, actual reviewed isolated installer interpreter artifact receipt. No active worker/policy session needed and no arbitrary caller path/manifest/dict. Root distribution verifier in authority.installer_release creates retained typed receipt from actual verified source CAS/current installed bootstrap actor; caller labels/UID0 alone insufficient. Root administrator can bypass controls; receipts do not claim to prevent that.",
+        "receipt_fields": [
+          "schema",
+          "receipt_handle",
+          "candidate_git_sha",
+          "distribution_receipt_handle",
+          "interpreter_receipt_handle",
+          "source_tree_sha256",
+          "baseline_tree_sha256",
+          "amendment_manifest_sha256",
+          "source_catalog_sha256",
+          "role_closure_manifest_sha256",
+          "root_setup_plan_sha256",
+          "build_output_store_id",
+          "build_output_receipt_handle",
+          "builder_artifact_id",
+          "builder_artifact_sha256",
+          "issued_monotonic",
+          "expires_monotonic"
+        ],
+        "producer": "Builder stages fixed v36 role layout from verified current candidate source and actual interpreter. Closed source/template/catalog rows only; builds exact role manifest and rendered plan below, rechecks actual held output bytes/modes/tree/knownloader/module names. Registry root-owned oneuse build receipt retains actual source/tool/build output closure. Never sourcearchiveSHA as installedexe or caller manifest authority.",
+        "publish_call": "RootInstalledStagePublisher.publish_installed_stage(release_build_receipt_handle)->VerifiedInstallerReleaseReceipt; verifies actual retained build receipt/outputstore/actor/target/currentcandidate then copies only verified fixedroleclosure to /usr/lib/hermes-installer/releases/<candidateSHA>, seals/fsyncs and publishes /var/lib/hermes-installer/deployments/current.json CAS. Existingowned/unownedconflict preserved; no arbitrary path or supplied file-role map.",
+        "plan_template": {
+          "artifact_id": "installer-root-setup-plan-template-v1",
+          "source_path": "plans/amendments/2026-10-09-release-plan-active-compiler-v53/root-setup-plan-template-v1.json",
+          "installed_relative_path": "templates/root-setup-plan-template-v1.json",
+          "sha256": "9f96befca8dba54a8251df80ccbed236809e9affbf1116efed42e06a7b92ac31",
+          "size_bytes": 767
+        },
+        "deployed_plan_fields": [
+          "schema",
+          "id",
+          "candidate_git_sha",
+          "baseline_tag",
+          "baseline_tag_object",
+          "baseline_commit",
+          "baseline_tree_sha256",
+          "amendment_manifest_sha256",
+          "allowed_artifact_ids",
+          "bootstrap_policy_artifact_id",
+          "template_artifact_ids",
+          "initial_acceptance_ids"
+        ],
+        "plan_generation": "RootInstalledReleaseBuilder generates plans/root-setup-plan-v1.json actualcanonicalbytes from exact verified template; id installer-root-setup-plan-v1, candidateGitactualverifieddistribution. amendment_manifest_sha256 = SHA256 canonical sortedcompact path->actualSHA map of selected source plans/amendments files (including template) BEFORE rendered output; no selfreference. allowed_artifact_ids sortedunique exact nonnullhash reviewed ArtifactCatalog record IDs in actualverifiedrelease catalog, not caller list. Generated nativeoutputroles are separately rootreceipt-bound dynamicoutputs, not unconstrained source allowlist. Reverify sourcecatalog/modulebuilderclosure and entire rendered plan before receipt. Actualdeployed planSHA comes buildreceipt, not fake fixedsourcehash. Fields strict, IDs/digests bounded existinggrammar, <=4096artifactIDs/<=128templates/18exactAC list."
       }
     }
   },
@@ -387,7 +436,32 @@
     ],
     "nullable": "provider_result_event_id nullable only when the reviewed fixture explicitly requires no provider. Required loader/request/tool/result/terminal fields never nullable for functional health success. status enum passed|failed|incomplete; failed/incomplete do not activate functional health.",
     "consume": "consume_selected_health_receipt(handle,committed_enrollment_receipt_id)->typed RootNativeHealthReceipt root registry lookup/current generation/event closure validation. Lifecycle may display typed presentation, but cannot construct/pass status as authority. Receipt is local functional health evidence, not all18AC or actual external account acceptance.",
-    "failure": "Changed profile/catalog/peer/mount/fixture, stale events, unrelated tool response, replay/cancel/expiry or semantic mismatch deny passed. Rollback preserves previous owned generation/data."
+    "failure": "Changed profile/catalog/peer/mount/fixture, stale events, unrelated tool response, replay/cancel/expiry or semantic mismatch deny passed. Rollback preserves previous owned generation/data.",
+    "live_control_binding": {
+      "owner_module": "hermes_installer.authority.managed_process_custodian",
+      "dto": "RootSelectedHealthControl",
+      "fields": {
+        "schema": "literal1",
+        "control_handle": "opaque str",
+        "managed_process_handle": "opaque str",
+        "process_id": "opaque str",
+        "operation_id": "literal hermes-agent-health-v1",
+        "enrollment_id": "opaque str",
+        "profile_id": "opaque str",
+        "process_generation": "opaque str",
+        "service_generation_digest": "lowercase SHA256",
+        "bootstrap_transaction_handle": "opaque str",
+        "committed_enrollment_receipt_id": "opaque str",
+        "health_fixture_artifact_id": "opaque selected ID",
+        "health_fixture_sha256": "lowercase SHA256",
+        "issued_monotonic": "finite float",
+        "expires_monotonic": "finite float"
+      },
+      "issuer": "Custody retains control only for actual started selected health operation after fresh process.start authorization, fixed enrolled recipe and live PIDFD/cgroup/starttime/executable checks. Profile/process selectors, physical paths and caller constructed DTOs are never authority. Prepared snapshot cannot health-start.",
+      "API": "ManagedProcessEffectHandler.resolve_selected_health_control(control_handle)->RootSelectedHealthControl; stable root registry lookup and current live peer resolution. RootSelectedHermesOperations attaches concrete RootNativeHealthObserver at construction; during run_selected_operation of hermes-agent-health-v1, custody invokes observer.begin_selected_health(control_handle) after retaining actual live managed process and before delivering fixture input. The root observer uses selected health execution registry and actual loader readiness/input issuer; it does not wait for terminal to reconstruct live identity.",
+      "completion": "Actual native request/provider/tool/result events accumulate while owned process is live. Custody then waits terminal, preserving immutable terminal receipt, and observer.finish_selected_health produces separate health receipt. SelectedHermesRun presentation may carry health_receipt_handle only from this exact actual root registry result. Terminal stdout/exit alone cannot fill health fields.",
+      "cancellation": "Lease bounded by original selected operation deadline; cancellation or generation/fixture/peer mismatch cancels only owned cgroup and invalidates pending health observation/input. Registry retains immutable failed/incomplete audit evidence, never promotes stale terminal."
+    }
   },
   "first_stage_policy_compiler": {
     "tasks": "BD-F01/BD-F03/LC-F03/HI-T01 original usable installer first setup, no new human approval gate.",
@@ -444,7 +518,37 @@
       ],
       "roles": "resources-source-bundle|native-compiled-closure|native-entrypoint-manifest|native-action-resolver|native-boundary-overlay; each exact fixed role admits one output per transaction, duplicate/crossrole conflict denied. source_receipt_handles includes distinct actual Hermes and Resources proofs as applicable. output_kind source-archive|compiled-closure|entrypoint-json|resolver-json|boundary-overlay, compatible exact role only.",
       "catalog": "Root registry resolve actual held immutable CAS object via current session verified artifact catalog/materialized-output catalog with actual compiled bytes/SHA/size/tree/owner/mode. Newly compiled artifact records published only by pinned reviewed root compiler and exact finite output manifest, no worker arbitrary artifact enrollment or sourceSHA as compiledSHA. Caller native receipt handle is lookup-only one-use session binding.",
-      "native_candidate_index_role": "Additive native-candidate-index exact separate compiled closure member/manifest pin per native-package-binding-contract protected_pre_discovery.index_delivery; no digest-domain conflation. Root materialization registry returns actual one-use CAS receipt same prepared transaction before activation."
+      "native_candidate_index_role": "Additive native-candidate-index exact separate compiled closure member/manifest pin per native-package-binding-contract protected_pre_discovery.index_delivery; no digest-domain conflation. Root materialization registry returns actual one-use CAS receipt same prepared transaction before activation.",
+      "output_cas_selection": {
+        "generated_artifact_id": "native-output:<artifact_role>:<package_id>:<generation>; role exact enum below, package/generation validated rootselection components<=64chars each; actual outputSHA separate. No role string alone/caller ID authority.",
+        "roles": [
+          "native-compiled-closure",
+          "native-entrypoint-manifest",
+          "native-action-resolver",
+          "native-boundary-overlay",
+          "native-candidate-index"
+        ],
+        "role_members": {
+          "native-compiled-closure": "exact compiler selected package closure tree + canonical member hash/size/mode manifest",
+          "native-entrypoint-manifest": "manifest.json exact entrypoint document",
+          "native-action-resolver": "resolver/resolver exact resolver document",
+          "native-boundary-overlay": "selected source-pinned Hermes overlay package/member manifest",
+          "native-candidate-index": "catalog/native-candidates.json exact pinned index"
+        },
+        "limits": "Complete compiled closure<=512MiB uncompressed<=50000 regular members; archive<=128MiB if used, no symlinks/special/hardlinks/outside selected source/action closure. Entry/resolver/index docs<=2MiB each, individual schema<=256KiB. Preserve actual requested full source/resources bytes and mode tree; bounds not excuses to omit. No modelweights/unselected binaries/lazy downloads. Output tree manifest exact sorted {relative_path,sha256,size_bytes,mode}, canonical UTF8 JSON, no extra synthetic accepted evidence.",
+        "compiler_identity": "compiler_artifact_id+SHA from actual selected installed root native materializer module/closure role artifact verified deployment receipt, no planning template/sourcearchivehash substituted. Actual root compiler observed generation manifest and source/overlay/resolver byte receipts verified before CAS writes; source and compiled digests distinct.",
+        "source_call": "RootMaterializationReceiptRegistry.mint_packaged_resources_source(prepared_setup_receipt_handle,verified_installer_release_receipt)->opaque source_receipt_handle",
+        "source": "Resolve exact selected Resources packaged archive artifact resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83 and295368byte/SHA b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1 through actual held installerrelease packagedartifact/catalog entry. Root CAS import validates entire739file/692declaration source pin/tree, no upstream network/sourcegovernance import. Return role resources-source-bundle RootRuntimeArtifactReceipt with fixed source ID, not generatednative-outputprefix.",
+        "handles": "Every source/materialization/output receipt handle scoped actual setupsession/transaction/plan/preparedgeneration/ownedroot/lease/issuerregistry; activation consumes each intended role handle exactlyonce. Same immutable verified CAS bytes may be audit-retained/referenced across explicitownedresume with fresh current transaction authorization, never re-mint caller bytes as proof. Actual compiler source receipt tuple includes Resources and pinnedHermes/overlaydependencies as needed; none conflated.",
+        "output_kind_by_role": {
+          "resources-source-bundle": "source-archive",
+          "native-compiled-closure": "compiled-closure",
+          "native-entrypoint-manifest": "entrypoint-json",
+          "native-action-resolver": "resolver-json",
+          "native-boundary-overlay": "boundary-overlay",
+          "native-candidate-index": "candidate-index-json"
+        }
+      }
     },
     "resources_source": {
       "artifact_id": "resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83",
@@ -618,8 +722,37 @@
           "resolve_call": "RootInitialCompilationRegistry.resolve_identity_policy_template(stage0_session_handle)->VerifiedIdentityPolicyTemplate",
           "verification": "Same verified installed deployment closure exact additional template-role artifact, stage0 selected plan/template closure/current actor/lease. Return immutable parsed exact template after held FD SHA/root ownership, no digest-only/session-label or environment constant substitute. Identity intake reads returned policy_revision; no arbitrary caller revision."
         },
-        "actor_verifier": "Existing InstalledRootSetupActorVerifier.verify_current(plan:VerifiedRootSetupPlan)->Mapping[str,Any] actual current executable/interpreter/imported module closure verifier. RootInitialCompilationRegistry constructs exact verified setup plan from installed deployment plan role + launcher/interpreter/module manifest rows before root-setup-selection/policy publication. No active policy prerequisite; no caller raw plan object. Same actual verifier later normal session checks. Stage0 stores verified plan privately and resolve_actor_plan(stage0_session_handle)->VerifiedRootSetupPlan returns current verified object to intake; no worker path."
+        "actor_verifier": "Existing InstalledRootSetupActorVerifier.verify_current(plan:VerifiedRootSetupPlan)->Mapping[str,Any] actual current executable/interpreter/imported module closure verifier. RootInitialCompilationRegistry constructs exact verified setup plan from installed deployment plan role + launcher/interpreter/module manifest rows before root-setup-selection/policy publication. No active policy prerequisite; no caller raw plan object. Same actual verifier later normal session checks. Stage0 stores verified plan privately and resolve_actor_plan(stage0_session_handle)->VerifiedRootSetupPlan returns current verified object to intake; no worker path.",
+        "selection_phases": "select_authentik_policy first mints immutable draft nonsecret selection with actor_credential_ref=null; draft permits only fixed masked credential intake. collect_authentik_actor_credential stores actual vault receipt and atomically creates bound revision in same root registry/handle with actual ref/new canonical selection_sha256; observer only resolves typed bound state/current digest. Draft cannot identity observe or publish principal. No credential prerequisite for creating draft, no credential-copy handoff. Root registry retains draft->bound transition/nonce/currentstage0; old draft digest not accepted as currentboundproof."
       }
+    },
+    "active_compilation": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "class": "RootActivePolicyCompilationRegistry",
+      "constructor": "from_root_setup(setup_session_store,verified_policy_template_resolver,runtime_receipt_registry,materialization_receipt_registry,root_journal)",
+      "call": "compile_active_policy(setup_session_handle,prepared_enrollment_receipt_handle,runtime_receipt_handles,materialization_receipt_handles)->opaque publication_handle",
+      "claim_fields": [
+        "schema",
+        "publication_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_sha256",
+        "prepared_generation_id",
+        "expected_selection_catalog_sha256",
+        "expected_service_generation_digest",
+        "policy_template_artifact_id",
+        "policy_template_sha256",
+        "principal_selection_receipt_handle",
+        "runtime_receipt_handles",
+        "materialization_receipt_handles",
+        "compiled_policy_sha256",
+        "compiled_artifact_catalog_sha256",
+        "compiled_selection_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "verify": "Root normal session actualcurrentactor/currentplan/ownedpreparedtransaction/heldroots/NSS plus exact runtime/compiledclosure/source receipts and fresh principal identity/policy. Render same strict closed templates from actualreceipt fields, no caller rows. Store immutable actualclaim/compiledbytes in rootpublicationregistry; activepublisher resolves explicittypedactiveclaim/currentpredecessor and validates whole loader schema. Initialstage0 cannot stand in activeclaim. Healthnotprerequisiteforrunnableprofile; laterfunctionalhealthseparateactualreceipt.",
+      "identity_adoption": "Verified stage0handoff preserves SAME rootvaultref/nonsecret origin/groups through retainedreceipt linkage, not secret copy/repeatedchoice. RootSetupSessionStore.resolve_adopted_identity_policy(normal_session)->fresh boundpolicyselection with newnormallease/currentactor, renews only exactauthorizedref metadata. Fixedidentityobserver re-observes actualsameAuthentiksubject/principal/currentpolicy/Systemgroups; expired30sstage0identitycannotauthorizeactivation. Changedsubject/revokedcredentialdenies/pending; no automaticprincipalchange."
     }
   },
   "official_pm_runtime": {

@@ -355,3 +355,17 @@ The implementation SHALL resolve the exact v49 immutable identity template throu
 #### Scenario: Only a session digest exists
 - **WHEN** identity policy revision is needed
 - **THEN** root resolves actual verified template bytes rather than inventing a module constant or trusting a caller revision
+
+### Requirement: Verified release plan and active compilation
+The implementation SHALL apply v53 exact source template/deployed plan and active receipt compilation joins.
+
+#### Scenario: Runtime outputs become available after preparation
+- **WHEN** publishing runnable active policy
+- **THEN** root active compiler verifies actual current runtime/materialization/identity receipts rather than using an initial-only claim or caller authority rows
+
+### Requirement: Live selected native health control
+The installer SHALL begin native health observation from a root-retained live selected process control before fixture input, retaining actual native events and a separate semantic health receipt.
+
+#### Scenario: Terminal-only health presentation
+- **WHEN** only stdout or exit status exists without the required live native event closure
+- **THEN** health remains incomplete and functional acceptance is not asserted
