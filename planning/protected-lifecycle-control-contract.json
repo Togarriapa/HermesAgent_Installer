@@ -401,7 +401,59 @@
           "initial_acceptance_ids"
         ],
         "plan_generation": "RootInstalledReleaseBuilder generates plans/root-setup-plan-v1.json actualcanonicalbytes from exact verified template; id installer-root-setup-plan-v1, candidateGitactualverifieddistribution. amendment_manifest_sha256 = SHA256 canonical sortedcompact path->actualSHA map of selected source plans/amendments files (including template) BEFORE rendered output; no selfreference. allowed_artifact_ids sortedunique exact nonnullhash reviewed ArtifactCatalog record IDs in actualverifiedrelease catalog, not caller list. Generated nativeoutputroles are separately rootreceipt-bound dynamicoutputs, not unconstrained source allowlist. Reverify sourcecatalog/modulebuilderclosure and entire rendered plan before receipt. Actualdeployed planSHA comes buildreceipt, not fake fixedsourcehash. Fields strict, IDs/digests bounded existinggrammar, <=4096artifactIDs/<=128templates/18exactAC list."
-      }
+      },
+      "fixed_manifest_path": "release-manifest.json at immutable release root; closure_manifest_relative_path must equal this literal. Builder writes canonical existing manifest schema and excludes manifest itself from file rows to avoid self-hash; descriptor/CAS independently pins its exact SHA. Build receipt gains closure_manifest_relative_path literal release-manifest.json. No caller-selected manifest path."
+    },
+    "first_source_bootstrap": {
+      "owner_module": "hermes_installer.authority.installer_release_build",
+      "CAS": "RootInstallerDistributionSourceCAS.acquire_selected(candidate_git_sha)->opaque distribution handle; fixed authorized repository HTTPS/Git origin only, exact selected commit/full tree/frozen tag/amendments verified, bounded root-owned staging. This read-only source acquisition and owned CAS staging precedes installed release/initial compilation; neither is required as input. No installer/service/account effects during unverified acquisition.",
+      "distribution": "RootInstallerDistributionRegistry.resolve(handle)->VerifiedInstallerDistributionReceipt binds actual retained root sourceCAS bytes/tree/catalog/baseline/candidate. Source handle alone cannot attest running actor or interpreter.",
+      "interpreter": "RootInstallerInterpreterRegistry.observe_current_bootstrap_interpreter(distribution_handle)->VerifiedInstallerInterpreterReceipt; resolve(handle,distribution_handle)->same actual retained proof. No caller executable path/hash/UID. Observe actual current root bootstrap process executable via /proc/self/exe and held FD; selected dedicated installer runtime prefix/rootownership/nofollow/module origins/import closure must match current source lock and verified runtime dependency artifacts. Python>=3.11 per actual installer pyproject; Hermes runtime remains separate exact official PM Python3.14. No global downgrade/system dependency mutation.",
+      "interpreter_fields": [
+        "schema",
+        "receipt_handle",
+        "distribution_receipt_handle",
+        "candidate_git_sha",
+        "runtime_artifact_receipt_handles",
+        "executable_sha256",
+        "executable_device",
+        "executable_inode",
+        "runtime_prefix_sha256",
+        "stdlib_closure_sha256",
+        "dependency_closure_sha256",
+        "python_version",
+        "implementation",
+        "cache_tag",
+        "soabi",
+        "machine",
+        "owner_uid",
+        "owner_gid",
+        "mode",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "actor": "RootSourceBootstrapActorVerifier.from_verified_source(distribution_registry,interpreter_registry).verify_current(distribution_handle,interpreter_handle)->VerifiedRootSourceBootstrapActor; actual kernel euid0/PIDFD/starttime/executable and loaded module byte origins must match held sourceCAS closure and interpreter receipt. Root selected entry module hermes_installer.authority.installer_release_build, callable bootstrap_selected_release, plus exact recursively imported installer modules under verified src/hermes_installer; no ambient PYTHONPATH/user site/cwd imports/unpinned third-party modules. Current raw install.sh ambient python/PYTHONPATH behavior cannot establish this proof; verified root bootstrap wrapper must launch isolated selected interpreter with explicit sealed source/module path map and recheck byte/inode closure. This actor verification is independent of deployments/current.json and any compiled policy.",
+      "actor_fields": [
+        "schema",
+        "receipt_handle",
+        "distribution_receipt_handle",
+        "interpreter_receipt_handle",
+        "candidate_git_sha",
+        "entry_module",
+        "entry_symbol",
+        "module_closure_sha256",
+        "executable_sha256",
+        "pid",
+        "pid_start_ticks",
+        "pidfd_identity",
+        "uid",
+        "gid",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "call": "bootstrap_selected_release(candidate_git_sha)->VerifiedInstallerReleaseReceipt is the finite root-local first-entry action: acquire selected source -> observe/verify actual isolated bootstrap interpreter and source actor -> RootInstalledReleaseBuilder.build_selected(distribution_handle,interpreter_handle) with retained actor proof -> publish_installed_stage. Builder resolves actual actor proof from same root registry, never caller fabricated assertion. All metadata IDs/hashes derive actual observed bytes/receipts, no invented source pin used as executable hash. After deployment, normal RootInitialCompilationRegistry uses installed release actor proof; no circular preinstalled release requirement.",
+      "CLI": "User-mode install/resume cannot invoke root-only factory/worker RPC. It gives exact selected root-local bootstrap/installed setup launcher command for authorized operator invocation and retains only nonsecret choice/journal presentation. Root-mode verified launcher collects actual choices/credentials securely and calls finite root APIs. No generic sudo shell/argv/root RPC; original routine setup authorization remains unchanged.",
+      "recovery": "Root journal retains source/interpreter/actor/build/deployment handles and actual stage states. Lost actor/PIDFD or changed source/runtime closure invalidates current operational lease and requires re-observation; CAS immutable source evidence retained. No absent pointer synthesized as active setup session."
     }
   },
   "native_health_receipt": {
@@ -560,7 +612,9 @@
           "selection": "Compiler emits immutable RootNativeOutputSelection {schema:1,artifact_role,output_kind,artifact_id,package_id,generation,payload_sha256,size_bytes,member_tree_sha256,compiler_artifact_id,compiler_sha256,source_receipt_handles}; stored registry binding verifies actual prepared transaction/source receipts and exact role/kind/member mapping before writer publishes. Caller-provided selection document alone cannot authorize.",
           "member_modes": "JSON mode integers exactly420 or493 (octal0644/0755), not strings; tar permission bits correspond. Entry point closure_files schema exactly {relative_path:str,sha256:str,size_bytes:int,mode:int}; normalized path relative to closure/, sorted unique complete tree. No mode coercion.",
           "overlay_member_path": "overlay/manifest.json is the sole member row for boundary-overlay JSON role. Exact JSON fields schema=1,source_commit,compiler_artifact_id,compiler_sha256,members; no unknown fields. members use NativeOutputMember path/sha256/size_bytes/mode rows referencing actual closure/... members. Boundary overlay document itself may be included at fixed archive overlay/manifest.json; it is outside compiled closure tree."
-        }
+        },
+        "candidate_index_identity": "Exception preserving existing native index_delivery: native-candidate-index role artifact_id is exactly native-candidate-index:<package_id>:<generation>, same string in output receipt, ArtifactCatalog and entrypoint candidate_index.artifact_id. Other roles use native-output:<artifact_role>:<package_id>:<generation>. No separate presentation alias/different manifest identity. Components bounded as existing selection, exact receipt bytes/hash required.",
+        "resources_source_producer": "resources-source-bundle output is not compiled. Its exact artifact identity remains existing resources_source archive pin. Source receipt records producer_artifact_id and producer_sha256 from verified installed RootMaterializationReceiptRegistry source-mint module closure, compiler_artifact_id/compiler_sha256 null for this source-only role. Native generated roles require actual compiler artifact identity/hash and producer fields may equal compiler. RootRuntimeArtifactReceipt parser discriminates source-only vs generated role; never pretend source archive SHA is executable/compiler identity."
       }
     },
     "resources_source": {
@@ -766,6 +820,42 @@
       ],
       "verify": "Root normal session actualcurrentactor/currentplan/ownedpreparedtransaction/heldroots/NSS plus exact runtime/compiledclosure/source receipts and fresh principal identity/policy. Render same strict closed templates from actualreceipt fields, no caller rows. Store immutable actualclaim/compiledbytes in rootpublicationregistry; activepublisher resolves explicittypedactiveclaim/currentpredecessor and validates whole loader schema. Initialstage0 cannot stand in activeclaim. Healthnotprerequisiteforrunnableprofile; laterfunctionalhealthseparateactualreceipt.",
       "identity_adoption": "Verified stage0handoff preserves SAME rootvaultref/nonsecret origin/groups through retainedreceipt linkage, not secret copy/repeatedchoice. RootSetupSessionStore.resolve_adopted_identity_policy(normal_session)->fresh boundpolicyselection with newnormallease/currentactor, renews only exactauthorizedref metadata. Fixedidentityobserver re-observes actualsameAuthentiksubject/principal/currentpolicy/Systemgroups; expired30sstage0identitycannotauthorizeactivation. Changedsubject/revokedcredentialdenies/pending; no automaticprincipalchange."
+    },
+    "service_root_layout": "service_container_root is fixed /var/lib/hermes-installer/services. service_parent_root is selected profile-specific child /var/lib/hermes-installer/services/hermes-agent-native-v1 from closed template, never the container itself. Service home/work/data are direct children of that profile root. Strict loader validates containment and exact template selection, not equality to container; factory appends home/work/data exactly once. HERMES_HOME/HOME equal profile-root/home. Root held nofollow/inode/owner/generation checks and prepared/active semantics unchanged.",
+    "root_key_selection": {
+      "owner_module": "hermes_installer.authority.enrollment",
+      "registry": "RootAuthorityKeySelectionRegistry",
+      "constructor": "from_installed_release(verified_release,installed_actor_verifier,root_journal)",
+      "API": "ensure_selected_key(initial_compilation_session_handle)->RootAuthorityKeyReceipt; resolve_selected_key(receipt_handle,initial_compilation_session_handle)->same retained receipt",
+      "key_path": "/etc/hermes-installer/authority.key existing exact HMAC key path",
+      "selection_path": "/etc/hermes-installer/authority-key-selection.json",
+      "fields": {
+        "schema": "literal1",
+        "receipt_handle": "opaque str",
+        "key_id": "authority-key- plus fresh root random32hex ID",
+        "algorithm": "literal HMAC-SHA256",
+        "key_device": "int",
+        "key_inode": "int",
+        "key_uid": "literal0",
+        "key_mode": "literal384 (0600)",
+        "release_receipt_handle": "opaque actual release receipt",
+        "initial_compilation_session_handle": "opaque actual stage0 session",
+        "issued_monotonic": "finite float",
+        "expires_monotonic": "finite float"
+      },
+      "custody": "Actual current verified root installed actor/session required before issuance. Root creates fresh32byte key once using existing create_authority_signing_key when absent, persists separate random nonsecret key_id selection and private retained receipt binding actual inode/key bytes. Existing key never rotated/overwritten; adoption only actual secure root nofollow file + verified existing active key_id, or explicitly journaled first-install key creation with no active policy. Ambiguous key/selection mismatch denies/resumes. Key hash/bytes never exposed in source/evidence/argv/compiler policy. Held FD actualowner/mode/inode and private key continuity rechecked before issuance/publication. Atomic journal/fsync recovery preserves key on failure.",
+      "compiler": "authority_base.key_id comes only this actual root receipt; the closed template contains a root binding to this source, not a literal guessed ID or credential. Every published authority snapshot and signer resolves same selected key_id; first publication needs no active worker.",
+      "descriptor": "Persist selection file exact {schema:1,key_id,algorithm:HMAC-SHA256,key_device,key_inode,key_uid:0,key_mode:384,key_binding_hmac}; key_binding_hmac is root-private HMAC of canonical descriptor excluding itself under actual held key, domain installer-authority-key-selection-v1. Operational RootAuthorityKeyReceipt separately binds actual current actor/session/release and lease; new session re-observes descriptor/key and mints fresh receipt preserving key_id. Descriptor contains no expired session as permanent selection and cannot by itself authorize effects. Never export key/tag in public evidence."
+    },
+    "prepared_authority_base_template": {
+      "artifact_id": "installer-prepared-authority-base-template-v1",
+      "source": {
+        "path": "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/prepared-authority-base-template-v1.json",
+        "sha256": "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953",
+        "size_bytes": 369
+      },
+      "installed_relative_path": "templates/prepared-authority-base-template-v1.json",
+      "render": "Render only actual RootAuthorityKeyReceipt.key_id and existing exact empty prepared service_generations snapshot. All authority capability/principal/profile/rule/provider/MCP/memory/bridge/delegation maps remain empty, including authentik. This prepared snapshot is dormant, no worker authorization and no process executable. Active compiler populates actual authenticated principal/policy/vault/service/runtime selections using closed template receipts before active loader; never pretend empty Authentik is operational. Prepared parser allows exact dormant empty maps only; active parser retains full required policy checks."
     }
   },
   "official_pm_runtime": {
