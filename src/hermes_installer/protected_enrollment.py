@@ -161,11 +161,41 @@ class HostServiceProfile:
 class ProtectedEnrollmentCatalog:
     """Immutable root-owned mapping from caller opaque IDs to service policy."""
 
-    def __init__(self, records: Mapping[tuple[str, str], HostServiceProfile], *, digest: str):
+    def __init__(self, records: Mapping[tuple[str, str], HostServiceProfile], *, digest: str,
+                 native_packages: list[Mapping[str, Any]] | None = None):
         if not records:
             raise EnrollmentDenied("protected service enrollment is empty")
         self._records = MappingProxyType(dict(records))
         self.digest = digest
+        parsed_native = {}
+        for raw in native_packages or []:
+            package = NativePackageBinding.from_protected_record(raw)
+            key = (package.package_id, package.generation)
+            if key in parsed_native:
+                raise EnrollmentDenied("native package generation is duplicated")
+            parsed_native[key] = package
+        self._native_packages = MappingProxyType(parsed_native)
+
+    def resolve_native_package(self, package_id: str, generation: str) -> "NativePackageBinding":
+        """Resolve a selected package row joined to this exact service generation.
+
+        Package rows remain metadata-only here. Materialization is available
+        only after custody resolves the opaque mount IDs and verifies the actual
+        read-only closure; this method never interprets them as filesystem paths.
+        """
+        selected_id = _id(package_id, "native package ID")
+        selected_generation = _id(generation, "native package generation")
+        row = self._native_packages.get((selected_id, selected_generation))
+        if row is None:
+            raise EnrollmentDenied("native package or generation is not enrolled")
+        candidates = [profile for (enrollment_id, current_generation), profile in self._records.items()
+                     if profile.profile_id == row.profile_id and current_generation == row.generation]
+        if len(candidates) != 1:
+            raise EnrollmentDenied("native package service profile generation is not uniquely enrolled")
+        service = self.resolve(candidates[0].enrollment_id, row.generation)
+        if service.generation != row.generation:
+            raise EnrollmentDenied("native package belongs to a stale service generation")
+        return row
 
     @classmethod
     def from_file(cls, path: Path, *, signature_verifier: Callable[[bytes, str], bool],
@@ -192,7 +222,8 @@ class ProtectedEnrollmentCatalog:
 
     @classmethod
     def from_verified_records(cls, raw_records: list[Mapping[str, Any]], *,
-                              protected_digest: str, expected_uid: int = 0) -> "ProtectedEnrollmentCatalog":
+                              protected_digest: str, expected_uid: int = 0,
+                              native_packages: list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
         """Build from records already authenticated by the root enrollment loader."""
         if (not isinstance(protected_digest, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", protected_digest)
@@ -206,7 +237,7 @@ class ProtectedEnrollmentCatalog:
                 raise EnrollmentDenied("protected enrollment ID and generation are duplicated")
             profile.roots.validate(root_uid=expected_uid)
             records[key] = profile
-        return cls(records, digest=protected_digest)
+        return cls(records, digest=protected_digest, native_packages=native_packages)
 
     def resolve(self, enrollment_id: str, generation: str) -> HostServiceProfile:
         key = (_id(enrollment_id, "enrollment ID"), _id(generation, "generation"))
@@ -364,6 +395,102 @@ class OperationBinding:
     service_gid: int
     authority_endpoint_id: str
     namespace_identity: str
+
+
+@dataclass(frozen=True, slots=True)
+class NativeAdapterBinding:
+    adapter_id: str
+    manifest_sha256: str
+    adapter_artifact_id: str
+    adapter_sha256: str
+    action_id: str
+    argument_schema_id: str
+    result_schema_id: str
+    effect_enrollment_id: str
+    operation: str
+    capability: str
+    target_id: str
+    recipient: str
+    generation: str
+
+
+@dataclass(frozen=True, slots=True)
+class NativePackageBinding:
+    """Typed native closure metadata joined to a protected service generation.
+
+    Mount IDs are intentionally opaque. The root custody layer must resolve
+    and verify them before returning any loader-visible mount handle.
+    """
+    package_id: str
+    profile_id: str
+    generation: str
+    source_revision: str
+    source_tree_sha256: str
+    compiled_closure_artifact_id: str
+    compiled_closure_sha256: str
+    entrypoint_artifact_id: str
+    entrypoint_sha256: str
+    resolver_artifact_id: str
+    resolver_sha256: str
+    service_package_root_id: str
+    service_mount_id: str
+    adapter_records: Mapping[str, NativeAdapterBinding]
+
+    @classmethod
+    def from_protected_record(cls, item: Mapping[str, Any]) -> "NativePackageBinding":
+        expected = {"package_id", "profile_id", "generation", "source_revision",
+                    "source_tree_sha256", "compiled_closure_artifact_id",
+                    "compiled_closure_sha256", "entrypoint_artifact_id", "entrypoint_sha256",
+                    "resolver_artifact_id", "resolver_sha256", "service_package_root_id",
+                    "service_mount_id", "adapter_records"}
+        if not isinstance(item, Mapping) or set(item) != expected:
+            raise EnrollmentDenied("protected native package record fields are invalid")
+        digests = ("source_tree_sha256", "compiled_closure_sha256", "entrypoint_sha256", "resolver_sha256")
+        if any(not isinstance(item[name], str) or not re.fullmatch(r"[0-9a-f]{64}", item[name])
+               for name in digests):
+            raise EnrollmentDenied("protected native package digest is invalid")
+        revision = item["source_revision"]
+        if not isinstance(revision, str) or not 1 <= len(revision) <= 256 or any(c in revision for c in "\x00\r\n"):
+            raise EnrollmentDenied("protected native package source revision is invalid")
+        raw_adapters = item["adapter_records"]
+        if not isinstance(raw_adapters, list) or not raw_adapters:
+            raise EnrollmentDenied("protected native package adapter closure is empty")
+        adapters: dict[str, NativeAdapterBinding] = {}
+        fields = {"adapter_id", "manifest_sha256", "adapter_artifact_id", "adapter_sha256",
+                  "action_id", "argument_schema_id", "result_schema_id", "effect_enrollment_id",
+                  "operation", "capability", "target_id", "recipient", "generation"}
+        for raw in raw_adapters:
+            if not isinstance(raw, Mapping) or set(raw) != fields:
+                raise EnrollmentDenied("protected native adapter fields are invalid")
+            for name in ("manifest_sha256", "adapter_sha256"):
+                if not isinstance(raw[name], str) or not re.fullmatch(r"[0-9a-f]{64}", raw[name]):
+                    raise EnrollmentDenied("protected native adapter digest is invalid")
+            adapter_id = _id(raw["adapter_id"], "native adapter ID")
+            if adapter_id in adapters:
+                raise EnrollmentDenied("protected native adapter ID is duplicated")
+            operation = _id(raw["operation"], "native adapter operation")
+            if not operation.startswith("plugin."):
+                raise EnrollmentDenied("native adapter operation is outside fixed plugin verbs")
+            if _id(raw["generation"], "native adapter generation") != _id(item["generation"], "generation"):
+                raise EnrollmentDenied("native adapter generation differs from its package")
+            adapters[adapter_id] = NativeAdapterBinding(
+                adapter_id, raw["manifest_sha256"], _id(raw["adapter_artifact_id"], "adapter artifact ID"),
+                raw["adapter_sha256"], _id(raw["action_id"], "native action ID"),
+                _id(raw["argument_schema_id"], "argument schema ID"),
+                _id(raw["result_schema_id"], "result schema ID"),
+                _id(raw["effect_enrollment_id"], "effect enrollment ID"), operation,
+                _id(raw["capability"], "native capability"), _id(raw["target_id"], "native target ID"),
+                _id(raw["recipient"], "native recipient"), raw["generation"],
+            )
+        return cls(
+            _id(item["package_id"], "native package ID"), _id(item["profile_id"], "profile ID"),
+            _id(item["generation"], "generation"), revision, item["source_tree_sha256"],
+            _id(item["compiled_closure_artifact_id"], "compiled closure artifact ID"),
+            item["compiled_closure_sha256"], _id(item["entrypoint_artifact_id"], "entrypoint artifact ID"),
+            item["entrypoint_sha256"], _id(item["resolver_artifact_id"], "resolver artifact ID"),
+            item["resolver_sha256"], _id(item["service_package_root_id"], "service package root ID"),
+            _id(item["service_mount_id"], "service mount ID"), MappingProxyType(adapters),
+        )
 
 
 def _parse_profile(item: Any) -> HostServiceProfile:

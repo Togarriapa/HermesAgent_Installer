@@ -147,6 +147,50 @@ def test_profile_rejects_caller_selected_roots_and_malformed_recipe(monkeypatch)
         _parse_profile({**item, "roots": {**item["roots"], "data": "/tmp/caller-root"}, "argv": ["bad"]})
 
 
+def test_native_package_record_is_typed_and_resolved_only_for_current_service_generation(monkeypatch):
+    item = {
+        "enrollment_id": "install-1", "generation": "gen-1", "profile_id": "hermes-main",
+        "principal_id": "owner", "service_uid": 1001, "service_gid": 1001, "service_user": "hermes-owner",
+        "executable": "/opt/hermes/bin/hermes", "executable_sha256": "a" * 64,
+        "runtime_artifact_ids": ["hermes-runtime-v1"], "package_runtime_records": {},
+        "roots": {"home_id": "home", "work_id": "work", "data_id": "data",
+                  "home": "/var/lib/hermes/home", "work": "/var/lib/hermes/work", "data": "/var/lib/hermes/data"},
+        "authority_endpoint_id": "owner-socket", "namespace_identity": "hermes-ns", "target_route_ids": ["http-api"],
+        "socket_policy_id": "hermes-sockets", "operation_targets": {"process.start": "start-target"},
+        "argv_recipe": ["/opt/hermes/bin/hermes", "serve"], "environment": {"HOME": "/var/lib/hermes/home"},
+        "max_lifetime_seconds": 600, "memory_max_bytes": 1000000,
+        "cpu_quota_percent": 100, "io_weight": 100,
+    }
+    profile = _parse_profile(item)
+    record = {
+        "package_id": "desktop-native", "profile_id": profile.profile_id,
+        "generation": profile.generation, "source_revision": "rev-1",
+        "source_tree_sha256": "b" * 64,
+        "compiled_closure_artifact_id": "compiled-closure", "compiled_closure_sha256": "c" * 64,
+        "entrypoint_artifact_id": "plugin-entrypoint", "entrypoint_sha256": "d" * 64,
+        "resolver_artifact_id": "plugin-resolver", "resolver_sha256": "e" * 64,
+        "service_package_root_id": "desktop-package-root", "service_mount_id": "desktop-package-mount",
+        "adapter_records": [{
+            "adapter_id": "adapter-one", "manifest_sha256": "f" * 64,
+            "adapter_artifact_id": "adapter-one-artifact", "adapter_sha256": "0" * 64,
+            "action_id": "read", "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
+            "effect_enrollment_id": "effect-enrollment", "operation": "plugin.example.read",
+            "capability": "example-read", "target_id": "example-target", "recipient": "example-recipient",
+            "generation": profile.generation,
+        }],
+    }
+    catalog = ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
+                                         native_packages=[record])
+    monkeypatch.setattr(catalog, "resolve", lambda enrollment_id, generation: profile
+                        if (enrollment_id, generation) == ("install-1", "gen-1")
+                        else (_ for _ in ()).throw(EnrollmentDenied("stale")))
+    resolved = catalog.resolve_native_package("desktop-native", profile.generation)
+    assert resolved.service_mount_id == "desktop-package-mount"
+    assert resolved.adapter_records["adapter-one"].operation == "plugin.example.read"
+    with pytest.raises(EnrollmentDenied):
+        catalog.resolve_native_package("desktop-native", "stale-generation")
+
+
 def test_signed_manifest_hash_canonicalization_is_stable():
     unsigned = {"schema": 1, "records": []}
     reversed_order = {"records": [], "schema": 1}
