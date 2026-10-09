@@ -75,6 +75,8 @@ class EnrollmentPolicy:
     source_issuers: tuple[Mapping[str, Any], ...] = ()
     resource_jobs: tuple[Mapping[str, Any], ...] = ()
     remote_session_enrollments: tuple[Mapping[str, Any], ...] = ()
+    resource_backend_enrollments: tuple[Mapping[str, Any], ...] = ()
+    resource_body_recipes: tuple[Mapping[str, Any], ...] = ()
     authority_base: Mapping[str, Any] | None = None
     home_root: Path = Path("/var/lib/hermes-installer/services/default/home")
     work_root: Path = Path("/var/lib/hermes-installer/services/default/work")
@@ -95,6 +97,115 @@ class EnrollmentReceipt:
     expires_monotonic: float
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedRootSetupAuthorization:
+    """Root-local proof returned only by the installed setup-session verifier."""
+    target_id: str
+    setup_session_id: str
+    plan_digest: str
+    operator_uid: int
+    transaction_handle: str
+
+
+class RootSetupAuthorizer(Protocol):
+    def authorize(self, *, peer_uid: int, peer_gid: int,
+                  request: BootstrapEnrollmentRequest) -> VerifiedRootSetupAuthorization: ...
+
+
+class RootBootstrapProvisionOperation:
+    """Fixed first-snapshot root-local entrypoint, separate from worker RPC.
+
+    The socket acceptor must pass kernel SO_PEERCRED values. ``authorizer`` is
+    assembled by the reviewed setup service and verifies a live local setup
+    session plus target/plan admission; it must never be built from RPC fields.
+    """
+    operation = "enrollment.provision"
+    capability = "installer-bootstrap-enrollment"
+    target = "service-generation:bootstrap:install"
+
+    def __init__(self, transaction: RootBootstrapEnrollment,
+                 authorizer: RootSetupAuthorizer):
+        self.transaction = transaction
+        self.authorizer = authorizer
+
+    def handle(self, payload: Mapping[str, Any], *, peer_uid: int, peer_gid: int) -> dict[str, Any]:
+        if type(peer_uid) is not int or peer_uid != 0 or type(peer_gid) is not int:
+            raise BootstrapEnrollmentError("initial enrollment requires the root-local setup endpoint")
+        if (not isinstance(payload, Mapping)
+                or set(payload) != {"schema", "artifact_receipt_handles", "operation_intent"}
+                or type(payload.get("schema")) is not int or payload["schema"] != 1
+                or not isinstance(payload.get("artifact_receipt_handles"), list)):
+            raise BootstrapEnrollmentError("bootstrap provision payload is malformed")
+        request = BootstrapEnrollmentRequest(tuple(payload["artifact_receipt_handles"]),
+                                             payload.get("operation_intent"))
+        _validate_request(request)
+        proof = self.authorizer.authorize(peer_uid=peer_uid, peer_gid=peer_gid, request=request)
+        if (not isinstance(proof, VerifiedRootSetupAuthorization)
+                or proof.target_id != self.target
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", proof.setup_session_id)
+                or not re.fullmatch(r"[0-9a-f]{64}", proof.plan_digest)
+                or type(proof.operator_uid) is not int or proof.operator_uid <= 0
+                or proof.transaction_handle != request.operation_intent):
+            raise BootstrapEnrollmentError("root-local setup admission is absent or invalid")
+        receipt = self.transaction.enroll(request, setup_authorization=proof)
+        return _receipt_wire(receipt)
+
+
+class BootstrapEnrollmentClient:
+    """Typed client for the dedicated authenticated root setup transport."""
+    def __init__(self, rpc: Callable[[str, Mapping[str, Any]], Mapping[str, Any]]):
+        if not callable(rpc):
+            raise ValueError("authenticated root setup RPC callable is required")
+        self._rpc = rpc
+
+    def provision(self, artifact_receipt_handles: tuple[str, ...],
+                  operation_intent: str) -> EnrollmentReceipt:
+        request = BootstrapEnrollmentRequest(artifact_receipt_handles, operation_intent)
+        _validate_request(request)
+        response = self._rpc("enrollment.provision", {
+            "schema": 1,
+            "artifact_receipt_handles": list(artifact_receipt_handles),
+            "operation_intent": operation_intent,
+        })
+        return _receipt_from_wire(response)
+
+
+def _receipt_wire(receipt: EnrollmentReceipt) -> dict[str, Any]:
+    return {"schema": receipt.schema, "transaction_handle": receipt.transaction_handle,
+            "provision_receipt_handle": receipt.provision_receipt_handle,
+            "generation_id": receipt.generation_id, "generation_digest": receipt.generation_digest,
+            "previous_generation_digest": receipt.previous_generation_digest,
+            "state": receipt.state, "enrollment_ids": list(receipt.enrollment_ids),
+            "issued_monotonic": receipt.issued_monotonic,
+            "expires_monotonic": receipt.expires_monotonic}
+
+
+def _receipt_from_wire(value: Mapping[str, Any]) -> EnrollmentReceipt:
+    required = {"schema", "transaction_handle", "provision_receipt_handle", "generation_id",
+                "generation_digest", "previous_generation_digest", "state", "enrollment_ids",
+                "issued_monotonic", "expires_monotonic"}
+    if not isinstance(value, Mapping) or set(value) != required:
+        raise BootstrapEnrollmentError("root setup authority returned a malformed provision receipt")
+    if (type(value["schema"]) is not int or value["schema"] != 1
+            or not all(isinstance(value[name], str) and value[name] for name in
+                       ("transaction_handle", "provision_receipt_handle", "generation_id"))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(value["generation_digest"]))
+            or value["previous_generation_digest"] is not None
+                and not re.fullmatch(r"[0-9a-f]{64}", str(value["previous_generation_digest"]))
+            or value["state"] not in {"prepared", "committed", "incomplete", "rolled-back", "rolled_back"}
+            or not isinstance(value["enrollment_ids"], list)
+            or any(not isinstance(item, str) or not item for item in value["enrollment_ids"])
+            or any(isinstance(value[key], bool) or not isinstance(value[key], (int, float))
+                   for key in ("issued_monotonic", "expires_monotonic"))
+            or value["expires_monotonic"] <= value["issued_monotonic"]):
+        raise BootstrapEnrollmentError("root setup authority returned an invalid provision receipt")
+    return EnrollmentReceipt(1, value["transaction_handle"], value["provision_receipt_handle"],
+                             value["generation_id"], value["generation_digest"],
+                             value["previous_generation_digest"], value["state"],
+                             tuple(value["enrollment_ids"]), float(value["issued_monotonic"]),
+                             float(value["expires_monotonic"]))
+
+
 class IdentityAdapter(Protocol):
     def ensure(self) -> ServiceIdentity: ...
     def remove_if_created(self, identity: ServiceIdentity) -> None: ...
@@ -102,6 +213,37 @@ class IdentityAdapter(Protocol):
 
 class ReceiptResolver(Protocol):
     def resolve(self, handle: str) -> VerifiedArtifactReceipt: ...
+
+
+class ArtifactStoreReceiptResolver:
+    """Resolve setup-issued opaque handles through the protected artifact CAS.
+
+    ``lookup`` is a root-owned receipt-registry lookup. It returns a CAS store
+    ID only after checking the current setup transaction/target; no RPC caller
+    may provide the store ID, digest, or path as artifact proof.
+    """
+    def __init__(self, *, catalog: Any, artifact_root: Path,
+                 lookup: Callable[[str], tuple[str, str]]):
+        if not artifact_root.is_absolute() or not callable(lookup):
+            raise ValueError("root artifact store and opaque receipt lookup are required")
+        self.catalog = catalog
+        self.artifact_root = artifact_root
+        self.lookup = lookup
+
+    def resolve(self, handle: str) -> VerifiedArtifactReceipt:
+        if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+            raise BootstrapEnrollmentError("artifact receipt handle is malformed")
+        try:
+            artifact_id, digest = self.lookup(handle)
+            resolved = self.catalog.resolve(artifact_id, digest, self.artifact_root, expected_uid=0)
+            spec = self.catalog._artifact(artifact_id, digest)
+        except Exception:
+            raise BootstrapEnrollmentPending("artifact receipt is absent from the root receipt registry or CAS") from None
+        if (resolved.path.is_symlink() or resolved.path.stat().st_uid != 0
+                or resolved.sha256 != digest or resolved.artifact_id != artifact_id
+                or not 1 <= spec.max_bytes <= 8 * 1024**3):
+            raise BootstrapEnrollmentError("root artifact receipt no longer matches protected catalog custody")
+        return VerifiedArtifactReceipt(handle, artifact_id, digest, resolved.path, spec.max_bytes)
 
 
 class SystemIdentityAdapter:
@@ -175,7 +317,7 @@ class SystemIdentityAdapter:
 
 class RootBootstrapEnrollment:
     """Prepare service-owned roots and atomically publish a digest-bound snapshot."""
-    def __init__(self, *, policy_resolver: Callable[[BootstrapEnrollmentRequest], EnrollmentPolicy],
+    def __init__(self, *, policy_resolver: Callable[[BootstrapEnrollmentRequest, VerifiedRootSetupAuthorization], EnrollmentPolicy],
                  receipt_resolver: ReceiptResolver, identity: IdentityAdapter,
                  record_builder: Callable[[EnrollmentPolicy, ServiceIdentity], tuple[Mapping[str, Any], ...]] | None = None,
                  authority_builder: Callable[[Mapping[str, Any] | None, EnrollmentPolicy, ServiceIdentity], Mapping[str, Any]] | None = None,
@@ -195,19 +337,25 @@ class RootBootstrapEnrollment:
         self.authority_loader = authority_loader or _load_authority
         self.authority_writer = authority_writer or _atomic_root_file
 
-    def enroll(self, request: BootstrapEnrollmentRequest) -> EnrollmentReceipt:
+    def enroll(self, request: BootstrapEnrollmentRequest, *,
+               setup_authorization: VerifiedRootSetupAuthorization | None = None) -> EnrollmentReceipt:
         _validate_request(request)
         if os.geteuid() != 0:
             raise BootstrapEnrollmentPending("service-generation enrollment requires the root authority process")
+        if (not isinstance(setup_authorization, VerifiedRootSetupAuthorization)
+                or setup_authorization.target_id != RootBootstrapProvisionOperation.target
+                or setup_authorization.transaction_handle != request.operation_intent):
+            raise BootstrapEnrollmentPending("root-local setup admission is required for first-snapshot enrollment")
         _ensure_root_directory(self.transaction_root)
         with _transaction_lock(self.transaction_root / "enrollment.lock"):
-            return self._enroll_locked(request)
+            return self._enroll_locked(request, setup_authorization)
 
-    def _enroll_locked(self, request: BootstrapEnrollmentRequest) -> EnrollmentReceipt:
+    def _enroll_locked(self, request: BootstrapEnrollmentRequest,
+                       setup_authorization: VerifiedRootSetupAuthorization) -> EnrollmentReceipt:
         _validate_request(request)
         if os.geteuid() != 0:
             raise BootstrapEnrollmentPending("service-generation enrollment requires the root authority process")
-        policy = self.policy_resolver(request)
+        policy = self.policy_resolver(request, setup_authorization)
         _validate_policy(policy, records_required=self.record_builder is None)
         receipts = tuple(self.receipt_resolver.resolve(handle) for handle in request.artifact_receipt_handles)
         _validate_receipts(receipts)
@@ -258,14 +406,16 @@ class RootBootstrapEnrollment:
                        roots=candidate_roots,
                        backup=backup if previous is not None else None, identity=identity,
                        provision_receipt_handle=provision_receipt_handle,
-                       request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
+                       request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests,
+                       setup_authorization=setup_authorization)
         try:
             identity = self.identity.ensure()
             _write_journal(journal, transaction_id, "preparing", created_roots, staged_artifacts,
                            roots=candidate_roots,
                            backup=backup if previous is not None else None, identity=identity,
                            provision_receipt_handle=provision_receipt_handle,
-                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
+                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests,
+                           setup_authorization=setup_authorization)
             for root in (policy.home_root, policy.work_root, policy.data_root):
                 if root in created_roots or not root.is_absolute():
                     raise BootstrapEnrollmentError("service roots are invalid or duplicated")
@@ -276,7 +426,8 @@ class RootBootstrapEnrollment:
                                roots=candidate_roots,
                                backup=backup if previous is not None else None,
                                identity=identity, provision_receipt_handle=provision_receipt_handle,
-                               request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
+                               request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests,
+                               setup_authorization=setup_authorization)
             if self.record_builder is not None:
                 policy = replace(policy, records=tuple(self.record_builder(policy, identity)))
                 _validate_policy(policy)
@@ -301,7 +452,8 @@ class RootBootstrapEnrollment:
                                    roots=candidate_roots,
                                    backup=backup if previous is not None else None,
                                    identity=identity, provision_receipt_handle=provision_receipt_handle,
-                                   request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
+                                   request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests,
+                                   setup_authorization=setup_authorization)
                 installed.append({"receipt_id": receipt.receipt_id,
                                   "artifact_id": receipt.artifact_id,
                                   "sha256": receipt.sha256,
@@ -319,16 +471,16 @@ class RootBootstrapEnrollment:
                            backup=backup if previous is not None else None,
                            identity=identity, generation_digest=published_generation_digest,
                            provision_receipt_handle=provision_receipt_handle,
-                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
+                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests,
+                           setup_authorization=setup_authorization)
             self.authority_writer(self.authority_path, encoded)
             _write_journal(journal, transaction_id, "committed", created_roots, staged_artifacts,
                            roots=candidate_roots,
                            backup=backup if previous is not None else None,
                            identity=identity, generation_digest=published_generation_digest,
                            provision_receipt_handle=provision_receipt_handle,
-                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
-            if previous is not None:
-                backup.unlink()
+                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests,
+                           setup_authorization=setup_authorization)
             issued = time.monotonic()
             return EnrollmentReceipt(
                     schema=1, transaction_handle=request.operation_intent,
@@ -358,10 +510,82 @@ class RootBootstrapEnrollment:
                            backup=backup if previous is not None else None,
                            identity=identity, generation_digest=published_generation_digest,
                            provision_receipt_handle=provision_receipt_handle,
-                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests)
+                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests,
+                           setup_authorization=setup_authorization)
             if backup.exists() and _root_file_ok(backup):
                 backup.unlink()
             raise
+
+    def rollback(self, provision_receipt_handle: str, *,
+                 expected_generation_digest: str) -> str:
+        """CAS-rollback a committed snapshot after a failed selected health check."""
+        if (os.geteuid() != 0 or not isinstance(provision_receipt_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", provision_receipt_handle)
+                or not re.fullmatch(r"[0-9a-f]{64}", expected_generation_digest)):
+            raise BootstrapEnrollmentError("rollback requires a root-issued receipt and generation digest")
+        _ensure_root_directory(self.transaction_root)
+        with _transaction_lock(self.transaction_root / "enrollment.lock"):
+            journals = tuple(self.transaction_root.glob("[0-9a-f]" * 32 + ".json"))
+            selected = None
+            for path in journals:
+                if not _root_file_ok(path):
+                    continue
+                try:
+                    candidate = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_pairs)
+                except (OSError, ValueError, UnicodeError):
+                    continue
+                if candidate.get("provision_receipt_handle") == provision_receipt_handle:
+                    selected = (path, candidate)
+                    break
+            if selected is None:
+                raise BootstrapEnrollmentError("provision receipt is not present in the root transaction journal")
+            path, journal = selected
+            transaction_id = journal.get("transaction_id")
+            if (journal.get("schema") != 1 or journal.get("state") != "committed"
+                    or not isinstance(transaction_id, str)
+                    or path.name != f"{transaction_id}.json"
+                    or journal.get("generation_digest") != expected_generation_digest):
+                raise BootstrapEnrollmentError("committed provision receipt does not match rollback request")
+            current = _current_generation_digest(self.authority_path)
+            if current != expected_generation_digest:
+                raise BootstrapEnrollmentError("active generation changed; rollback compare-and-swap refused")
+            backup_text = journal.get("backup", "")
+            if backup_text:
+                backup = Path(backup_text)
+                if backup.parent != self.transaction_root or not _root_file_ok(backup):
+                    raise BootstrapEnrollmentError("prior authority snapshot is unavailable; rollback stopped")
+                self.authority_writer(self.authority_path, backup.read_bytes())
+            else:
+                self.authority_path.unlink()
+            for artifact in journal.get("artifacts", []):
+                candidate = Path(artifact)
+                if candidate.parent != self.artifact_root or candidate.name != candidate.stem:
+                    raise BootstrapEnrollmentError("journal artifact path is outside the enrolled store")
+                if candidate.exists() and hashlib.sha256(candidate.read_bytes()).hexdigest() != candidate.name:
+                    raise BootstrapEnrollmentError("journal artifact changed; rollback preserved it")
+                _unlink_only_owned(candidate, uid=0, expected_sha256=candidate.name)
+            identity_value = journal.get("identity")
+            identity = None
+            if isinstance(identity_value, dict) and set(identity_value) == {"name", "uid", "gid", "created"}:
+                identity = ServiceIdentity(identity_value["name"], identity_value["uid"],
+                                           identity_value["gid"], identity_value["created"])
+            roots_removed = True
+            for root in reversed(journal.get("created_roots", [])):
+                roots_removed = _remove_empty_service_root(Path(root), identity) and roots_removed
+            if identity is not None and roots_removed:
+                self.identity.remove_if_created(identity)
+            _write_journal(path, transaction_id, "rolled_back", [], [],
+                           roots=tuple(Path(p) for p in journal.get("roots", [])),
+                           backup=Path(backup_text) if backup_text else None,
+                           identity=identity,
+                           generation_digest=expected_generation_digest,
+                           provision_receipt_handle=provision_receipt_handle,
+                           request_digest=journal.get("request_digest"),
+                           artifact_receipt_digests=tuple(journal.get("artifact_receipt_digests", [])),
+                           setup_authorization=journal.get("setup_authorization"))
+            if backup_text:
+                backup.unlink()
+            return "rolled_back"
 
     def recover(self, transaction_id: str) -> str:
         """Roll back an interrupted transaction using its root-owned recovery journal."""
@@ -422,7 +646,8 @@ class RootBootstrapEnrollment:
                            generation_digest=journal.get("generation_digest"),
                            provision_receipt_handle=journal.get("provision_receipt_handle"),
                            request_digest=journal.get("request_digest"),
-                           artifact_receipt_digests=tuple(journal.get("artifact_receipt_digests", [])))
+                           artifact_receipt_digests=tuple(journal.get("artifact_receipt_digests", [])),
+                           setup_authorization=journal.get("setup_authorization"))
             backup_text = journal.get("backup", "")
             if backup_text:
                 backup = Path(backup_text)
@@ -438,7 +663,12 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "protected_build_records": [dict(row) for row in policy.protected_build_records],
              "native_packages": [dict(row) for row in policy.native_packages],
              "memory_enrollments": [dict(row) for row in policy.memory_enrollments],
-             "operation_parameter_schemas": [dict(row) for row in policy.operation_parameter_schemas]}
+             "operation_parameter_schemas": [dict(row) for row in policy.operation_parameter_schemas],
+             "source_issuers": [dict(row) for row in policy.source_issuers],
+             "resource_jobs": [dict(row) for row in policy.resource_jobs],
+             "remote_session_enrollments": [dict(row) for row in policy.remote_session_enrollments],
+             "resource_backend_enrollments": [dict(row) for row in policy.resource_backend_enrollments],
+             "resource_body_recipes": [dict(row) for row in policy.resource_body_recipes]}
     value["generation_digest"] = hashlib.sha256(_canonical(value, ensure_ascii=False)).hexdigest()
     from .enrollment import _validate_service_generations
     try:
@@ -761,7 +991,18 @@ def _write_journal(path: Path, transaction_id: str, state: str,
                    generation_digest: str | None = None,
                    provision_receipt_handle: str | None = None,
                    request_digest: str | None = None,
-                   artifact_receipt_digests: tuple[str, ...] = ()) -> None:
+                   artifact_receipt_digests: tuple[str, ...] = (),
+                   setup_authorization: VerifiedRootSetupAuthorization | Mapping[str, Any] | None = None) -> None:
+    if isinstance(setup_authorization, VerifiedRootSetupAuthorization):
+        setup = {"target_id": setup_authorization.target_id,
+                 "setup_session_id": setup_authorization.setup_session_id,
+                 "plan_digest": setup_authorization.plan_digest,
+                 "operator_uid": setup_authorization.operator_uid,
+                 "transaction_handle": setup_authorization.transaction_handle}
+    elif isinstance(setup_authorization, Mapping):
+        setup = dict(setup_authorization)
+    else:
+        setup = None
     _atomic_root_file(path, _canonical({"schema": 1, "transaction_id": transaction_id,
                                         "state": state, "created_roots": [str(p) for p in created_roots],
                                         "roots": [str(p) for p in roots],
@@ -773,7 +1014,8 @@ def _write_journal(path: Path, transaction_id: str, state: str,
                                         "generation_digest": generation_digest,
                                         "provision_receipt_handle": provision_receipt_handle,
                                         "request_digest": request_digest,
-                                        "artifact_receipt_digests": list(artifact_receipt_digests)}))
+                                        "artifact_receipt_digests": list(artifact_receipt_digests),
+                                        "setup_authorization": setup}))
 
 
 def _unique_pairs(pairs):

@@ -13,7 +13,11 @@ from pathlib import Path
 from hermes_installer.authority.bootstrap_enrollment import (
     BootstrapEnrollmentError,
     BootstrapEnrollmentRequest,
+    BootstrapEnrollmentClient,
+    EnrollmentReceipt,
     EnrollmentPolicy,
+    RootBootstrapProvisionOperation,
+    VerifiedRootSetupAuthorization,
     RootBootstrapEnrollment,
     ServiceIdentity,
     SystemIdentityAdapter,
@@ -39,6 +43,13 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             records=({"label": "café"},),
         ))
         self.assertEqual(_validate_service_generations(snapshot), snapshot)
+        self.assertEqual(set(snapshot), {
+            "schema", "generation_id", "service_records", "protected_devices",
+            "protected_build_records", "native_packages", "memory_enrollments",
+            "operation_parameter_schemas", "source_issuers", "resource_jobs",
+            "remote_session_enrollments", "resource_backend_enrollments",
+            "resource_body_recipes", "generation_digest",
+        })
         expected = hashlib.sha256(json.dumps(
             {key: value for key, value in snapshot.items() if key != "generation_digest"},
             sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -56,6 +67,67 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
         # Caller path/executable/UID fields are deliberately not part of the DTO.
         self.assertEqual(set(BootstrapEnrollmentRequest.__dataclass_fields__),
                          {"artifact_receipt_handles", "operation_intent"})
+
+    def test_root_provision_uses_kernel_peer_and_independent_setup_admission(self):
+        receipt = EnrollmentReceipt(1, "transaction:root-issued", "receipt:root-issued",
+                                    "generation-1", "a" * 64, None, "committed",
+                                    ("enrollment-1",), 1.0, 30.0)
+
+        class Transaction:
+            def enroll(self, request, *, setup_authorization):
+                self.request = request
+                self.proof = setup_authorization
+                return receipt
+
+        class SetupAuthorizer:
+            def authorize(self, *, peer_uid, peer_gid, request):
+                return VerifiedRootSetupAuthorization(
+                    "service-generation:bootstrap:install", "setup-session-1",
+                    "b" * 64, 501, request.operation_intent)
+
+        transaction = Transaction()
+        operation = RootBootstrapProvisionOperation(transaction, SetupAuthorizer())
+        payload = {"schema": 1, "artifact_receipt_handles": ["source:opaque"],
+                   "operation_intent": "transaction:root-issued"}
+        response = operation.handle(payload, peer_uid=0, peer_gid=0)
+        self.assertEqual(response["generation_digest"], "a" * 64)
+        self.assertEqual(transaction.request.artifact_receipt_handles, ("source:opaque",))
+        self.assertEqual(transaction.proof.operator_uid, 501)
+        with self.assertRaises(BootstrapEnrollmentError):
+            operation.handle(payload, peer_uid=501, peer_gid=501)
+
+    def test_root_provision_rejects_caller_selected_paths_and_unissued_intent(self):
+        class Transaction:
+            def enroll(self, *_args, **_kwargs):
+                raise AssertionError("must not reach transaction")
+
+        class SetupAuthorizer:
+            def authorize(self, *, peer_uid, peer_gid, request):
+                return VerifiedRootSetupAuthorization(
+                    "service-generation:bootstrap:install", "setup-session-1",
+                    "b" * 64, 501, "transaction:another")
+
+        operation = RootBootstrapProvisionOperation(Transaction(), SetupAuthorizer())
+        with self.assertRaises(BootstrapEnrollmentError):
+            operation.handle({"schema": 1, "artifact_receipt_handles": ["source:1"],
+                              "operation_intent": "transaction:invented", "path": "/tmp/x"},
+                             peer_uid=0, peer_gid=0)
+
+    def test_typed_root_client_sends_exact_fixed_verb_and_parses_pathless_receipt(self):
+        calls = []
+        def rpc(operation, payload):
+            calls.append((operation, dict(payload)))
+            return {"schema": 1, "transaction_handle": "transaction:1",
+                    "provision_receipt_handle": "receipt:1", "generation_id": "gen-1",
+                    "generation_digest": "c" * 64, "previous_generation_digest": None,
+                    "state": "committed", "enrollment_ids": ["enrollment-1"],
+                    "issued_monotonic": 1.0, "expires_monotonic": 30.0}
+
+        result = BootstrapEnrollmentClient(rpc).provision(("source:opaque",), "transaction:1")
+        self.assertEqual(calls[0][0], "enrollment.provision")
+        self.assertEqual(set(calls[0][1]), {"schema", "artifact_receipt_handles", "operation_intent"})
+        self.assertEqual(result.generation_id, "gen-1")
+        self.assertFalse(hasattr(result, "path"))
 
     def test_incomplete_root_policy_is_rejected(self):
         policy = EnrollmentPolicy("profile", "principal", "generation", "source", ())
@@ -201,6 +273,133 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
             base.rmdir()
         except OSError:
             pass
+
+    def test_first_snapshot_provision_then_health_rollback_uses_real_account_and_custody(self):
+        base = Path("/var/lib/hermes-installer")
+        base.mkdir(mode=0o700, exist_ok=True)
+        fixture_id = secrets.token_hex(6)
+        fixture = base / (".bootstrap-first-" + fixture_id)
+        fixture.mkdir(mode=0o700)
+        txroot = fixture / "transactions"
+        store = fixture / "artifact-store"
+        txroot.mkdir(mode=0o700)
+        store.mkdir(mode=0o700)
+        service_parent = Path("/var/lib/hermes-installer/services") / fixture_id
+        roots = tuple(service_parent / name for name in ("home", "work", "data"))
+        service_name = "hboot" + fixture_id
+        adapter = SystemIdentityAdapter(fixture / "identity.json", name=service_name)
+        source = fixture / "official-fixture-source.tar"
+        source.write_bytes(b"owned root enrollment fixture payload")
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        base_authority = {key: {} for key in (
+            "key_id", "principals", "rules", "authentik", "process_profiles",
+            "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers",
+            "native_bridges", "normalization_policies", "delegations", "service_generations",
+        )}
+        base_authority["schema"] = 1
+
+        def policy_resolver(request, proof):
+            self.assertEqual(request.operation_intent, proof.transaction_handle)
+            return EnrollmentPolicy(
+                service_profile_id="hermes-profile", principal_id="hermes-service",
+                generation_id="fixture-generation-" + fixture_id,
+                source_artifact_id="hermes-fixture-source", records=(),
+                authority_base=base_authority,
+                home_root=roots[0], work_root=roots[1], data_root=roots[2],
+            )
+
+        def record_builder(policy, identity):
+            executable = Path("/usr/bin/true")
+            executable_sha = hashlib.sha256(executable.read_bytes()).hexdigest()
+            root_ids = ["fixture-home-" + fixture_id, "fixture-work-" + fixture_id,
+                        "fixture-data-" + fixture_id]
+            return ({
+                "enrollment_id": "fixture-enrollment-" + fixture_id,
+                "generation": policy.generation_id, "profile_id": policy.service_profile_id,
+                "principal_id": policy.principal_id, "service_uid": identity.uid,
+                "service_gid": identity.gid, "service_user": identity.name,
+                "device_enrollment_id": None, "expected_device_generation": None,
+                "executable": str(executable), "executable_sha256": executable_sha,
+                "runtime_artifact_ids": ["hermes-fixture-source"],
+                "package_runtime_records": {},
+                "roots": {"home_id": root_ids[0], "work_id": root_ids[1],
+                          "data_id": root_ids[2], "home": str(policy.home_root),
+                          "work": str(policy.work_root), "data": str(policy.data_root)},
+                "authority_endpoint_id": "fixture-authority-endpoint",
+                "namespace_identity": "fixture-namespace-" + fixture_id,
+                "socket_policy_id": "fixture-socket-policy", "target_route_ids": [],
+                "operation_targets": {},
+                "operation_recipes": {"fixture-health": {
+                    "executable_artifact_id": "hermes-fixture-source",
+                    "executable_sha256": executable_sha,
+                    "argv_recipe": [{"literal": str(executable)}],
+                    "cwd_root_id": root_ids[0], "cwd_subpath": "work",
+                    "environment": {}, "child_artifact_refs": {},
+                    "max_lifetime_seconds": 60, "max_output_bytes": 1024,
+                    "stdin_mode": "closed", "parameter_schema_id": "fixture-parameters",
+                }},
+                "argv_recipe": [str(executable)], "environment": {},
+                "max_lifetime_seconds": 60, "memory_max_bytes": 1_073_741_824,
+                "cpu_quota_percent": 100, "io_weight": 100,
+            },)
+
+        class FixtureResolver:
+            def resolve(self, handle):
+                if handle != "source-fixture":
+                    raise BootstrapEnrollmentError("fixture handle is not enrolled")
+                return VerifiedArtifactReceipt("fixture-receipt", "hermes-fixture-source",
+                                               digest, source, 1024)
+
+        transaction = RootBootstrapEnrollment(
+            policy_resolver=policy_resolver, receipt_resolver=FixtureResolver(),
+            identity=adapter, record_builder=record_builder,
+            authority_path=fixture / "authority.json", transaction_root=txroot,
+            artifact_root=store,
+        )
+        setup_proof = VerifiedRootSetupAuthorization(
+            "service-generation:bootstrap:install", "fixture-setup-" + fixture_id,
+            "a" * 64, os.getuid(), "transaction:fixture-" + fixture_id)
+        request = BootstrapEnrollmentRequest(("source-fixture",), setup_proof.transaction_handle)
+        try:
+            result = transaction.enroll(request, setup_authorization=setup_proof)
+            self.assertEqual(result.state, "committed")
+            snapshot = json.loads((fixture / "authority.json").read_text())
+            self.assertEqual(snapshot["service_generations"]["generation_digest"], result.generation_digest)
+            self.assertEqual(set(snapshot["service_generations"]), {
+                "schema", "generation_id", "service_records", "protected_devices",
+                "protected_build_records", "native_packages", "memory_enrollments",
+                "operation_parameter_schemas", "source_issuers", "resource_jobs",
+                "remote_session_enrollments", "resource_backend_enrollments",
+                "resource_body_recipes", "generation_digest",
+            })
+            for root in roots:
+                info = root.lstat()
+                self.assertEqual((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)),
+                                 (pwd.getpwnam(service_name).pw_uid, grp.getgrnam(service_name).gr_gid, 0o700))
+            stored = store / digest
+            self.assertEqual(hashlib.sha256(stored.read_bytes()).hexdigest(), digest)
+            self.assertEqual((stored.stat().st_uid, stat.S_IMODE(stored.stat().st_mode)), (0, 0o444))
+
+            self.assertEqual(transaction.rollback(result.provision_receipt_handle,
+                                                  expected_generation_digest=result.generation_digest),
+                             "rolled_back")
+            self.assertFalse((fixture / "authority.json").exists())
+            self.assertFalse(any(root.exists() for root in roots))
+            with self.assertRaises(KeyError):
+                pwd.getpwnam(service_name)
+            self.assertFalse(stored.exists())
+        finally:
+            try:
+                adapter.remove_if_created(ServiceIdentity(
+                    service_name, pwd.getpwnam(service_name).pw_uid,
+                    grp.getgrnam(service_name).gr_gid, True))
+            except KeyError:
+                pass
+            shutil.rmtree(fixture, ignore_errors=True)
+            try:
+                service_parent.rmdir()
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
