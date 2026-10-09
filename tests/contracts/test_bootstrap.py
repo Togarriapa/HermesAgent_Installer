@@ -1,8 +1,8 @@
 from __future__ import annotations
-import hashlib, json, tempfile, unittest
+import hashlib, json, os, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from hermes_installer.bootstrap import (BootstrapError, EXPECTED_STAGES, HERMES_COMMIT,
-    HermesBootstrap, git_blob_sha1)
+    HermesBootstrap, git_blob_sha1, _stop_group)
 from hermes_installer.state import Journal, OwnedRoot
 
 SCRIPT=b"#!/usr/bin/env bash\necho fixture\n"
@@ -155,5 +155,53 @@ class BootstrapTests(unittest.TestCase):
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),runner=FakeRunner())
             with self.assertRaisesRegex(BootstrapError,"object identity"): boot.prepare()
             self.assertFalse(boot.script_path.exists())
+
+    def test_manifest_capture_stops_at_the_output_bound(self):
+        with tempfile.TemporaryDirectory() as td:
+            data=OwnedRoot(Path(td)/"data"); data.ensure()
+            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
+            boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
+            boot.script_path.parent.mkdir(parents=True,exist_ok=True)
+            boot.script_path.write_text("#!/usr/bin/env bash\npython3 -c 'import sys;sys.stdout.write(\"x\"*200000)'\n")
+            started=time.monotonic()
+            with self.assertRaisesRegex(BootstrapError,"output bound"):
+                boot._run_process(["--manifest"],timeout=5,capture=True)
+            self.assertLess(time.monotonic()-started,3)
+
+    def test_stop_group_cleans_only_its_owned_descendants(self):
+        with tempfile.TemporaryDirectory() as td:
+            pid_file=Path(td)/"child.pid"
+            child_code="import subprocess,sys,time,pathlib; p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); pathlib.Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)"
+            proc=subprocess.Popen([sys.executable,"-c",child_code,str(pid_file)],stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+            proc._hermes_cleanup_lock=threading.Lock()
+            deadline=time.monotonic()+3
+            while not pid_file.exists() and time.monotonic()<deadline: time.sleep(0.02)
+            self.assertTrue(pid_file.exists())
+            child_pid=int(pid_file.read_text())
+            self.assertEqual(os.getpgid(child_pid),proc.pid)
+            self.assertTrue(_stop_group(proc))
+            self.assertIsNotNone(proc.returncode)
+            end=time.monotonic()+2
+            running=True
+            while running and time.monotonic()<end:
+                stat_path=Path("/proc")/str(child_pid)/"stat"
+                try:
+                    raw=stat_path.read_text()
+                    state=raw[raw.rfind(")")+2:].split()[0]
+                    running=state!="Z"
+                except OSError:
+                    running=False
+                if running: time.sleep(0.02)
+            self.assertFalse(running,"owned descendant remained executable after group cleanup")
+
+    def test_lost_child_custody_never_authorizes_group_signal(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        proc=SimpleNamespace(pid=987654,returncode=None,_hermes_cleanup_lock=threading.Lock())
+        with patch("hermes_installer.bootstrap.os.waitid",side_effect=ChildProcessError), \
+             patch("hermes_installer.bootstrap.os.killpg") as signal_group:
+            self.assertFalse(_stop_group(proc))
+            signal_group.assert_not_called()
 
 if __name__ == "__main__": unittest.main()

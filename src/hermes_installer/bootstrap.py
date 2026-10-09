@@ -61,21 +61,64 @@ def _write_private(path: Path, data: bytes, mode: int = 0o700) -> None:
         except FileNotFoundError:
             pass
 
-def _stop_group(proc: subprocess.Popen) -> None:
+def _child_state(proc: subprocess.Popen) -> str:
+    """Inspect a direct child without reaping it, preserving its session ID as a safe group handle."""
+    if proc.returncode is not None:
+        return "reaped"
+    if not all(hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")):
+        return "unknown"
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
+        result = os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+    except ChildProcessError:
+        return "lost"
+    except OSError:
+        return "unknown"
+    return "exited" if result is not None and result.si_pid == proc.pid else "running"
+
+
+def _owned_process_group(proc: subprocess.Popen) -> bool:
+    """Only signal the new session created for a still-unreaped Popen child."""
     try:
-        proc.wait(timeout=1)
-    except subprocess.TimeoutExpired:
-        pass
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    if proc.poll() is None:
-        proc.wait()
+        return os.getpgid(proc.pid) == proc.pid and os.getsid(proc.pid) == proc.pid
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+def _stop_group(proc: subprocess.Popen) -> bool:
+    """Terminate only a process group whose unreaped leader proves our custody."""
+    lock = getattr(proc, "_hermes_cleanup_lock", None)
+    if lock is None:
+        lock = threading.Lock()
+        setattr(proc, "_hermes_cleanup_lock", lock)
+    with lock:
+        state = _child_state(proc)
+        if state in {"lost", "unknown", "reaped"} or not _owned_process_group(proc):
+            return False
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return False
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            state = _child_state(proc)
+            if state in {"lost", "unknown", "reaped"}:
+                return False
+            if state == "exited":
+                break
+            time.sleep(0.025)
+        # WNOWAIT leaves the session leader unreaped here. Its PID/PGID cannot
+        # be recycled while SIGKILL reaches any remaining descendants.
+        if _child_state(proc) == "lost" or not _owned_process_group(proc):
+            return False
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            return False
+        return True
 
 class HermesBootstrap:
     """Runs exact upstream script content and stage names; callers cannot inject commands."""
@@ -142,21 +185,73 @@ class HermesBootstrap:
         proc = subprocess.Popen(cmd, cwd=self.data_root.root, env=self._environment(), stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, shell=False, close_fds=True, start_new_session=True)
+        proc._hermes_cleanup_lock = threading.Lock()
+        if not capture:
+            try:
+                return proc.wait(timeout=timeout), b""
+            except subprocess.TimeoutExpired:
+                if not _stop_group(proc):
+                    raise BootstrapError("Installer timeout could not safely confirm process-group ownership") from None
+                return 124, b""
+            except BaseException:
+                _stop_group(proc)
+                raise
+
+        assert proc.stdout is not None
+        output = bytearray()
+        overflow = threading.Event()
+        eof = threading.Event()
+
+        def drain() -> None:
+            while True:
+                block = proc.stdout.read(8192)
+                if not block:
+                    eof.set()
+                    return
+                if len(output) + len(block) > 64 * 1024:
+                    overflow.set()
+                elif not overflow.is_set():
+                    output.extend(block)
+
+        reader = threading.Thread(target=drain, name="hermes-manifest-reader", daemon=True)
+        reader.start()
+        deadline = time.monotonic() + timeout
         try:
-            if capture:
-                out, _ = proc.communicate(timeout=timeout)
-                if len(out) > 64 * 1024:
-                    _stop_group(proc)
+            while True:
+                if overflow.is_set():
+                    if not _stop_group(proc):
+                        raise BootstrapError("Manifest output exceeded its bound and child ownership was unavailable") from None
+                    reader.join(timeout=1)
                     raise BootstrapError("Official installer manifest exceeded its output bound")
-                return proc.returncode, out
-            code = proc.wait(timeout=timeout)
-            return code, b""
-        except subprocess.TimeoutExpired:
-            _stop_group(proc)
-            return 124, b""
+                state = _child_state(proc)
+                if state == "lost":
+                    raise BootstrapError("Installer child custody was lost; refusing to signal a process group")
+                if state == "unknown":
+                    raise BootstrapError("Installer child state could not be verified safely")
+                if state == "reaped":
+                    raise BootstrapError("Installer child was reaped outside the bounded runner")
+                if state == "exited":
+                    reader.join(timeout=1)
+                    if reader.is_alive() or not eof.is_set():
+                        if not _stop_group(proc):
+                            raise BootstrapError("Manifest child left an unowned output descendant") from None
+                        reader.join(timeout=1)
+                        raise BootstrapError("Manifest child left an output descendant")
+                    code = proc.wait()
+                    return code, bytes(output)
+                if time.monotonic() >= deadline:
+                    if not _stop_group(proc):
+                        raise BootstrapError("Installer timeout could not safely confirm process-group ownership") from None
+                    reader.join(timeout=1)
+                    return 124, b""
+                time.sleep(0.025)
         except BaseException:
-            _stop_group(proc)
+            if proc.returncode is None:
+                _stop_group(proc)
+            reader.join(timeout=0.5)
             raise
+        finally:
+            proc.stdout.close()
 
     def _manifest(self) -> None:
         code, raw = self.runner(["--manifest", "--json", *self._base_args()], timeout=30, capture=True)
@@ -288,34 +383,55 @@ class HermesBootstrap:
         proc = subprocess.Popen([str(hermes), "--version"], cwd=self.install_dir, env=self._environment(),
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, shell=False,
             close_fds=True, start_new_session=True)
+        proc._hermes_cleanup_lock = threading.Lock()
         chunks: list[bytes] = []
         seen = 0
         overflow = threading.Event()
+        eof = threading.Event()
+
         def drain() -> None:
             nonlocal seen
             assert proc.stdout is not None
             while True:
                 block = proc.stdout.read(1024)
                 if not block:
+                    eof.set()
                     return
                 seen += len(block)
-                if seen <= 8192:
+                if seen <= 8192 and not overflow.is_set():
                     chunks.append(block)
                 else:
                     overflow.set()
-                    _stop_group(proc)
-                    return
-        reader = threading.Thread(target=drain, daemon=True)
+
+        reader = threading.Thread(target=drain, name="hermes-version-reader", daemon=True)
         reader.start()
+        deadline = time.monotonic() + 20
         try:
-            code = proc.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            _stop_group(proc)
-            reader.join(timeout=1)
-            return False
-        reader.join(timeout=1)
-        output = b"".join(chunks).strip()
-        return code == 0 and not overflow.is_set() and bool(output)
+            while True:
+                if overflow.is_set():
+                    _stop_group(proc)
+                    reader.join(timeout=1)
+                    return False
+                state = _child_state(proc)
+                if state in {"lost", "unknown", "reaped"}:
+                    return False
+                if state == "exited":
+                    reader.join(timeout=1)
+                    if reader.is_alive() or not eof.is_set():
+                        _stop_group(proc)
+                        reader.join(timeout=1)
+                        return False
+                    code = proc.wait()
+                    output = b"".join(chunks).strip()
+                    return code == 0 and not overflow.is_set() and bool(output)
+                if time.monotonic() >= deadline:
+                    _stop_group(proc)
+                    reader.join(timeout=1)
+                    return False
+                time.sleep(0.025)
+        finally:
+            if proc.stdout is not None:
+                proc.stdout.close()
 
     def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 7200) -> BootstrapReport:
         if not 60 <= timeout_per_stage <= 14_400:
