@@ -95,12 +95,17 @@ def _metadata(text: str, skill_path: str) -> tuple[str, str]:
     return name, description[:500]
 
 
-def discover_component_skills(component_id: str, files: Mapping[str, bytes]) -> SkillDiscovery:
+def discover_component_skills(
+    component_id: str,
+    files: Mapping[str, bytes],
+    *,
+    skill_files: tuple[str, ...] | None = None,
+) -> SkillDiscovery:
     """Discover separate SKILL.md roots without flattening helper or shared files."""
     contract = resolve_component_adapter(component_id)
     if contract.unresolved_reason():
         raise SkillAdapterError(contract.unresolved_reason())
-    audit = audit_skill_file_map(dict(files))
+    audit = audit_skill_file_map(dict(files), skill_files=skill_files)
     if not audit.complete:
         first = audit.problems[0]
         raise SkillAdapterError(f"skill reference audit failed at {first.source_path}:{first.line}: {first.reason}")
