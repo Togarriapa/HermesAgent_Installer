@@ -58,6 +58,44 @@ class ProviderPolicyTests(unittest.TestCase):
                     input_tokens=2, output_token_limit=8)
             self.assertEqual(provider.calls, [])
 
+    def test_tool_body_cannot_downgrade_to_inference_capability(self):
+        with tempfile.TemporaryDirectory() as td:
+            provider = RecordingProvider()
+            authorizations = []
+            def authorizer(*args):
+                authorizations.append(args[1])
+                return synthetic_authorizer(*args)
+            dispatcher = Dispatcher(DispatchPolicy({"public": default_public_route()}, "public"),
+                BudgetLedger(self.ledger_root(Path(td))), provider, context_authorizer=authorizer)
+            with self.assertRaisesRegex(PolicyDenied, "Tool capability flag does not match"):
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL,
+                    b'{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"x"}}]}',
+                    input_tokens=2, output_token_limit=8, tool_request=False)
+            self.assertEqual(authorizations, [])
+            self.assertEqual(provider.calls, [])
+
+    def test_fresh_grant_nonce_may_change_but_identity_swap_blocks_retry(self):
+        from dataclasses import replace
+        with tempfile.TemporaryDirectory() as td:
+            provider = RecordingProvider([ProviderResponse(429, b"", {"Retry-After": "0"}), ProviderResponse(200, b"ok")])
+            root = self.ledger_root(Path(td))
+            calls = []
+            def changing_authorizer(context, capability, intent_id, now, timeout, cancelled):
+                grant = synthetic_authorizer(context, capability, intent_id, now, timeout, cancelled)
+                calls.append(grant)
+                if len(calls) >= 3:
+                    return replace(grant, namespace="swapped-namespace")
+                return grant
+            dispatcher = Dispatcher(DispatchPolicy({"public": default_public_route()}, "public"),
+                BudgetLedger(root), provider, context_authorizer=changing_authorizer,
+                sleep=lambda _delay: None)
+            with self.assertRaisesRegex(PolicyDenied, "authorization changed"):
+                dispatcher.dispatch(DispatchContext("hermes", "chat", Sensitivity.PUBLIC), MODEL,
+                    b'{"messages":[{"role":"user","content":"retry"}]}',
+                    input_tokens=2, output_token_limit=8)
+            self.assertEqual(len(provider.calls), 1)
+            self.assertNotEqual(calls[0].grant_id, calls[1].grant_id)
+
     def test_host_classification_overrides_caller_public_label(self):
         with tempfile.TemporaryDirectory() as td:
             provider = RecordingProvider()
