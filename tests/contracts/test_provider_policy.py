@@ -8,7 +8,7 @@ from pathlib import Path
 from hermes_installer.state import OwnedRoot
 from hermes_installer.policy import (
     BudgetLedger, DispatchContext, DispatchPolicy, Dispatcher, PolicyDenied,
-    ProviderResponse, Route, Sensitivity, default_public_route,
+    ProviderResponse, Route, Sensitivity, default_public_route, normalize_chat_request,
 )
 
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -93,15 +93,18 @@ class ProviderPolicyTests(unittest.TestCase):
     def test_ledger_reserves_and_accounts_across_dispatchers(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            paid = Route("private", "http://127.0.0.1:8811/v1", frozenset({"local/test"}), Sensitivity.CONFIDENTIAL, False, True, 10.0, 10.0)
-            policy = DispatchPolicy({"public": default_public_route(), "private": paid}, "public", "private", metered_budget_usd=0.003)
+            payload = b'{"messages":[{"role":"user","content":"test"}]}'
+            bound = max(100, len(normalize_chat_request(payload, "local/test", 100)))
+            estimate = (bound + 100) / 1_000_000
+            paid = Route("private", "http://127.0.0.1:8811/v1", frozenset({"local/test"}), Sensitivity.CONFIDENTIAL, False, True, 1.0, 1.0)
+            policy = DispatchPolicy({"public": default_public_route(), "private": paid}, "public", "private", metered_budget_usd=estimate * 1.5)
             ledger_root = self.ledger_root(root)
             first = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider([ProviderResponse(200, b"ok", input_tokens=100, output_tokens=100)]))
-            first.dispatch(DispatchContext("one", "chat", Sensitivity.PRIVATE), "local/test", b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=100, output_token_limit=100)
-            self.assertAlmostEqual(BudgetLedger(ledger_root).spent(), 0.002)
+            first.dispatch(DispatchContext("one", "chat", Sensitivity.PRIVATE), "local/test", payload, input_tokens=100, output_token_limit=100)
+            self.assertAlmostEqual(BudgetLedger(ledger_root).spent(), estimate)
             second = Dispatcher(policy, BudgetLedger(ledger_root), RecordingProvider())
             with self.assertRaisesRegex(PolicyDenied, "Aggregate metered budget"):
-                second.dispatch(DispatchContext("two", "summary", Sensitivity.PRIVATE), "local/test", b'{"messages":[{"role":"user","content":"test"}]}', input_tokens=100, output_token_limit=100)
+                second.dispatch(DispatchContext("two", "summary", Sensitivity.PRIVATE), "local/test", payload, input_tokens=100, output_token_limit=100)
 
 
     def test_unknown_prices_are_never_treated_as_free(self):
@@ -117,8 +120,10 @@ class ProviderPolicyTests(unittest.TestCase):
     def test_ambiguous_paid_timeout_keeps_attempt_reservation(self):
         with tempfile.TemporaryDirectory() as td:
             root=self.ledger_root(Path(td))
+            payload=b'{"messages":[{"role":"user","content":"test"}]}'
+            estimate=(max(1,len(normalize_chat_request(payload,"local/test",1)))+1)/1_000_000
             paid=Route("private","http://127.0.0.1:8811/v1",frozenset({"local/test"}),Sensitivity.CONFIDENTIAL,False,True,1.0,1.0)
-            policy=DispatchPolicy({"public":default_public_route(),"private":paid},"public","private",metered_budget_usd=0.00002,max_attempts=2)
+            policy=DispatchPolicy({"public":default_public_route(),"private":paid},"public","private",metered_budget_usd=estimate*1.5,max_attempts=2)
             calls=[]
             def transport(route,model,payload,*,output_token_limit,timeout,trace_id):
                 calls.append(route.name)
@@ -126,9 +131,9 @@ class ProviderPolicyTests(unittest.TestCase):
             ledger=BudgetLedger(root)
             dispatcher=Dispatcher(policy,ledger,transport)
             with self.assertRaisesRegex(PolicyDenied,"Aggregate metered budget"):
-                dispatcher.dispatch(DispatchContext("private","chat",Sensitivity.PRIVATE),"local/test",b'{"messages":[{"role":"user","content":"test"}]}',input_tokens=1,output_token_limit=1)
+                dispatcher.dispatch(DispatchContext("private","chat",Sensitivity.PRIVATE),"local/test",payload,input_tokens=1,output_token_limit=1)
             self.assertEqual(calls,["private"])
-            self.assertAlmostEqual(ledger.spent(),0.000016)
+            self.assertAlmostEqual(ledger.spent(),estimate)
 
     def test_retry_delay_observes_cancellation_and_dispatch_deadline(self):
         with tempfile.TemporaryDirectory() as td:
