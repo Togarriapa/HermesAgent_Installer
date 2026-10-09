@@ -1358,7 +1358,10 @@ class ManagedProcessEffectHandler:
                     code = getattr(exc, "code", "internal")
                     if not isinstance(code, str) or not re.fullmatch(r"[a-z0-9_.-]{1,64}", code):
                         code = "internal"
-                    self._diagnostic_sink(("inspect-deny:" + code).encode("ascii"))
+                    exception_type = type(exc).__name__
+                    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", exception_type):
+                        exception_type = "Exception"
+                    self._diagnostic_sink(("inspect-deny:" + code + ":" + exception_type).encode("ascii"))
                 raise
         return self._control(profile, context, operation, payload, timeout, cancelled)
 
