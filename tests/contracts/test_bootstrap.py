@@ -339,3 +339,62 @@ class BootstrapTests(unittest.TestCase):
             self.assertFalse(data.path("cache/hermes-install-"+HERMES_COMMIT[:12]+".sh").exists())
 
 if __name__ == "__main__": unittest.main()
+
+class EnrolledBootstrapTests(unittest.TestCase):
+    def test_root_selected_operations_never_activate_without_native_health_receipt(self):
+        import base64
+        import time
+        from types import SimpleNamespace
+        from hermes_installer.authority.bootstrap_enrollment import EnrollmentReceipt
+        from hermes_installer.bootstrap_custody import BootstrapCustody, RootSelectedHermesOperations
+
+        class Client:
+            def __init__(self):
+                self.operations = []
+                self.next_process = 0
+            def start_enrolled_process_operation(self, **kwargs):
+                self.operations.append(kwargs)
+                self.next_process += 1
+                return SimpleNamespace(status=200, body=json.dumps({
+                    "process_id": f"{self.next_process:032x}",
+                    "generation": f"process-{self.next_process}", "uid": 1234,
+                }).encode(), receipt_id=f"receipt-{self.next_process}")
+            def process_control_operation(self, operation, **kwargs):
+                if operation == "process.status":
+                    return SimpleNamespace(state="exited", result={"exit_code": 0})
+                if operation == "process.read":
+                    stream = kwargs["fields"]["stream"]
+                    body = b"token=fixture-secret\n" if stream == "stderr" else b"stage complete\n"
+                    return SimpleNamespace(state="exited", result={
+                        "data_bytes": base64.b64encode(body).decode(), "eof": True})
+                if operation == "process.stop":
+                    return SimpleNamespace(state="stopped", result={
+                        "closed": True, "reap_state": "complete"})
+                raise AssertionError(operation)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = OwnedRoot(root / "data")
+            data.ensure()
+            state_root = OwnedRoot(root / "state")
+            state_root.ensure()
+            journal = Journal(state_root.path("journal.sqlite3"))
+            receipt = EnrollmentReceipt(1, "transaction", "provision-receipt", "service-gen",
+                "a" * 64, None, "committed", ("enrollment-1",), time.monotonic(),
+                time.monotonic() + 60)
+            client = Client()
+            operations = RootSelectedHermesOperations(BootstrapCustody(client), receipt)
+            report = HermesBootstrap(data, journal, selected_operations=operations).install(
+                include_desktop=True, timeout_per_stage=30)
+            self.assertFalse(report.agent_ready)
+            self.assertFalse(report.desktop_built)
+            self.assertFalse(report.fixture_only)
+            self.assertIn("native Agent function evidence", report.configuration_state)
+            self.assertEqual([call["operation_id"] for call in client.operations], [
+                "hermes-agent-stage-v1", "hermes-agent-health-v1"])
+            self.assertTrue(all(call["parameters"] == {} for call in client.operations))
+            self.assertEqual(journal.operation("hermes-agent:" + HERMES_COMMIT)["status"],
+                             "pending:native-health-observation")
+            self.assertEqual([row["state"] for row in journal.owned("hermes-generation")], ["staged"])
+            diagnostic = data.path("runtime/logs/hermes-agent/" + HERMES_COMMIT[:12] + "/selected-health.log")
+            self.assertNotIn(b"fixture-secret", diagnostic.read_bytes())

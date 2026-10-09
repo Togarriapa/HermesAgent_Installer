@@ -1692,3 +1692,11 @@ def _identifier(value: Any, name: str) -> None:
     if (not isinstance(value, str) or not 1 <= len(value) <= 256
             or any(ord(char) < 0x21 or char in "\\\x7f" for char in value)):
         raise ValueError(f"{name} is invalid")
+
+
+def __getattr__(name: str) -> Any:
+    """Preserve the v31 public location without duplicating its implementation."""
+    if name in {"RootTaskNativeObservationRegistry", "RootTaskNativeExecutionReceipt"}:
+        from . import task_native_observation
+        return getattr(task_native_observation, name)
+    raise AttributeError(name)
