@@ -21,6 +21,8 @@ class MemoryRecord:
 
 class Provider(Protocol):
     name: str
+    def backup(self, namespace: str, *, context: Any = None) -> Any: ...
+    def restore(self, backup: Any, *, context: Any = None) -> None: ...
     def capture(self, record: MemoryRecord, *, context: Any = None) -> None: ...
     def search(self, namespace: str, query: str, limit: int, *, context: Any = None) -> list[MemoryRecord]: ...
     def export(self, namespace: str, *, context: Any = None) -> list[MemoryRecord]: ...
@@ -160,6 +162,25 @@ class MemoryManager:
             raise MemoryUnavailable("memory provider is not installed")
         return [item for item in provider.export(namespace, context=context)
                 if item.namespace == namespace and item.profile == profile]
+
+    def backup(self, name: str, namespace: str, *, context: Any = None) -> Any:
+        profile = getattr(context, "profile_id", "")
+        self._authorize(context, "memory_backup", profile, namespace)
+        provider = self.providers.get(name)
+        if provider is None:
+            raise MemoryUnavailable("memory provider is not installed")
+        return provider.backup(namespace, context=context)
+
+    def restore(self, name: str, backup: Any, *, context: Any = None) -> None:
+        profile = getattr(context, "profile_id", "")
+        namespace = getattr(context, "namespace_id", _namespace(context) or "")
+        self._authorize(context, "memory_restore", profile, namespace)
+        provider = self.providers.get(name)
+        if provider is None:
+            raise MemoryUnavailable("memory provider is not installed")
+        if getattr(backup, "provider", None) != name:
+            raise PermissionError("backup belongs to a different provider")
+        provider.restore(backup, context=context)
 
     def remove(self, name: str, namespace: str, record_id: str, *, context: Any = None) -> bool:
         profile = getattr(context, "profile_id", "")

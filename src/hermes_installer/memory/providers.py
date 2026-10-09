@@ -1,6 +1,7 @@
 """Broker-only, pinned memory-provider adapters; no direct network or startup."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from dataclasses import dataclass
@@ -20,6 +21,16 @@ class MemoryBroker(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryBackup:
+    provider: str
+    profile: str
+    namespace: str
+    archive: str
+    sha256: str
+    lineage: Any
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderStatus:
     provider: str
     available: bool
@@ -30,7 +41,7 @@ class ProviderStatus:
 class BrokerMemoryProvider:
     """Broker resolves each opaque target to a protected pinned service handler."""
     name = ""
-    actions = frozenset({"doctor", "capture", "extract", "embed", "search", "export", "delete"})
+    actions = frozenset({"doctor", "capture", "extract", "embed", "search", "export", "delete", "backup", "restore"})
 
     def __init__(self, broker: MemoryBroker, *, intent: str = "memory-service", timeout: float = 8.0,
                  cancelled: Callable[[], bool] | None = None):
@@ -113,8 +124,45 @@ class BrokerMemoryProvider:
         if context is None or getattr(context, "namespace_id", getattr(context, "namespace", None)) != namespace:
             raise PermissionError("export namespace does not match signed host context")
         result = self._call("export", "memory-export", {"schema": 1, "namespace": namespace},
-                            self._context("memory-export", context))
+                            self._context("memory-backup", context))
         return self._records(result.get("records"), namespace, context)
+
+    def backup(self, namespace: str, *, context: Any = None) -> MemoryBackup:
+        if context is None or getattr(context, "namespace_id", getattr(context, "namespace", None)) != namespace:
+            raise PermissionError("backup namespace does not match signed host context")
+        result = self._call("backup", "memory-backup", {"schema": 1, "namespace": namespace},
+                            self._context("memory-backup", context))
+        archive = result.get("archive")
+        digest = result.get("sha256")
+        if not isinstance(archive, str) or not isinstance(digest, str):
+            raise MemoryProviderError("broker returned no opaque backup archive")
+        try:
+            decoded = base64.b64decode(archive, validate=True)
+        except (ValueError, base64.binascii.Error):
+            raise MemoryProviderError("broker returned malformed backup archive") from None
+        if hashlib.sha256(decoded).hexdigest() != digest:
+            raise MemoryProviderError("broker backup digest mismatch")
+        return MemoryBackup(self.name, context.profile_id, namespace, archive, digest, context)
+
+    def restore(self, backup: MemoryBackup, *, context: Any = None) -> None:
+        if (context is None or backup.provider != self.name or
+                backup.profile != getattr(context, "profile_id", None) or
+                backup.namespace != getattr(context, "namespace_id", getattr(context, "namespace", None)) or
+                getattr(backup.lineage, "profile_id", None) != backup.profile or
+                getattr(backup.lineage, "namespace_id", getattr(backup.lineage, "namespace", None)) != backup.namespace):
+            raise PermissionError("backup identity does not match signed host context and provider")
+        try:
+            decoded = base64.b64decode(backup.archive, validate=True)
+        except (ValueError, base64.binascii.Error):
+            raise MemoryProviderError("backup archive is malformed") from None
+        digest = hashlib.sha256(decoded).hexdigest()
+        if digest != backup.sha256:
+            raise MemoryProviderError("backup archive digest mismatch")
+        self._call("restore", "memory-restore",
+            {"schema": 1, "namespace": backup.namespace, "archive": backup.archive, "sha256": digest},
+            self.broker.context(purpose="memory-restore", intent=self.intent,
+                source_contexts=(context, backup.lineage), trace_id=getattr(context, "trace_id", None),
+                lease_seconds=30))
 
     def remove(self, namespace: str, record_id: str, *, context: Any = None) -> bool:
         if context is None or getattr(context, "namespace_id", getattr(context, "namespace", None)) != namespace:

@@ -47,6 +47,8 @@ class BrokerFixture:
                 "profile": "profile-a", "source": "user", "text": "synthetic fact",
                 "provenance": ["fixture"]}]},
             "delete": {"deleted": True},
+            "backup": {"archive": "eA==", "sha256": hashlib.sha256(b"x").hexdigest()},
+            "restore": {"restored": True},
         }[op]
         return SimpleNamespace(status=200, body=json.dumps(body).encode(), headers={}, receipt_id="fixture")
 
@@ -92,6 +94,23 @@ class MemoryBrokerTests(unittest.TestCase):
         self.assertTrue(provider.remove("namespace-a", "r1", context=self.ctx))
         self.assertEqual([call[2] for call in self.broker.calls if call[0] == "grant"],
                          ["memory-retrieval", "memory-export", "memory-delete"])
+
+    def test_backup_restore_are_separate_digest_bound_scoped_effects(self):
+        provider = AgentMemoryProvider(self.broker)
+        backup = provider.backup("namespace-a", context=self.ctx)
+        self.assertEqual((backup.provider, backup.profile, backup.namespace),
+                         ("agentmemory", "profile-a", "namespace-a"))
+        provider.restore(backup, context=self.ctx)
+        grants = [call for call in self.broker.calls if call[0] == "grant"]
+        self.assertEqual([call[2] for call in grants], ["memory-backup", "memory-restore"])
+        self.assertEqual([call[3] for call in grants],
+                         ["memory:agentmemory:backup", "memory:agentmemory:restore"])
+        foreign = backup.__class__(backup.provider, "profile-b", backup.namespace,
+                                   backup.archive, backup.sha256, backup.lineage)
+        before = len(self.broker.calls)
+        with self.assertRaises(PermissionError):
+            provider.restore(foreign, context=self.ctx)
+        self.assertEqual(len(self.broker.calls), before)
 
     def test_owner_journal_persists_and_blocks_unresolved_transition(self):
         with tempfile.TemporaryDirectory() as temporary:
