@@ -1348,26 +1348,35 @@ class ManagedProcessEffectHandler:
                 or peer_pid <= 0 or canonical_digest(payload) != authorization.request_digest):
             raise AuthorityDenied("process.binding", "process grant does not match the enrolled profile effect")
         if operation == "process.start":
-            return self._start(profile, context, authorization, payload, timeout, peer_pid,
-                               peer_pidfd, cancelled)
+            try:
+                return self._start(profile, context, authorization, payload, timeout, peer_pid,
+                                   peer_pidfd, cancelled)
+            except Exception as exc:
+                self._record_test_diagnostic("start-deny", exc)
+                raise
         if operation == "process.inspect":
             try:
                 return self._inspect(profile, context, payload, timeout, cancelled)
             except Exception as exc:
-                if self._diagnostic_sink is not None:
-                    code = getattr(exc, "code", "internal")
-                    if not isinstance(code, str) or not re.fullmatch(r"[a-z0-9_.-]{1,64}", code):
-                        code = "internal"
-                    exception_type = type(exc).__name__
-                    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", exception_type):
-                        exception_type = "Exception"
-                    import traceback
-                    frame = traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
-                    line = frame.lineno if frame is not None else 0
-                    self._diagnostic_sink(("inspect-deny:" + code + ":" + exception_type
-                                           + ":line=" + str(line)).encode("ascii"))
+                self._record_test_diagnostic("inspect-deny", exc)
                 raise
         return self._control(profile, context, operation, payload, timeout, cancelled)
+
+    def _record_test_diagnostic(self, prefix: str, exc: Exception) -> None:
+        """Emit only bounded exception class/code/line into root-only test evidence."""
+        sink = self._diagnostic_sink
+        if sink is None:
+            return
+        code = getattr(exc, "code", "internal")
+        if not isinstance(code, str) or not re.fullmatch(r"[a-z0-9_.-]{1,64}", code):
+            code = "internal"
+        exception_type = type(exc).__name__
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", exception_type):
+            exception_type = "Exception"
+        import traceback
+        frame = traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
+        line = frame.lineno if frame is not None else 0
+        sink((prefix + ":" + code + ":" + exception_type + ":line=" + str(line)).encode("ascii"))
 
     @staticmethod
     def _json(payload: bytes) -> dict[str, Any]:
