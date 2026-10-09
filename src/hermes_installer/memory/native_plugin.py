@@ -125,8 +125,10 @@ class HermesMemoryProvider(MemoryProvider):
         grant = client.authorize_effect(context, capability="memory-capture", target=target, request_digest=hashlib.sha256(body).hexdigest())
         result = client.memory_enqueue(grant, target=target,
             request_digest=hashlib.sha256(body).hexdigest(), payload=body, timeout=0.5)
-        self._decode(result, "enqueue")
-        receipt = getattr(result, "receipt_id", None)
+        queued = self._decode(result, "enqueue")
+        # The transport receipt proves one broker effect; the response body
+        # receipt is the durable queue identity used by the result operation.
+        receipt = queued.get("receipt_id")
         if not isinstance(receipt, str) or not receipt:
             raise RuntimeError("durable memory queue returned no receipt")
         return receipt
@@ -171,8 +173,9 @@ class HermesMemoryProvider(MemoryProvider):
 
     def on_memory_write(self, action: str, target: str, content: str,
                         metadata: dict[str, Any] | None = None) -> None:
-        if action not in {"add", "replace", "remove"} or target not in {"memory", "user"}:
+        if action not in {"add", "replace"} or target not in {"memory", "user"}:
             return
+        action = "update" if action == "replace" else action
         safe_metadata = {key: str(value)[:256] for key, value in (metadata or {}).items()
                          if key in {"write_origin", "session_id", "tool_name"}}
         try:
