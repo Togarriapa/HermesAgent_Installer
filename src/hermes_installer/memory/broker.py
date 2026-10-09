@@ -65,7 +65,7 @@ class BrokerDenied(PermissionError):
 
 class ServiceIPC(Protocol):
     """Root-owned broker transport. No endpoint, method, path, or key from a worker."""
-    def request(self, *, service_id: str, provider: str, fixed_route: str,
+    def request(self, *, service_id: str, service_generation: int, provider: str, fixed_route: str,
                 payload: bytes, timeout: float,
                 cancelled: Callable[[], bool]) -> bytes: ...
 
@@ -104,12 +104,13 @@ class MemoryTarget:
     service_id: str
     source_revision: str
     service_generation: int
+    data_root_id: str
     dedicated_store: bool = True
 
     def __post_init__(self) -> None:
         if self.provider not in PROVIDERS or not all(
                 isinstance(x, str) and x and len(x) <= 256 for x in
-                (self.profile_id, self.namespace_id, self.service_id)):
+                (self.profile_id, self.namespace_id, self.service_id, self.data_root_id)):
             raise ValueError("invalid protected provider enrollment")
         if (len(self.source_revision) != 40 or
                 any(c not in "0123456789abcdef" for c in self.source_revision)):
@@ -434,7 +435,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
             route=ROUTES[target.provider].get(action)
             if route is None or ipc is None:
                 raise BrokerUnavailable("root-owned authenticated memory service connector is unavailable")
-            result=_result(ipc.request(service_id=target.service_id,provider=target.provider,
+            result=_result(ipc.request(service_id=target.service_id,service_generation=target.service_generation,provider=target.provider,
                 fixed_route=route,payload=canonical(request),timeout=timeout,cancelled=cancelled))
             result["profile_id"]=context.profile_id
             result["namespace_id"]=context.namespace_id
@@ -518,8 +519,13 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         # Enabling this requires a fresh protected policy decision and an
         # explicitly enrolled private-local route at every operation boundary.
         return False
+    service_ids = [target.service_id for target in targets.values()]
+    data_roots = [target.data_root_id for target in targets.values()]
+    if len(service_ids) != len(set(service_ids)) or len(data_roots) != len(set(data_roots)):
+        raise ValueError("memory services and data roots must be separately isolated per profile")
     return {
         "targets": targets,
+        "owner_ledger": ledger,
         "owner_state": owner_state,
         "queue": queue,
         "ipc": None,
