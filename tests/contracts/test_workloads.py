@@ -232,6 +232,22 @@ class WorkloadSchedulerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "does not connect"):
                 scheduler.execute(Workload("graphify-code-fixture"))
 
+    def test_scrapegraph_requires_installer_bound_source_before_launch(self):
+        calls = []
+        scheduler = WorkloadScheduler(
+            lambda invocation: calls.append(invocation),
+            frozenset({"component.scrapegraph-ai.read-fixture",
+                       "component.scrapegraph-ai.fixture-model"}),
+            runtime_roots={"scrapegraph-ai-python": "/owned/scrapegraph/bin/python"},
+            work_roots={"scrapegraph-ai": "/owned/work/scrapegraph-ai"},
+            memory_budget_mb=2048,
+        )
+        with self.assertRaisesRegex(RuntimeError, "source generation is not enrolled"):
+            scheduler.execute(Workload("scrapegraph-local-fixture"))
+        with self.assertRaisesRegex(ValueError, "fixed registered recipe"):
+            scheduler.execute(Workload("scrapegraph-local-fixture", {"source_root": "/tmp/source"}))
+        self.assertEqual([], calls)
+
 
 if __name__ == "__main__":
     unittest.main()

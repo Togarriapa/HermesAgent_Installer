@@ -130,7 +130,9 @@ def audit_skill_references(source_root: Path) -> SkillReferenceAudit:
     )
 
 
-def audit_skill_file_map(files: dict[str, bytes]) -> SkillReferenceAudit:
+def audit_skill_file_map(
+    files: dict[str, bytes], *, skill_files: tuple[str, ...] | None = None,
+) -> SkillReferenceAudit:
     """Audit a validated source archive in memory before it is staged."""
     paths = set(files)
     for name, body in files.items():
@@ -139,7 +141,14 @@ def audit_skill_file_map(files: dict[str, bytes]) -> SkillReferenceAudit:
             or relative.is_absolute() or not relative.parts or ".." in relative.parts
             or relative.as_posix() != name or "\\" in name):
             raise ValueError("source archive contains an unsafe path or non-byte file")
-    skills = tuple(sorted(name for name in paths if PurePosixPath(name).name == "SKILL.md"))
+    available_skills = {name for name in paths if PurePosixPath(name).name == "SKILL.md"}
+    if skill_files is None:
+        skills = tuple(sorted(available_skills))
+    else:
+        if (not skill_files or len(skill_files) != len(set(skill_files))
+                or any(name not in available_skills for name in skill_files)):
+            raise ValueError("selected skill files must name existing distinct SKILL.md paths")
+        skills = tuple(sorted(skill_files))
     pending = [(skill, skill) for skill in skills]
     checked: set[str] = set()
     resolved: set[str] = set()
