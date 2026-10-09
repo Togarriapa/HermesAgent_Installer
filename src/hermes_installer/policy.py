@@ -431,13 +431,16 @@ class Dispatcher:
                     if current_authorization.expires_at_monotonic <= self.clock():
                         raise PolicyDenied("authorization.expired", "Host authorization expired before provider dispatch")
                     reservation = self.ledger.reserve(estimate, self.policy.metered_budget_usd)
-                    timeout = min(self.policy.max_retry_after_seconds or remaining, remaining)
+                    authorization_remaining = current_authorization.expires_at_monotonic - self.clock()
+                    timeout = min(self.policy.max_retry_after_seconds or remaining, remaining, authorization_remaining)
                     if timeout <= 0:
                         self.ledger.release(reservation)
                         raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
                     try:
                         try:
-                            response = self.transport(route, model, normalized_payload, output_token_limit=output_token_limit, timeout=timeout, trace_id=context.trace_id, cancelled=context.cancelled)
+                            def dispatch_cancelled() -> bool:
+                                return context.cancelled() or self.clock() >= current_authorization.expires_at_monotonic
+                            response = self.transport(route, model, normalized_payload, output_token_limit=output_token_limit, timeout=timeout, trace_id=context.trace_id, cancelled=dispatch_cancelled)
                         except PolicyDenied:
                             self.ledger.settle(reservation)
                             raise
@@ -452,6 +455,8 @@ class Dispatcher:
                         self.ledger.settle(reservation, actual)
                         if context.cancelled():
                             raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider dispatch")
+                        if self.clock() >= current_authorization.expires_at_monotonic:
+                            raise PolicyDenied("authorization.expired", "Host authorization expired during provider dispatch")
                         if self.clock() >= deadline:
                             raise PolicyDenied("dispatch.deadline", "Request deadline elapsed during provider dispatch")
                     except BaseException:
