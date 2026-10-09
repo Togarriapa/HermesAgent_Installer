@@ -56,6 +56,14 @@ class PreflightContractTests(unittest.TestCase):
                     holder.terminate()
                     holder.join()
 
+    def test_lock_probe_reports_unknown_when_kernel_table_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "dpkg.lock"
+            path.touch()
+            errors = []
+            self.assertEqual(_held_package_locks((path,), errors, Path(temporary) / "missing"), ())
+            self.assertEqual(len(errors), 1)
+
     def test_disk_probe_reports_mount_filesystem_capacity_and_transport(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             mountpoint = Path(temporary) / "data"

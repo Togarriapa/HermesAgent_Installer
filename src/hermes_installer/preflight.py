@@ -348,30 +348,33 @@ def _tls_probe(timeout: float = 3.0) -> bool | None:
         return False
 
 
-def _held_package_locks(lock_paths: tuple[Path, ...] = (Path("/var/lib/dpkg/lock-frontend"), Path("/var/lib/dpkg/lock"), Path("/var/lib/apt/lists/lock"), Path("/var/lib/rpm/.rpm.lock")), errors: list[str] | None = None) -> tuple[str, ...]:
-    import fcntl
-
-    held: list[str] = []
+def _held_package_locks(lock_paths: tuple[Path, ...] = (Path("/var/lib/dpkg/lock-frontend"), Path("/var/lib/dpkg/lock"), Path("/var/lib/apt/lists/lock"), Path("/var/cache/apt/archives/lock"), Path("/var/lib/rpm/.rpm.lock")), errors: list[str] | None = None, proc_locks: Path = Path("/proc/locks")) -> tuple[str, ...]:
+    identities: dict[str, str] = {}
     for path in lock_paths:
-        if not path.exists():
-            continue
         try:
-            fd = os.open(path, os.O_RDWR | getattr(os, "O_CLOEXEC", 0))
+            info = path.stat()
+        except FileNotFoundError:
+            continue
         except OSError as exc:
-            # Existence is not evidence of contention; inability to inspect is a separate unknown.
             if errors is not None:
                 errors.append(f"{path}: {exc.strerror or type(exc).__name__}")
             continue
-        try:
-            try:
-                fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.lockf(fd, fcntl.LOCK_UN)
-            except BlockingIOError:
-                held.append(str(path))
-        finally:
-            os.close(fd)
-    return tuple(held)
-
+        key = f"{os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x}:{info.st_ino}"
+        identities[key] = str(path)
+    if not identities:
+        return ()
+    try:
+        lines = proc_locks.read_text(encoding="ascii").splitlines()
+    except OSError as exc:
+        if errors is not None:
+            errors.append(f"cannot inspect kernel lock table: {exc.strerror or type(exc).__name__}")
+        return ()
+    held: set[str] = set()
+    for line in lines:
+        fields = line.split()
+        if len(fields) >= 6 and fields[1] in {"POSIX", "FLOCK", "OFDLCK"} and fields[5] in identities:
+            held.add(identities[fields[5]])
+    return tuple(sorted(held))
 
 def _linux_release_supported(path: Path) -> bool:
     try:
