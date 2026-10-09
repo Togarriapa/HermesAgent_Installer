@@ -31,7 +31,7 @@ os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.dont_write_bytecode = True
 
 from providers import get_provider_profile
-from providers import LOCAL_PROVIDER_NAME
+LOCAL_PROVIDER_NAME = "hermes-installer-dispatch"
 profile = get_provider_profile(LOCAL_PROVIDER_NAME)
 if profile is None or profile.default_aux_model != model:
     raise SystemExit("managed Hermes provider profile was not discovered")

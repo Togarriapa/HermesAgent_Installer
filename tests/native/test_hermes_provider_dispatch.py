@@ -16,7 +16,7 @@ from pathlib import Path
 INSTALLER_SRC = Path(__file__).resolve().parents[2] / "src"
 sys.path.insert(0, str(INSTALLER_SRC))
 
-from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, default_public_route
+from hermes_installer.policy import BudgetLedger, DispatchPolicy, Dispatcher, ProviderResponse, Sensitivity, default_public_route
 from hermes_installer.provider_gateway import LocalProviderGateway, materialize_hermes_profile_config, materialize_hermes_provider_plugin
 from hermes_installer.state import OwnedRoot
 
@@ -69,7 +69,7 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
         data_path = Path(data_value).resolve(strict=True)
         marker = data_path / ".hermes-installer-owned"
         self.assertTrue(marker.is_file() and not marker.is_symlink())
-        self.assertEqual(marker.read_bytes(), b"schema=1\\n")
+        self.assertEqual(marker.read_bytes(), b"schema=1\n")
         self.assertEqual(data_path.stat().st_uid, os.geteuid())
         self.assertEqual(data_path.stat().st_mode & 0o077, 0)
         interpreter = Path(pm_python).resolve(strict=True)
@@ -101,7 +101,7 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
             )
             gateway = LocalProviderGateway(
                 dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-public",
-                sensitivity=__import__("hermes_installer.policy", fromlist=["Sensitivity"]).Sensitivity.PUBLIC,
+                sensitivity=Sensitivity.PUBLIC,
                 model=MODEL, port=int(plugin["port"]),
             )
             worker = Path(__file__).with_name("hermes_dispatch_worker.py")
@@ -135,7 +135,7 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 gateway.close()
                 marker_path = profile_home / ".hermes-installer-home-owned"
                 self.assertTrue(marker_path.is_file() and not marker_path.is_symlink())
-                self.assertEqual(marker_path.read_bytes(), b"hermes-installer-managed-home-v1\\n")
+                self.assertEqual(marker_path.read_bytes(), b"hermes-installer-managed-home-v1\n")
                 import shutil
                 shutil.rmtree(profile_home)
 
