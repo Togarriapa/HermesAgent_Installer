@@ -401,6 +401,16 @@
       "source_files": 739,
       "declarations": 692,
       "provenance": "Independent checked-in Resources bundle+pin fullsource proof, not Hermes archive receipt; no Resources network fetch or imported governance. Sol independently hashed archive bytes."
-    }
+    },
+    "closed_template_artifact": {
+      "artifact_id": "installer-bootstrap-compiler-template-v1",
+      "path": "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json",
+      "sha256": "27854f8f8c67ce42832f020dbfd96512607e39576b27e484598ff397cb9432e5",
+      "size_bytes": 4281,
+      "state": "reviewed planning/source template, not installed runnable artifact or fake executable attestation"
+    },
+    "closed_template_bindings": "Every leaf exact {root_binding:<enum>} resolved only from actual root-held trusted facts: principal.principal_id from selected verified authoritative principal binding; transaction.process_generation/namespace_identity root-issued currenttransaction; nss.service_uid/gid actualdedicatedexclusiveaccount; roots.home/work/data heldnofollow createdownedprivatechildren; pm.catalog_executable_path/executable_sha256/runtime_artifact_ids/package_runtime_records actual selected officialPM receipt+ArtifactCatalog currentresolvedimmutable runtime; native.child_artifact_refs actualpreparednative output receipt closure. No arbitrary binding expression/path/field interpolation, caller values or ambient defaults. Missingbinding leaves preparedemptyrecords. Namespace identity is observed issued namespace enrollment, not caller-generated token.",
+    "stage_executor": "RootPreparedHermesStageExecutor.run_selected_stage(setup_session_handle,prepared_receipt_handle)->tuple[RootRuntimeArtifactReceipt,...] root-private fixedstage operation/hermes-agent-stage:start independent activeworker; exact source/script/PM lock and current ownedstaging roots selected from closedtemplate+rootreceipts, uses official stage adapter checkpoint bounded600s, no callerargv/path/flags. Produces actual officialPM/native runtime artifacts and receipt verification before runnable activation. Health/task recipes are separate committed runnable profile operations; stage not forced into that later profile process.start target.",
+    "policy_rows": "Compiler renders existing exact bootstrap_policy_artifact document from these closed literal identity/root/profile/recipe shapes, full selected reviewed installed authoritybase schema plus actualprincipal binding and actual artifact/action selections. No invented static Authentik claims, secrets or permissive principal/allowance maps. Ordinaryeffects require actual selected authoritative principal proof; preparedsetup still proceeds from rootsession. Additional original components/profiles derive their existing reviewed finite templates and actual source/consent/account/runtime receipts, never omit original scope because one primaryprofile template exists."
   }
 }
