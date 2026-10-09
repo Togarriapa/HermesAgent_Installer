@@ -36,6 +36,10 @@ _MAX_FILE = 16 * 1024 * 1024
 _SEAL = object()
 
 
+def _expected_gid(uid: int) -> int:
+    return 0 if uid == 0 else os.getgid()
+
+
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -184,16 +188,19 @@ class PolicyPublicationReceiptResolver:
         publications = journal_root / "policy-publications"
         _verify_root_directory(publications, 0, create=False, mode=0o700)
         matches: list[dict[str, Any]] = []
+        record_count = 0
         dir_fd = os.open(publications, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
             with os.scandir(dir_fd) as entries:
                 for entry in entries:
-                    if len(matches) > 128:
+                    record_count += 1
+                    if record_count > 128:
                         raise BootstrapEnrollmentPending("policy publication journal exceeds its bounded record count")
                     if not entry.name.endswith(".json") or not _SHA.fullmatch(entry.name[:-5]):
                         raise BootstrapEnrollmentError("policy publication journal contains an unexpected entry")
                     info = entry.stat(follow_symlinks=False)
-                    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1:
+                    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                            or info.st_gid != 0 or info.st_nlink != 1):
                         raise BootstrapEnrollmentError("policy publication journal contains an unsafe entry")
                     record = _read_owned_json(publications / entry.name, 0,
                                               maximum=64 * 1024, required_mode=0o600)
@@ -278,7 +285,7 @@ def _read_generation_descriptor(receipt: RootSetupPublicationReceipt, uid: int
         raise BootstrapEnrollmentError("current policy generation cannot be opened safely") from None
     try:
         info = os.fstat(root_fd)
-        if (info.st_uid != uid or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o555
+        if (info.st_uid != uid or info.st_gid != _expected_gid(uid) or stat.S_IMODE(info.st_mode) != 0o555
                 or (info.st_dev, info.st_ino) != (receipt.generation_device, receipt.generation_inode)):
             raise BootstrapEnrollmentError("current policy generation custody differs from its selection")
         descriptor_bytes, descriptor_info = _readat(root_fd, "publication.json", uid, 0o444)
@@ -650,7 +657,7 @@ def _verify_generation(path: Path, publication_sha: str, descriptor: bytes,
         raise BootstrapEnrollmentError("existing policy generation is not a safe owned directory") from None
     try:
         info = os.fstat(fd)
-        if (info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o555
+        if (info.st_uid != uid or info.st_gid != _expected_gid(uid) or stat.S_IMODE(info.st_mode) != 0o555
                 or path.name != publication_sha):
             raise BootstrapEnrollmentError("existing policy generation identity or mode differs")
         for spec in files:
@@ -670,7 +677,8 @@ def _verify_generation(path: Path, publication_sha: str, descriptor: bytes,
                         if stat.S_ISLNK(info.st_mode):
                             raise BootstrapEnrollmentError("existing policy generation contains a symlink")
                         if stat.S_ISDIR(info.st_mode):
-                            if info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o555:
+                            if (info.st_uid != uid or info.st_gid != _expected_gid(uid)
+                                    or stat.S_IMODE(info.st_mode) != 0o555):
                                 raise BootstrapEnrollmentError("existing policy generation directory custody differs")
                             child_fd = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                                                dir_fd=directory_fd)
@@ -678,7 +686,8 @@ def _verify_generation(path: Path, publication_sha: str, descriptor: bytes,
                                 walk(child_fd, relative)
                             finally:
                                 os.close(child_fd)
-                        elif stat.S_ISREG(info.st_mode) and info.st_uid == uid and info.st_nlink == 1:
+                        elif (stat.S_ISREG(info.st_mode) and info.st_uid == uid
+                              and info.st_gid == _expected_gid(uid) and info.st_nlink == 1):
                             found.add(relative)
                         else:
                             raise BootstrapEnrollmentError("existing policy generation contains an unsafe entry")
@@ -725,7 +734,8 @@ def _atomic_replace(path: Path, data: bytes, uid: int, mode: int,
                 raise BootstrapEnrollmentPending("selection appeared during initial publication")
         elif (current is None or current.st_dev != compare_inode[0]
               or current.st_ino != compare_inode[1] or not stat.S_ISREG(current.st_mode)
-              or current.st_uid != uid or stat.S_IMODE(current.st_mode) != mode):
+              or current.st_uid != uid or current.st_gid != _expected_gid(uid)
+              or stat.S_IMODE(current.st_mode) != mode):
             raise BootstrapEnrollmentPending("selection inode changed during publication")
         if compare_inode is None:
             try:
@@ -782,7 +792,8 @@ def _write_at_fd(parent_fd: int, name: str, data: bytes, uid: int, mode: int,
     fd = os.open(name, flags, mode, dir_fd=parent_fd)
     try:
         info = os.fstat(fd)
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_nlink != 1):
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid
+                or info.st_gid != _expected_gid(uid) or info.st_nlink != 1):
             raise BootstrapEnrollmentError("publication target is not a single-link owned regular file")
         view = memoryview(data)
         while view:
@@ -813,6 +824,7 @@ def _readat(root_fd: int, relative: str, uid: int, mode: int) -> tuple[bytes, os
         try:
             info = os.fstat(fd)
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid
+                    or info.st_gid != _expected_gid(uid)
                     or stat.S_IMODE(info.st_mode) != mode or info.st_nlink != 1
                     or info.st_size > _MAX_FILE):
                 raise BootstrapEnrollmentError("published policy file custody is unsafe")
@@ -836,6 +848,7 @@ def _read_fixed(path: Path, uid: int, mode: int, maximum: int) -> tuple[bytes, o
         try:
             info = os.fstat(fd)
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid
+                    or info.st_gid != _expected_gid(uid)
                     or stat.S_IMODE(info.st_mode) != mode or info.st_nlink != 1
                     or info.st_size > maximum):
                 raise BootstrapEnrollmentError("root selection custody is unsafe")
@@ -868,6 +881,7 @@ def _open_owned_file(path: Path, flags: int, uid: int, mode: int) -> int:
         os.close(parent_fd)
     info = os.fstat(fd)
     if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid
+            or info.st_gid != _expected_gid(uid)
             or stat.S_IMODE(info.st_mode) != mode or info.st_nlink != 1):
         os.close(fd)
         raise BootstrapEnrollmentError("policy publication lock is not root owned")
@@ -880,7 +894,8 @@ def _mkdirat(parent_fd: int, name: str, mode: int, uid: int) -> None:
                  dir_fd=parent_fd)
     try:
         info = os.fstat(fd)
-        if info.st_uid != uid or stat.S_IMODE(info.st_mode) != mode:
+        if (info.st_uid != uid or info.st_gid != _expected_gid(uid)
+                or stat.S_IMODE(info.st_mode) != mode):
             raise BootstrapEnrollmentError("policy generation staging directory custody is unsafe")
         os.fsync(fd)
     finally:
@@ -899,7 +914,8 @@ def _verify_root_directory(path: Path, uid: int, *, create: bool, mode: int) -> 
         raise BootstrapEnrollmentError("required policy publication directory is unavailable") from None
     try:
         info = os.fstat(fd)
-        if (info.st_uid != uid or stat.S_IMODE(info.st_mode) != mode
+        if (info.st_uid != uid or info.st_gid != _expected_gid(uid)
+                or stat.S_IMODE(info.st_mode) != mode
                 or bool(stat.S_IMODE(info.st_mode) & 0o022)):
             raise BootstrapEnrollmentError("policy publication directory ownership or mode is unsafe")
     finally:
@@ -957,14 +973,16 @@ def _fsync_dir(path: Path) -> None:
 
 def _remove_tree_owned(path: Path, uid: int) -> None:
     info = os.stat(path, follow_symlinks=False)
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid:
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid
+            or info.st_gid != _expected_gid(uid)):
         raise BootstrapEnrollmentError("refusing to remove unowned publication staging path")
     os.chmod(path, 0o700)
     for child in path.iterdir():
         child_info = os.stat(child, follow_symlinks=False)
         if stat.S_ISDIR(child_info.st_mode):
             _remove_tree_owned(child, uid)
-        elif stat.S_ISREG(child_info.st_mode) and child_info.st_uid == uid:
+        elif (stat.S_ISREG(child_info.st_mode) and child_info.st_uid == uid
+              and child_info.st_gid == _expected_gid(uid)):
             os.chmod(child, 0o600)
             child.unlink()
         else:
