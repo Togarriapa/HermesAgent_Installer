@@ -272,7 +272,19 @@
           "audio_artifact_id": "owned bounded captured audio receipt",
           "mode": "general|home_control"
         },
-        "result": "bounded transcript and root source receipt; fixed mode maps to selected Whisper or Speech-to-Phrase; transcript/wakeword not action authority"
+        "result": "bounded transcript and root source receipt; fixed mode maps to selected Whisper or Speech-to-Phrase; transcript/wakeword not action authority",
+        "result_schema": {
+          "fields": [
+            "schema=1",
+            "transcript (string<=65536chars)",
+            "source_receipt_handle",
+            "profile_id",
+            "owner_generation",
+            "operation_id",
+            "expires_monotonic"
+          ],
+          "rule": "extra fields forbidden; root-observed service result/source receipt, no caller provenance; current peer/profile/generation bounded expiry"
+        }
       },
       "voice_speak": {
         "operation": "plugin.voice-pipeline.tts",
@@ -280,7 +292,25 @@
           "session_handle": "root enrolled active local output session",
           "text": "<=16384chars"
         },
-        "result": "owned bounded audio artifact receipt; no raw path/cloudfallback"
+        "result": "owned bounded audio artifact receipt; no raw path/cloudfallback",
+        "result_schema": {
+          "fields": [
+            "schema=1",
+            "audio_artifact"
+          ],
+          "audio_artifact_fields": [
+            "artifact_id",
+            "sha256",
+            "size_bytes",
+            "media_type",
+            "profile_id",
+            "owner_generation",
+            "operation_id",
+            "source_receipt_handle",
+            "expires_monotonic"
+          ],
+          "rule": "extra fields forbidden; no raw PCM/base64/path/URL/credential, separate bounded owned artifact reads"
+        }
       },
       "open_session": {
         "operation": "plugin.voice-pipeline.session",
