@@ -19,7 +19,7 @@ import subprocess
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -45,6 +45,17 @@ class ManagedProfileCustody:
     argv_recipe: tuple[str, ...] | None = None
     authority_socket: Path | None = None
     process_role_artifact_hashes: Mapping[str, str] | None = None
+    # Root-resolved enrollment identity and distinct private roots. These are
+    # never accepted from a worker request; the enrollment adapter supplies them.
+    enrollment_id: str | None = None
+    home_id: str | None = None
+    work_id: str | None = None
+    data_id: str | None = None
+    home_root: Path | None = None
+    work_root: Path | None = None
+    operation_targets: Mapping[str, str] | None = None
+    operation_recipes: Mapping[str, Mapping[str, Any]] | None = None
+    parameter_schemas: Mapping[str, Mapping[str, Any]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +133,9 @@ _ALLOWED_ENV = {
 
 
 def process_start_target(profile: ManagedProfileCustody) -> str:
+    enrolled = (profile.operation_targets or {}).get("process.start")
+    if enrolled is not None:
+        return enrolled
     return (f"hermes-profile-invoke:{profile.profile_id}:{profile.executable}:"
             f"{profile.artifact_sha256}:{profile.data_root}")
 
@@ -129,11 +143,17 @@ def process_start_target(profile: ManagedProfileCustody) -> str:
 def process_control_target(profile: ManagedProfileCustody, operation: str) -> str:
     if operation not in {"process.status", "process.read", "process.write", "process.stop"}:
         raise ValueError("process control operation is not fixed")
+    enrolled = (profile.operation_targets or {}).get(operation)
+    if enrolled is not None:
+        return enrolled
     verb = operation.removeprefix("process.")
     return f"hermes-profile-control:{profile.profile_id}:{profile.data_root}:{verb}"
 
 
 def process_inspect_target(profile: ManagedProfileCustody) -> str:
+    enrolled = (profile.operation_targets or {}).get("process.inspect")
+    if enrolled is not None:
+        return enrolled
     return f"{profile.profile_id}:inspect"
 
 
@@ -141,6 +161,134 @@ def _code_interpreter(name: str) -> bool:
     normalized = name.casefold()
     return (normalized in {"bash", "sh", "dash", "zsh", "node", "ruby", "perl"}
             or normalized.startswith("python"))
+
+
+_OPERATION_RECIPE_FIELDS = {
+    "executable_artifact_id", "executable_sha256", "argv_recipe", "cwd_root_id",
+    "cwd_subpath", "environment", "child_artifact_refs", "max_lifetime_seconds",
+    "max_output_bytes", "stdin_mode", "parameter_schema_id",
+}
+_PARAMETER_FIELD_FIELDS = {
+    "name", "type", "required", "enum", "max_length", "minimum", "maximum",
+}
+
+
+def _validate_service_root(path: Path, *, uid: int, gid: int) -> Path:
+    if not path.is_absolute():
+        raise ValueError("service roots must be absolute")
+    resolved = path.resolve(strict=True)
+    if resolved != path:
+        raise ValueError("service roots must be canonical")
+    info = path.lstat()
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != uid or info.st_gid != gid or stat.S_IMODE(info.st_mode) != 0o700):
+        raise ValueError("service roots must be private 0700 directories")
+    parent = path.parent
+    while parent != Path(parent.anchor):
+        ancestor = parent.lstat()
+        if stat.S_ISLNK(ancestor.st_mode) or ancestor.st_uid != 0 or ancestor.st_mode & 0o022:
+            raise ValueError("service root ancestors must be root protected")
+        parent = parent.parent
+    return resolved
+
+
+def _validate_operation_enrollment(profile: ManagedProfileCustody) -> None:
+    targets = profile.operation_targets
+    recipes = profile.operation_recipes
+    schemas = profile.parameter_schemas
+    roots = (profile.enrollment_id, profile.home_id, profile.work_id, profile.data_id,
+             profile.home_root, profile.work_root)
+    if not any(value is not None for value in roots + (targets, recipes, schemas)):
+        return  # Legacy root fixture; production enrollment uses selection-only recipes.
+    if (not isinstance(profile.enrollment_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", profile.enrollment_id)
+            or any(not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value)
+                   for value in (profile.home_id, profile.work_id, profile.data_id))
+            or len({profile.home_id, profile.work_id, profile.data_id}) != 3
+            or profile.home_root is None or profile.work_root is None
+            or not isinstance(targets, Mapping) or not isinstance(recipes, Mapping)
+            or not isinstance(schemas, Mapping) or not recipes):
+        raise ValueError("opaque operation enrollment or owned roots are incomplete")
+    _validate_service_root(profile.home_root, uid=profile.owner_uid, gid=profile.owner_gid)
+    _validate_service_root(profile.work_root, uid=profile.owner_uid, gid=profile.owner_gid)
+    _validate_service_root(profile.data_root, uid=profile.owner_uid, gid=profile.owner_gid)
+    if len(recipes) > 128 or len(schemas) > 128:
+        raise ValueError("operation enrollment exceeds its fixed count")
+    for operation, target in targets.items():
+        if (not isinstance(operation, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{1,63}", operation)
+                or not isinstance(target, str) or not re.fullmatch(r"[A-Za-z0-9_.:@/-]{1,256}", target)):
+            raise ValueError("protected operation target is malformed")
+    if "process.start" not in targets:
+        raise ValueError("selection-only launch target is not enrolled")
+    for recipe_id, raw in recipes.items():
+        if (not isinstance(recipe_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", recipe_id)
+                or not isinstance(raw, Mapping) or set(raw) != _OPERATION_RECIPE_FIELDS):
+            raise ValueError("protected operation recipe fields are invalid")
+        if (not isinstance(raw["executable_artifact_id"], str)
+                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", raw["executable_artifact_id"])
+                or not isinstance(raw["executable_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", raw["executable_sha256"])):
+            raise ValueError("operation executable binding is malformed")
+        if raw["cwd_root_id"] not in {profile.home_id, profile.work_id, profile.data_id}:
+            raise ValueError("operation working root is outside enrollment")
+        subpath = raw["cwd_subpath"]
+        if (not isinstance(subpath, str) or len(subpath) > 512 or "\\" in subpath
+                or "\x00" in subpath or Path(subpath).is_absolute()
+                or subpath not in {"", "."} and any(part in {"", ".", ".."} for part in Path(subpath).parts)):
+            raise ValueError("operation working subpath is invalid")
+        if (not isinstance(raw["argv_recipe"], (tuple, list)) or not raw["argv_recipe"]
+                or len(raw["argv_recipe"]) > 128):
+            raise ValueError("operation argv recipe is invalid")
+        for token in raw["argv_recipe"]:
+            if (not isinstance(token, Mapping) or len(token) != 1
+                    or set(token) not in ({"literal"}, {"parameter"})):
+                raise ValueError("argv recipe tokens must be one literal or one parameter")
+            key = "literal" if "literal" in token else "parameter"
+            if not isinstance(token[key], str) or not token[key] or len(token[key]) > 4096 or "\x00" in token[key]:
+                raise ValueError("argv recipe token is malformed")
+        if not isinstance(raw["environment"], Mapping) or not isinstance(raw["child_artifact_refs"], Mapping):
+            raise ValueError("operation environment or child artifact mapping is malformed")
+        if (len(raw["child_artifact_refs"]) > 32 or any(
+                not isinstance(artifact_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", artifact_id)
+                or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                for artifact_id, digest in raw["child_artifact_refs"].items())):
+            raise ValueError("operation child artifact references are invalid")
+        if (type(raw["max_lifetime_seconds"]) is not int
+                or not 1 <= raw["max_lifetime_seconds"] <= min(profile.max_lifetime_seconds, 600)
+                or type(raw["max_output_bytes"]) is not int
+                or not 1 <= raw["max_output_bytes"] <= 4 * 1024 * 1024
+                or raw["stdin_mode"] not in {"closed", "bounded-typed-bytes"}
+                or not isinstance(raw["parameter_schema_id"], str)
+                or raw["parameter_schema_id"] not in schemas):
+            raise ValueError("operation recipe limits or parameter schema are invalid")
+    for schema_id, schema in schemas.items():
+        if (not isinstance(schema_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", schema_id)
+                or not isinstance(schema, Mapping) or set(schema) != {"id", "fields"}
+                or schema.get("id") != schema_id or not isinstance(schema.get("fields"), (tuple, list))):
+            raise ValueError("protected parameter schema is malformed")
+        names = set()
+        for field in schema["fields"]:
+            if not isinstance(field, Mapping) or set(field) != _PARAMETER_FIELD_FIELDS:
+                raise ValueError("parameter field definition is malformed")
+            name = field["name"]
+            if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name)
+                    or name in names or field["type"] not in {"string", "integer", "boolean"}
+                    or type(field["required"]) is not bool):
+                raise ValueError("parameter field name or type is invalid")
+            names.add(name)
+            enum = field["enum"]
+            if enum is not None and (not isinstance(enum, (tuple, list)) or len(enum) > 256
+                                     or any(not isinstance(item, (str, int, bool)) for item in enum)):
+                raise ValueError("parameter enum is invalid")
+            if field["type"] == "string":
+                if (type(field["max_length"]) is not int or not 1 <= field["max_length"] <= 4096
+                        or not isinstance(enum, (tuple, list)) or not enum
+                        or field["minimum"] is not None or field["maximum"] is not None):
+                    raise ValueError("string parameter bounds are invalid")
+            elif (field["max_length"] is not None or type(field["minimum"]) is not int
+                  or type(field["maximum"]) is not int or field["minimum"] > field["maximum"]):
+                raise ValueError("numeric parameter bounds are invalid")
 
 
 def _argv_matches_recipe(profile: ManagedProfileCustody, argv: list[str],
@@ -151,10 +299,14 @@ def _argv_matches_recipe(profile: ManagedProfileCustody, argv: list[str],
         return False
     code_interpreter = _code_interpreter(profile.executable.name)
     if code_interpreter:
-        # A profile may run only an immutable, catalog-enrolled script. Never accept
-        # -c/-e, inline code, caller paths, or interpreter override flags.
-        return (len(recipe) == 2 and recipe[1] == "{child_artifact}" and len(children) > 0
-                and len(argv) == 2 and argv[1] in children)
+        # A profile may run only an immutable, catalog-enrolled script. The script
+        # must be the first operand; -c/-e, interpreter flags before it, and
+        # unpinned script paths are never accepted. Following arguments are still
+        # exact root-recipe tokens (for example an enrolled installer stage).
+        return (len(argv) >= 2 and bool(children) and argv[1] in children
+                and recipe[1] == "{child_artifact}"
+                and all(expected == "{child_artifact}" and actual in children or expected == actual
+                        for expected, actual in zip(recipe[1:], argv[1:])))
     if any(arg.startswith("artifact:") for arg in argv[1:]):
         return False
     # Application-specific options may be present only when the protected root
@@ -336,7 +488,8 @@ class ManagedProcessEffectHandler:
                 for store_id, digest in children.items()):
             raise ValueError("child artifact references are invalid")
         recipe = profile.argv_recipe
-        if (not isinstance(recipe, tuple) or not recipe or len(recipe) > 128
+        if not profile.operation_recipes and (
+                not isinstance(recipe, tuple) or not recipe or len(recipe) > 128
                 or recipe[0] != str(exe)
                 or any(not isinstance(arg, str) or "\x00" in arg or len(arg) > 4096
                        for arg in recipe)
@@ -351,7 +504,7 @@ class ManagedProcessEffectHandler:
         registered_digests = {profile.artifact_sha256, *children.values()}
         if any(digest not in registered_digests for digest in role_pins):
             raise ValueError("process inspection roles must reference enrolled executable artifacts")
-        if _code_interpreter(exe.name) and recipe != (str(exe), "{child_artifact}"):
+        if not profile.operation_recipes and _code_interpreter(exe.name) and recipe != (str(exe), "{child_artifact}"):
             raise ValueError("code interpreters require one immutable child-artifact operand")
         sock = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
         if sock != Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock"):
@@ -360,7 +513,12 @@ class ManagedProcessEffectHandler:
                 or type(profile.max_lifetime_seconds) is not int
                 or not 0 < profile.max_lifetime_seconds <= 600):
             raise ValueError("profile generation or maximum lifetime is invalid")
-        for path in (profile.executable, profile.artifact_root, profile.data_root, sock):
+        protected_paths = [profile.executable, profile.artifact_root, profile.data_root, sock]
+        if profile.home_root is not None:
+            protected_paths.append(profile.home_root)
+        if profile.work_root is not None:
+            protected_paths.append(profile.work_root)
+        for path in protected_paths:
             if any(char.isspace() for char in str(path)) or ":" in str(path):
                 raise ValueError("protected process paths cannot contain systemd property delimiters")
         for value, lower, upper, label in (
@@ -370,6 +528,7 @@ class ManagedProcessEffectHandler:
         ):
             if value is not None and (type(value) is not int or not lower <= value <= upper):
                 raise ValueError(f"profile {label} limit is invalid")
+        _validate_operation_enrollment(profile)
 
     def handlers(self) -> Mapping[tuple[str, str], Callable[..., Mapping[str, Any]]]:
         result = {}
@@ -440,22 +599,187 @@ class ManagedProcessEffectHandler:
                 raise AuthorityDenied("process.generation", "a managed process is already active for this profile")
             self._starting.add(profile.profile_id)
         try:
+            if profile.operation_recipes:
+                return self.start_selected_operation(
+                    profile, context, authorization, payload, timeout=timeout,
+                    peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
+                )
             return self._start_reserved(profile, context, authorization, payload, timeout,
                                         peer_pid, peer_pidfd, cancelled)
         finally:
             with self._lock:
                 self._starting.discard(profile.profile_id)
 
+    def start_selected_operation(self, profile: ManagedProfileCustody, context: HostContext,
+                                 authorization: EffectAuthorization, payload: bytes, *,
+                                 timeout: float, peer_pid: int, peer_pidfd: int | None,
+                                 cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Resolve a selection-only worker request to one immutable root recipe.
+
+        This method is called only after dispatch has checked the consumed
+        process.start grant against these exact selection bytes. No path, argv,
+        executable, environment, PID, namespace, or socket comes from the peer.
+        """
+        request = self._json(payload)
+        if (set(request) != {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
+                or type(request.get("schema")) is not int or request["schema"] != 1
+                or request.get("enrollment_id") != profile.enrollment_id
+                or request.get("generation") != profile.generation):
+            raise AuthorityDenied("process.selection", "operation selection is malformed or stale")
+        operation_id = request.get("operation_id")
+        recipes = profile.operation_recipes or {}
+        recipe = recipes.get(operation_id) if isinstance(operation_id, str) else None
+        if not isinstance(recipe, Mapping):
+            raise AuthorityDenied("process.recipe", "operation recipe is not enrolled for this generation")
+        if not isinstance(profile.operation_targets, Mapping) or not profile.operation_targets.get("process.start"):
+            raise AuthorityDenied("process.target", "operation launch target is not enrolled")
+        parameters = request.get("parameters")
+        if not isinstance(parameters, dict):
+            raise AuthorityDenied("process.parameters", "operation parameters must be a bounded object")
+        schema_id = recipe["parameter_schema_id"]
+        schema = (profile.parameter_schemas or {}).get(schema_id)
+        if not isinstance(schema, Mapping):
+            raise AuthorityDenied("process.parameters", "operation parameter schema is unavailable")
+        normalized = self._validate_operation_parameters(parameters, schema)
+
+        if cancelled() or self.monotonic() >= authorization.monotonic_expires_at:
+            raise AuthorityDenied("process.start_expired", "operation grant expired before recipe resolution")
+        executable_id = recipe["executable_artifact_id"]
+        executable_digest = recipe["executable_sha256"]
+        executable_ref = (executable_id if executable_id.startswith("artifact:")
+                          else f"artifact:{executable_id}:{executable_digest}")
+        executable = self._resolve_enrolled_artifact(executable_ref, executable_digest, executable=True)
+        children: dict[str, str] = {}
+        child_refs_by_id: dict[str, str] = {}
+        for artifact_id, digest in recipe["child_artifact_refs"].items():
+            ref = artifact_id if artifact_id.startswith("artifact:") else f"artifact:{artifact_id}:{digest}"
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise AuthorityDenied("process.recipe", "child artifact digest is malformed")
+            children[ref] = digest
+            child_refs_by_id[artifact_id] = ref
+        executable_tokens = [str(executable)]
+        for item in recipe["argv_recipe"]:
+            if "literal" in item:
+                token = item["literal"]
+                token = child_refs_by_id.get(token, token)
+            else:
+                parameter_name = item["parameter"]
+                if parameter_name not in normalized:
+                    raise AuthorityDenied("process.parameters", "argv recipe references an absent optional parameter")
+                value = normalized[parameter_name]
+                token = ("true" if value else "false") if type(value) is bool else str(value)
+            if not isinstance(token, str) or "\x00" in token or len(token) > 4096:
+                raise AuthorityDenied("process.argv", "resolved operation argument exceeds its bound")
+            executable_tokens.append(token)
+        if any(any(secret in item.casefold() for secret in ("--token", "--secret", "--password", "--api-key", "--credential"))
+               for item in executable_tokens[1:]):
+            raise AuthorityDenied("process.secret", "credential-bearing argv is forbidden")
+        environment = dict(recipe["environment"])
+        if (len(environment) > 32 or any(key not in _ALLOWED_ENV for key in environment)
+                or any(not isinstance(value, str) or "\x00" in value or "\n" in value or "\r" in value
+                       or len(value) > 1024 for value in environment.values())
+                or environment.get("HOME") != "/hermes" or environment.get("HERMES_HOME") != "/hermes"):
+            raise AuthorityDenied("process.environment", "enrolled operation environment is invalid")
+        cwd_root_id = recipe["cwd_root_id"]
+        root_by_id = {profile.home_id: profile.home_root, profile.work_id: profile.work_root,
+                      profile.data_id: profile.data_root}
+        root_path = root_by_id.get(cwd_root_id)
+        if root_path is None:
+            raise AuthorityDenied("process.cwd", "operation working root is not enrolled")
+        relative = recipe["cwd_subpath"]
+        cwd = root_path if relative in {"", "."} else root_path / relative
+        try:
+            resolved_cwd = cwd.resolve(strict=True)
+            if not resolved_cwd.is_dir() or not resolved_cwd.is_relative_to(root_path):
+                raise ValueError("working directory escapes enrolled root")
+            cursor = root_path
+            for part in Path(relative).parts if relative not in {"", "."} else ():
+                cursor /= part
+                if stat.S_ISLNK(cursor.lstat().st_mode):
+                    raise ValueError("working directory traverses a symlink")
+        except (OSError, ValueError):
+            raise AuthorityDenied("process.cwd", "operation working directory is unavailable") from None
+        recipe_argv = tuple([str(executable), *(
+            "{child_artifact}" if token in children else token for token in executable_tokens[1:]
+        )])
+        derived = replace(profile, executable=executable, artifact_sha256=executable_digest,
+                          child_artifact_refs=children, argv_recipe=recipe_argv)
+        launch = {
+            "schema": 1, "target": process_start_target(derived),
+            "profile_id": profile.profile_id, "executable": str(executable),
+            "artifact_sha256": executable_digest, "artifact_root": str(profile.artifact_root),
+            "cwd": str(resolved_cwd), "data_root": str(profile.data_root),
+            "argv": executable_tokens, "env_allowlist": environment,
+            "child_artifact_refs": children,
+            "max_lifetime_seconds": recipe["max_lifetime_seconds"],
+            "max_output_bytes": recipe["max_output_bytes"],
+            "stdin_mode": "pipe" if recipe["stdin_mode"] == "bounded-typed-bytes" else "closed",
+        }
+        launch_bytes = json.dumps(launch, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+        return self._start_reserved(derived, context, authorization, launch_bytes, timeout,
+                                   peer_pid, peer_pidfd, cancelled, registered_profile=profile)
+
+    @staticmethod
+    def _validate_operation_parameters(parameters: Mapping[str, Any], schema: Mapping[str, Any]) -> dict[str, Any]:
+        fields = schema.get("fields")
+        if not isinstance(fields, (tuple, list)) or len(fields) > 128:
+            raise AuthorityDenied("process.parameters", "parameter schema fields are invalid")
+        definitions = {item.get("name"): item for item in fields if isinstance(item, Mapping)}
+        if len(definitions) != len(fields) or set(parameters) - set(definitions):
+            raise AuthorityDenied("process.parameters", "operation supplied unknown parameters")
+        result: dict[str, Any] = {}
+        for name, field in definitions.items():
+            if name not in parameters:
+                if field["required"]:
+                    raise AuthorityDenied("process.parameters", "required operation parameter is missing")
+                continue
+            value, kind = parameters[name], field["type"]
+            if kind == "string":
+                if (not isinstance(value, str) or not value or len(value) > field["max_length"]
+                        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+                        or any(char in value for char in "/\\:") or "://" in value):
+                    raise AuthorityDenied("process.parameters", "string parameter is not a bounded scalar")
+            elif kind == "integer":
+                if type(value) is not int or not field["minimum"] <= value <= field["maximum"]:
+                    raise AuthorityDenied("process.parameters", "integer parameter is outside its bounds")
+            elif kind == "boolean":
+                if type(value) is not bool:
+                    raise AuthorityDenied("process.parameters", "boolean parameter has the wrong type")
+            else:
+                raise AuthorityDenied("process.parameters", "parameter type is not supported")
+            enum = field["enum"]
+            if enum is not None and not any(type(value) is type(candidate) and value == candidate for candidate in enum):
+                raise AuthorityDenied("process.parameters", "operation parameter is outside its enrolled enum")
+            result[name] = value
+        return result
+
+    def _resolve_enrolled_artifact(self, store_id: str, digest: str, *, executable: bool = False) -> Path:
+        if not self.artifact_resolver:
+            raise AuthorityDenied("process.artifact", "root artifact resolver is unavailable")
+        try:
+            resolved = self.artifact_resolver(store_id, digest)
+            path = Path(getattr(resolved, "path", resolved))
+            if (path != path.resolve(strict=True) or _root_path(path, directory=False) != path
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != digest):
+                raise ValueError("artifact differs from catalog")
+            info = path.stat(follow_symlinks=False)
+            if executable and not info.st_mode & 0o111:
+                raise ValueError("artifact is not executable")
+            return path
+        except Exception:
+            raise AuthorityDenied("process.artifact", "root artifact resolver could not verify the enrolled artifact") from None
+
     def _start_reserved(self, profile: ManagedProfileCustody, context: HostContext,
                         authorization: EffectAuthorization, payload: bytes, timeout: float,
                         peer_pid: int, peer_pidfd: int | None,
-                        cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+                        cancelled: Callable[[], bool], *,
+                        registered_profile: ManagedProfileCustody | None = None) -> Mapping[str, Any]:
         launch_deadline = min(self.monotonic() + max(0.0, timeout),
                               authorization.monotonic_expires_at)
 
         def require_live_start(parent_fd: int | None = None) -> None:
             if (cancelled() or self.monotonic() >= launch_deadline
-                    or self.profiles.get(profile.profile_id) is not profile
+                    or self.profiles.get(profile.profile_id) is not (registered_profile or profile)
                     or (parent_fd is not None and _pidfd_exited(parent_fd))):
                 raise AuthorityDenied("process.start_expired", "start grant, profile enrollment or caller expired before launch")
 
@@ -472,6 +796,11 @@ class ManagedProcessEffectHandler:
         }
         if any(request.get(key) != value for key, value in expected.items()):
             raise AuthorityDenied("process.binding", "launch envelope differs from protected profile registration")
+        executable_info = profile.executable.stat(follow_symlinks=False)
+        executable_identity = (executable_info.st_dev, executable_info.st_ino)
+        if (hashlib.sha256(profile.executable.read_bytes()).hexdigest() != profile.artifact_sha256
+                or not executable_info.st_mode & 0o111):
+            raise AuthorityDenied("process.executable", "pinned executable changed before launch preparation")
         registered_children = dict(profile.child_artifact_refs or {})
         supplied_children = request.get("child_artifact_refs")
         if not isinstance(supplied_children, dict) or supplied_children != registered_children:
@@ -530,9 +859,15 @@ class ManagedProcessEffectHandler:
             if value is not None and not (value == "/hermes" or value.startswith("/hermes/")):
                 raise AuthorityDenied("process.environment", "profile writable path escapes its private mount")
         cwd = Path(request["cwd"]).resolve(strict=True)
-        root = profile.data_root.resolve(strict=True)
-        if not cwd.is_relative_to(root):
-            raise AuthorityDenied("process.cwd", "working directory is outside the private profile")
+        roots = [(profile.data_root.resolve(strict=True), f"/hermes/profiles/{profile.profile_id}")]
+        if profile.home_root is not None:
+            roots.append((profile.home_root.resolve(strict=True), "/hermes"))
+        if profile.work_root is not None:
+            roots.append((profile.work_root.resolve(strict=True), "/workspace"))
+        cwd_binding = next(((root, target) for root, target in roots if cwd.is_relative_to(root)), None)
+        if cwd_binding is None:
+            raise AuthorityDenied("process.cwd", "working directory is outside the enrolled private roots")
+        cwd_root, cwd_target = cwd_binding
         lifetime, output_cap = request["max_lifetime_seconds"], request["max_output_bytes"]
         if (isinstance(lifetime, bool) or not isinstance(lifetime, (int, float))
                 or not 0 < lifetime <= min(profile.max_lifetime_seconds, 600)
@@ -553,8 +888,8 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.child", "selected child artifact is not in the root catalog")
         unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
         mount = f"/hermes/profiles/{profile.profile_id}"
-        rel = cwd.relative_to(root).as_posix()
-        target_cwd = mount if rel == "." else f"{mount}/{rel}"
+        rel = cwd.relative_to(cwd_root).as_posix()
+        target_cwd = cwd_target if rel == "." else f"{cwd_target}/{rel}"
         properties = [
             "--property=Type=exec", f"--property=RuntimeMaxSec={float(lifetime)}s",
             "--property=KillMode=control-group", f"--property=Description=HermesInstaller {profile.profile_id} {profile.generation}",
@@ -571,8 +906,13 @@ class ManagedProcessEffectHandler:
             # exist yet; systemd's `-` prefix skips only that absent path.
             # Once enrolled/installed, the same path is still masked.
             "--property=InaccessiblePaths=/etc/hermes-installer -/var/lib/hermes-installer /etc/ssh /etc/ssl/private",
-            f"--property=BindPaths={root}:{mount}",
         ]
+        bind_paths = [f"{profile.data_root}:{mount}"]
+        if profile.home_root is not None:
+            bind_paths.append(f"{profile.home_root}:/hermes")
+        if profile.work_root is not None:
+            bind_paths.append(f"{profile.work_root}:/workspace")
+        properties.append("--property=BindPaths=" + " ".join(bind_paths))
         authority_socket = profile.authority_socket or Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
         try:
             parent = authority_socket.parent.lstat()
@@ -666,6 +1006,21 @@ class ManagedProcessEffectHandler:
                 _remove_artifact_mount(artifact_mount_dir)
             raise
         try:
+            require_live_start(parent_fd)
+            current_executable = profile.executable.stat(follow_symlinks=False)
+            if ((current_executable.st_dev, current_executable.st_ino) != executable_identity
+                    or hashlib.sha256(profile.executable.read_bytes()).hexdigest() != profile.artifact_sha256):
+                raise AuthorityDenied("process.executable", "pinned executable changed before manager launch")
+            if selected_child_ref is not None:
+                current_child = artifact_path.stat(follow_symlinks=False)
+                expected_child_identity = next(
+                    item[1:] for item in child_artifact_identities
+                    if item[0] == selected_child_ref.rsplit(":", 1)[-1]
+                )
+                if ((current_child.st_dev, current_child.st_ino) != expected_child_identity
+                        or hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+                        != selected_child_ref.rsplit(":", 1)[-1]):
+                    raise AuthorityDenied("process.child", "pinned child artifact changed before manager launch")
             launcher = subprocess.Popen(command,
                 stdin=subprocess.PIPE if request["stdin_mode"] == "pipe" else subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -675,6 +1030,11 @@ class ManagedProcessEffectHandler:
             if artifact_mount_dir is not None:
                 _remove_artifact_mount(artifact_mount_dir)
             raise AuthorityDenied("process.launcher_start", "root process manager could not start the enrolled service") from None
+        except BaseException:
+            os.close(parent_fd)
+            if artifact_mount_dir is not None:
+                _remove_artifact_mount(artifact_mount_dir)
+            raise
         started = self.monotonic()
         deadline = min(launch_deadline, started + 10.0)
         child_fd = None
