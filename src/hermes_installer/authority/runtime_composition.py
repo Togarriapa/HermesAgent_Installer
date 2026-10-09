@@ -87,6 +87,13 @@ class RootAuthorityRuntime:
     def resolve_native_package(self, package_id: str, generation: str) -> Any:
         return self.bindings.resolve_native_package(package_id, generation)
 
+    def resolve_selected_native_principal(
+        self, profile_id: str, generation: str, service_generation_digest: str,
+    ) -> Any:
+        return self.bindings.resolve_selected_native_principal(
+            profile_id, generation, service_generation_digest,
+        )
+
     def resolve_device(self, enrollment_id: str, generation: str) -> Any:
         return self.bindings.resolve_device(enrollment_id, generation)
 
