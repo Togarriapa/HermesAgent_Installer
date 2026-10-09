@@ -659,30 +659,177 @@ class _PluginImplementation:
     description = ""
 
     def register(self, ctx: object, runtime_context: object) -> None:
-        identity = getattr(runtime_context, "identity", None)
-        if getattr(identity, "kind", None) != "plugins" or getattr(identity, "resource_id", None) != self.resource_id:
-            raise FinanceUnavailable("selected financial Plugin identity does not match its reviewed adapter")
-        service = getattr(runtime_context, self.service_attribute, None)
-        if service is None:
-            raise FinanceUnavailable(self.blocker)
+        _require_effect_runtime(runtime_context, self.resource_id)
         register = getattr(ctx, "register_tool", None)
         if not callable(register):
             raise FinanceUnavailable("native Hermes PluginContext.register_tool is unavailable")
         register(name=self.tool_name, toolset=self.resource_id.replace("-", "_"), schema=self.schema,
-                 handler=self.handler(service, runtime_context), requires_env=None, is_async=False,
+                 handler=self.handler(runtime_context), requires_env=None, is_async=False,
                  description=self.description)
 
     @property
     def blocker(self) -> str:
         return "selected protected financial runtime is unavailable; enroll its exact scoped root adapter before activation"
 
-    def handler(self, service: object, runtime_context: object):
+    def handler(self, runtime_context: object):
         raise NotImplementedError
+
+
+_CONFIRMATION_FIELD = "opaque_confirmation_attestation_id"
+_ATTESTATION = re.compile(r"^[A-Za-z0-9_-]{16,256}$")
+_DATA_ACTIONS: Mapping[tuple[DataProvider, DataOperation], str] = {
+    (provider, operation): f"{provider.value}.{operation.value}.read"
+    for provider, operations in _DATA_SCOPES.items() for operation in operations
+}
+_EXECUTION_OPERATIONS: Mapping[str, frozenset[str]] = {
+    "trading212": frozenset({"place-market-order", "place-limit-order", "place-stop-order", "place-stop-limit-order", "cancel-pending-order"}),
+    "pionex": frozenset({"place-order", "cancel-order"}),
+    "regulated-pisp": frozenset({"initiate-user-authorized-payment"}),
+    "ledger-wallet-api": frozenset({"sign-user-authorized-transaction", "sign-and-broadcast-user-authorized-transaction"}),
+}
+_EXECUTION_WRITE_ACTIONS = frozenset({
+    (provider, operation) for provider, operations in _EXECUTION_OPERATIONS.items() for operation in operations
+})
+_LIVE_OPERATIONS = frozenset({"construct", "simulate", "estimate-fee", "inspect", "sign", "broadcast"})
+_LIVE_READS = frozenset({"construct", "simulate", "estimate-fee", "inspect"})
+_SANDBOX_READS = frozenset({"read-balance", "simulate", "inspect-receipt"})
+_SANDBOX_OPERATIONS = frozenset({"create-account", "reset-account", *_SANDBOX_READS,
+    "sign-test-transaction", "send-test-asset", "deploy-test-contract", "reviewed-testnet-dapp"})
+
+
+def _require_effect_runtime(runtime: object, adapter_id: str) -> object:
+    identity = getattr(runtime, "identity", None)
+    if (getattr(identity, "kind", None) != "plugins"
+            or getattr(identity, "resource_id", None) != adapter_id
+            or getattr(identity, "version", "1.0.0") != "1.0.0"):
+        raise FinanceUnavailable("selected financial Plugin identity does not match the pinned adapter")
+    effects = getattr(runtime, "plugin_effects", None)
+    invoke = getattr(effects, "invoke", None)
+    if not callable(invoke):
+        raise FinanceUnavailable("root-selected financial effect broker is not enrolled")
+    return runtime
+
+
+def _idempotency_key(adapter_id: str, action_id: str, arguments: Mapping[str, object],
+                     attestation: str | None) -> str:
+    # Stable for the exact attempt, so a repeated invocation cannot become a
+    # second effect merely by obtaining a new invocation trace.
+    body = {"adapter": adapter_id, "action": action_id, "arguments": arguments,
+            "confirmation": attestation}
+    return hashlib.sha256(_canonical_json(body)).hexdigest()
+
+
+def _effect(runtime: object, *, adapter_id: str, action_id: str,
+            arguments: Mapping[str, object], write: bool,
+            attestation: str | None = None) -> dict[str, object]:
+    _require_effect_runtime(runtime, adapter_id)
+    if write:
+        if not isinstance(attestation, str) or not _ATTESTATION.fullmatch(attestation):
+            raise FinanceDenied("a fresh exact-payload user confirmation handle is required")
+    elif attestation is not None:
+        raise FinanceDenied("read-only operation cannot carry a confirmation handle")
+    key = _idempotency_key(adapter_id, action_id, arguments, attestation) if write else None
+    try:
+        response = runtime.plugin_effects.invoke(adapter_id=adapter_id, action_id=action_id,
+            arguments=dict(arguments), idempotency_key=key,
+            opaque_confirmation_attestation_id=attestation)
+    except Exception:
+        raise FinanceUnavailable("root financial effect failed; protected details were withheld") from None
+    value = _effect_envelope(response)
+    if value["state"] in {"ambiguous", "pending", "unavailable"}:
+        return {"operation_id": value["operation_id"], "state": value["state"],
+                "verification_status": value["verification_status"],
+                "resume_action_id": value["resume_action_id"]}
+    expected = "committed" if write else "read-complete"
+    if value["state"] != expected or (write and value["verification_status"] != "verified"):
+        raise FinanceUnavailable("root financial effect did not confirm the expected completion state")
+    result = value["result"]
+    if not isinstance(result, (dict, list, str, int, float, bool, type(None))):
+        raise FinanceUnavailable("root financial effect result has an unsupported shape")
+    clean = _sanitize_effect_result(result)
+    return clean if isinstance(clean, dict) else {"result": clean}
+
+
+_SENSITIVE_RESULT_KEYS = frozenset({"token", "secret", "credential", "authorization", "private_key",
+    "seed", "seed_phrase", "mnemonic", "signature", "signed_transaction", "raw_transaction",
+    "raw_response", "api_key", "access_token", "refresh_token", "account_id", "iban"})
+
+
+def _sanitize_effect_result(value: object, depth: int = 0) -> object:
+    if depth > 8:
+        raise FinanceUnavailable("root financial effect result is nested beyond its bound")
+    if isinstance(value, Mapping):
+        result: dict[str, object] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or any(term in key.casefold() for term in _SENSITIVE_RESULT_KEYS):
+                continue
+            result[key] = _sanitize_effect_result(item, depth + 1)
+        return result
+    if isinstance(value, list):
+        if len(value) > _MAX_ROWS:
+            raise FinanceUnavailable("root financial effect result exceeds its record bound")
+        return [_sanitize_effect_result(item, depth + 1) for item in value]
+    if isinstance(value, str):
+        if len(value.encode("utf-8")) > 16_384 or any(ord(char) < 32 for char in value):
+            raise FinanceUnavailable("root financial effect contains an unbounded text value")
+        return value
+    if isinstance(value, float) and not math.isfinite(value):
+        raise FinanceUnavailable("root financial effect contains a non-finite number")
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    raise FinanceUnavailable("root financial effect contains an unsupported value")
+
+
+def _effect_envelope(response: object) -> dict[str, object]:
+    if isinstance(response, Mapping):
+        value = dict(response)
+    else:
+        status, body = getattr(response, "status", None), getattr(response, "body", None)
+        if type(status) is not int or status != 200 or not isinstance(body, bytes) or len(body) > _MAX_REPLY_BYTES:
+            raise FinanceUnavailable("root financial effect returned an invalid or oversized response")
+        try:
+            value = json.loads(body)
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            raise FinanceUnavailable("root financial effect returned malformed JSON") from None
+    required = {"schema", "operation_id", "state", "result", "verification_status", "resume_action_id"}
+    if (not isinstance(value, dict) or set(value) != required or type(value.get("schema")) is not int
+            or value["schema"] != 1 or value["state"] not in {"committed", "read-complete", "pending", "ambiguous", "unavailable"}
+            or not isinstance(value["operation_id"], str) or len(value["operation_id"]) > 128
+            or not isinstance(value["verification_status"], str)
+            or value["resume_action_id"] is not None and not isinstance(value["resume_action_id"], str)):
+        raise FinanceUnavailable("root financial effect returned an unexpected operation envelope")
+    try:
+        encoded = _canonical_json(value)
+    except (TypeError, ValueError, OverflowError):
+        raise FinanceUnavailable("root financial effect returned non-JSON data") from None
+    if len(encoded) > _MAX_REPLY_BYTES:
+        raise FinanceUnavailable("root financial effect exceeded the bounded response size")
+    return value
+
+
+def _bounded_action(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping) or len(value) > 32:
+        raise FinanceDenied("financial action must be a bounded object")
+    try:
+        encoded = _canonical_json(dict(value))
+    except (TypeError, ValueError, OverflowError):
+        raise FinanceDenied("financial action contains non-JSON values") from None
+    if len(encoded) > 65_536:
+        raise FinanceDenied("financial action exceeds its request bound")
+    return dict(value)
+
+
+def _attested_args(args: Mapping[str, object], ordinary: frozenset[str]) -> tuple[dict[str, object], str]:
+    if set(args) != ordinary | {_CONFIRMATION_FIELD}:
+        raise FinanceDenied("write requires exactly one opaque confirmation attestation field")
+    attestation = args[_CONFIRMATION_FIELD]
+    if not isinstance(attestation, str) or not _ATTESTATION.fullmatch(attestation):
+        raise FinanceDenied("confirmation handle is malformed")
+    return {key: value for key, value in args.items() if key != _CONFIRMATION_FIELD}, attestation
 
 
 class FinancialDataHubImplementation(_PluginImplementation):
     resource_id = "financial-data-hub"
-    service_attribute = "financial_data"
     tool_name = "financial_data_read"
     schema = {"type": "object", "properties": {
         "provider": {"type": "string", "enum": [p.value for p in DataProvider]},
@@ -691,70 +838,124 @@ class FinancialDataHubImplementation(_PluginImplementation):
         "required": ["provider", "operation"], "additionalProperties": False}
     description = "Read observations only from an independently consented financial source."
 
-    def handler(self, service: object, runtime_context: object):
+    def handler(self, runtime_context: object):
         def read(args: object):
             if not isinstance(args, Mapping) or set(args) - {"provider", "operation", "filters"}:
                 raise FinanceDenied("financial read arguments contain unreviewed fields")
-            observations = service.read(DataProvider(args["provider"]), DataOperation(args["operation"]),
-                filters=args.get("filters", {}))
-            return {"observations": [asdict(item) for item in observations]}
+            try:
+                provider, operation = DataProvider(args["provider"]), DataOperation(args["operation"])
+            except (ValueError, TypeError):
+                raise FinanceDenied("provider or operation is outside the fixed read catalog") from None
+            action_id = _DATA_ACTIONS.get((provider, operation))
+            if action_id is None:
+                raise FinanceDenied("operation is outside this provider's pinned read-only scope")
+            filters = _bounded_filter(args.get("filters", {}))
+            result = _effect(runtime_context, adapter_id=self.resource_id, action_id=action_id,
+                             arguments={"provider": provider.value, "operation": operation.value,
+                                        "filters": filters}, write=False)
+            rows = _bounded_rows(result)
+            # Root enrollment fixes account identity. Only non-sensitive public
+            # alias data is accepted back from the protected broker.
+            alias = result.get("account_alias", "selected") if isinstance(result, Mapping) else "selected"
+            if not isinstance(alias, str) or not _ID.fullmatch(alias):
+                alias = "selected"
+            observed = _timestamp(datetime.now(timezone.utc))
+            return {"observations": [asdict(_normalize_observation(provider, operation, alias, row, observed))
+                                     for row in rows]}
         return read
 
 
 class FinancialExecutionGatewayImplementation(_PluginImplementation):
     resource_id = "financial-execution-gateway"
-    service_attribute = "financial_execution"
     tool_name = "financial_execute_one_order"
     schema = {"type": "object", "properties": {
-        "provider": {"type": "string", "enum": ["trading212", "pionex", "regulated-pisp", "ledger-wallet-api"]},
-        "account": {"type": "string", "maxLength": 128}, "operation": {"type": "string", "maxLength": 64},
-        "action": {"type": "object"}}, "required": ["provider", "account", "operation", "action"],
-        "additionalProperties": False}
+        "provider": {"type": "string", "enum": list(_EXECUTION_OPERATIONS)},
+        "operation": {"type": "string", "maxLength": 64}, "action": {"type": "object"},
+        _CONFIRMATION_FIELD: {"type": "string", "minLength": 16, "maxLength": 256}},
+        "required": ["provider", "operation", "action", _CONFIRMATION_FIELD], "additionalProperties": False}
     description = "Execute only the exact provider action covered by a fresh one-shot Hermes user confirmation."
 
-    def handler(self, service: object, runtime_context: object):
+    def handler(self, runtime_context: object):
         def execute(args: object):
-            if not isinstance(args, Mapping) or set(args) != {"provider", "account", "operation", "action"}:
+            if not isinstance(args, Mapping):
                 raise FinanceDenied("execution arguments must match the reviewed exact schema")
-            # Never accept a confirmation token from model/tool arguments.
-            return service.execute(provider=args["provider"], account=args["account"],
-                operation=args["operation"], action=args["action"],
-                invocation=_resolve_current_invocation(runtime_context))
+            base, confirmation = _attested_args(args, frozenset({"provider", "operation", "action"}))
+            provider, operation = base["provider"], base["operation"]
+            if not isinstance(provider, str) or not isinstance(operation, str) or operation not in _EXECUTION_OPERATIONS.get(provider, frozenset()):
+                raise FinanceDenied("provider operation is outside the fixed execution catalog")
+            action = _bounded_action(base["action"])
+            # The root resolves the account and recipient from enrollment, then
+            # binds and consumes this opaque confirmation against the final payload.
+            return _effect(runtime_context, adapter_id=self.resource_id,
+                action_id="plugin.financial-execution-gateway.execute",
+                arguments={"provider": provider, "operation": operation, "action": action},
+                write=True, attestation=confirmation)
         return execute
 
 
 class AgentLiveWalletImplementation(_PluginImplementation):
     resource_id = "agent-live-wallet"
-    service_attribute = "live_wallet"
     tool_name = "agent_live_wallet_action"
     schema = {"type": "object", "properties": {
         "network": {"type": "string", "maxLength": 128}, "operation": {"type": "string", "enum": ["construct", "simulate", "estimate-fee", "inspect", "sign", "broadcast"]},
-        "action": {"type": "object"}}, "required": ["network", "operation", "action"], "additionalProperties": False}
+        "action": {"type": "object"}, _CONFIRMATION_FIELD: {"type": "string", "minLength": 16, "maxLength": 256}},
+        "required": ["network", "operation", "action"], "additionalProperties": False}
     description = "Prepare and inspect an allowlisted live-wallet action; signing and broadcast require fresh user confirmation."
 
-    def handler(self, service: object, runtime_context: object):
+    def handler(self, runtime_context: object):
         def act(args: object):
-            if not isinstance(args, Mapping) or set(args) != {"network", "operation", "action"}:
+            if not isinstance(args, Mapping) or set(args) - {"network", "operation", "action", _CONFIRMATION_FIELD}:
                 raise FinanceDenied("live wallet arguments do not match the reviewed schema")
-            return service.act(network_name=args["network"], operation=args["operation"], action=args["action"], invocation=_resolve_current_invocation(runtime_context))
+            network, operation = args.get("network"), args.get("operation")
+            if not isinstance(network, str) or not _ID.fullmatch(network) or operation not in _LIVE_OPERATIONS:
+                raise FinanceDenied("live wallet network or operation is outside the fixed catalog")
+            write = operation not in _LIVE_READS
+            if write:
+                payload, confirmation = _attested_args(args, frozenset({"network", "operation", "action"}))
+            else:
+                if set(args) != {"network", "operation", "action"}:
+                    raise FinanceDenied("read-only wallet operation cannot carry a write confirmation")
+                payload, confirmation = dict(args), None
+            action = _bounded_action(payload["action"])
+            return _effect(runtime_context, adapter_id=self.resource_id,
+                action_id="plugin.agent-live-wallet.execute" if write else "plugin.agent-live-wallet.read",
+                arguments={"network": network, "operation": operation, "action": action},
+                write=write, attestation=confirmation)
         return act
 
 
 class AgentSandboxWalletImplementation(_PluginImplementation):
     resource_id = "agent-sandbox-wallet"
-    service_attribute = "sandbox_wallet"
     tool_name = "agent_sandbox_wallet_action"
     schema = {"type": "object", "properties": {
         "network": {"type": "string", "enum": ["ethereum-sepolia", "solana-devnet"]},
         "operation": {"type": "string", "enum": ["create-account", "reset-account", "read-balance", "simulate", "sign-test-transaction", "send-test-asset", "deploy-test-contract", "reviewed-testnet-dapp", "inspect-receipt"]},
-        "action": {"type": "object"}}, "required": ["network", "operation", "action"], "additionalProperties": False}
+        "action": {"type": "object"}, _CONFIRMATION_FIELD: {"type": "string", "minLength": 16, "maxLength": 256}},
+        "required": ["network", "operation", "action"], "additionalProperties": False}
     description = "Experiment with enrolled test accounts on Sepolia or Solana Devnet using test assets only."
 
-    def handler(self, service: object, runtime_context: object):
+    def handler(self, runtime_context: object):
         def act(args: object):
-            if not isinstance(args, Mapping) or set(args) != {"network", "operation", "action"}:
+            if not isinstance(args, Mapping) or set(args) - {"network", "operation", "action", _CONFIRMATION_FIELD}:
                 raise FinanceDenied("sandbox wallet arguments do not match the reviewed schema")
-            return service.act(network_name=args["network"], operation=args["operation"], action=args["action"])
+            network, operation = args.get("network"), args.get("operation")
+            if network not in {"ethereum-sepolia", "solana-devnet"} or operation not in _SANDBOX_OPERATIONS:
+                raise FinanceDenied("sandbox operation is outside Sepolia/Solana Devnet test catalog")
+            write = operation not in _SANDBOX_READS
+            if write:
+                payload, confirmation = _attested_args(args, frozenset({"network", "operation", "action"}))
+            else:
+                if set(args) != {"network", "operation", "action"}:
+                    raise FinanceDenied("read-only sandbox operation cannot carry a write confirmation")
+                payload, confirmation = dict(args), None
+            action = _bounded_action(payload["action"])
+            # Refuse mainnet bridges in the adapter as well as at the root.
+            if write and (action.get("test_asset") is not True or action.get("mainnet_bridge") is not False):
+                raise FinanceDenied("sandbox writes must identify a test asset and deny mainnet bridge")
+            return _effect(runtime_context, adapter_id=self.resource_id,
+                action_id="plugin.agent-sandbox-wallet.execute" if write else "plugin.agent-sandbox-wallet.read",
+                arguments={"network": network, "operation": operation, "action": action},
+                write=write, attestation=confirmation)
         return act
 
 

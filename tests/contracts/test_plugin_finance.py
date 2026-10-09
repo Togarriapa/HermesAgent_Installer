@@ -8,7 +8,8 @@ import hashlib
 import json
 
 from hermes_installer.components.plugin_finance import (
-    AgentWallet, DataOperation, DataProvider, FinancialDataHub,
+    AgentLiveWalletImplementation, AgentSandboxWalletImplementation, AgentWallet,
+    DataOperation, DataProvider, FinancialDataHub, FinancialDataHubImplementation,
     FinancialExecutionGateway, FinancialExecutionGatewayImplementation,
     FinanceDenied, FinanceUnavailable,
     NetworkClass, NetworkEnrollment,
@@ -113,15 +114,22 @@ class PluginContext:
 
 
 class PluginRuntime:
-    identity = type("Identity", (), {"kind": "plugins", "resource_id": "financial-execution-gateway"})()
+    def __init__(self, resource_id, effects=None):
+        self.identity = type("Identity", (), {"kind": "plugins", "resource_id": resource_id, "version": "1.0.0"})()
+        self.plugin_effects = effects
 
-    def __init__(self, service):
-        self.financial_execution = service
-        self.calls = 0
 
-    def current_invocation(self):
-        self.calls += 1
-        return type("Invocation", (), {"order_id": "order-" + str(self.calls)})()
+class EffectSpy:
+    def __init__(self, state="read-complete"):
+        self.calls = []
+        self.state = state
+
+    def invoke(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"schema": 1, "operation_id": "fixture-op", "state": self.state,
+                "result": {"items": [{"balance": "10", "access_token": "secret"}]},
+                "verification_status": "verified" if self.state == "committed" else "not-applicable",
+                "resume_action_id": None}
 
 
 class ExecutionSpy:
@@ -335,17 +343,81 @@ class PluginFinanceTests(unittest.TestCase):
             NetworkEnrollment("ethereum-sepolia", NetworkClass.TESTNET, 11155111,
                 "https://rpc.evil.invalid", frozenset({"TETH"}))
 
-    def test_native_tool_uses_fresh_runtime_invocation_and_has_no_confirmation_argument(self):
-        runtime = PluginRuntime(ExecutionSpy())
+    def test_native_finance_tools_call_only_root_selected_effect_boundary(self):
+        effects = EffectSpy()
+        runtime = PluginRuntime("financial-data-hub", effects)
+        context = PluginContext()
+        FinancialDataHubImplementation().register(context, runtime)
+        tool = context.tools["financial_data_read"]
+        result = tool["handler"]({"provider": "bank-aisp", "operation": "balances"})
+        self.assertEqual(effects.calls[0]["adapter_id"], "financial-data-hub")
+        self.assertEqual(effects.calls[0]["action_id"], "bank-aisp.balances.read")
+        self.assertNotIn("financial_data", vars(runtime))
+        self.assertNotIn("access_token", str(result))
+
+    def test_execution_requires_opaque_fresh_confirmation_and_root_dispatch(self):
+        effects = EffectSpy("committed")
+        runtime = PluginRuntime("financial-execution-gateway", effects)
         context = PluginContext()
         FinancialExecutionGatewayImplementation().register(context, runtime)
         tool = context.tools["financial_execute_one_order"]
-        self.assertNotIn("confirmation", tool["schema"]["properties"])
-        args = {"provider": "trading212", "account": "my-account", "operation": "x", "action": {}}
-        tool["handler"](args)
-        tool["handler"](args)
-        self.assertEqual(runtime.calls, 2)
-        self.assertEqual([item.order_id for item in runtime.financial_execution.invocations], ["order-1", "order-2"])
+        base = {"provider": "trading212", "operation": "place-market-order",
+                "action": {"instrument": "ACME", "side": "buy", "quantity": "1", "currency": "EUR"}}
+        with self.assertRaises(FinanceDenied):
+            tool["handler"](base | {"opaque_confirmation_attestation_id": "x"})
+        confirmation = "attestation_handle_123456"
+        result = tool["handler"](base | {"opaque_confirmation_attestation_id": confirmation})
+        call = effects.calls[0]
+        self.assertEqual(call["action_id"], "plugin.financial-execution-gateway.execute")
+        self.assertEqual(call["opaque_confirmation_attestation_id"], confirmation)
+        self.assertNotIn("account", call["arguments"])
+        self.assertNotIn("opaque_confirmation_attestation_id", call["arguments"])
+        self.assertEqual(call["idempotency_key"], hashlib.sha256(json.dumps({
+            "adapter": "financial-execution-gateway", "action": call["action_id"],
+            "arguments": call["arguments"], "confirmation": confirmation}, sort_keys=True,
+            separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest())
+        self.assertEqual(result["items"][0]["balance"], "10")
+        self.assertNotIn("access_token", str(result))
+
+    def test_wallet_tools_use_fixed_root_actions_and_sandbox_constraints(self):
+        live_effects = EffectSpy()
+        live_runtime = PluginRuntime("agent-live-wallet", live_effects)
+        live_context = PluginContext()
+        AgentLiveWalletImplementation().register(live_context, live_runtime)
+        live_tool = live_context.tools["agent_live_wallet_action"]
+        with self.assertRaises(FinanceDenied):
+            live_tool["handler"]({"network": "mainnet", "operation": "broadcast", "action": {}})
+        live_tool["handler"]({"network": "ethereum-mainnet", "operation": "inspect", "action": {}})
+        self.assertEqual(live_effects.calls[0]["action_id"], "plugin.agent-live-wallet.read")
+
+        sandbox_effects = EffectSpy("committed")
+        sandbox_runtime = PluginRuntime("agent-sandbox-wallet", sandbox_effects)
+        sandbox_context = PluginContext()
+        AgentSandboxWalletImplementation().register(sandbox_context, sandbox_runtime)
+        sandbox_tool = sandbox_context.tools["agent_sandbox_wallet_action"]
+        with self.assertRaises(FinanceDenied):
+            sandbox_tool["handler"]({"network": "ethereum-sepolia", "operation": "send-test-asset",
+                "action": {"test_asset": True, "mainnet_bridge": True},
+                "opaque_confirmation_attestation_id": "attestation_handle_123456"})
+        sandbox_tool["handler"]({"network": "ethereum-sepolia", "operation": "send-test-asset",
+            "action": {"test_asset": True, "mainnet_bridge": False},
+            "opaque_confirmation_attestation_id": "attestation_handle_123456"})
+        self.assertEqual(sandbox_effects.calls[0]["action_id"], "plugin.agent-sandbox-wallet.execute")
+
+    def test_unavailable_runtime_and_ambiguous_envelope_never_claim_success(self):
+        context = PluginContext()
+        with self.assertRaises(FinanceUnavailable):
+            FinancialDataHubImplementation().register(context, PluginRuntime("financial-data-hub"))
+        effects = EffectSpy("ambiguous")
+        runtime = PluginRuntime("financial-execution-gateway", effects)
+        execution_context = PluginContext()
+        FinancialExecutionGatewayImplementation().register(execution_context, runtime)
+        result = execution_context.tools["financial_execute_one_order"]["handler"]({
+            "provider": "trading212", "operation": "cancel-pending-order",
+            "action": {"provider_order_id": "ord-1"},
+            "opaque_confirmation_attestation_id": "attestation_handle_123456"})
+        self.assertEqual(result["state"], "ambiguous")
+        self.assertNotIn("accepted", result)
 
 
 if __name__ == "__main__":
