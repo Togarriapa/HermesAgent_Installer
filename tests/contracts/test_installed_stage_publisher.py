@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
 from hermes_installer.authority.installed_stage_publisher import (
-    _canonical, _publish_retained_build, _sha,
+    _canonical, _publish_retained_build, _recover_staging_journals, _sha,
 )
 
 
@@ -41,6 +41,7 @@ class Predecessor:
 class BuildReceipt:
     def __init__(self, path: Path, files: tuple[FileRow, ...], output_root: Path):
         self.candidate_git_sha = "a" * 40
+        self.receipt_handle = "receipt_handle_for_test_0123456789abcdef"
         self.files = files
         self.output_device = os.stat(output_root).st_dev
         self.closure_manifest_relative_path = "release-manifest.json"
@@ -156,6 +157,39 @@ class InstalledStagePublicationTests(unittest.TestCase):
                                             predecessor=predecessor)
             self.assertEqual(record_path.read_bytes(), raw)
             self.assertEqual(json.loads(record_path.read_bytes())["receipt_id"], "prior")
+
+    def test_interrupted_candidate_stage_is_recovered_for_same_build_receipt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, receipt, record_path, release, predecessor = self._fixture(temp)
+            with patch("hermes_installer.authority.installed_stage_publisher._rename_noreplace",
+                       side_effect=OSError("injected release rename failure")):
+                with self.assertRaises(OSError):
+                    _publish_retained_build(receipt=receipt, release_root=release,
+                                            receipt_path=record_path, expected_uid=os.getuid(),
+                                            predecessor=predecessor)
+            stage_journals = tuple((record_path.parent.parent / "releases").glob(".stage-*.journal.json"))
+            self.assertEqual(len(stage_journals), 1)
+            self.assertFalse(release.exists())
+            _publish_retained_build(receipt=receipt, release_root=release,
+                                    receipt_path=record_path, expected_uid=os.getuid(),
+                                    predecessor=predecessor)
+            self.assertTrue(release.is_dir())
+            self.assertTrue(record_path.is_file())
+            self.assertEqual(tuple((record_path.parent.parent / "releases").glob(".stage-*.journal.json")), ())
+
+    def test_recovery_refuses_matching_symlink_journal_and_preserves_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, receipt, record_path, release, _ = self._fixture(temp)
+            releases = release.parent
+            source = root / "important"
+            source.write_bytes(b"preserve")
+            prefix = f".stage-{receipt.candidate_git_sha}-{_sha(receipt.receipt_handle.encode())[:16]}-"
+            journal = releases / (prefix + "foreign.journal.json")
+            journal.symlink_to(source)
+            with self.assertRaises(BootstrapEnrollmentPending):
+                _recover_staging_journals(releases, receipt, _canonical({}), os.getuid())
+            self.assertTrue(journal.is_symlink())
+            self.assertEqual(source.read_bytes(), b"preserve")
 
 
 if __name__ == "__main__":

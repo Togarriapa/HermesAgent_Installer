@@ -10,6 +10,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import secrets
 import stat
 import sys
@@ -22,7 +23,7 @@ from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentP
 from .installer_release import (DEPLOYMENT_RECEIPT_PATH, RELEASE_STORE_ROOT,
                                 InstalledRootReleaseVerifier, MAX_FILES,
                                 MAX_FILE_BYTES, MAX_MANIFEST_BYTES, MAX_RECEIPT_BYTES,
-                                _artifact_id_for, _safe_relative)
+                                _artifact_id_for, _safe_relative, _unique_pairs)
 
 _RECEIPT_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:-"
 _MAX_RECORDS = 50_000
@@ -131,6 +132,7 @@ def _publish_retained_build(*, receipt: Any, release_root: Path, receipt_path: P
                                   expected_uid):
                 return
             raise
+        _recover_staging_journals(release_root.parent, receipt, manifest_bytes, expected_uid)
         _ensure_release(receipt, release_root, manifest_path, manifest_bytes, rows, expected_uid)
         receipt.verify_current()
         release_info = os.stat(release_root, follow_symlinks=False)
@@ -175,7 +177,9 @@ def _build_rows(receipt: Any) -> tuple[_ReleaseRow, ...]:
                 or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)
                 or type(size) is not int or not 0 <= size <= MAX_FILE_BYTES
                 or type(mode) is not int or mode & ~0o777 or mode & 0o022
-                or not isinstance(roles, tuple) or not roles or tuple(sorted(set(roles))) != roles
+                or not isinstance(roles, tuple) or not roles
+                or any(not isinstance(role, str) for role in roles)
+                or tuple(sorted(set(roles))) != roles
                 or any(role not in roles_allowed for role in roles)):
             raise BootstrapEnrollmentError("build receipt contains a malformed closure row")
         artifact_id = _artifact_id_for(path, list(roles))
@@ -207,8 +211,23 @@ def _ensure_release(receipt: Any, final: Path, manifest_path: str,
     if info is not None:
         _verify_existing_release(final, receipt, manifest_path, manifest_bytes, rows, uid)
         return
-    stage = final.parent / (".stage-" + receipt.candidate_git_sha + "-" + secrets.token_hex(12))
-    os.mkdir(stage, 0o700)
+    receipt_id = receipt.receipt_handle
+    if not isinstance(receipt_id, str) or not receipt_id or len(receipt_id) > 128:
+        raise BootstrapEnrollmentError("build receipt has no stable staging identity")
+    prefix = f".stage-{receipt.candidate_git_sha}-{_sha(receipt_id.encode())[:16]}-"
+    stage = final.parent / (prefix + secrets.token_hex(12))
+    journal = Path(str(stage) + ".journal.json")
+    journal_bytes = _canonical({"schema": 1, "candidate_git_sha": receipt.candidate_git_sha,
+                                "build_receipt_handle": receipt_id,
+                                "manifest_sha256": _sha(manifest_bytes),
+                                "stage_name": stage.name})
+    _atomic_create_file(journal, journal_bytes, uid, 0o600)
+    journal_info = os.stat(journal, follow_symlinks=False)
+    try:
+        os.mkdir(stage, 0o700)
+    except Exception:
+        _unlink_owned_file(journal, uid, (journal_info.st_dev, journal_info.st_ino))
+        raise
     try:
         root_fd = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
@@ -225,17 +244,66 @@ def _ensure_release(receipt: Any, final: Path, manifest_path: str,
         except FileExistsError:
             _verify_existing_release(final, receipt, manifest_path, manifest_bytes, rows, uid)
             _remove_owned_stage(stage, uid)
+            _unlink_owned_file(journal, uid, (journal_info.st_dev, journal_info.st_ino))
         else:
             _fsync_dir(final.parent)
             installed = os.stat(final, follow_symlinks=False)
             if (installed.st_dev, installed.st_ino) != (stage_info.st_dev, stage_info.st_ino):
                 raise BootstrapEnrollmentError("installed release identity changed during atomic rename")
+            _unlink_owned_file(journal, uid, (journal_info.st_dev, journal_info.st_ino))
     except Exception:
         try:
             _remove_owned_stage(stage, uid)
         except FileNotFoundError:
             pass
         raise
+
+
+def _recover_staging_journals(parent: Path, receipt: Any, manifest_bytes: bytes, uid: int) -> None:
+    """Remove only stages named by this same retained one-use build receipt."""
+    receipt_id = receipt.receipt_handle
+    prefix = f".stage-{receipt.candidate_git_sha}-{_sha(receipt_id.encode())[:16]}-"
+    parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        with os.scandir(os.dup(parent_fd)) as entries:
+            for entry in entries:
+                name = entry.name
+                if not name.startswith(prefix) or not name.endswith(".journal.json"):
+                    continue
+                info = entry.stat(follow_symlinks=False)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != _gid(uid)
+                        or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
+                    raise BootstrapEnrollmentPending("matching release staging journal has unsafe custody")
+                raw, _ = _read_record_bytes(parent_fd, name, uid, 4096)
+                try:
+                    journal = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+                except (UnicodeError, ValueError, json.JSONDecodeError):
+                    raise BootstrapEnrollmentPending("matching release staging journal is malformed") from None
+                if (not isinstance(journal, dict)
+                        or set(journal) != {"schema", "candidate_git_sha", "build_receipt_handle",
+                                            "manifest_sha256", "stage_name"}
+                        or journal.get("schema") != 1
+                        or journal.get("candidate_git_sha") != receipt.candidate_git_sha
+                        or journal.get("build_receipt_handle") != receipt_id
+                        or journal.get("manifest_sha256") != _sha(manifest_bytes)
+                        or not isinstance(journal.get("stage_name"), str)
+                        or not re.fullmatch(re.escape(prefix) + r"[0-9a-f]{24}", journal["stage_name"])
+                        or name != journal["stage_name"] + ".journal.json"):
+                    raise BootstrapEnrollmentPending("release staging journal differs from the retained build receipt")
+                stage = parent / journal["stage_name"]
+                try:
+                    stage_info = os.stat(stage, follow_symlinks=False)
+                except FileNotFoundError:
+                    stage_info = None
+                if stage_info is not None:
+                    if (not stat.S_ISDIR(stage_info.st_mode) or stage_info.st_uid != uid
+                            or stage_info.st_gid != _gid(uid) or stage_info.st_dev != info.st_dev):
+                        raise BootstrapEnrollmentPending("journaled release stage has foreign filesystem custody")
+                    _remove_owned_stage(stage, uid)
+                os.unlink(name, dir_fd=parent_fd)
+                os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
 
 
 def _copy_file(receipt: Any, root_fd: int, row: _ReleaseRow, uid: int) -> None:
@@ -356,7 +424,7 @@ def _verify_existing_release(final: Path, receipt: Any, manifest_path: str,
                     relative = f"{prefix}/{entry.name}" if prefix else entry.name
                     info = entry.stat(follow_symlinks=False)
                     if stat.S_ISDIR(info.st_mode):
-                        if (info.st_uid != uid or info.st_gid != _gid(uid)
+                        if (info.st_uid != uid or info.st_gid != _gid(uid) or info.st_dev != root.st_dev
                                 or stat.S_IMODE(info.st_mode) != 0o555):
                             raise BootstrapEnrollmentError("existing release directory custody differs")
                         child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
@@ -365,7 +433,9 @@ def _verify_existing_release(final: Path, receipt: Any, manifest_path: str,
                             walk(child, relative)
                         finally:
                             os.close(child)
-                    elif stat.S_ISREG(info.st_mode) and info.st_uid == uid and info.st_nlink == 1:
+                    elif (stat.S_ISREG(info.st_mode) and info.st_uid == uid
+                          and info.st_gid == _gid(uid) and info.st_dev == root.st_dev
+                          and info.st_nlink == 1):
                         expected_row = expected.get(relative)
                         if expected_row is None or stat.S_IMODE(info.st_mode) != expected_row[2] or info.st_size != expected_row[1]:
                             raise BootstrapEnrollmentError("existing release contains an unlisted or changed file")
@@ -445,6 +515,52 @@ def _read_record(path: Path, uid: int) -> tuple[bytes, os.stat_result]:
             return bytes(data), info
         finally:
             os.close(fd)
+    finally:
+        os.close(parent_fd)
+
+
+def _read_record_bytes(parent_fd: int, name: str, uid: int,
+                       maximum: int) -> tuple[bytes, os.stat_result]:
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != _gid(uid)
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                or info.st_size > maximum):
+            raise BootstrapEnrollmentPending("release staging journal file custody is unsafe")
+        data = bytearray()
+        while True:
+            block = os.read(fd, 4096)
+            if not block:
+                break
+            data.extend(block)
+            if len(data) > maximum:
+                raise BootstrapEnrollmentPending("release staging journal exceeds its size bound")
+        return bytes(data), info
+    finally:
+        os.close(fd)
+
+
+def _atomic_create_file(path: Path, data: bytes, uid: int, mode: int) -> None:
+    parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        _write_at(parent_fd, path.name, data, uid, mode)
+        os.fsync(parent_fd)
+    except FileExistsError:
+        raise BootstrapEnrollmentPending("release staging journal already exists") from None
+    finally:
+        os.close(parent_fd)
+
+
+def _unlink_owned_file(path: Path, uid: int, expected_identity: tuple[int, int]) -> None:
+    parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != _gid(uid)
+                or info.st_nlink != 1 or (info.st_dev, info.st_ino) != expected_identity):
+            raise BootstrapEnrollmentPending("release staging journal changed before cleanup")
+        os.unlink(path.name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
     finally:
         os.close(parent_fd)
 
@@ -556,19 +672,25 @@ def _hash_fd(fd: int) -> str:
 
 
 def _seal_tree(root_fd: int, uid: int) -> None:
+    root_device = os.fstat(root_fd).st_dev
     scan_fd = os.dup(root_fd)
     try:
         with os.scandir(scan_fd) as entries:
             for entry in entries:
                 info = entry.stat(follow_symlinks=False)
                 if stat.S_ISDIR(info.st_mode):
+                    if (info.st_uid != uid or info.st_gid != _gid(uid)
+                            or info.st_dev != root_device):
+                        raise BootstrapEnrollmentError("release staging directory custody is unsafe")
                     child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
                                     os.O_CLOEXEC, dir_fd=root_fd)
                     try:
                         _seal_tree(child, uid)
                     finally:
                         os.close(child)
-                elif stat.S_ISREG(info.st_mode) and info.st_uid == uid and info.st_nlink == 1:
+                elif (stat.S_ISREG(info.st_mode) and info.st_uid == uid
+                      and info.st_gid == _gid(uid) and info.st_dev == root_device
+                      and info.st_nlink == 1):
                     fd = os.open(entry.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=root_fd)
                     try:
                         os.fsync(fd)

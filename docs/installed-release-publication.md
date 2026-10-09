@@ -18,6 +18,12 @@ Its update is serialized by a root-owned lock and checks the sealed
 before compare-and-swap. The installed-release verifier validates the exact
 new tree before the pointer is made current.
 
+An fsynced sidecar journal binds any in-progress candidate directory to the
+same retained build receipt and manifest digest. A retry under the publication
+lock removes only a same-receipt owned stage, then restages from the held
+verified output. Stages or journals with different identities or unsafe
+custody remain untouched and make the retry fail closed.
+
 This publisher establishes installed release custody and stage-zero inputs.
 It does not establish account authentication, native setup completion,
 service health, target-platform qualification, or Pi acceptance. The policy
