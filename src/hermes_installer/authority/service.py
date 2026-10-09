@@ -925,7 +925,7 @@ class AuthorityService:
                         *, cancelled: Callable[[], bool],
                         peer_pidfd: int | None = None,
                         enforce_peer_identity: bool = True,
-                        reuse_source_receipts: bool = False) -> dict[str, Any]:
+                        source_receipt_ids_to_consume: frozenset[str] | None = None) -> dict[str, Any]:
         if not isinstance(payload, dict) or set(payload) != {"authorization", "operation", "payload", "timeout"}:
             raise AuthorityDenied("effect.request", "broker request fields are invalid")
         import base64
@@ -957,7 +957,7 @@ class AuthorityService:
         handler = self.handlers.get((rule.operation, rule.target))
         if handler is None:
             raise AuthorityDenied("effect.unavailable", "fixed effect handler is not installed")
-        self._consume(grant, consume_source_receipts=not reuse_source_receipts)
+        self._consume(grant, source_receipt_ids_to_consume=source_receipt_ids_to_consume)
         started = self.monotonic()
         remaining = min(timeout, grant.monotonic_expires_at - started)
         if remaining <= 0:
@@ -1083,7 +1083,8 @@ class AuthorityService:
             operation=grant.operation, native_process_identity=grant.native_process_identity,
         )
 
-    def _consume(self, grant: EffectAuthorization, *, consume_source_receipts: bool = True) -> None:
+    def _consume(self, grant: EffectAuthorization, *,
+                 source_receipt_ids_to_consume: frozenset[str] | None = None) -> None:
         with self._lock:
             now = self.monotonic()
             self._nonces = {nonce: expiry for nonce, expiry in self._nonces.items() if expiry > now}
@@ -1093,15 +1094,18 @@ class AuthorityService:
             }
             if grant.nonce in self._nonces:
                 raise AuthorityDenied("grant.replay", "effect grant was already consumed")
-            receipt_ids = {receipt.receipt_id for receipt in grant.source_receipts}
-            if consume_source_receipts and receipt_ids & self._source_receipts_consumed.keys():
+            grant_receipt_ids = {receipt.receipt_id for receipt in grant.source_receipts}
+            receipt_ids = (grant_receipt_ids if source_receipt_ids_to_consume is None
+                           else set(source_receipt_ids_to_consume))
+            if not receipt_ids.issubset(grant_receipt_ids):
+                raise AuthorityDenied("source.binding", "effect cannot consume unrelated source evidence")
+            if receipt_ids & self._source_receipts_consumed.keys():
                 raise AuthorityDenied("source.replay", "source receipt was already used by another effect")
-            if len(self._nonces) >= 100_000 or (consume_source_receipts
-                    and len(self._source_receipts_consumed) + len(receipt_ids) > 100_000):
+            if len(self._nonces) >= 100_000 or len(self._source_receipts_consumed) + len(receipt_ids) > 100_000:
                 raise AuthorityDenied("grant.capacity", "effect replay protection is at capacity")
             self._nonces[grant.nonce] = grant.monotonic_expires_at
-            if consume_source_receipts:
-                for receipt in grant.source_receipts:
+            for receipt in grant.source_receipts:
+                if receipt.receipt_id in receipt_ids:
                     self._source_receipts_consumed[receipt.receipt_id] = receipt.monotonic_expires_at
 
     def _verify_context_signature(self, context: HostContext) -> None:
