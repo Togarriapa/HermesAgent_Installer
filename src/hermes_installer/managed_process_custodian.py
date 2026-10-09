@@ -2181,7 +2181,6 @@ class ManagedProcessEffectHandler:
             if native_mount_source is not None:
                 self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.environment", "system manager environment cannot be safely cleared")
-        import re
         manager_keys = {line.split("=", 1)[0] for line in manager_env.stdout.decode("utf-8", "replace").splitlines()
                         if "=" in line and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", line.split("=", 1)[0])}
         manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
