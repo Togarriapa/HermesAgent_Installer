@@ -15,10 +15,12 @@ def canonical_asset(raw:str)->str:
 class GatewayRuntime:
     policy:RemotePolicy
     upstream:str="http://127.0.0.1:14500/"
+    profile_id:str="hermes-desktop"
     clock:Callable[[],float]=time.time
     monotonic:Callable[[],float]=time.monotonic
-    policy_current:Callable[[str],bool]=lambda _email:True
+    policy_current:Callable[[str],bool]|None=None
     max_lease_seconds:int=60
+    max_active_sockets:int=4
     watchdog_seconds:int=5
     leases:dict[str,SocketLease]=field(default_factory=dict)
     def __post_init__(self):
@@ -28,21 +30,27 @@ class GatewayRuntime:
     def principal(self,request,method,path):
         return authorize_request(token=request.headers.get("Cf-Access-Jwt-Assertion"),policy=self.policy,method=method,path=path,host=request.headers.get("Host",""),origin=request.headers.get("Origin"),now=self.clock)
     def create_lease(self,principal):
-        key=secrets.token_urlsafe(24);lease=SocketLease.create(principal,now=self.monotonic(),requested_seconds=self.max_lease_seconds);self.leases[key]=lease;return key,lease
+        key=secrets.token_urlsafe(24)
+        for old_key,old in tuple(self.leases.items()):
+            try:old.authorize_frame(now=self.monotonic())
+            except GatewayDenied:self.leases.pop(old_key,None)
+        if len(self.leases)>=self.max_active_sockets or any(x.principal.subject==principal.subject for x in self.leases.values()):raise GatewayDenied("profile session limit reached")
+        lease=SocketLease.create(principal,now=self.monotonic(),wall_now=self.clock(),requested_seconds=self.max_lease_seconds)
+        self.leases[key]=lease;return key,lease
     def renew(self,key,principal,challenge):
         lease=self.leases.get(key)
         if lease is None:raise GatewayDenied("unknown lease")
-        lease.renew(principal,challenge=challenge,now=self.monotonic(),policy_current=self.policy_current,requested_seconds=self.max_lease_seconds);return lease
+        lease.renew(principal,challenge=challenge,now=self.monotonic(),wall_now=self.clock(),policy_current=self.policy_current,requested_seconds=self.max_lease_seconds);return lease
 
 _BOOTSTRAP="""<!doctype html><meta charset=utf-8><title>Hermes Desktop</title><p id=s>Starting protected Desktop session…</p><script>
-(async()=>{try{const r=await fetch('/session',{method:'POST',cache:'no-store',credentials:'same-origin'});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-lease',x.lease_id);sessionStorage.setItem('hd-challenge',x.renewal_challenge);location.replace('/client/index.html?path='+encodeURIComponent('/client/?lease='+encodeURIComponent(x.lease_id)))}catch(e){document.getElementById('s').textContent='Access authorization required.'}})();
+(async()=>{try{const r=await fetch('/session',{method:'POST',cache:'no-store',credentials:'same-origin'});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-lease',x.lease_id);sessionStorage.setItem('hd-challenge',x.renewal_challenge);location.replace('/client/index.html?path='+encodeURIComponent('/client/?lease='+encodeURIComponent(x.lease_id)+'&profile=hermes-desktop'))}catch(e){document.getElementById('s').textContent='Access authorization required.'}})();
 </script>"""
 _RENEW="""<script>(()=>{let busy=false;async function renew(){if(busy)return;busy=true;try{const id=sessionStorage.getItem('hd-lease'),challenge=sessionStorage.getItem('hd-challenge');if(!id||!challenge)throw Error();const r=await fetch('/renew',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({lease_id:id,challenge})});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-challenge',x.renewal_challenge)}catch(_){sessionStorage.removeItem('hd-lease');sessionStorage.removeItem('hd-challenge');location.replace('/client/bootstrap.html')}finally{busy=false}}setInterval(renew,25000);})();</script>"""
 
 def create_app(runtime:GatewayRuntime):
     from aiohttp import ClientSession,web,WSMsgType
     app=web.Application(client_max_size=2048);app["runtime"]=runtime
-    async def startup(a):a["client"]=ClientSession(timeout=None,trust_env=False,auto_decompress=False)
+    async def startup(a):a["client"]=ClientSession(timeout=__import__("aiohttp").ClientTimeout(total=30,connect=3,sock_read=10),trust_env=False,auto_decompress=False)
     async def cleanup(a):await a["client"].close()
     @web.middleware
     async def auth_errors(request,handler):
@@ -55,7 +63,7 @@ def create_app(runtime:GatewayRuntime):
         p=runtime.principal(request,"POST","/session")
         if request.content_length not in (None,0):raise GatewayDenied("request body forbidden")
         key,lease=runtime.create_lease(p)
-        return web.json_response({"lease_id":key,"renewal_challenge":lease.renewal_challenge,"expires_in":max(0,int(lease.expires_at-runtime.monotonic()))},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
+        return web.json_response({"lease_id":key,"profile_id":runtime.profile_id,"renewal_challenge":lease.renewal_challenge,"expires_in":max(0,int(lease.expires_at-runtime.monotonic()))},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
     async def renew(request):
         p=runtime.principal(request,"POST","/renew")
         if request.content_length is None or request.content_length>2048:raise GatewayDenied("invalid renewal body")
@@ -76,7 +84,8 @@ def create_app(runtime:GatewayRuntime):
         upstream=runtime.upstream.rstrip("/")+"/"+quote(suffix,safe="/-._~")
         async with request.app["client"].request(request.method,upstream,allow_redirects=False,headers={"Accept":request.headers.get("Accept","*/*")}) as response:
             if response.status in {301,302,303,307,308}:raise GatewayDenied("upstream redirect denied")
-            data=b"" if request.method=="HEAD" else await response.read()
+            data=b"" if request.method=="HEAD" else await response.content.read(16*1024*1024+1)
+            if len(data)>16*1024*1024:raise GatewayDenied("upstream asset exceeds bound")
             ctype=response.headers.get("Content-Type","")
             if path=="/client/index.html" and "text/html" in ctype:
                 text=data.decode("utf-8","strict")
@@ -89,7 +98,7 @@ def create_app(runtime:GatewayRuntime):
     async def stream(request):
         p=runtime.principal(request,"GET","/client/")
         websocket_target("/stream",principal=p,host=request.headers.get("Host",""),origin=request.headers.get("Origin"),policy=runtime.policy)
-        if set(request.query)!={"lease"}:raise GatewayDenied("socket lease required")
+        if set(request.query)!={"lease","profile"} or request.query["profile"]!=runtime.profile_id:raise GatewayDenied("socket profile/lease binding required")
         key=request.query["lease"];lease=runtime.leases.get(key)
         if lease is None or (lease.principal.subject,lease.principal.email)!=(p.subject,p.email):raise GatewayDenied("socket/principal mismatch")
         lease.authorize_frame(now=runtime.monotonic())
@@ -112,8 +121,17 @@ def create_app(runtime:GatewayRuntime):
                     elif msg.type==WSMsgType.PONG:await dst.pong(msg.data)
                     elif msg.type==WSMsgType.CLOSE:await dst.close();return
             wd=asyncio.create_task(watchdog())
-            try:await asyncio.gather(relay(downstream,upstream),relay(upstream,downstream))
-            finally:wd.cancel();runtime.leases.pop(key,None);await upstream.close();await downstream.close()
+            relays={asyncio.create_task(relay(downstream,upstream)),asyncio.create_task(relay(upstream,downstream)),wd}
+            try:
+                done,pending=await asyncio.wait(relays,return_when=asyncio.FIRST_COMPLETED)
+                for task in pending:task.cancel()
+                await asyncio.gather(*pending,return_exceptions=True)
+                for task in done:
+                    if task is not wd and task.exception():raise task.exception()
+            finally:
+                for task in relays:task.cancel()
+                await asyncio.gather(*relays,return_exceptions=True)
+                runtime.leases.pop(key,None);await upstream.close();await downstream.close()
             return downstream
     app.router.add_get("/",root);app.router.add_post("/session",create);app.router.add_post("/renew",renew)
     app.router.add_get("/client/{tail:.*}",client);app.router.add_get("/client/",client)
