@@ -392,6 +392,7 @@ class ProtectedEnrollment:
     resource_body_recipe_records: tuple[Mapping[str, Any], ...]
     resource_scope_bindings: Mapping[str, Mapping[str, Any]]
     resource_validators: Mapping[str, Mapping[str, Any]]
+    root_journal_root_records: tuple[Mapping[str, Any], ...]
 
 
 _SOURCE_ACTIONS_BY_CHANNEL = {
@@ -454,7 +455,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "operation_parameter_schemas", "source_issuers", "resource_jobs",
             "remote_session_enrollments", "resource_backend_enrollments",
             "resource_body_recipes", "resource_scope_bindings", "resource_validators",
-            "generation_digest"}
+            "root_journal_roots", "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != 1:
         raise AuthorityDenied("enrollment.generation", "service generation snapshot schema is unsupported")
@@ -756,6 +757,28 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                 raise AuthorityDenied("enrollment.generation", "resource JSON schema artifact digest is invalid")
         elif artifact_id is not None or artifact_sha is not None:
             raise AuthorityDenied("enrollment.generation", "resource validator has an inapplicable schema artifact")
+    journal_rows = item["root_journal_roots"]
+    if (not isinstance(journal_rows, list) or len(journal_rows) > 1024
+            or any(not isinstance(row, dict) for row in journal_rows)):
+        raise AuthorityDenied("enrollment.generation", "protected root journal catalog is invalid")
+    journal_fields = {"root_id", "absolute_path", "owner_uid", "owner_gid", "mode",
+                      "device", "inode", "generation", "purpose"}
+    seen_journal_ids: set[str] = set()
+    for row in journal_rows:
+        journal = _exact(row, journal_fields, "root journal root")
+        root_id = _read_id(journal["root_id"], "root journal ID")
+        path = journal["absolute_path"]
+        numbers = (journal["owner_uid"], journal["owner_gid"], journal["mode"],
+                   journal["device"], journal["inode"])
+        if (root_id in seen_journal_ids or not isinstance(path, str)
+                or not Path(path).is_absolute() or "\x00" in path
+                or any(type(number) is not int for number in numbers)
+                or journal["owner_uid"] != 0 or journal["owner_gid"] != 0
+                or journal["mode"] != 0o700 or journal["device"] < 0
+                or journal["inode"] <= 0 or journal["purpose"] != "authority-journal"):
+            raise AuthorityDenied("enrollment.generation", "root journal root identity or purpose is invalid")
+        _read_id(journal["generation"], "root journal generation")
+        seen_journal_ids.add(root_id)
     # Parse the exact active source-issuer schema here, after verifying the
     # digest, so callers cannot fall back to an unsigned sidecar catalog.
     _parse_source_issuers(item["source_issuers"])
@@ -1280,6 +1303,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                           for row in service_generations["resource_scope_bindings"]}),
         MappingProxyType({row["id"]: MappingProxyType(dict(row))
                           for row in service_generations["resource_validators"]}),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["root_journal_roots"]),
     )
 
 

@@ -66,6 +66,10 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "remote_session_enrollments": [],
             "resource_backend_enrollments": [], "resource_body_recipes": [],
             "resource_scope_bindings": [], "resource_validators": [],
+            "root_journal_roots": [{"root_id": "journal-a", "absolute_path": "/var/lib/hermes-installer/authority-journal",
+                                    "owner_uid": 0, "owner_gid": 0, "mode": 448,
+                                    "device": 1, "inode": 2, "generation": "journal-gen-a",
+                                    "purpose": "authority-journal"}],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -111,6 +115,10 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "remote_session_enrollments": [],
             "resource_backend_enrollments": [], "resource_body_recipes": [],
             "resource_scope_bindings": [], "resource_validators": [],
+            "root_journal_roots": [{"root_id": "journal-a", "absolute_path": "/var/lib/hermes-installer/authority-journal",
+                                    "owner_uid": 0, "owner_gid": 0, "mode": 448,
+                                    "device": 1, "inode": 2, "generation": "journal-gen-a",
+                                    "purpose": "authority-journal"}],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -163,6 +171,10 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "remote_session_enrollments": rows,
                 "resource_backend_enrollments": [], "resource_body_recipes": [],
                 "resource_scope_bindings": [], "resource_validators": [],
+                "root_journal_roots": [{"root_id": "journal-a", "absolute_path": "/var/lib/hermes-installer/authority-journal",
+                                        "owner_uid": 0, "owner_gid": 0, "mode": 448,
+                                        "device": 1, "inode": 2, "generation": "journal-gen-a",
+                                        "purpose": "authority-journal"}],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -204,6 +216,10 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "source_issuers": [], "resource_jobs": [], "remote_session_enrollments": [],
             "resource_backend_enrollments": [backend], "resource_body_recipes": [body],
             "resource_scope_bindings": [], "resource_validators": [],
+            "root_journal_roots": [{"root_id": "journal-a", "absolute_path": "/var/lib/hermes-installer/authority-journal",
+                                    "owner_uid": 0, "owner_gid": 0, "mode": 448,
+                                    "device": 1, "inode": 2, "generation": "journal-gen-a",
+                                    "purpose": "authority-journal"}],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -235,6 +251,10 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "source_issuers": [], "resource_jobs": [], "remote_session_enrollments": [],
             "resource_backend_enrollments": [], "resource_body_recipes": [],
             "resource_scope_bindings": [scope], "resource_validators": [validator],
+            "root_journal_roots": [{"root_id": "journal-a", "absolute_path": "/var/lib/hermes-installer/authority-journal",
+                                    "owner_uid": 0, "owner_gid": 0, "mode": 448,
+                                    "device": 1, "inode": 2, "generation": "journal-gen-a",
+                                    "purpose": "authority-journal"}],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
