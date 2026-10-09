@@ -1,0 +1,3 @@
+# Closed memory and model recipe identities v6
+
+Sol original-scope additive HI09/HW03/HW02/SK01 clarification. Source-pinned AgentMemory api.ts and OpenViking search/sessions router bytes independently read/hashed define closed request/body/response validator IDs and root scope bindings; actual installed validators and response semantic source still required before activation. No arbitrary scope/URI/parts/hidden options. planning/native-package-binding-contract.json selects fixed Colibri/CPython build and Coral inference recipe IDs with empty no-caller-parameters-v1 schema. Build/inference payload/device never caller argv. Existing tasks remain open; all frozen baseline/tag/original acceptance preserved.

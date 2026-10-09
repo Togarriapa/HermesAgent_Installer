@@ -4,6 +4,7 @@ import pytest
 
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings, build_root_runtime_bindings
 from hermes_installer.protected_enrollment import EnrollmentDenied
+from hermes_installer.authority.types import AuthorityDenied
 
 
 def test_root_runtime_composition_fails_closed_without_verified_generation_records():
@@ -82,4 +83,44 @@ def test_selected_start_join_uses_fixed_recipe_and_effect_target():
     with pytest.raises(EnrollmentDenied, match="only protected process.start"):
         bindings.resolve_selected_operation(
             "enrollment-a", "generation-a", "process.stop", "hermes-server-start-v1",
+        )
+
+
+def test_package_set_manifest_may_be_absent_but_malformed_manifest_still_denies(tmp_path, monkeypatch):
+    import os
+    from hermes_installer import artifacts
+    from hermes_installer.authority.runtime_bindings import _load_optional_package_sets
+
+    manifest = tmp_path / "package-sets.json"
+    tmp_path.chmod(0o700)
+    monkeypatch.setattr(artifacts, "PACKAGE_SET_MANIFEST_PATH", manifest)
+    result = _load_optional_package_sets(
+        catalog=None, signing_key=b"k" * 32, key_id="test-key", expected_uid=os.getuid(),
+    )
+    assert dict(result) == {}
+
+    manifest.write_text("{}", encoding="utf-8")
+    manifest.chmod(0o600)
+    with pytest.raises(AuthorityDenied) as caught:
+        _load_optional_package_sets(
+            catalog=None, signing_key=b"k" * 32, key_id="test-key", expected_uid=os.getuid(),
+        )
+    assert caught.value.code == "package-set.catalog"
+
+
+def test_package_set_manifest_symlink_is_not_treated_as_absent(tmp_path, monkeypatch):
+    import os
+    from hermes_installer import artifacts
+    from hermes_installer.authority.runtime_bindings import _load_optional_package_sets
+
+    tmp_path.chmod(0o700)
+    target = tmp_path / "target.json"
+    target.write_text('{"schema":1,"package_sets":[]}', encoding="utf-8")
+    target.chmod(0o600)
+    manifest = tmp_path / "package-sets.json"
+    manifest.symlink_to(target)
+    monkeypatch.setattr(artifacts, "PACKAGE_SET_MANIFEST_PATH", manifest)
+    with pytest.raises(AuthorityDenied):
+        _load_optional_package_sets(
+            catalog=None, signing_key=b"k" * 32, key_id="test-key", expected_uid=os.getuid(),
         )

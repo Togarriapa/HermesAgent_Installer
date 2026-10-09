@@ -152,3 +152,80 @@ The installer SHALL resolve only protected fixed operation recipes and current r
 #### Scenario: Forged recipe or expired voice session
 - **WHEN** selected operation parameters escape its schema or voice session is stale, sibling-owned or lacks trusted permission
 - **THEN** reject before execution/capture and cancel owned expired resources.
+
+### Requirement: Native protected configuration identities
+The installer SHALL validate strict root-owned package/issuer catalogs and distinct canonical normalization-policy and installed module hashes with actual current enrollment joins.
+
+#### Scenario: Partial hash or unobserved configured issuer
+- **WHEN** policy/module digest is missing or source observer only exists as configuration text
+- **THEN** keep affected native effect unavailable and require actual identity/observer evidence.
+
+### Requirement: Fixed recipe parameter grammar
+The installer SHALL validate only bounded root-selected scalar parameter schemas and exact literal/parameter argv tokens, one element each, with no interpolation or caller physical resource selection.
+
+#### Scenario: Caller injects path or extra parameter
+- **WHEN** parameter is untyped, unbounded, extra or outside exact scalar grammar
+- **THEN** reject before launch without shell expansion or alternate recipe fallback.
+
+### Requirement: Selected package and compound memory admission
+The installer SHALL resolve native package from actual enrolled peer and SHALL authorize each fixed compound memory step separately under same bounded root-owned admission and source lineage.
+
+#### Scenario: Caller chooses package or reuses compound grant
+- **WHEN** caller claims alternate package/scope or repeats one consumed authorization across steps
+- **THEN** reject before bytes and retain owned cleanup journal with no sibling deletion.
+
+### Requirement: Canonical native record digests
+The installer SHALL validate exact canonical resolver/policy document digest preimages, reject duplicate keys and keep module/archive hashes distinct.
+
+#### Scenario: Self hash or wrapper bytes substituted
+- **WHEN** digest uses wrong preimage or archive/module identity in place of canonical document
+- **THEN** reject enrollment before effects; verified presentation does not confer authority.
+
+### Requirement: Fixed memory compound wire
+The installer SHALL enforce canonical typed memory compound write envelopes with root-derived HTTP frames and atomic root current-step state, separate from stream protocols.
+
+#### Scenario: Forged HTTP frame or skipped compound step
+- **WHEN** caller submits arbitrary HTTP bytes, wrong job/step or reused frame grant
+- **THEN** reject before backend bytes with owned failure/cleanup journal and no sibling scope mutation.
+
+### Requirement: Root-observed remote session bridge
+The installer SHALL verify actual Access JWT and fresh root selected policy at root authority, join verified identity to current native profile and bind every asset/input/stream operation to fixed connector session lease/generation. Gateway local or selfsigned claims SHALL not authorize root effects.
+
+#### Scenario: Forged gateway claims or expired active stream
+- **WHEN** root JWT/policy/principal verification fails or active lease revokes/expires
+- **THEN** deny before bytes or close both stream directions within tested bounded lease and preserve setup/read/tunnel credential separation.
+
+### Requirement: Closed selected recipe identities
+The installer SHALL use finite source-bound request/recipe/validator IDs with root-enforced scope and fixed parameter-free model launches; absent actual validator identity SHALL remain unavailable.
+
+#### Scenario: Caller supplies scope or model launch parameters
+- **WHEN** caller attempts to replace root scope, URI, device or fixed build/inference parameters
+- **THEN** reject before backend/launch bytes and preserve exact incomplete native evidence.
+
+### Requirement: Independent device profile epoch join
+The installer SHALL compare selected device identity generation to protected expected_device_generation independently from process profile generation.
+
+#### Scenario: Device epoch changes under live profile
+- **WHEN** hotplug or replacement changes selected device identity epoch
+- **THEN** invalidate inference enrollment/active grant and require root reattestation without sibling/all-device fallback.
+
+### Requirement: Root private observed source capture
+The installer SHALL issue qualified source receipts only through root-private actual registered observer/event joins and exact bounded observed bytes, with peer, generation, parent closure, recipient and lease bindings. Worker submitted capture SHALL remain UNKNOWN/private.
+
+#### Scenario: Worker claims tool result or authentic user input
+- **WHEN** actual registered root observer/event/invocation evidence is absent, stale or replayed
+- **THEN** deny qualified receipt before effect and preserve private unknown provenance without omitted original functionality.
+
+### Requirement: Typed remote root session wire
+The installer SHALL expose distinct one-shot asset and leased WebSocket admissions through peer-bound opaque root handles and finite typed connector operations that check current session state and fresh exact grants internally.
+
+#### Scenario: Asset handle reused for WebSocket or caller chooses connector
+- **WHEN** caller reuses consumed asset admission, selects target/path or sends frame after root lease expiry
+- **THEN** reject before bytes and close owned relay without localcontext or raw FD bypass.
+
+### Requirement: Protected runtime assembly identities
+The installer SHALL load strict root-owned active generation catalogs, verify immutable native closure/device kernel isolation, attest actual successful build output dynamically and sign the exact full connector effect payload digest.
+
+#### Scenario: Preclaimed build hash or partial effect digest
+- **WHEN** output was not actually attested after terminal success, closure/import/device identity differs or grant signs only partial payload
+- **THEN** deny activation/effect without permissive fallback and preserve truthful failure/native evidence.
