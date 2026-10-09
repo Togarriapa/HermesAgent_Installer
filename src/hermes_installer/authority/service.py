@@ -278,7 +278,8 @@ class AuthorityService:
         """Attach the root-built observed-call registry once during startup."""
         if (self.native_invocation_registry is not None
                 or not callable(getattr(registry, "begin_native_invocation", None))
-                or not callable(getattr(registry, "get_invocation_contexts", None))):
+                or not callable(getattr(registry, "get_invocation_contexts", None))
+                or not callable(getattr(registry, "take_native_response_metadata", None))):
             raise AuthorityDenied("native.invocation", "root invocation registry binding is invalid")
         self.native_invocation_registry = registry
 
