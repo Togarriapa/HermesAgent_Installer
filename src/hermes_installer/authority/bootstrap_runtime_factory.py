@@ -63,6 +63,7 @@ _TEMPLATE_ID = "installer-bootstrap-compiler-template-v1"
 _IDENTITY_TEMPLATE_ID = "installer-authentik-policy-template-v1"
 _PLAN_TEMPLATE_ID = "installer-root-setup-plan-template-v1"
 _POLICY_GENERATION_ID = "installer-bootstrap-policy-generation-v1"
+_SERVICE_PARENT_ROOT = "/var/lib/hermes-installer/services/hermes-agent-native-v1"
 _STORE_ID = "installer-bootstrap-artifact-store-v1"
 _JOURNAL_ID = "installer-authority-journal-v1"
 _GEN = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
@@ -573,7 +574,7 @@ class InstalledBootstrapPolicyResolver:
                        for key in root_ids)
                 or len({roots[key] for key in root_ids}) != len(root_ids)
                 or roots["journal_root_id"] != _JOURNAL_ID
-                or roots["service_parent_root"] != "/var/lib/hermes-installer/services"):
+                or roots["service_parent_root"] != _SERVICE_PARENT_ROOT):
             _fail("bootstrap service root policy does not use the selected private root layout")
         base = doc["authority_base_template"]
         self._validate_authority_base_template(base)
