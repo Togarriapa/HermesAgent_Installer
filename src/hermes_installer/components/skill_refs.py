@@ -9,6 +9,35 @@ from urllib.parse import unquote, urlsplit
 
 
 _LINK = re.compile(r"!?(?:\[[^\]\n]*\])\(\s*(<[^>\n]+>|[^)\s]+)(?:\s+[^)]*)?\)")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+_INLINE_CODE = re.compile(r"(`+).*?\1(?!`)", re.DOTALL)
+
+
+def _mask_markdown_code(text: str) -> str:
+    """Blank fenced, indented and inline code while preserving source offsets."""
+    output: list[str] = []
+    fence_char: str | None = None
+    fence_size = 0
+    for line in text.splitlines(keepends=True):
+        marker = _FENCE.match(line.rstrip("\r\n"))
+        if fence_char is not None:
+            output.append("".join("\n" if char == "\n" else "\r" if char == "\r" else " " for char in line))
+            if (marker and marker.group(1)[0] == fence_char
+                    and len(marker.group(1)) >= fence_size and not marker.group(2).strip()):
+                fence_char = None
+                fence_size = 0
+            continue
+        if marker:
+            fence_char = marker.group(1)[0]
+            fence_size = len(marker.group(1))
+            output.append("".join("\n" if char == "\n" else "\r" if char == "\r" else " " for char in line))
+            continue
+        if line.startswith("    ") or line.startswith("\t"):
+            output.append("".join("\n" if char == "\n" else "\r" if char == "\r" else " " for char in line))
+            continue
+        output.append(line)
+    masked = "".join(output)
+    return _INLINE_CODE.sub(lambda match: "".join("\n" if char == "\n" else "\r" if char == "\r" else " " for char in match.group(0)), masked)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +97,7 @@ def audit_skill_references(source_root: Path) -> SkillReferenceAudit:
             ))
             continue
 
-        for match in _LINK.finditer(text):
+        for match in _LINK.finditer(_mask_markdown_code(text)):
             raw = match.group(1)
             target = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
             parsed = urlsplit(target)
@@ -168,7 +197,7 @@ def audit_skill_file_map(
             problems.append(SkillReferenceProblem(source, 1, "", "markdown file cannot be read as UTF-8"))
             continue
         source_parent = PurePosixPath(source).parent.as_posix()
-        for match in _LINK.finditer(text):
+        for match in _LINK.finditer(_mask_markdown_code(text)):
             raw = match.group(1)
             target = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
             parsed = urlsplit(target)
