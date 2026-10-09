@@ -269,3 +269,11 @@ The installed root entrypoint SHALL compile and publish reviewed closed-template
 #### Scenario: First install without policy files
 - **WHEN** no policy generation exists
 - **THEN** verified stage0 publication constructs it without an active worker or caller authority rows.
+
+### Requirement: Prepared native materialization receipt closure
+
+Root materialization SHALL occur under verified prepared transaction and exact fixed CAS output roles before runnable activation. HERMES_HOME SHALL equal selected service_home_root_id. Resources source proof SHALL remain independent from Hermes source proof.
+
+#### Scenario: Source or role substitution
+- **WHEN** a native output receipt substitutes another source or role
+- **THEN** active record publication is denied.

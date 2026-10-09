@@ -224,3 +224,11 @@ Root event context issuance SHALL require the exact active daemon/module/observe
 #### Scenario: Unverified root dispatcher role
 - **WHEN** role/module/kernel/event/body bindings are absent or stale
 - **THEN** no context or child effect is fabricated.
+
+### Requirement: Prepared native materialization receipt closure
+
+Root materialization SHALL occur under verified prepared transaction and exact fixed CAS output roles before runnable activation. HERMES_HOME SHALL equal selected service_home_root_id. Resources source proof SHALL remain independent from Hermes source proof.
+
+#### Scenario: Source or role substitution
+- **WHEN** a native output receipt substitutes another source or role
+- **THEN** active record publication is denied.

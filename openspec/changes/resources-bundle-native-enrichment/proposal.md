@@ -91,3 +91,7 @@ Use pending_pair_DTO and task_runner_protocol.RootTaskController exact records/r
 ### v23 root resource controller enrollment
 
 Use active resource_controller_roles and root_controller_role_catalog exact actual daemon/module/source/backend/operation joins; current handler module SHA and stricter effective result bounds apply. HI/RB tasks remain pending.
+
+### v27 prepared native receipts and Hermes home
+
+Use first_stage_policy_compiler exact home/prepared order/runtime artifact roles/independent Resources source and receipt_binding_rules_schema. Existing BD/LC/HI/RB tasks remain pending.
