@@ -41,7 +41,8 @@ class NativeRegistryTests(unittest.TestCase):
  def test_materialization_applies_policy_without_claiming_authority(self):
   files=self.registry.materialize()
   self.assertEqual(len(files),692)
-  self.assertTrue(all(path.split("/",1)[0] in self.registry.root_counts for path in files))
+  self.assertEqual({path.split("/",1)[0] for path in files if "/" in path},set(self.registry.root_counts))
+  self.assertIn("catalog.yaml",files)
   sample=next(data for path,data in files.items() if path.startswith("skills/"))
   self.assertIn(b"host-authorization-applied",sample)
   self.assertIn(b"secrets-resolved",sample)

@@ -16,7 +16,10 @@ verification must consume only installer-owned bytes. The pinned upstream URL
 is provenance, not a fetch dependency.
 
 Keep edits and user experience in installer-owned overlays and generations;
-do not edit the vendored source snapshot in place. A newer upstream release
-requires a new reviewed pin and a complete additive snapshot. No license or
-redistribution permission is inferred from the source archive; honor the
-upstream notices and licensing terms before redistribution.
+do not edit the vendored source snapshot in place. Installation and recovery use only the Installer-owned archive and expanded
+snapshot, so the original Resources repository may be unavailable or deleted.
+A newer catalog is published by adding a new reviewed Installer-owned pin and a
+complete additive snapshot; runtime never follows a moving upstream branch.
+This user-authorized owner copy does not assert a blanket redistribution grant.
+Preserve all source notices and apply the relevant terms before distributing
+the Installer or its bundled snapshot.

@@ -105,6 +105,11 @@ class NativeRegistry:
             meta["annotations"]=ann; doc["metadata"]=meta
             out[self.paths[key]]=yaml.safe_dump(doc,sort_keys=False,allow_unicode=True).encode("utf-8")
         if not out: raise RegistryError("refusing to materialize an empty selection")
+        # Keep the native discovery contract and policy document beside the
+        # effective roots so Hermes can discover the selected manifests offline.
+        out["catalog.yaml"]=self.source.files["catalog.yaml"]
+        for quality_path in self.catalog["spec"]["qualityPolicyFiles"]:
+            out[quality_path]=self.source.files[quality_path]
         return out
 
     def stage(self,store:Any,generation_id:str,discovery:NativeDiscovery|None=None):
