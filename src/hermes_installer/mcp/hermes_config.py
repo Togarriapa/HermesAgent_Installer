@@ -7,9 +7,14 @@ transport or creates credentials. Existing user entries are preserved verbatim.
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
+import uuid
+import fcntl
 import json
 import re
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -152,3 +157,110 @@ def merge_hermes_mcp_config(
     if len(rendered.encode("utf-8")) > MAX_CONFIG_BYTES:
         raise HermesMCPConfigError("merged Hermes config exceeds the 1 MiB limit")
     return rendered, next_owners
+
+
+def write_selected_profile_mcp_config(
+    *,
+    hermes_home,
+    config_path,
+    proposed: Mapping[str, Mapping[str, Any]],
+    owned_fingerprints: Mapping[str, str] | None,
+    expected_owner_uid: int,
+) -> tuple[dict[str, str], str]:
+    """Atomically merge MCP config into one already-owned profile HERMES_HOME.
+
+    The caller derives this home from the selected, materialized Hermes profile.
+    The function verifies its private ownership boundary, preserves unowned
+    Hermes config entries, and returns fingerprints for installer state.
+    """
+    home = Path(hermes_home)
+    target = Path(config_path)
+    if not isinstance(expected_owner_uid, int) or isinstance(expected_owner_uid, bool):
+        raise HermesMCPConfigError("expected profile owner is invalid")
+    if expected_owner_uid != os.geteuid():
+        raise HermesMCPConfigError("profile config may only be written by its owning installer user")
+    try:
+        resolved_home = home.resolve(strict=True)
+        if not home.is_absolute() or resolved_home != home or target != home / "config.yaml":
+            raise HermesMCPConfigError("MCP config path is outside the selected Hermes profile")
+        home_stat = home.lstat()
+    except OSError:
+        raise HermesMCPConfigError("selected Hermes profile home is unavailable") from None
+    if (stat.S_ISLNK(home_stat.st_mode) or not stat.S_ISDIR(home_stat.st_mode)
+            or home_stat.st_uid != expected_owner_uid or home_stat.st_mode & 0o077):
+        raise HermesMCPConfigError("selected Hermes profile home is not private and owner-controlled")
+
+    lock_path = home / ".mcp-config.lock"
+    try:
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except OSError:
+        raise HermesMCPConfigError("cannot open the private MCP config lock") from None
+    temporary = None
+    try:
+        lock_stat = os.fstat(lock_fd)
+        if (not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_uid != expected_owner_uid
+                or lock_stat.st_mode & 0o077):
+            raise HermesMCPConfigError("MCP config lock is not a private regular file")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        existing_bytes = _read_private_config(target, expected_owner_uid)
+        try:
+            current_text = existing_bytes.decode("utf-8") if existing_bytes is not None else None
+        except UnicodeDecodeError:
+            raise HermesMCPConfigError("Hermes config is not UTF-8") from None
+        rendered, next_owners = merge_hermes_mcp_config(
+            current_text, proposed, owned_fingerprints=owned_fingerprints
+        )
+        payload = rendered.encode("utf-8")
+        temporary = home / f".config.yaml.mcp-{uuid.uuid4().hex}.tmp"
+        try:
+            write_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                               | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(write_fd, "wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except OSError:
+            raise HermesMCPConfigError("temporary Hermes MCP config could not be written") from None
+
+        # Detect edits by writers that do not honor the advisory lock.
+        if _read_private_config(target, expected_owner_uid) != existing_bytes:
+            raise HermesMCPConfigError("Hermes config changed during the MCP merge; retry from a fresh read")
+        os.replace(temporary, target)
+        temporary = None
+        directory_fd = os.open(home, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                               | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        return next_owners, hashlib.sha256(payload).hexdigest()
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+        os.close(lock_fd)
+
+
+def _read_private_config(path: Path, expected_owner_uid: int) -> bytes | None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise HermesMCPConfigError("existing Hermes MCP config cannot be inspected") from None
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)
+            or info.st_uid != expected_owner_uid or info.st_mode & 0o077
+            or info.st_size > MAX_CONFIG_BYTES):
+        raise HermesMCPConfigError("existing Hermes config is not private and owner-controlled")
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as stream:
+            data = stream.read(MAX_CONFIG_BYTES + 1)
+    except OSError:
+        raise HermesMCPConfigError("existing Hermes config cannot be read safely") from None
+    if len(data) > MAX_CONFIG_BYTES:
+        raise HermesMCPConfigError("Hermes config exceeds the 1 MiB limit")
+    return data
