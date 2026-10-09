@@ -669,3 +669,12 @@ The installer SHALL satisfy this obligation: Finish with the project location, e
 #### Scenario: R0195 unavailable or failed prerequisite
 - **WHEN** a requested item or assertion lacks functional evidence, contains a failed/pending result or only has source/configuration/fixture evidence
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+
+### Requirement: Supplemental target and account evidence profiles
+The acceptance verifier SHALL provide installer-owned assertion profiles for every Sol-validated supplemental evidence ID and bind each profile to its exact acceptance criterion. A profile definition SHALL NOT claim that the corresponding implementation, hardware, account, or external-service behavior has been executed.
+
+#### Scenario: Complete supplemental profile coverage
+- **WHEN** the validated planning catalog includes EV-RB06, EV-HI10, EV-HW01, EV-RB07, or EV-PR01
+- **THEN** each ID SHALL map to its exact requirement dimensions under AC16, AC18, AC10, AC16, or AC08 respectively, with no generic placeholder assertion
+- **AND** every unobserved assertion SHALL remain null/pending; an observed false assertion or nonzero command exit SHALL fail; only authenticated retained results can contribute to acceptance

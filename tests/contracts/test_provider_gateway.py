@@ -19,7 +19,9 @@ MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
 TOKEN="local-fixture-token-value-0123456789abcdef"
 
 
-def fixture_context(*, purpose, intent, source_contexts, trace_id, lease_seconds,
+def fixture_context(*, native_context_handle=None, normalized_payload=None, purpose, intent, source_contexts=(), source_receipts=(),
+                    trace_id, lease_seconds, final_payload_digest=None,
+                    operation=None, retry_index=0, cancelled=None,
                     sensitivity=Sensitivity.PUBLIC):
     return DispatchContext(
         profile_id="fixture-profile", purpose=purpose, sensitivity=sensitivity, trace_id=trace_id,
@@ -59,7 +61,8 @@ class ProviderGatewayTests(unittest.TestCase):
 
     def request(self,path="/v1/chat/completions",*,method="POST",body=None,token=TOKEN,headers=None):
         url=f"http://127.0.0.1:{self.port}{path}"
-        request=urllib.request.Request(url,data=body,method=method,headers={"Authorization":"Bearer "+token,"Content-Type":"application/json",**(headers or {})})
+        request=urllib.request.Request(url,data=body,method=method,headers={"Authorization":"Bearer "+token,"Content-Type":"application/json",
+            "X-Hermes-Installer-Context":"fixture-native-context-handle-01",**(headers or {})})
         try:
             response=urllib.request.urlopen(request,timeout=2)
         except urllib.error.HTTPError as exc:
@@ -133,6 +136,12 @@ class ProviderGatewayTests(unittest.TestCase):
         self.assertEqual(normalized["model"],MODEL)
         self.assertEqual(normalized["max_tokens"],32)
 
+    def test_gateway_requires_host_issued_native_context_handle(self):
+        payload=json.dumps({"model":MODEL,"messages":[{"role":"user","content":"hello"}]}).encode()
+        status,_,_=self.request(body=payload,headers={"X-Hermes-Installer-Context":""})
+        self.assertEqual(status,403)
+        self.assertEqual(self.transport.calls,[])
+
     def test_auth_origin_route_and_size_fail_before_dispatch(self):
         payload=json.dumps({"model":MODEL,"messages":[{"role":"user","content":"hello"}]}).encode()
         status,_,_=self.request(body=payload,token="wrong")
@@ -162,7 +171,8 @@ class ProviderGatewayTests(unittest.TestCase):
         self.addCleanup(private.close)
         req=urllib.request.Request(f"http://127.0.0.1:{private_port}/v1/chat/completions",
             data=json.dumps({"model":MODEL,"messages":[{"role":"user","content":"sensitive"}]}).encode(),
-            headers={"Authorization":"Bearer "+TOKEN,"X-Classification":"PUBLIC","Content-Type":"application/json"})
+            headers={"Authorization":"Bearer "+TOKEN,"X-Classification":"PUBLIC","Content-Type":"application/json",
+                    "X-Hermes-Installer-Context":"fixture-native-context-handle-01"})
         try:
             urllib.request.urlopen(req,timeout=2)
         except urllib.error.HTTPError as exc:
@@ -304,7 +314,8 @@ class ProviderGatewayTests(unittest.TestCase):
         def request():
             req=urllib.request.Request(f"http://127.0.0.1:{port}/v1/chat/completions",
                 data=json.dumps({"model":MODEL,"messages":[{"role":"user","content":"hello"}]}).encode(),
-                headers={"Authorization":"Bearer "+TOKEN,"Content-Type":"application/json"})
+                headers={"Authorization":"Bearer "+TOKEN,"Content-Type":"application/json",
+                         "X-Hermes-Installer-Context":"fixture-native-context-handle-01"})
             try:
                 urllib.request.urlopen(req,timeout=3)
             except urllib.error.HTTPError as exc:

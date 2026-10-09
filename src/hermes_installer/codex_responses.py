@@ -19,11 +19,13 @@ CODEX_RECIPIENT = "openai:codex"
 MAX_REQUEST_BYTES = 1_048_576
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_OUTPUT_TOKENS = 65_536
+MAX_SSE_EVENTS = 4096
+MAX_SSE_EVENT_BYTES = 262_144
 _ALLOWED_TOP_LEVEL = frozenset({
-    "model", "input", "instructions", "max_output_tokens", "tools",
-    "tool_choice", "parallel_tool_calls", "stream", "store", "truncation",
+    "model", "input", "instructions", "tools",
+    "tool_choice", "parallel_tool_calls", "stream", "store",
 })
-_ALLOWED_ROLES = frozenset({"system", "developer", "user", "assistant"})
+_ALLOWED_ROLES = frozenset({"developer", "user", "assistant"})
 
 
 class CodexAuthority(Protocol):
@@ -57,11 +59,13 @@ def _text(value: object, *, maximum: int = 256_000) -> bool:
         return False
 
 
-def _validate_input(value: object) -> None:
+def _validate_input(value: object, *, function_names: frozenset[tuple[str, str]]) -> None:
     if _text(value):
         return
     if not isinstance(value, list) or len(value) > 4096:
         raise PolicyDenied("request.input", "Codex Responses input must be bounded text")
+    pending_calls: dict[str, tuple[str, str]] = {}
+    seen_calls: set[str] = set()
     for item in value:
         if not isinstance(item, dict):
             raise PolicyDenied("request.input", "Codex Responses input item is malformed")
@@ -79,11 +83,38 @@ def _validate_input(value: object) -> None:
             for part in content:
                 if not isinstance(part, dict) or set(part) != {"type", "text"} or part.get("type") not in {"input_text", "output_text"} or not _text(part.get("text")):
                     raise PolicyDenied("request.modality", "Images, audio, files and non-text inputs are unavailable")
+        elif kind == "function_call":
+            if set(item) - {"type", "call_id", "name", "arguments", "namespace", "id", "status"}:
+                raise PolicyDenied("request.tool_call", "Unsupported function-call history field")
+            call_id, name, namespace, arguments = (item.get("call_id"), item.get("name"),
+                                                    item.get("namespace"), item.get("arguments"))
+            if (not _text(call_id, maximum=64) or not _text(name, maximum=64)
+                    or not _text(namespace, maximum=64) or (namespace, name) not in function_names
+                    or not _text(arguments, maximum=65_536)
+                    or item.get("status", "completed") != "completed"
+                    or ("id" in item and not _text(item["id"], maximum=128))):
+                raise PolicyDenied("request.tool_call", "Function-call history does not match a declared completed tool")
+            try:
+                parsed_arguments = json.loads(arguments, object_pairs_hook=_pairs_no_duplicates,
+                    parse_constant=lambda _: (_ for _ in ()).throw(ValueError("constant")))
+            except (ValueError, UnicodeDecodeError, RecursionError):
+                raise PolicyDenied("request.tool_call", "Function-call arguments are malformed") from None
+            if not isinstance(parsed_arguments, dict) or call_id in seen_calls:
+                raise PolicyDenied("request.tool_call", "Function-call history is invalid or duplicated")
+            seen_calls.add(call_id)
+            pending_calls[call_id] = (namespace, name)
         elif kind == "function_call_output":
-            if set(item) != {"type", "call_id", "output"} or not _text(item.get("call_id"), maximum=256) or not _text(item.get("output")):
+            if (set(item) - {"type", "call_id", "output", "namespace", "name"}
+                    or not _text(item.get("call_id"), maximum=64) or not _text(item.get("output"))):
                 raise PolicyDenied("request.tool_output", "Function outputs must be bounded text")
+            expected = pending_calls.get(item["call_id"])
+            if expected is None or (item.get("namespace", expected[0]), item.get("name", expected[1])) != expected:
+                raise PolicyDenied("request.tool_output", "Function output has no preceding matching call")
+            pending_calls.pop(item["call_id"])
         else:
-            raise PolicyDenied("request.modality", "Only text input and function-call output are supported")
+            raise PolicyDenied("request.modality", "Only text, declared function-call history and function outputs are supported")
+    if pending_calls:
+        raise PolicyDenied("request.tool_output", "Function-call history is missing a matching tool output")
 
 
 def normalize_responses_request(payload: bytes) -> tuple[bytes, str, bool]:
@@ -102,49 +133,65 @@ def normalize_responses_request(payload: bytes) -> tuple[bytes, str, bool]:
         raise PolicyDenied("route.model", "Codex model identifier is invalid")
     if "input" not in body:
         raise PolicyDenied("request.input", "Codex Responses request requires input")
-    _validate_input(body["input"])
     if "instructions" in body and not _text(body["instructions"]):
         raise PolicyDenied("request.instructions", "Codex instructions must be bounded text")
-    maximum = body.get("max_output_tokens", 4096)
-    if isinstance(maximum, bool) or not isinstance(maximum, int) or not 1 <= maximum <= MAX_OUTPUT_TOKENS:
-        raise PolicyDenied("request.bounds", "Codex output-token limit is outside its supported bound")
     tools = body.get("tools", [])
     if not isinstance(tools, list) or len(tools) > 64:
         raise PolicyDenied("request.tools", "Codex function-tool list exceeds its bound")
-    for tool in tools:
-        if not isinstance(tool, dict) or tool.get("type") != "function" or set(tool) - {"type", "name", "description", "parameters", "strict"}:
-            raise PolicyDenied("request.tools", "Only declared function tools are supported")
-        if not isinstance(tool.get("name"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", tool["name"]):
-            raise PolicyDenied("request.tools", "Codex function tool name is invalid")
-        if "description" in tool and not _text(tool["description"], maximum=4096):
-            raise PolicyDenied("request.tools", "Codex function description is too long")
-        if not isinstance(tool.get("parameters"), dict):
-            raise PolicyDenied("request.tools", "Codex function tool requires a JSON schema")
-        if "strict" in tool and not isinstance(tool["strict"], bool):
-            raise PolicyDenied("request.tools", "Codex function strict flag is invalid")
+    function_names: set[tuple[str, str]] = set()
+    namespace_names: set[str] = set()
+    for namespace in tools:
+        if (not isinstance(namespace, dict) or namespace.get("type") != "namespace"
+                or set(namespace) - {"type", "name", "description", "tools"}):
+            raise PolicyDenied("request.tools", "SIWC tools must use the documented namespace form")
+        namespace_name = namespace.get("name")
+        if not isinstance(namespace_name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", namespace_name):
+            raise PolicyDenied("request.tools", "Codex tool namespace is invalid")
+        if namespace_name in namespace_names:
+            raise PolicyDenied("request.tools", "Duplicate Codex tool namespaces are unavailable")
+        namespace_names.add(namespace_name)
+        if "description" in namespace and not _text(namespace["description"], maximum=4096):
+            raise PolicyDenied("request.tools", "Codex namespace description is too long")
+        functions = namespace.get("tools")
+        if not isinstance(functions, list) or not 1 <= len(functions) <= 64:
+            raise PolicyDenied("request.tools", "Codex namespace requires bounded function tools")
+        for tool in functions:
+            if (not isinstance(tool, dict) or tool.get("type") != "function"
+                    or set(tool) - {"type", "name", "description", "parameters", "strict", "allowed_callers"}):
+                raise PolicyDenied("request.tools", "Only namespaced direct function tools are supported")
+            name = tool.get("name")
+            if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
+                raise PolicyDenied("request.tools", "Codex function tool name is invalid")
+            pair = (namespace_name, name)
+            if pair in function_names:
+                raise PolicyDenied("request.tools", "Duplicate namespaced function tool names are unavailable")
+            function_names.add(pair)
+            if "description" in tool and not _text(tool["description"], maximum=4096):
+                raise PolicyDenied("request.tools", "Codex function description is too long")
+            if not isinstance(tool.get("parameters"), dict):
+                raise PolicyDenied("request.tools", "Codex function tool requires a JSON schema")
+            if "strict" in tool and not isinstance(tool["strict"], bool):
+                raise PolicyDenied("request.tools", "Codex function strict flag is invalid")
+            callers = tool.get("allowed_callers")
+            if callers is not None and callers != ["direct"]:
+                raise PolicyDenied("request.tools", "Only direct local function execution is supported")
+    _validate_input(body["input"], function_names=frozenset(function_names))
     choice = body.get("tool_choice", "auto")
-    valid_choice = (choice in {"auto", "none", "required"} if isinstance(choice, str) else (
-        isinstance(choice, dict)
-        and choice.get("type") == "function"
-        and choice.get("name") in {t["name"] for t in tools}
-        and set(choice) == {"type", "name"}
-    ))
+    valid_choice = isinstance(choice, str) and choice in {"auto", "none", "required"}
     if not valid_choice:
         raise PolicyDenied("request.tools", "Codex tool choice must name an allowed function")
     if body.get("tool_choice") == "required" and not tools:
         raise PolicyDenied("request.tools", "Required function choice has no declared functions")
     if body.get("parallel_tool_calls", False) is not False:
         raise PolicyDenied("request.tools", "Parallel function calls are disabled")
-    if body.get("truncation", "disabled") != "disabled":
-        raise PolicyDenied("request.fields", "Codex truncation mode is invalid")
-    if body.get("stream", False) is not False or body.get("store", False) is not False:
-        raise PolicyDenied("request.mode", "Streaming and server-side response storage are disabled")
-    # The supported route is bounded request/response JSON only. No server side
-    # conversations, background jobs, or implicit model behavior are enabled.
-    body["stream"] = False
+    if body.get("stream", True) is not True or body.get("store", False) is not False:
+        raise PolicyDenied("request.mode", "ChatGPT-plan inference requires stream=true and store=false")
+    # The supported route follows the official ChatGPT-plan Responses contract.
+    # Output is bounded by the root broker's byte/event/deadline caps because
+    # max_output_tokens is not supported on this plan-use path.
+    body["stream"] = True
     body["store"] = False
     body["parallel_tool_calls"] = False
-    body["max_output_tokens"] = maximum
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"),
                            ensure_ascii=False, allow_nan=False).encode("utf-8")
     if len(canonical) > MAX_REQUEST_BYTES:
@@ -153,6 +200,95 @@ def normalize_responses_request(payload: bytes) -> tuple[bytes, str, bool]:
         isinstance(item, dict) and item.get("type") == "function_call_output"
         for item in body["input"] if isinstance(body["input"], list))
     return canonical, model, uses_tools
+
+
+def validate_responses_sse(body: bytes, content_type: str) -> tuple[int, int]:
+    """Require a bounded Responses SSE stream with a successful terminal event."""
+    media_type = content_type.split(";", 1)[0].strip().casefold() if isinstance(content_type, str) else ""
+    if (not isinstance(body, bytes) or not 1 <= len(body) <= MAX_RESPONSE_BYTES
+            or media_type != "text/event-stream"):
+        raise PolicyDenied("response.stream_bounds", "Codex response is not a bounded SSE stream")
+    normalized = body.replace(b"\r\n", b"\n")
+    if b"\r" in normalized:
+        raise PolicyDenied("response.stream_format", "Codex event stream uses invalid line endings")
+    # SSE dispatches an event only when a blank line terminates it. Never accept
+    # an unterminated final frame, even if it contains response.completed text.
+    if not normalized.endswith(b"\n\n"):
+        frames = normalized.split(b"\n\n")[:-1]
+    else:
+        frames = normalized[:-2].split(b"\n\n")
+    if len(frames) > MAX_SSE_EVENTS:
+        raise PolicyDenied("response.stream_bounds", "Codex event stream exceeds its event limit")
+    completed = False
+    input_tokens = output_tokens = 0
+    for frame in frames:
+        if not frame:
+            continue
+        if len(frame) > MAX_SSE_EVENT_BYTES:
+            raise PolicyDenied("response.stream_bounds", "Codex event exceeds its frame limit")
+        event_name = ""
+        data_lines: list[bytes] = []
+        for line in frame.split(b"\n"):
+            if line.startswith(b":"):
+                continue
+            field, separator, value = line.partition(b":")
+            if not separator:
+                value = b""
+            elif value.startswith(b" "):
+                value = value[1:]
+            if field == b"event":
+                try:
+                    event_name = value.decode("utf-8", errors="strict")
+                except UnicodeDecodeError:
+                    raise PolicyDenied("response.stream_format", "Codex event name is malformed") from None
+            elif field == b"data":
+                data_lines.append(value)
+        if not data_lines:
+            continue
+        raw_data = b"\n".join(data_lines)
+        if len(raw_data) > MAX_SSE_EVENT_BYTES:
+            raise PolicyDenied("response.stream_bounds", "Codex event data exceeds its frame limit")
+        try:
+            event = json.loads(raw_data, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("constant")))
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            raise PolicyDenied("response.stream_format", "Codex event JSON is malformed") from None
+        if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+            raise PolicyDenied("response.stream_format", "Codex event has no typed event name")
+        kind = event["type"]
+        if event_name and event_name != kind:
+            raise PolicyDenied("response.stream_format", "Codex SSE event name does not match its payload")
+        if completed:
+            raise PolicyDenied("response.stream_terminal", "Codex stream contains events after completion")
+        if kind in {"error", "response.failed"}:
+            code = "provider.codex_failed"
+            payload = event.get("error")
+            if isinstance(payload, dict) and payload.get("code") in {
+                "subscription_sharing_usage_limit_exceeded",
+                "subscription_sharing_usage_unavailable",
+            }:
+                code = "provider.codex_usage_unavailable"
+            raise PolicyDenied(code, "Codex Responses stream did not complete successfully")
+        if kind == "response.incomplete":
+            raise PolicyDenied("provider.codex_incomplete", "Codex Responses stream ended as incomplete")
+        if kind == "response.completed":
+            response = event.get("response")
+            if (not isinstance(response, dict)
+                    or not _text(response.get("id"), maximum=256)
+                    or response.get("status") != "completed"):
+                raise PolicyDenied("response.stream_format", "Codex completion event lacks a completed response object")
+            usage = response.get("usage")
+            if not isinstance(usage, dict):
+                raise PolicyDenied("response.stream_usage", "Codex completed response lacks usage accounting")
+            input_value, output_value = usage.get("input_tokens"), usage.get("output_tokens")
+            if (isinstance(input_value, bool) or not isinstance(input_value, int) or input_value < 0
+                    or isinstance(output_value, bool) or not isinstance(output_value, int) or output_value < 0):
+                raise PolicyDenied("response.stream_usage", "Codex completed response usage is malformed")
+            input_tokens = min(input_value, 1_000_000)
+            output_tokens = min(output_value, MAX_OUTPUT_TOKENS)
+            completed = True
+    if not completed:
+        raise PolicyDenied("provider.codex_partial", "Codex Responses stream ended before response.completed")
+    return input_tokens, output_tokens
 
 
 class CodexResponsesTransport:
@@ -187,15 +323,34 @@ class CodexResponsesTransport:
             raise PolicyDenied("context.lease", "Host Codex context has insufficient monotonic lease")
         body, _model, uses_tools = normalize_responses_request(payload)
         digest = hashlib.sha256(body).hexdigest()
+        if getattr(host_context, "final_payload_digest", None) != digest:
+            raise PolicyDenied("authorization.payload_mismatch", "Codex host context is not bound to the normalized request")
         capability = "provider-tool-call" if uses_tools else "provider-inference"
+        capabilities = getattr(host_context, "capabilities", frozenset())
+        if not isinstance(capabilities, frozenset) or capability not in capabilities:
+            raise PolicyDenied("authorization.capability", "Codex host context lacks request-derived capability")
         target, recipient = CODEX_TARGET, CODEX_RECIPIENT
         try:
             grant = self._authority.authorize_effect(
                 host_context, capability=capability, target=target, recipient=recipient,
                 request_digest=digest, retry_index=retry_index)
-            if grant is None or not self._authority.verify_effect(
+            verified = self._authority.verify_effect(
                 grant, host_context, capability=capability, target=target,
-                recipient=recipient, request_digest=digest, retry_index=retry_index):
+                recipient=recipient, request_digest=digest, retry_index=retry_index)
+            verified_at = getattr(verified, "verified_at_monotonic", None)
+            if (getattr(verified, "authorization", None) != grant
+                    or getattr(verified, "operation", None) != "provider.dispatch"
+                    or not isinstance(getattr(verified, "verification_receipt", None), str)
+                    or not getattr(verified, "verification_receipt", "")
+                    or isinstance(verified_at, bool)
+                    or not isinstance(verified_at, (int, float))
+                    or not math.isfinite(verified_at)
+                    or verified_at > time.monotonic()
+                    or getattr(grant, "capability", None) != capability
+                    or getattr(grant, "target", None) != target
+                    or getattr(grant, "recipient", None) != recipient
+                    or getattr(grant, "request_digest", None) != digest
+                    or getattr(grant, "retry_index", None) != retry_index):
                 raise PolicyDenied("authorization.denied", "Host denied the Codex effect grant")
             grant_expires = getattr(grant, "monotonic_expires_at", None)
             if (isinstance(grant_expires, bool) or not isinstance(grant_expires, (int, float))
@@ -222,7 +377,7 @@ class CodexResponsesTransport:
             raise PolicyDenied("response.bounds", "Host broker returned an invalid Codex response")
         safe_headers = {"Content-Type": "application/json"}
         content_type = headers.get("Content-Type", "application/json")
-        if isinstance(content_type, str) and content_type in {"application/json", "text/event-stream"}:
+        if isinstance(content_type, str) and content_type.split(";", 1)[0].strip().casefold() in {"application/json", "text/event-stream"}:
             safe_headers["Content-Type"] = content_type
         retry_after = headers.get("Retry-After")
         if retry_after is not None:
@@ -233,16 +388,20 @@ class CodexResponsesTransport:
             except (TypeError, ValueError, OverflowError):
                 pass
         input_tokens = output_tokens = 0
-        try:
-            response_json = json.loads(response_body)
-            usage = response_json.get("usage", {}) if isinstance(response_json, dict) else {}
-            if isinstance(usage, dict):
-                prompt = usage.get("input_tokens", 0)
-                completion = usage.get("output_tokens", 0)
-                if isinstance(prompt, int) and not isinstance(prompt, bool) and prompt >= 0:
-                    input_tokens = min(prompt, 1_000_000)
-                if isinstance(completion, int) and not isinstance(completion, bool) and completion >= 0:
-                    output_tokens = min(completion, MAX_OUTPUT_TOKENS)
-        except (ValueError, UnicodeDecodeError):
-            pass
+        if 200 <= status < 300:
+            input_tokens, output_tokens = validate_responses_sse(
+                response_body, safe_headers.get("Content-Type", ""))
+        else:
+            try:
+                response_json = json.loads(response_body)
+                usage = response_json.get("usage", {}) if isinstance(response_json, dict) else {}
+                if isinstance(usage, dict):
+                    prompt = usage.get("input_tokens", 0)
+                    completion = usage.get("output_tokens", 0)
+                    if isinstance(prompt, int) and not isinstance(prompt, bool) and prompt >= 0:
+                        input_tokens = min(prompt, 1_000_000)
+                    if isinstance(completion, int) and not isinstance(completion, bool) and completion >= 0:
+                        output_tokens = min(completion, MAX_OUTPUT_TOKENS)
+            except (ValueError, UnicodeDecodeError):
+                pass
         return ProviderResponse(status, response_body, safe_headers, input_tokens, output_tokens)
