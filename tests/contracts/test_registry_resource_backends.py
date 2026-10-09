@@ -14,11 +14,15 @@ from hermes_installer.registry.resource_backends import (
     resource_profile_task_handler_sha256,
     resolve_resource_profile_task,
     ResourceProfileTaskAdapter,
+    build_resource_profile_task_adapters,
 )
 from hermes_installer.registry.resource_jobs import (
     ResourceBackendEnrollment,
     ResourceBodyRecipe,
     ResourceBodyRecipeField,
+    ResourceJobEnrollment,
+    ResourceJobNode,
+    ResourceScopeBinding,
     ResourceValidator,
     RootResourceJobAdmissionHandle,
 )
@@ -140,6 +144,61 @@ class ResourceProfileBackendTests(unittest.TestCase):
 
     def test_handler_identity_is_bound_to_this_adapter_source(self):
         self.assertRegex(resource_profile_task_handler_sha256(), r"^[0-9a-f]{64}$")
+
+    def test_composition_builds_immutable_adapter_map_from_exact_selected_joins(self):
+        from hermes_installer.authority.service import AuthorityService
+
+        from dataclasses import replace
+
+        _, backend, task_recipe, validator, bindings = _selected()
+        generation = hashlib.sha256(b"resource-generation").hexdigest()
+        backend = replace(backend, generation=generation)
+        outer_recipe = ResourceBodyRecipe(
+            recipe_id="outer-recipe", schema_id="outer-request-v1",
+            source_artifact_id="outer-source", source_sha256="c" * 64,
+            output_fields=(ResourceBodyRecipeField("event", "literal", "selected", "event-text"),),
+            scope_bindings=(), maximum_bytes=1024,
+        )
+        event_validator = ResourceValidator("event-text", "utf8-string", 128, None, None, None, None, None)
+        scope = ResourceScopeBinding(
+            scope_binding_id="scope-1", resource_id="daily", profile_id="selected-profile",
+            principal_id="selected-principal", resource_generation=generation,
+            profile_generation="profile-generation", backend_enrollment_id="backend-1",
+            fixed_fields={}, credential_reference_ids=frozenset(), recipient=None,
+        )
+        node = ResourceJobNode(
+            node_id="run-node", action_id="run", effect=backend.operation,
+            target=backend.target_id, recipient=None, payload=outer_recipe.template_payload(),
+            request_schema_id=backend.request_schema_id, body_recipe_id=outer_recipe.recipe_id,
+            backend_enrollment_id=backend.backend_id, result_schema_id=backend.result_schema_id,
+            scope_binding_id=backend.scope_binding_id,
+        )
+        enrollment = ResourceJobEnrollment(
+            resource_id="daily", kind="crons", generation=generation,
+            selected_enabled=True, profile_id=backend.profile_id, principal_id=backend.principal_id,
+            consent_revision=backend.consent_revision, approved_action_ids=frozenset({"run"}),
+            fixed_target_ids=frozenset({backend.target_id}), recipient_scope=frozenset(),
+            source_policy=frozenset({"static-context"}), schedule_or_route_id="daily-run",
+            nodes=(node,), max_children=2, max_concurrency=1, max_runtime_seconds=60,
+            max_payload_bytes=4096, max_replay_entries=10, enrollment_id="job-enrollment",
+            source_issuer_channel_id=backend.source_issuer_channel_id,
+            observer_enrollment_id=backend.observer_enrollment_id,
+            backend_enrollment_id=backend.backend_id, profile_generation=backend.profile_generation,
+            backends={backend.backend_id: backend}, body_recipes={
+                outer_recipe.recipe_id: outer_recipe, task_recipe.recipe_id: task_recipe,
+            }, scope_bindings={scope.scope_binding_id: scope},
+            validators={validator.validator_id: validator, event_validator.validator_id: event_validator},
+        )
+        service = object.__new__(AuthorityService)
+        with patch.object(AuthorityService, "launch_resource_profile_task", create=True):
+            adapters = build_resource_profile_task_adapters(
+                {(enrollment.resource_id, enrollment.generation): enrollment},
+                protected_bindings=bindings, authority_service=service,
+            )
+        self.assertEqual(tuple(adapters), (("backend-1", "run-node"),))
+        self.assertIsInstance(adapters[("backend-1", "run-node")], ResourceProfileTaskAdapter)
+        with self.assertRaises(TypeError):
+            adapters[("forged", "node")] = object()
 
     def test_adapter_forwards_only_exact_live_root_admission_handle(self):
         from hermes_installer.authority.service import AuthorityService

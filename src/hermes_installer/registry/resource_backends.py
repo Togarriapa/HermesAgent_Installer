@@ -16,7 +16,8 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol
+from types import MappingProxyType
 
 
 HERMES_RESOURCE_PROFILE_TASK_OPERATION = "hermes-resource-profile-task-v1"
@@ -241,6 +242,77 @@ def build_resource_profile_task_adapter(
         backend, task_body_recipe, protected_bindings=protected_bindings, validators=validators,
     )
     return ResourceProfileTaskAdapter(selection, node_id=node_id, launcher=authority_service)
+
+
+def build_resource_profile_task_adapters(
+    enrollments: Mapping[Any, Any] | Iterable[Any],
+    *,
+    protected_bindings: ProtectedResourceRuntimeBindings,
+    authority_service: Any,
+) -> Mapping[tuple[str, str], "ResourceProfileTaskAdapter"]:
+    """Resolve the immutable root adapter map for all selected job nodes.
+
+    Only nodes whose exact backend enrollment carries the reviewed Hermes
+    ``execution_binding`` are included. The key is the protected
+    ``(backend_id, node_id)`` pair consumed by ``ResourceJobAuthority``. No
+    declaration-provided callback, path, or target is considered. A selected
+    task binding that cannot be resolved aborts composition rather than
+    silently producing a partial runtime.
+
+    Source admission and terminal/result-capsule proof remain independent
+    gates enforced by the job authority; this map does not issue contexts,
+    start processes, or make an unverified source usable.
+    """
+    from hermes_installer.authority.service import AuthorityService
+    from hermes_installer.registry.resource_jobs import ResourceJobEnrollment
+
+    if not isinstance(authority_service, AuthorityService):
+        raise ResourceProfileTaskUnavailable("root AuthorityService is required for profile-task adapter composition")
+    if not callable(getattr(authority_service, "launch_resource_profile_task", None)):
+        raise ResourceProfileTaskUnavailable("root selected profile-task launcher is not installed")
+
+    values = enrollments.values() if isinstance(enrollments, Mapping) else enrollments
+    adapters: dict[tuple[str, str], ResourceProfileTaskAdapter] = {}
+    for enrollment in values:
+        if not isinstance(enrollment, ResourceJobEnrollment):
+            raise ResourceProfileTaskUnavailable("indexed resource job enrollment has an unexpected type")
+        if not enrollment.selected_enabled:
+            continue
+        for node in enrollment.nodes:
+            backend = enrollment.backends.get(node.backend_enrollment_id)
+            if backend is None or backend.execution_binding is None:
+                continue
+            if (backend.resource_id != enrollment.resource_id
+                    or backend.generation != enrollment.generation
+                    or backend.profile_id != enrollment.profile_id
+                    or backend.profile_generation != enrollment.profile_generation
+                    or node.backend_enrollment_id != backend.backend_id
+                    or node.action_id not in backend.approved_action_ids
+                    or node.effect != backend.operation
+                    or node.target != backend.target_id
+                    or node.recipient != backend.recipient):
+                raise ResourceProfileTaskUnavailable("resource job node does not exactly join its selected backend")
+            binding = backend.execution_binding
+            recipe_id = binding.get("task_body_recipe_id") if isinstance(binding, Mapping) else None
+            recipe = enrollment.body_recipes.get(recipe_id)
+            if recipe is None:
+                raise ResourceProfileTaskUnavailable("selected profile-task recipe is absent from the job catalog")
+            key = (backend.backend_id, node.node_id)
+            if key in adapters:
+                raise ResourceProfileTaskUnavailable("duplicate selected profile-task backend/node key")
+            try:
+                adapters[key] = build_resource_profile_task_adapter(
+                    backend, recipe, validators=enrollment.validators,
+                    protected_bindings=protected_bindings, node_id=node.node_id,
+                    authority_service=authority_service,
+                )
+            except ResourceProfileTaskUnavailable:
+                raise
+            except Exception:
+                raise ResourceProfileTaskUnavailable(
+                    "selected profile-task adapter could not be resolved from protected catalogs"
+                ) from None
+    return MappingProxyType(adapters)
 
 
 class ResourceProfileTaskAdapter:
