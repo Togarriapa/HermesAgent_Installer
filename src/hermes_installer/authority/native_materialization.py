@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Protocol
 
+from hermes_installer.authority.pm_runtime import NativePMRuntimeResolver
 from hermes_installer.registry.native import NativeRegistry
 from hermes_installer.registry.native_install import (
     PINNED_HERMES_REVISION,
@@ -50,15 +51,6 @@ class NativeMaterializationSelection:
     source_artifact_id: str
     source_receipt_handle: str
     pm_runtime_handle: str
-
-
-class NativePMRuntimeResolver(Protocol):
-    """Root-private resolver for the committed official Hermes PM runtime."""
-
-    def resolve_python(
-        self, *, pm_runtime_handle: str, enrollment_id: str,
-        service_generation: str, source_artifact_id: str,
-    ) -> Path: ...
 
 
 class RootSelectedInstallationBinding(Protocol):
