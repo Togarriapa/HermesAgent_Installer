@@ -182,22 +182,40 @@ class BootstrapTests(unittest.TestCase):
 
     def test_capture_does_not_block_closing_when_reader_lacks_eof(self):
         from unittest.mock import patch
+        entered=threading.Event()
+        release=threading.Event()
+        class BlockingStream:
+            closed=False
+            def read(self, size):
+                entered.set()
+                release.wait(3)
+                return b""
+            def close(self):
+                self.closed=True
+        class FakeProc:
+            pid=999999
+            returncode=None
+            def __init__(self):
+                self.stdout=BlockingStream()
+            def wait(self, timeout=None):
+                return 0
+        proc=FakeProc()
         with tempfile.TemporaryDirectory() as td:
             data=OwnedRoot(Path(td)/"data"); data.ensure()
             state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
             boot.script_path.parent.mkdir(parents=True,exist_ok=True)
-            boot.script_path.write_text("#!/usr/bin/env bash\\nsleep 10 &\\nwait\\n")
+            boot.script_path.write_text("#!/usr/bin/env bash\\n")
             started=time.monotonic()
-            with patch("hermes_installer.bootstrap._child_state",return_value="lost"):
+            with patch("hermes_installer.bootstrap.subprocess.Popen",return_value=proc), \\
+                 patch("hermes_installer.bootstrap._child_state",return_value="lost"), \\
+                 patch("hermes_installer.bootstrap._stop_group",return_value=False):
                 with self.assertRaisesRegex(BootstrapError,"custody was lost"):
                     boot._run_process(["--manifest"],timeout=5,capture=True)
-            self.assertLess(time.monotonic()-started,2)
-            # The mocked lost-custody boundary deliberately forbids cleanup.
-            # The fixture owns its child, so clean it up after proving the runner
-            # returned without closing a stream still held by its reader.
-            with patch("hermes_installer.bootstrap._child_state", wraps=lambda *a: "unknown"):
-                pass
+            self.assertTrue(entered.is_set())
+            self.assertLess(time.monotonic()-started,1)
+            self.assertFalse(proc.stdout.closed)
+            release.set()
 
     def test_stop_group_cleans_only_its_owned_descendants(self):
         with tempfile.TemporaryDirectory() as td:
