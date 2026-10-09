@@ -22,7 +22,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from hermes_installer.artifacts import ResolvedArtifact, _install_coral_package_set
+from hermes_installer.artifacts import (
+    ResolvedArtifact, _install_coral_package_set, _mkdir_service_directory,
+)
+from hermes_installer.authority.types import AuthorityDenied
 
 
 def _wheel(*, distribution: str, module_files: dict[str, bytes], version: str) -> bytes:
@@ -79,6 +82,19 @@ class OfflinePackageSetLinuxTests(unittest.TestCase):
             venv_root = root / "service-venvs"
             venv_root.mkdir(mode=0o700)
             os.chown(venv_root, service_uid, service_gid)
+            output_root = _mkdir_service_directory(
+                venv_root, "custody-check", service_uid, service_gid,
+            )
+            output_info = output_root.lstat()
+            self.assertEqual((output_info.st_uid, output_info.st_gid,
+                              output_info.st_mode & 0o777),
+                             (service_uid, service_gid, 0o700))
+            unsafe = venv_root / "unsafe-root-owned"
+            unsafe.mkdir(mode=0o700)
+            with self.assertRaises(AuthorityDenied):
+                _mkdir_service_directory(venv_root, unsafe.name, service_uid, service_gid)
+            shutil.rmtree(unsafe)
+            output_root.rmdir()
 
             wheel_rows = (
                 SimpleNamespace(distribution="numpy", version="1.26.4",

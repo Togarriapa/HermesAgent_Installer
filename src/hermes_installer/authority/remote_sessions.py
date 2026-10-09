@@ -146,6 +146,18 @@ def _finite(value: Any, name: str) -> float:
     return float(value)
 
 
+def _bounded_deadline(start: float, duration: float) -> float:
+    """Round a monotonic lease cap downward so float addition cannot exceed it."""
+    start = _finite(start, "lease start")
+    duration = _finite(duration, "lease duration")
+    if duration <= 0:
+        raise _deny("remote.state", "lease duration must be positive")
+    cap = start + duration
+    if not math.isfinite(cap):
+        raise _deny("remote.state", "lease deadline is not finite")
+    return math.nextafter(cap, -math.inf)
+
+
 @dataclass(frozen=True, slots=True)
 class RemoteAdmissionRequest:
     """Only the fixed route request fields permitted by HI13."""
@@ -814,9 +826,10 @@ class RemoteSessionAuthority:
         except Exception:
             raise _deny("remote.verify", "root remote admission failed closed") from None
         issued = self.monotonic()
-        expiry = min(issued + self.enrollment.maximum_lease_seconds,
+        expiry = min(_bounded_deadline(issued, self.enrollment.maximum_lease_seconds),
                      identity.jwt_expires_monotonic,
-                     identity.policy_verified_monotonic + self.enrollment.maximum_lease_seconds)
+                     _bounded_deadline(identity.policy_verified_monotonic,
+                                       self.enrollment.maximum_lease_seconds))
         if expiry <= issued:
             raise _deny("remote.expired", "verified Access and policy lease is already expired")
         handle = secrets.token_urlsafe(32)
@@ -891,9 +904,10 @@ class RemoteSessionAuthority:
         with self._lock:
             self._assert_runtime(session.gateway)
             verified = self.monotonic()
-            expiry = min(verified + self.enrollment.maximum_lease_seconds,
+            expiry = min(_bounded_deadline(verified, self.enrollment.maximum_lease_seconds),
                          identity.jwt_expires_monotonic,
-                         identity.policy_verified_monotonic + self.enrollment.maximum_lease_seconds)
+                         _bounded_deadline(identity.policy_verified_monotonic,
+                                           self.enrollment.maximum_lease_seconds))
             if expiry <= verified:
                 self._close_state(session)
                 raise _deny("remote.renewal", "fresh remote lease is already expired")

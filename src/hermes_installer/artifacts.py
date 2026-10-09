@@ -673,7 +673,9 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
                                before_activation: Callable[[], None]) -> tuple[Path, str]:
     owner = runtime.service_uid
     base = _secure_directory(Path(runtime.venv_root), owner)
-    destination_parent = _mkdir_chain(base / spec.package_set_id, owner)
+    destination_parent = _mkdir_service_directory(
+        base, spec.package_set_id, owner, runtime.service_gid,
+    )
     destination = destination_parent / spec.manifest_sha256
     if destination.exists() or destination.is_symlink():
         digest = _verify_installed_package_set(destination, spec, runtime)
@@ -753,7 +755,11 @@ def _install_coral_package_set(spec: Any, runtime: PackageSetRuntimeBinding,
     except OSError as exc:
         if exc.errno == errno.ENOSPC:
             raise AuthorityDenied("package.storage", "isolated package-set staging ran out of space; retry after freeing owned storage") from None
-        raise AuthorityDenied("package.storage", "isolated package-set staging failed safely") from None
+        # errno is a bounded platform code, not a path or runtime detail. Keep
+        # it in the denial so the root-owned service journal can distinguish
+        # storage/custody failures without exposing protected filesystem paths.
+        code = exc.errno if type(exc.errno) is int else 0
+        raise AuthorityDenied("package.storage", f"isolated package-set staging failed safely (errno {code})") from None
     finally:
         _remove_private_tree(work)
 
@@ -1676,6 +1682,69 @@ def _mkdir_chain(path: Path, expected_uid: int) -> Path:
         raise AuthorityDenied("artifact.custody", "artifact output directory ownership or mode is unsafe")
     os.chmod(path, 0o700)
     return path
+
+
+def _mkdir_service_directory(parent: Path, leaf: str, owner: int, group: int) -> Path:
+    """Create one package-set directory for the enrolled service identity.
+
+    The authority process is root, while `venv_root` belongs to the dedicated
+    service UID. A plain mkdir therefore leaves a root-owned child that cannot
+    pass the service-root custody check. Create relative to a verified parent,
+    pin the child with an open directory FD, and set ownership/mode through that
+    FD. Existing entries are only reused when they already have the exact
+    enrolled owner and private directory mode; an unsafe pre-existing path is
+    never repaired or recursively adopted.
+    """
+    if (not _safe_leaf(leaf) or type(owner) is not int or owner <= 0
+            or type(group) is not int or group < 0 or os.geteuid() != 0):
+        raise AuthorityDenied("artifact.custody", "package-set output identity is invalid")
+    parent = _secure_directory(parent, owner)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        parent_fd = os.open(parent, flags)
+    except OSError:
+        raise AuthorityDenied("artifact.custody", "package-set output parent is unavailable") from None
+    child_fd: int | None = None
+    try:
+        parent_info = os.fstat(parent_fd)
+        if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != owner
+                or parent_info.st_mode & 0o022):
+            raise AuthorityDenied("artifact.custody", "package-set output parent custody is unsafe")
+        created = False
+        try:
+            os.mkdir(leaf, mode=0o700, dir_fd=parent_fd)
+            created = True
+        except FileExistsError:
+            pass
+        try:
+            child_fd = os.open(leaf, flags, dir_fd=parent_fd)
+            child_info = os.fstat(child_fd)
+        except OSError:
+            raise AuthorityDenied("artifact.custody", "package-set output path is not a real directory") from None
+        if not stat.S_ISDIR(child_info.st_mode):
+            raise AuthorityDenied("artifact.custody", "package-set output path is not a directory")
+        if created:
+            # A just-created entry must still be the root-owned inode we made
+            # before changing its service identity.
+            if child_info.st_uid != 0:
+                raise AuthorityDenied("artifact.custody", "new package-set output directory changed during creation")
+            os.fchown(child_fd, owner, group)
+            os.fchmod(child_fd, 0o700)
+            child_info = os.fstat(child_fd)
+        if (child_info.st_uid != owner or child_info.st_gid != group
+                or stat.S_IMODE(child_info.st_mode) != 0o700):
+            raise AuthorityDenied("artifact.custody", "package-set output directory ownership or mode is unsafe")
+        entry = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        if (not stat.S_ISDIR(entry.st_mode) or entry.st_dev != child_info.st_dev
+                or entry.st_ino != child_info.st_ino):
+            raise AuthorityDenied("artifact.custody", "package-set output directory changed during creation")
+    except OSError:
+        raise AuthorityDenied("artifact.custody", "package-set output directory could not be secured") from None
+    finally:
+        if child_fd is not None:
+            os.close(child_fd)
+        os.close(parent_fd)
+    return parent / leaf
 
 
 def _hash_file(path: Path, max_bytes: int) -> tuple[str, int]:
