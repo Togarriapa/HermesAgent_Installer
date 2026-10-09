@@ -395,6 +395,10 @@ class SourceObserverRegistry:
             raise AuthorityDenied("source.package", "root loaded-package custody proof is unavailable")
         loaded_package_proof = self._resolve_loaded_package_proof(
             identity, observer, package, now, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+        if (_selected_native_target is not None
+                and getattr(_selected_native_target, "loaded_package_proof", None)
+                != loaded_package_proof):
+            raise AuthorityDenied("source.package", "selected target loaded-package proof changed")
         if _selected_native_target is None and not callable(self.target_peer_resolver):
             raise AuthorityDenied("source.target", "root-selected target peer channel is unavailable")
         selected_target = (_selected_native_target if _selected_native_target is not None
@@ -1674,6 +1678,12 @@ class RootNativeExecutionSelectionRegistry:
                     or record.authority_epoch != self.service.authority_epoch
                     or record.selection.service_generation_digest != self.service.service_generation_digest):
                 self._selections.pop(handle, None)
+                target = self._targets.pop(handle, None)
+                if target is not None:
+                    try:
+                        os.close(target.peer_pidfd)
+                    except OSError:
+                        pass
 
     def close(self) -> None:
         with self._lock:

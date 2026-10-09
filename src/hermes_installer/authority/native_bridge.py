@@ -135,6 +135,24 @@ class NativeBridgeBroker:
         self._context_pair_index: dict[tuple[str, str, str, str, str], set[str]] = {}
         self._lock = threading.RLock()
 
+    def attach_provider_response_registry(self, registry: Any) -> None:
+        """Attach the root response observer once after cycle-safe construction."""
+        from .native_runtime_observer import NativeInvocationRegistry
+
+        if type(registry) is not NativeInvocationRegistry:
+            raise AuthorityDenied("native.bridge_registry", "provider response registry type is invalid")
+        if (registry.service is not self.service
+                or registry.bridges != self.bridges
+                or not callable(getattr(registry, "register_provider_response", None))
+                or not callable(getattr(registry, "take_native_response_metadata", None))
+                or not callable(getattr(registry, "begin_native_invocation", None))
+                or not callable(getattr(registry, "get_invocation_contexts", None))):
+            raise AuthorityDenied("native.bridge_registry", "provider response registry does not join this root runtime")
+        with self._lock:
+            if self.provider_response_registry is not None:
+                raise AuthorityDenied("native.bridge_registry", "provider response registry is already attached")
+            self.provider_response_registry = registry
+
     def prepare(self, *, uid: int, peer_pid: int, peer_pidfd: int,
                 payload: Any, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         """Reject worker capture until an actual root-observed event exists."""
