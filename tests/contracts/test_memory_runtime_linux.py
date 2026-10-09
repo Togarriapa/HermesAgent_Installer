@@ -191,6 +191,11 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
                     })
 
             service_catalog = SelectedProfileCatalog()
+            # Exercise the production catalog's complete profile/provider/
+            # route join before the connector uses the same binding.
+            service_catalog.resolve_connector_route(
+                enrollment.service_enrollment_id, enrollment.service_generation,
+                enrollment.target_id, recipe.approved_route_id)
 
             class ProcessManager:
                 def __init__(self):
