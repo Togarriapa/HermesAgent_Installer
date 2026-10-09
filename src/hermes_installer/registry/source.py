@@ -116,6 +116,9 @@ class BundledRegistrySource:
             raise RegistrySourceError("vendored source archive is malformed") from None
         if len(files)!=self.pin.snapshot_file_count:
             raise RegistrySourceError("vendored source file count differs from the pinned commit")
+        computed_tree, computed_roots = _git_tree(files, modes)
+        if computed_tree != self.pin.git_tree or any(computed_roots.get(root) != tree for root, tree in self.pin.root_trees.items()):
+            raise RegistrySourceError("vendored source Git tree IDs differ from the selected upstream commit")
         for root,count in self.pin.root_counts.items():
             entries=[path for path in files if path.startswith(root+"/")]
             if len(entries)!=count or any("/" in path[len(root)+1:] or not path.endswith(".yaml") for path in entries):
