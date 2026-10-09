@@ -650,5 +650,11 @@
       "resolve": "resolve_schema_derivation(handle,*,artifact_id,artifact_sha256,size_bytes,service_generation_digest)->RootSchemaDerivationReceipt; same retained registry instance checks actual observation, all parent receipts, package/action/kind/current service joins, lease and canonical child bytes. Source receipt handle is this typed derivation handle, not a raw archive receipt.",
       "evidence": "HI-T08/HI-T09 and MC-F01: exact parent membership/authenticated discovery and child schema digest; mismatched server/tool/package/action/hash/member, stale generation, caller DTO and generic fetch substitution deny. Fixture evidence does not establish native acceptance."
     }
+  },
+  "native_turn_delivery": {
+    "contract": "planning/memory-service-connector-contract.json#whole_turn_capture.handle_delivery",
+    "input_DTO_addition": "turn_handle: opaque string supplied only by root retained current turn; NativeInitialInputDelivery and ChannelEventDelivery",
+    "response_DTO_additions": "ProviderResponseMetadata.turn_handle: opaque string; final_response_delivery_handle: opaque string|null; supplied only by actual root response observer",
+    "authority": "Authenticated peer delivery only; DTO handles do not themselves mint context, public clearance or effect grants."
   }
 }
