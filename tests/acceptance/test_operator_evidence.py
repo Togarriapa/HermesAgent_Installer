@@ -97,6 +97,11 @@ class OperatorEvidenceTests(unittest.TestCase):
                 "caller_paths_urls_pip_args_extra_wheels_rejected",
                 "wrong_hash_runtime_abi_root_network_enospc_cancel_preserve_prior_generation",
             },
+            ("AC16", "EV-RB06"): {
+                "fixed_service_action_and_public_query_bound", "bounded_metadata_parameters_before_network",
+                "redirects_private_unknown_query_and_arbitrary_destination_denied",
+                "read_results_untrusted_and_never_activate_resources",
+            },
             ("AC16", "EV-RB07"): {
                 "selected_enabled_generation_and_authenticated_event_verified", "single_bounded_job_admission_consumed",
                 "fresh_reduced_grant_per_child_and_attempt", "source_lineage_sensitivity_and_recipient_bound",

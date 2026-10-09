@@ -8,7 +8,7 @@ The requested Pi setup needs truthful complete integration inventory, requiremen
 
 - Implement the full constraints and individual obligations assigned to `verification-documentation` in planning/traceability.json.
 - Deliver component-specific functional/failure tests and account/hardware pending states rather than clone-only completion.
-- Keep verifier assertion profiles current with Sol-validated supplemental evidence IDs, including process attestation, Coral package installation, selected resource jobs, and documented OpenAI subscription inference.
+- Keep verifier assertion profiles current with Sol-validated supplemental evidence IDs, including fixed registry discovery, process attestation, Coral package installation, selected resource jobs, and documented OpenAI subscription inference.
 - Preserve existing data and keep all externally funded/account/device actions within configured scope.
 
 ## Capabilities
