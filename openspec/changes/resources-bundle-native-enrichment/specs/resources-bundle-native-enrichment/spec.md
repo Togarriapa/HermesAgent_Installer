@@ -160,3 +160,11 @@ The installer SHALL verify the actual immutable selected voice workflow recipe a
 #### Scenario: Recipe bytes available without handler
 - **WHEN** a selected recipe is verified but actual root engine, primitive handler or trusted session permission is missing
 - **THEN** capability remains incomplete and no recipe/fixture status claims native effect success
+
+### Requirement: Resource profile task terminal protocol
+
+The implementation SHALL enforce this protocol. RB-T08 / EV-RB07: use the exact root task runner protocol in planning/protected-resource-job-contract.json, including one-shot admitted UTF8 stdin plus EOF, actual terminal validation and result-capsule lineage; launch or fixture status cannot establish completion.
+
+#### Scenario: Missing concrete runtime proof
+- **WHEN** the exact protocol or current kernel/native observations are unavailable
+- **THEN** the affected task remains incomplete and no fixture or mount-only evidence establishes acceptance.

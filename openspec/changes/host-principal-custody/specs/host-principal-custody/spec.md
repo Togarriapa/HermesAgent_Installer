@@ -341,3 +341,11 @@ The installer SHALL authorize private origin probes through a separate root-owne
 #### Scenario: Setup probe submitted to public issuer
 - **WHEN** a private probe handle or synthetic Access context reaches the public remote connector issuer
 - **THEN** it is rejected, and only the separate root-private exact probe issuer may admit selected local app readiness operations
+
+### Requirement: Native loaded closure observation
+
+The implementation SHALL enforce this protocol. HI-T08 / HI-T09: use planning/protected-runtime-assembly-contract.json native_custody_proof_protocol; immutable mount metadata alone cannot establish readiness, source provenance or action success.
+
+#### Scenario: Missing concrete runtime proof
+- **WHEN** the exact protocol or current kernel/native observations are unavailable
+- **THEN** the affected task remains incomplete and no fixture or mount-only evidence establishes acceptance.
