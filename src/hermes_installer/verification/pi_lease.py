@@ -2,8 +2,9 @@
 
 This is a reviewable scope descriptor, not a signature, enrollment credential,
 or cryptographic authorization grant. It cannot authorize installation,
-profile/model invocation, account access, or mutation outside its isolated
-acceptance staging directory.
+profile/model invocation, account access, or arbitrary mutation. Its only
+non-staging effect is a named temporary symlink to the pinned Hermes checkout,
+which must be absent before the probe and removed immediately afterward.
 """
 
 from __future__ import annotations
@@ -25,7 +26,9 @@ RETAINED_HUMAN_INSTRUCTION = (
 )
 DEVICE_ID = "48dfbc75-8877-40bb-b391-9b08301911ad"
 STAGING_PARENT = "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance"
-TARGET_REPOSITORY = "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/repo"
+PINNED_HERMES_SOURCE = "/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532"
+PINNED_HERMES_SOURCE_SHA = "7085fbf7753266fc4943c55ac04926186bc90005"
+TEMPORARY_SOURCE_FIXTURE_LINK = "/tmp/hermes-agent-hi08"
 _SHA40 = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -47,6 +50,7 @@ class PiObservation:
     staging_gid: int
     staging_mode: int
     staging_is_symlink: bool
+    temporary_source_link_absent: bool
     checkout_sha: str
 
     @classmethod
@@ -72,10 +76,13 @@ class PiObservation:
             raise PermissionError("target owner or architecture differs from the observed Pi")
         if not self.model.startswith("Raspberry Pi 5 Model B"):
             raise PermissionError("target model is not the observed Raspberry Pi 5 Model B")
-        if self.staging_root != f"{STAGING_PARENT}/ev-rb02-7b895616":
-            raise PermissionError("staging root is outside the observed isolated acceptance directory")
+        expected_staging = f"{STAGING_PARENT}/ev-rb08-{self.checkout_sha[:12]}"
+        if self.staging_root != expected_staging:
+            raise PermissionError("staging root is not the exact candidate-scoped acceptance checkout")
         if (self.staging_uid, self.staging_gid, self.staging_mode, self.staging_is_symlink) != (1000, 1000, 0o700, False):
             raise PermissionError("staging root is not a nonsymlink, owner-only directory")
+        if self.temporary_source_link_absent is not True:
+            raise PermissionError("the fixed temporary source fixture path must be absent before the probe")
         if not _SHA40.fullmatch(self.checkout_sha):
             raise ValueError("observed checkout SHA must be a full Git SHA")
         return observed
@@ -101,6 +108,8 @@ class PiReadOnlyLease:
     authorization_signature_verified: bool
     allowed_acceptance: tuple[str, ...]
     allowed_actions: tuple[str, ...]
+    allowed_auxiliary_effects: tuple[str, ...]
+    temporary_source_link_absent_at_observation: bool
     denied_actions: tuple[str, ...]
     observed_at: str
     expires_at: str
@@ -158,6 +167,11 @@ def build_pi_read_only_lease(
         cryptographic_grant=False, authorization_signature_verified=False,
         allowed_acceptance=("AC16",),
         allowed_actions=("bounded_read_only_discovery", "isolated_contract_tests"),
+        allowed_auxiliary_effects=(
+            f"temporary_symlink:{TEMPORARY_SOURCE_FIXTURE_LINK}->{PINNED_HERMES_SOURCE}@{PINNED_HERMES_SOURCE_SHA}",
+            "remove_temporary_source_fixture_link_and_verify_absent",
+        ),
+        temporary_source_link_absent_at_observation=observation.temporary_source_link_absent,
         denied_actions=("managed_install", "profile_invocation", "model_inference", "account_or_cloud_mutation", "host_service_mutation", "outbound_test_message", "arbitrary_shell"),
         observed_at=observation.observed_at,
         expires_at=expires.isoformat().replace("+00:00", "Z"),
@@ -192,7 +206,8 @@ def build_pi_contract_test_request(
         "/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python",
     }:
         raise PermissionError("test interpreter is not one of the observed fixed Python runtimes")
-    if str(PurePosixPath(TARGET_REPOSITORY)) != TARGET_REPOSITORY:
+    cwd = lease.staging_root
+    if str(PurePosixPath(cwd)) != cwd:
         raise ValueError("test working directory must be normalized")
     timeout = min(120, int((expires - issued_at).total_seconds()))
     if timeout < 1:
@@ -208,7 +223,7 @@ def build_pi_contract_test_request(
             "tests.contracts.test_registry_native",
             "tests.native.test_native_boundary_adapter", "-v",
         ),
-        cwd=TARGET_REPOSITORY,
+        cwd=cwd,
         environment_allowlist=("PATH", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE"),
         timeout_seconds=timeout, stdout_limit_bytes=262144, stderr_limit_bytes=262144,
     )

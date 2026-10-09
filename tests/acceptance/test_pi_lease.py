@@ -23,9 +23,9 @@ class PiLeaseTests(unittest.TestCase):
             observed_at=(self.now - timedelta(seconds=15)).isoformat(),
             uid=1000, gid=1000, owner="admin", architecture="aarch64",
             model="Raspberry Pi 5 Model B Rev 1.1",
-            staging_root="/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/ev-rb02-7b895616",
+            staging_root="/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/ev-rb08-ffffffffffff",
             staging_uid=1000, staging_gid=1000, staging_mode=0o700,
-            staging_is_symlink=False, checkout_sha="f" * 40,
+            staging_is_symlink=False, temporary_source_link_absent=True, checkout_sha="f" * 40,
         )
 
     def test_manifest_binds_candidate_separately_and_limits_scope(self):
@@ -41,6 +41,9 @@ class PiLeaseTests(unittest.TestCase):
         self.assertFalse(document["authorization_signature_verified"])
         self.assertEqual(("AC16",), document["allowed_acceptance"])
         self.assertEqual({"bounded_read_only_discovery", "isolated_contract_tests"}, set(document["allowed_actions"]))
+        self.assertEqual(2, len(document["allowed_auxiliary_effects"]))
+        self.assertTrue(any("/tmp/hermes-agent-hi08" in item for item in document["allowed_auxiliary_effects"]))
+        self.assertTrue(document["temporary_source_link_absent_at_observation"])
         self.assertIn("profile_invocation", document["denied_actions"])
         self.assertIn("account_or_cloud_mutation", document["denied_actions"])
         self.assertLessEqual(datetime.fromisoformat(document["expires_at"].replace("Z", "+00:00")) - self.now, timedelta(minutes=10))
@@ -58,7 +61,7 @@ class PiLeaseTests(unittest.TestCase):
             uid=1000, gid=1000, owner="admin", architecture="aarch64",
             model=self.observation.model, staging_root=self.observation.staging_root,
             staging_uid=1000, staging_gid=1000, staging_mode=0o700,
-            staging_is_symlink=False, checkout_sha="f" * 40,
+            staging_is_symlink=False, temporary_source_link_absent=True, checkout_sha="f" * 40,
         )
         with self.assertRaisesRegex(PermissionError, "device"):
             build_pi_read_only_lease(wrong, candidate_sha="a" * 40, now=self.now)
@@ -68,6 +71,8 @@ class PiLeaseTests(unittest.TestCase):
             {"uid": 0}, {"owner": "other"}, {"architecture": "x86_64"},
             {"staging_uid": 0}, {"staging_mode": 0o755}, {"staging_is_symlink": True},
             {"staging_root": "/tmp/acceptance"},
+            {"staging_root": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/ev-rb08-000000000000"},
+            {"temporary_source_link_absent": False},
         ):
             with self.subTest(changes=changes), self.assertRaises(PermissionError):
                 build_pi_read_only_lease(replace(self.observation, **changes), candidate_sha="a" * 40, now=self.now)
@@ -98,7 +103,7 @@ class PiLeaseTests(unittest.TestCase):
         self.assertEqual(lease.manifest_sha256, value["target_manifest_sha256"])
         self.assertEqual(("PATH", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE"), request.environment_allowlist)
         self.assertEqual(120, request.timeout_seconds)
-        self.assertEqual("/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/repo", request.cwd)
+        self.assertEqual(self.observation.staging_root, request.cwd)
         self.assertEqual("-m", request.argv[1])
         self.assertEqual("unittest", request.argv[2])
         self.assertNotIn(request.argv[0].rsplit("/", 1)[-1], {"sh", "bash", "dash", "zsh"})
