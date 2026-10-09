@@ -457,3 +457,10 @@ The installer SHALL bind generated native CAS artifacts to the fixed reviewed ro
 #### Scenario: Alternate or unverified native output
 - **WHEN** generated output uses unknown archive members, alternate encoding or mismatched source/member hashes
 - **THEN** activation is denied and native acceptance remains pending
+
+### Requirement: Distinct native closure and archive digests
+The installer SHALL preserve the canonical closure_files tree digest for compiled_closure_sha256 and use separate archive artifact digest for CAS bytes.
+
+#### Scenario: Archive hash substituted for closure tree
+- **WHEN** a package substitutes archive bytes SHA for the selected compiled tree hash
+- **THEN** mount and binder verification reject the mismatched digest domain
