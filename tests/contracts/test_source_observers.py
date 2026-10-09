@@ -189,6 +189,7 @@ def _enrollment(**changes):
         role_artifact_id="hermes-main",
         role_sha256=_digest("b"),
         channel_id="chat.request",
+        capture_schema_id="schema.capture.request",
         source_action_id="authenticated-input",
         target_id="provider.fixed",
         recipient="public-provider",
@@ -209,6 +210,20 @@ def _context(service, payload=b"captured request", source_receipts=()):
         signature="signed", source_receipts=tuple(source_receipts), final_payload_digest=canonical_digest(payload),
         enrollment_id="producer-enrollment", generation="gen-4", operation="native.event.prepare",
         native_process_identity=service._native_process_identity(733, 2001),
+    )
+
+
+def _consumer_context(service, receipt, *, profile="gateway-profile", uid=2002):
+    return HostContext(
+        principal_id="gateway-principal", profile_id=profile,
+        namespace_id="gateway-namespace", uid=uid, purpose="resource-job",
+        intent_id="job-1", trace_id="trace-job-1", sensitivity=Sensitivity.PRIVATE,
+        lineage_hash=canonical_digest({"receipt": receipt.receipt_id}),
+        policy_revision="policy-1", capabilities=frozenset({"resource-job.admit"}),
+        issued_at_monotonic=10.0, monotonic_expires_at=30.0,
+        nonce="job-nonce", grant_id="job-grant", signature="signed",
+        source_receipts=(receipt,), enrollment_id="gateway-enrollment",
+        generation="gen-8", operation="resource.job.admit",
     )
 
 
@@ -299,6 +314,71 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.registry.take_source_receipt(
                 str(result), peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+
+    def test_root_recipe_capsule_is_resolved_from_signed_receipt_and_consumed_once(self):
+        event_id = self.record()
+        handle = self.registry.capture_observed_source(
+            self.enrollment.observer_enrollment_id, event_id, b"captured request")
+        receipt = self.service._source_receipt_handles[handle]
+        context = _consumer_context(self.service, receipt)
+        lookup = self.registry.lookup_source_handle(
+            receipt.receipt_id, signed_context=context,
+            peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        self.assertEqual(lookup, handle)
+        capsule = self.registry.consume_source_payload_capsule(
+            lookup, signed_context=context, peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        self.assertEqual(capsule.payload_bytes, b"captured request")
+        self.assertEqual(capsule.payload_sha256, receipt.payload_digest)
+        self.assertEqual(capsule.receipt_id, receipt.receipt_id)
+        self.assertEqual(capsule.observer_enrollment_id, self.enrollment.observer_enrollment_id)
+        self.assertEqual(capsule.channel_id, self.enrollment.channel_id)
+        self.assertEqual(capsule.capture_schema_id, self.enrollment.capture_schema_id)
+        self.assertEqual(capsule.source_action_id, self.enrollment.source_action_id)
+        self.assertEqual(capsule.invocation_id, "grant-1")
+        self.assertEqual(capsule.parent_receipt_ids, ())
+        self.assertNotIn(str(handle), self.registry._payload_capsules)
+        with self.assertRaises(AuthorityDenied):
+            self.registry.consume_source_payload_capsule(
+                lookup, signed_context=context, peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+
+    def test_capsule_wrong_profile_or_forged_receipt_context_denied_and_scrubbed(self):
+        event_id = self.record()
+        handle = self.registry.capture_observed_source(
+            self.enrollment.observer_enrollment_id, event_id, b"captured request")
+        receipt = self.service._source_receipt_handles[handle]
+        context = _consumer_context(self.service, receipt)
+        wrong_context = _consumer_context(self.service, receipt, profile="other-profile")
+        with self.assertRaises(AuthorityDenied):
+            self.registry.lookup_source_handle(
+                receipt.receipt_id, signed_context=wrong_context,
+                peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        lookup = self.registry.lookup_source_handle(
+            receipt.receipt_id, signed_context=context,
+            peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        bad_context = replace(context, source_receipts=())
+        with self.assertRaises(AuthorityDenied):
+            self.registry.consume_source_payload_capsule(
+                lookup, signed_context=bad_context,
+                peer_uid=2002, peer_pid=844, peer_pidfd=1501)
+        self.assertEqual(self.registry._capsule_bytes, 0)
+        self.assertFalse(self.registry._payload_capsules)
+
+    def test_invocation_cancel_epoch_restart_and_expiry_scrub_capsules(self):
+        handles = []
+        for payload in (b"captured request", b"second event"):
+            event_id = self.record(payload)
+            handles.append(self.registry.capture_observed_source(
+                self.enrollment.observer_enrollment_id, event_id, payload))
+        self.assertEqual(self.registry.cancel_invocation_payload_capsules("grant-1"), 2)
+        self.assertEqual(self.registry._capsule_bytes, 0)
+        event_id = self.record()
+        handle = self.registry.capture_observed_source(
+            self.enrollment.observer_enrollment_id, event_id, b"captured request")
+        retained = self.registry._payload_capsules[str(handle)][2]
+        self.service.authority_epoch = "epoch-two"
+        self.registry.prune()
+        self.assertEqual(self.registry._capsule_bytes, 0)
+        self.assertEqual(retained, bytearray(len(retained)))
 
     def test_peer_delivery_rejects_wrong_identity_and_never_returns_receipt_claims(self):
         event_id = self.record()

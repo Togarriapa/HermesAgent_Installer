@@ -7,6 +7,7 @@ registrations plus the already verified, consumed host effect grant.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
@@ -142,6 +143,32 @@ class LivePeerIdentity:
     namespace_identity: str
 
 
+@dataclass(frozen=True, slots=True)
+class RemoteOriginKernelProof:
+    """Private root observation of the sole active enrolled process.
+
+    This is kernel identity evidence only. It carries no route, config, token,
+    application-window or origin-readiness claims.
+    """
+
+    process_id: str
+    enrollment_id: str
+    profile_id: str
+    profile_generation: str
+    uid: int
+    gid: int
+    pid: int
+    pid_starttime_ticks: int
+    executable_device: int
+    executable_inode: int
+    executable_sha256: str
+    cgroup_id: str
+    mount_namespace_inode: int
+    network_namespace_inode: int
+    pidfd_registry_handle: str
+    expires_monotonic: float
+
+
 @dataclass(slots=True)
 class ManagedNamespaceLease:
     """Short-lived duplicated FDs for one exact live private network namespace."""
@@ -190,6 +217,7 @@ class _Handle:
     stdin_cursor: int = 0
     stdout_cursor: int = 0
     stderr_cursor: int = 0
+    stdin_sequence: int = 0
     stopped: bool = False
     lock: threading.RLock | None = None
     # The immutable profile registered by the root daemon. ``profile`` may be a
@@ -932,8 +960,8 @@ class ManagedProcessEffectHandler:
         stage.chmod(0o700)
         stage.rmdir()
 
-    @staticmethod
-    def _verify_native_package_mount(pid: int, receipt: NativePackageMountReceipt) -> None:
+    def _verify_native_package_mount(self, pid: int, receipt: NativePackageMountReceipt) -> None:
+        failure_code = "procfs"
         try:
             raw = Path(f"/proc/{pid}/mountinfo").read_text()
             if len(raw) > 4 * 1024 * 1024:
@@ -948,17 +976,24 @@ class ManagedProcessEffectHandler:
                 if mountpoint == receipt.mount_path:
                     candidates.append((fields, separator))
             if len(candidates) != 1:
+                failure_code = "target"
                 raise ValueError("mount target absent or ambiguous")
             fields, separator = candidates[0]
             options = set(fields[5].split(","))
             propagation = fields[6:separator]
             if (not {"ro", "nosuid", "nodev", "noexec"}.issubset(options)
                     or any(item.startswith(("shared:", "master:", "propagate_from:")) for item in propagation)):
+                failure_code = "mount_flags_or_propagation"
                 raise ValueError("mount flags are not constrained")
             observed = os.stat(f"/proc/{pid}/root{receipt.mount_path}", follow_symlinks=False)
             if (observed.st_dev, observed.st_ino) != (receipt.mount_source_device, receipt.mount_source_inode):
+                failure_code = "source_identity"
                 raise ValueError("mounted root inode differs from the staged package")
         except (OSError, ValueError, IndexError):
+            if self._diagnostic_sink is not None:
+                # Deliberately exclude filesystem paths and exception strings;
+                # this bounded code is sufficient to diagnose kernel proof.
+                self._diagnostic_sink(("native-mount-verification-failed:" + failure_code).encode("ascii"))
             raise AuthorityDenied("native.mount_effect", "kernel did not establish the exact private read-only package mount") from None
 
     @staticmethod
@@ -1094,6 +1129,10 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.request", "process request is malformed") from None
         if not isinstance(value, dict):
             raise AuthorityDenied("process.request", "process request must be an object")
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=True, allow_nan=False).encode("ascii")
+        if canonical != payload:
+            raise AuthorityDenied("process.request", "process request is not canonical JSON")
         return value
 
     def _start(self, profile: ManagedProfileCustody, context: HostContext,
@@ -1504,11 +1543,11 @@ class ManagedProcessEffectHandler:
                 properties.append(
                     "--property=BindReadOnlyPaths=" + str(native_mount_source) + ":"
                     + native_mount_receipt.mount_path)
-                # BindReadOnlyPaths accepts only the bind recursion option in
-                # its optional tuple. NoExecPaths is the systemd-supported
-                # execution denial; nosuid/nodev are inherited from the
-                # protected /run mount and independently required by the
-                # mountinfo probe before admission.
+                # systemd's bind tuple supports only recursion options. Apply
+                # the other mount restrictions through its dedicated namespace
+                # properties so mountinfo reflects kernel-enforced flags.
+                properties.append("--property=PrivateMounts=yes")
+                properties.append("--property=NoSuidSgid=" + native_mount_receipt.mount_path)
                 properties.append("--property=NoExecPaths=" + native_mount_receipt.mount_path)
         except BaseException:
             os.close(parent_fd)
@@ -1779,8 +1818,10 @@ class ManagedProcessEffectHandler:
                  payload: bytes, timeout: float,
                  cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         item = self._json(payload)
-        if (set(item) != {"schema", "process_id", "generation"} or item.get("schema") != 1
+        if (set(item) != {"schema", "operation", "process_id", "generation", "fields"}
+                or item.get("schema") != 1 or item.get("operation") != "process.inspect"
                 or not isinstance(item.get("process_id"), str)
+                or item.get("fields") != {}
                 or item.get("generation") != profile.generation):
             raise AuthorityDenied("process.inspect", "inspection request is malformed or stale")
         with self._lock:
@@ -1944,12 +1985,15 @@ class ManagedProcessEffectHandler:
             })
         if cancelled() or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd):
             raise AuthorityDenied("process.expired", "process expired during inspection")
+        # HI10's public inspection wire is intentionally a small top-level
+        # attestation. It excludes raw host PIDs, paths, argv and environments;
+        # per-member identities are opaque handles tied to this root registry.
         return _response(200, {
-            "schema": 1, "process_id": handle.process_id, "generation": profile.generation,
-            "operation": "process.inspect", "state": "running",
-            "result": {"profile_id": profile.profile_id, "cgroup_identity": handle.cgroup,
-                "observation_monotonic": observed, "complete": stable,
-                "processes": processes},
+            "schema": 1, "process_id": handle.process_id,
+            "generation": profile.generation, "operation": "process.inspect",
+            "state": "running", "result": {"profile_id": profile.profile_id,
+            "cgroup_identity": handle.cgroup, "observation_monotonic": observed,
+            "complete": stable, "processes": processes},
             "expires_monotonic": min(handle.expires, observed + min(max(timeout, 0.1), 30.0)),
         })
 
@@ -2040,6 +2084,90 @@ class ManagedProcessEffectHandler:
                 ticks, exe_sha256, cgroup, handle.kernel_namespace_id)
         except (OSError, ValueError, StopIteration):
             return None
+
+    def inspect_enrolled_process(self, profile_id: str,
+                                 generation: str) -> RemoteOriginKernelProof | None:
+        """Inspect exactly one root-registered live process for an enrolled profile.
+
+        This root-only API is intended for the remote-origin authority. It
+        selects from the protected manager registry, rechecks the retained
+        PIDFD/start time/executable inode and both namespaces, and returns no
+        caller-selected PID/path. Application readiness and route/config
+        evidence must be joined by their own authority catalogs.
+        """
+        if (not isinstance(profile_id, str) or not profile_id
+                or not isinstance(generation, str) or not generation):
+            return None
+        registered = self.profiles.get(profile_id)
+        if registered is None or registered.generation != generation:
+            return None
+        with self._lock:
+            matches = [handle for handle in self._handles.values()
+                       if handle.profile.profile_id == profile_id
+                       and handle.profile.generation == generation
+                       and handle.registered_profile is registered]
+        if len(matches) != 1:
+            return None
+        handle = matches[0]
+        pidfd = None
+        try:
+            if (handle.stopped or self.monotonic() >= handle.expires
+                    or _pidfd_exited(handle.child_pidfd)):
+                return None
+            pidfd = os.dup(handle.child_pidfd)
+            pid = self._pidfd_target(pidfd)
+            if pid != handle.pid or _pidfd_exited(pidfd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or pid not in self._pids(handle.cgroup)):
+                return None
+            status = Path(f"/proc/{pid}/status").read_text().splitlines()
+            uid_fields = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            gid_fields = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            if (len(uid_fields) != 4 or any(int(value) != handle.profile.owner_uid for value in uid_fields)
+                    or len(gid_fields) != 4 or any(int(value) != handle.profile.owner_gid for value in gid_fields)):
+                return None
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            try:
+                observed = os.fstat(exe_fd)
+                if ((observed.st_dev, observed.st_ino) != (executable.st_dev, executable.st_ino)
+                        or (device, inode) != (executable.st_dev, executable.st_ino)):
+                    return None
+                digest = hashlib.sha256()
+                while True:
+                    chunk = os.read(exe_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                executable_sha256 = digest.hexdigest()
+            finally:
+                os.close(exe_fd)
+            if executable_sha256 != handle.profile.artifact_sha256:
+                return None
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            if (f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or _pid_identity(pid) != (ticks, cgroup, device, inode)
+                    or self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)):
+                return None
+            enrollment_id = handle.profile.enrollment_id
+            if not isinstance(enrollment_id, str) or not enrollment_id:
+                return None
+            registry_handle = self._opaque_member_id(process_id=handle.process_id,
+                pid=pid, ticks=ticks, device=device, inode=inode, cgroup=cgroup)
+            return RemoteOriginKernelProof(
+                handle.process_id, enrollment_id, profile_id, generation,
+                handle.profile.owner_uid, handle.profile.owner_gid, pid, ticks,
+                device, inode, executable_sha256, cgroup, mount_ns, network_ns,
+                registry_handle, handle.expires,
+            )
+        except (OSError, ValueError, StopIteration):
+            return None
+        finally:
+            if pidfd is not None:
+                os.close(pidfd)
 
     def resolve_process_operation(self, process_id: str, generation: str, operation: str, *,
                                   peer_uid: int, peer_pid: int,
@@ -2162,21 +2290,21 @@ class ManagedProcessEffectHandler:
     def _control(self, profile: ManagedProfileCustody, context: HostContext, operation: str,
                  payload: bytes, timeout: float, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
         item = self._json(payload)
-        common = {"schema", "process_id", "generation"}
+        common = {"schema", "operation", "process_id", "generation", "fields"}
         extras = {"process.status": set(), "process.stop": {"reason", "grace_seconds"},
                   "process.read": {"stream", "maximum_bytes"},
                   "process.write": {"data_bytes", "sequence"}}[operation]
-        if (set(item) != common | extras or item.get("schema") != 1
+        if (set(item) != common or item.get("schema") != 1 or item.get("operation") != operation
                 or not isinstance(item.get("process_id"), str)
                 or not re.fullmatch(r"[0-9a-f]{32}", item["process_id"])
+                or not isinstance(item.get("fields"), dict) or set(item["fields"]) != extras
                 or item.get("generation") != profile.generation):
             raise AuthorityDenied("process.control", "control envelope is malformed")
+        fields = item["fields"]
         if operation == "process.stop" and (
-                item["reason"] not in {"cancel", "shutdown", "rollback"}
-                or isinstance(item["grace_seconds"], bool)
-                or not isinstance(item["grace_seconds"], (int, float))
-                or not math.isfinite(item["grace_seconds"])
-                or not 0 <= item["grace_seconds"] <= 10):
+                fields["reason"] not in {"cancel", "shutdown", "rollback"}
+                or type(fields["grace_seconds"]) is not int
+                or not 0 <= fields["grace_seconds"] <= 10):
             raise AuthorityDenied("process.stop", "stop reason or grace period is invalid")
         with self._lock:
             handle = self._handles.get(item["process_id"])
@@ -2185,10 +2313,9 @@ class ManagedProcessEffectHandler:
             proof = finished[2]
             return _response(200, {"schema": 1, "process_id": item["process_id"],
                 "generation": profile.generation, "operation": operation, "state": "stopped",
-                "result": {"cleanup_verified": proof.cleanup_verified,
-                    "cgroup_empty": proof.cgroup_empty, "pidfd_gone": proof.main_pidfd_gone,
-                    "evidence_digest": proof.evidence_digest, "reason": item["reason"]},
-                "expires_monotonic": proof.observed_monotonic})
+                "result": {"closed": proof.cleanup_verified,
+                    "reap_state": "reaped" if proof.cleanup_verified else "unverified"},
+                "expires_monotonic": self.monotonic() + 5.0})
         if (handle is None or handle.profile.profile_id != profile.profile_id
                 or item["generation"] != profile.generation
                 or context.principal_id != handle.principal_id
@@ -2200,71 +2327,73 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.expired", "parent, lease or service lifetime ended")
         if operation == "process.status":
             code = handle.launcher.poll()
-            result = {"pid": handle.pid, "uid": profile.owner_uid, "namespace_id": handle.kernel_namespace_id,
-                "stdout_cursor": handle.stdout_cursor, "stderr_cursor": handle.stderr_cursor,
-                "exit_code": code, "cgroup": handle.cgroup, "kernel_limits": self._limits(handle.cgroup)}
+            # Control status is deliberately non-identifying. Detailed host
+            # identity is available only through the separately authorized,
+            # bounded process.inspect attestation.
+            result = {"exit_code": code}
             return _response(200, {"schema": 1, "process_id": handle.process_id,
                 "generation": profile.generation, "operation": operation,
                 "state": "running" if code is None else "exited", "result": result,
-                "expires_monotonic": handle.expires})
+                "expires_monotonic": min(handle.expires, self.monotonic() + 5.0)})
         if operation == "process.read":
-            stream_name, maximum = item["stream"], item["maximum_bytes"]
+            stream_name, maximum = fields["stream"], fields["maximum_bytes"]
             if (stream_name not in {"stdout", "stderr"} or type(maximum) is not int
-                    or not 1 <= maximum <= 262144):
+                    or not 1 <= maximum <= 1_048_576):
                 raise AuthorityDenied("process.read", "stream or read bounds are invalid")
-            current = handle.stdout_cursor if stream_name == "stdout" else handle.stderr_cursor
-            remaining_output = handle.output_cap - handle.stdout_cursor - handle.stderr_cursor
-            if remaining_output <= 0:
-                self._stop(handle, timeout=min(timeout, 5.0))
-                raise AuthorityDenied("process.output", "managed process exceeded its output cap")
-            maximum = min(maximum, remaining_output)
-            stream = getattr(handle.launcher, stream_name)
-            ready, _, _ = select.select([stream.fileno()], [], [], min(max(timeout, 0), .75))
-            data = os.read(stream.fileno(), maximum) if ready else b""
-            eof = bool(ready and not data)
-            if stream_name == "stdout":
-                handle.stdout_cursor += len(data)
-                current = handle.stdout_cursor
-            else:
-                handle.stderr_cursor += len(data)
-                current = handle.stderr_cursor
+            with handle.lock or contextlib.nullcontext():
+                remaining_output = handle.output_cap - handle.stdout_cursor - handle.stderr_cursor
+                if remaining_output <= 0:
+                    self._stop(handle, timeout=min(timeout, 5.0))
+                    raise AuthorityDenied("process.output", "managed process exceeded its output cap")
+                maximum = min(maximum, remaining_output)
+                stream = getattr(handle.launcher, stream_name)
+                ready, _, _ = select.select([stream.fileno()], [], [], min(max(timeout, 0), .75))
+                data = os.read(stream.fileno(), maximum) if ready else b""
+                eof = bool(ready and not data)
+                if stream_name == "stdout":
+                    handle.stdout_cursor += len(data)
+                else:
+                    handle.stderr_cursor += len(data)
             return _response(200, {"schema": 1, "process_id": handle.process_id,
                 "generation": profile.generation, "operation": operation,
                 "state": "running" if handle.launcher.poll() is None else "exited",
-                "result": {"stream": stream_name, "cursor": current,
-                    "data_bytes": base64.b64encode(data).decode("ascii"), "eof": eof},
-                "expires_monotonic": handle.expires})
+                "result": {"data_bytes": base64.b64encode(data).decode("ascii"),
+                    "eof": eof, "redacted": False},
+                "expires_monotonic": min(handle.expires, self.monotonic() + 5.0)})
         if operation == "process.write":
-            cursor = item["sequence"]
+            cursor = fields["sequence"]
             try:
-                data = base64.b64decode(item["data_bytes"], validate=True)
+                data = base64.b64decode(fields["data_bytes"], validate=True)
             except Exception:
                 raise AuthorityDenied("process.write", "stdin data is malformed") from None
             if (type(cursor) is not int or cursor != handle.stdin_sequence or len(data) > 262144
+                    or base64.b64encode(data).decode("ascii") != fields["data_bytes"]
                     or handle.launcher.stdin is None):
                 raise AuthorityDenied("process.cursor", "stdin cursor or data length is invalid")
-            fd = handle.launcher.stdin.fileno()
-            _, writable, _ = select.select([], [fd], [], min(max(timeout, 0), .75))
-            try:
-                written = os.write(fd, data) if writable else 0
-            except BlockingIOError:
-                written = 0
-            handle.stdin_cursor += written
-            if written:
+            with handle.lock or contextlib.nullcontext():
+                fd = handle.launcher.stdin.fileno()
+                _, writable, _ = select.select([], [fd], [], min(max(timeout, 0), .75))
+                try:
+                    written = os.write(fd, data) if writable else 0
+                except BlockingIOError:
+                    written = 0
+                handle.stdin_cursor += written
+                # A request sequence is consumed once admitted, even if the pipe
+                # cannot currently accept bytes. The caller retries with a fresh
+                # sequence, never replaying an ambiguous partial frame.
                 handle.stdin_sequence += 1
             return _response(200, {"schema": 1, "process_id": handle.process_id,
                 "generation": profile.generation, "operation": operation,
-                "state": "running", "result": {"sequence": handle.stdin_sequence,
-                    "bytes_written": written, "stdin_cursor": handle.stdin_cursor},
-                "expires_monotonic": handle.expires})
-        reason, grace = item["reason"], item["grace_seconds"]
+                "state": "running", "result": {"accepted_bytes": written,
+                    "sequence": handle.stdin_sequence},
+                "expires_monotonic": min(handle.expires, self.monotonic() + 5.0)})
+        reason, grace = fields["reason"], fields["grace_seconds"]
         proof = self._stop(handle, timeout=min(timeout, max(.1, float(grace))))
         return _response(200, {"schema": 1, "process_id": handle.process_id,
             "generation": profile.generation, "operation": operation, "state": "stopped",
-            "result": {"cleanup_verified": proof.cleanup_verified,
-                "cgroup_empty": proof.cgroup_empty, "pidfd_gone": proof.main_pidfd_gone,
-                "evidence_digest": proof.evidence_digest, "reason": reason},
-            "expires_monotonic": proof.observed_monotonic})
+            "result": {"closed": proof.cleanup_verified,
+                "reap_state": "reaped" if proof.cleanup_verified else "unverified"},
+            "expires_monotonic": self.monotonic() + 5.0})
 
     def _watch_parent(self, handle: _Handle) -> None:
         poller = select.poll()
