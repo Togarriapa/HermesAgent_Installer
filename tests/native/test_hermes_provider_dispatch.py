@@ -88,7 +88,7 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
             root.ensure()
             data_root = OwnedRoot(Path(data_value).resolve(strict=True))
             data_root.ensure()
-            profile_relative = "profiles/hermes-installer-native-" + uuid.uuid4().hex
+            profile_relative = "profiles/hermes-installer-native-probe"
             plugin = materialize_hermes_provider_plugin(data_root, profile_relative=profile_relative, port=None, model=MODEL)
             home = Path(plugin["home"])
             materialize_hermes_profile_config(data_root, home_relative=profile_relative, port=int(plugin["port"]), model=MODEL)
@@ -101,29 +101,36 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 dispatcher, token=FIXTURE_KEY, profile_id="native-fixture-public",
                 sensitivity=Sensitivity.PUBLIC, model=MODEL, port=int(plugin["port"]),
             )
+            os.environ.clear()
+            os.environ.update({
+                "HOME": str(home),
+                "HERMES_HOME": str(home),
+                "HERMES_AGENT_SOURCE_ROOT": str(source),
+                "HERMES_INSTALLER_DATA_ROOT": str(data_root.path()),
+                LOCAL_KEY_ENV: FIXTURE_KEY,
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PATH": "/usr/bin:/bin",
+                # Hermes bootstrap may re-exec after imports. Preserve only the
+                # pinned source/data identities and this installer module path.
+                "PYTHONPATH": str(installer_src) + os.pathsep + str(source),
+            })
+            sys.dont_write_bytecode = True
+            sys.path.insert(0, str(source))
+            inserted = True
             try:
-                gateway.start()
-                os.environ.clear()
-                os.environ.update({
-                    "HOME": str(home),
-                    "HERMES_HOME": str(home),
-                    LOCAL_KEY_ENV: FIXTURE_KEY,
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                    "PATH": "/usr/bin:/bin",
-                    # Hermes may re-exec its selected Python after preparation;
-                    # preserve only this exact installer module path.
-                    "PYTHONPATH": str(installer_src),
-                })
-                sys.path.insert(0, str(source))
-                inserted = True
-
+                # Imports that can invoke PM bootstrap happen before a live
+                # fixture listener exists. The profile path is deterministic so
+                # a bootstrap re-exec reconciles the same owned fixture.
                 from providers import get_provider_profile
+                from run_agent import AIAgent
+                from agent.auxiliary_client import call_llm
+
                 profile = get_provider_profile(LOCAL_PROVIDER_NAME)
                 self.assertIsNotNone(profile, "Hermes native plugin discovery must load the managed ProviderProfile")
                 self.assertEqual(profile.base_url, f"http://127.0.0.1:{plugin['port']}/v1")
                 self.assertEqual(profile.default_aux_model, MODEL)
 
-                from run_agent import AIAgent
+                gateway.start()
                 agent = AIAgent(
                     quiet_mode=True,
                     enabled_toolsets=[], skip_context_files=True, load_soul_identity=False,
@@ -137,7 +144,6 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 )
                 self.assertEqual(primary.choices[0].message.content, "native fixture response")
 
-                from agent.auxiliary_client import call_llm
                 auxiliary = call_llm(
                     task="title_generation",
                     main_runtime=None,
