@@ -154,7 +154,7 @@ def run(args: argparse.Namespace) -> CommandResult:
             return CommandResult(args.command, OutcomeState.FAILED, "Hermes Agent is explicitly disabled in configuration; no Agent stages were run.", exit_code=2)
         data_path = Path(config.paths.get("data_root", "~/HermesInstaller/data")).expanduser()
         state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
-        resume_command = "hermes-installer resume" + (f" --config {shlex.quote(str(args.config))}" if args.config else "")
+        resume_command = "./install.sh resume" + (f" --config {shlex.quote(str(args.config))}" if args.config else "")
         try:
             data_root = OwnedRoot(data_path); data_root.ensure()
             state_root = OwnedRoot(state_path); state_root.ensure()
@@ -172,6 +172,10 @@ def run(args: argparse.Namespace) -> CommandResult:
                     "config_path": str(args.config) if args.config else None})
             with process_lock(state_root.path("installer.lock")):
                 report = HermesBootstrap(data_root, journal).install(include_desktop=config.components.get("hermes_desktop", True))
+            journal.checkpoint("installer:selection", "bootstrap-complete", {"config": selection,
+                "config_path": str(args.config) if args.config else None, "commit": report.commit,
+                "generation": report.generation, "agent_ready": report.agent_ready,
+                "desktop_built": report.desktop_built})
         except (BootstrapError, OwnershipError, OSError, RuntimeError, ValueError) as exc:
             return CommandResult(args.command, OutcomeState.FAILED, str(exc),
                 resume_command=resume_command, exit_code=1)
