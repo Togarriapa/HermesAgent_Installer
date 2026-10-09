@@ -101,7 +101,7 @@ class ProviderTransportTests(unittest.TestCase):
         transport = OpenRouterTransport(ref, secret_reader=lambda value: resolved.append(value) or "rotated-secret",
             network_factory=lambda **kwargs: requests.append(kwargs), eligibility=fixture_gate)
         with self.assertRaisesRegex(PolicyDenied, "credential"):
-            transport(default_public_route(), MODEL, b'{"messages":[]}',
+            transport(default_public_route(), MODEL, b'{"messages":[{"role":"user","content":"hi"}]}',
                 output_token_limit=8, timeout=2, trace_id="bound-key")
         self.assertEqual(resolved, [ref])
         self.assertEqual(requests, [])
