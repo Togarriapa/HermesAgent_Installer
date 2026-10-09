@@ -6,6 +6,8 @@ import argparse
 import json
 import os
 import sys
+import shlex
+from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
@@ -148,24 +150,42 @@ def run(args: argparse.Namespace) -> CommandResult:
                 resume_command=f"hermes-installer {args.command}" + (f" --config {args.config}" if args.config else ""))
         if args.command == "install" and getattr(args, "dry_run", False):
             return CommandResult("install", OutcomeState.READY, "Dry run completed; no installer files, packages, services, or accounts were changed.", _host_findings(config))
+        if config.components.get("hermes_agent") is False:
+            return CommandResult(args.command, OutcomeState.FAILED, "Hermes Agent is explicitly disabled in configuration; no Agent stages were run.", exit_code=2)
         data_path = Path(config.paths.get("data_root", "~/HermesInstaller/data")).expanduser()
         state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
+        resume_command = "hermes-installer resume" + (f" --config {shlex.quote(str(args.config))}" if args.config else "")
         try:
             data_root = OwnedRoot(data_path); data_root.ensure()
             state_root = OwnedRoot(state_path); state_root.ensure()
             journal = Journal(state_root.path("journal.sqlite3"))
+            selection = {"schema_version": config.schema_version, "timezone": config.timezone,
+                "paths": config.paths, "components": config.components, "privacy": config.privacy,
+                "remote_desktop": config.remote_desktop}
+            prior = journal.operation("installer:selection")
+            if args.command == "resume" and prior is None:
+                return CommandResult("resume", OutcomeState.FAILED, "There is no installer operation to resume; use install first.", exit_code=2)
+            if prior is not None and prior["payload"].get("config") != selection:
+                return CommandResult(args.command, OutcomeState.FAILED, "Configuration differs from the durable installer selection; restore the original validated config before resuming.", resume_command=resume_command, exit_code=2)
+            if prior is None:
+                journal.checkpoint("installer:selection", "active", {"config": selection,
+                    "config_path": str(args.config) if args.config else None})
             with process_lock(state_root.path("installer.lock")):
                 report = HermesBootstrap(data_root, journal).install(include_desktop=config.components.get("hermes_desktop", True))
         except (BootstrapError, OwnershipError, OSError, RuntimeError, ValueError) as exc:
             return CommandResult(args.command, OutcomeState.FAILED, str(exc),
-                resume_command=f"hermes-installer resume" + (f" --config {args.config}" if args.config else ""), exit_code=1)
+                resume_command=resume_command, exit_code=1)
         findings = (
             Finding("hermes.agent.bootstrap", "Pinned Hermes source and runtime stages completed", OutcomeState.READY if report.agent_ready else OutcomeState.PENDING, {"commit": report.commit, "generation": report.generation}),
             Finding("hermes.desktop.build", "Official ARM64 Desktop artifact was produced" if report.desktop_built else "Official Desktop artifact remains unavailable", OutcomeState.READY if report.desktop_built else OutcomeState.PENDING),
             Finding("hermes.configuration", report.configuration_state, OutcomeState.PENDING),
         )
-        state = OutcomeState.READY if report.agent_ready and (not config.components.get("hermes_desktop", True) or report.desktop_built) else OutcomeState.PENDING
-        return CommandResult(args.command, state, "Official pinned bootstrap stages completed; user configuration and service activation remain separate.", findings, "hermes-installer resume")
+        state = OutcomeState.PENDING
+        if report.agent_ready and (not config.components.get("hermes_desktop", True) or report.desktop_built):
+            message = "Pinned Hermes Agent and selected Desktop build verified; provider, user-session service, and remaining configuration steps are pending."
+        else:
+            message = "Pinned bootstrap finished with runtime verification pending; no public service was activated."
+        return CommandResult(args.command, state, message, findings, resume_command)
     if args.command in {"configure", "test-connection", "select-memory", "resolve-source", "component", "update", "data"}:
         facts = discover_host()
         if not facts.supported_arm64_linux:

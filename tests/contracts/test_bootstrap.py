@@ -39,7 +39,8 @@ class FakeRunner:
                 (directory/".git"/"HEAD").write_text(HERMES_COMMIT)
             if stage=="complete":
                 (directory/".hermes"/"bin").mkdir(parents=True)
-                (directory/".hermes"/"bin"/"hermes").write_text("#!/bin/sh\\n")
+                (directory/".hermes"/"bin"/"hermes").write_text("#!/bin/sh\\necho Hermes fixture version\\n")
+                (directory/".hermes"/"bin"/"hermes").chmod(0o700)
                 (directory/".hermes-bootstrap-complete").write_text(json.dumps({"pinnedCommit":HERMES_COMMIT}))
             if stage=="products" and self.fail_once==stage:
                 self.fail_once=None
@@ -58,7 +59,11 @@ class BootstrapTests(unittest.TestCase):
             state_root=OwnedRoot(Path(td)/"state");state_root.ensure()
             journal=Journal(state_root.path("journal.sqlite3"))
             runner=FakeRunner()
-            bootstrap=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,expected_script_blob=git_blob_sha1(SCRIPT))
+            def desktop_build(*,timeout):
+                out=Path(runner.calls[0][0][runner.calls[0][0].index("--dir")+1])/"apps/desktop/dist"
+                out.mkdir(parents=True,exist_ok=True); (out/"index.html").write_text("<html>"+"x"*200+"</html>")
+                return 0,b""
+            bootstrap=HermesBootstrap(data,journal,network=FakeNetwork(),runner=runner,desktop_builder=desktop_build,expected_script_blob=git_blob_sha1(SCRIPT))
             bootstrap.install(include_desktop=True)
             first_stage_count=sum(1 for call in runner.calls if "--stage" in call[0])
             bootstrap.install(include_desktop=True)

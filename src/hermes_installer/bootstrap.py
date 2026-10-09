@@ -4,6 +4,7 @@ import hashlib, json, os, signal, stat, subprocess, time, uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+import threading
 from .network import BoundedNetwork, NetworkError
 from .state import Journal, OwnedRoot, OwnershipError
 
@@ -79,11 +80,12 @@ def _stop_group(proc: subprocess.Popen) -> None:
 class HermesBootstrap:
     """Runs exact upstream script content and stage names; callers cannot inject commands."""
     def __init__(self, data_root: OwnedRoot, state: Journal, *, network: BoundedNetwork | None = None,
-                 runner: Callable | None = None, expected_script_blob: str = INSTALL_SCRIPT_BLOB):
+                 runner: Callable | None = None, desktop_builder: Callable | None = None, expected_script_blob: str = INSTALL_SCRIPT_BLOB):
         self.data_root = data_root
         self.state = state
         self.network = network or BoundedNetwork(deadline_seconds=20, socket_timeout=8, max_response_bytes=128 * 1024)
         self.runner = runner or self._run_process
+        self.desktop_builder = desktop_builder or self._run_desktop_source_build
         self.expected_script_blob = expected_script_blob
         self.install_dir = data_root.path("generations/hermes-agent-" + HERMES_COMMIT[:12])
         self.hermes_home = data_root.path("profiles/default")
@@ -257,6 +259,58 @@ class HermesBootstrap:
             return bool(owned and previous and previous.get("status") in {"running:repository", "failed:repository"})
         return head == HERMES_COMMIT
 
+
+    def _run_desktop_source_build(self, *, timeout: float) -> tuple[int, bytes]:
+        hermes = self.install_dir / ".hermes" / "bin" / "hermes"
+        if not hermes.is_file() or hermes.is_symlink():
+            raise BootstrapError("Pinned Hermes CLI entrypoint is unavailable for the source Desktop build")
+        proc = subprocess.Popen([str(hermes), "desktop", "--build-only", "--source"], cwd=self.install_dir,
+            env=self._environment(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, shell=False, close_fds=True, start_new_session=True)
+        try:
+            return proc.wait(timeout=timeout), b""
+        except subprocess.TimeoutExpired:
+            _stop_group(proc)
+            return 124, b""
+
+    def _verify_agent_runtime(self) -> bool:
+        hermes = self.install_dir / ".hermes" / "bin" / "hermes"
+        if hermes.is_symlink() or not hermes.is_file() or not os.access(hermes, os.X_OK):
+            return False
+        if self._source_head() != HERMES_COMMIT:
+            return False
+        proc = subprocess.Popen([str(hermes), "--version"], cwd=self.install_dir, env=self._environment(),
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, shell=False,
+            close_fds=True, start_new_session=True)
+        chunks: list[bytes] = []
+        seen = 0
+        overflow = threading.Event()
+        def drain() -> None:
+            nonlocal seen
+            assert proc.stdout is not None
+            while True:
+                block = proc.stdout.read(1024)
+                if not block:
+                    return
+                seen += len(block)
+                if seen <= 8192:
+                    chunks.append(block)
+                else:
+                    overflow.set()
+                    _stop_group(proc)
+                    return
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
+        try:
+            code = proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            _stop_group(proc)
+            reader.join(timeout=1)
+            return False
+        reader.join(timeout=1)
+        output = b"".join(chunks).strip()
+        return code == 0 and not overflow.is_set() and bool(output)
+
     def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 7200) -> BootstrapReport:
         if not 60 <= timeout_per_stage <= 14_400:
             raise ValueError("Stage timeout is outside the supported bound")
@@ -277,10 +331,7 @@ class HermesBootstrap:
                 if stage != "products" or not include_desktop or desktop_output.is_dir():
                     statuses.append(StageStatus(stage, done[stage]))
                     continue
-            if stage == "products" and not include_desktop:
-                extra: list[str] = []
-            else:
-                extra = ["--include-desktop"] if stage == "products" and include_desktop else []
+            extra: list[str] = []
             self.state.checkpoint(self.operation, "running:" + stage, {
                 "commit": HERMES_COMMIT, "stage": stage, "generation": str(self.install_dir),
                 "hermes_home": str(self.hermes_home), "desktop_requested": bool(include_desktop),
@@ -308,10 +359,14 @@ class HermesBootstrap:
             complete = json.loads(completion.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             complete = {}
-        if complete.get("pinnedCommit") != HERMES_COMMIT or not (self.install_dir / ".hermes" / "bin" / "hermes").is_file():
-            raise BootstrapError("Official Hermes Agent completion marker or command is missing")
-        desktop_dir = self.install_dir / "apps" / "desktop" / "release" / "linux-arm64-unpacked"
-        desktop_built = bool(include_desktop and desktop_dir.is_dir())
+        if complete.get("pinnedCommit") != HERMES_COMMIT or not self._verify_agent_runtime():
+            raise BootstrapError("Pinned Hermes source or executable runtime verification failed")
+        desktop_dir = self.install_dir / "apps" / "desktop"
+        desktop_built = False
+        if include_desktop:
+            code, _ = self.desktop_builder(timeout=timeout_per_stage)
+            dist_index = desktop_dir / "dist" / "index.html"
+            desktop_built = code == 0 and dist_index.is_file() and not dist_index.is_symlink() and dist_index.stat().st_size > 100
         self.state.checkpoint(self.operation, "complete", {
             "commit": HERMES_COMMIT, "generation": str(self.install_dir), "desktop_built": desktop_built,
             "configuration_state": "pending: provider and gateway setup were safely skipped",
