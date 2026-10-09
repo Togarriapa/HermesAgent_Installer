@@ -91,18 +91,13 @@ def test_existing_coral_interpreter_is_probed_only_through_managed_runner(tmp_pa
             run_command=wrong_version)
 
 
-def test_coral_python_provisioning_refuses_unselected_or_unenrolled_package_sets(tmp_path: Path) -> None:
+def test_coral_python_provisioning_requires_selection_and_live_root_authority() -> None:
     with pytest.raises(PermissionError, match="must be selected"):
-        coral.provision_coral_python(tmp_path / "component", selected=False)
-    with pytest.raises(CoralError, match="protected artifact-catalog"):
-        coral.provision_coral_python(tmp_path / "component", selected=True)
-
-
-def test_coral_package_set_blocker_names_missing_host_effect_not_missing_spec(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(coral, "resolve_coral_runtime_artifacts", lambda *args, **kwargs: {})
-    with pytest.raises(CoralError, match="host API has no published package-set effect client"):
-        coral.provision_coral_python(tmp_path / "component", selected=True,
-            catalog=object(), staging_root=tmp_path / "catalog")
+        coral.provision_coral_python(selected=False, authority_client=object(),
+            enrollment_id="e", generation="g", manifest_sha256="a" * 64)
+    with pytest.raises(CoralError, match="root package-set effect denied"):
+        coral.provision_coral_python(selected=True, authority_client=object(),
+            enrollment_id="e", generation="g", manifest_sha256="a" * 64)
 
 
 def test_coral_package_set_caller_sends_only_fixed_enrollment_and_checks_root_receipt() -> None:

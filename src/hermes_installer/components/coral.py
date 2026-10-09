@@ -440,19 +440,16 @@ def _run_managed_command(run_command: Callable[..., object], argv: Sequence[str]
     return str(output)
 
 
-def provision_coral_python(component_root: Path, *, selected: bool, catalog=None,
-                           staging_root: Path | None = None, expected_uid: int = 0) -> Path:
-    """Fail closed until the enrolled protected package-set effect is callable."""
+def provision_coral_python(*, selected: bool, authority_client,
+                           enrollment_id: str, generation: str,
+                           manifest_sha256: str, timeout: float = 600,
+                           cancelled: Callable[[], bool] | None = None) -> CoralPackageSetReceipt:
+    """Install the selected protected runtime through the root package broker."""
     if not selected:
         raise PermissionError("the isolated Coral runtime must be selected before provisioning")
-    if catalog is None or staging_root is None:
-        raise CoralError("Coral runtime provisioning requires its protected artifact-catalog receipts")
-    resolve_coral_runtime_artifacts(catalog, staging_root, expected_uid=expected_uid)
-    raise CoralError(
-        "Coral activation remains unavailable: the reviewed coral-cp39-runtime-v1 package-set contract "
-        "exists, but this host API has no published package-set effect client or enrolled CPython 3.9 "
-        "build attestation/runtime generation; no package install was attempted"
-    )
+    return install_coral_runtime_package_set(authority_client,
+        enrollment_id=enrollment_id, generation=generation,
+        manifest_sha256=manifest_sha256, timeout=timeout, cancelled=cancelled)
 
 def download_official_sample(destination: Path, *, selected: bool = False, cancel=None, catalog=None,
                              staging_root: Path | None = None, expected_uid: int = 0) -> Path:
