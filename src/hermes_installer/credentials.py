@@ -1,6 +1,6 @@
 """Secret references and hidden setup input; values are never serialized by this module."""
 from __future__ import annotations
-import getpass, os, re, stat
+import getpass, os, re, stat, sys, warnings
 from pathlib import Path
 from typing import Callable, Mapping
 from urllib.parse import unquote, urlparse
@@ -24,18 +24,32 @@ def resolve_secret(reference: str, *, environ: Mapping[str, str] | None = None,
         value = (os.environ if environ is None else environ).get(key)
     elif reference.startswith("file://"):
         parsed = urlparse(reference)
-        path = Path(unquote(parsed.path))
-        if parsed.netloc or not path.is_absolute():
-            raise CredentialError("File secret reference must be an absolute local path")
+        if parsed.netloc or parsed.query or parsed.fragment or not parsed.path.startswith("/"):
+            raise CredentialError("File secret reference must be an absolute local path without query or fragment")
+        parts = [unquote(p) for p in parsed.path.split("/") if p]
+        if not parts or any(p in {".", ".."} or "\\x00" in p for p in parts):
+            raise CredentialError("Invalid secret file path")
+        flags_dir = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        current = os.open("/", flags_dir)
         try:
-            info = path.lstat()
-            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
-                raise CredentialError("Secret file must be a non-symlink regular file")
-            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
-                raise CredentialError("Secret file must be user-owned with mode 0600 or stricter")
-            value = path.read_text(encoding="utf-8").rstrip("\r\n")
+            for part in parts[:-1]:
+                nxt = os.open(part, flags_dir, dir_fd=current)
+                os.close(current)
+                current = nxt
+            flags_file = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+            fd = os.open(parts[-1], flags_file, dir_fd=current)
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or info.st_size > 4096:
+                    raise CredentialError("Secret file must be a small user-owned regular file with mode 0600 or stricter")
+                with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as stream:
+                    value = stream.read(4097).rstrip("\\r\\n")
+            finally:
+                os.close(fd)
         except OSError:
-            raise CredentialError("Secret file could not be read") from None
+            raise CredentialError("Secret file could not be read safely") from None
+        finally:
+            os.close(current)
     elif reference.startswith("keyring://"):
         key = reference[10:]
         if not key or len(key) > 512 or keyring_lookup is None:
@@ -54,7 +68,14 @@ def resolve_secret(reference: str, *, environ: Mapping[str, str] | None = None,
 
 def read_hidden_token(*, prompt="Cloudflare API token (input hidden): ",
                       reader: Callable[[str], str] = getpass.getpass) -> str:
-    value = reader(prompt)
+    if reader is getpass.getpass and not sys.stdin.isatty():
+        raise CredentialError("Hidden token input requires a terminal")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", getpass.GetPassWarning)
+            value = reader(prompt)
+    except (getpass.GetPassWarning, OSError):
+        raise CredentialError("Could not read the token without echo") from None
     if not _valid_token(value):
         raise CredentialError("A valid Cloudflare API token is required")
     return value.strip()

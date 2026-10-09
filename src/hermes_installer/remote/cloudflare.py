@@ -71,9 +71,9 @@ class CloudflareClient:
         return tuple(sorted(zones, key=lambda z: len(z.name), reverse=True))
     def organization(self, account_id: str) -> Mapping[str, Any]:
         result = self.request("GET", f"/accounts/{self._object_id(account_id)}/access/organizations")
-        if not isinstance(result, list) or not result or not isinstance(result[0], dict):
+        if not isinstance(result, dict):
             raise CloudflareError("Cloudflare Zero Trust organization is not enrolled")
-        domain = result[0].get("auth_domain")
+        domain = result.get("auth_domain")
         if not isinstance(domain, str) or not re.fullmatch(r"[A-Za-z0-9.-]+", domain) or domain.startswith(".") or domain.endswith("."):
             raise CloudflareError("Cloudflare organization has no valid Access authentication domain")
-        return result[0]
+        return result

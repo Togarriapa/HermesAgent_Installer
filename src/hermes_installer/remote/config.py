@@ -1,7 +1,7 @@
 """Remote setup prompts and explicit noninteractive inputs."""
 from __future__ import annotations
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Iterable
 from ..credentials import CredentialError, read_hidden_token, resolve_secret
 from .cloudflare import CloudflareClient, CloudflareZone
@@ -19,7 +19,7 @@ class RemoteSetup:
     allowed_emails: tuple[str, ...]
     zone: CloudflareZone
     auth_domain: str
-    management_token: str
+    management_token: str = field(repr=False, compare=False)
 
 def validate_hostname(value: str) -> str:
     value = value.strip().lower().rstrip(".")
@@ -67,7 +67,7 @@ def collect_remote_setup(*, interactive: bool, config: dict | None = None,
     selected_id = remote.get("zone_id")
     if selected_id:
         matches = tuple(z for z in matches if z.zone_id == selected_id)
-    if len(matches) > 1:
+    if selected_id and not matches:\n        raise RemoteConfigError("The explicitly selected zone_id does not match an accessible active zone")\n    if len(matches) > 1:
         if not interactive:
             raise RemoteConfigError("Several equally specific zones match; add explicit zone_id and resume")
         choices = ", ".join(f"{i + 1}) {zone.name} ({zone.account_id})" for i, zone in enumerate(matches))
