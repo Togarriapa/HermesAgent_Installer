@@ -18,6 +18,11 @@ from .transports import StreamableHTTPTransport
 _ENTITY_ID = re.compile(r"[a-z0-9_]+\.[a-z0-9_]+\Z")
 
 
+def _selected_entities(entity_ids: Iterable[str]) -> tuple[str, ...]:
+    entities = _selected_entities(entity_ids)
+    return entities
+
+
 def adapter(client, *, entity_ids: Iterable[str], allowed_tools: Iterable[str]) -> ReadOnlyAdapter:
     authority = getattr(client, "authority_client", None)
     if type(authority) is not AuthorityClient:
