@@ -184,7 +184,7 @@ class HermesBootstrap:
         cmd = [str(bash), str(self.script_path), *args]
         proc = subprocess.Popen(cmd, cwd=self.data_root.root, env=self._environment(), stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, shell=False, close_fds=True, start_new_session=True)
+                                stderr=subprocess.DEVNULL, shell=False, close_fds=True, start_new_session=True, bufsize=0)
         proc._hermes_cleanup_lock = threading.Lock()
         if not capture:
             try:
@@ -237,7 +237,14 @@ class HermesBootstrap:
                             raise BootstrapError("Manifest child left an unowned output descendant") from None
                         reader.join(timeout=1)
                         raise BootstrapError("Manifest child left an output descendant")
+                    # A child may exit before the reader has drained the final
+                    # pipe bytes. eof is set only after recording the last block,
+                    # but make the output-bound decision adjacent to success too.
+                    if overflow.is_set() or len(output) > 64 * 1024:
+                        raise BootstrapError("Official installer manifest exceeded its output bound")
                     code = proc.wait()
+                    if overflow.is_set():
+                        raise BootstrapError("Official installer manifest exceeded its output bound")
                     return code, bytes(output)
                 if time.monotonic() >= deadline:
                     if not _stop_group(proc):
@@ -251,7 +258,11 @@ class HermesBootstrap:
             reader.join(timeout=0.5)
             raise
         finally:
-            proc.stdout.close()
+            # A raw unbuffered pipe read may outlive lost child custody if an
+            # unrelated writer inherited stdout. Never block interpreter shutdown
+            # waiting for a BufferedReader lock held by that daemon reader.
+            if not reader.is_alive():
+                proc.stdout.close()
 
     def _manifest(self) -> None:
         code, raw = self.runner(["--manifest", "--json", *self._base_args()], timeout=30, capture=True)

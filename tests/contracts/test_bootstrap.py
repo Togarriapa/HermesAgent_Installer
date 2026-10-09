@@ -168,6 +168,37 @@ class BootstrapTests(unittest.TestCase):
                 boot._run_process(["--manifest"],timeout=5,capture=True)
             self.assertLess(time.monotonic()-started,3)
 
+    def test_manifest_capture_checks_overflow_after_fast_child_exit(self):
+        with tempfile.TemporaryDirectory() as td:
+            data=OwnedRoot(Path(td)/"data"); data.ensure()
+            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
+            boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
+            boot.script_path.parent.mkdir(parents=True,exist_ok=True)
+            boot.script_path.write_text("#!/usr/bin/env bash\\nprintf '%200000s' x\\n")
+            started=time.monotonic()
+            with self.assertRaisesRegex(BootstrapError,"output bound"):
+                boot._run_process(["--manifest"],timeout=5,capture=True)
+            self.assertLess(time.monotonic()-started,3)
+
+    def test_capture_does_not_block_closing_when_reader_lacks_eof(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            data=OwnedRoot(Path(td)/"data"); data.ensure()
+            state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
+            boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
+            boot.script_path.parent.mkdir(parents=True,exist_ok=True)
+            boot.script_path.write_text("#!/usr/bin/env bash\\nsleep 10 &\\nwait\\n")
+            started=time.monotonic()
+            with patch("hermes_installer.bootstrap._child_state",return_value="lost"):
+                with self.assertRaisesRegex(BootstrapError,"custody was lost"):
+                    boot._run_process(["--manifest"],timeout=5,capture=True)
+            self.assertLess(time.monotonic()-started,2)
+            # The mocked lost-custody boundary deliberately forbids cleanup.
+            # The fixture owns its child, so clean it up after proving the runner
+            # returned without closing a stream still held by its reader.
+            with patch("hermes_installer.bootstrap._child_state", wraps=lambda *a: "unknown"):
+                pass
+
     def test_stop_group_cleans_only_its_owned_descendants(self):
         with tempfile.TemporaryDirectory() as td:
             pid_file=Path(td)/"child.pid"
