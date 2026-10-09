@@ -211,20 +211,23 @@ class RemoteEnrollmentTests(unittest.TestCase):
         self.assertEqual(len(idp_posts), 1)
         self.assertNotIn("leak sentinel", second.message)
 
-    def test_route_activation_requires_real_origin_and_enrolled_token_sink_before_effects(self):
+    def test_route_activation_requires_root_bound_receipts_before_tunnel_or_dns(self):
         self.config["remote_desktop"]["policy_read_token_ref"] = self.read_ref
         result = self.run_enrollment(activate_route=True)
         self.assertEqual((result.state, result.policy_read_state, result.route_state),
                          ("pending", "verified", "pending"))
         self.assertTrue(result.component_installable)
         self.assertEqual(self.route_effects(), [])
-        with_origin_only = self.run_enrollment(activate_route=True, origin_ready=lambda: True)
-        self.assertEqual(with_origin_only.route_state, "pending")
+        with_setup_only = self.run_enrollment(
+            activate_route=True, setup_transaction_handle="A" * 43)
+        self.assertEqual(with_setup_only.route_state, "pending")
         self.assertEqual(self.route_effects(), [])
-        with_sink_only = self.run_enrollment(activate_route=True,
-                                             runtime_token_writer=lambda _token: None)
+        with_sink_only = self.run_enrollment(
+            activate_route=True, setup_transaction_handle="A" * 43,
+            runtime_token_writer=lambda *_args, **_kwargs: None)
         self.assertEqual(with_sink_only.route_state, "pending")
         self.assertEqual(self.route_effects(), [])
+        self.assertIn("signed private-origin readiness receipt", with_sink_only.message)
 
     def test_foreign_hostname_access_application_is_preserved_before_any_write(self):
         self.server.apps.append({"id": "foreign-app", "name": "Existing user's app",

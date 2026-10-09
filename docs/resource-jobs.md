@@ -47,16 +47,42 @@ receipt and bind its event body before making the call. Likewise,
 `finish_child` must receive only IDs issued by the root after it validates the
 broker response. These methods are not safe to expose as worker RPCs.
 
-Current state: the SQLite admission/DAG backend and a root handler-factory
-draft are implemented. The authority module now parses typed backend/body
-recipe records, omits jobs without source issuer/observer/backend/recipe joins,
-and provides a one-node `invoke_resource_backend` call point that derives a
-fresh context and grant for each admitted attempt. Registration requires the
-fixed handler to identify its exact backend enrollment, artifact ID, and
-digest. This is still unavailable: the active root catalog has no scope
-binding/result-schema resolver, multi-action DAGs have only one backend ID in
-the current record shape, observed event/result payload capsules are not
-available in this checkout, and no selected resource backend callable is
-currently assembled with the required artifact binding. Dynamic recipes fail
-closed until those root-only resolvers exist. No cron, webhook, channel, or
-bundle effect is established by the ledger fixtures or this draft.
+Current state: the SQLite admission/DAG backend and root handler-factory draft
+are implemented. The parser joins active per-node backend, scope, validator,
+body recipe, source issuer, and observer records; it rejects an observer whose
+origin, action, or capture schema does not match the selected route. The
+admission handler resolves the exact signed source receipt through the
+root-private `SourceObserverRegistry`, consumes its one-use payload capsule,
+and retains only recipe-selected fields that pass protected validators. The
+retained event projection is bounded, job-expiring, and scrubbed when the job
+terminates, expires, or is revoked. Caller-supplied event bytes and unsigned
+webhook receipts cannot supply recipe values.
+
+For a selected profile task, the private admission row retains the actual
+verified `_JobEvent`, signed parent context, and complete source receipt
+objects beside the one-use node handle. `resolve_admitted_task_source()` is
+available only after consuming that exact handle and rechecks the current
+resource/profile generation, consent, child attempt, lease, parent closure,
+and protected process/native recipe joins. It returns immutable event/result
+projections and neutral `RootAdmittedTask` / `RootAdmittedTaskSource` DTOs.
+The source DTO carries only root-private opaque receipt handles, canonical
+signed receipt wires, lineage, subject metadata, and a controller lookup
+handle; `_JobEvent`, `HostContext`, and receipt objects stay in the authority's
+private registry. The controller resolver rechecks a worker producer through
+the attached `SourceObserverRegistry` and transfers one duplicated PIDFD in
+the typed `RootTaskController`. Timer, webhook, and channel controller
+resolvers remain absent, so those event classes remain unavailable. The
+closure digest binds the signed context/receipts, source-capsule provenance,
+selected scope IDs, event fields, and predecessor result fields.
+
+Admission and child handlers remain unavailable unless root composition joins
+the current protected catalogs and installs the concrete selected process-task
+launcher and terminal/result capsule consumer. Each fixed process task is
+specified to use a separate root `process.start` grant. In particular, the
+current checkout has no `AuthorityService.launch_resource_profile_task` or
+result-capsule completion path, and no root timer/webhook/channel controller
+issuer. Profile-task nodes and dependent DAG nodes must not be reported as
+functional. Dynamic result/scope recipes fail closed. Fixture tests exercise
+ledger/parser behavior and typed root source/controller resolution; they do
+not establish cron, webhook, channel, bundle, Hermes process custody, or target
+effects.

@@ -74,13 +74,22 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         ROUTES[self.route_key] = replace(self.original_route, port=self.port)
         self.accepted = threading.Event()
         self.received = bytearray()
+        self.http_response_mode = False
         def echo():
             peer, _ = self.listener.accept()
             self.accepted.set()
             try:
-                while data := peer.recv(4096):
-                    self.received.extend(data)
-                    peer.sendall(data)
+                if self.http_response_mode:
+                    while b"\r\n\r\n" not in self.received:
+                        data = peer.recv(4096)
+                        if not data:
+                            break
+                        self.received.extend(data)
+                    peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\n\r\nhello")
+                else:
+                    while data := peer.recv(4096):
+                        self.received.extend(data)
+                        peer.sendall(data)
             finally:
                 peer.close()
         self.echo_thread = threading.Thread(target=echo, daemon=True)
@@ -242,11 +251,12 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         effect_handlers = {(operation, "xpra-native"):
                            (lambda **_: {"status": 200, "body": b"", "headers": {}, "receipt_id": "fixture"})
                            for operation in operations}
+        native_principal = PrincipalBinding(
+            2001, "principal:native", "hermes-desktop", "namespace:native",
+            frozenset({"hermes-service-connect"}))
         service = AuthorityService(
             signing_key=b"k" * 32, key_id="fixture-authority",
-            bindings_by_uid={2001: PrincipalBinding(
-                2001, "principal:native", "hermes-desktop", "namespace:native",
-                frozenset({"hermes-service-connect"}))},
+            bindings_by_uid={2001: native_principal},
             rules=effect_rules, handlers=effect_handlers, policy=Policy(),
             profile_generations={"hermes-desktop": "generation:1"},
             service_generation_digest="e" * 64,
@@ -254,6 +264,9 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         hi12 = AuthorityServiceHI12Adapter(
             service, boot_epoch=lambda: "boot:fixture",
             service_generation_digest=lambda: "e" * 64,
+            resolve_selected_native_principal=lambda profile, generation, digest:
+                native_principal if (profile, generation, digest) ==
+                ("hermes-desktop", "generation:1", "e" * 64) else None,
         )
         root_effects = RemoteConnectorEffectAuthority(
             runtime_state=lambda: state, enrollment=protected_remote,
@@ -342,6 +355,154 @@ class FixedServiceConnectorContracts(unittest.TestCase):
                       peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
         self.assertNotIn(opened, self.connector._streams)
         self.assertEqual(len(service._nonces), 4)
+
+
+    def test_root_setup_probe_uses_exact_asset_id_and_hi12_before_socket_effects(self):
+        import hashlib
+        from dataclasses import replace
+        from types import SimpleNamespace
+        from hermes_installer.authority.remote_probe_connector_authority import (
+            RootSetupProbeBinding, SetupProbeConnectorAuthority,
+        )
+        from hermes_installer.authority.remote_connector_authority import AuthorityServiceHI12Adapter
+        from hermes_installer.authority.service import AuthorityService, EffectRule, PrincipalBinding
+        from hermes_installer.authority.types import Sensitivity
+        from hermes_installer.service_connector import SetupProbeConnectorBackend
+
+        path = "/client/index.html"
+        asset_id = hashlib.sha256(b"hermes-client-asset-v1\0" + path.encode()).hexdigest()
+        handle = __import__("secrets").token_urlsafe(32)
+        now = time.monotonic()
+        state = {
+            "binding": RootSetupProbeBinding(
+                probe_handle=handle, setup_transaction_handle="setup:fixture",
+                setup_transaction_digest="a" * 64, setup_actor_identity_digest="b" * 64,
+                probe_actor_identity_digest="c" * 64, setup_profile_id="setup-profile",
+                setup_generation="setup-gen", setup_enrollment_id="setup-enroll",
+                setup_role_sha256="d" * 64, probe_enrollment_id="probe-enroll",
+                probe_profile_id="probe-profile", probe_generation="probe-gen",
+                probe_role_sha256="e" * 64, gateway_identity_digest="f" * 64,
+                gateway_profile_id="gateway-profile", gateway_generation="gateway-gen",
+                gateway_enrollment_id="gateway-enroll", native_identity_digest="1" * 64,
+                native_enrollment_id="enrollment:fixture", native_profile_id="hermes-desktop",
+                native_generation="generation:1", enrollment_id="enrollment:fixture",
+                target_id="xpra-native", connector_target_id="xpra-native",
+                approved_route_ids=("xpra-http", "xpra-websocket"), asset_ids=(asset_id,),
+                selected_action="asset-get", selected_asset_id=asset_id,
+                session_id="setup-probe:nonce-fixture", next_sequence=0,
+                connector_handle=None, effect_sequence=0,
+                policy_revision="policy:fixture", policy_config_digest="2" * 64,
+                service_generation_digest="3" * 64, principal_id="principal:fixture",
+                issued_monotonic=now - 0.01, expires_monotonic=now + 20,
+                frame_deadline_monotonic=now + 4, cancelled=lambda: False,
+            ),
+            "connector": None,
+        }
+
+        class Policy:
+            def classify(self, *, purpose, intent, source_contexts, binding):
+                return Sensitivity.PRIVATE, "4" * 64
+            def allow_effect(self, *, context, rule, request_digest, retry_index):
+                return context.sensitivity is Sensitivity.PRIVATE and retry_index == 0
+
+        operations = ("connector.open", "connector.read", "connector.write", "connector.close")
+        def make_hi12(*, omit_open=False):
+            active = [operation for operation in operations if not (omit_open and operation == "connector.open")]
+            rules = {("hermes-service-connect", operation, "xpra-native"):
+                     EffectRule("hermes-service-connect", operation, "xpra-native") for operation in active}
+            handlers = {(operation, "xpra-native"):
+                        (lambda **_: {"status": 200, "body": b"", "headers": {}, "receipt_id": "fixture"})
+                        for operation in active}
+            native_principal = PrincipalBinding(
+                1234, "principal:fixture", "hermes-desktop", "namespace:fixture",
+                frozenset({"hermes-service-connect"}))
+            service = AuthorityService(
+                signing_key=b"p" * 32, key_id="setup-probe-fixture",
+                bindings_by_uid={1234: native_principal},
+                rules=rules, handlers=handlers, policy=Policy(),
+                profile_generations={"hermes-desktop": "generation:1"},
+                service_generation_digest="3" * 64)
+            return AuthorityServiceHI12Adapter(
+                service, boot_epoch=lambda: "fixture-boot",
+                service_generation_digest=lambda: "3" * 64,
+                resolve_selected_native_principal=lambda profile, generation, digest:
+                    native_principal if (profile, generation, digest) ==
+                    ("hermes-desktop", "generation:1", "3" * 64) else None), service
+
+        def resolve(handle_arg, uid, pid, pidfd):
+            if (handle_arg, uid, pid, pidfd) != (handle, 1234, os.getpid(), self.pidfd):
+                raise ValueError("wrong probe peer")
+            return state["binding"]
+
+        def advance(handle_arg, expected_effect, expected_frame, operation,
+                    connector_id, uid, pid, pidfd):
+            if (handle_arg != handle or expected_effect != state["binding"].effect_sequence
+                    or expected_frame != state["binding"].next_sequence
+                    or uid != 1234 or pid != os.getpid() or pidfd != self.pidfd):
+                return False
+            if operation == "connector.open":
+                if expected_effect != 0 or expected_frame != 0 or state["connector"] is not None:
+                    return False
+                state["connector"] = connector_id
+                state["binding"] = replace(state["binding"], connector_handle=connector_id)
+            elif connector_id != state["connector"]:
+                return False
+            if operation in {"connector.read", "connector.write"}:
+                state["binding"] = replace(state["binding"], next_sequence=expected_frame + 1)
+            state["binding"] = replace(state["binding"], effect_sequence=expected_effect + 1)
+            return True
+
+        hi12, service = make_hi12()
+        authority = SetupProbeConnectorAuthority(
+            resolve_binding=resolve, hi12=hi12, boot_epoch=lambda: "fixture-boot",
+            advance_sequence=advance)
+
+        self.http_response_mode = True
+
+        class Catalog:
+            def resolve_connector_route(self, enrollment, generation, target, route):
+                return SimpleNamespace(enrollment_id=enrollment, generation=generation,
+                    target_id=target, route_id=route, profile_id="hermes-desktop",
+                    namespace_identity="net:fixture")
+        class ProcessManager:
+            def resolve_namespace_lease(self, binding):
+                return SimpleNamespace(namespace_fd=-1, pidfd=self_pidfd, uid=1234,
+                    cgroup_identity="fixture-cgroup", generation="generation:1",
+                    namespace_identity="net:fixture", process_id="root-managed",
+                    close=lambda: None)
+        self_pidfd = self.pidfd
+        backend = SetupProbeConnectorBackend(
+            self.connector, catalog=Catalog(), process_manager=ProcessManager(),
+            probe_authority=authority, resolve_probe_connector_binding=resolve,
+            resolve_probe_asset_path=lambda binding, selected: path if selected == asset_id else (_ for _ in ()).throw(ValueError()),
+        )
+        denied_hi12, _denied_service = make_hi12(omit_open=True)
+        denied_authority = SetupProbeConnectorAuthority(
+            resolve_binding=resolve, hi12=denied_hi12, boot_epoch=lambda: "fixture-boot",
+            advance_sequence=advance)
+        denied_backend = SetupProbeConnectorBackend(
+            self.connector, catalog=Catalog(), process_manager=ProcessManager(),
+            probe_authority=denied_authority, resolve_probe_connector_binding=resolve,
+            resolve_probe_asset_path=lambda binding, selected: path if selected == asset_id else (_ for _ in ()).throw(ValueError()),
+        )
+        try:
+            with self.assertRaises(AuthorityDenied):
+                backend.read_asset(handle, "4" * 64, "GET", peer_uid=1234,
+                                   peer_pid=os.getpid(), peer_pidfd=self.pidfd)
+            self.assertFalse(self.received, "a mismatched selected asset must not open the service socket")
+            with self.assertRaises(AuthorityDenied):
+                denied_backend.read_asset(handle, asset_id, "GET", peer_uid=1234,
+                                          peer_pid=os.getpid(), peer_pidfd=self.pidfd)
+            self.assertFalse(self.received, "a denied HI12 open must not connect to the service socket")
+            result = backend.read_asset(handle, asset_id, "GET", peer_uid=1234,
+                                        peer_pid=os.getpid(), peer_pidfd=self.pidfd)
+            self.assertEqual((result.status, result.body), (200, b"hello"))
+            self.assertEqual(len(service._nonces), 4,
+                             "open/write/read/close each spend a real AuthorityService HI12 nonce")
+            self.assertTrue(bytes(self.received).startswith(b"GET /client/index.html HTTP/1.1\r\nHost: 127.0.0.1:"))
+            self.assertFalse(self.connector._streams)
+        finally:
+            self.http_response_mode = False
 
 
 class FixedConnectorProtocolContracts(unittest.TestCase):
