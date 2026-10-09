@@ -52,6 +52,7 @@ class GatewayRuntime:
     max_active_sockets:int=4
     watchdog_seconds:int=5
     leases:dict[str,SocketLease]=field(default_factory=dict)
+    sockets:dict[str,object]=field(default_factory=dict,repr=False)
     def __post_init__(self):
         u=urlsplit(self.upstream)
         if u.scheme!="http" or u.hostname not in {"127.0.0.1","::1"} or u.username or u.password:raise ValueError("fixed loopback upstream required")
@@ -91,11 +92,17 @@ class GatewayRuntime:
             authorization_deadline_monotonic=grant.valid_until_monotonic,
             jwt_deadline_monotonic=grant.jwt_deadline_monotonic)
         return lease
+    def logout(self,key,challenge):
+        lease=self.leases.get(key)
+        if lease is None or not isinstance(challenge,str) or not secrets.compare_digest(lease.renewal_challenge,challenge):
+            raise GatewayDenied("logout session proof is invalid")
+        self.leases.pop(key,None)
+        return self.sockets.pop(key,None)
 
 _BOOTSTRAP="""<!doctype html><meta charset=utf-8><title>Hermes Desktop</title><p id=s>Starting protected Desktop session…</p><script>
 (async()=>{try{const r=await fetch('/session',{method:'POST',cache:'no-store',credentials:'same-origin'});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-lease',x.lease_id);sessionStorage.setItem('hd-challenge',x.renewal_challenge);location.replace('/client/index.html?path='+encodeURIComponent('/client/?lease='+encodeURIComponent(x.lease_id)+'&profile=hermes-desktop&nonce='+encodeURIComponent(x.socket_nonce)))}catch(e){document.getElementById('s').textContent='Access authorization required.'}})();
 </script>"""
-_RENEW="""<script>(()=>{let busy=false;async function renew(){if(busy)return;busy=true;try{const id=sessionStorage.getItem('hd-lease'),challenge=sessionStorage.getItem('hd-challenge');if(!id||!challenge)throw Error();const r=await fetch('/renew',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({lease_id:id,challenge})});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-challenge',x.renewal_challenge)}catch(_){sessionStorage.removeItem('hd-lease');sessionStorage.removeItem('hd-challenge');location.replace('/client/bootstrap.html')}finally{busy=false}}setInterval(renew,25000);})();</script>"""
+_RENEW="""<script>(()=>{let busy=false;async function renew(){if(busy)return;busy=true;try{const id=sessionStorage.getItem('hd-lease'),challenge=sessionStorage.getItem('hd-challenge');if(!id||!challenge)throw Error();const r=await fetch('/renew',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({lease_id:id,challenge})});if(!r.ok)throw Error();const x=await r.json();sessionStorage.setItem('hd-challenge',x.renewal_challenge)}catch(_){sessionStorage.removeItem('hd-lease');sessionStorage.removeItem('hd-challenge');location.replace('/client/bootstrap.html')}finally{busy=false}}const b=document.createElement('button');b.textContent='End Desktop session';b.setAttribute('aria-label','End Desktop session');b.style='position:fixed;top:8px;right:8px;z-index:2147483647;padding:8px;background:#7b1d1d;color:white';b.onclick=async()=>{b.disabled=true;try{const id=sessionStorage.getItem('hd-lease'),challenge=sessionStorage.getItem('hd-challenge');if(id&&challenge)await fetch('/logout',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({lease_id:id,challenge})})}finally{sessionStorage.removeItem('hd-lease');sessionStorage.removeItem('hd-challenge');location.replace('/client/bootstrap.html')}};const addButton=()=>document.body.appendChild(b);if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',addButton,{once:true});else addButton();setInterval(renew,25000);})();</script>"""
 
 def create_app(runtime:GatewayRuntime):
     from aiohttp import ClientSession,web,WSMsgType
@@ -127,6 +134,17 @@ def create_app(runtime:GatewayRuntime):
         grant=await runtime.authorize_current(action="renew",session_id=body["lease_id"],access_jwt=token,principal=p)
         lease=runtime.renew(body["lease_id"],p,body["challenge"],grant)
         return web.json_response({"renewal_challenge":lease.renewal_challenge,"expires_in":max(0,int(lease.expires_at-runtime.monotonic()))},headers={"Cache-Control":"no-store","Pragma":"no-cache"})
+    async def logout(request):
+        runtime.principal(request,"POST","/logout")
+        if request.content_length is None or request.content_length>2048:raise GatewayDenied("invalid logout body")
+        try:body=await asyncio.wait_for(request.json(),timeout=3)
+        except Exception:raise GatewayDenied("invalid logout body") from None
+        if not isinstance(body,dict) or set(body)!={"lease_id","challenge"} or not all(isinstance(body[x],str) for x in body):raise GatewayDenied("invalid logout fields")
+        socket=runtime.logout(body["lease_id"],body["challenge"])
+        if socket is not None:
+            try:await asyncio.wait_for(socket.close(code=1000,message=b"user logout"),timeout=2)
+            except Exception:pass
+        return web.Response(status=204,headers={"Cache-Control":"no-store","Pragma":"no-cache"})
     async def client(request):
         if request.path=="/client/" and request.headers.get("Upgrade","").casefold()=="websocket":return await stream(request)
         path=canonical_asset(request.raw_path)
@@ -178,7 +196,8 @@ def create_app(runtime:GatewayRuntime):
         up=urlsplit(runtime.upstream);wsurl=URL.build(scheme="ws",host=up.hostname,port=up.port or 80,path="/")
         async with request.app["client"].ws_connect(wsurl,protocols=("binary",),origin=runtime.upstream.rstrip("/"),timeout=3,receive_timeout=None,max_msg_size=16777216,autoping=False,autoclose=False) as upstream:
             downstream=web.WebSocketResponse(protocols=("binary",),max_msg_size=16777216,autoping=False,autoclose=False,compress=False)
-            await downstream.prepare(request)
+                await downstream.prepare(request)
+                runtime.sockets[key]=downstream
             async def watchdog():
                 while not downstream.closed:
                     await asyncio.sleep(runtime.watchdog_seconds)
@@ -201,14 +220,14 @@ def create_app(runtime:GatewayRuntime):
                 for task in done:
                     if task is not wd and not task.cancelled() and task.exception():raise task.exception()
             finally:
-                runtime.leases.pop(key,None)
+                runtime.leases.pop(key,None);runtime.sockets.pop(key,None)
                 for close in (upstream.close(),downstream.close()):
                     try:await asyncio.wait_for(close,timeout=2)
                     except Exception:pass
                 for task in relays:task.cancel()
                 await asyncio.wait(relays,timeout=5)
             return downstream
-    app.router.add_get("/",root);app.router.add_post("/session",create);app.router.add_post("/renew",renew)
+    app.router.add_get("/",root);app.router.add_post("/session",create);app.router.add_post("/renew",renew);app.router.add_post("/logout",logout)
     app.router.add_get("/client/{tail:.*}",client);app.router.add_get("/client/",client)
     app.middlewares.append(auth_errors);app.on_startup.append(startup);app.on_cleanup.append(cleanup)
     return app

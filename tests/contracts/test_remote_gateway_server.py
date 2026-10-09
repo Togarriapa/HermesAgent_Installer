@@ -111,8 +111,8 @@ class RemoteGatewayAuthorizedFlowTests(unittest.IsolatedAsyncioTestCase):
   self.upstream=TestServer(upstream_app);await self.upstream.start_server()
   self.membership=[True]
   verifier=FixtureVerifier(lambda:self.monotonic[0],self.wall,self.membership)
-  runtime=GatewayRuntime(self.policy,upstream=str(self.upstream.make_url("/")),monotonic=lambda:self.monotonic[0],verifier=verifier,max_lease_seconds=1,watchdog_seconds=1)
-  self.gateway=TestClient(TestServer(create_app(runtime)));await self.gateway.start_server()
+  self.runtime=GatewayRuntime(self.policy,upstream=str(self.upstream.make_url("/")),monotonic=lambda:self.monotonic[0],verifier=verifier,max_lease_seconds=1,watchdog_seconds=1)
+  self.gateway=TestClient(TestServer(create_app(self.runtime)));await self.gateway.start_server()
   self.headers={"Host":self.policy.hostname,"Origin":"https://"+self.policy.hostname,"Cf-Access-Jwt-Assertion":self.token}
  async def asyncTearDown(self):
   await self.gateway.close();await self.upstream.close()
@@ -131,6 +131,12 @@ class RemoteGatewayAuthorizedFlowTests(unittest.IsolatedAsyncioTestCase):
   self.assertEqual(renewed.status,200);fresh=(await renewed.json())["renewal_challenge"]
   replay=await self.gateway.post("/renew",headers=self.headers,json={"lease_id":session["lease_id"],"challenge":session["renewal_challenge"]})
   self.assertEqual(replay.status,403);self.assertNotEqual(fresh,session["renewal_challenge"])
+ async def test_explicit_logout_requires_current_challenge_and_removes_lease(self):
+  created=await self.gateway.post("/session",headers=self.headers);session=await created.json()
+  denied=await self.gateway.post("/logout",headers=self.headers,json={"lease_id":session["lease_id"],"challenge":"wrong"})
+  self.assertEqual(denied.status,403);self.assertIn(session["lease_id"],self.runtime.leases)
+  response=await self.gateway.post("/logout",headers=self.headers,json={"lease_id":session["lease_id"],"challenge":session["renewal_challenge"]})
+  self.assertEqual(response.status,204);self.assertNotIn(session["lease_id"],self.runtime.leases)
  async def test_fresh_policy_removal_denies_initial_issue_and_same_jwt_renewal(self):
   created=await self.gateway.post("/session",headers=self.headers)
   self.assertEqual(created.status,200);session=await created.json()
