@@ -9,6 +9,7 @@ import sys
 import sqlite3
 import stat
 import contextlib
+import fcntl
 import shlex
 from dataclasses import asdict
 from pathlib import Path
@@ -120,104 +121,155 @@ def _host_findings(config: InstallerConfig | None = None) -> tuple[Finding, ...]
 
 
 
-def _resume_checkpoint_exists(state_path: Path) -> bool:
-    """Read-only gate so a fresh resume cannot create a root, marker, database, or WAL."""
+@contextlib.contextmanager
+def _quiescent_journal(state_path: Path):
+    """Yield an immutable SQLite reader only while a pre-existing writer lock is quiescent.
+
+    Status must never create lock/database/WAL files or update WAL read marks.
+    Writers cooperate through installer.lock; a live lock holder or nonempty WAL
+    makes the answer indeterminate instead of returning a stale checkpoint.
+    """
     path = state_path.expanduser().absolute()
     if path.is_symlink() or not path.is_dir():
-        return False
+        raise OSError("state root unavailable")
+    root_info = path.lstat()
+    if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.getuid()
+            or stat.S_IMODE(root_info.st_mode) & 0o077):
+        raise OSError("state root ownership is not verified")
     marker = path / ".hermes-installer-owned"
-    database = path / "journal.sqlite3"
+    marker_fd = os.open(marker, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
     try:
-        info = path.stat()
-        marker_info = marker.lstat()
+        marker_info = os.fstat(marker_fd)
+        if (not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != os.getuid()
+                or stat.S_IMODE(marker_info.st_mode) & 0o077
+                or os.read(marker_fd, 65) != b"schema=1\n"):
+            raise OSError("ownership marker is invalid")
+    finally:
+        os.close(marker_fd)
+
+    lock_path = path / "installer.lock"
+    lock_fd = os.open(lock_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    try:
+        lock_info = os.fstat(lock_fd)
+        if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid()
+                or stat.S_IMODE(lock_info.st_mode) & 0o077):
+            raise OSError("lock ownership is not verified")
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("installer operation is active") from None
+
+        database = path / "journal.sqlite3"
         db_info = database.lstat()
-        if (info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077
-            or marker.is_symlink() or not stat.S_ISREG(marker_info.st_mode)
-            or marker_info.st_uid != os.getuid() or stat.S_IMODE(marker_info.st_mode) & 0o077
-            or marker.read_bytes() != b"schema=1\n"
-            or database.is_symlink() or not stat.S_ISREG(db_info.st_mode)
-            or db_info.st_uid != os.getuid() or stat.S_IMODE(db_info.st_mode) & 0o077):
-            return False
+        if (database.is_symlink() or not stat.S_ISREG(db_info.st_mode)
+                or db_info.st_uid != os.getuid() or stat.S_IMODE(db_info.st_mode) & 0o077):
+            raise OSError("journal ownership is not verified")
+        wal = path / "journal.sqlite3-wal"
+        try:
+            wal_info = wal.lstat()
+        except FileNotFoundError:
+            wal_info = None
+        if wal_info is not None:
+            if wal.is_symlink() or not stat.S_ISREG(wal_info.st_mode) or wal_info.st_uid != os.getuid():
+                raise OSError("journal WAL ownership is not verified")
+            if wal_info.st_size:
+                raise RuntimeError("journal has an active or uncheckpointed WAL")
+        before = (db_info.st_dev, db_info.st_ino, db_info.st_size, db_info.st_mtime_ns, db_info.st_ctime_ns,
+                  None if wal_info is None else (wal_info.st_dev, wal_info.st_ino, wal_info.st_size, wal_info.st_mtime_ns, wal_info.st_ctime_ns))
         uri = database.as_uri() + "?mode=ro&immutable=1"
         with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=2)) as db:
+            db.row_factory = sqlite3.Row
+            yield db
+        db_after = database.lstat()
+        try:
+            wal_after_info = wal.lstat()
+        except FileNotFoundError:
+            wal_after_info = None
+        after = (db_after.st_dev, db_after.st_ino, db_after.st_size, db_after.st_mtime_ns, db_after.st_ctime_ns,
+                 None if wal_after_info is None else (wal_after_info.st_dev, wal_after_info.st_ino, wal_after_info.st_size, wal_after_info.st_mtime_ns, wal_after_info.st_ctime_ns))
+        if before != after:
+            raise RuntimeError("journal changed during immutable read")
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def _resume_checkpoint_exists(state_path: Path) -> bool:
+    """Read-only gate so a fresh resume cannot create a root, marker, database, or WAL."""
+    try:
+        with _quiescent_journal(state_path) as db:
             row = db.execute("SELECT 1 FROM operations WHERE id='installer:selection'").fetchone()
         return row is not None
-    except (OSError, sqlite3.Error, ValueError):
+    except (OSError, RuntimeError, sqlite3.Error, ValueError):
         return False
 
+
 def _recorded_component_findings(state_path: Path, component: str | None = None) -> tuple[Finding, ...]:
-    """Read the durable installer journal without creating or modifying state."""
+    """Report historical checkpoints without mutating SQLite or implying current health."""
     path = state_path.expanduser().absolute()
-    if path.is_symlink() or not path.is_dir():
-        return (Finding("installer.state", "No installer-owned state directory is available", OutcomeState.PENDING),)
-    marker = path / ".hermes-installer-owned"
-    database = path / "journal.sqlite3"
     try:
-        root_info = path.lstat()
-        marker_info = marker.lstat()
-        db_info = database.lstat()
-        if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.getuid()
-                or stat.S_IMODE(root_info.st_mode) & 0o077
-                or marker.is_symlink() or not stat.S_ISREG(marker_info.st_mode)
-                or marker_info.st_uid != os.getuid() or stat.S_IMODE(marker_info.st_mode) & 0o077
-                or marker.read_bytes() != b"schema=1\n"
-                or database.is_symlink() or not stat.S_ISREG(db_info.st_mode)
-                or db_info.st_uid != os.getuid() or stat.S_IMODE(db_info.st_mode) & 0o077):
-            return (Finding("installer.state", "Installer state ownership could not be verified", OutcomeState.PENDING),)
-        uri = database.as_uri() + "?mode=ro"
-        with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=2)) as db:
-            db.row_factory = sqlite3.Row
-            try:
-                row = db.execute(
-                    "SELECT status,payload FROM operations WHERE id='installer:selection'"
-                ).fetchone()
-                resources = db.execute(
-                    "SELECT kind,state,COUNT(*) AS count FROM owned_resources GROUP BY kind,state ORDER BY kind,state"
-                ).fetchall()
-            except sqlite3.Error:
-                return (Finding("installer.state", "Installer journal has no readable component records", OutcomeState.PENDING),)
-        if row is None:
-            return (Finding("installer.state", "No installation operation has been recorded", OutcomeState.PENDING),)
+        with _quiescent_journal(path) as db:
+            row = db.execute(
+                "SELECT status,updated_at,payload FROM operations WHERE id='installer:selection'"
+            ).fetchone()
+            resources = db.execute(
+                "SELECT kind,state,COUNT(*) AS count FROM owned_resources GROUP BY kind,state ORDER BY kind,state"
+            ).fetchall()
+    except RuntimeError as exc:
+        detail = "Installer operation is active" if "active" in str(exc) else "Installer journal has uncheckpointed changes"
+        return (Finding("installer.state", detail + "; status is indeterminate until it is quiescent", OutcomeState.PENDING),)
+    except (OSError, sqlite3.Error, ValueError):
+        return (Finding("installer.state", "No safely readable, quiescent installer checkpoint is available", OutcomeState.PENDING),)
+    if row is None:
+        findings = (Finding("installer.state", "No installation operation has been recorded", OutcomeState.PENDING),)
+        if component:
+            selected = component.lower().replace(".", "_").replace("-", "_")
+            return (Finding("component." + selected, f"No durable status is recorded for component {selected}", OutcomeState.PENDING),)
+        return findings
+    try:
         payload = json.loads(row["payload"])
         if not isinstance(payload, dict):
             raise ValueError("invalid journal payload")
         report = payload.get("report", payload)
         if not isinstance(report, dict):
             report = {}
-        findings = [
-            Finding("installer.operation", f"Last installer operation: {row['status']}",
-                    OutcomeState.READY if row["status"] == "bootstrap-complete" else OutcomeState.PENDING),
-            Finding("hermes.agent.bootstrap", "Pinned Hermes Agent bootstrap is verified" if report.get("agent_ready") is True
-                    else "Pinned Hermes Agent runtime verification is pending",
-                    OutcomeState.READY if report.get("agent_ready") is True else OutcomeState.PENDING),
-            Finding("hermes.desktop.build", "Official Desktop build artifact is recorded" if report.get("desktop_built") is True
-                    else "Official Desktop build is not recorded",
-                    OutcomeState.READY if report.get("desktop_built") is True else OutcomeState.PENDING),
-        ]
-        for item in resources:
-            findings.append(Finding(
-                "resource." + str(item["kind"]),
-                f"Owned {item['kind']} resources in state {item['state']}: {int(item['count'])}",
-                OutcomeState.READY if item["state"] == "active" else OutcomeState.PENDING,
-                {"count": int(item["count"])},
-            ))
-        if component:
-            aliases = {
-                "hermes-agent": "hermes_agent", "agent": "hermes_agent",
-                "hermes-desktop": "hermes_desktop", "desktop": "hermes_desktop",
-                "provider": "provider", "gateway": "provider_gateway",
-                "remote-desktop": "remote_desktop", "remote": "remote_desktop",
-            }
-            selected = aliases.get(component, component).replace("-", "_")
-            matching = tuple(item for item in findings
-                             if selected in item.code.replace("-", "_")
-                             or item.code.replace("-", "_").startswith("resource." + selected))
-            return matching or (Finding("component." + selected,
-                f"No durable status is recorded for component {selected}",
-                OutcomeState.PENDING),)
-        return tuple(findings)
-    except (OSError, sqlite3.Error, ValueError, TypeError):
-        return (Finding("installer.state", "Installer journal could not be read safely", OutcomeState.PENDING),)
+    except (ValueError, TypeError):
+        return (Finding("installer.state", "Recorded installer checkpoint is malformed", OutcomeState.PENDING),)
+    timestamp = float(row["updated_at"])
+    findings = [
+        Finding("installer.operation", f"Recorded installer operation: {row['status']} (updated_at={timestamp:.3f})",
+                OutcomeState.PENDING, {"recorded_at": timestamp, "historical": True}),
+        Finding("hermes.agent.bootstrap", "A historical Agent runtime verification passed" if report.get("agent_ready") is True
+                else "Agent runtime verification is not recorded as passed",
+                OutcomeState.PENDING, {"historical": True}),
+        Finding("hermes.desktop.build", "A historical official Desktop build was recorded" if report.get("desktop_built") is True
+                else "Official Desktop build is not recorded",
+                OutcomeState.PENDING, {"historical": True}),
+    ]
+    for item in resources:
+        findings.append(Finding(
+            "resource." + str(item["kind"]),
+            f"Recorded owned {item['kind']} resources in state {item['state']}: {int(item['count'])}",
+            OutcomeState.PENDING,
+            {"count": int(item["count"]), "historical": True},
+        ))
+    if component:
+        selected = component.lower().replace(".", "_").replace("-", "_")
+        aliases = {
+            "agent": "hermes_agent", "hermes_agent": "hermes_agent",
+            "desktop": "hermes_desktop", "hermes_desktop": "hermes_desktop",
+            "provider": "provider", "gateway": "provider_gateway",
+            "remote": "remote_desktop", "remote_desktop": "remote_desktop",
+        }
+        selected = aliases.get(selected, selected)
+        matching = tuple(item for item in findings
+                         if item.code.lower().replace(".", "_").replace("-", "_").startswith(selected)
+                         or item.code.lower().replace(".", "_").replace("-", "_").startswith("resource_" + selected))
+        return matching or (Finding("component." + selected,
+            f"No durable status is recorded for component {selected}",
+            OutcomeState.PENDING),)
+    return tuple(findings)
 
 
 def run(args: argparse.Namespace) -> CommandResult:
