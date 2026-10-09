@@ -445,7 +445,10 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     # The root-only adapter maps this bounded body to the pinned
                     # REST operation. Per-profile service/data roots provide scope.
                     request={"content":"\n".join(facts),"type":"fact",
-                        "project":target.namespace_id}
+                        "project":target.namespace_id,
+                        "concepts":["hermes-record:"+record_id,
+                                    "hermes-lineage:"+context.lineage_hash,
+                                    "hermes-source:"+source]}
                 else:
                     request={"record_id":record_id,"source":source,"facts":facts,
                         "embeddings":vectors,"lineage":context.lineage_hash,

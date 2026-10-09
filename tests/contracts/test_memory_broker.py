@@ -52,10 +52,10 @@ def target(profile, namespace, service):
                         "root-data-" + profile)
 
 
-def call(handler, context, action, value, *, digest_override=None):
+def call(handler, context, action, value, *, digest_override=None, provider="agentmemory"):
     raw = canonical(value)
     grant = Grant(context.profile_id, context.namespace_id,
-                  "memory:agentmemory:" + action,
+                  "memory:" + provider + ":" + action,
                   digest_override or hashlib.sha256(raw).hexdigest())
     return handler(context=context, authorization=grant, payload=raw, timeout=1.0,
                    peer_pid=123, cancelled=lambda: False)
@@ -149,7 +149,7 @@ class MemoryBrokerTests(unittest.TestCase):
         response = call(handlers[("memory.capture", "memory:claude-mem:capture")],
             Context(), "capture", {"schema": 1, "record_id": "synthetic-id",
                 "source": "hermes-session:synthetic", "facts": ["synthetic fact"],
-                "embeddings": [[0.1, 0.2]], "provenance": ["a" * 64]})
+                "embeddings": [[0.1, 0.2]], "provenance": ["a" * 64]}, provider="claude-mem")
         self.assertEqual(response["status"], 200)
         self.assertEqual(ipc.calls[0]["fixed_route"], "POST /v1/memories")
         body = json.loads(ipc.calls[0]["payload"])
