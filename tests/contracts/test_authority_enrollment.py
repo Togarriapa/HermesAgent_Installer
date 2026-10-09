@@ -11,12 +11,30 @@ from hermes_installer.authority.enrollment import (
     AUTHORITY_CONFIG_PATH, CREDENTIAL_DIRECTORY, RootCredentialVault,
     _reject_secret_material, _unique_pairs, _verify_active_process_rules, write_authority_config,
     write_protected_file, _validate_service_generations, _parse_observer_delivery_bindings,
-    _parse_source_issuers,
+    _parse_source_issuers, _parse_native_schema_artifact_records,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
 
 class ProtectedEnrollmentContracts(unittest.TestCase):
+    def test_native_schema_artifact_rows_are_exact_bounded_and_unique_per_action_kind(self):
+        row = {
+            "id": "arguments-v1", "artifact_id": "schema-arguments-v1",
+            "sha256": "a" * 64, "schema_kind": "arguments",
+            "native_package_id": "package-a", "native_package_generation": "generation-a",
+            "adapter_id": "adapter-a", "action_id": "action-a",
+            "source_receipt_handle": "receipt-handle-a",
+        }
+        parsed = _parse_native_schema_artifact_records([row])
+        self.assertEqual(parsed[0]["source_receipt_handle"], "receipt-handle-a")
+        self.assertEqual(parsed[0]["sha256"], "a" * 64)
+        with self.assertRaises(AuthorityDenied):
+            _parse_native_schema_artifact_records([{**row, "unreviewed": True}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_native_schema_artifact_records([row, dict(row)])
+        with self.assertRaises(AuthorityDenied):
+            _parse_native_schema_artifact_records([{**row, "schema_kind": "discovery"}])
+
     def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
         issuer = _parse_source_issuers([{
             "issuer_channel_id": "tool-result", "producer_profile_id": "producer-profile",
@@ -78,7 +96,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "resource_backend_enrollments": [], "resource_body_recipes": [],
                 "resource_scope_bindings": [], "resource_validators": [], "root_journal_roots": [],
                 "resource_controller_roles": [], "native_mcp_tool_bindings": bindings,
-                "remote_observation_enrollments": [],
+                "remote_observation_enrollments": [], "native_schema_artifacts": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -147,7 +165,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -199,7 +217,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -267,7 +285,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "resource_scope_bindings": [], "resource_validators": [],
                 "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -341,7 +359,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -391,7 +409,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [scope], "resource_validators": [validator],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [],
         }
 
         def sign(value):
@@ -445,7 +463,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [],
         }
 
         def sign(value):
@@ -478,7 +496,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [root],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [],
         }
         unsigned = dict(snapshot)
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(

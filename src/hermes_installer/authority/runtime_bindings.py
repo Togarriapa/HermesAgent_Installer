@@ -97,6 +97,7 @@ class RootRuntimeBindings:
     root_journal_catalog: ProtectedRootJournalCatalog | None = None
     source_observer_enrollments: Mapping[str, Any] = MappingProxyType({})
     native_mcp_tool_binding_records: tuple[Mapping[str, Any], ...] = ()
+    native_schema_artifact_records: tuple[Mapping[str, Any], ...] = ()
     protected_rules: Mapping[tuple[str, str, str], Any] = MappingProxyType({})
     mcp_services: Mapping[str, Any] = MappingProxyType({})
     remote_observation_records: tuple[Mapping[str, Any], ...] = ()
@@ -104,6 +105,58 @@ class RootRuntimeBindings:
     resource_credential_bindings: Mapping[tuple[str, str], ResourceCredentialBinding] = MappingProxyType({})
     resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
     resource_backend_records: tuple[Mapping[str, Any], ...] = ()
+
+    def resolve_native_schema_record(
+        self, schema_id: str, native_package_id: str, native_package_generation: str,
+        adapter_id: str, action_id: str, schema_kind: str,
+    ) -> Mapping[str, Any]:
+        """Select one digest-bound schema artifact row joined to current actions.
+
+        This does not treat the opaque source receipt handle as proof and does
+        not parse bytes. The native schema catalog must verify receipt
+        membership and resolve the actual root-owned artifact before exposing
+        a schema body.
+        """
+        if schema_kind not in {"arguments", "result"}:
+            raise EnrollmentDenied("native schema kind is invalid")
+        try:
+            package = self.enrollment_catalog.resolve_native_package(
+                native_package_id, native_package_generation,
+            )
+        except Exception:
+            raise EnrollmentDenied("native schema package generation is unavailable") from None
+        adapter = package.adapter_records.get(adapter_id)
+        if adapter is None or adapter.action_id != action_id:
+            raise EnrollmentDenied("native schema does not join an active package adapter action")
+        expected_schema_id = (adapter.argument_schema_id if schema_kind == "arguments"
+                              else adapter.result_schema_id)
+        eligible = schema_id == expected_schema_id
+        if not eligible:
+            # Native MCP request/result schemas are separately selected by the
+            # protected MCP dispatch rows but still use the exact package,
+            # action and fixed dispatch adapter.
+            eligible = any(
+                row.get("id") == action_id
+                and row.get("native_package_id") == native_package_id
+                and row.get("native_package_generation") == native_package_generation
+                and adapter_id == "hermes-installer.native-mcp-dispatch.v1"
+                and row.get("handler_artifact_id") == adapter.adapter_artifact_id
+                and row.get("handler_artifact_sha256") == adapter.adapter_sha256
+                and row.get("request_schema_id" if schema_kind == "arguments" else "result_schema_id") == schema_id
+                for row in self.native_mcp_tool_binding_records
+            )
+        if not eligible:
+            raise EnrollmentDenied("native schema ID is not selected by the exact package/action")
+        matches = [row for row in self.native_schema_artifact_records
+                   if row.get("id") == schema_id
+                   and row.get("native_package_id") == native_package_id
+                   and row.get("native_package_generation") == native_package_generation
+                   and row.get("adapter_id") == adapter_id
+                   and row.get("action_id") == action_id
+                   and row.get("schema_kind") == schema_kind]
+        if len(matches) != 1:
+            raise EnrollmentDenied("native schema artifact is absent or ambiguous in the active generation")
+        return matches[0]
 
     def _remote_observation_join(self, remote_enrollment_id: str) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
         if not isinstance(remote_enrollment_id, str) or not remote_enrollment_id:
@@ -587,6 +640,7 @@ def build_root_runtime_bindings(
         "protected_build_records", "protected_enrollment_digest",
         "root_journal_root_records", "native_mcp_tool_binding_records",
         "resource_controller_role_records", "remote_observation_records",
+        "native_schema_artifact_records",
         "resource_backend_enrollment_records",
     )
     if any(not hasattr(enrollment, name) for name in required_attributes):
@@ -793,6 +847,7 @@ def build_root_runtime_bindings(
             artifact_catalog=artifact_catalog,
         ),
         native_mcp_tool_binding_records=tuple(enrollment.native_mcp_tool_binding_records),
+        native_schema_artifact_records=tuple(enrollment.native_schema_artifact_records),
         protected_rules=MappingProxyType(dict(enrollment.rules)),
         mcp_services=MappingProxyType(dict(enrollment.mcp_services)),
         remote_observation_records=tuple(enrollment.remote_observation_records),

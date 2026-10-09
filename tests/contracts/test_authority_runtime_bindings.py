@@ -38,6 +38,7 @@ def test_root_runtime_composition_requires_service_records_before_optional_hardw
         root_journal_root_records=(),
         native_mcp_tool_binding_records=(), resource_controller_role_records=(),
         remote_observation_records=(), resource_backend_enrollment_records=(),
+        native_schema_artifact_records=(),
     )
     with pytest.raises(EnrollmentDenied, match="service generation records"):
         build_root_runtime_bindings(
@@ -361,6 +362,45 @@ def test_resource_controller_role_requires_current_digest_observer_backend_and_a
     runtime.artifact_catalog.artifacts["module-a"] = SimpleNamespace(sha256="c" * 64)
     with pytest.raises(EnrollmentDenied, match="artifact does not match"):
         runtime.resolve_resource_controller_role("controller-a", "d" * 64)
+
+
+def test_native_schema_record_selection_joins_protected_package_action_and_kind():
+    from hermes_installer.protected_enrollment import EnrollmentDenied
+
+    adapter = SimpleNamespace(
+        adapter_id="adapter-a", action_id="action-a",
+        argument_schema_id="arguments-v1", result_schema_id="result-v1",
+    )
+    package = SimpleNamespace(adapter_records={"adapter-a": adapter})
+    row = {
+        "id": "arguments-v1", "artifact_id": "schema-arguments-v1", "sha256": "a" * 64,
+        "schema_kind": "arguments", "native_package_id": "package-a",
+        "native_package_generation": "generation-a", "adapter_id": "adapter-a",
+        "action_id": "action-a", "source_receipt_handle": "receipt-a",
+    }
+
+    class Catalog:
+        def resolve_native_package(self, package_id, generation):
+            if (package_id, generation) != ("package-a", "generation-a"):
+                raise EnrollmentDenied("package generation unavailable")
+            return package
+
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=Catalog(), build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None, native_schema_artifact_records=(row,),
+    )
+    assert runtime.resolve_native_schema_record(
+        "arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
+    ) is row
+    with pytest.raises(EnrollmentDenied, match="not selected"):
+        runtime.resolve_native_schema_record(
+            "result-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
+        )
+    with pytest.raises(EnrollmentDenied, match="not selected"):
+        runtime.resolve_native_schema_record(
+            "arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "result",
+        )
 
 
 def test_root_native_package_resolver_rejects_ambiguous_selected_profile_generation():

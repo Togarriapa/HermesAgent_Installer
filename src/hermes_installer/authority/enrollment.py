@@ -407,6 +407,7 @@ class ProtectedEnrollment:
     native_mcp_tool_binding_records: tuple[Mapping[str, Any], ...] = ()
     resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
     remote_observation_records: tuple[Mapping[str, Any], ...] = ()
+    native_schema_artifact_records: tuple[Mapping[str, Any], ...] = ()
 
 
 _SOURCE_ACTIONS_BY_CHANNEL = {
@@ -491,6 +492,41 @@ def _parse_observer_delivery_bindings(
     return tuple(selected)
 
 
+def _parse_native_schema_artifact_records(value: Any) -> tuple[Mapping[str, Any], ...]:
+    """Validate active native schema artifact references without trusting receipt labels."""
+    if not isinstance(value, list) or len(value) > 4096:
+        raise AuthorityDenied("enrollment.generation", "native schema artifact catalog is invalid")
+    fields = {"id", "artifact_id", "sha256", "schema_kind", "native_package_id",
+              "native_package_generation", "adapter_id", "action_id", "source_receipt_handle"}
+    records: list[Mapping[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str, str]] = set()
+    for raw in value:
+        item = _exact(raw, fields, "native schema artifact")
+        schema_id = _read_id(item["id"], "native schema ID")
+        artifact_id = _read_id(item["artifact_id"], "native schema artifact ID")
+        package_id = _read_id(item["native_package_id"], "native schema package ID")
+        generation = _read_id(item["native_package_generation"], "native schema package generation")
+        adapter_id = _read_id(item["adapter_id"], "native schema adapter ID")
+        action_id = _read_id(item["action_id"], "native schema action ID")
+        source_receipt = _read_id(item["source_receipt_handle"], "native schema source receipt")
+        digest = item["sha256"]
+        kind = item["schema_kind"]
+        if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or kind not in {"arguments", "result"}):
+            raise AuthorityDenied("enrollment.generation", "native schema artifact digest or kind is invalid")
+        identity = (schema_id, package_id, generation, adapter_id, action_id, kind)
+        if identity in seen:
+            raise AuthorityDenied("enrollment.generation", "native schema artifact binding is duplicated")
+        seen.add(identity)
+        records.append(MappingProxyType({
+            "id": schema_id, "artifact_id": artifact_id, "sha256": digest,
+            "schema_kind": kind, "native_package_id": package_id,
+            "native_package_generation": generation, "adapter_id": adapter_id,
+            "action_id": action_id, "source_receipt_handle": source_receipt,
+        }))
+    return tuple(records)
+
+
 def _validate_service_generations(value: Any) -> dict[str, Any]:
     """Validate the one active, root-owned HI09 catalog snapshot and its digest."""
     keys = {"schema", "generation_id", "service_records", "protected_devices",
@@ -500,6 +536,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "resource_body_recipes", "resource_scope_bindings", "resource_validators",
             "root_journal_roots", "resource_controller_roles",
             "native_mcp_tool_bindings", "remote_observation_enrollments",
+            "native_schema_artifacts",
             "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != 1:
@@ -523,6 +560,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         if (not isinstance(rows, list) or len(rows) > 1024
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    native_schema_records = _parse_native_schema_artifact_records(item["native_schema_artifacts"])
     native_mcp_fields = {
         "id", "profile_id", "process_generation", "native_package_id",
         "native_package_generation", "native_server_name", "native_tool_name",
@@ -1580,6 +1618,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         tuple(MappingProxyType(dict(row)) for row in service_generations["native_mcp_tool_bindings"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["resource_controller_roles"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["remote_observation_enrollments"]),
+        tuple(native_schema_records),
     )
 
 
