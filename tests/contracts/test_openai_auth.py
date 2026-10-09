@@ -15,6 +15,7 @@ from hermes_installer.openai_auth import (
 class FakeTransport:
     def __init__(self):
         self.calls = []
+        self.revocation_responses = []
         self.response = {
             "access_token": "access-secret", "refresh_token": "refresh-secret",
             "id_token": "identity-token", "token_type": "Bearer",
@@ -25,7 +26,7 @@ class FakeTransport:
     def post_form(self, endpoint, values, *, timeout):
         self.calls.append((endpoint, dict(values), timeout))
         if values.get("token_type_hint") == "refresh_token":
-            return {}
+            return self.revocation_responses.pop(0) if self.revocation_responses else {}
         return dict(self.response)
 
     def get_json(self, endpoint, *, timeout):
@@ -57,7 +58,7 @@ class OpenAIAuthTests(unittest.TestCase):
                     "aud": [audience], "nonce": nonce, "email": "user@example.test"}
         return ChatGPTPlanAuth(host_id="urn:uuid:6b87b55d-f3a8-4cb9-82b4-f5d28203f066",
             agent_name="Hermes Installer", transport=transport, vault=vault,
-            verify_id_token=verify), transport, vault
+            verify_id_token=verify, sleep=lambda _delay: None), transport, vault
 
     def test_builtin_jwks_verifier_rejects_bad_signature(self):
         def enc(raw):
@@ -140,6 +141,18 @@ class OpenAIAuthTests(unittest.TestCase):
         self.assertEqual(transport.calls[-2][0],
                          "https://auth.openai.com/.well-known/openid-configuration")
         self.assertEqual(transport.calls[-1][1]["token_type_hint"], "refresh_token")
+
+    def test_revoke_retries_only_transient_failures_and_then_clears(self):
+        auth, transport, vault = self.make_auth()
+        attempt = auth.begin(callback_uri="http://127.0.0.1:1455/auth/callback")
+        callback = (attempt.callback_uri + "?code=one-use-code&state=" + attempt.state
+                    + "&client_id=oaiapp_issued")
+        auth.complete(attempt, callback, credential_ref="host-vault://account")
+        transport.revocation_responses = [{"status_code": 503}, {"status_code": 503}, {}]
+        self.assertTrue(auth.revoke(credential_ref="host-vault://account"))
+        revoke_calls = [call for call in transport.calls if call[1].get("token_type_hint")]
+        self.assertEqual(len(revoke_calls), 3)
+        self.assertEqual(vault.accounts["host-vault://account"].refresh_token, "")
 
     def test_returning_account_reuses_registration_and_refresh_is_host_vault_backed(self):
         auth, transport, vault = self.make_auth()
