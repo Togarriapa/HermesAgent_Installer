@@ -161,6 +161,40 @@ class DispatchAuthorization:
 
 ContextAuthorizer = Callable[[DispatchContext, str, str, float, float, Callable[[], bool]], DispatchAuthorization | None]
 
+class ProviderEffectAuthority(Protocol):
+    """Host authority for provider effects; implementations verify signed contexts/grants."""
+
+    def authorize_effect(self, host_context: object, *, capability: str, target: str,
+                         recipient: str, request_digest: str, retry_index: int) -> object: ...
+
+    def verify_effect(self, grant: object, host_context: object, *, capability: str,
+                      target: str, recipient: str, request_digest: str,
+                      retry_index: int) -> bool: ...
+
+
+PROVIDER_RECIPIENT = "provider:openrouter"
+
+
+def canonical_provider_target(model: str) -> str:
+    """Return the host-broker target identity; it is never treated as a URL."""
+    from urllib.parse import quote
+    if model != "nvidia/nemotron-3-ultra-550b-a55b:free":
+        raise PolicyDenied("route.model", "Provider model is not enrolled with the host broker")
+    return "provider://openrouter/api/v1/chat/completions?model=" + quote(model, safe="")
+
+
+def _host_sensitivity(context: object) -> Sensitivity:
+    value = getattr(context, "sensitivity", None)
+    if isinstance(value, Sensitivity):
+        return value
+    names = {"public": Sensitivity.PUBLIC, "private": Sensitivity.PRIVATE,
+             "confidential": Sensitivity.CONFIDENTIAL, "unknown": Sensitivity.UNKNOWN}
+    if isinstance(value, str) and value.casefold() in names:
+        return names[value.casefold()]
+    return Sensitivity.UNKNOWN
+
+
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderResponse:
@@ -173,7 +207,9 @@ class ProviderResponse:
 
 class Transport(Protocol):
     def __call__(self, route: Route, model: str, payload: bytes, *, output_token_limit: int,
-                 timeout: float, trace_id: str, cancelled: Callable[[], bool]) -> ProviderResponse: ...
+                 timeout: float, trace_id: str, cancelled: Callable[[], bool],
+                 effect_grant: object | None = None, target: str = "",
+                 recipient: str = "", request_digest: str = "", retry_index: int = 0) -> ProviderResponse: ...
 
 
 def request_requires_tools(payload: bytes) -> bool:
@@ -351,6 +387,7 @@ class Dispatcher:
 
     def __init__(self, policy: DispatchPolicy, ledger: BudgetLedger, transport: Transport, *,
                  context_authorizer: ContextAuthorizer | None = None,
+                 effect_authority: ProviderEffectAuthority | None = None,
                  clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep):
         if not callable(clock) or not callable(sleep):
             raise TypeError("dispatcher clock and sleeper must be callable")
@@ -358,6 +395,7 @@ class Dispatcher:
         # Missing host authorization intentionally makes this dispatcher unusable.
         # Test fixtures must inject an explicit synthetic authorizer.
         self.context_authorizer = context_authorizer
+        self.effect_authority = effect_authority
         self.clock, self.sleep = clock, sleep
         self._lock = threading.Lock()
         self._active: set[str] = set()
@@ -428,25 +466,52 @@ class Dispatcher:
             raise PolicyDenied("authorization.stale", "Host provider authorization is stale, mismatched, or insufficient")
         return grant
 
-    def _wait(self, context: DispatchContext, delay: float, deadline: float) -> None:
+    def _wait(self, context: object, delay: float, deadline: float,
+              cancelled: Callable[[], bool] | None = None) -> None:
+        cancellation = cancelled if callable(cancelled) else getattr(context, "cancelled", lambda: False)
         remaining = min(max(0.0, delay), max(0.0, deadline - self.clock()))
         while remaining > 0:
-            if context.cancelled():
+            if cancellation():
                 raise PolicyDenied("dispatch.cancelled", "Request was cancelled during retry delay")
             step = min(0.25, remaining)
             self.sleep(step)
             remaining -= step
             if self.clock() >= deadline:
                 raise PolicyDenied("dispatch.deadline", "Request deadline elapsed during retry delay")
-        if context.cancelled():
+        if cancellation():
             raise PolicyDenied("dispatch.cancelled", "Request was cancelled during retry delay")
 
-    def dispatch(self, context: DispatchContext, model: str, payload: bytes, *, input_tokens: int,
-                 output_token_limit: int, tool_request: bool = False) -> ProviderResponse:
+    def dispatch(self, context: object, model: str, payload: bytes, *, input_tokens: int,
+                 output_token_limit: int, tool_request: bool = False,
+                 cancelled: Callable[[], bool] | None = None) -> ProviderResponse:
         if not isinstance(payload, bytes) or len(payload) > 4 * 1024 * 1024:
             raise PolicyDenied("request.bounds", "Serialized request must be bytes and at most 4 MiB")
         if not isinstance(input_tokens, int) or not isinstance(output_token_limit, int) or not 0 <= input_tokens <= 1_000_000 or not 0 <= output_token_limit <= 65_536:
             raise PolicyDenied("request.bounds", "Token bounds are outside the supported limits")
+        host_bound = not isinstance(context, DispatchContext)
+        if host_bound and self.effect_authority is None:
+            raise PolicyDenied("authorization.unavailable", "Host provider broker is unavailable")
+        request_cancelled = cancelled if callable(cancelled) else (
+            getattr(context, "cancelled", lambda: False) if not host_bound else (lambda: False))
+        if host_bound:
+            required = ("principal_id", "profile_id", "namespace_id", "uid", "purpose", "intent_id",
+                        "trace_id", "lineage_hash", "policy_revision", "issued_at_monotonic",
+                        "monotonic_expires_at", "sensitivity", "capabilities", "nonce", "signature")
+            if any(not getattr(context, name, None) for name in required):
+                raise PolicyDenied("authorization.context_unavailable", "Signed host provider context is incomplete")
+            issued = getattr(context, "issued_at_monotonic")
+            expires = getattr(context, "monotonic_expires_at")
+            uid = getattr(context, "uid")
+            now = self._now()
+            sensitivity = _host_sensitivity(context)
+            if (isinstance(uid, bool) or not isinstance(uid, int) or uid < 0
+                    or isinstance(issued, bool) or not isinstance(issued, (int, float))
+                    or isinstance(expires, bool) or not isinstance(expires, (int, float))
+                    or not math.isfinite(issued) or not math.isfinite(expires)
+                    or issued > now or expires <= now or expires <= issued
+                    or expires - issued > 60 or sensitivity == Sensitivity.UNKNOWN
+                    or not isinstance(context.capabilities, frozenset)):
+                raise PolicyDenied("authorization.context_unavailable", "Signed host provider context has invalid identity, classification or monotonic lease")
         with self._lock:
             if context.trace_id in self._active:
                 raise PolicyDenied("dispatch.loop", "Repeated trace indicates a provider routing loop")
@@ -454,23 +519,33 @@ class Dispatcher:
         try:
             started = self.clock()
             deadline = started + self.policy.max_dispatch_seconds
-            if context.deadline is not None:
-                deadline = min(deadline, context.deadline)
-            if context.cancelled():
+            context_deadline = (getattr(context, "monotonic_expires_at", None) if host_bound
+                                else getattr(context, "deadline", None))
+            if context_deadline is not None:
+                deadline = min(deadline, context_deadline)
+            if request_cancelled():
                 raise PolicyDenied("dispatch.cancelled", "Request was cancelled")
             if started >= deadline:
                 raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
             requires_tools = request_requires_tools(payload)
-            if not isinstance(tool_request, bool) or tool_request != requires_tools:
-                raise PolicyDenied("authorization.request_mismatch", "Tool capability flag does not match the request body")
-            capability = "tool-call" if requires_tools else "inference"
+            if not host_bound and (not isinstance(tool_request, bool) or tool_request != requires_tools):
+                raise PolicyDenied("authorization.request_mismatch", "Tool capability flag does not match the request body (synthetic context)")
+            capability = ("provider-tool-call" if requires_tools else "provider-inference") if host_bound else (
+                "tool-call" if requires_tools else "inference")
             payload_sha256 = __import__("hashlib").sha256(payload).hexdigest()
-            lineage_claim = ",".join(value.name for value in context.derived_from)
-            intent_material = chr(31).join((context.profile_id, context.trace_id, context.purpose,
-                context.sensitivity.name, lineage_claim, capability, model, payload_sha256))
-            intent_id = __import__("hashlib").sha256(intent_material.encode("utf-8")).hexdigest()
-            initial_authorization = self._authorize(context, capability, intent_id, deadline)
-            sensitivity = initial_authorization.effective_sensitivity
+            if host_bound:
+                if capability not in getattr(context, "capabilities", frozenset()):
+                    raise PolicyDenied("authorization.capability", "Signed host context lacks the request-derived provider capability")
+                intent_id = context.intent_id
+                initial_authorization = None
+                sensitivity = _host_sensitivity(context)
+            else:
+                lineage_claim = ",".join(value.name for value in context.derived_from)
+                intent_material = chr(31).join((context.profile_id, context.trace_id, context.purpose,
+                    context.sensitivity.name, lineage_claim, capability, model, payload_sha256))
+                intent_id = __import__("hashlib").sha256(intent_material.encode("utf-8")).hexdigest()
+                initial_authorization = self._authorize(context, capability, intent_id, deadline)
+                sensitivity = initial_authorization.effective_sensitivity
             if sensitivity == Sensitivity.PUBLIC:
                 first = self.policy.public_route
             else:
@@ -480,6 +555,7 @@ class Dispatcher:
             candidates = (first, *self.policy.fallbacks.get(first, ()))
             visited: set[str] = set()
             last_status = 0
+            effect_retry_index = 0
             for name in candidates:
                 if name in visited:
                     raise PolicyDenied("dispatch.loop", "Provider fallback loop was detected")
@@ -493,7 +569,7 @@ class Dispatcher:
                     continue
                 if route.free_only and (not model.endswith(":free") or route.input_usd_per_million != 0 or route.output_usd_per_million != 0):
                     continue
-                if tool_request and not route.supports_tools:
+                if requires_tools and not route.supports_tools:
                     continue
                 if route.input_usd_per_million is None or route.output_usd_per_million is None:
                     continue
@@ -508,27 +584,54 @@ class Dispatcher:
                 if estimate > 0 and self.policy.metered_budget_usd <= 0:
                     continue
                 for attempt in range(self.policy.max_attempts):
-                    if context.cancelled():
+                    if request_cancelled():
                         raise PolicyDenied("dispatch.cancelled", "Request was cancelled before attempt")
                     remaining = deadline - self.clock()
                     if remaining <= 0:
                         raise PolicyDenied("dispatch.deadline", "Request deadline has elapsed")
-                    current_authorization = self._authorize(context, capability, intent_id, deadline)
-                    if (current_authorization.principal_id != initial_authorization.principal_id
-                            or current_authorization.profile_id != initial_authorization.profile_id
-                            or current_authorization.namespace != initial_authorization.namespace
-                            or current_authorization.trace_id != initial_authorization.trace_id
-                            or current_authorization.policy_revision != initial_authorization.policy_revision
-                            or current_authorization.purpose != initial_authorization.purpose
-                            or current_authorization.capability != initial_authorization.capability
-                            or current_authorization.intent_id != initial_authorization.intent_id
-                            or current_authorization.lineage_sha256 != initial_authorization.lineage_sha256
-                            or current_authorization.effective_sensitivity != sensitivity):
-                        raise PolicyDenied("authorization.changed", "Host authorization changed during provider routing")
-                    if current_authorization.expires_at_monotonic <= self.clock() or self.clock() >= deadline:
-                        raise PolicyDenied("authorization.expired", "Host authorization expired before provider dispatch")
+                    effect_grant = None
+                    effect_target = ""
+                    effect_recipient = ""
+                    effect_digest = ""
+                    if host_bound:
+                        effect_authority = self.effect_authority
+                        effect_target = canonical_provider_target(model)
+                        effect_recipient = PROVIDER_RECIPIENT
+                        effect_digest = __import__("hashlib").sha256(normalized_payload).hexdigest()
+                        try:
+                            effect_grant = effect_authority.authorize_effect(
+                                context, capability=capability, target=effect_target,
+                                recipient=effect_recipient, request_digest=effect_digest,
+                                retry_index=effect_retry_index)
+                            verified = effect_authority.verify_effect(
+                                effect_grant, context, capability=capability,
+                                target=effect_target, recipient=effect_recipient,
+                                request_digest=effect_digest, retry_index=effect_retry_index)
+                        except Exception:
+                            raise PolicyDenied("authorization.failed", "Host provider effect authorization failed") from None
+                        if verified is not True or getattr(effect_grant, "monotonic_expires_at", 0) <= self._now():
+                            raise PolicyDenied("authorization.denied", "Host broker denied or expired the provider effect")
+                        if self._now() >= deadline:
+                            raise PolicyDenied("dispatch.deadline", "Request deadline elapsed before provider dispatch")
+                        authorization_expires = float(effect_grant.monotonic_expires_at)
+                    else:
+                        current_authorization = self._authorize(context, capability, intent_id, deadline)
+                        if (current_authorization.principal_id != initial_authorization.principal_id
+                                or current_authorization.profile_id != initial_authorization.profile_id
+                                or current_authorization.namespace != initial_authorization.namespace
+                                or current_authorization.trace_id != initial_authorization.trace_id
+                                or current_authorization.policy_revision != initial_authorization.policy_revision
+                                or current_authorization.purpose != initial_authorization.purpose
+                                or current_authorization.capability != initial_authorization.capability
+                                or current_authorization.intent_id != initial_authorization.intent_id
+                                or current_authorization.lineage_sha256 != initial_authorization.lineage_sha256
+                                or current_authorization.effective_sensitivity != sensitivity):
+                            raise PolicyDenied("authorization.changed", "Host authorization changed during provider routing")
+                        authorization_expires = current_authorization.expires_at_monotonic
+                        if authorization_expires <= self.clock() or self.clock() >= deadline:
+                            raise PolicyDenied("authorization.expired", "Host authorization expired before provider dispatch")
                     reservation = self.ledger.reserve(estimate, self.policy.metered_budget_usd)
-                    authorization_remaining = current_authorization.expires_at_monotonic - self.clock()
+                    authorization_remaining = authorization_expires - self.clock()
                     timeout = min(self.policy.max_retry_after_seconds or remaining, remaining, authorization_remaining)
                     if timeout <= 0:
                         self.ledger.release(reservation)
@@ -536,8 +639,19 @@ class Dispatcher:
                     try:
                         try:
                             def dispatch_cancelled() -> bool:
-                                return context.cancelled() or self.clock() >= current_authorization.expires_at_monotonic
-                            response = self.transport(route, model, normalized_payload, output_token_limit=output_token_limit, timeout=timeout, trace_id=context.trace_id, cancelled=dispatch_cancelled)
+                                return request_cancelled() or self.clock() >= authorization_expires
+                            if host_bound:
+                                effect_retry_index += 1
+                                response = self.transport(route, model, normalized_payload,
+                                    output_token_limit=output_token_limit, timeout=timeout,
+                                    trace_id=context.trace_id, cancelled=dispatch_cancelled,
+                                    effect_grant=effect_grant, target=effect_target,
+                                    recipient=effect_recipient, request_digest=effect_digest,
+                                    retry_index=effect_retry_index - 1)
+                            else:
+                                response = self.transport(route, model, normalized_payload,
+                                    output_token_limit=output_token_limit, timeout=timeout,
+                                    trace_id=context.trace_id, cancelled=dispatch_cancelled)
                         except PolicyDenied:
                             self.ledger.settle(reservation)
                             raise
@@ -550,9 +664,9 @@ class Dispatcher:
                         if 200 <= response.status < 300 and response.input_tokens >= 0 and response.output_tokens >= 0:
                             actual = (response.input_tokens * route.input_usd_per_million + response.output_tokens * route.output_usd_per_million) / 1_000_000
                         self.ledger.settle(reservation, actual)
-                        if context.cancelled():
+                        if request_cancelled():
                             raise PolicyDenied("dispatch.cancelled", "Request was cancelled during provider dispatch")
-                        if self.clock() >= current_authorization.expires_at_monotonic:
+                        if self.clock() >= authorization_expires:
                             raise PolicyDenied("authorization.expired", "Host authorization expired during provider dispatch")
                         if self.clock() >= deadline:
                             raise PolicyDenied("dispatch.deadline", "Request deadline elapsed during provider dispatch")
@@ -575,7 +689,7 @@ class Dispatcher:
                             delay = min(1.0, self.policy.max_retry_after_seconds)
                     else:
                         delay = min(float(attempt + 1), self.policy.max_retry_after_seconds)
-                    self._wait(context, delay, deadline)
+                    self._wait(context, delay, deadline, request_cancelled)
             if last_status == 429:
                 raise PolicyDenied("provider.rate_limited", "Provider rate limit persisted after bounded retries")
             raise PolicyDenied("route.unavailable", "No eligible provider route completed this request")
