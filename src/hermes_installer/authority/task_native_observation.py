@@ -112,6 +112,7 @@ class RootTaskNativeObservationRegistry:
                 or getattr(native_bridge_broker, "provider_response_registry", None) is None
                 or not callable(getattr(process_custody_registry, "_resolve_task_handle", None))
                 or not callable(getattr(process_custody_registry, "resolve_task_terminal", None))
+                or not callable(getattr(process_custody_registry, "resolve_task_stdin_write", None))
                 or not callable(getattr(admitted_task_registry, "resolve_admitted_task_source", None))
                 or not callable(getattr(admitted_task_registry, "resolve_admitted_task", None))):
             raise AuthorityDenied("resource.native_observer", "root task native observation dependencies are unavailable")
@@ -302,6 +303,15 @@ class RootTaskNativeObservationRegistry:
                 task_handle.handle_id, terminal_receipt_handle)
             now = self.monotonic()
             self._validate_terminal(run, terminal, terminal_receipt_handle, now)
+            write_handle = getattr(terminal, "stdin_write_receipt_handle", None)
+            if not _opaque(write_handle):
+                raise AuthorityDenied("resource.native_stdin", "successful terminal lacks an actual stdin write receipt")
+            write_receipt = self.process_custody.resolve_task_stdin_write(
+                task_handle, write_handle)
+            if self.process_custody.resolve_task_stdin_write(
+                    task_handle, write_handle) is not write_receipt:
+                raise AuthorityDenied("resource.native_stdin", "custody returned a reconstructed stdin write receipt")
+            self._validate_stdin_write_receipt(run, terminal, write_handle, write_receipt, now)
         except Exception:
             self._discard_run(task_handle.handle_id, run)
             raise
@@ -879,6 +889,35 @@ class RootTaskNativeObservationRegistry:
             raise AuthorityDenied("resource.native_terminal", "task terminal or current authority does not match the retained native execution")
         if getattr(terminal, "native_execution_receipt_handle", None) not in (None, ""):
             raise AuthorityDenied("resource.native_terminal", "terminal already carries an unrelated native execution receipt")
+
+    def _validate_stdin_write_receipt(self, run: _TaskRun, terminal: Any,
+                                      receipt_handle: Any, receipt: Any,
+                                      now: float) -> None:
+        from ..registry.resource_jobs import RootTaskStdinWriteReceipt
+
+        task = run.admitted_task
+        initial = run.initial_input_receipt
+        if (type(receipt) is not RootTaskStdinWriteReceipt
+                or not _opaque(receipt_handle)
+                or getattr(terminal, "stdin_write_receipt_handle", None) != receipt_handle
+                or getattr(run.task_handle, "stdin_write_receipt_handle", None) != receipt_handle
+                or receipt.receipt_handle != receipt_handle
+                or receipt.task_handle != run.task_handle.handle_id
+                or receipt.process_id != run.task_handle.process_id
+                or receipt.process_generation != task.process_generation
+                or receipt.initial_input_receipt_handle != initial.receipt_handle
+                or receipt.stdin_sha256 != task.stdin_sha256
+                or receipt.stdin_size_bytes != task.stdin_size_bytes
+                or receipt.sequence != 0
+                or receipt.write_complete is not True or receipt.drained is not True
+                or receipt.stdin_closed is not True
+                or receipt.service_generation_digest != run.service_generation_digest
+                or receipt.issued_monotonic < initial.issued_monotonic
+                or receipt.issued_monotonic > getattr(terminal, "finished_monotonic", now)
+                or receipt.issued_monotonic > now or receipt.expires_monotonic <= now
+                or receipt.expires_monotonic > initial.expires_monotonic
+                or receipt.expires_monotonic > run.deadline):
+            raise AuthorityDenied("resource.native_stdin", "custody stdin write/EOF receipt does not match the admitted input")
 
     @staticmethod
     def _event_time(run: _TaskRun, event_id: str, now: float) -> None:
