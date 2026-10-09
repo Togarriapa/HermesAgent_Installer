@@ -124,18 +124,20 @@ def _spawn_private_namespace_responder(service_uid: int, service_gid: int,
             os._exit(0)
     os.close(write_fd)
     payload = os.read(read_fd, 128)
-    os.close(read_fd)
     if payload.startswith(b"ERR:"):
+        os.close(read_fd)
         code = payload.partition(b":")[2].decode("ascii", "replace")
         os.waitpid(pid, 0)
         if code in {str(errno.EPERM), str(errno.EACCES), str(errno.ENOSYS)}:
             raise unittest.SkipTest("Linux CI lacks disposable network-namespace capability")
         raise AssertionError("network namespace responder failed: " + code)
     if payload != b"OK":
+        os.close(read_fd)
         os.kill(pid, signal.SIGKILL)
         os.waitpid(pid, 0)
         raise AssertionError("network namespace responder did not publish its bound port")
     if not hasattr(os, "pidfd_open"):
+        os.close(read_fd)
         os.kill(pid, signal.SIGKILL)
         os.waitpid(pid, 0)
         raise unittest.SkipTest("Linux pidfd API is unavailable")
