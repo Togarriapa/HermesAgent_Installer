@@ -23,3 +23,5 @@ None; no runtime capability is currently implemented in this greenfield reposito
 ## Impact
 
 Planned modules: src/hermes_installer/preflight.py, src/hermes_installer/desktop.py, src/hermes_installer/bootstrap.py. Depends on the pinned planning/tooling baseline. All implementation belongs to GPT-6 Luna; specification/refinement belongs to GPT-6.1 Sol. See design.md and explicit task/evidence DAG.
+
+Hermes/resource selection v3: plans/amendments/2026-10-09-hermes-bootstrap-resource-job-selection-v3.md defines fixed stage/health recipes and activegeneration resourcejob/DAG/source/backend joins; BD-F03/LC-F03/LC-F04/HI-T09/RB-T08 tasks and nativeevidence remainopen.

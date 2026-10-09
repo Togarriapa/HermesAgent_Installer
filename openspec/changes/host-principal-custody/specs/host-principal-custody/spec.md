@@ -229,3 +229,17 @@ The installer SHALL load strict root-owned active generation catalogs, verify im
 #### Scenario: Preclaimed build hash or partial effect digest
 - **WHEN** output was not actually attested after terminal success, closure/import/device identity differs or grant signs only partial payload
 - **THEN** deny activation/effect without permissive fallback and preserve truthful failure/native evidence.
+
+### Requirement: Active source and package build consistency
+The installer SHALL bind source issuer records into active generation digest, use selection-only build RPC and activate package runtime actual hashes only from verified successful postbuild receipts.
+
+#### Scenario: Mutable sidecar or predicted runtime hash
+- **WHEN** source issuer differs from active snapshot or package manifest claims a prebuilt unknown executable digest
+- **THEN** reject activation and retain prior owned generation with exact pending build/source reason.
+
+### Requirement: Selected Hermes and resource runtime recipes
+The installer SHALL resolve fixed parameter-free Hermes stage/health recipes and active protected resource job DAG/source/backend joins, retaining official PM runtime and actual functional health evidence.
+
+#### Scenario: Caller supplies bootstrap paths or source-only health
+- **WHEN** caller overrides recipe/roots/argv or only inventory/status exists without actual selected native workflow
+- **THEN** reject overrides or keep functional readiness incomplete, preserve prior generation and exact resume reason.
