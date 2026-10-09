@@ -225,6 +225,10 @@ class RootInitialCompilationSession:
     _root_journal_root: Mapping[str, Any] = field(repr=False)
     _seal: str = field(repr=False)
 
+    @property
+    def principal_selection_receipt_handle(self) -> str | None:
+        return self._choices.selected_principal_binding_receipt_handle
+
 
 @dataclass(frozen=True, slots=True)
 class PendingInitialCompilation:
@@ -1054,13 +1058,20 @@ class RootInitialCompilationRegistry:
         if not isinstance(plan_rows, list) or len(plan_rows) != 1 or not isinstance(plan_rows[0], dict):
             raise BootstrapEnrollmentError("compiled selection must contain only its verified setup plan")
         plan = plan_rows[0]
+        plan_file = next((row for row in self.release.files
+                          if row.artifact_id == session.plan_artifact_id), None)
         plan_fields = {"artifact_id", "relative_path", "sha256", "baseline_tag_object", "baseline_commit",
                        "baseline_tree_sha256", "amendment_manifest_sha256", "allowed_artifact_ids",
                        "bootstrap_policy_artifact_id"}
-        if (set(plan) != plan_fields or plan["artifact_id"] != session.plan_artifact_id
+        expected_allowed = self._allowed_plan_artifact_ids(session)
+        if (plan_file is None or set(plan) != plan_fields or plan["artifact_id"] != session.plan_artifact_id
+                or plan["relative_path"] != plan_file.relative_path
                 or plan["sha256"] != session.plan_sha256 or plan["bootstrap_policy_artifact_id"] != _POLICY_ID
-                or not isinstance(plan["allowed_artifact_ids"], list)
-                or len(set(plan["allowed_artifact_ids"])) != len(plan["allowed_artifact_ids"])):
+                or plan["baseline_tag_object"] != self.release.baseline_tag_object
+                or plan["baseline_commit"] != self.release.baseline_commit
+                or plan["baseline_tree_sha256"] != self.release.baseline_tree_sha256
+                or plan["amendment_manifest_sha256"] != self.release.amendment_manifest_sha256
+                or plan["allowed_artifact_ids"] != list(expected_allowed)):
             raise BootstrapEnrollmentError("compiled root plan does not exactly join its selected release")
         policy_sha = hashlib.sha256(compiled.policy_bytes).hexdigest()
         policy_rows = document.get("bootstrap_policies")
