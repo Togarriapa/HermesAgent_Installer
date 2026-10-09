@@ -1,0 +1,3 @@
+# Operation parameter grammar v2
+
+Sol additive HI09/HW03 fixed recipe clarification: planning/native-package-binding-contract.json defines operation-parameters.json strict bounded scalar schema and exact literal/parameter token objects, one argv element each, no interpolation/coercion/shell/path/URL/secret parameter. Recipe operation_id distinct from process.start effect operation and included full digest binding. Root-only selected HW02 device joins inference profile by opaque enrollment, absent from caller parameters; HW03 compiler has no TPU device access by default. Existing HI-T09/HW-T03/HW-T02 and all native evidence remain open, frozen baseline/tag unchanged.

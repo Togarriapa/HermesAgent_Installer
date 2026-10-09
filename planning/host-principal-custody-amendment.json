@@ -124,6 +124,13 @@
       "then": "root evaluates only exact enrolled operation tuple and consumes bounded frame grant; wrong operation/replay denies and expiry cleanup still closes the stream",
       "task_id": "HI-T12",
       "evidence_id": "EV-HI12"
+    },
+    {
+      "id": "HI13",
+      "name": "Root-observed remote session admission",
+      "text": "Root SHALL verify actual Access JWT/fresh protected selected policy and bind authenticated identity/fingerprint/profile/lease/route/generation to native connector allbytes; gateway local claims cannot replace root authority.",
+      "when": "gateway requests native asset or websocket session",
+      "then": "root verifies enrolled JWT/policy/principal before bytes and cancels active streams on current lease/revoke/generation failure"
     }
   ],
   "tasks": [
@@ -313,6 +320,24 @@
       "target_acceptance_complete": false,
       "verification": "actual same-target multi-operation positive and wrong operation/legacy pair/duplicate/replay/frame digest/deadline tests; cleanup after expired authority",
       "docs": "docs/host-principal-custody.md"
+    },
+    {
+      "id": "HI-T13",
+      "requirement_ids": [
+        "HI13"
+      ],
+      "depends_on": [
+        "HI-T07",
+        "HI-T09",
+        "HI-T12",
+        "RP-T02",
+        "RP-T03",
+        "RP-T04"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false,
+      "verification": "EV-HI13 actual two-process gateway/root positive verified Access session and nativeconnector bytes plus forgedJWT/emailheaders/selfsignedclaims/wrongaudienceissueralgorithm/allowlist/subjectprofile/configdigest/generation/sibling/replay/expiredlease denied before allasset/pixel/inputbytes. Actual activeWS logout/revocation/freshrenewal/cancel closes<=60s (+watchdog observed bound); setup/read/tunnel secrets absent gateway/Desktop. FixtureJWT/policy evidence distinct from actual enrolledCloudflare/native proof.",
+      "docs": "docs/remote-desktop-access.md"
     }
   ],
   "acceptance": {
@@ -337,7 +362,8 @@
       "HI09",
       "HI10",
       "HI11",
-      "HI12"
+      "HI12",
+      "HI13"
     ]
   },
   "change_dependencies": [
@@ -349,6 +375,7 @@
   "refinement_amendments": [
     "plans/amendments/2026-10-09-fixed-process-inspection-v1.md",
     "plans/amendments/2026-10-09-native-cross-process-bridge-v1.md",
-    "plans/amendments/2026-10-09-operation-bound-effect-rules-v1.md"
+    "plans/amendments/2026-10-09-operation-bound-effect-rules-v1.md",
+    "plans/amendments/2026-10-09-remote-root-session-bridge-v1.md"
   ]
 }
