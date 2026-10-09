@@ -76,6 +76,7 @@ class NativeResourceBinding:
     discoverability: str
     invocation: str
     blockers: tuple[str, ...] = ()
+    readiness: Mapping[str, bool] | None = None
 
 
 _PROFILE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -273,6 +274,39 @@ class NativeRegistry:
     def discover_all(self) -> NativeDiscovery:
         return self.discover(tuple(sorted(self.resolver.raw)))
 
+    def _runtime_artifact(self, item: ResolvedResource):
+        from .resources_runtime import materialize_runtime_resource
+
+        kind = item.resource.kind.value
+        key = f"{kind}/{item.resource.id}@{item.resource.version}"
+        effective = dict(item.effective_spec or item.resource.body)
+        if kind == "crons" and item.resource.id in {"resource-sync", "daily-resource-reconcile"}:
+            action = effective.get("action")
+            if not isinstance(action, Mapping):
+                raise RegistryError(f"bundled update cron has no action mapping: {item.resource.id}")
+            action = dict(action)
+            action.pop("repository", None)
+            action.pop("ref", None)
+            action["type"] = "installer-resource-candidate-assessment"
+            action["source"] = {
+                "kind": "installer-bundle",
+                "path": f"resources/vendor/hermes-agent-resources-{self.source.catalog_version}",
+                "catalogVersion": self.source.catalog_version,
+                "revision": self.source.revision,
+            }
+            action["mode"] = "candidate-assessment"
+            effective["action"] = action
+        return materialize_runtime_resource(
+            kind=kind,
+            resource_id=item.resource.id,
+            version=item.resource.version,
+            source_path=self.paths[key],
+            source_document=self.resolver.raw[key].document,
+            effective_spec=effective,
+            source_revision=self.source.revision,
+            catalog_version=self.source.catalog_version,
+        )
+
     def crosswalk(self, discovery: NativeDiscovery | None = None) -> tuple[NativeResourceBinding, ...]:
         """Return one explicit native binding or actionable incomplete reason per declaration."""
         selected = discovery or self.discover_all()
@@ -281,34 +315,44 @@ class NativeRegistry:
             kind, name, version = item.resource.kind.value, item.resource.id, item.resource.version
             key = f"{kind}/{name}@{version}"
             source_path = self.paths[key]
+            readiness = {
+                "bundled": True, "validated": True, "materialized": False,
+                "discovered": False, "authenticated": False, "functional": False,
+                "enabled": False, "target_verified": False,
+            }
             if kind == "profiles":
                 native_path = f"profiles/{name}"
                 adapter_id = "hermes.isolated-home.v1"
                 discoverability = "Hermes native HERMES_HOME selected by the internal orchestrator"
                 invocation = "orchestrator-internal-profile.v1"
                 blockers = ("Native profile discovery and guarded workflow invocation remain pending target evidence.",)
+                readiness["materialized"] = True
             elif kind == "skills":
                 native_path = f"skills/{name}/SKILL.md"
                 adapter_id = "hermes.skill-directory.v1"
                 discoverability = "Hermes SKILL.md discovery"
                 invocation = "Hermes native on-demand skill loader"
                 blockers = ("Native skill discovery and selected workflow invocation remain pending target evidence.",)
+                readiness["materialized"] = True
             else:
-                native_path = f"installer-registry/declarations/{kind}/{name}.yaml"
-                adapter_id = None
-                discoverability = "Installer registry inventory only"
-                invocation = "unavailable"
-                if kind == "plugins":
-                    reason = "No reviewed native Hermes plugin handler is packaged for this declaration."
-                elif kind == "mcps":
-                    reason = "No native MCP server implementation and configured account are packaged for this declaration."
-                elif kind == "bundles":
-                    reason = "The Hermes-only correlated orchestrator adapter is required before this roster can be invoked."
-                elif kind in {"channels", "crons", "webhooks"}:
-                    reason = f"A reviewed, selected, and independently authorized {kind[:-1]} runtime adapter is required before activation."
-                else:
-                    reason = "No reviewed native operational adapter is available for this declaration."
-                blockers = (reason,)
+                runtime = self._runtime_artifact(item)
+                native_path = runtime.native_path
+                adapter_id = runtime.adapter_id
+                discoverability = runtime.discoverability
+                invocation = runtime.invocation
+                blockers = runtime.blockers
+                if kind == "plugins" and not runtime.readiness.materialized:
+                    blockers = tuple(blockers) + (
+                        "Reviewed handler is not packaged as a guarded native plugin module for this selected profile.",
+                    )
+                readiness.update({
+                    "materialized": runtime.readiness.materialized,
+                    "discovered": runtime.readiness.discovered,
+                    "authenticated": runtime.readiness.authenticated,
+                    "functional": runtime.readiness.functional,
+                    "enabled": runtime.readiness.enabled,
+                    "target_verified": runtime.readiness.target_verified,
+                })
             bindings.append(NativeResourceBinding(
                 resource_id=name,
                 kind=kind,
@@ -319,6 +363,7 @@ class NativeRegistry:
                 discoverability=discoverability,
                 invocation=invocation,
                 blockers=blockers,
+                readiness=readiness,
             ))
         return tuple(bindings)
 
@@ -387,7 +432,10 @@ class NativeRegistry:
             else:
                 source_key = f"{binding.kind}/{binding.resource_id}@{binding.version}"
                 source_doc = copy.deepcopy(dict(self.resolver.raw[source_key].document))
-                out[binding.native_path] = yaml.safe_dump(source_doc, sort_keys=False, allow_unicode=True).encode("utf-8")
+                declaration_path = f"installer-registry/declarations/{binding.kind}/{binding.resource_id}.yaml"
+                out[declaration_path] = yaml.safe_dump(source_doc, sort_keys=False, allow_unicode=True).encode("utf-8")
+                runtime = self._runtime_artifact(item)
+                out.update(runtime.files)
             ledger.append({
                 "id": binding.resource_id,
                 "kind": binding.kind,
@@ -396,15 +444,7 @@ class NativeRegistry:
                 "native": {"path": binding.native_path, "adapter": binding.adapter_id},
                 "discoverability": binding.discoverability,
                 "invocation": binding.invocation,
-                "readiness": {
-                    "bundled": True,
-                    "validated": True,
-                    "materialized": binding.kind in {"profiles", "skills"},
-                    "discovered": False,
-                    "functional": False,
-                    "enabled": False,
-                    "target_verified": False,
-                },
+                "readiness": dict(binding.readiness or {}),
                 "blockers": list(binding.blockers),
             })
 
