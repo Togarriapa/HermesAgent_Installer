@@ -900,6 +900,7 @@ class RootTaskNativeObservationRegistry:
         if (type(receipt) is not RootTaskStdinWriteReceipt
                 or not _opaque(receipt_handle)
                 or getattr(terminal, "stdin_write_receipt_handle", None) != receipt_handle
+                or getattr(run.task_handle, "stdin_write_receipt_handle", None) != receipt_handle
                 or receipt.receipt_handle != receipt_handle
                 or receipt.task_handle != run.task_handle.handle_id
                 or receipt.process_id != run.task_handle.process_id
