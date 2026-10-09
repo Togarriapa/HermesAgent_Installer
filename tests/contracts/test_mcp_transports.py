@@ -6,6 +6,7 @@ import json
 import time
 import unittest
 
+from hermes_installer.mcp.client import MCPClient
 from hermes_installer.mcp.transports import StdioTransport, StreamableHTTPTransport, TransportError
 from hermes_installer.policy import DispatchAuthorization, DispatchContext, Sensitivity
 
@@ -139,7 +140,9 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
         transport = StreamableHTTPTransport(
             f"http://127.0.0.1:{port}/mcp", service_id="fixture", timeout=2,
         )
-        client = MCPClientCompat(transport, context, FixtureAuthority())
+        client = MCPClient(transport, {"get_state"}, service_id="fixture",
+                           selection="sensor.office", dispatch_context=context,
+                           context_authorizer=FixtureAuthority(), timeout=2)
         async with server:
             await client.initialize()
             await client.discover()
@@ -161,38 +164,6 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
         finally:
             server.close()
             await server.wait_closed()
-
-
-class MCPClientCompat:
-    """Keep this transport test small while exercising the same host-grant seam."""
-    def __init__(self, transport, context, authority):
-        self.transport, self.context, self.authority = transport, context, authority
-
-    async def initialize(self):
-        grant = self.authority(self.context, "mcp:fixture:connect", "fixture-connect",
-                               time.monotonic(), 3, lambda: False)
-        response = await self.transport.request(
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-             "params": {"protocolVersion": "2025-03-26"}},
-            dispatch_context=self.context, dispatch_authorization=grant,
-        )
-        result = response["result"]
-        self.assert_version = result["protocolVersion"]
-        await self.transport.request(
-            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
-            dispatch_context=self.context, dispatch_authorization=grant,
-        )
-
-    async def discover(self):
-        grant = self.authority(self.context, "mcp:fixture:connect", "fixture-discover",
-                               time.monotonic(), 3, lambda: False)
-        return await self.transport.request(
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-            dispatch_context=self.context, dispatch_authorization=grant,
-        )
-
-    async def close(self):
-        await self.transport.close()
 
 
 if __name__ == "__main__":
