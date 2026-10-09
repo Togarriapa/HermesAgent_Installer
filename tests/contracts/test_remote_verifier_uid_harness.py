@@ -200,7 +200,7 @@ class TwoUidVerifierSubprocessTests(unittest.TestCase):
                 foreign = subprocess.run(
                     [sys.executable, str(fixture_root / "tests" / "fixtures" / HELPER.name), "foreign"], input=json.dumps(request),
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=gateway_env,
-                    preexec_fn=_drop(foreign_uid, foreign_uid), text=True, timeout=4,
+                    preexec_fn=_drop(foreign_uid, foreign_uid, (gateway_gid,)), text=True, timeout=4,
                 )
                 self.assertEqual(foreign.returncode, 0, foreign.stderr[-1000:])
                 self.assertEqual(json.loads(foreign.stdout)["response_bytes"], 0,
@@ -215,6 +215,10 @@ class TwoUidVerifierSubprocessTests(unittest.TestCase):
             finally:
                 if service.poll() is None:
                     service.kill()
+                    try:
+                        service.communicate(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        pass
                 if service.stdout is not None and not service.stdout.closed:
                     service.stdout.close()
                 if service.stderr is not None and not service.stderr.closed:
